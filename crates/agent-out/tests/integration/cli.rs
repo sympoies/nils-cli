@@ -79,8 +79,12 @@ struct TestCleanupSummary {
     delete_bytes: u64,
     preserve_bytes: u64,
     needs_policy_bytes: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
     unreadable: usize,
-    unreadable_bytes: u64,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Serialize)]

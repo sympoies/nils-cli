@@ -352,3 +352,143 @@ fn retention_flag_requires_include_projects_and_a_positive_day_count() {
     let zero = fixture.plan(&["--project-retention-days", "0"]);
     assert_ne!(zero.code, 0);
 }
+
+/// True when permission bits cannot restrict this process (for example root).
+#[cfg(unix)]
+fn permissions_are_bypassed(probe: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(probe).expect("probe dir");
+    fs::set_permissions(probe, fs::Permissions::from_mode(0o000)).expect("chmod probe");
+    let bypassed = fs::read_dir(probe).is_ok();
+    fs::set_permissions(probe, fs::Permissions::from_mode(0o755)).expect("restore probe");
+    bypassed
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_project_run_delete_is_recorded_and_other_rows_continue() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new();
+    if permissions_are_bypassed(&fixture.tmp.path().join("probe")) {
+        return;
+    }
+    let first = make_run(&fixture.projects, "owner__repo", "20200101-000000-first");
+    let stuck = make_run(&fixture.projects, "owner__repo", "20200101-000000-stuck");
+    // A read-only directory keeps its files from being removed.
+    fs::set_permissions(stuck.join("logs"), fs::Permissions::from_mode(0o555)).expect("chmod");
+    age_tree(&first);
+    age_tree(&stuck);
+
+    let plan = fixture
+        .plan(&["--project-retention-days", "30"])
+        .stdout_json();
+    assert_eq!(plan["result"]["summary"]["delete"], 2);
+    let output = fixture.apply(&plan);
+    fs::set_permissions(stuck.join("logs"), fs::Permissions::from_mode(0o755)).expect("restore");
+
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let report = output.stdout_json();
+    assert_eq!(report["result"]["summary"]["deleted"], 1);
+    assert_eq!(report["result"]["summary"]["failed"], 1);
+    let failed = report["result"]["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|entry| entry["status"] == "failed")
+        .expect("failed entry");
+    assert!(
+        failed["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("20200101-000000-stuck")
+    );
+    assert!(!first.exists());
+    assert!(stuck.join("logs/output.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_repo_directories_never_yield_project_run_deletes() {
+    let fixture = Fixture::new();
+    let real = make_run(&fixture.projects, "owner__repo", "20200101-000000-real");
+    let elsewhere = fixture.agent_home.join("out/playwright");
+    let hidden = make_run(&elsewhere, "tool", "20200101-000000-hidden");
+    age_tree(&real);
+    age_tree(&hidden);
+    std::os::unix::fs::symlink(elsewhere.join("tool"), fixture.projects.join("linked"))
+        .expect("symlink repo dir");
+
+    let mut plan = fixture
+        .plan(&["--project-retention-days", "30"])
+        .stdout_json();
+    let items = plan["result"]["items"].as_array().expect("items");
+    assert!(
+        items
+            .iter()
+            .all(|item| !item["path"].as_str().unwrap().contains("/linked/")),
+        "the planner must not descend into a symlinked repo directory"
+    );
+
+    // A forged row that reaches the hidden run through the link is refused.
+    let mut forged = item(&plan, "20200101-000000-real").clone();
+    forged["name"] = Value::from("20200101-000000-hidden");
+    forged["path"] = Value::from(
+        fixture
+            .projects
+            .join("linked/20200101-000000-hidden")
+            .to_string_lossy()
+            .to_string(),
+    );
+    plan["result"]["items"]
+        .as_array_mut()
+        .expect("items")
+        .push(forged);
+    resign(&mut plan);
+    let output = fixture.apply(&plan);
+    assert_ne!(output.code, 0);
+    assert_eq!(
+        output.stdout_json()["error"]["code"],
+        "cleanup-delete-shape-invalid"
+    );
+    assert!(hidden.exists());
+    assert!(real.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_top_level_and_repo_entries_become_preserved_rows() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new();
+    if permissions_are_bypassed(&fixture.tmp.path().join("probe")) {
+        return;
+    }
+    let loose = fixture.agent_home.join("out/loose-report");
+    fs::create_dir_all(loose.join("inner")).expect("loose dir");
+    let repo = fixture.projects.join("locked__repo");
+    make_run(&fixture.projects, "locked__repo", "20200101-000000-run");
+    fs::set_permissions(&loose, fs::Permissions::from_mode(0o000)).expect("chmod loose");
+    fs::set_permissions(&repo, fs::Permissions::from_mode(0o000)).expect("chmod repo");
+
+    let output = fixture.plan(&["--project-retention-days", "30"]);
+    fs::set_permissions(&loose, fs::Permissions::from_mode(0o755)).expect("restore loose");
+    fs::set_permissions(&repo, fs::Permissions::from_mode(0o755)).expect("restore repo");
+
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let plan = output.stdout_json();
+    for name in ["loose-report", "locked__repo"] {
+        let row = item(&plan, name);
+        assert_eq!(row["category"], "unreadable", "row {name}");
+        assert_eq!(row["action"], "preserve", "row {name}");
+    }
+    assert_eq!(plan["result"]["summary"]["unreadable"], 2);
+}
+
+#[test]
+fn plans_without_unreadable_rows_omit_the_unreadable_count() {
+    let fixture = Fixture::new();
+    make_run(&fixture.projects, "owner__repo", "20200101-000000-run");
+    let plan = fixture.plan(&[]).stdout_json();
+    assert!(plan["result"]["summary"].get("unreadable").is_none());
+}

@@ -125,8 +125,10 @@ Plan classification is conservative:
 - an entry that cannot be fully read (for example a subtree owned by another
   account) no longer fails the whole plan. It becomes a `preserve` row with
   category `unreadable` and a one-line `diagnostic` (`code`, `path`,
-  `message`), is counted in `summary.unreadable`, and is never deleted. Failing
-  to list `$AGENT_HOME/out` or `projects/` itself still fails the plan.
+  `message`), is counted in `summary.unreadable` (omitted when zero), and is
+  never deleted. Failing to list `$AGENT_HOME/out` or `projects/` itself still
+  fails the plan.
+- a symlinked `projects/` root or repo directory is never descended into.
 
 #### Project-run retention
 
@@ -151,8 +153,8 @@ Other runs stay `needs-policy` with a reason naming the failed condition. A
 delete row carries a `tree_identity`: a versioned metadata digest of relative
 path, type, size, mtime, ctime, device, and inode for every entry. Hashing file
 contents at plan and again at apply is impractical for multi-gigabyte runs, and
-any rewrite, rename, or replacement changes this identity. Without the flag,
-plans are byte-identical to earlier releases.
+any rewrite, rename, or replacement changes this identity. Without the flag
+and without unreadable rows, plans are byte-identical to earlier releases.
 
 `cleanup apply` requires a reviewed plan file and exact digest confirmation:
 
@@ -164,7 +166,8 @@ agent-out cleanup apply \
   --format json
 ```
 
-Apply deletes only reviewed `cache` delete items from the plan. It rejects
+Apply deletes only reviewed `cache` delete items and, under a plan retention
+policy, `project-artifact` delete items from the plan. It rejects
 digest mismatches, requires the resolved agent home to match the plan, rejects
 parent-directory or out-of-root delete paths, validates every delete candidate
 before removing any path, rejects duplicate delete paths, re-checks evidence
@@ -177,13 +180,15 @@ deleting them. If `--agent-home` is omitted, `AGENT_HOME` is still required so
 the plan has a live runtime-root boundary.
 
 Project-run delete rows are accepted only as exact `projects/<repo>/<run>`
-paths in a plan whose retention policy is consistent and whose cutoff is no
-later than `now - DAYS` (`cleanup-retention-policy-invalid` otherwise). Before
-each deletion apply re-reads the run: a read failure, a new evidence marker, a
-changed `tree_identity`, or a run that no longer meets the policy becomes a
-`skipped` entry. A project-run delete that fails part way is recorded as
-`failed` (`summary.failed`) and the remaining rows continue; other categories
-still abort on a delete failure.
+paths with no symlink anywhere on that path, in a plan whose retention policy is
+consistent and whose cutoff is no later than `now - DAYS`
+(`cleanup-retention-policy-invalid` otherwise). Immediately before each
+project-run deletion apply re-reads that run: a read failure, a new evidence
+marker, a changed `tree_identity`, or a run that no longer meets the policy
+becomes a `skipped` entry. A project-run delete that fails part way is recorded
+as `failed` (`summary.failed`) and the remaining rows continue; other categories
+still abort on a delete failure. The command still exits 0 with `applied: true`
+in that case, so callers must check `summary.failed`.
 
 ### `completion`
 

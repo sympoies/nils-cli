@@ -692,10 +692,13 @@ pub struct CleanupSummary {
     pub preserve_bytes: u64,
     pub needs_policy_bytes: u64,
     /// Preserved entries that could not be fully read; also counted in preserve.
-    #[serde(default)]
+    /// Omitted when zero so plans without unreadable rows keep earlier bytes.
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub unreadable: usize,
-    #[serde(default)]
-    pub unreadable_bytes: u64,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Serialize)]
@@ -725,13 +728,20 @@ pub struct CleanupApplySummary {
     pub failed: usize,
 }
 
+/// What a project-run delete must re-prove immediately before removal.
+struct ProjectRunRecheck {
+    item: CleanupItem,
+    policy: ProjectRetention,
+    owner_uid: u32,
+}
+
 struct CleanupValidatedDelete {
     path: PathBuf,
     display_path: String,
     reason: String,
     size_bytes: u64,
     metadata: fs::Metadata,
-    project_run: bool,
+    project_run: Option<ProjectRunRecheck>,
 }
 
 enum CleanupApplyDecision {
@@ -921,7 +931,7 @@ fn build_cleanup_plan(args: &CleanupPlanArgs) -> Result<CleanupPlan, CliError> {
         let name = path_name(&path);
         let kind = entry_kind(&path);
 
-        if name == CANONICAL_PROJECT_ROOT && path.is_dir() {
+        if name == CANONICAL_PROJECT_ROOT && is_real_dir(&path) {
             items.push(CleanupItem {
                 name,
                 path: display_path(&path),
@@ -1108,7 +1118,8 @@ fn build_project_cleanup_items(
     }
 
     for project_dir in read_sorted_children(projects_root, "cleanup-read-failed")? {
-        if !project_dir.is_dir() {
+        // A symlinked repo directory could steer project-run deletes elsewhere.
+        if !is_real_dir(&project_dir) {
             continue;
         }
         let run_dirs = match read_sorted_children(&project_dir, "cleanup-read-failed") {
@@ -1366,10 +1377,14 @@ fn cleanup_summary(items: &[CleanupItem]) -> CleanupSummary {
         }
         if item.category == CleanupCategory::Unreadable {
             summary.unreadable += 1;
-            summary.unreadable_bytes = summary.unreadable_bytes.saturating_add(item.size_bytes);
         }
     }
     summary
+}
+
+/// A directory that is not itself a symlink.
+fn is_real_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
 }
 
 fn entry_kind(path: &Path) -> String {
@@ -1757,6 +1772,33 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
             }
         };
         let delete_identity = validate_cleanup_delete_target(&path, &out_root, &metadata)?;
+        let project_run = match (item.category, retention) {
+            (CleanupCategory::ProjectArtifact, Some(policy)) => {
+                // No symlink may sit anywhere on the lexical projects/<repo>/<run>
+                // path; otherwise a link could steer the delete to another root.
+                let canonical_out_root = fs::canonicalize(&out_root).map_err(|err| {
+                    CliError::runtime(
+                        "cleanup-out-root-canonicalize-failed",
+                        format!("failed to resolve {}: {err}", out_root.display()),
+                        Some(json!({ "out_root": display_path(&out_root) })),
+                    )
+                })?;
+                let relative = path.strip_prefix(&out_root).unwrap_or(&path);
+                if delete_identity != canonical_out_root.join(relative) {
+                    return Err(CliError::data(
+                        "cleanup-delete-shape-invalid",
+                        "project-run delete path passes through a symlink",
+                        Some(json!({ "path": item.path })),
+                    ));
+                }
+                Some(ProjectRunRecheck {
+                    item: item.clone(),
+                    policy,
+                    owner_uid: path_owner_uid(&out_root)?,
+                })
+            }
+            _ => None,
+        };
         if !delete_paths.insert(delete_identity) {
             return Err(CliError::data(
                 "cleanup-delete-duplicate",
@@ -1765,26 +1807,22 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
             ));
         }
 
-        let skip_reason = match (item.category, retention) {
-            (CleanupCategory::ProjectArtifact, Some(policy)) => {
-                project_run_apply_skip_reason(item, &path, policy, path_owner_uid(&out_root)?)
+        // Project runs are rechecked immediately before their own delete below.
+        if project_run.is_none() {
+            let skip_reason = if marker_flags(&path)?.has_evidence() {
+                Some("evidence marker appeared after the plan was created".to_string())
+            } else if !cleanup_item_metadata_matches(item, &path)? {
+                Some("path metadata changed after the plan was created".to_string())
+            } else {
+                None
+            };
+            if let Some(reason) = skip_reason {
+                decisions.push(CleanupApplyDecision::Skip {
+                    path: item.path.clone(),
+                    reason,
+                });
+                continue;
             }
-            _ => {
-                if marker_flags(&path)?.has_evidence() {
-                    Some("evidence marker appeared after the plan was created".to_string())
-                } else if !cleanup_item_metadata_matches(item, &path)? {
-                    Some("path metadata changed after the plan was created".to_string())
-                } else {
-                    None
-                }
-            }
-        };
-        if let Some(reason) = skip_reason {
-            decisions.push(CleanupApplyDecision::Skip {
-                path: item.path.clone(),
-                reason,
-            });
-            continue;
         }
 
         decisions.push(CleanupApplyDecision::Delete(Box::new(
@@ -1794,7 +1832,7 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
                 reason: item.reason.clone(),
                 size_bytes: item.size_bytes,
                 metadata,
-                project_run: item.category == CleanupCategory::ProjectArtifact,
+                project_run,
             },
         )));
     }
@@ -1814,6 +1852,23 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
                 summary.skipped += 1;
             }
             CleanupApplyDecision::Delete(delete) => {
+                if let Some(recheck) = &delete.project_run
+                    && let Some(reason) = project_run_apply_skip_reason(
+                        &recheck.item,
+                        &delete.path,
+                        recheck.policy,
+                        recheck.owner_uid,
+                    )
+                {
+                    entries.push(CleanupApplyEntry {
+                        path: delete.display_path,
+                        action: "delete".to_string(),
+                        status: "skipped".to_string(),
+                        reason,
+                    });
+                    summary.skipped += 1;
+                    continue;
+                }
                 let removed =
                     if delete.metadata.is_dir() && !delete.metadata.file_type().is_symlink() {
                         fs::remove_dir_all(&delete.path)
@@ -1823,7 +1878,7 @@ fn apply_cleanup_plan(args: &CleanupApplyArgs) -> Result<CleanupApplyReport, Cli
                 if let Err(err) = removed {
                     // A project run is one of many independent rows; record its
                     // failure and keep going. Other categories still abort.
-                    if delete.project_run {
+                    if delete.project_run.is_some() {
                         entries.push(CleanupApplyEntry {
                             path: delete.display_path,
                             action: "delete".to_string(),
@@ -3134,5 +3189,66 @@ mod tests {
 
         assert_eq!(shell_quote("plain"), "'plain'");
         assert_eq!(shell_quote(""), "''");
+    }
+
+    #[test]
+    fn run_ids_parse_only_valid_allocation_prefixes() {
+        let midnight = 1_577_836_800; // 2020-01-01T00:00:00Z
+        let cases: &[(&str, Option<i64>)] = &[
+            ("20200101-000000-topic", Some(midnight)),
+            (
+                "20200101-123456-topic",
+                Some(midnight + 12 * 3600 + 34 * 60 + 56),
+            ),
+            ("20200101-123456", Some(midnight + 12 * 3600 + 34 * 60 + 56)),
+            ("20200101-topic", Some(midnight)),
+            ("20200101", Some(midnight)),
+            ("20200101-12-topic", Some(midnight)),
+            ("20200101-1234567-topic", Some(midnight)),
+            ("20201340-000000-bad-date", None),
+            ("20200101x-topic", None),
+            ("2020010-topic", None),
+            ("adhoc-run", None),
+            ("é2020101-topic", None),
+            ("", None),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(run_started_unix(name), *expected, "run id {name:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directories_owned_by_another_account_block_retention() {
+        use std::os::unix::fs::MetadataExt;
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let run = tmp.path().join("20200101-000000-run");
+        fs::create_dir_all(run.join("logs")).expect("run");
+        fs::write(run.join("logs/out.txt"), "x").expect("file");
+        let owner = fs::metadata(tmp.path()).expect("metadata").uid();
+        let policy = ProjectRetention {
+            days: 30,
+            cutoff_unix: i64::MAX,
+        };
+
+        let own = scan_tree(&run, owner).expect("scan");
+        assert!(!own.foreign_owned_dirs);
+        assert!(project_run_retention_eligible(
+            "20200101-000000-run",
+            "directory",
+            &own,
+            policy
+        ));
+
+        let foreign = scan_tree(&run, owner.wrapping_add(1)).expect("scan");
+        assert!(foreign.foreign_owned_dirs);
+        assert!(!project_run_retention_eligible(
+            "20200101-000000-run",
+            "directory",
+            &foreign,
+            policy
+        ));
+        assert_eq!(foreign.identity, own.identity);
     }
 }
