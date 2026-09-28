@@ -350,6 +350,78 @@ if (fs.existsSync(modulePath)) {
     assert.match(messages.join("\n"), /still running after 3 checks/);
   });
 
+  test("each wait attempt decides from one run listing, so completion between reads is not missed", async () => {
+    const { state, github } = fixture();
+    const mainRun = state.workflowRuns[1];
+    mainRun.status = "in_progress";
+    mainRun.conclusion = null;
+    const listRuns = github.rest.actions.listWorkflowRuns;
+    let pushListings = 0;
+    github.rest.actions.listWorkflowRuns = async (params) => {
+      if (params.event === "push") {
+        pushListings += 1;
+        const { data } = await listRuns(params);
+        const response = {
+          data: { workflow_runs: data.workflow_runs.map((run) => ({ ...run })) },
+        };
+        // The run finishes right after the first listing is served.
+        if (pushListings === 1) {
+          mainRun.status = "completed";
+          mainRun.conclusion = "success";
+        }
+        return response;
+      }
+      return listRuns(params);
+    };
+    let sleeps = 0;
+    const sleep = async () => {
+      sleeps += 1;
+    };
+
+    assert.deepEqual(
+      await waitForTrustedMainCi({
+        github,
+        context,
+        core: quietCore().core,
+        sha: baseSha,
+        attempts: 5,
+        sleep,
+      }),
+      { runId: 200, runUrl: `https://github.com/${fullName}/actions/runs/200` },
+    );
+    assert.equal(sleeps, 1);
+  });
+
+  test("base main CI still running at the wall-clock deadline fails closed", async () => {
+    const { state, github } = fixture();
+    state.workflowRuns[1].status = "in_progress";
+    state.workflowRuns[1].conclusion = null;
+    let clock = 0;
+    let sleeps = 0;
+    const sleep = async (ms) => {
+      sleeps += 1;
+      clock += ms;
+    };
+    const { core, messages } = quietCore();
+
+    assert.equal(
+      await waitForTrustedMainCi({
+        github,
+        context,
+        core,
+        sha: baseSha,
+        attempts: 100,
+        intervalMs: 1_000,
+        deadlineMs: 2_500,
+        now: () => clock,
+        sleep,
+      }),
+      null,
+    );
+    assert.equal(sleeps, 2);
+    assert.match(messages.join("\n"), /still running at the wait deadline/);
+  });
+
   test("a pending push run from another repository is not awaited", async () => {
     const { state, github } = fixture();
     state.workflowRuns[1].status = "in_progress";

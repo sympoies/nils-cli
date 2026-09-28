@@ -225,6 +225,13 @@ async function findTrustedMainCi({
   if (!/^[0-9a-f]{40}$/i.test(sha || "")) {
     return null;
   }
+  const runs = await listMainPushRuns({ github, context, sha });
+  return trustedMainCiFromRuns({ github, context, runs, requiredChecks });
+}
+
+// Every same-repository `ci.yml` push run on `main` for exactly `sha`, in any
+// state. Trust and pending decisions both read this one listing.
+async function listMainPushRuns({ github, context, sha }) {
   const fullName = `${context.repo.owner}/${context.repo.repo}`;
   const runs = await listAll(
     github,
@@ -240,14 +247,23 @@ async function findTrustedMainCi({
     },
     "workflow_runs",
   );
-  const trustedRuns = runs.filter(
+  return runs.filter(
     (run) =>
       run.event === "push" &&
-      run.status === "completed" &&
-      run.conclusion === "success" &&
       run.head_branch === "main" &&
       run.head_sha === sha &&
       run.repository?.full_name === fullName,
+  );
+}
+
+async function trustedMainCiFromRuns({
+  github,
+  context,
+  runs,
+  requiredChecks = REQUIRED_CHECKS,
+}) {
+  const trustedRuns = runs.filter(
+    (run) => run.status === "completed" && run.conclusion === "success",
   );
   if (trustedRuns.length !== 1) {
     return null;
@@ -269,37 +285,16 @@ async function findTrustedMainCi({
   return { runId: run.id, runUrl: run.html_url };
 }
 
-async function hasPendingMainCi({ github, context, sha }) {
-  const fullName = `${context.repo.owner}/${context.repo.repo}`;
-  const runs = await listAll(
-    github,
-    github.rest.actions.listWorkflowRuns,
-    {
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      workflow_id: "ci.yml",
-      branch: "main",
-      event: "push",
-      head_sha: sha,
-      per_page: 100,
-    },
-    "workflow_runs",
-  );
-  return runs.some(
-    (run) =>
-      run.event === "push" &&
-      run.status !== "completed" &&
-      run.head_branch === "main" &&
-      run.head_sha === sha &&
-      run.repository?.full_name === fullName,
-  );
-}
-
 // A release PR is usually opened minutes after the base commit lands, while
 // that commit's push CI is still running, so a single lookup always missed and
 // sent the release PR through the full suite. Wait while the exact base run is
 // still pending; stop as soon as it is trusted, or as soon as nothing is left
 // to wait for (no run, or a run that concluded without full success).
+//
+// Each attempt decides from one listing, so a run that completes between two
+// reads cannot look both unfinished and not pending. The wall-clock deadline
+// stays well under the `changes` job timeout: a timed-out or cancelled job
+// would skip the required checks instead of falling back to full CI.
 async function waitForTrustedMainCi({
   github,
   context,
@@ -307,18 +302,29 @@ async function waitForTrustedMainCi({
   sha,
   attempts = 80,
   intervalMs = 30_000,
+  deadlineMs = 35 * 60_000,
+  now = () => Date.now(),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
+  if (!/^[0-9a-f]{40}$/i.test(sha || "")) {
+    return null;
+  }
+  const deadline = now() + deadlineMs;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const trusted = await findTrustedMainCi({ github, context, sha });
+    const runs = await listMainPushRuns({ github, context, sha });
+    const trusted = await trustedMainCiFromRuns({ github, context, runs });
     if (trusted) {
       return trusted;
     }
-    if (!(await hasPendingMainCi({ github, context, sha }))) {
+    if (!runs.some((run) => run.status !== "completed")) {
       return null;
     }
     if (attempt === attempts) {
       core.info(`Base main CI on ${sha} is still running after ${attempts} checks.`);
+      return null;
+    }
+    if (now() + intervalMs >= deadline) {
+      core.info(`Base main CI on ${sha} is still running at the wait deadline.`);
       return null;
     }
     core.info(`Waiting for base main CI on ${sha} (${attempt}/${attempts}).`);
