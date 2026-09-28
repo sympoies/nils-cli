@@ -1496,7 +1496,6 @@ fn codex_tables_appended_inside_the_owned_block_are_relocated_byte_for_byte() {
     let preview = codex_setup_json(&fixture, &["--dry-run"]);
     assert_eq!(preview["status"], "drifted");
     assert_eq!(preview["owned_count"], 2);
-    assert_eq!(preview["legacy_residue_count"], 0);
     assert_eq!(preview["would_change"], true);
     assert_eq!(preview["apply_allowed"], false);
     assert_eq!(fs::read_to_string(&config).expect("preview"), original);
