@@ -2065,6 +2065,109 @@ pub fn main_agent_controller_claim_snapshot(
     Ok(Some(controller_claim_snapshot(claim)?))
 }
 
+/// Result of growing an assignment-derived worker claim in place.
+#[derive(Clone, Debug)]
+pub enum WorkerClaimExtension {
+    /// The worker holds no active claim; only the assignment changed.
+    NoActiveClaim,
+    /// The claim now matches the replacement context.
+    Updated { claim_id: String, revision: u64 },
+}
+
+/// Replace the scopes and provider references of the exact worker's active
+/// assignment-derived claim with `replacement`, keeping its claim identity,
+/// grants, worktree fingerprint, and expiry. `current` is the context derived
+/// from the assignment before the change; a claim already equal to
+/// `replacement` is treated as an interrupted earlier extension and converges.
+///
+/// The claim is saved under the coordination lock before `commit` persists the
+/// matching assignment change (coordination before orchestration), and it is
+/// restored if `commit` fails.
+pub fn extend_main_agent_worker_claim(
+    context: &CliContext,
+    session_id: &str,
+    incarnation: &str,
+    current: &WorkContextInput,
+    replacement: &WorkContextInput,
+    commit: impl FnOnce(&WorkerClaimExtension) -> Result<(), CliError>,
+) -> Result<WorkerClaimExtension, CliError> {
+    let current = current.clone().validate_and_canonicalize()?;
+    let replacement = replacement.clone().validate_and_canonicalize()?;
+    let mut locked = lock_registry(context)?;
+    let now = now_epoch();
+    clean_expired(&mut locked.registry, now);
+    let Some(index) = locked.registry.claims.iter().position(|claim| {
+        claim.session_id == session_id
+            && claim.session_incarnation == incarnation
+            && claim.state == "active"
+    }) else {
+        commit(&WorkerClaimExtension::NoActiveClaim)?;
+        return Ok(WorkerClaimExtension::NoActiveClaim);
+    };
+    let claim = locked.registry.claims[index].clone();
+    let with_claim_worktrees = |mut input: WorkContextInput| {
+        input.worktrees = claim.worktrees.clone();
+        input
+    };
+    let observed = input_from_record(&claim);
+    let replacement = with_claim_worktrees(replacement);
+    if !claim.checkout_shell_grant
+        || (observed != with_claim_worktrees(current) && observed != replacement)
+    {
+        return Err(CliError::data(
+            "worker-claim-mismatch",
+            "the worker's active claim is not the exact assignment-derived claim",
+            None,
+        ));
+    }
+    if observed == replacement {
+        let outcome = WorkerClaimExtension::Updated {
+            claim_id: claim.claim_id,
+            revision: claim.revision,
+        };
+        commit(&outcome)?;
+        return Ok(outcome);
+    }
+    if has_nonterminal_operation(&locked.registry, &claim.claim_id) {
+        return Err(operation_in_progress());
+    }
+    super::ensure_claim_mutation_not_fenced(context, session_id, incarnation, &claim)?;
+    let complete =
+        complete_relevant_universe(context, &locked.registry, Some((session_id, incarnation)));
+    let evaluation = evaluate(
+        Some((session_id, incarnation)),
+        &replacement,
+        &locked.registry.claims,
+        complete,
+        false,
+    );
+    if evaluation.classification == ConflictClassification::Conflict {
+        return Err(CliError::data(
+            "claim-conflict",
+            "extended worker scope conflicts with an active claim",
+            Some(json!({ "evaluation": evaluation })),
+        ));
+    }
+    {
+        let updated = &mut locked.registry.claims[index];
+        updated.scopes = replacement.scopes.clone();
+        updated.provider_refs = replacement.provider_refs.clone();
+        updated.revision = updated.revision.saturating_add(1);
+        updated.updated_at = timestamp(now);
+    }
+    let outcome = WorkerClaimExtension::Updated {
+        claim_id: claim.claim_id.clone(),
+        revision: locked.registry.claims[index].revision,
+    };
+    locked.save()?;
+    if let Err(error) = commit(&outcome) {
+        locked.registry.claims[index] = claim;
+        locked.save()?;
+        return Err(error);
+    }
+    Ok(outcome)
+}
+
 /// One unexpired active claim's owner and public work context.
 #[derive(Clone, Debug)]
 pub struct ActiveClaimContext {
@@ -2705,6 +2808,143 @@ fn operation_in_progress() -> CliError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn extension_input(scopes: &[&str]) -> WorkContextInput {
+        WorkContextInput {
+            schema_version: super::super::context::WORK_CONTEXT_INPUT_VERSION.to_string(),
+            intent: "implementation".to_string(),
+            tier: "direct".to_string(),
+            repositories: vec!["example/repo".to_string()],
+            worktrees: Vec::new(),
+            provider_refs: Vec::new(),
+            plan_refs: Vec::new(),
+            scopes: scopes
+                .iter()
+                .map(|value| Scope {
+                    kind: ScopeKind::PathPrefix,
+                    repository: "example/repo".to_string(),
+                    value: (*value).to_string(),
+                })
+                .collect(),
+            summary: "worker lane".to_string(),
+        }
+    }
+
+    fn extension_fixture(scopes: &[&str], grant: bool) -> (tempfile::TempDir, CliContext) {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        fs::create_dir_all(&context.state_dir).expect("state dir");
+        fs::set_permissions(&context.state_dir, fs::Permissions::from_mode(0o700))
+            .expect("state dir mode");
+        let claimed = extension_input(scopes);
+        let mut locked = lock_registry(&context).expect("registry");
+        locked.registry.claims.push(WorkContextRecord {
+            schema_version: WORK_CONTEXT_VERSION.to_string(),
+            session_id: "worker".to_string(),
+            session_incarnation: "worker-incarnation".to_string(),
+            claim_id: "worker-claim".to_string(),
+            revision: 1,
+            state: "active".to_string(),
+            intent: claimed.intent,
+            tier: claimed.tier,
+            repositories: claimed.repositories,
+            worktrees: Vec::new(),
+            checkout_shell_grant: grant,
+            pull_request_head: None,
+            provider_refs: Vec::new(),
+            plan_refs: Vec::new(),
+            scopes: claimed.scopes,
+            summary: claimed.summary,
+            updated_at: "2030-01-01T00:00:00Z".to_string(),
+            expires_at: "9999-12-31T23:59:59Z".to_string(),
+            expires_at_epoch: i64::MAX,
+            terminal_at_epoch: None,
+        });
+        locked.save().expect("save registry");
+        (tmp, context)
+    }
+
+    fn stored_worker_claim(context: &CliContext) -> WorkContextRecord {
+        let locked = lock_registry(context).expect("registry");
+        locked
+            .registry
+            .claims
+            .iter()
+            .find(|claim| claim.claim_id == "worker-claim")
+            .cloned()
+            .expect("worker claim")
+    }
+
+    #[test]
+    fn extend_worker_claim_restores_the_claim_when_the_assignment_commit_fails() {
+        let (_tmp, context) = extension_fixture(&["docs/lane"], true);
+        let error = extend_main_agent_worker_claim(
+            &context,
+            "worker",
+            "worker-incarnation",
+            &extension_input(&["docs/lane"]),
+            &extension_input(&["docs/lane", "docs/extra"]),
+            |_| {
+                Err(CliError::data(
+                    "assignment-state-conflict",
+                    "simulated assignment commit failure",
+                    None,
+                ))
+            },
+        )
+        .expect_err("a failed commit fails the extension");
+        assert_eq!(error.code(), "assignment-state-conflict");
+        let claim = stored_worker_claim(&context);
+        assert_eq!(claim.revision, 1);
+        assert_eq!(claim.scopes, extension_input(&["docs/lane"]).scopes);
+    }
+
+    #[test]
+    fn extend_worker_claim_converges_on_an_already_extended_claim() {
+        let (_tmp, context) = extension_fixture(&["docs/extra", "docs/lane"], true);
+        let mut committed = false;
+        let outcome = extend_main_agent_worker_claim(
+            &context,
+            "worker",
+            "worker-incarnation",
+            &extension_input(&["docs/lane"]),
+            &extension_input(&["docs/lane", "docs/extra"]),
+            |_| {
+                committed = true;
+                Ok(())
+            },
+        )
+        .expect("an interrupted extension converges");
+        assert!(committed, "the assignment commit still runs");
+        assert!(matches!(
+            outcome,
+            WorkerClaimExtension::Updated { revision: 1, .. }
+        ));
+        assert_eq!(stored_worker_claim(&context).revision, 1);
+    }
+
+    #[test]
+    fn extend_worker_claim_refuses_a_claim_that_is_not_assignment_derived() {
+        for (scopes, grant) in [(&["docs/other"][..], true), (&["docs/lane"][..], false)] {
+            let (_tmp, context) = extension_fixture(scopes, grant);
+            let error = extend_main_agent_worker_claim(
+                &context,
+                "worker",
+                "worker-incarnation",
+                &extension_input(&["docs/lane"]),
+                &extension_input(&["docs/lane", "docs/extra"]),
+                |_| panic!("a mismatched claim must not commit the assignment"),
+            )
+            .expect_err("a non-derived claim fails closed");
+            assert_eq!(error.code(), "worker-claim-mismatch");
+            let claim = stored_worker_claim(&context);
+            assert_eq!(claim.revision, 1);
+            assert_eq!(claim.scopes, extension_input(scopes).scopes);
+        }
+    }
 
     #[test]
     fn operation_private_proofs_are_never_serialized() {

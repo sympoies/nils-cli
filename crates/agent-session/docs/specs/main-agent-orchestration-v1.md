@@ -119,6 +119,7 @@ main-agent worker account-handoff ASSIGNMENT_ID --account ACCOUNT --if-revision 
 main-agent worker account-handoff-cancel ASSIGNMENT_ID --reservation-id RESERVATION_ID --account ACCOUNT [--intent-id INTENT_ID] --if-revision N --authorize-account-change --idempotency-key KEY --format json
 main-agent worker request-changes ASSIGNMENT_ID --if-revision N --reason TEXT --idempotency-key KEY --format json
 main-agent worker resume ASSIGNMENT_ID --if-revision N --reason TEXT --idempotency-key KEY --format json
+main-agent worker extend-scope ASSIGNMENT_ID [--scope PATH]... [--provider-ref ISSUE]... --if-revision N --idempotency-key KEY --format json
 main-agent worker reenter ASSIGNMENT_ID --worker-incarnation INCARNATION --if-revision N --if-notification-generation N --idempotency-key KEY --format json
 main-agent worker submit-recovery ASSIGNMENT_ID --if-revision N --timeout D --idempotency-key KEY --format json
 main-agent worker reconcile-recovery ASSIGNMENT_ID --if-revision N --idempotency-key KEY --format json
@@ -632,6 +633,49 @@ serialized away when absent. Worker start also rejects, as an
 provider_ref}`, a packet issue already held by the controller claim or by a
 live worker claim. Creating issues and touching another repository's
 records are not covered and remain Main Agent work.
+
+Assignment packet `scopes` are always `path-prefix` scopes. A trailing `/` is
+accepted and normalized away wherever a packet scope becomes a claim scope or is
+compared for overlap; an exact-path scope is not expressible in a packet.
+
+`worker extend-scope` grows a live assignment in place. It is controller-only
+(the authenticated primary manager with an active claim), fenced by the exact
+assignment `--if-revision`, idempotent by key, and accepts a `working`,
+`blocked`, or `submitted` assignment (`assignment-state-conflict` otherwise;
+`starting` is excluded because a pending start replays against its exact stored
+packet). At least one `--scope` or `--provider-ref` is required
+(`worker-extend-scope-empty`, usage). Each `--scope` adds a path prefix and each
+`--provider-ref` adds an issue number in the assignment repository; values
+already present are ignored, and a request that adds nothing fails with
+`worker-extend-scope-unchanged`. The extended packet is validated like a new one
+(`invalid-orchestration-input` or `invalid-scope`) and compared with the
+controller claim and every other live assignment exactly as `worker start`
+does (`assignment-scope-conflict`). The command stores the extended packet as a
+new content-addressed packet, then, when the bound worker holds its active
+assignment-derived claim, replaces that claim's scopes and provider references
+in place under the coordination lock. The claim keeps its `claim_id`, checkout
+fingerprint, checkout-shell grant, pull-request head grant, and expiry, and its
+revision advances by one. The worker claim is saved before the assignment
+(coordination before orchestration) and restored if the assignment commit
+fails, and a replay after an interrupted run converges on the already-extended
+claim. The assignment then records the new packet digest and normalized
+`scopes` and advances its revision. `revoke-claim`, `stop-claimed-runtime`, and
+`adopt` re-derive the expected claim from that packet, so they keep matching. A
+worker claim that is not the exact assignment-derived claim fails with
+`worker-claim-mismatch`, an active or uncertain operation with
+`operation-in-progress` (retry after it finishes), and a peer claim overlap with `claim-conflict`.
+Without an active worker claim, only the assignment changes and the next
+bootstrap derives the extended claim. The result
+`main-agent.worker-extend-scope-result.v1` carries the public `assignment`,
+`claim: {state: "updated", claim_id, revision} | {state: "absent"}`, and
+`notification: {state: "sent", message_id} | {state: "failed", code} |
+{state: "skipped", reason}` for the mailbox message that tells the worker its
+scope changed. A notification failure never undoes the extension. The
+idempotency receipt is committed with the assignment change and a `pending`
+notification, so a same-key retry after any later failure replays the result
+and completes the notification with its idempotent child mailbox key. Assignment
+mutation fences (runtime stop, claim revocation, re-entry, delete, and similar
+reservations) are re-checked under the orchestration lock before the commit.
 
 `worker wait` is read-only completion-awareness for the orchestrating Main
 Agent — the CLI counterpart to the operator console's sub-second SSE push. It is

@@ -281,6 +281,9 @@ enum WorkerCommand {
     /// `working`; the worker then re-runs its bootstrap argv to re-acquire its
     /// exact assignment-derived claim.
     Resume(WorkerRequestChangesArgs),
+    /// Grow a live assignment's scopes and child-issue refs in place, updating
+    /// its worker claim without a new session or worktree.
+    ExtendScope(WorkerExtendScopeArgs),
     /// Re-enter an exact idle Codex worker through its existing unread
     /// notification generation without resending assignment content.
     Reenter(WorkerReenterArgs),
@@ -501,6 +504,25 @@ struct WorkerRequestChangesArgs {
     /// Bounded durable reason recorded for the exact worker's next revision.
     #[arg(long)]
     reason: String,
+    #[arg(long, help = IDEMPOTENCY_KEY_HELP)]
+    idempotency_key: String,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Clone, Debug, Args)]
+struct WorkerExtendScopeArgs {
+    assignment_id: String,
+    /// Repository-relative path prefix to add; repeatable. A trailing `/` is
+    /// accepted.
+    #[arg(long = "scope", value_name = "PATH")]
+    scopes: Vec<String>,
+    /// Issue number in the assignment repository the worker may comment on;
+    /// repeatable.
+    #[arg(long = "provider-ref", value_name = "ISSUE")]
+    provider_refs: Vec<u64>,
+    #[arg(long, help = ASSIGNMENT_REVISION_HELP)]
+    if_revision: u64,
     #[arg(long, help = IDEMPOTENCY_KEY_HELP)]
     idempotency_key: String,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
@@ -3253,6 +3275,7 @@ fn run_worker(context: &CliContext, args: WorkerArgs) -> Result<Value, CliError>
         }
         WorkerCommand::RequestChanges(args) => run_worker_request_changes(context, args),
         WorkerCommand::Resume(args) => run_worker_resume(context, args),
+        WorkerCommand::ExtendScope(args) => run_worker_extend_scope(context, args),
         WorkerCommand::Reenter(args) => run_worker_reenter(context, args),
         WorkerCommand::Accept(args) => {
             run_assignment_state(context, args, "submitted", "accepted", "worker-accept")
@@ -3729,7 +3752,11 @@ fn run_worker_start_single_input(
             repository: input.repository.clone(),
             worktree: input.worktree.clone(),
             base_ref: input.base_ref.clone(),
-            scopes: input.scopes.clone(),
+            scopes: input
+                .scopes
+                .iter()
+                .map(|scope| packet_scope_value(scope).to_string())
+                .collect(),
             durable_refs: input.durable_refs.clone(),
             depends_on: input.depends_on.clone(),
             checkpoint: None,
@@ -13266,7 +13293,7 @@ fn assignment_worker_work_context_from_packet(
             .map(|value| Scope {
                 kind: ScopeKind::PathPrefix,
                 repository: repository.clone(),
-                value: value.clone(),
+                value: packet_scope_value(value).to_string(),
             })
             .collect(),
         summary: packet.task_summary.clone(),
@@ -13368,7 +13395,7 @@ fn assignment_scope_conflicts(
                 agent_session::internal::coordination::context::canonicalize_targets(vec![Scope {
                     kind: ScopeKind::PathPrefix,
                     repository: repository.clone(),
-                    value: value.clone(),
+                    value: packet_scope_value(value).to_string(),
                 }])
                 .ok()
                 .and_then(|mut scopes| scopes.pop())
@@ -19422,6 +19449,338 @@ fn return_assignment_to_worker(
     Ok(outcome)
 }
 
+/// Assignment packet scopes are always path prefixes; a trailing `/` is
+/// accepted and normalized away.
+fn packet_scope_value(value: &str) -> &str {
+    value
+        .strip_suffix('/')
+        .filter(|value| !value.is_empty())
+        .unwrap_or(value)
+}
+
+/// Assignment states whose live worker may have its scope grown in place.
+/// `starting` is excluded because a pending start replays against the exact
+/// stored packet digest.
+const EXTENDABLE_ASSIGNMENT_STATES: [&str; 3] = ["working", "blocked", "submitted"];
+
+fn run_worker_extend_scope(
+    context: &CliContext,
+    args: WorkerExtendScopeArgs,
+) -> Result<Value, CliError> {
+    validate_idempotency_key(&args.idempotency_key)?;
+    if args.scopes.is_empty() && args.provider_refs.is_empty() {
+        return Err(CliError::usage(
+            "worker-extend-scope-empty",
+            "worker extend-scope requires at least one --scope or --provider-ref",
+            None,
+        ));
+    }
+    let (record, incarnation) = authenticated_self(context)?;
+    ensure_active_claim(context, &record)?;
+    let request_digest = agent_session::internal::coordination::request_digest(
+        "worker-extend-scope",
+        &json!({
+            "assignment_id": args.assignment_id,
+            "if_revision": args.if_revision,
+            "scopes": args.scopes,
+            "provider_refs": args.provider_refs,
+        }),
+    );
+    let active_claims =
+        agent_session::internal::coordination::claims::active_claim_contexts(context)?;
+    let registry = orchestration::load_registry_readonly(context)?;
+    let run = require_current_main(&registry, &record, &incarnation)?.clone();
+    if let Some(value) = idempotency_replay(
+        &registry,
+        &record,
+        &incarnation,
+        &args.idempotency_key,
+        "worker-extend-scope",
+        &request_digest,
+    )? {
+        drop(registry);
+        return finish_worker_extend_scope_notification(
+            context,
+            &record,
+            &incarnation,
+            &args.idempotency_key,
+            &request_digest,
+            value,
+        );
+    }
+    let assignment = registry
+        .assignments
+        .get(&args.assignment_id)
+        .filter(|assignment| assignment.run_id == run.run_id)
+        .ok_or_else(|| not_found("assignment-not-found", "assignment was not found"))?
+        .clone();
+    ensure_primary_manager(&assignment, &record, &incarnation)?;
+    ensure_revision(args.if_revision, assignment.revision, "assignment")?;
+    ensure_assignment_mutation_admitted(context, &assignment, AssignmentMutationOwner::Ordinary)?;
+    if !EXTENDABLE_ASSIGNMENT_STATES.contains(&assignment.state.as_str()) {
+        return Err(CliError::data(
+            "assignment-state-conflict",
+            "worker extend-scope requires a working, blocked, or submitted assignment",
+            Some(json!({
+                "assignment_id": assignment.assignment_id,
+                "state": assignment.state,
+                "revision": assignment.revision
+            })),
+        ));
+    }
+    let packet: AssignmentInput = serde_json::from_value(orchestration::read_packet(
+        context,
+        &assignment.private_packet_digest,
+    )?)
+    .map_err(|_| invalid_input("stored assignment packet is invalid"))?;
+    let repository = packet.repository.clone().ok_or_else(|| {
+        invalid_input("worker extend-scope requires the assignment to declare a repository")
+    })?;
+    let mut extended = packet.clone();
+    for scope in &args.scopes {
+        let scope = packet_scope_value(scope).to_string();
+        if !extended
+            .scopes
+            .iter()
+            .any(|existing| packet_scope_value(existing) == scope)
+        {
+            extended.scopes.push(scope);
+        }
+    }
+    for number in &args.provider_refs {
+        if !extended
+            .provider_refs
+            .iter()
+            .any(|existing| existing.number == *number)
+        {
+            extended.provider_refs.push(ProviderRef {
+                kind: "issue".to_string(),
+                repository: repository.clone(),
+                number: *number,
+            });
+        }
+    }
+    if extended.scopes == packet.scopes && extended.provider_refs == packet.provider_refs {
+        return Err(CliError::data(
+            "worker-extend-scope-unchanged",
+            "every requested scope and provider ref is already assigned",
+            Some(json!({ "assignment_id": assignment.assignment_id })),
+        ));
+    }
+    validate_assignment_input(&extended)?;
+    let mut others = registry.clone();
+    others.assignments.remove(&assignment.assignment_id);
+    ensure_assignment_scopes_disjoint(
+        &extended,
+        &run.tier,
+        Some((record.id.as_str(), incarnation.as_str())),
+        &others,
+        &active_claims,
+    )?;
+    drop(others);
+    drop(registry);
+    let current_context = assignment_worker_work_context_from_packet(
+        &packet,
+        run.tier.clone(),
+        "worker extend-scope requires the assignment to declare a repository",
+    )?;
+    let extended_context = assignment_worker_work_context_from_packet(
+        &extended,
+        run.tier.clone(),
+        "worker extend-scope requires the assignment to declare a repository",
+    )?;
+    let extended_packet = serde_json::to_value(&extended)
+        .map_err(|_| invalid_input("assignment packet is invalid"))?;
+    let extended_digest = orchestration::store_packet(context, &extended_packet)?;
+    let record_scopes = extended
+        .scopes
+        .iter()
+        .map(|scope| packet_scope_value(scope).to_string())
+        .collect::<Vec<_>>();
+    let mut outcome = None;
+    let mut commit = |claim: &agent_session::internal::coordination::claims::WorkerClaimExtension|
+        -> Result<(), CliError> {
+        let mut locked = orchestration::lock_registry(context)?;
+        let run = require_current_main(&locked.registry, &record, &incarnation)?.clone();
+        let current = locked
+            .registry
+            .assignments
+            .get_mut(&args.assignment_id)
+            .filter(|current| current.run_id == run.run_id)
+            .ok_or_else(|| not_found("assignment-not-found", "assignment was not found"))?;
+        ensure_primary_manager(current, &record, &incarnation)?;
+        ensure_revision(args.if_revision, current.revision, "assignment")?;
+        ensure_assignment_mutation_admitted(context, current, AssignmentMutationOwner::Ordinary)?;
+        if current.private_packet_digest != assignment.private_packet_digest
+            || current.state != assignment.state
+            || current.worker != assignment.worker
+        {
+            return Err(CliError::data(
+                "assignment-state-conflict",
+                "assignment changed before its scope could be extended",
+                Some(json!({
+                    "assignment_id": current.assignment_id,
+                    "state": current.state,
+                    "revision": current.revision
+                })),
+            ));
+        }
+        current.private_packet_digest = extended_digest.clone();
+        current.scopes = record_scopes.clone();
+        current.revision = current.revision.saturating_add(1);
+        current.updated_at = timestamp();
+        // The receipt commits with the assignment change, so a same-key retry
+        // after any later failure replays instead of hitting the revision
+        // fence; the pending notification is completed on replay.
+        let result = json!({
+            "schema_version": "main-agent.worker-extend-scope-result.v1",
+            "assignment": public_assignment_view(current),
+            "claim": worker_claim_extension_view(claim),
+            "notification": { "state": "pending" },
+        });
+        store_receipt(
+            &mut locked.registry,
+            &record,
+            &incarnation,
+            &args.idempotency_key,
+            "worker-extend-scope",
+            &request_digest,
+            result.clone(),
+        )?;
+        locked.save()?;
+        outcome = Some(result);
+        Ok(())
+    };
+    match assignment.worker.as_ref() {
+        Some(worker) => {
+            agent_session::internal::coordination::claims::extend_main_agent_worker_claim(
+                context,
+                &worker.session_id,
+                &worker.session_incarnation,
+                &current_context,
+                &extended_context,
+                commit,
+            )?;
+        }
+        None => {
+            commit(
+                &agent_session::internal::coordination::claims::WorkerClaimExtension::NoActiveClaim,
+            )?;
+        }
+    }
+    let pending = outcome.ok_or_else(|| invalid_input("worker extend-scope did not commit"))?;
+    finish_worker_extend_scope_notification(
+        context,
+        &record,
+        &incarnation,
+        &args.idempotency_key,
+        &request_digest,
+        pending,
+    )
+}
+
+fn worker_claim_extension_view(
+    claim: &agent_session::internal::coordination::claims::WorkerClaimExtension,
+) -> Value {
+    match claim {
+        agent_session::internal::coordination::claims::WorkerClaimExtension::Updated {
+            claim_id,
+            revision,
+        } => json!({ "state": "updated", "claim_id": claim_id, "revision": revision }),
+        agent_session::internal::coordination::claims::WorkerClaimExtension::NoActiveClaim => {
+            json!({ "state": "absent" })
+        }
+    }
+}
+
+/// Send the scope-change notification for a committed extension whose receipt
+/// is still pending, then record its outcome. The mailbox send is idempotent by
+/// a key derived from the command key, so a replay never sends twice.
+fn finish_worker_extend_scope_notification(
+    context: &CliContext,
+    record: &SessionRecord,
+    incarnation: &str,
+    idempotency_key: &str,
+    request_digest: &str,
+    mut result: Value,
+) -> Result<Value, CliError> {
+    if result["notification"]["state"] != "pending" {
+        return Ok(result);
+    }
+    result["notification"] = notify_worker_scope_extended(
+        context,
+        record,
+        result["assignment"]["assignment_id"]
+            .as_str()
+            .unwrap_or_default(),
+        idempotency_key,
+        &result["assignment"],
+    );
+    let mut locked = orchestration::lock_registry(context)?;
+    store_receipt(
+        &mut locked.registry,
+        record,
+        incarnation,
+        idempotency_key,
+        "worker-extend-scope",
+        request_digest,
+        result.clone(),
+    )?;
+    locked.save()?;
+    Ok(result)
+}
+
+/// Tell the exact worker through its mailbox that its scope changed. A
+/// delivery failure is reported in the result, never undoing the extension.
+fn notify_worker_scope_extended(
+    context: &CliContext,
+    record: &SessionRecord,
+    assignment_id: &str,
+    idempotency_key: &str,
+    assignment: &Value,
+) -> Value {
+    let Some(worker_session_id) = assignment["worker"]["session_id"].as_str() else {
+        return json!({ "state": "skipped", "reason": "no-bound-worker" });
+    };
+    let body = format!(
+        "Main Agent extended your assignment {assignment_id} to revision {}. Scopes: {}. Your work-context claim now covers them; re-read it with `agent-session work-context status` before further mutation.",
+        assignment["revision"], assignment["scopes"],
+    );
+    let directory = session_dir(context, &record.id).join("coordination");
+    let body_path = directory.join(format!(
+        "main-agent-extend-scope-{}.txt",
+        uuid::Uuid::new_v4()
+    ));
+    let sent = fs::create_dir_all(&directory)
+        .map_err(|_| invalid_input("scope notification directory is unavailable"))
+        .and_then(|()| {
+            write_atomic(&body_path, body.as_bytes(), SECRET_FILE_MODE)
+                .map_err(|_| invalid_input("scope notification could not be prepared"))
+        })
+        .and_then(|()| {
+            agent_session::internal::coordination::mailbox::send_with_commit_authorization(
+                context,
+                cli::MessageSendArgs {
+                    to_machine: None,
+                    from_session: record.id.clone(),
+                    to_session: worker_session_id.to_string(),
+                    body_file: body_path.clone(),
+                    capability_file: None,
+                    idempotency_key: child_idempotency_key(idempotency_key, "notify"),
+                    reply_to: None,
+                    expires_in: None,
+                    format: OutputFormat::Json,
+                },
+                || Ok(()),
+            )
+        });
+    let _ = fs::remove_file(&body_path);
+    match sent {
+        Ok(value) => json!({ "state": "sent", "message_id": value["message_id"] }),
+        Err(error) => json!({ "state": "failed", "code": error.code() }),
+    }
+}
+
 fn run_worker_reenter(context: &CliContext, args: WorkerReenterArgs) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
     let request_digest = agent_session::internal::coordination::request_digest(
@@ -22114,7 +22473,7 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
             .map(|value| Scope {
                 kind: ScopeKind::PathPrefix,
                 repository: repository.clone(),
-                value: value.clone(),
+                value: packet_scope_value(value).to_string(),
             })
             .collect(),
         summary: input.task_summary.clone(),
@@ -23328,6 +23687,7 @@ fn command_name(command: &MainAgentCommand) -> &'static str {
             WorkerCommand::AccountHandoffCancel(_) => "worker-account-handoff-cancel",
             WorkerCommand::RequestChanges(_) => "worker-request-changes",
             WorkerCommand::Resume(_) => "worker-resume",
+            WorkerCommand::ExtendScope(_) => "worker-extend-scope",
             WorkerCommand::Reenter(_) => "worker-reenter",
             WorkerCommand::Accept(_) => "worker-accept",
             WorkerCommand::Release(_) => "worker-release",
@@ -23388,6 +23748,7 @@ fn command_output_format(command: &MainAgentCommand) -> OutputFormat {
             WorkerCommand::AccountHandoffCancel(args) => args.format,
             WorkerCommand::RequestChanges(args) => args.format,
             WorkerCommand::Resume(args) => args.format,
+            WorkerCommand::ExtendScope(args) => args.format,
             WorkerCommand::Reenter(args) => args.format,
             WorkerCommand::Accept(args)
             | WorkerCommand::Release(args)
