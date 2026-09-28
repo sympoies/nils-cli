@@ -79,6 +79,10 @@ assert_contains .github/workflows/ci.yml "cancel-in-progress: \${{ github.event_
   "CI cancels only superseded pull request runs"
 assert_contains .github/workflows/ci.yml "|| github.run_id }}" \
   "main push CI runs never share a concurrency group, so release provenance is never cancelled"
+assert_contains .github/workflows/ci.yml "save-if: \${{ github.ref == 'refs/heads/main' }}" \
+  "CI saves the Rust cache only from main"
+assert_contains .github/workflows/release.yml "save-if: false" \
+  "release builds do not save tag-scoped Rust caches"
 assert_contains .github/workflows/ci.yml "release_only:" \
   "CI publishes the release-only decision"
 assert_contains .github/workflows/ci.yml "scripts/ci/detect-release-only.sh" \

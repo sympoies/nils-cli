@@ -96,6 +96,10 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          # A tag-scoped cache is visible only to that tag, so it is never
+          # restored; saving it just evicts the main CI caches.
+          save-if: false
 
       - name: Regenerate third-party artifacts
         shell: bash
