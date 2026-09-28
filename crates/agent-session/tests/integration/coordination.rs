@@ -988,7 +988,7 @@ fn init_main_run(
                 "scopes": [{
                     "kind": "path-prefix",
                     "repository": "example/repository",
-                    "value": "crates/agent-session"
+                    "value": "controller-owned"
                 }],
                 "summary": "Exercise orchestration recovery"
             },
@@ -7566,7 +7566,7 @@ fn main_agent_rebind_serializes_direct_claim_mutations_through_rollback() {
             "targets": [{
                 "kind": "path-exact",
                 "repository": "example/repository",
-                "value": "crates/agent-session/src/main_agent.rs"
+                "value": "controller-owned/main_agent.rs"
             }]
         }))
         .expect("admit targets"),
@@ -7701,7 +7701,7 @@ fn work_context_admit_revalidates_the_authenticated_capability_after_preparation
             "targets": [{
                 "kind": "path-exact",
                 "repository": "example/repository",
-                "value": "crates/agent-session/src/main_agent.rs"
+                "value": "controller-owned/main_agent.rs"
             }]
         }),
     );
@@ -7839,7 +7839,7 @@ fn work_context_admit_renews_live_claim_at_final_commit_after_preparation() {
             "targets": [{
                 "kind": "path-exact",
                 "repository": "example/repository",
-                "value": "crates/agent-session/src/main_agent.rs"
+                "value": "controller-owned/main_agent.rs"
             }]
         }),
     );
@@ -16468,7 +16468,7 @@ fn main_agent_failed_preclaim_worker_is_cancelled_retired_and_reassigned_in_isol
         "repository": "example/repository",
         "worktree": failed_checkout,
         "base_ref": "main",
-        "scopes": ["crates/agent-session"],
+        "scopes": ["controller-owned"],
         "durable_refs": []
     });
     insert_orchestration_assignment(
@@ -16497,7 +16497,7 @@ fn main_agent_failed_preclaim_worker_is_cancelled_retired_and_reassigned_in_isol
             "repository": "example/repository",
             "worktree": failed_checkout,
             "base_ref": "main",
-            "scopes": ["crates/agent-session"],
+            "scopes": ["controller-owned"],
             "durable_refs": [],
             "checkpoint": null,
             "result_summary": null,
@@ -30835,6 +30835,505 @@ fn main_agent_worker_start_decouples_run_revision_and_gates_on_dependencies() {
     );
 }
 
+fn overlap_assignment_packet(
+    assignment_id: &str,
+    checkout: &Path,
+    scopes: &[&str],
+) -> serde_json::Value {
+    json!({
+        "schema_version": "main-agent.assignment-input.v1",
+        "assignment_id": assignment_id,
+        "task_summary": "Overlap preflight lane",
+        "task": {},
+        "launch": {
+            "agent": "codex", "cwd": checkout, "title": null,
+            "session_id": format!("worker-{assignment_id}"),
+            "coordination_mode": "enforce", "agent_args": []
+        },
+        "repository": "example/repository", "worktree": checkout, "base_ref": "main",
+        "scopes": scopes, "durable_refs": []
+    })
+}
+
+fn insert_overlap_assignment(
+    state_dir: &Path,
+    checkout: &Path,
+    assignment_id: &str,
+    state: &str,
+    scopes: &[&str],
+) {
+    insert_overlap_assignment_with(
+        state_dir,
+        checkout,
+        ("run-one", "main-one", "main-incarnation-one"),
+        assignment_id,
+        state,
+        scopes,
+        serde_json::Value::Null,
+    );
+}
+
+fn insert_overlap_assignment_with(
+    state_dir: &Path,
+    checkout: &Path,
+    (run_id, manager_id, manager_incarnation): (&str, &str, &str),
+    assignment_id: &str,
+    state: &str,
+    scopes: &[&str],
+    worker: serde_json::Value,
+) {
+    insert_orchestration_assignment(
+        state_dir,
+        assignment_id,
+        json!({
+            "schema_version": "agent-session.orchestration-assignment.v1",
+            "assignment_id": assignment_id,
+            "run_id": run_id,
+            "revision": 2,
+            "state": state,
+            "task_summary": "Existing overlap lane",
+            "private_packet_digest": "replaced-by-fixture",
+            "primary_manager": {
+                "session_id": manager_id,
+                "session_incarnation": manager_incarnation,
+                "session_created_at": "2030-01-01T00:00:00Z"
+            },
+            "worker": worker,
+            "collaborators": [],
+            "borrowed_by": [],
+            "repository": "example/repository",
+            "worktree": null,
+            "base_ref": "main",
+            "scopes": scopes,
+            "durable_refs": [],
+            "checkpoint": null,
+            "result_summary": null,
+            "blocker_summary": null,
+            "created_at": "2030-01-01T00:00:01Z",
+            "updated_at": "2030-01-01T00:00:02Z"
+        }),
+        &overlap_assignment_packet(assignment_id, checkout, scopes),
+    );
+}
+
+#[test]
+fn main_agent_worker_start_rejects_scope_overlap_before_launch() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let checkout = tmp.path().join("checkout");
+    fs::create_dir(&state_dir).expect("state");
+    init_checkout(&checkout, "https://example.invalid/example/repository.git");
+    seed_brokers_at(
+        &state_dir,
+        &[(
+            "main-one",
+            "main-incarnation-one",
+            "main-private-capability-material-0000000001",
+            checkout.as_path(),
+            Some("enforce"),
+        )],
+    );
+    let main_capability = init_main_run(tmp.path(), &state_dir, &checkout, "main-one", "run-one");
+    insert_overlap_assignment(
+        &state_dir,
+        &checkout,
+        "assignment-live",
+        "working",
+        &["docs/live-lane"],
+    );
+    insert_overlap_assignment(
+        &state_dir,
+        &checkout,
+        "assignment-cancelled",
+        "cancelled",
+        &["docs/cancelled-lane"],
+    );
+    // An accepted assignment reserves nothing by declaration, but a claim its
+    // bound worker still holds must block an overlapping start.
+    insert_overlap_assignment_with(
+        &state_dir,
+        &checkout,
+        ("run-one", "main-one", "main-incarnation-one"),
+        "assignment-accepted",
+        "accepted",
+        &["docs/accepted-declared"],
+        json!({
+            "session_id": "worker-accepted",
+            "session_incarnation": "worker-accepted-incarnation",
+            "session_created_at": "2030-01-01T00:00:00Z"
+        }),
+    );
+    rewrite_registry(&state_dir, |registry| {
+        registry["claims"]
+            .as_array_mut()
+            .expect("claims")
+            .push(json!({
+                "schema_version": "agent-session.work-context.v1",
+                "session_id": "worker-accepted",
+                "session_incarnation": "worker-accepted-incarnation",
+                "claim_id": "worker-accepted-retained-claim",
+                "revision": 1,
+                "state": "active",
+                "intent": "implementation",
+                "tier": "direct",
+                "repositories": ["example/repository"],
+                "worktrees": [],
+                "provider_refs": [],
+                "plan_refs": [],
+                "scopes": [{
+                    "kind": "path-prefix",
+                    "repository": "example/repository",
+                    "value": "docs/claimed-lane"
+                }],
+                "summary": "Retained accepted worker claim",
+                "updated_at": "2030-01-01T00:00:00Z",
+                "expires_at": "9999-12-31T23:59:59Z",
+                "expires_at_epoch": i64::MAX
+            }));
+    });
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let codex_bin = fake_agent(tmp.path(), "codex-worker");
+    let codex_home = tmp.path().join("codex-home");
+    write_trusted_codex_config(&codex_home, &[&checkout]);
+    let state = state_dir.to_string_lossy().into_owned();
+    let tmux_arg = tmux_bin.to_string_lossy().into_owned();
+    let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
+    let codex_arg = codex_bin.to_string_lossy().into_owned();
+    let codex_home_arg = codex_home.to_string_lossy().into_owned();
+    let envs = [
+        ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+        ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+        ("AGENT_SESSION_CODEX_BIN", codex_arg.as_str()),
+        ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+        ("CODEX_HOME", codex_home_arg.as_str()),
+    ];
+    let start = |assignment_id: &str, scopes: &[&str]| {
+        let path = tmp.path().join(format!("{assignment_id}.json"));
+        write_private_json(
+            &path,
+            &overlap_assignment_packet(assignment_id, &checkout, scopes),
+        );
+        run_main_agent(
+            &checkout,
+            &[
+                "--state-dir",
+                &state,
+                "worker",
+                "start",
+                "--assignment-file",
+                path.to_str().expect("assignment path"),
+                "--await-ready",
+                "0",
+                "--idempotency-key",
+                &format!("start-{assignment_id}"),
+                "--format",
+                "json",
+            ],
+            &envs,
+        )
+    };
+
+    let live_overlap = start("assignment-live-overlap", &["docs/live-lane/child.md"]);
+    assert_eq!(live_overlap.code, 65, "{}", live_overlap.stdout_text());
+    let error = &live_overlap.stdout_json()["error"];
+    assert_eq!(error["code"], "assignment-scope-conflict");
+    assert_eq!(
+        error["details"]["conflicts"],
+        json!([{
+            "owner": "assignment",
+            "assignment_id": "assignment-live",
+            "repository": "example/repository",
+            "scope": "docs/live-lane/child.md",
+            "conflicting_scope": "docs/live-lane"
+        }])
+    );
+    assert!(
+        error["message"].as_str().is_some_and(
+            |message| message.contains("assignment-live") && message.contains("docs/live-lane")
+        ),
+        "the message names the conflicting assignment and scope: {error}"
+    );
+
+    let controller_overlap = start("assignment-controller-overlap", &["controller-owned/notes"]);
+    assert_eq!(
+        controller_overlap.code,
+        65,
+        "{}",
+        controller_overlap.stdout_text()
+    );
+    let error = &controller_overlap.stdout_json()["error"];
+    assert_eq!(error["code"], "assignment-scope-conflict");
+    assert_eq!(
+        error["details"]["conflicts"],
+        json!([{
+            "owner": "controller",
+            "repository": "example/repository",
+            "scope": "controller-owned/notes",
+            "conflicting_scope": "controller-owned"
+        }])
+    );
+
+    let retained_claim_overlap = start("assignment-claim-overlap", &["docs/claimed-lane/child"]);
+    assert_eq!(
+        retained_claim_overlap.code,
+        65,
+        "{}",
+        retained_claim_overlap.stdout_text()
+    );
+    assert_eq!(
+        retained_claim_overlap.stdout_json()["error"]["details"]["conflicts"],
+        json!([{
+            "owner": "assignment",
+            "assignment_id": "assignment-accepted",
+            "repository": "example/repository",
+            "scope": "docs/claimed-lane/child",
+            "conflicting_scope": "docs/claimed-lane"
+        }])
+    );
+
+    let batch_dir = tmp.path().join("batch");
+    fs::create_dir(&batch_dir).expect("batch dir");
+    write_private_json(
+        &batch_dir.join("lane-a.json"),
+        &overlap_assignment_packet("assignment-batch-overlap", &checkout, &["docs/live-lane"]),
+    );
+    let batch = run_main_agent(
+        &checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "start",
+            "--batch",
+            batch_dir.to_str().expect("batch dir"),
+            "--idempotency-key",
+            "batch-overlap-0001",
+            "--format",
+            "json",
+        ],
+        &envs,
+    );
+    assert_eq!(batch.code, 0, "{}", batch.stdout_text());
+    let lanes = data(&batch)["lanes"].as_array().expect("lanes").clone();
+    assert_eq!(lanes.len(), 1, "{lanes:?}");
+    assert_eq!(lanes[0]["error"]["code"], "assignment-scope-conflict");
+
+    let registry = orchestration_registry(&state_dir);
+    for refused in [
+        "assignment-live-overlap",
+        "assignment-controller-overlap",
+        "assignment-claim-overlap",
+        "assignment-batch-overlap",
+    ] {
+        assert!(
+            registry["assignments"].get(refused).is_none(),
+            "overlap refusal must not persist {refused}"
+        );
+        assert!(
+            !state_dir
+                .join(format!("sessions/worker-{refused}"))
+                .exists(),
+            "overlap refusal must not create a worker session for {refused}"
+        );
+    }
+    assert!(
+        tmux_calls(&tmux_log).is_empty(),
+        "overlap refusal must happen before tmux launch"
+    );
+
+    let disjoint = start("assignment-disjoint", &["docs/cancelled-lane"]);
+    assert_eq!(disjoint.code, 0, "{}", disjoint.stdout_text());
+    assert!(
+        orchestration_registry(&state_dir)["assignments"]
+            .get("assignment-disjoint")
+            .is_some(),
+        "a scope held only by a terminal assignment does not block launch"
+    );
+}
+
+#[test]
+fn main_agent_quick_rejects_scope_overlap_before_creating_its_run() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let checkout = tmp.path().join("checkout");
+    fs::create_dir(&state_dir).expect("state");
+    init_checkout(&checkout, "https://example.invalid/example/repository.git");
+    let other_checkout = tmp.path().join("other-checkout");
+    init_checkout(
+        &other_checkout,
+        "https://example.invalid/example/repository.git",
+    );
+    seed_brokers_at(
+        &state_dir,
+        &[
+            (
+                "main-one",
+                "main-incarnation-one",
+                "main-private-capability-material-0000000001",
+                checkout.as_path(),
+                Some("enforce"),
+            ),
+            (
+                "main-two",
+                "main-incarnation-two",
+                "main-private-capability-material-0000000002",
+                other_checkout.as_path(),
+                Some("enforce"),
+            ),
+        ],
+    );
+    let quick_capability = capability(&state_dir, "main-one");
+    let _ = init_main_run(
+        tmp.path(),
+        &state_dir,
+        &other_checkout,
+        "main-two",
+        "run-two",
+    );
+    insert_overlap_assignment_with(
+        &state_dir,
+        &checkout,
+        ("run-two", "main-two", "main-incarnation-two"),
+        "assignment-held",
+        "assigned",
+        &["docs/quick-held"],
+        serde_json::Value::Null,
+    );
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let codex_bin = fake_agent(tmp.path(), "codex-worker");
+    let codex_home = tmp.path().join("codex-home");
+    write_trusted_codex_config(&codex_home, &[&checkout]);
+    let state = state_dir.to_string_lossy().into_owned();
+    let tmux_arg = tmux_bin.to_string_lossy().into_owned();
+    let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
+    let codex_arg = codex_bin.to_string_lossy().into_owned();
+    let codex_home_arg = codex_home.to_string_lossy().into_owned();
+    let quick = |name: &str, scopes: &[&str]| {
+        let path = tmp.path().join(format!("{name}.json"));
+        let mut packet = overlap_assignment_packet(name, &checkout, scopes);
+        packet["launch"]["session_id"] = serde_json::Value::Null;
+        // quick copies `worktree` into its controller claim, which accepts only
+        // fingerprints, so quick packets leave it null.
+        packet["worktree"] = serde_json::Value::Null;
+        write_private_json(&path, &packet);
+        run_main_agent(
+            &checkout,
+            &[
+                "--state-dir",
+                &state,
+                "quick",
+                "--assignment-file",
+                path.to_str().expect("assignment path"),
+                "--await-ready",
+                "0",
+                "--format",
+                "json",
+            ],
+            &[
+                ("AGENT_SESSION_CAPABILITY_FILE", quick_capability.as_str()),
+                ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+                ("AGENT_SESSION_CODEX_BIN", codex_arg.as_str()),
+                ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+                ("CODEX_HOME", codex_home_arg.as_str()),
+            ],
+        )
+    };
+
+    let refused = quick("assignment-quick-overlap", &["docs/quick-held/child"]);
+    assert_eq!(refused.code, 65, "{}", refused.stdout_text());
+    assert_eq!(
+        refused.stdout_json()["error"]["details"]["conflicts"],
+        json!([{
+            "owner": "assignment",
+            "assignment_id": "assignment-held",
+            "repository": "example/repository",
+            "scope": "docs/quick-held/child",
+            "conflicting_scope": "docs/quick-held"
+        }])
+    );
+    let registry = orchestration_registry(&state_dir);
+    assert_eq!(
+        registry["runs"].as_object().expect("runs").len(),
+        1,
+        "a refused quick start must not leave an ephemeral run behind"
+    );
+    let coordination: serde_json::Value = serde_json::from_slice(
+        &fs::read(state_dir.join("coordination/registry.json")).expect("coordination registry"),
+    )
+    .expect("coordination registry json");
+    assert!(
+        coordination["claims"]
+            .as_array()
+            .expect("claims")
+            .iter()
+            .all(|claim| claim["session_id"] != "main-one" || claim["state"] != "active"),
+        "a refused quick start must not leave a controller claim behind"
+    );
+    assert!(tmux_calls(&tmux_log).is_empty());
+
+    let narrowed = quick("assignment-quick-narrowed", &["docs/quick-free"]);
+    assert_eq!(narrowed.code, 0, "{}", narrowed.stdout_text());
+}
+
+#[test]
+fn main_agent_checkpoint_summary_limit_error_names_the_field_and_limit() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let checkout = tmp.path().join("checkout");
+    fs::create_dir(&state_dir).expect("state");
+    init_checkout(&checkout, "https://example.invalid/example/repository.git");
+    seed_brokers_at(
+        &state_dir,
+        &[(
+            "main-one",
+            "main-incarnation-one",
+            "main-private-capability-material-0000000001",
+            checkout.as_path(),
+            Some("enforce"),
+        )],
+    );
+    let main_capability = init_main_run(tmp.path(), &state_dir, &checkout, "main-one", "run-one");
+    let checkpoint_path = tmp.path().join("checkpoint-long.json");
+    write_private_json(
+        &checkpoint_path,
+        &json!({
+            "schema_version": "main-agent.checkpoint-input.v1",
+            "summary": "x".repeat(241),
+            "next_action": "Shorten the summary"
+        }),
+    );
+    let refused = run_main_agent(
+        &checkout,
+        &[
+            "--state-dir",
+            state_dir.to_str().expect("state dir"),
+            "checkpoint",
+            "--file",
+            checkpoint_path.to_str().expect("checkpoint path"),
+            "--if-revision",
+            "1",
+            "--idempotency-key",
+            "main-checkpoint-long-0001",
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+    );
+    assert_eq!(refused.code, 65, "{}", refused.stdout_text());
+    let error = &refused.stdout_json()["error"];
+    assert_eq!(error["code"], "invalid-orchestration-input");
+    assert_eq!(
+        error["details"],
+        json!({"field": "checkpoint summary", "max_characters": 240, "characters": 241})
+    );
+    assert!(
+        error["message"].as_str().is_some_and(
+            |message| message.contains("checkpoint summary") && message.contains("240")
+        ),
+        "the message names the field and its limit: {error}"
+    );
+}
+
 #[test]
 fn main_agent_worker_start_batch_isolates_per_lane_results() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
@@ -31232,7 +31731,7 @@ fn main_agent_worker_start_batch_replays_repaired_cwd_without_duplicate_lanes() 
                 "repository": "example/repository",
                 "worktree": cwd,
                 "base_ref": "main",
-                "scopes": ["crates/agent-session"],
+                "scopes": [format!("docs/{assignment_id}")],
                 "durable_refs": []
             }),
         );
@@ -32125,27 +32624,36 @@ fn main_agent_worker_start_distinct_null_id_requests_hold_distinct_authority_fen
     let codex_bin = fake_agent(tmp.path(), "codex-worker");
     let codex_home = tmp.path().join("codex-home");
     write_trusted_codex_config(&codex_home, &[&checkout]);
-    let assignment_path = tmp.path().join("assignment-null-ids.json");
-    write_private_json(
-        &assignment_path,
-        &json!({
-            "schema_version": "main-agent.assignment-input.v1",
-            "assignment_id": null,
-            "task_summary": "Launch distinct workers from the same null-id packet",
-            "task": {},
-            "launch": {
-                "agent": "codex", "cwd": checkout, "title": null,
-                "session_id": null, "coordination_mode": "enforce", "agent_args": []
-            },
-            "repository": "example/repository", "worktree": checkout, "base_ref": "main",
-            "scopes": ["crates/agent-session"], "durable_refs": []
-        }),
-    );
+    // Two null-id packets with disjoint scopes: identical scopes would be
+    // refused before launch as an assignment scope overlap.
+    let null_id_packet = |name: &str, scope: &str| {
+        let path = tmp.path().join(name);
+        write_private_json(
+            &path,
+            &json!({
+                "schema_version": "main-agent.assignment-input.v1",
+                "assignment_id": null,
+                "task_summary": "Launch distinct workers from null-id packets",
+                "task": {},
+                "launch": {
+                    "agent": "codex", "cwd": checkout, "title": null,
+                    "session_id": null, "coordination_mode": "enforce", "agent_args": []
+                },
+                "repository": "example/repository", "worktree": checkout, "base_ref": "main",
+                "scopes": [scope], "durable_refs": []
+            }),
+        );
+        path
+    };
+    let first_assignment_path =
+        null_id_packet("assignment-null-ids-first.json", "docs/null-id-first");
+    let second_assignment_path =
+        null_id_packet("assignment-null-ids-second.json", "docs/null-id-second");
     let first_barrier = tmp.path().join("null-id-first-barrier");
     let second_barrier = tmp.path().join("null-id-second-barrier");
     fs::create_dir(&first_barrier).expect("first barrier");
     fs::create_dir(&second_barrier).expect("second barrier");
-    let spawn = |idempotency_key: &str, barrier: &Path| {
+    let spawn = |idempotency_key: &str, barrier: &Path, assignment_path: &Path| {
         let mut command = Command::new(crate::main_agent_bin());
         command
             .current_dir(&checkout)
@@ -32178,8 +32686,16 @@ fn main_agent_worker_start_distinct_null_id_requests_hold_distinct_authority_fen
             .spawn()
             .expect("spawn worker start")
     };
-    let first = spawn("worker-start-null-ids-0001", &first_barrier);
-    let second = spawn("worker-start-null-ids-0002", &second_barrier);
+    let first = spawn(
+        "worker-start-null-ids-0001",
+        &first_barrier,
+        &first_assignment_path,
+    );
+    let second = spawn(
+        "worker-start-null-ids-0002",
+        &second_barrier,
+        &second_assignment_path,
+    );
     let overlap_deadline = Instant::now() + Duration::from_secs(10);
     while !first_barrier.join("ready").is_file() || !second_barrier.join("ready").is_file() {
         assert!(
@@ -38233,7 +38749,7 @@ fn main_agent_closeout_waits_for_a_bound_claim_operation_before_closing() {
         "main-closeout-operation-incarnation",
         211,
     );
-    let mutation_target = checkout.join("crates/agent-session/src/main_agent.rs");
+    let mutation_target = checkout.join("controller-owned/main_agent.rs");
     fs::create_dir_all(mutation_target.parent().expect("target parent")).expect("target parent");
     fs::write(&mutation_target, "// fixture\n").expect("mutation target");
     let targets = tmp.path().join("closeout-operation-targets.json");
@@ -38244,7 +38760,7 @@ fn main_agent_closeout_waits_for_a_bound_claim_operation_before_closing() {
             "targets": [{
                 "kind": "path-exact",
                 "repository": "example/repository",
-                "value": "crates/agent-session/src/main_agent.rs"
+                "value": "controller-owned/main_agent.rs"
             }]
         }),
     );

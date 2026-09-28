@@ -3645,6 +3645,10 @@ fn run_worker_start_single_input(
             .into_string()
             .map_err(|_| assignment_launch_cwd_error())?;
         ensure_active_claim(context, &record)?;
+        // Observe claims before the orchestration lock to keep the
+        // coordination -> orchestration lock order.
+        let active_claims =
+            agent_session::internal::coordination::claims::active_claim_contexts(context)?;
         locked = orchestration::lock_registry(context)?;
         if let Some(batch_lane) = batch_lane {
             renew_worker_start_batch_lane_locked(&mut locked.registry, batch_lane)?;
@@ -3682,6 +3686,15 @@ fn run_worker_start_single_input(
                 Some(json!({ "assignment_id": assignment_id, "blocked_on": blocked_on })),
             ));
         }
+        // A `quick` run synthesizes its ephemeral controller claim from this
+        // same assignment and checks the other assignments before creating it.
+        ensure_assignment_scopes_disjoint(
+            &input,
+            &run.tier,
+            (!run.ephemeral).then_some((record.id.as_str(), incarnation.as_str())),
+            &locked.registry,
+            &active_claims,
+        )?;
         let packet_digest = orchestration::store_packet(context, &packet_value)?;
         let now = timestamp();
         let assignment = AssignmentRecord {
@@ -12155,7 +12168,7 @@ fn persist_worktree_progress_snapshot(
 
 fn run_worker_cancel(context: &CliContext, args: WorkerCancelArgs) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    orchestration::validate_summary("cancellation reason", &args.reason)?;
+    validate_input_summary("cancellation reason", &args.reason)?;
     let (main, main_incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &main)?;
     let request_digest = agent_session::internal::coordination::request_digest(
@@ -12542,7 +12555,7 @@ fn run_worker_reconcile_stopped(
     args: WorkerReconcileStoppedArgs,
 ) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    orchestration::validate_summary("terminalization reason", &args.reason)?;
+    validate_input_summary("terminalization reason", &args.reason)?;
     let (main, main_incarnation, continuation_claim) =
         agent_session::internal::coordination::authenticate_any_from_file_with_active_claim_observational(
             context, None,
@@ -13181,6 +13194,126 @@ fn assignment_worker_work_context_from_packet(
     })
 }
 
+/// Assignment states whose declared scopes a future or current worker claim
+/// still needs. `accepted`, `released`, and `cancelled` reserve nothing by
+/// declaration; a worker claim they retain is still observed directly.
+const SCOPE_RESERVING_ASSIGNMENT_STATES: [&str; 5] =
+    ["assigned", "starting", "working", "blocked", "submitted"];
+const MAX_REPORTED_SCOPE_CONFLICTS: usize = 16;
+
+/// Reject a fresh worker start whose bootstrap claim would overlap the
+/// controller claim or a live assignment, before any provider side effect.
+/// Bootstrap claim acquisition remains the authority; this only fails early.
+fn ensure_assignment_scopes_disjoint(
+    input: &AssignmentInput,
+    tier: &str,
+    controller: Option<(&str, &str)>,
+    registry: &orchestration::Registry,
+    active_claims: &[agent_session::internal::coordination::claims::ActiveClaimContext],
+) -> Result<(), CliError> {
+    if input.repository.is_none() {
+        return Ok(());
+    }
+    let candidate = assignment_worker_work_context_from_packet(
+        input,
+        tier.to_string(),
+        "worker start requires the assignment packet to declare a repository",
+    )?
+    .validate_and_canonicalize()?;
+    let conflicts = assignment_scope_conflicts(&candidate, controller, registry, active_claims);
+    let Some(first) = conflicts.first() else {
+        return Ok(());
+    };
+    let owner = match first["assignment_id"].as_str() {
+        Some(assignment_id) => format!("live assignment {assignment_id}"),
+        None => "the Main Agent controller claim".to_string(),
+    };
+    Err(CliError::data(
+        "assignment-scope-conflict",
+        format!(
+            "assignment scope {} overlaps {owner} scope {}; choose disjoint scopes before launch",
+            first["scope"].as_str().unwrap_or_default(),
+            first["conflicting_scope"].as_str().unwrap_or_default(),
+        ),
+        Some(json!({ "conflicts": conflicts })),
+    ))
+}
+
+fn assignment_scope_conflicts(
+    candidate: &WorkContextInput,
+    controller: Option<(&str, &str)>,
+    registry: &orchestration::Registry,
+    active_claims: &[agent_session::internal::coordination::claims::ActiveClaimContext],
+) -> Vec<Value> {
+    let claim_scopes = |session_id: &str, incarnation: &str| {
+        active_claims
+            .iter()
+            .filter(|claim| {
+                claim.session_id == session_id && claim.session_incarnation == incarnation
+            })
+            .flat_map(|claim| claim.context.scopes.iter().cloned())
+            .collect::<Vec<_>>()
+    };
+    let mut owners: Vec<(Option<&str>, Vec<Scope>)> = controller
+        .map(|(session_id, incarnation)| (None, claim_scopes(session_id, incarnation)))
+        .into_iter()
+        .collect();
+    for assignment in registry.assignments.values() {
+        let mut scopes = Vec::new();
+        if SCOPE_RESERVING_ASSIGNMENT_STATES.contains(&assignment.state.as_str())
+            && let Some(repository) = assignment.repository.as_ref()
+        {
+            scopes.extend(assignment.scopes.iter().filter_map(|value| {
+                agent_session::internal::coordination::context::canonicalize_targets(vec![Scope {
+                    kind: ScopeKind::PathPrefix,
+                    repository: repository.clone(),
+                    value: value.clone(),
+                }])
+                .ok()
+                .and_then(|mut scopes| scopes.pop())
+            }));
+        }
+        if let Some(worker) = assignment.worker.as_ref() {
+            scopes.extend(claim_scopes(
+                &worker.session_id,
+                &worker.session_incarnation,
+            ));
+        }
+        owners.push((Some(assignment.assignment_id.as_str()), scopes));
+    }
+    let mut conflicts = std::collections::BTreeSet::new();
+    for (assignment_id, scopes) in &owners {
+        for scope in &candidate.scopes {
+            for other in scopes {
+                if agent_session::internal::coordination::context::scopes_overlap(scope, other) {
+                    conflicts.insert((
+                        assignment_id.map(str::to_string),
+                        scope.repository.clone(),
+                        scope.value.clone(),
+                        other.value.clone(),
+                    ));
+                }
+            }
+        }
+    }
+    conflicts
+        .into_iter()
+        .take(MAX_REPORTED_SCOPE_CONFLICTS)
+        .map(|(assignment_id, repository, scope, conflicting_scope)| {
+            let mut conflict = json!({
+                "owner": if assignment_id.is_some() { "assignment" } else { "controller" },
+                "repository": repository,
+                "scope": scope,
+                "conflicting_scope": conflicting_scope,
+            });
+            if let Some(assignment_id) = assignment_id {
+                conflict["assignment_id"] = json!(assignment_id);
+            }
+            conflict
+        })
+        .collect()
+}
+
 fn assignment_worker_work_context(
     context: &CliContext,
     registry: &orchestration::Registry,
@@ -13439,7 +13572,7 @@ fn run_worker_revoke_claim(
     released_retire: Option<&ReleasedRetireClaimRecovery>,
 ) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    orchestration::validate_summary("claim revocation reason", &args.reason)?;
+    validate_input_summary("claim revocation reason", &args.reason)?;
     let (main, main_incarnation, controller_claim) =
         agent_session::internal::coordination::authenticate_any_from_file_with_active_claim_observational(
             context, None,
@@ -16924,7 +17057,7 @@ fn pause_cancel_after_admission_for_test(assignment: &AssignmentRecord) -> Resul
 
 fn run_worker_reassign(context: &CliContext, args: WorkerReassignArgs) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    orchestration::validate_summary("reassignment reason", &args.reason)?;
+    validate_input_summary("reassignment reason", &args.reason)?;
     parse_await_ready(&args.await_ready)?;
     let replacement: AssignmentInput = agent_session::internal::coordination::read_bounded_json(
         &args.assignment_file,
@@ -18983,8 +19116,7 @@ fn run_worker_request_changes(
     args: WorkerRequestChangesArgs,
 ) -> Result<Value, CliError> {
     validate_idempotency_key(&args.idempotency_key)?;
-    orchestration::validate_summary("request-changes reason", &args.reason)
-        .map_err(|_| invalid_input("request-changes reason is invalid"))?;
+    validate_input_summary("request-changes reason", &args.reason)?;
     let (record, incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &record)?;
     let mut locked = orchestration::lock_registry(context)?;
@@ -21768,14 +21900,6 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
             .collect(),
         summary: input.task_summary.clone(),
     };
-    ensure_or_acquire_claim(
-        context,
-        &record,
-        &work_context,
-        &idempotency_key,
-        None,
-        false,
-    )?;
 
     let objective = json!({
         "schema_version": PACKET_SCHEMA,
@@ -21800,6 +21924,34 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
             "await_ready_seconds": await_ready_seconds
         }),
     );
+
+    // Fail a fresh quick scope overlap before its ephemeral run or controller
+    // claim exists, so a narrowed retry is not refused as `quick-run-exists`.
+    let active_claims =
+        agent_session::internal::coordination::claims::active_claim_contexts(context)?;
+    {
+        let registry = orchestration::load_registry_readonly(context)?;
+        if idempotency_replay_compatible(
+            &registry,
+            &record,
+            &incarnation,
+            &idempotency_key,
+            "quick",
+            &[&request_digest, &legacy_request_digest],
+        )?
+        .is_none()
+        {
+            ensure_assignment_scopes_disjoint(&input, &tier, None, &registry, &active_claims)?;
+        }
+    }
+    ensure_or_acquire_claim(
+        context,
+        &record,
+        &work_context,
+        &idempotency_key,
+        None,
+        false,
+    )?;
 
     let run_id = {
         let mut locked = orchestration::lock_registry(context)?;
@@ -22467,7 +22619,7 @@ fn validate_objective_packet(packet: &ObjectivePacket) -> Result<(), CliError> {
         ))
         .with_hint("run `main-agent packet-schema` for an example objective packet"));
     }
-    orchestration::validate_summary("objective summary", &packet.objective_summary)?;
+    validate_input_summary("objective summary", &packet.objective_summary)?;
     if canonical_work_mode(&packet.tier).is_none() {
         return Err(invalid_input("objective packet tier is invalid"));
     }
@@ -22479,7 +22631,7 @@ fn validate_objective_packet(packet: &ObjectivePacket) -> Result<(), CliError> {
     }
     packet.work_context.clone().validate_and_canonicalize()?;
     if let Some(next_action) = &packet.next_action {
-        orchestration::validate_summary("next action", next_action)?;
+        validate_input_summary("next action", next_action)?;
     }
     Ok(())
 }
@@ -22490,7 +22642,7 @@ fn validate_assignment_input(input: &AssignmentInput) -> Result<(), CliError> {
             "assignment packet schema is unsupported; expected schema_version \"{ASSIGNMENT_INPUT_SCHEMA}\""
         )));
     }
-    orchestration::validate_summary("task summary", &input.task_summary)?;
+    validate_input_summary("task summary", &input.task_summary)?;
     if input.scopes.len() > 32
         || input.durable_refs.len() > 64
         || input.launch.agent_args.len() > 64
@@ -22757,19 +22909,40 @@ fn exact_assignment_checkout_root(raw: &str, label: &str) -> Result<PathBuf, Cli
     Ok(root)
 }
 
+/// Validate one caller-supplied bounded text field. The stored-record
+/// validator reports store corruption; a caller's input instead fails with the
+/// input code and names the field and its limit so the caller can correct it.
+fn validate_input_summary(name: &str, value: &str) -> Result<(), CliError> {
+    if orchestration::validate_summary(name, value).is_ok() {
+        return Ok(());
+    }
+    Err(CliError::data(
+        "invalid-orchestration-input",
+        format!(
+            "{name} must be non-empty, at most {} characters, and free of control characters",
+            orchestration::SUMMARY_MAX_CHARACTERS
+        ),
+        Some(json!({
+            "field": name,
+            "max_characters": orchestration::SUMMARY_MAX_CHARACTERS,
+            "characters": value.chars().count(),
+        })),
+    ))
+}
+
 fn validate_checkpoint(input: &CheckpointInput) -> Result<(), CliError> {
     if input.schema_version != CHECKPOINT_INPUT_SCHEMA {
         return Err(invalid_input(&format!(
             "checkpoint schema is unsupported; expected schema_version \"{CHECKPOINT_INPUT_SCHEMA}\""
         )));
     }
-    orchestration::validate_summary("checkpoint summary", &input.summary)?;
-    orchestration::validate_summary("next action", &input.next_action)?;
+    validate_input_summary("checkpoint summary", &input.summary)?;
+    validate_input_summary("next action", &input.next_action)?;
     if let Some(value) = &input.result_summary {
-        orchestration::validate_summary("result summary", value)?;
+        validate_input_summary("result summary", value)?;
     }
     if let Some(value) = &input.blocker_summary {
-        orchestration::validate_summary("blocker summary", value)?;
+        validate_input_summary("blocker summary", value)?;
     }
     Ok(())
 }

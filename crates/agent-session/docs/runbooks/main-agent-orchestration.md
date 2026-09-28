@@ -111,7 +111,9 @@ Save as `checkpoint.json`:
 
 A worker can additionally set `state` to `working`, `blocked`, or `submitted`
 and can provide `result_summary` or `blocker_summary`. A Main Agent checkpoint
-records only the summary and next action.
+records only the summary and next action. Each text field is at most 240
+characters; an over-limit field fails with `invalid-orchestration-input` whose
+`details` name the `field` and `max_characters`.
 
 ## Safe lifecycle
 
@@ -210,6 +212,11 @@ must be narrow enough not to overlap the Main Agent claim or another live
 worker. The Main Agent owns orchestration, review, and acceptance; it must not
 claim worker-owned implementation paths. An enforce-mode `claim-conflict`
 therefore means the ownership plan is wrong, not that prompt transport failed.
+`worker start` checks this before launch: a packet scope that overlaps the
+controller claim or a live assignment fails with `assignment-scope-conflict`
+naming the conflicting assignment and scope in `details.conflicts`, and no
+assignment, session, or provider process is created. Narrow the scopes, or
+wait for the conflicting assignment to finish, then start again.
 
 Fresh launch is preflighted before any durable assignment or provider side
 effect. `assignment-launch-cwd-unavailable` means `launch.cwd` does not resolve
