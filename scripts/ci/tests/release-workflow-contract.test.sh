@@ -83,6 +83,8 @@ assert_contains .github/workflows/ci.yml "save-if: \${{ github.ref == 'refs/head
   "CI saves the Rust cache only from main"
 assert_contains .github/workflows/release.yml "save-if: false" \
   "release builds do not save tag-scoped Rust caches"
+assert_contains .github/workflows/ci.yml "key: llvm-cov" \
+  "the instrumented macOS job caches its llvm-cov dependencies under their own key"
 assert_contains .github/workflows/ci.yml "NILS_CLI_TEST_RUNNER: llvm-cov" \
   "the macOS full lane runs the instrumented tests that enforce the coverage floor"
 assert_contains .github/workflows/ci.yml "needs: [changes, test_macos]" \
