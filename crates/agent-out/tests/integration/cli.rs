@@ -32,6 +32,10 @@ struct TestCleanupPlan {
     out_root: String,
     out_root_exists: bool,
     include_projects: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project_retention_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project_retention_cutoff_unix: Option<i64>,
     items: Vec<TestCleanupItem>,
     summary: TestCleanupSummary,
     plan_digest: String,
@@ -49,8 +53,21 @@ struct TestCleanupItem {
     mtime_unix: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     content_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tree_identity: Option<String>,
     contains_skill_usage: bool,
     contains_test_first_evidence: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    diagnostic: Option<TestCleanupDiagnostic>,
+}
+
+/// Field order mirrors `CleanupDiagnostic`; the plan digest is computed over
+/// declaration-ordered JSON, so a sorted `Value` map would not round-trip.
+#[derive(Deserialize, Serialize)]
+struct TestCleanupDiagnostic {
+    code: String,
+    path: String,
+    message: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -62,6 +79,12 @@ struct TestCleanupSummary {
     delete_bytes: u64,
     preserve_bytes: u64,
     needs_policy_bytes: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    unreadable: usize,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Serialize)]
@@ -70,6 +93,10 @@ struct TestCleanupPlanDigestInput<'a> {
     out_root: &'a str,
     out_root_exists: bool,
     include_projects: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_retention_days: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_retention_cutoff_unix: Option<i64>,
     items: &'a [TestCleanupItem],
     summary: &'a TestCleanupSummary,
 }
@@ -82,6 +109,8 @@ fn recompute_cleanup_plan_digest(envelope: &mut Value) -> String {
         out_root: &plan.out_root,
         out_root_exists: plan.out_root_exists,
         include_projects: plan.include_projects,
+        project_retention_days: plan.project_retention_days,
+        project_retention_cutoff_unix: plan.project_retention_cutoff_unix,
         items: &plan.items,
         summary: &plan.summary,
     };

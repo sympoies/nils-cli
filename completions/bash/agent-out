@@ -141,7 +141,7 @@ _agent__out() {
             return 0
             ;;
         agent__out__cleanup__plan)
-            opts="-h --agent-home --include-projects --format --help"
+            opts="-h --agent-home --include-projects --project-retention-days --format --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -152,6 +152,10 @@ _agent__out() {
                     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
                         compopt -o plusdirs
                     fi
+                    return 0
+                    ;;
+                --project-retention-days)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 --format)

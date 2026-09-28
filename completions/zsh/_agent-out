@@ -79,6 +79,7 @@ _arguments "${_arguments_options[@]}" : \
             (plan)
 _arguments "${_arguments_options[@]}" : \
 '--agent-home=[Agent home root. Defaults to AGENT_HOME]:PATH:_files -/' \
+'--project-retention-days=[Mark idle project runs older than DAYS as delete candidates]:DAYS:_default' \
 '--format=[Output format]:FORMAT:(text json)' \
 '--include-projects[Include canonical projects/<repo>/<run> entries as preserve/needs-policy rows]' \
 '-h[Print help]' \
