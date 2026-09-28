@@ -262,9 +262,7 @@ impl BootstrapBackend {
     ) -> Result<Option<serde_json::Value>, ForgeError> {
         match self {
             Self::Forgejo(client) => client.branch_optional(owner, repo, branch),
-            Self::Github(client) => {
-                client.api_optional(&format!("repos/{owner}/{repo}/git/ref/heads/{branch}"))
-            }
+            Self::Github(client) => client.branch_ref_optional(owner, repo, branch),
         }
     }
 
@@ -466,26 +464,23 @@ impl GithubClient {
 
     fn api_optional(&self, endpoint: &str) -> Result<Option<serde_json::Value>, ForgeError> {
         let result = self.api_result(endpoint, &[])?;
-        if result.success {
-            return serde_json::from_str(&result.stdout)
-                .map(Some)
-                .map_err(|error| {
-                    unavailable(
-                        "bootstrap_github_api_invalid",
-                        "GitHub bootstrap API returned invalid JSON",
-                        Some(error.to_string()),
-                    )
-                });
-        }
-        if github_api_status(&result) == Some(404) {
+        optional_json(result)
+    }
+
+    fn branch_ref_optional(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+    ) -> Result<Option<serde_json::Value>, ForgeError> {
+        let result =
+            self.api_result(&format!("repos/{owner}/{repo}/git/ref/heads/{branch}"), &[])?;
+        // A repository without commits has no branches, but GitHub reports it
+        // as 409 rather than the 404 of a missing branch.
+        if !result.success && is_empty_repository(&result) {
             return Ok(None);
         }
-        Err(ForgeError::runtime_failure(
-            error_schema(),
-            "bootstrap_github_api_failed",
-            "GitHub bootstrap API request failed",
-            Some(result.stderr),
-        ))
+        optional_json(result)
     }
 
     fn authenticated_user(&self) -> Result<String, ForgeError> {
@@ -499,18 +494,8 @@ impl GithubClient {
     fn empty_refs(&self, owner: &str, repo: &str) -> Result<bool, ForgeError> {
         let result = self.api_result(&format!("repos/{owner}/{repo}/git/refs"), &[])?;
         if !result.success {
-            if github_api_status(&result) == Some(409) {
-                let message = serde_json::from_str::<serde_json::Value>(&result.stdout)
-                    .ok()
-                    .and_then(|value| {
-                        value
-                            .get("message")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_string)
-                    });
-                if message.as_deref() == Some("Git Repository is empty.") {
-                    return Ok(true);
-                }
+            if is_empty_repository(&result) {
+                return Ok(true);
             }
             return Err(ForgeError::runtime_failure(
                 error_schema(),
@@ -674,6 +659,43 @@ impl GithubClient {
 
 fn github_api_status(result: &ProcessResult) -> Option<u16> {
     result.http_status
+}
+
+fn is_empty_repository(result: &ProcessResult) -> bool {
+    github_api_status(result) == Some(409)
+        && serde_json::from_str::<serde_json::Value>(&result.stdout)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+            .as_deref()
+            == Some("Git Repository is empty.")
+}
+
+fn optional_json(result: ProcessResult) -> Result<Option<serde_json::Value>, ForgeError> {
+    if result.success {
+        return serde_json::from_str(&result.stdout)
+            .map(Some)
+            .map_err(|error| {
+                unavailable(
+                    "bootstrap_github_api_invalid",
+                    "GitHub bootstrap API returned invalid JSON",
+                    Some(error.to_string()),
+                )
+            });
+    }
+    if github_api_status(&result) == Some(404) {
+        return Ok(None);
+    }
+    Err(ForgeError::runtime_failure(
+        error_schema(),
+        "bootstrap_github_api_failed",
+        "GitHub bootstrap API request failed",
+        Some(result.stderr),
+    ))
 }
 
 fn split_github_http_response(raw: &str) -> Result<(u16, &str), ForgeError> {
