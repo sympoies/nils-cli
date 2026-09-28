@@ -6,6 +6,13 @@ on:
       - main
   pull_request:
 
+# A newer push to a pull request supersedes its older CI run, so cancel the old
+# one instead of letting it hold runners for half an hour. Push runs on main are
+# never grouped: each main commit's full CI run is release-lane provenance.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     runs-on: ubuntu-latest

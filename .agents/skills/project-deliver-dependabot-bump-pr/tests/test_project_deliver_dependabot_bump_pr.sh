@@ -331,11 +331,16 @@ repo_dir="$CASE_REPO_DIR"
 export MOCK_PUSH_SUCCESS=1
 export MOCK_CHECKS_NO_CHECKS_ONCE=1
 export DEPENDABOT_BUMP_PR_CI_RUN_POLL_SECONDS=1
+# The mock PR keeps reporting its pre-push head, so bound the head-sync wait;
+# the 120 s default otherwise spends two minutes of every CI run here.
+export DEPENDABOT_BUMP_PR_HEAD_SYNC_WAIT_SECONDS=1
+export DEPENDABOT_BUMP_PR_POLL_INTERVAL_SECONDS=1
 run_in_case "$repo_dir" --pr 101 --no-sync-main --skip-merge
 assert_contains "$MOCK_LOG" "gh:pr-checks"
 assert_contains "$MOCK_LOG" "gh:run-list"
 assert_contains "$MOCK_LOG" "gh:run-watch"
 unset MOCK_PUSH_SUCCESS MOCK_CHECKS_NO_CHECKS_ONCE DEPENDABOT_BUMP_PR_CI_RUN_POLL_SECONDS
+unset DEPENDABOT_BUMP_PR_HEAD_SYNC_WAIT_SECONDS DEPENDABOT_BUMP_PR_POLL_INTERVAL_SECONDS
 
 create_case ci-stale-head
 repo_dir="$CASE_REPO_DIR"

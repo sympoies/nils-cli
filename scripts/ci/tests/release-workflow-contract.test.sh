@@ -75,6 +75,10 @@ assert_not_contains .github/workflows/release.yml "tool: cross" \
   "release workflow does not install cross"
 assert_not_contains .github/workflows/release.yml "cross build" \
   "release workflow does not invoke cross"
+assert_contains .github/workflows/ci.yml "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" \
+  "CI cancels only superseded pull request runs"
+assert_contains .github/workflows/ci.yml "|| github.run_id }}" \
+  "main push CI runs never share a concurrency group, so release provenance is never cancelled"
 assert_contains .github/workflows/ci.yml "release_only:" \
   "CI publishes the release-only decision"
 assert_contains .github/workflows/ci.yml "scripts/ci/detect-release-only.sh" \
