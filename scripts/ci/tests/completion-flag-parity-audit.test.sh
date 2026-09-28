@@ -141,17 +141,21 @@ run_audit() {
 }
 
 # 1. Report contract: failures from several binaries keep binary order and
-#    exact wording whether the audit runs serially or concurrently.
+#    exact wording whether the audit runs serially or concurrently. `zeta-cli`
+#    completes only `--color-mode`, which must not count as `--color`.
 contract="$tmp/contract"
 make_workspace "$contract" \
   "alpha-cli:--verbose --color:--verbose --color:--color" \
   "beta-cli:--json:--json:--json" \
-  "gamma-cli:--dry-run --force:--dry-run:--dry-run --force"
+  "gamma-cli:--dry-run --force:--dry-run:--dry-run --force" \
+  "zeta-cli:--color:--color-mode:--color-mode"
 
 expected_contract="$(cat <<'EOF'
 FAIL: alpha-cli: zsh completion missing flag `--verbose` for command `<root>`
 FAIL: gamma-cli: bash completion missing flag `--force` for command `<root>`
-FAIL: completion flag parity audit (required=3, dynamic_engine_skipped=0, failures=2)
+FAIL: zeta-cli: bash completion missing flag `--color` for command `<root>`
+FAIL: zeta-cli: zsh completion missing flag `--color` for command `<root>`
+FAIL: completion flag parity audit (required=4, dynamic_engine_skipped=0, failures=4)
 EOF
 )"
 
