@@ -56,6 +56,12 @@ Environment:
   NILS_CLI_TEST_RUNNER=nextest
     Run `cargo nextest run --profile ci --workspace` and `cargo test --workspace --doc`
     instead of `cargo test --workspace`.
+  NILS_CLI_TEST_RUNNER=llvm-cov
+    Run the workspace tests once under coverage instrumentation instead:
+    `cargo llvm-cov nextest --profile ci --workspace --no-fail-fast --lcov
+    --output-path target/coverage/lcov.info --fail-under-lines <N>`, then
+    `cargo test --workspace --doc`. <N> is NILS_CLI_COVERAGE_FAIL_UNDER_LINES
+    (default: 85). Requires cargo-nextest and cargo-llvm-cov.
 
 Exit codes:
   0  all checks passed
@@ -106,8 +112,14 @@ if [[ "$docs_only" -eq 0 ]]; then
         exit 2
       fi
       ;;
+    llvm-cov)
+      if ! command -v cargo-nextest >/dev/null 2>&1 || ! cargo llvm-cov --version >/dev/null 2>&1; then
+        echo "error: NILS_CLI_TEST_RUNNER=llvm-cov requires cargo-nextest and cargo-llvm-cov on PATH" >&2
+        exit 2
+      fi
+      ;;
     *)
-      echo "error: unsupported NILS_CLI_TEST_RUNNER value: $test_runner (expected 'cargo' or 'nextest')" >&2
+      echo "error: unsupported NILS_CLI_TEST_RUNNER value: $test_runner (expected 'cargo', 'nextest', or 'llvm-cov')" >&2
       exit 2
       ;;
   esac
@@ -172,6 +184,16 @@ run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings
 if [[ "$test_runner" == "nextest" ]]; then
   run cargo nextest run --profile ci --workspace
+  run cargo test --workspace --doc
+elif [[ "$test_runner" == "llvm-cov" ]]; then
+  # One instrumented run both gates the tests and measures coverage, so a
+  # platform needs no second full test run for the coverage floor.
+  # --no-fail-fast keeps the full failure inventory, as the coverage gate did.
+  run rm -rf target/coverage
+  run mkdir -p target/coverage
+  run cargo llvm-cov nextest --profile ci --workspace --no-fail-fast \
+    --lcov --output-path target/coverage/lcov.info \
+    --fail-under-lines "${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"
   run cargo test --workspace --doc
 else
   run cargo test --workspace
