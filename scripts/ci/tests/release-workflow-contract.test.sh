@@ -83,6 +83,29 @@ assert_contains .github/workflows/ci.yml "save-if: \${{ github.ref == 'refs/head
   "CI saves the Rust cache only from main"
 assert_contains .github/workflows/release.yml "save-if: false" \
   "release builds do not save tag-scoped Rust caches"
+assert_contains .github/workflows/release.yml "shared-key: release-\${{ matrix.target }}" \
+  "release builds restore the per-target dependency cache warmed on main"
+assert_contains .github/workflows/release-cache.yml "shared-key: release-\${{ matrix.target }}" \
+  "the release cache warmer saves under the key release builds restore"
+assert_contains .github/workflows/release-cache.yml "save-if: \${{ github.ref == 'refs/heads/main' }}" \
+  "the release cache warmer saves only from main, where tag runs can read it"
+assert_contains .github/workflows/release-cache.yml "cargo build --release --workspace --locked --target \${{ matrix.target }}" \
+  "the release cache warmer runs the release build command"
+# rust-cache keys include the runner OS/arch and the rustc version, so a target,
+# runner, or toolchain step that differs between the two workflows makes every
+# release restore miss without failing anything.
+release_build_signature() {
+  rg --no-filename '^\s*(- runs_on:|target:|uses: dtolnay/rust-toolchain@|targets:)' "$1" |
+    sed -E 's/^[[:space:]]*(- )?//'
+}
+if [[ "$(release_build_signature .github/workflows/release.yml)" != \
+      "$(release_build_signature .github/workflows/release-cache.yml)" ]]; then
+  echo "FAIL: the release cache warmer builds the same targets, runners, and toolchain as release.yml" >&2
+  diff <(release_build_signature .github/workflows/release.yml) \
+    <(release_build_signature .github/workflows/release-cache.yml) >&2 || true
+  exit 1
+fi
+echo "ok: the release cache warmer builds the same targets, runners, and toolchain as release.yml"
 assert_contains .github/workflows/ci.yml "key: llvm-cov" \
   "the instrumented macOS job caches its llvm-cov dependencies under their own key"
 assert_contains .github/workflows/ci.yml "NILS_CLI_TEST_RUNNER: llvm-cov" \

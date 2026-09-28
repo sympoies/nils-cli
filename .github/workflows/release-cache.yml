@@ -1,0 +1,68 @@
+name: Release cache
+
+# A tag-triggered release build can restore only caches saved on its own tag or
+# on the default branch, and nothing on main builds the release profile, so
+# every release compiled all of its dependencies cold. This workflow builds the
+# release profile on main for each release target and saves the dependency
+# cache under the per-target key that release.yml restores.
+#
+# It runs daily rather than on every Cargo.lock change: a release bump rewrites
+# Cargo.lock, and warming on each one would start two macOS jobs next to the
+# release's own. rust-cache's key ignores workspace package versions, and its
+# restore key still matches after a dependency bump, so a day-old cache stays
+# mostly warm.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/release-cache.yml
+  workflow_dispatch:
+
+concurrency:
+  group: release-cache
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    name: Warm release cache (${{ matrix.target }})
+    runs-on: ${{ matrix.runs_on }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      # Keep this matrix, the toolchain step, and the build command in step
+      # with release.yml; release-workflow-contract.test.sh enforces it.
+      matrix:
+        include:
+          - runs_on: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runs_on: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runs_on: macos-14
+            target: x86_64-apple-darwin
+          - runs_on: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        id: cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # rust-cache never overwrites an existing key, so an exact hit has
+      # nothing new to save.
+      - name: Build (release)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo build --release --workspace --locked --target ${{ matrix.target }}
