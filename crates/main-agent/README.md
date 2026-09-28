@@ -36,6 +36,8 @@ main-agent worker start --assignment-file assignment.json --idempotency-key star
 main-agent worker supervise ASSIGNMENT_ID --format json
 main-agent worker accept ASSIGNMENT_ID --if-revision 3 --idempotency-key accept-001 --format json
 main-agent closeout --if-run-revision 7 --checkpoint-file final.json --idempotency-key closeout-001 --format json
+main-agent runs orphaned --format json
+main-agent runs close-orphaned --older-than 7d --format json
 main-agent completion zsh
 ```
 

@@ -1469,6 +1469,62 @@ after the last committed stage and may return success. After a
 `completed: true` result is stored, later exact replays return that same
 terminal value and never repeat a deletion.
 
+### Close orphaned runs
+
+A run whose controller session was deleted, for example an abandoned
+experiment or acceptance canary, can no longer run `close` or `closeout`:
+both authenticate as that controller. The local operator closes such runs
+instead. This needs no capability; it is authorized by ownership of the state
+directory, the same trust as the registry file itself.
+
+List them first. The listing is read-only:
+
+```bash
+main-agent runs orphaned --format json
+```
+
+A run is orphaned when its controller session directory is deleted, the
+controller holds no active claim, and every assignment passes the same
+live-owner rule as the pre-launch overlap check: no bound worker session
+exists, no worker holds an active claim, and no non-terminal assignment is
+still waiting for a worker to be bound. Its assignments must also carry no
+in-flight operation fence, and neither the controller nor any worker may own a
+progress receipt that never finished. `refused` lists each run whose controller
+is gone but something else is still live, with `code` and every blocker:
+
+- `orphaned-run-controller-claim-active`: the controller still holds a claim.
+- `orphaned-run-worker-live`: a worker session exists, a worker holds a claim,
+  or a launch has no bound worker yet.
+- `orphaned-run-operation-pending`: an assignment operation fence (for example
+  a runtime stop, claim revocation, account handoff, or provider stop canary)
+  or a controller or worker progress receipt is still in flight.
+- `orphaned-run-too-recent`: the last run or assignment activity is newer than
+  `--older-than`.
+
+Resolve a refused run through its normal owner, or leave it. The cleanup never
+overrides a live owner or an unfinished operation.
+
+Then close them in two steps. Without `--apply`, `close-orphaned` only prints
+the plan and its `plan_digest`:
+
+```bash
+main-agent runs close-orphaned --older-than 7d --format json
+main-agent runs close-orphaned --older-than 7d \
+  --apply --if-plan-digest PLAN_DIGEST \
+  --idempotency-key close-orphaned-001 \
+  --format json
+```
+
+`--apply` re-evaluates under the registry lock and commits only when the plan
+still has that exact digest; otherwise it fails with
+`orphaned-run-plan-conflict` and `current_plan_digest`, and changes nothing.
+Review the new dry run before applying again. Each closed run becomes `closed`
+(reason `orphaned`), and each non-terminal assignment becomes `cancelled`, or
+`released` when it was already `accepted` (reason `orphaned-run`), each with
+its revision advanced by one. Sessions, worktrees, packets, receipts, and
+history are never deleted. Replaying the same key and request returns the
+stored result without changing anything.
+
 ## Revision and idempotency rules
 
 Every state mutation uses an absence or revision fence and an idempotency key.

@@ -2721,6 +2721,7 @@ dependencies = [
  "nils-build-info",
  "nils-common",
  "nils-test-support",
+ "pretty_assertions",
  "serde",
  "serde_json",
  "sha2",

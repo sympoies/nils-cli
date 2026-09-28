@@ -684,6 +684,52 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(runs)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[agent-session state directory]:PATH:_files -/' \
+'--host=[Advisory machine label for public projections]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_main-agent__subcmd__runs_commands" \
+"*::: :->runs" \
+&& ret=0
+
+    case $state in
+    (runs)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:main-agent-runs-command-$line[1]:"
+        case $line[1] in
+            (orphaned)
+_arguments "${_arguments_options[@]}" : \
+'--older-than=[Report runs whose last run or assignment activity is newer than this (for example 7d or 12h) as too recent. The default 0 applies no bound]:DURATION:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[agent-session state directory]:PATH:_files -/' \
+'--host=[Advisory machine label for public projections]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(close-orphaned)
+_arguments "${_arguments_options[@]}" : \
+'--older-than=[Close only runs whose last run or assignment activity is at least this old, for example 7d or 12h]:DURATION:_default' \
+'--if-plan-digest=[The plan_digest printed by the dry run being applied]:DIGEST:_default' \
+'--idempotency-key=[Retry an ambiguous outcome with the same idempotency key and the same logical request; use a new key for a changed request.]:IDEMPOTENCY_KEY:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[agent-session state directory]:PATH:_files -/' \
+'--host=[Advisory machine label for public projections]:HOST:_default' \
+'(--apply)--dry-run[Print the plan without changing anything. This is the default]' \
+'--apply[Commit the plan named by --if-plan-digest]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (completion)
 _arguments "${_arguments_options[@]}" : \
 '--state-dir=[agent-session state directory]:PATH:_files -/' \
@@ -718,6 +764,7 @@ _main-agent_commands() {
 'closeout:Persist the final checkpoint, retire terminal workers, close the run, and release only the controller claim bound to this run' \
 'quick:Fast-path\: create an ephemeral run, single assignment, and launch in one call. The run auto-closes once the worker is torn down' \
 'packet-schema:Print an example objective packet (schema, required fields, and the nested work-context) that \`init --packet-file\` accepts' \
+'runs:Operator maintenance of durable runs in this state directory\: list and close orphaned runs whose controller and workers are all gone' \
 'completion:Print shell completion script' \
     )
     _describe -t commands 'main-agent commands' commands "$@"
@@ -796,6 +843,24 @@ _main-agent__subcmd__rebind_commands() {
 _main-agent__subcmd__rehydrate_commands() {
     local commands; commands=()
     _describe -t commands 'main-agent rehydrate commands' commands "$@"
+}
+(( $+functions[_main-agent__subcmd__runs_commands] )) ||
+_main-agent__subcmd__runs_commands() {
+    local commands; commands=(
+'orphaned:List active runs whose controller session is deleted and whose workers, claims, and operations are all gone. Read-only' \
+'close-orphaned:Close orphaned runs older than a bound. Prints the plan unless --apply' \
+    )
+    _describe -t commands 'main-agent runs commands' commands "$@"
+}
+(( $+functions[_main-agent__subcmd__runs__subcmd__close-orphaned_commands] )) ||
+_main-agent__subcmd__runs__subcmd__close-orphaned_commands() {
+    local commands; commands=()
+    _describe -t commands 'main-agent runs close-orphaned commands' commands "$@"
+}
+(( $+functions[_main-agent__subcmd__runs__subcmd__orphaned_commands] )) ||
+_main-agent__subcmd__runs__subcmd__orphaned_commands() {
+    local commands; commands=()
+    _describe -t commands 'main-agent runs orphaned commands' commands "$@"
 }
 (( $+functions[_main-agent__subcmd__self_commands] )) ||
 _main-agent__subcmd__self_commands() {
