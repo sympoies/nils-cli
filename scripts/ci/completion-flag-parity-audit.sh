@@ -15,6 +15,7 @@ RUN_STDERR=""
 ROOT_HELP_TEXT=""
 ENSURE_BIN_ERROR=""
 PLATFORM_EXE_SUFFIX=""
+PARITY_RESULTS_DIR=""
 
 declare -a PATH_PARTS=()
 declare -a FAILURES=()
@@ -31,7 +32,24 @@ Audit completion flag parity between --help and bash/zsh completions.
 Options:
   --strict   Compatibility flag. The audit is always strict.
   -h, --help Show this help
+
+Environment:
+  COMPLETION_PARITY_JOBS  Binaries audited concurrently (default: CPU count).
 USAGE
+}
+
+# Print the number of binaries to audit concurrently: COMPLETION_PARITY_JOBS
+# when set, otherwise the online CPU count.
+parity_job_count() {
+  local jobs="${COMPLETION_PARITY_JOBS:-}"
+  if [[ -z "$jobs" ]]; then
+    jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+    [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || jobs=1
+  elif [[ ! "$jobs" =~ ^[1-9][0-9]*$ ]]; then
+    echo "FAIL: COMPLETION_PARITY_JOBS must be a positive integer, got: $jobs" >&2
+    return 1
+  fi
+  printf '%s' "$jobs"
 }
 
 run_command() {
@@ -61,11 +79,14 @@ run_command() {
     "${cmd[@]}"
   ) >"$stdout_file" 2>"$stderr_file" &
   local pid=$!
-  local elapsed_tenths=0
-  local max_tenths=$(( timeout_seconds * 10 ))
+  local elapsed_hundredths=0
+  local max_hundredths=$(( timeout_seconds * 100 ))
 
+  # Most probes are `--help` calls that exit within milliseconds, so poll finely
+  # for the first 0.2s before backing off; a flat 0.1s poll made every probe
+  # cost at least 0.1s.
   while kill -0 "$pid" 2>/dev/null; do
-    if (( elapsed_tenths >= max_tenths )); then
+    if (( elapsed_hundredths >= max_hundredths )); then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
       RUN_CODE=124
@@ -74,8 +95,13 @@ run_command() {
       rm -f "$stdout_file" "$stderr_file"
       return 0
     fi
-    sleep 0.1
-    elapsed_tenths=$(( elapsed_tenths + 1 ))
+    if (( elapsed_hundredths < 20 )); then
+      sleep 0.01
+      elapsed_hundredths=$(( elapsed_hundredths + 1 ))
+    else
+      sleep 0.1
+      elapsed_hundredths=$(( elapsed_hundredths + 10 ))
+    fi
   done
 
   if wait "$pid"; then
@@ -388,75 +414,84 @@ zsh_leaf_block() {
   local binary="$2"
   local path_key="$3"
   local args_marker='_arguments "${_arguments_options[@]}" : \'
-  local from_args
+  local marker=""
+  local marker_prefix=""
+  local leaf_marker=""
 
-  if [[ "$path_key" == "$ROOT_KEY" ]]; then
-    if [[ "$script_text" != *"$args_marker"* ]]; then
+  if [[ "$path_key" != "$ROOT_KEY" ]]; then
+    decode_path "$path_key"
+    local parts_len="${#PATH_PARTS[@]}"
+    if (( parts_len == 0 )); then
       return 1
     fi
-    from_args="${args_marker}${script_text#*"$args_marker"}"
-    if [[ "$from_args" != *"&& ret=0"* ]]; then
-      return 1
-    fi
-    printf '%s' "${from_args%%"&& ret=0"*}"
-    return 0
-  fi
 
-  decode_path "$path_key"
-  local parts_len="${#PATH_PARTS[@]}"
-  if (( parts_len == 0 )); then
-    return 1
-  fi
+    local leaf_index=$(( parts_len - 1 ))
+    local leaf="${PATH_PARTS[$leaf_index]}"
+    local -a parents=()
+    local idx
+    for (( idx = 0; idx < leaf_index; idx++ )); do
+      parents+=( "${PATH_PARTS[$idx]}" )
+    done
 
-  local leaf_index=$(( parts_len - 1 ))
-  local leaf="${PATH_PARTS[$leaf_index]}"
-  local -a parents=()
-  local idx
-  for (( idx = 0; idx < leaf_index; idx++ )); do
-    parents+=( "${PATH_PARTS[$idx]}" )
-  done
-
-  local marker
-  marker="$(zsh_context_marker "$binary" "${parents[@]}")"
-  if [[ "$script_text" == *"$marker"* ]]; then
-    local from_marker="${script_text#*"$marker"}"
-  else
+    marker="$(zsh_context_marker "$binary" "${parents[@]}")"
     # clap_complete may use a non-1 positional offset when a command has an
     # optional positional before a nested subcommand, e.g. `pr review [id]
-    # validate`. Match the context prefix and let the leaf case find the exact
-    # subcommand block instead of assuming `$line[1]`.
-    local marker_prefix
+    # validate`. Fall back to the context prefix and let the leaf case find the
+    # exact subcommand block instead of assuming `$line[1]`.
     marker_prefix="$(zsh_context_prefix "$binary" "${parents[@]}")"
-    if [[ "$script_text" != *"$marker_prefix"* ]]; then
-      return 1
-    fi
-    local from_marker="${script_text#*"$marker_prefix"}"
+    leaf_marker="(${leaf})"
   fi
-  local leaf_marker="(${leaf})"
-  if [[ "$from_marker" != *"$leaf_marker"* ]]; then
-    return 1
-  fi
-  local from_leaf="${from_marker#*"$leaf_marker"}"
-  if [[ "$from_leaf" != *"$args_marker"* ]]; then
-    return 1
-  fi
-  from_args="${args_marker}${from_leaf#*"$args_marker"}"
-  if [[ "$from_args" != *"&& ret=0"* ]]; then
-    return 1
-  fi
-  printf '%s' "${from_args%%"&& ret=0"*}"
+
+  # Every step cuts at the first occurrence of a literal marker. Bash's
+  # `${text#*"$marker"}` does that in quadratic time, which took minutes on the
+  # ~220 KB forge-cli script, so find the markers with awk's linear `index()`.
+  # Markers travel through ENVIRON because `-v` would interpret backslashes.
+  PARITY_ZSH_ARGS_MARKER="$args_marker" \
+    PARITY_ZSH_MARKER="$marker" \
+    PARITY_ZSH_MARKER_PREFIX="$marker_prefix" \
+    PARITY_ZSH_LEAF_MARKER="$leaf_marker" \
+    LC_ALL=C awk '
+      { text = text $0 "\n" }
+      END {
+        leaf = ENVIRON["PARITY_ZSH_LEAF_MARKER"]
+        if (leaf != "") {
+          marker = ENVIRON["PARITY_ZSH_MARKER"]
+          at = index(text, marker)
+          if (at == 0) {
+            marker = ENVIRON["PARITY_ZSH_MARKER_PREFIX"]
+            at = index(text, marker)
+            if (at == 0) {
+              exit 1
+            }
+          }
+          text = substr(text, at + length(marker))
+          at = index(text, leaf)
+          if (at == 0) {
+            exit 1
+          }
+          text = substr(text, at + length(leaf))
+        }
+        at = index(text, ENVIRON["PARITY_ZSH_ARGS_MARKER"])
+        if (at == 0) {
+          exit 1
+        }
+        text = substr(text, at)
+        at = index(text, "&& ret=0")
+        if (at == 0) {
+          exit 1
+        }
+        printf "%s", substr(text, 1, at - 1)
+      }
+    ' <<<"$script_text"
 }
 
-escape_ere() {
-  printf '%s' "$1" | sed -e 's/[][(){}.^$*+?|\\/]/\\&/g'
-}
-
+# Match `token` as a whole flag word. The quoted token is literal inside `=~`,
+# and a newline satisfies the `[^[:alnum:]-]` boundary, so this matches exactly
+# what a line-oriented `grep -E` of the same pattern would, without forking.
 contains_token() {
   local haystack="$1"
   local token="$2"
-  local escaped
-  escaped="$(escape_ere "$token")"
-  LC_ALL=C grep -Eq "(^|[^[:alnum:]-])${escaped}([^[:alnum:]-]|$)" <<<"$haystack"
+  [[ "$haystack" =~ (^|[^[:alnum:]-])"$token"([^[:alnum:]-]|$) ]]
 }
 
 command_display_for_path() {
@@ -741,8 +776,21 @@ main() {
     [[ -n "$engine_bin" ]] && bin_engine["$engine_bin"]="$engine_value"
   done < <(parse_bin_engine "$matrix_path")
 
+  local jobs
+  if ! jobs="$(parity_job_count)"; then
+    return 2
+  fi
+  PARITY_RESULTS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/completion-flag-parity.XXXXXX")"
+  trap 'rm -rf "$PARITY_RESULTS_DIR"' EXIT
+
+  # Each binary's audit is independent and dominated by process spawning, so
+  # run up to `jobs` of them at once. Workers write their failures to a result
+  # file, and the report is assembled afterwards in the original binary order,
+  # so output does not depend on scheduling.
   local binary
   local dynamic_engine_skipped=0
+  local running=0
+  local -a audited_bins=()
   for binary in "${required_bins[@]}"; do
     # A `completion_engine=dynamic` CLI ships a clap_complete CompleteEnv stub,
     # not a static asset with a comparable flag list, so there is nothing for
@@ -751,7 +799,34 @@ main() {
       dynamic_engine_skipped=$((dynamic_engine_skipped + 1))
       continue
     fi
-    audit_binary "$repo_root" "$binary" "$repo_root/target/debug/${binary}${PLATFORM_EXE_SUFFIX}"
+    audited_bins+=( "$binary" )
+    (
+      FAILURES=()
+      audit_binary "$repo_root" "$binary" "$repo_root/target/debug/${binary}${PLATFORM_EXE_SUFFIX}"
+      if (( ${#FAILURES[@]} > 0 )); then
+        printf '%s\0' "${FAILURES[@]}"
+      fi >"$PARITY_RESULTS_DIR/${binary}.partial"
+      mv "$PARITY_RESULTS_DIR/${binary}.partial" "$PARITY_RESULTS_DIR/${binary}.done"
+    ) &
+    running=$((running + 1))
+    if (( running >= jobs )); then
+      wait -n || true
+      running=$((running - 1))
+    fi
+  done
+  wait
+
+  for binary in "${audited_bins[@]}"; do
+    local result_file="$PARITY_RESULTS_DIR/${binary}.done"
+    if [[ ! -f "$result_file" ]]; then
+      FAILURES+=( "${binary}: audit worker exited before reporting results" )
+      continue
+    fi
+    local -a binary_failures=()
+    mapfile -d '' -t binary_failures <"$result_file"
+    if (( ${#binary_failures[@]} > 0 )); then
+      FAILURES+=( "${binary_failures[@]}" )
+    fi
   done
 
   if (( ${#FAILURES[@]} > 0 )); then

@@ -15,6 +15,7 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/forge-cli-fixture-lint.sh --strict
   - bash scripts/ci/tests/install-local-release-binaries.test.sh
   - bash scripts/ci/tests/completion-freshness-audit.test.sh
+  - bash scripts/ci/tests/completion-flag-parity-audit.test.sh
   - bash scripts/ci/tests/local-fast-checks.test.sh
   - bash scripts/ci/tests/detect-docs-only.test.sh
   - bash scripts/ci/tests/detect-release-only.test.sh
@@ -145,6 +146,7 @@ fi
 
 run bash scripts/ci/tests/install-local-release-binaries.test.sh
 run bash scripts/ci/tests/completion-freshness-audit.test.sh
+run bash scripts/ci/tests/completion-flag-parity-audit.test.sh
 run bash scripts/ci/tests/local-fast-checks.test.sh
 run bash scripts/ci/tests/detect-docs-only.test.sh
 run bash scripts/ci/tests/detect-release-only.test.sh
