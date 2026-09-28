@@ -324,6 +324,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
+          # rust-cache never overwrites an existing key, and the key cut before
+          # this job ran instrumented tests holds no llvm-cov-target
+          # dependencies, so every run rebuilt ~400 crates (~6 min). A distinct
+          # key lets main save a cache that includes them.
+          key: llvm-cov
           # Only main saves. rust-cache stores dependencies, not workspace
           # crates, so a PR copy (~1 GB) adds nothing over main's and just
           # evicts the main caches every run restores.
