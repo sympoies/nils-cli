@@ -3,6 +3,8 @@
 // links one integration test binary instead of many. This keeps the
 // dev-loop link phase O(crates) instead of O(test-files).
 
+#[path = "integration/cleanup_retention.rs"]
+mod cleanup_retention;
 #[path = "integration/cli.rs"]
 mod cli;
 #[path = "integration/completion_export.rs"]

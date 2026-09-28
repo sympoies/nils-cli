@@ -128,6 +128,15 @@ pub struct CleanupPlanArgs {
     #[arg(long)]
     pub include_projects: bool,
 
+    /// Mark idle project runs older than DAYS as delete candidates.
+    #[arg(
+        long = "project-retention-days",
+        value_name = "DAYS",
+        requires = "include_projects",
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    pub project_retention_days: Option<u32>,
+
     /// Output format.
     #[arg(long, value_enum, default_value_t = CleanupFormat::Text)]
     pub format: CleanupFormat,
