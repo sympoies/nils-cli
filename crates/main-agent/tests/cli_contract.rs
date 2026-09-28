@@ -32,6 +32,7 @@ fn macro_first_worker_surface_is_discoverable() {
         "revoke-claim",
         "account-handoff-cancel",
         "request-changes",
+        "resume",
         "cancel",
         "retire",
     ] {
@@ -105,6 +106,11 @@ fn recovery_primitives_publish_their_guards() {
     assert!(request_changes.contains("return a submitted assignment"));
     assert!(request_changes.contains("expected current assignment revision"));
     assert!(request_changes.contains("bounded durable reason"));
+
+    let resume = help(&["worker", "resume", "--help"]).to_ascii_lowercase();
+    assert!(resume.contains("post-claim blocked assignment"));
+    assert!(resume.contains("re-runs its bootstrap argv"));
+    assert!(resume.contains("expected current assignment revision"));
 }
 
 #[test]
@@ -124,6 +130,7 @@ fn completions_publish_account_handoff_cancellation_guards() {
         for contract in [
             "account-handoff-cancel",
             "request-changes",
+            "resume",
             "stop-runtime",
             "stop-claimed-runtime",
             "--worker-incarnation",
