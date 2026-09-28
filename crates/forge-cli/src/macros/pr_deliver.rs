@@ -725,6 +725,9 @@ fn build_merge_args(
         allow_unchecked_tasks_reason: args.allow_unchecked_tasks_reason.clone(),
         allow_no_checks: args.allow_no_checks,
         allow_no_checks_reason: args.allow_no_checks_reason.clone(),
+        allow_merge_freeze: Vec::new(),
+        allow_merge_freeze_reason: None,
+        queue_timeout: None,
     }
 }
 

@@ -874,12 +874,17 @@ operations:
       - { name: --allow-unchecked-tasks-reason, type: string,                    default: null }
       - { name: --allow-no-checks,          type: bool,                          default: false } # requires --allow-no-checks-reason
       - { name: --allow-no-checks-reason,   type: string,                        default: null }
+      - { name: --allow-merge-freeze,       type: list<integer>,                 default: [] } # repeatable; requires --allow-merge-freeze-reason; must name every active freeze
+      - { name: --allow-merge-freeze-reason, type: string,                       default: null }
+      - { name: --queue-timeout,            type: integer,                       default: 2700 } # seconds; merge-queue wait bound
     validations:
       - worktree_clean
       - test_first_evidence_provider_head_mismatch # when --expected-head is supplied, the first provider snapshot must still match it before merge mutation
       - delivery_base_matches # when --expected-base is supplied, the first provider snapshot must still match it before merge mutation
       - draft_merge_refused
       - default_branch_protected
+      - merge_freeze_active     # GitHub: an open `merge-freeze` issue blocks unless every one is named by --allow-merge-freeze with a reason; policy read failure is merge_policy_unavailable
+      - merge_queue_method_mismatch # GitHub: an explicit --method that differs from the required merge queue's method
       - required_checks_green   # TTL-zero re-check
       - merge_method_supported
       - keep_branch_conflict
@@ -889,6 +894,8 @@ operations:
       - tasklist_complete
     backends:
       github: { program: gh,   argv: [pr, merge, "{id}", "--{method}", "--delete-branch?"] }
+      github_merge_policy: { program: gh, argv: [api, graphql, -f, "query=ForgeMergePolicy(owner,name,base,pr)", ...] }
+      github_merge_queue: { program: gh, argv: [api, graphql, -f, "query=ForgeEnqueuePullRequest(pullRequestId,expectedHeadOid)", ...], poll: "ForgeMergeQueuePoll until MERGED; merge_queue_dequeued | merge_queue_checks_failed | merge_queue_timeout" } # replaces the direct merge when the base requires a merge queue
       gitlab: { program: glab, argv: [mr, merge, "{id}", "--squash?", "--remove-source-branch?"] }
     output:
       data:
@@ -896,7 +903,9 @@ operations:
         url: string
         merge_sha: string
         method: enum<squash|merge|rebase>
-        deleted_branch: bool
+        deleted_branch: bool # false when landed through a merge queue
+        merge_queue?: bool # true when the base required a merge queue and the PR landed through it
+        merge_freeze_override?: '{ issues: list<integer>, reason: string }' # present only when --allow-merge-freeze bypassed active freezes
         unchecked_tasks_override_reason?: string # present only when --allow-unchecked-tasks bypass was used
         unresolved_threads_override_reason?: string # present only when --allow-unresolved-threads bypass was used
         no_checks_override_reason?: string # present only when --allow-no-checks bypass was used; the only durable record that a merge happened with no CI evidence
@@ -1168,6 +1177,25 @@ operations:
         pushed: bool
         observed_remote_sha: string
     notes: "No unconstrained force, delete, retry, or direct-merge path exists. The selected authority must match the push URL before metadata lookup, and returned metadata must match that same authority and repository; metadata from another authority cannot authorize the push. Canonical comparison preserves non-default HTTPS ports. The internal exact old-OID lease is a compare-and-swap guard, and the separate ancestry proof keeps the resulting update fast-forward-only. Every Git subprocess has a 120-second timeout and 8 MiB per-stream capture limit with process-group cleanup. Dry-run performs the read-only preflight and emits pushed=false."
+
+  - id: repo.freeze
+    schema_version: cli.forge-cli.repo.freeze.v1
+    summary: Start, end, or report a GitHub merge freeze; an open issue labelled merge-freeze is the record pr.merge enforces.
+    inputs:
+      - { name: start --reason,   type: string,  required: true }
+      - { name: start --until,    type: string,  default: null }
+      - { name: end --issue,      type: integer, default: null } # omitted: ends the single active freeze
+      - { name: status,           type: flag,    default: null }
+    validations: [merge_freeze_not_active, merge_freeze_ambiguous]
+    backends:
+      github: { status: [issue, list, --label, merge-freeze, --state, open, --json, "number,title,url,author,createdAt"], start: [[label, list, --search, merge-freeze], [label, create, merge-freeze], [issue, create, --title, "Merge freeze: {reason}", --body, "{body}", --label, merge-freeze]], end: [issue, close, "{issue}", --comment, "{comment}"] }
+      gitlab: provider_unsupported
+    output:
+      data:
+        provider: enum<github>
+        action: enum<start|end|status>
+        active: bool
+        freezes: 'list<{ number: integer, title: string, url: string, author?: string, created_at?: string }>'
 
   - id: auth.status
     schema_version: cli.forge-cli.auth.status.v1

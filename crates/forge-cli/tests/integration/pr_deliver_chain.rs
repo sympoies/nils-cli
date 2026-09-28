@@ -682,6 +682,9 @@ EOF
     ;;
   "api graphql")
     case "$*" in
+      *"ForgeMergePolicy"*)
+        printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":null,"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false}}}}}}}}'
+        ;;
       *"authorAssociation body createdAt"*)
         printf '%s\n' '{{"data":{{"viewer":{{"login":"testuser-gh"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[{review_state_node}],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
         ;;
@@ -818,6 +821,9 @@ EOF
     ;;
   "api graphql")
     case "$*" in
+      *"ForgeMergePolicy"*)
+        printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":null,"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false}}}}}}}}'
+        ;;
       *"authorAssociation body createdAt"*)
         printf '%s\n' '{{"data":{{"viewer":{{"login":"testuser-gh"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[{review_state_node}],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
         ;;
@@ -1008,9 +1014,16 @@ EOF
     :
     ;;
   "api graphql")
-    cat <<'EOF'
+    case "$*" in
+      *"ForgeMergePolicy"*)
+        printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":null,"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false}}}}}}}}'
+        ;;
+      *)
+        cat <<'EOF'
 {{ "data": {{ "repository": {{ "pullRequest": {{ "headRefOid": "{thread_head_sha}", "reviewThreads": {{ "nodes": [], "pageInfo": {{ "hasNextPage": false, "endCursor": null }} }} }} }} }} }}
 EOF
+        ;;
+    esac
     ;;
   "pr merge")
     touch {merge_sentinel}

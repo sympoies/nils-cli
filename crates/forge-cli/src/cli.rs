@@ -950,6 +950,30 @@ pub struct PrMergeArgs {
         value_parser = clap::builder::NonEmptyStringValueParser::new()
     )]
     pub allow_unchecked_tasks_reason: Option<String>,
+    /// Merge despite an active merge freeze (an open `merge-freeze` issue) the
+    /// caller holds. Repeat to name every active freeze; one left unnamed
+    /// still triggers `merge_freeze_active`. Requires
+    /// `--allow-merge-freeze-reason`.
+    #[arg(
+        long = "allow-merge-freeze",
+        value_name = "ISSUE",
+        action = ArgAction::Append,
+        requires = "allow_merge_freeze_reason"
+    )]
+    pub allow_merge_freeze: Vec<u64>,
+    /// Required when `--allow-merge-freeze` is set; recorded in the merge
+    /// envelope payload.
+    #[arg(
+        long = "allow-merge-freeze-reason",
+        value_name = "TEXT",
+        requires = "allow_merge_freeze",
+        value_parser = clap::builder::NonEmptyStringValueParser::new()
+    )]
+    pub allow_merge_freeze_reason: Option<String>,
+    /// Upper bound, in seconds, on waiting for a required merge queue to merge
+    /// the enqueued PR (default 2700).
+    #[arg(long = "queue-timeout", value_name = "SECONDS")]
+    pub queue_timeout: Option<u64>,
 }
 
 /// Native provider review summaries for one pull request.
@@ -2054,6 +2078,38 @@ pub enum RepoCommand {
     Bootstrap(RepoBootstrapArgs),
     /// Deliver one signed commit to the default branch with a normal fast-forward push.
     PushDefault(RepoPushDefaultArgs),
+    /// Start, end, or report a GitHub merge freeze (an open `merge-freeze` issue).
+    Freeze(RepoFreezeArgs),
+}
+
+/// `repo freeze` arguments.
+#[derive(Args, Debug, Clone)]
+pub struct RepoFreezeArgs {
+    #[command(subcommand)]
+    pub command: RepoFreezeCommand,
+}
+
+/// `repo freeze` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum RepoFreezeCommand {
+    /// Open a merge freeze. `pr merge` refuses to merge while it is open.
+    Start {
+        /// Why merges are frozen; becomes the freeze issue title.
+        #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        reason: String,
+        /// Expected end of the freeze, recorded in the issue body.
+        #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        until: Option<String>,
+    },
+    /// End a merge freeze by closing its issue. Without `--issue`, ends the
+    /// single active freeze.
+    End {
+        /// Freeze issue number to close.
+        #[arg(long)]
+        issue: Option<u64>,
+    },
+    /// Report the active merge freezes.
+    Status,
 }
 
 /// `auth` subtree.
@@ -2165,6 +2221,9 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
         Some(Command::Repo(RepoArgs {
             command: Some(RepoCommand::PushDefault(args)),
         })) => ops::repo_push_default::run(&global, args, format),
+        Some(Command::Repo(RepoArgs {
+            command: Some(RepoCommand::Freeze(args)),
+        })) => ops::repo_freeze::run(&global, args.command, format),
         Some(Command::Pr(PrArgs {
             command: Some(PrCommand::Create(args)),
         })) => ops::pr_create::run(&global, args, format),

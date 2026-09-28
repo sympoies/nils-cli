@@ -35,6 +35,7 @@ use crate::config::{ForgeConfig, MergeMethod, ReviewConvergencePolicy};
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::ops::gitlab_api;
+use crate::ops::merge_policy;
 use crate::ops::pr_review_loop::{self, ReviewLoopMergeGate};
 use crate::ops::pr_review_threads;
 use crate::ops::pr_tasks;
@@ -59,6 +60,14 @@ pub struct PrMergePayload {
     pub merge_sha: String,
     pub method: &'static str,
     pub deleted_branch: bool,
+    /// True when the base branch required a merge queue and the PR landed
+    /// through it instead of the direct merge API.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub merge_queue: bool,
+    /// Recorded `--allow-merge-freeze` bypass: the freeze issues it named and
+    /// the reason; absent when no freeze was active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_freeze_override: Option<merge_policy::FreezeOverride>,
     pub base: String,
     pub head: String,
     /// Recorded `--allow-unchecked-tasks-reason` when the task-list gate
@@ -452,10 +461,43 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         ));
     }
 
+    // Rule 5 — GitHub merge policy: an active repository merge freeze blocks
+    // the merge before any provider mutation, and a required merge queue
+    // replaces the direct merge API and decides the merge method.
+    let policy = if ctx.provider == Provider::GitHub {
+        Some(merge_policy::read_policy(
+            runner,
+            ctx,
+            &repo.owner,
+            &repo.name,
+            &pr.base,
+            args.id,
+        )?)
+    } else {
+        None
+    };
+    let merge_freeze_override = match policy.as_ref() {
+        Some(policy) => merge_policy::enforce_freeze(
+            &policy.freezes,
+            &args.allow_merge_freeze,
+            args.allow_merge_freeze_reason.as_deref(),
+        )?,
+        None => None,
+    };
+    let queue = policy.as_ref().and_then(|policy| policy.queue.as_ref());
+    let method = match queue {
+        Some(queue) => merge_policy::resolve_queue_method(
+            queue,
+            args.method.map(|method| method.into_method()),
+            settings.method,
+        )?,
+        None => settings.method,
+    };
+
     let no_checks = NoChecksAllowance::resolve(args, ctx, workdir, &global.remote, &pr.base);
 
     // Rule 9 — method must be in the repo's allowed list.
-    enforce_method_supported(settings.method, &repo)?;
+    enforce_method_supported(method, &repo)?;
 
     // Rule 8 — TTL-zero required-check re-check. An empty gating set fails
     // closed here: absence of checks is not evidence the head passed any.
@@ -575,21 +617,71 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         )?);
     }
 
-    // All gates clear — invoke the backend.
-    let merge_call =
-        build_live_merge_call(ctx, args.id, &pr, settings.method, settings.delete_branch)?;
-    invoke_merge_with_idempotency_check(runner, ctx, args.id, &merge_call, pr.head_sha.as_deref())?;
-
-    // Post-merge re-fetch for merge_sha.
-    let merge_sha = fetch_merge_sha(runner, ctx, args.id)?;
+    // All gates clear — invoke the backend, or hand the verified head to the
+    // required merge queue and wait for it to land.
+    let merge_sha = if let (Some(policy), Some(_)) = (policy.as_ref(), queue) {
+        let head = pr
+            .head_sha
+            .as_deref()
+            .filter(|head| !head.is_empty())
+            .ok_or_else(|| {
+                ForgeError::validation(
+                    schema_err(),
+                    "review_state_conflict",
+                    "a merge-queue merge requires a provider head to enqueue",
+                    None,
+                )
+            })?;
+        if !policy.in_queue {
+            let node_id = policy.pr_node_id.as_deref().ok_or_else(|| {
+                ForgeError::unavailable(
+                    schema_err(),
+                    "merge_policy_unavailable",
+                    "the merge policy read did not return the pull request id",
+                    None,
+                )
+            })?;
+            merge_policy::enqueue(runner, ctx, node_id, head)?;
+        }
+        let timeout = args.queue_timeout.map_or(
+            merge_policy::DEFAULT_QUEUE_TIMEOUT,
+            std::time::Duration::from_secs,
+        );
+        match merge_policy::wait_for_merge(
+            runner,
+            clock,
+            ctx,
+            &repo.owner,
+            &repo.name,
+            args.id,
+            timeout,
+        )? {
+            Some(sha) => sha,
+            None => fetch_merge_sha(runner, ctx, args.id)?,
+        }
+    } else {
+        let merge_call = build_live_merge_call(ctx, args.id, &pr, method, settings.delete_branch)?;
+        invoke_merge_with_idempotency_check(
+            runner,
+            ctx,
+            args.id,
+            &merge_call,
+            pr.head_sha.as_deref(),
+        )?;
+        // Post-merge re-fetch for merge_sha.
+        fetch_merge_sha(runner, ctx, args.id)?
+    };
 
     Ok(PrMergePayload {
         provider: ctx.provider.as_str(),
         number: pr.number,
         url: pr.url,
         merge_sha,
-        method: settings.method.as_str(),
-        deleted_branch: settings.delete_branch,
+        method: method.as_str(),
+        // The queue applies the repository's own head-branch deletion setting.
+        deleted_branch: queue.is_none() && settings.delete_branch,
+        merge_queue: queue.is_some(),
+        merge_freeze_override,
         base: pr.base,
         head: pr.head,
         unchecked_tasks_override_reason: if args.allow_unchecked_tasks {
@@ -1060,6 +1152,9 @@ mod tests {
             allow_unchecked_tasks_reason: None,
             allow_no_checks: false,
             allow_no_checks_reason: None,
+            allow_merge_freeze: Vec::new(),
+            allow_merge_freeze_reason: None,
+            queue_timeout: None,
         };
 
         let err = compute(&ForbiddenRunner, &global, &args, repo.path())

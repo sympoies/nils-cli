@@ -61,8 +61,9 @@ In scope (v1):
   `reopen`.
 - Repository label lifecycle: `label list`, `label audit`, and
   `label ensure`.
-- Repository helpers: read-only `repo view` and the explicitly governed
-  `repo push-default` delivery exception.
+- Repository helpers: read-only `repo view`, the explicitly governed
+  `repo push-default` delivery exception, and the GitHub merge-freeze record
+  `repo freeze start|end|status`.
 - Macro ops: `pr deliver` (kind = `feature` | `bug`), composing the
   atoms above into the agent-runtime-kit standard "open draft → wait CI →
   ready → merge → cleanup" flow.
@@ -143,6 +144,7 @@ Parity matrix (v1):
 | `auth status`                               | `gh auth status --hostname <authority>`                                                                                                      | `glab auth status --hostname <authority>`                              | exact (text → typed)                                                                                                     |
 | `repo view`                                 | `gh repo view <slug-or-host/slug> --json …`                                                                                                  | `glab repo view <slug-or-https-url> -F json`                           | exact                                                                                                                    |
 | `repo push-default`                         | local Git validation/push plus host-qualified `gh repo view --json …` default-branch resolution                                              | local Git validation/push plus host-qualified `glab repo view -F json` | exact; no provider force path                                                                                            |
+| `repo freeze` (start, end, status)          | `gh label list/create`, `gh issue create/list/close` on the `merge-freeze` label                                                             | `provider_unsupported`                                                 | GitHub-only in v1                                                                                                        |
 | `inbox list`                                | `gh search prs/issues --json …`                                                                                                              | `glab api --hostname <host> …`                                         | normalized aggregation                                                                                                   |
 | `inbox status`                              | same provider reads as `inbox list`                                                                                                          | same provider reads as `inbox list`                                    | bounded counts                                                                                                           |
 | `inbox next`                                | same provider reads as `inbox list`                                                                                                          | same provider reads as `inbox list`                                    | ranked bounded subset                                                                                                    |
@@ -1198,6 +1200,11 @@ distinctions that cannot be proven offline.
     `--allow-unchecked-tasks-reason` (the description is the delivery
     contract: every `- [ ]` is checked off or rewritten as
     dispositioned before merge);
+  - on GitHub, no active merge freeze (an open `merge-freeze` issue) OR every
+    active freeze named with `--allow-merge-freeze` plus a recorded
+    `--allow-merge-freeze-reason`. A base branch that requires a merge queue
+    lands through `enqueuePullRequest` instead of the direct merge API (policy
+    18);
   - `--method squash|merge|rebase` (default `squash`, configurable
     per repo).
 - Direct callers may pass `--expected-head <sha>`. The first provider snapshot
@@ -1518,6 +1525,31 @@ backend implementations cannot diverge.
     scan is verbatim). The error `detail` enumerates each offending line and its
     fix without echoing the marker; set
     `FORGE_CLI_ALLOW_AGENT_ATTRIBUTION=1` to bypass a verified false positive.
+18. **Merge freeze and merge queue (GitHub).** Right after the repository
+    read, `pr merge` (and the `pr deliver` merge step) issues one GraphQL
+    policy read (`ForgeMergePolicy`): the open issues labelled `merge-freeze`,
+    the base branch's `mergeQueue`, and the PR node id. A failed or partial read
+    fails closed with `merge_policy_unavailable`.
+    - An open `merge-freeze` issue is an active freeze. The merge is refused
+      with `merge_freeze_active`, whose detail names each freeze (number, title,
+      author, start, URL). The freeze holder bypasses it with one
+      `--allow-merge-freeze <issue>` per active freeze plus a required
+      `--allow-merge-freeze-reason`; the bypass is recorded as
+      `merge_freeze_override`. A freeze lives on the provider, so it applies to
+      private repositories whose plan offers no branch protection or merge
+      queue. `repo freeze start|end|status` manages the record.
+    - When the base requires a merge queue, the direct merge API is not used.
+      After every other gate passes, the verified head is enqueued with
+      `enqueuePullRequest` and `expectedHeadOid` (skipped when the PR is already
+      queued). The command then polls until the PR is merged, bounded by
+      `--queue-timeout` (default 2700 s).
+      - Dequeued or closed without merging: `merge_queue_dequeued`.
+      - Entry reported unmergeable: `merge_queue_checks_failed`.
+      - Bound exceeded: `merge_queue_timeout`.
+    - The queue's configured method wins. An explicit `--method` that differs is
+      refused with `merge_queue_method_mismatch` before enqueue. The payload sets
+      `merge_queue: true`, and `deleted_branch` is false because the queue
+      applies the repository's own head-branch deletion setting.
     Enforced by `pr create`, `pr edit`, `issue create`, `issue edit`,
     `pr comment`, `issue comment`, `pr review`, `pr review-threads reply`, and
     `pr review-threads resolve`.

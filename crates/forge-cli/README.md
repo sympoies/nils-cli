@@ -33,6 +33,7 @@ cargo run -p nils-forge-cli -- pr pending-review inspect 123 --review PRR_pendin
 cargo run -p nils-forge-cli -- pr pending-review resume-submit 123 --review PRR_pending --review-run-id <digest> --expected-head <sha> --expected-commit <sha> --expected-snapshot <digest> --decision comments-only --format json
 cargo run -p nils-forge-cli -- pr pending-review delete 123 --review PRR_pending --expected-head <sha> --expected-commit <sha> --expected-body-file review.md --confirm-abandoned --dry-run --format json
 cargo run -p nils-forge-cli -- pr merge 123 --expected-head <reviewed-sha> --review-convergence --format json
+cargo run -p nils-forge-cli -- repo freeze status --format json
 cargo run -p nils-forge-cli -- repo push-default --expected-base <sha> --reason-file reason.md --dry-run --format json
 cargo run -p nils-forge-cli -- repo push-default --default-branch-receipt receipt.json --expected-base <sha> --reason-file reason.md --dry-run --format json
 ```
@@ -166,6 +167,27 @@ reviewed. Provider drift then fails before the merge mutation; `pr deliver`
 binds both values internally. A requested `--base` is exact throughout lookup,
 adoption, create read-back, ready, and merge; `--allow-non-default-base` only
 authorizes that named target and never widens it to another non-default branch.
+
+On GitHub, `pr merge` also honors a repository-wide merge freeze. The freeze
+record is an open issue labelled `merge-freeze`, managed with
+`repo freeze start --reason <text> [--until <time>]`, `repo freeze end
+[--issue <n>]`, and `repo freeze status`. While a freeze is open the merge fails
+closed with `merge_freeze_active`. The freeze holder can still merge by naming
+every active freeze with `--allow-merge-freeze <issue>` and giving a
+`--allow-merge-freeze-reason`, which is recorded as `merge_freeze_override`.
+The record lives on the provider, so it works on private repositories that
+cannot use branch protection or a merge queue.
+
+When the base branch requires a merge queue, `pr merge` still runs every gate.
+It then enqueues the verified head with `enqueuePullRequest` instead of calling
+the direct merge API, and waits for the queue to land it, bounded by
+`--queue-timeout <seconds>` (default 2700). Failures are typed:
+
+- `merge_queue_dequeued`: the PR left the queue without merging.
+- `merge_queue_checks_failed`: the queue reports the PR as unmergeable.
+- `merge_queue_timeout`: the wait exceeded `--queue-timeout`.
+- `merge_queue_method_mismatch`: an explicit `--method` differs from the
+  queue's configured method.
 
 `pr review --submit-review` requires `--expected-head <sha>` and compares the
 provider head before any native review mutation. Summary-only reviews keep the

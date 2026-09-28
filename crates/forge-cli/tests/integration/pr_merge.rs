@@ -175,6 +175,9 @@ fn github_merge_stub_with_ledger(
     )
 }
 
+/// The merge-policy read on a repository with no freeze and no merge queue.
+const NO_MERGE_POLICY: &str = r#"{"data":{"repository":{"mergeQueue":null,"issues":{"nodes":[]},"pullRequest":{"id":"PR_node7","isInMergeQueue":false}}}}"#;
+
 fn github_merge_stub_with_checks(
     stub: &StubEnv,
     review_nodes: &str,
@@ -182,6 +185,31 @@ fn github_merge_stub_with_checks(
     reject_reviews: bool,
     ledger_marker: Option<String>,
     checks_json: &str,
+) -> String {
+    github_merge_stub_full(
+        stub,
+        review_nodes,
+        thread_nodes,
+        reject_reviews,
+        ledger_marker,
+        checks_json,
+        NO_MERGE_POLICY,
+        "",
+    )
+}
+
+/// The merge stub with a caller-provided merge-policy response and extra
+/// `api graphql` case arms (for the merge-queue enqueue and poll requests).
+#[allow(clippy::too_many_arguments)]
+fn github_merge_stub_full(
+    stub: &StubEnv,
+    review_nodes: &str,
+    thread_nodes: &str,
+    reject_reviews: bool,
+    ledger_marker: Option<String>,
+    checks_json: &str,
+    merge_policy_json: &str,
+    extra_graphql_cases: &str,
 ) -> String {
     let merged = stub.tempdir.path().join("github-merged");
     let review_calls = stub.tempdir.path().join("review-calls");
@@ -231,6 +259,8 @@ case "$1 $2" in
   "pr checks") printf '%s\n' '{checks_json}' ;;
   "api graphql")
     case "$*" in
+{extra_graphql_cases}
+      *"ForgeMergePolicy"*) printf '%s\n' '{merge_policy_json}' ;;
       *"authorAssociation body createdAt"*) printf '%s\n' '{{"data":{{"viewer":{{"login":"maintainer"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[{state_nodes}],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}' ;;
       *"reviews(first:"*) {review_query} ;;
       *"reviewThreads(first: 100"*) printf '%s\n' '{{"data":{{"repository":{{"pullRequest":{{"headRefOid":"head123","reviewThreads":{{"nodes":[{thread_nodes}],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}' ;;
@@ -246,6 +276,8 @@ esac
         state_nodes = state_nodes,
         merged = merged.display(),
         checks_json = checks_json,
+        merge_policy_json = merge_policy_json,
+        extra_graphql_cases = extra_graphql_cases,
     )
 }
 
@@ -2039,5 +2071,260 @@ fn pr_merge_gitlab_allow_no_checks_merges_an_mr_with_no_pipeline() {
     assert!(
         sentinel.exists(),
         "the bypassed merge must reach the backend"
+    );
+}
+
+/// One active freeze: open issue #42 labelled `merge-freeze`.
+const ACTIVE_FREEZE_POLICY: &str = r#"{"data":{"repository":{"mergeQueue":null,"issues":{"nodes":[{"number":42,"title":"Merge freeze: nils-cli 1.29.3 release","url":"https://github.com/acme/widgets/issues/42","author":{"login":"release-bot"},"createdAt":"2026-09-29T00:00:00Z"}]},"pullRequest":{"id":"PR_node7","isInMergeQueue":false}}}}"#;
+
+/// A base branch whose ruleset requires a squash merge queue.
+const SQUASH_QUEUE_POLICY: &str = r#"{"data":{"repository":{"mergeQueue":{"configuration":{"mergeMethod":"SQUASH"}},"issues":{"nodes":[]},"pullRequest":{"id":"PR_node7","isInMergeQueue":false}}}}"#;
+
+fn run_github_merge(
+    stub: &StubEnv,
+    repo: &std::path::Path,
+    extra: &[&str],
+) -> super::support::CmdOutput {
+    let mut argv = vec![
+        "--provider",
+        "github",
+        "--format",
+        "json",
+        "pr",
+        "merge",
+        "7",
+        "--review-convergence=false",
+    ];
+    argv.extend_from_slice(extra);
+    run_forge_cli_in(stub, &argv, Some(repo))
+}
+
+#[test]
+fn pr_merge_refuses_an_active_merge_freeze_before_mutation() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let body = github_merge_stub_full(
+        &stub,
+        "",
+        "",
+        true,
+        None,
+        ONE_REQUIRED_PASS_CHECKS,
+        ACTIVE_FREEZE_POLICY,
+        "",
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "merge_freeze_active");
+    let detail = env["error"]["details"]["detail"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(detail.contains("#42"), "{detail}");
+    assert!(
+        !merged.exists(),
+        "a frozen repository must not reach the merge"
+    );
+}
+
+#[test]
+fn pr_merge_bypasses_a_named_freeze_and_records_the_reason() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let body = github_merge_stub_full(
+        &stub,
+        "",
+        "",
+        true,
+        None,
+        ONE_REQUIRED_PASS_CHECKS,
+        ACTIVE_FREEZE_POLICY,
+        "",
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(
+        &stub,
+        &repo_path,
+        &[
+            "--allow-merge-freeze",
+            "42",
+            "--allow-merge-freeze-reason",
+            "release version bump owned by the freeze holder",
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["data"]["merge_freeze_override"]["issues"][0], 42);
+    assert_eq!(
+        env["data"]["merge_freeze_override"]["reason"],
+        "release version bump owned by the freeze holder"
+    );
+    assert!(
+        merged.exists(),
+        "the named freeze holder must reach the merge"
+    );
+}
+
+#[test]
+fn pr_merge_bypass_must_name_every_active_freeze() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let body = github_merge_stub_full(
+        &stub,
+        "",
+        "",
+        true,
+        None,
+        ONE_REQUIRED_PASS_CHECKS,
+        ACTIVE_FREEZE_POLICY,
+        "",
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(
+        &stub,
+        &repo_path,
+        &[
+            "--allow-merge-freeze",
+            "41",
+            "--allow-merge-freeze-reason",
+            "names a different freeze",
+        ],
+    );
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "merge_freeze_active"
+    );
+    assert!(!merged.exists());
+}
+
+#[test]
+fn pr_merge_allow_merge_freeze_requires_a_reason() {
+    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let out = run_forge_cli_in(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "pr",
+            "merge",
+            "7",
+            "--allow-merge-freeze",
+            "42",
+        ],
+        None,
+    );
+    assert_eq!(out.code, 64, "stdout={}\nstderr={}", out.stdout, out.stderr);
+}
+
+#[test]
+fn pr_merge_enqueues_when_the_base_requires_a_merge_queue() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let enqueued = stub.tempdir.path().join("enqueued");
+    let extra = format!(
+        r#"      *"ForgeEnqueuePullRequest"*"expectedHeadOid=head123"*) touch {enqueued}; printf '%s\n' '{{"data":{{"enqueuePullRequest":{{"mergeQueueEntry":{{"state":"QUEUED","position":1}}}}}}}}' ;;
+      *"ForgeMergeQueuePoll"*) printf '%s\n' '{{"data":{{"repository":{{"pullRequest":{{"state":"MERGED","mergeCommit":{{"oid":"merge456"}},"mergeQueueEntry":null}}}}}}}}' ;;"#,
+        enqueued = enqueued.display()
+    );
+    let body = github_merge_stub_full(
+        &stub,
+        "",
+        "",
+        true,
+        None,
+        ONE_REQUIRED_PASS_CHECKS,
+        SQUASH_QUEUE_POLICY,
+        &extra,
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["data"]["merge_sha"], "merge456");
+    assert_eq!(env["data"]["merge_queue"], true);
+    assert!(enqueued.exists(), "a required queue must be entered");
+    assert!(!merged.exists(), "the direct merge API must not be used");
+}
+
+#[test]
+fn pr_merge_reports_a_pull_request_dequeued_by_the_merge_queue() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let extra = r#"      *"ForgeEnqueuePullRequest"*) printf '%s\n' '{"data":{"enqueuePullRequest":{"mergeQueueEntry":{"state":"QUEUED","position":1}}}}' ;;
+      *"ForgeMergeQueuePoll"*) printf '%s\n' '{"data":{"repository":{"pullRequest":{"state":"OPEN","mergeCommit":null,"mergeQueueEntry":null}}}}' ;;"#;
+    let body = github_merge_stub_full(
+        &stub,
+        "",
+        "",
+        true,
+        None,
+        ONE_REQUIRED_PASS_CHECKS,
+        SQUASH_QUEUE_POLICY,
+        extra,
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &[]);
+
+    assert_ne!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "merge_queue_dequeued"
+    );
+    assert!(!merged.exists());
+}
+
+#[test]
+fn pr_merge_rejects_an_explicit_method_the_merge_queue_does_not_use() {
+    let tempdir = make_github_repo(None);
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let enqueued = stub.tempdir.path().join("enqueued");
+    let extra = format!(
+        r#"      *"ForgeEnqueuePullRequest"*) touch {enqueued}; exit 99 ;;"#,
+        enqueued = enqueued.display()
+    );
+    let body = github_merge_stub_full(
+        &stub,
+        "",
+        "",
+        true,
+        None,
+        ONE_REQUIRED_PASS_CHECKS,
+        SQUASH_QUEUE_POLICY,
+        &extra,
+    );
+    let stub = stub.gh_stub(&body);
+
+    let out = run_github_merge(&stub, &repo_path, &["--method", "rebase"]);
+
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "merge_queue_method_mismatch"
+    );
+    assert!(
+        !enqueued.exists(),
+        "a mismatched method must fail before enqueue"
     );
 }
