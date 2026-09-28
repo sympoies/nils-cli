@@ -593,6 +593,22 @@ resend or Enter injection. The Main Agent's claim and each worker assignment
 MUST therefore use non-overlapping scopes, and mutating workers MUST launch in
 their own managed worktrees.
 
+An assignment packet may declare `provider_refs`, an optional, additive list of
+at most 16 `{kind: "issue", repository, number}` entries. Every entry MUST
+name a distinct positive issue in the packet's own `repository`; any other
+kind, repository, or a missing packet repository fails at `worker start` with
+`invalid-orchestration-input`. An empty list is serialized away, so packets
+without it keep their request and packet digests. Bootstrap copies the list
+into the worker claim's `provider_refs`, which covers provider mutations such
+as a comment on the worker's child issue. With the checkout-shell grant,
+bootstrap also mints the private pull-request head grant for the worker
+checkout's branch (see Session Coordination V1), so the worker can create,
+update, and review the pull request whose head is its own branch. Worker start
+also rejects, as an `assignment-scope-conflict` entry `{owner, assignment_id?,
+repository, provider_ref}`, a packet issue already held by the controller claim
+or by a live worker claim. Creating issues and touching another repository's
+records are not covered and remain Main Agent work.
+
 `worker wait` is read-only completion-awareness for the orchestrating Main
 Agent — the CLI counterpart to the operator console's sub-second SSE push. It is
 a bounded (1-60s), level-triggered long-poll: given an assignment id or `--any`,

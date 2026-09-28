@@ -224,6 +224,7 @@ Public views omit all private proof material.
   "schema_version": "agent-session.operation-targets.v1",
   "targets": [{"kind": "path-exact", "repository": "owner/repository", "value": "src/lib.rs"}],
   "provider_refs": [{"kind": "issue", "repository": "owner/repository", "number": 123}],
+  "pull_requests": [{"kind": "pull-request-head", "repository": "owner/repository", "head": "feat/topic"}],
   "checkouts": [{"repository": "owner/repository", "path": "/canonical/private/checkout"}],
   "descendant": {"pid": 12345, "start_time": 987654}
 }
@@ -236,6 +237,21 @@ fails closed. Filesystem targets require a matching checkout binding. When the
 operation names exactly one repository, an omitted binding uses the managed
 session record's canonical cwd; multi-repository operations require explicit
 bindings. A provider-only operation may omit `targets` and `checkouts`.
+
+`pull_requests` is optional and additive; omitting it leaves the request, its
+idempotency digest, and the lease unchanged. Its only kind is
+`pull-request-head`, which names a pull request by `repository` and `head`
+branch, so it applies before the pull request exists (`pr create`) and after
+(a caller resolves a pull-request number to its head). The repository is
+canonicalized like any other, and `head` must be a bounded Git branch name
+(1-255 bytes; no whitespace, control characters, `..`, `//`, `@{`, or any of
+`~^:?*[\`; no leading `-`, `/`, or `.`; no trailing `/`, `.`, or `.lock`).
+At most 16 entries are accepted.
+A pull-request target is covered only by the private pull-request head grant
+described below; generic claims cannot cover one. An admitted lease records the
+canonical entries as `pull_request_targets`, which is omitted when empty. An
+uncovered target fails with `uncovered-mutation-scope`, and an invalid one with
+`invalid-scope`.
 
 An opaque checkout-local shell effect has one narrowly defined coverage rule.
 When `operation` is exactly `shell`, the target set is exactly one
@@ -257,6 +273,16 @@ the checkout lease prevents simultaneous physical writers. A worker remains
 untrusted: its final diff must be checked against the assignment scopes, and
 an adversarial same-user process requires an OS security boundary outside this
 contract.
+
+The same authenticated bootstrap mints a private pull-request head grant
+`{repository, head}` on the claim when the checkout's `origin` resolves to a
+claimed repository and its HEAD is a branch (an unborn branch counts; a
+detached HEAD grants nothing). The grant is stored as `pull_request_head` in
+the private registry, omitted from every public work-context projection, and
+absent from older records. It covers a `pull-request-head` target only for that
+exact repository and head, which lets a worker create, update, and review the
+pull request for its own branch without covering any other branch or
+repository. Generic `work-context claim` and `set` cannot request it.
 
 The runtime-issued checkpoint file follows the same threat boundary. The broker
 pre-creates one exact owner-only regular file for the current incarnation, and

@@ -16,10 +16,11 @@ use crate::cli::{
 use crate::{CliContext, CliError};
 
 use super::context::{
-    CheckoutBinding, ConflictClassification, ProviderRef, Scope, ScopeKind, WORK_CONTEXT_VERSION,
-    WorkContextInput, WorkContextRecord, canonical_repository, canonicalize_provider_refs,
-    canonicalize_targets, checkout_root, evaluate, fingerprint_epoch, scope_covers,
-    validate_physical_targets,
+    CheckoutBinding, ConflictClassification, ProviderRef, PullRequestHead, PullRequestTarget,
+    Scope, ScopeKind, WORK_CONTEXT_VERSION, WorkContextInput, WorkContextRecord,
+    canonical_repository, canonicalize_provider_refs, canonicalize_pull_request_targets,
+    canonicalize_targets, checkout_branch, checkout_root, evaluate, fingerprint_epoch,
+    repository_for_checkout, scope_covers, validate_physical_targets,
 };
 use super::{
     Registry, authenticate_any_from_file, authenticate_from_file, authenticate_token,
@@ -65,6 +66,8 @@ pub(crate) struct OperationLease {
     pub targets: Vec<Scope>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_targets: Vec<ProviderRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pull_request_targets: Vec<PullRequestTarget>,
     pub state: String,
     pub revision: u64,
     pub started_at: String,
@@ -299,6 +302,8 @@ struct OperationTargetsInput {
     #[serde(default)]
     provider_refs: Vec<ProviderRef>,
     #[serde(default)]
+    pull_requests: Vec<PullRequestTarget>,
+    #[serde(default)]
     checkouts: Vec<CheckoutBinding>,
     #[serde(default)]
     descendant: Option<DescendantIdentity>,
@@ -508,6 +513,18 @@ fn claim_impl(
             Some(json!({ "evaluation": evaluation })),
         ));
     }
+    // The worker bootstrap grant also covers pull requests whose head is the
+    // branch checked out in the authenticated worker checkout.
+    let pull_request_head = checkout_shell_grant
+        .then(|| {
+            let repository = repository_for_checkout(&checkout)?;
+            candidate.repositories.contains(&repository).then_some(())?;
+            Some(PullRequestHead {
+                repository,
+                head: checkout_branch(&checkout)?,
+            })
+        })
+        .flatten();
     let claim = WorkContextRecord {
         schema_version: WORK_CONTEXT_VERSION.to_string(),
         session_id: record.id.clone(),
@@ -520,6 +537,7 @@ fn claim_impl(
         repositories: candidate.repositories,
         worktrees: candidate.worktrees,
         checkout_shell_grant,
+        pull_request_head,
         provider_refs: candidate.provider_refs,
         plan_refs: candidate.plan_refs,
         scopes: candidate.scopes,
@@ -746,6 +764,7 @@ pub(crate) fn set_declared(
         repositories: candidate.repositories,
         worktrees: candidate.worktrees,
         checkout_shell_grant: false,
+        pull_request_head: None,
         provider_refs: candidate.provider_refs,
         plan_refs: candidate.plan_refs,
         scopes: candidate.scopes,
@@ -1146,26 +1165,30 @@ pub(crate) fn admit(context: &CliContext, args: WorkContextAdmitArgs) -> Result<
     validate_descendant(input.descendant.as_ref())?;
     let targets = canonicalize_targets(input.targets)?;
     let provider_targets = canonicalize_provider_refs(input.provider_refs)?;
-    if targets.is_empty() && provider_targets.is_empty() {
+    let pull_request_targets = canonicalize_pull_request_targets(input.pull_requests)?;
+    if targets.is_empty() && provider_targets.is_empty() && pull_request_targets.is_empty() {
         return Err(CliError::data(
             "invalid-scope",
             "operation targets must name at least one filesystem or provider mutation",
             None,
         ));
     }
-    let digest = request_digest(
-        "work-context-admit",
-        &json!({
-            "claim": args.claim,
-            "if_revision": args.if_revision,
-            "operation": args.operation,
-            "targets": targets,
-            "provider_targets": provider_targets,
-            "checkouts": input.checkouts,
-            "descendant": input.descendant,
-            "execution_token_digest": digest_bytes(execution_token.as_bytes()),
-        }),
-    );
+    let mut digest_input = json!({
+        "claim": args.claim,
+        "if_revision": args.if_revision,
+        "operation": args.operation,
+        "targets": targets,
+        "provider_targets": provider_targets,
+        "checkouts": input.checkouts,
+        "descendant": input.descendant,
+        "execution_token_digest": digest_bytes(execution_token.as_bytes()),
+    });
+    // Omitted when empty so requests without pull-request targets keep the
+    // digest released builds computed for them.
+    if !pull_request_targets.is_empty() {
+        digest_input["pull_request_targets"] = json!(pull_request_targets);
+    }
+    let digest = request_digest("work-context-admit", &digest_input);
     {
         let _session_authority = lock_claim_session_authority(context, &record, &incarnation)?;
         let locked = lock_registry_observational(context)?;
@@ -1265,6 +1288,18 @@ pub(crate) fn admit(context: &CliContext, args: WorkContextAdmitArgs) -> Result<
             None,
         ));
     }
+    if pull_request_targets.iter().any(|target| {
+        claim
+            .pull_request_head
+            .as_ref()
+            .is_none_or(|head| head.repository != target.repository || head.head != target.head)
+    }) {
+        return Err(CliError::data(
+            "uncovered-mutation-scope",
+            "pull request target is not covered by the active claim",
+            None,
+        ));
+    }
     let candidate = input_from_record(claim);
     let complete =
         complete_relevant_universe(context, &locked.registry, Some((&record.id, &incarnation)));
@@ -1314,6 +1349,7 @@ pub(crate) fn admit(context: &CliContext, args: WorkContextAdmitArgs) -> Result<
         operation: args.operation,
         targets,
         provider_targets,
+        pull_request_targets,
         state: "active".to_string(),
         revision: 1,
         started_at: timestamp(now),
@@ -1891,6 +1927,7 @@ pub fn acquire_main_agent_worker_start_fence(
         operation: "main-agent-worker-start".to_string(),
         targets: Vec::new(),
         provider_targets: Vec::new(),
+        pull_request_targets: Vec::new(),
         state: "active".to_string(),
         revision: 1,
         started_at: timestamp(now),
@@ -2207,6 +2244,7 @@ pub(crate) fn public_context(claim: &WorkContextRecord) -> Result<Value, CliErro
     object.remove("expires_at_epoch");
     object.remove("terminal_at_epoch");
     object.remove("checkout_shell_grant");
+    object.remove("pull_request_head");
     Ok(value)
 }
 
@@ -2646,6 +2684,7 @@ mod tests {
             operation: "edit".to_string(),
             targets: Vec::new(),
             provider_targets: Vec::new(),
+            pull_request_targets: Vec::new(),
             state: "active".to_string(),
             revision: 1,
             started_at: "time".to_string(),
