@@ -26,7 +26,7 @@ pub(crate) const READINESS_SCHEMA: &str = "agent-session.session-retitle.readine
 pub(crate) const RECEIPTS_SCHEMA: &str = "agent-session.session-retitle.receipts.v3";
 const MARKER_KEY: &str = "session_retitle_v3";
 const MARKER_SCHEMA: &str = "agent-session.session-retitle-state.v3";
-const SEMANTIC_PROJECTION_VERSION: u8 = 3;
+const SEMANTIC_PROJECTION_VERSION: u8 = 4;
 const MAX_MARKER_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_PROVIDER_INPUT_BYTES: usize = 16 * 1024;
 const MAX_SEMANTIC_PROJECTION_BYTES: usize = 12 * 1024;
@@ -157,6 +157,10 @@ pub(crate) struct SemanticMemory {
     /// managed objective pivot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     managed_objective: Option<String>,
+    /// Sanitized prose of the latest substantive human follow-up that did not
+    /// change the objective. It feeds the title activity, never the topic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    current_request: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     current_activity: Option<MemoryFact>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -193,6 +197,7 @@ impl Default for SemanticMemory {
             objective_context: None,
             work_references: Vec::new(),
             managed_objective: None,
+            current_request: None,
             current_activity: None,
             milestones: Vec::new(),
             decisions: Vec::new(),
@@ -1032,6 +1037,7 @@ fn reset_prior_semantic_projection(
     memory.origin = None;
     memory.active_objective = None;
     memory.managed_objective = None;
+    memory.current_request = None;
     memory.current_activity = None;
     memory.milestones.clear();
     memory.decisions.clear();
@@ -2107,7 +2113,9 @@ fn reduce_messages_with(
         if memory.applied_message_ids.contains(&message.id) {
             continue;
         }
-        if !prompts_set_objective && message.human_prompt && message.role == "user" {
+        let human = message.human_prompt && message.role == "user";
+        let prompt = human.then(|| human_prompt_text(&message.text)).flatten();
+        if human && (!prompts_set_objective || prompt.is_none()) {
             memory.last_turn_id = Some(message.id.clone());
             push_bounded(
                 &mut memory.applied_message_ids,
@@ -2116,8 +2124,8 @@ fn reduce_messages_with(
             );
             continue;
         }
-        let source_text = if message.human_prompt && message.role == "user" {
-            crate::provider_prompt::image_preview_text(&message.text)
+        let source_text = if let Some(prompt) = prompt {
+            crate::provider_prompt::image_preview_text(prompt)
         } else {
             message.text.clone()
         };
@@ -2146,6 +2154,7 @@ fn reduce_messages_with(
                 memory.active_objective = Some(fact.clone());
                 memory.objective_context = objective_context(&source_text);
                 memory.work_references = references;
+                memory.current_request = None;
             } else if explicit_objective_pivot(&text)
                 || (greeting_origin_is_active(memory)
                     && !is_greeting_placeholder(&text)
@@ -2154,8 +2163,14 @@ fn reduce_messages_with(
                 memory.active_objective = Some(fact.clone());
                 memory.objective_context = objective_context(&source_text);
                 memory.work_references = references;
-            } else if !references.is_empty() {
-                memory.work_references = references;
+                memory.current_request = None;
+            } else {
+                if !references.is_empty() {
+                    memory.work_references = references;
+                }
+                if !is_routine_followup(&text) && !is_greeting_placeholder(&text) {
+                    memory.current_request = current_request(&source_text);
+                }
             }
             push_bounded(
                 &mut memory.journey,
@@ -2242,6 +2257,7 @@ fn apply_managed_objective(
     }
     memory.active_objective = Some(fact);
     memory.objective_context = objective_context(&objective.summary);
+    memory.current_request = None;
     memory.work_references = extract_work_references(&strip_image_reference_markers(
         &crate::retitle::filter_text(&objective.summary),
     ));
@@ -2258,8 +2274,20 @@ fn apply_managed_objective(
     true
 }
 
+/// A cue counts only where the prompt opens with it, optionally after a
+/// conversational filler. Mid-sentence these words are ordinary prose: `現在`
+/// is just "now", and `改成` also means "change X to Y".
 fn explicit_objective_pivot(text: &str) -> bool {
-    let normalized = text.trim().to_ascii_lowercase();
+    let normalized = text.trim().to_lowercase();
+    let mut rest = normalized.as_str();
+    while let Some(next) = ["那", "現在", "好", "ok ", "ok,", "okay ", "okay,"]
+        .iter()
+        .find_map(|filler| rest.strip_prefix(filler))
+    {
+        rest = next.trim_start_matches(|character: char| {
+            character.is_whitespace() || matches!(character, ',' | '，' | '、')
+        });
+    }
     [
         "now ",
         "next ",
@@ -2271,13 +2299,36 @@ fn explicit_objective_pivot(text: &str) -> bool {
         "please implement",
         "please fix",
         "接下來",
-        "現在",
         "改成",
         "換成",
         "新目標",
     ]
     .iter()
-    .any(|cue| normalized.starts_with(cue) || normalized.contains(cue))
+    .any(|cue| rest.starts_with(cue))
+}
+
+/// Claude Code writes a slash-command echo, its local output, and a bare typed
+/// command as ordinary user records. Only a command's arguments carry human
+/// intent; every other part is transcript scaffolding.
+fn human_prompt_text(text: &str) -> Option<&str> {
+    let trimmed = text.trim();
+    if trimmed.starts_with("<local-command-") {
+        return None;
+    }
+    if trimmed.contains("<command-name>") {
+        return trimmed
+            .split_once("<command-args>")
+            .and_then(|(_, rest)| rest.split_once("</command-args>"))
+            .map(|(args, _)| args.trim())
+            .filter(|args| !args.is_empty());
+    }
+    let bare_command = trimmed.strip_prefix('/').is_some_and(|name| {
+        !name.is_empty()
+            && name.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | ':')
+            })
+    });
+    (!bare_command).then_some(text)
 }
 
 fn normalized_short_prompt(text: &str) -> String {
@@ -2449,6 +2500,12 @@ fn objective_context(value: &str) -> Option<String> {
     let stripped =
         strip_image_reference_markers(&crate::provider_prompt::image_preview_text(value));
     sanitize_text(&stripped, MAX_OBJECTIVE_CONTEXT_CHARS)
+}
+
+fn current_request(value: &str) -> Option<String> {
+    let stripped =
+        strip_image_reference_markers(&crate::provider_prompt::image_preview_text(value));
+    sanitize_text(&stripped, MAX_TEXT_CHARS)
 }
 
 fn valid_reference_number(value: &str) -> bool {
@@ -2634,6 +2691,7 @@ pub(crate) fn render_provider_input(memory: &SemanticMemory) -> Result<String, C
     let value = json!({
         "schema_version": CAPABILITY,
         "human_objective": memory.objective_context,
+        "current_request": memory.current_request,
         "origin": memory.origin,
         "active_objective": memory.active_objective,
         "current_activity": (!has_readable_objective).then_some(memory.current_activity).flatten(),
@@ -2926,6 +2984,10 @@ fn sanitize_memory_in_place(memory: &mut SemanticMemory) {
         .objective_context
         .as_deref()
         .and_then(|context| sanitize_text(context, MAX_OBJECTIVE_CONTEXT_CHARS));
+    memory.current_request = memory
+        .current_request
+        .as_deref()
+        .and_then(|request| sanitize_text(request, MAX_TEXT_CHARS));
     memory
         .work_references
         .retain(|reference| valid_work_reference(reference));
@@ -4325,6 +4387,11 @@ mod tests {
             "continue",
             "what is the status?",
             "please explain that",
+            "這問題現在嚴重影響我的使用 幫我看看怎麼解決",
+            "現在就重啟 sidecar",
+            "那現在幫我看看 retitle 有沒有什麼問題",
+            "i don't know why the next step fails",
+            "把按鈕顏色改成藍色",
         ] {
             assert!(
                 !explicit_objective_pivot(prompt),
@@ -4337,8 +4404,112 @@ mod tests {
             "change the objective to crash recovery",
             "接下來處理 rotation",
             "改成 observability",
+            "現在改成先修 retitle 標題",
+            "那接下來處理 rotation",
+            "Instead, fix the flaky test",
         ] {
             assert!(explicit_objective_pivot(prompt), "missed pivot: {prompt}");
+        }
+    }
+
+    #[test]
+    fn routine_follow_ups_keep_the_main_objective_and_become_the_current_request() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[
+                message(
+                    "turn-1",
+                    "user",
+                    "修正 dashboard 排序在多台主機間跑掉",
+                    true,
+                ),
+                message(
+                    "turn-2",
+                    "user",
+                    "這問題現在嚴重影響我的使用 幫我看看怎麼解決",
+                    true,
+                ),
+                message("turn-3", "assistant", "Restarting the sidecars", false),
+                message("turn-4", "user", "現在就重啟 sidecar", true),
+            ],
+        );
+
+        assert_eq!(memory.active_objective, memory.origin);
+        assert_eq!(
+            memory.objective_context.as_deref(),
+            Some("修正 dashboard 排序在多台主機間跑掉")
+        );
+        assert_eq!(
+            memory.current_request.as_deref(),
+            Some("現在就重啟 sidecar")
+        );
+        let provider = render_provider_input(&memory).unwrap();
+        assert!(provider.contains("\"current_request\":\"現在就重啟 sidecar\""));
+        assert!(!provider.contains("Restarting the sidecars"));
+
+        reduce_messages(&mut memory, &[message("turn-5", "user", "繼續", true)]);
+        assert_eq!(
+            memory.current_request.as_deref(),
+            Some("現在就重啟 sidecar")
+        );
+
+        reduce_messages(
+            &mut memory,
+            &[message("turn-6", "user", "現在改成先修 retitle 標題", true)],
+        );
+        assert_eq!(
+            memory.active_objective.as_ref().unwrap().display.as_deref(),
+            Some("現在改成先修 retitle 標題")
+        );
+        assert_eq!(memory.current_request, None);
+    }
+
+    #[test]
+    fn slash_command_transcript_records_never_become_objectives() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[
+                message(
+                    "turn-clear",
+                    "user",
+                    "<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>",
+                    true,
+                ),
+                message(
+                    "turn-output",
+                    "user",
+                    "<local-command-stdout>\u{1b}[2mCompacted \u{1b}[22m</local-command-stdout>",
+                    true,
+                ),
+                message("turn-bare", "user", "/compact", true),
+                message("turn-1", "user", "修正 dashboard 排序", true),
+                message(
+                    "turn-skill",
+                    "user",
+                    "<command-message>fix-bug</command-message>\n<command-name>/fix-bug</command-name>\n<command-args>登入頁面當機</command-args>",
+                    true,
+                ),
+            ],
+        );
+
+        assert_eq!(
+            memory.origin.as_ref().unwrap().display.as_deref(),
+            Some("修正 dashboard 排序")
+        );
+        assert_eq!(memory.current_request.as_deref(), Some("登入頁面當機"));
+        assert_eq!(memory.journey.len(), 2);
+        assert_eq!(memory.last_turn_id.as_deref(), Some("turn-skill"));
+        assert!(
+            memory
+                .applied_message_ids
+                .iter()
+                .any(|id| id == "turn-clear")
+        );
+        let durable = serde_json::to_string(&memory).unwrap();
+        for leaked in ["command · name", "stdout", "compact", "\\u001b"] {
+            assert!(!durable.contains(leaked), "leaked {leaked}: {durable}");
         }
     }
 

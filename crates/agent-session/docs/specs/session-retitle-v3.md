@@ -354,6 +354,10 @@ The marker contains:
   token with punctuation, or an explicit GitHub issue or pull URL;
 - an optional opaque hash of the last managed orchestration objective folded
   into memory (see [Managed orchestration objectives](#managed-orchestration-objectives));
+- a sanitized, bounded current request: the latest substantive human
+  follow-up that did not change the objective. A routine acknowledgement
+  leaves it unchanged, and a new origin or objective pivot clears it. It feeds
+  the title activity, never the topic;
 - `current_activity`, which assistant progress may update;
 - bounded `milestones`, `decisions`, `blockers`, and `journey` ledgers;
 - bounded source `segments` and the current incremental `cursor`;
@@ -368,13 +372,18 @@ MUST NOT evict the active non-terminal operation.
 
 The origin is never automatically replaced. Routine human follow-ups update
 the journey but not the active objective. A deterministic, explicit pivot cue
-in a human-submitted turn can replace `active_objective`. A greeting-only origin
+in a human-submitted turn can replace `active_objective`. A cue counts only
+where the prompt opens with it, optionally after a conversational filler such
+as `現在`, `那`, or `ok`; the same word later in a sentence is ordinary prose,
+and `現在` alone is not a cue. A greeting-only origin
 is a placeholder: the first later human prompt that is neither another greeting
 nor a routine acknowledgement also replaces `active_objective`. Older
 projections retain their cached state and use the provider path above when a
 later task is recorded only in the journey. Assistant, developer, system, tool,
 compact-summary, generated continuation, and terminal output can update neither
-`origin` nor `active_objective`. Assistant text MAY update activity or a bounded
+`origin` nor `active_objective`. A Claude slash-command echo, its local command
+output, and a bare typed slash command are transcript scaffolding, not human
+objectives; only a command's non-empty arguments count as the human prompt. Assistant text MAY update activity or a bounded
 ledger after sanitization.
 
 The provider input is a deterministic JSON projection of the accepted memory
@@ -383,7 +392,9 @@ context, but excludes the public readable objective field, work references,
 cursor, segment, receipt, timestamp, path, credential, environment, and raw
 provider identity fields. When readable human context is present, the provider
 projection excludes assistant-derived activity and ledgers so instructions in
-the human prompt cannot copy that private memory into a public title.
+the human prompt cannot copy that private memory into a public title. The
+current request is human prose and is included; the provider keeps the topic on
+the active objective and MAY name the current request as the title activity.
 Repeated rendering of the same memory revision MUST produce identical bytes.
 
 ## Managed orchestration objectives
