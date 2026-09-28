@@ -277,6 +277,11 @@ recorded in `sympoies/nils-cli#1409`.
   Codex/Claude sessions add `last_prompt_state` with one of `current`, `pending`,
   or `unavailable`. `current` may include `last_prompt`; `current` without it
   authoritatively means the caught-up transcript has no eligible user prompt.
+  A managed Main Agent worker (`orchestration.role` is `worker`) never
+  previews its launch prompt: a prompt identical to the session's own private
+  launch prompt, which is the controller-generated bootstrap instruction and
+  names a machine-local executable, is withheld as `current` without
+  `last_prompt` until a later prompt replaces it.
   `pending` means exact-source discovery, cold recovery, or known append catch-up
   is in progress and omits the preview rather than reporting a stale cached
   value. `unavailable` means the exact source cannot currently be used or its

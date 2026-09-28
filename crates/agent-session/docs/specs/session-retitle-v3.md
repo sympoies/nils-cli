@@ -348,6 +348,8 @@ The marker contains:
   `repo #N` for another repository. A nearby prose word does not qualify a
   bare `#N` as cross-repository; the compact form requires a repository-shaped
   token with punctuation, or an explicit GitHub issue or pull URL;
+- an optional opaque hash of the last managed orchestration objective folded
+  into memory (see [Managed orchestration objectives](#managed-orchestration-objectives));
 - `current_activity`, which assistant progress may update;
 - bounded `milestones`, `decisions`, `blockers`, and `journey` ledgers;
 - bounded source `segments` and the current incremental `cursor`;
@@ -379,6 +381,32 @@ provider identity fields. When readable human context is present, the provider
 projection excludes assistant-derived activity and ledgers so instructions in
 the human prompt cannot copy that private memory into a public title.
 Repeated rendering of the same memory revision MUST produce identical bytes.
+
+## Managed orchestration objectives
+
+A session in a [Main Agent run](main-agent-orchestration-v1.md) takes its
+objective from the orchestration registry, read at each memory refresh:
+
+- A managed worker's objective is its assignment `task_summary`. Every
+  user-role prompt of a worker is delivered by its controller, starting with
+  the generated bootstrap prompt, so those prompts update neither `origin`,
+  `active_objective`, the objective context, work references, nor the journey.
+  The first worker title therefore describes the assignment task, and the
+  bootstrap prompt never reaches the title provider.
+- The controller of an `active` run takes that run's `objective_summary`
+  (the most recently created one if it controls several active runs). A closed,
+  orphaned, or recovery-needed run contributes nothing.
+
+The objective is folded in as an objective pivot once per distinct
+role, owner (assignment or run id), and summary, recorded as the opaque
+`managed_objective` hash. The pivot sets `active_objective` (and `origin`
+when absent), the objective context, and work references from the summary,
+appends a `human_objective` journey entry, and counts as a semantic change, so
+the next retitle re-evaluates the title even without new history. Because it
+fires only when that identity changes, a later explicit human pivot in a Main
+session still wins until the session starts a different run. The summary is
+already bounded and validated by the orchestration writer and is sanitized
+like any human objective before it enters memory.
 
 ## Incremental history and discontinuity
 

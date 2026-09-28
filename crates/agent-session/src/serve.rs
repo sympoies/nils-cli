@@ -5175,8 +5175,18 @@ async fn enrich_last_prompts(state: &Arc<ServeState>, sessions: &mut [SessionVie
         }
         let context = state.context.clone();
         let id = session.id.clone();
-        let Ok(Ok(record)) =
-            tokio::task::spawn_blocking(move || load_session_record(&context, &id)).await
+        let managed_worker = session
+            .orchestration
+            .as_ref()
+            .is_some_and(|orchestration| orchestration.role == "worker");
+        let Ok(Ok((record, launch_prompt))) = tokio::task::spawn_blocking(move || {
+            let record = load_session_record(&context, &id)?;
+            let launch_prompt = managed_worker
+                .then(|| managed_worker_launch_prompt(&context, &record))
+                .flatten();
+            Ok::<_, CliError>((record, launch_prompt))
+        })
+        .await
         else {
             continue;
         };
@@ -5187,9 +5197,44 @@ async fn enrich_last_prompts(state: &Arc<ServeState>, sessions: &mut [SessionVie
         {
             session.last_prompt_state = Some(projection.state);
             session.last_prompt_continuity = projection.continuity;
-            session.last_prompt = projection.prompt;
+            session.last_prompt = projection
+                .prompt
+                .filter(|prompt| !is_launch_prompt(prompt, launch_prompt.as_deref()));
         }
     }
+}
+
+/// Reads a managed worker's launch prompt: the session's own private
+/// `prompt.md`, which the controller wrote. That prompt is the generated
+/// bootstrap instruction (it names a machine-local executable), never human
+/// input, so the latest-prompt preview withholds it.
+fn managed_worker_launch_prompt(context: &CliContext, record: &SessionRecord) -> Option<String> {
+    let expected = crate::session_dir(context, &record.id).join("prompt.md");
+    if Path::new(record.prompt_file.as_deref()?) != expected {
+        return None;
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&expected)
+        .ok()?;
+    let limit = crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES as u64;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut prompt = String::new();
+    file.take(limit + 1).read_to_string(&mut prompt).ok()?;
+    (prompt.len() as u64 <= limit).then_some(prompt)
+}
+
+fn is_launch_prompt(prompt: &LastPrompt, launch_prompt: Option<&str>) -> bool {
+    launch_prompt.is_some_and(|launch| {
+        if prompt.truncated {
+            launch.starts_with(&prompt.text)
+        } else {
+            launch == prompt.text
+        }
+    })
 }
 
 async fn codex_accounts_handler(
@@ -20937,6 +20982,165 @@ esac
                 .as_object()
                 .is_some_and(|session| !session.contains_key("last_prompt")),
             "current without a prompt authoritatively represents an empty transcript"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sessions_list_withholds_a_managed_worker_launch_prompt_preview() {
+        use std::os::unix::fs::PermissionsExt;
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let state_dir = tmp.path().join("state");
+        let codex_home = tmp.path().join("codex-home");
+        let transcript = codex_home.join("sessions/2026/09/session.jsonl");
+        std::fs::create_dir_all(transcript.parent().expect("transcript parent"))
+            .expect("transcript dir");
+        let id = "managed-preview";
+        let provider_id = "managed-preview-provider";
+        let launch_prompt = "Main Agent Mode is explicitly active for this managed worker assignment. Run exactly `/opt/pkg/Cellar/nils-cli/1.29.0/bin/main-agent bootstrap --idempotency-key bootstrap-0123 --format json` now.";
+        let prompt_line = |text: &str| {
+            format!(
+                "{}\n",
+                json!({
+                    "type":"event_msg",
+                    "payload":{"type":"user_message","message":text}
+                })
+            )
+        };
+        std::fs::write(
+            &transcript,
+            format!(
+                "{}\n{}",
+                json!({
+                    "type":"session_meta",
+                    "payload":{
+                        "id":provider_id,
+                        "session_id":provider_id,
+                        "cwd":"/tmp",
+                        "source":"cli",
+                        "timestamp":"2099-01-01T00:00:00Z"
+                    }
+                }),
+                prompt_line(launch_prompt)
+            ),
+        )
+        .expect("transcript");
+        let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", codex_home.to_str().unwrap());
+        seed_session_with_runtime(&state_dir, id, "codex", &format!("hs-codex-{id}"));
+        let session_dir = state_dir.join("sessions").join(id);
+        let prompt_path = session_dir.join("prompt.md");
+        std::fs::write(&prompt_path, launch_prompt).expect("launch prompt");
+        std::fs::set_permissions(&prompt_path, std::fs::Permissions::from_mode(0o600))
+            .expect("launch prompt mode");
+        let record_path = session_dir.join("session.json");
+        let mut record: Value =
+            serde_json::from_slice(&std::fs::read(&record_path).expect("session record"))
+                .expect("session json");
+        record["prompt_file"] = json!(prompt_path);
+        record["provider_resume"] = json!({
+            "provider":"codex",
+            "session_id":provider_id,
+            "captured_at":"2099-01-01T00:00:00Z",
+            "capture_method":"codex-explicit-session-id",
+            "resume_args":["resume", provider_id]
+        });
+        std::fs::write(
+            &record_path,
+            serde_json::to_vec_pretty(&record).expect("session json"),
+        )
+        .expect("session record");
+        let reference = |session_id: &str| {
+            json!({
+                "session_id": session_id,
+                "session_incarnation": format!("launch-{session_id}"),
+                "session_created_at": "2000-01-01T00:00:00Z"
+            })
+        };
+        let orchestration_root = state_dir.join("orchestration");
+        std::fs::create_dir_all(&orchestration_root).expect("orchestration root");
+        std::fs::set_permissions(&orchestration_root, std::fs::Permissions::from_mode(0o700))
+            .expect("orchestration mode");
+        let registry_path = orchestration_root.join("registry.json");
+        std::fs::write(
+            &registry_path,
+            serde_json::to_vec_pretty(&json!({
+                "schema_version": "agent-session.orchestration-registry.v2",
+                "runs": {
+                    "run-one": {
+                        "schema_version": "agent-session.orchestration-run.v1",
+                        "run_id": "run-one",
+                        "revision": 2,
+                        "state": "active",
+                        "tier": "L0",
+                        "objective_summary": "Deliver the program wave",
+                        "objective_packet_digest": format!("sha256:{}", "a".repeat(64)),
+                        "controller": reference("preview-main"),
+                        "created_at": "2099-01-01T00:00:00Z",
+                        "updated_at": "2099-01-01T00:00:00Z"
+                    }
+                },
+                "assignments": {
+                    "assignment-one": {
+                        "schema_version": "agent-session.orchestration-assignment.v2",
+                        "assignment_id": "assignment-one",
+                        "run_id": "run-one",
+                        "revision": 3,
+                        "state": "working",
+                        "task_summary": "Title workers from their task",
+                        "private_packet_digest": format!("sha256:{}", "b".repeat(64)),
+                        "primary_manager": reference("preview-main"),
+                        "worker": reference(id),
+                        "created_at": "2099-01-01T00:00:00Z",
+                        "updated_at": "2099-01-01T00:00:00Z"
+                    }
+                },
+                "receipts": {}
+            }))
+            .expect("registry json"),
+        )
+        .expect("registry");
+        std::fs::set_permissions(&registry_path, std::fs::Permissions::from_mode(0o600))
+            .expect("registry mode");
+        let tmux_calls = tmp.path().join("tmux.calls");
+        let tmux = failing_delete_tmux(tmp.path(), &state_dir, id, 77, &tmux_calls);
+        let state = state(&state_dir, Some(TOKEN), tmux);
+
+        let current = |expected: Option<&'static str>| {
+            let state = state.clone();
+            async move {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        let (_, body) = call(router(state.clone()), get("/sessions")).await;
+                        let session = body["data"]["sessions"][0].clone();
+                        if session["last_prompt_state"] == "current"
+                            && session["last_prompt"]["text"].as_str() == expected
+                        {
+                            break session;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("current last prompt")
+            }
+        };
+        let withheld = current(None).await;
+        assert_eq!(withheld["orchestration"]["role"], "worker");
+        assert!(
+            !withheld.to_string().contains("bootstrap"),
+            "a managed worker's generated launch prompt must never reach the preview: {withheld}"
+        );
+
+        OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .expect("append transcript")
+            .write_all(prompt_line("please also cover the blocked case").as_bytes())
+            .expect("append prompt");
+        let later = current(Some("please also cover the blocked case")).await;
+        assert_eq!(
+            later["last_prompt"]["text"],
+            "please also cover the blocked case"
         );
     }
 
