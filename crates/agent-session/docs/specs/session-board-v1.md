@@ -9,6 +9,10 @@
   retention, and the query route in [Aggregator query contract](#aggregator-query-contract).
 - Program key: `agent-console-board-2026-09`, item A0. Implementation items A1
   (local projection), A2 (closed ledger), and A5 (CLI) follow this contract.
+- Code placement: board projection, ledger, relay, and CLI code lives in its
+  own module (`crates/agent-session/src/board.rs` or a `board/` directory),
+  not in `serve.rs` or `lib.rs`. Those files only register routes and the
+  subcommand and call into the board module.
 
 The board lets every session in one deployment see which other sessions
 exist, where they run, and roughly what they are doing, including sessions
@@ -94,7 +98,10 @@ Every board surface carries records with this shape. The record has no
 ```
 
 Timestamps are RFC 3339 UTC strings, as in `SessionView`. Every field is
-always present; an unavailable value is `null`, never omitted.
+always present; an unavailable value is `null`, never omitted. The only
+optional member is the aggregator annotation `console_owner` described in
+[Aggregator annotations](#aggregator-annotations), which is not a board-record
+field.
 
 ### Field sources
 
@@ -440,6 +447,42 @@ parameter, repeated parameter, or invalid value fails with
   newest first, then by `machine` and `session_id` ascending.
 - At most 1024 records are returned; `truncated: true` reports that more
   matched.
+- `retention` is the aggregator's configured retention (`3d`, `7d`, `2w`, or
+  `1mo`). `effective_since` is the start of the window actually applied.
+  `since_capped` is `true` exactly when the requested `since` was longer than
+  `retention` and was clamped to it.
+
+### Since beyond retention
+
+A `since` longer than the configured retention is clamped and reported with
+`since_capped: true`; it is not an error. v1 defines no `retention-exceeded`
+failure code, and an aggregator must not return one. A consumer that needs to
+know the real window reads `retention` and `effective_since`.
+
+### Aggregator annotations
+
+An aggregator view may add one optional member to each record:
+`console_owner` (string or null), the aggregator's display label for the
+deployment principal that owns the session. It is an annotation, not a
+board-record field:
+
+- daemons and CLI local mode never emit it; the relay route passes it through
+  unchanged when the aggregator sends it;
+- absence and `null` both mean unknown;
+- it is display-only. It never authorizes a message, and a consumer must not
+  infer from it, or from `messaging_supported`, that the caller may message
+  the session. `message send` ownership checks decide that.
+
+Whether an aggregator populates it is the aggregator's choice.
+
+### Console UI surface
+
+An aggregator may also serve the same `agent-session.board-view.v1` object to
+its own user interface behind its normal user authentication, with the same
+filters, clamping, and failure codes, and no per-principal filtering. The route
+path, its response envelope, and how the aggregator advertises that the route
+exists are the aggregator's own API and are outside this contract. The daemon
+and CLI never call that route.
 
 ## CLI
 
@@ -502,8 +545,8 @@ in coordination v1.
 | `cli.agent-session.board.v1` | CLI JSON envelope |
 
 Unsupported schema versions fail closed. Consumers ignore unknown additive
-fields on envelopes, but a record field listed above never changes type
-within v1.
+fields on envelopes and records, but a record field listed above never changes
+type within v1.
 
 ## Stable failure codes
 
@@ -543,5 +586,6 @@ Implementation items must cover:
   `board-cursor-expired` after pruning and after `ledger_id` change;
 - relay route capability authentication, `board-relay-disabled` without a
   network call, and error mapping;
-- CLI mode selection, including no silent fallback on relay failure, and
-  text and JSON golden output.
+- CLI mode selection, including no silent fallback on relay failure, local
+  mode clamping `since` to `7d` with `since_capped`, a relay view carrying
+  `console_owner` passing through, and text and JSON golden output.
