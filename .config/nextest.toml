@@ -27,7 +27,6 @@
 # `nils-agent-session` `main_agent_worker_start_distinct_null_id_requests_hold_distinct_authority_fences`,
 # `launch_profile_readiness_timeout_kills_its_process_group`,
 # `delete_exhausts_bounded_identity_churn_without_losing_current_runtime`,
-# `nils-agent-hook` `codex_apply_patch_target_binding_meets_dispatch_latency_budget`,
 # and `nils-claude-cli` `spawn_retry_is_bounded_and_limited_to_would_block`.
 # Two thirds of those events are macOS. Every cluster investigated so far looked
 # like host contention and turned out to be a defect, so find the mechanism
@@ -70,6 +69,17 @@ priority = 100
 # pressure cannot turn OS child-spawn availability into a semantic failure.
 [[profile.ci.overrides]]
 filter = 'package(nils-agent-hook) & test(enforce_valid_read_only_bypasses_only_the_declared_fallback_handler)'
+threads-required = "num-test-threads"
+priority = 100
+
+# This test asserts the wall-clock p95 of 20 `dispatch` process runs per target
+# count against 25-100 ms budgets, so CPU taken by other tests counts against
+# it. Once priority started it beside the longest agent-session tests, run
+# 36474535382 failed both attempts on macOS at 16 targets only (35 and 47 ms)
+# while 64 and 256 targets stayed under budget: scheduling noise, not dispatch
+# cost; it was on the flaky list above for the same reason.
+[[profile.ci.overrides]]
+filter = 'package(nils-agent-hook) & test(=codex_apply_patch_target_binding_meets_dispatch_latency_budget)'
 threads-required = "num-test-threads"
 priority = 100
 
