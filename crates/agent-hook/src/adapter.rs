@@ -545,18 +545,59 @@ pub fn render_provider(decision: &NormalizedDecision) -> Result<String, HookErro
         DecisionAction::Warn if decision.product == Product::Codex && decision.event == "Stop" => {
             json!({})
         }
-        DecisionAction::Context | DecisionAction::Warn => json!({
-            "hookSpecificOutput": {
-                "hookEventName": decision.event,
-                "additionalContext": decision.context.as_deref().unwrap_or(&reason),
+        DecisionAction::Context | DecisionAction::Warn
+            if matches!(decision.product, Product::Codex | Product::Claude) =>
+        {
+            match native_context_text(decision) {
+                Some(context) => context_output(&decision.event, &context),
+                None => json!({}),
             }
-        }),
+        }
+        DecisionAction::Context | DecisionAction::Warn => context_output(
+            &decision.event,
+            decision.context.as_deref().unwrap_or(&reason),
+        ),
     };
     serde_json::to_string(&output).map_err(|_| {
         HookError::runtime(
             "provider-output-render-failed",
             "provider output could not be rendered",
         )
+    })
+}
+
+/// Model-facing text for a Codex or Claude context or warning decision.
+///
+/// Rule-supplied text is rendered as is. Without it, a context decision has
+/// nothing to say and a warning names only the codes that raised it. The
+/// complete reason list is the configured rule set, not what fired, so it is
+/// never provider context (sympoies/nils-cli#1878).
+fn native_context_text(decision: &NormalizedDecision) -> Option<String> {
+    if let Some(context) = decision
+        .context
+        .as_deref()
+        .filter(|context| !context.trim().is_empty())
+    {
+        return Some(context.to_string());
+    }
+    if decision.action != DecisionAction::Warn {
+        return None;
+    }
+    let warnings = decision
+        .reasons
+        .iter()
+        .filter(|reason| reason.disposition == "warn")
+        .map(|reason| reason.code.as_str())
+        .collect::<Vec<_>>();
+    (!warnings.is_empty()).then(|| warnings.join(","))
+}
+
+fn context_output(event: &str, context: &str) -> Value {
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": event,
+            "additionalContext": context,
+        }
     })
 }
 
@@ -1560,6 +1601,105 @@ mod tests {
                     serde_json::from_str(&render_provider(&decision).expect("provider output"))
                         .expect("provider JSON");
                 assert_eq!(rendered, provider_output);
+            }
+        }
+    }
+
+    fn textless_decision(
+        product: Product,
+        event: &str,
+        action: DecisionAction,
+        context: Option<&str>,
+    ) -> NormalizedDecision {
+        let reason = |rule_id: &str, code: &str, disposition: &str| DecisionReason {
+            rule_id: rule_id.to_string(),
+            code: code.to_string(),
+            disposition: disposition.to_string(),
+        };
+        NormalizedDecision {
+            schema_version: "agent-hook.decision.v1".to_string(),
+            request_id: "request:textless".to_string(),
+            product,
+            event: event.to_string(),
+            action,
+            reasons: vec![
+                reason("coord.activity", "agent-activity", "allow"),
+                reason("coord.semantic-conflict", "semantic-conflict", "warn"),
+                reason("coord.owner-liveness", "owner-unclaimed", "allow"),
+                reason("runtime.reminder", "forge-label-reminder", "allow"),
+                reason("runtime.context", "empty-context", "context"),
+            ],
+            context: context.map(str::to_string),
+            replacement: None,
+            shadow: Vec::<ShadowObservation>::new(),
+            config_digest: "sha256:config".to_string(),
+            policy_digest: "sha256:policy".to_string(),
+            recovery_applied: false,
+            enforcement: None,
+            downgraded_by: None,
+            provider_output: None,
+        }
+    }
+
+    fn rendered(decision: &NormalizedDecision) -> Value {
+        serde_json::from_str(&render_provider(decision).expect("provider output"))
+            .expect("provider JSON")
+    }
+
+    #[test]
+    fn provider_render_omits_context_decision_without_text() {
+        for product in [Product::Codex, Product::Claude] {
+            for event in ["PreToolUse", "UserPromptSubmit"] {
+                for context in [None, Some(""), Some(" \n\t")] {
+                    let decision =
+                        textless_decision(product, event, DecisionAction::Context, context);
+                    assert_eq!(
+                        rendered(&decision),
+                        json!({}),
+                        "{product:?}/{event} context={context:?} must not inject reason codes"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn provider_render_names_only_warning_codes_for_warn_without_text() {
+        for product in [Product::Codex, Product::Claude] {
+            for context in [None, Some(""), Some("  ")] {
+                let decision =
+                    textless_decision(product, "PreToolUse", DecisionAction::Warn, context);
+                assert_eq!(
+                    rendered(&decision),
+                    json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "additionalContext": "semantic-conflict",
+                        }
+                    }),
+                    "{product:?} context={context:?} must not list allow or context codes"
+                );
+            }
+        }
+        let codex_stop = textless_decision(Product::Codex, "Stop", DecisionAction::Warn, None);
+        assert_eq!(rendered(&codex_stop), json!({}));
+    }
+
+    #[test]
+    fn provider_render_keeps_block_reasons_and_supplied_text() {
+        for product in [Product::Codex, Product::Claude] {
+            let block = textless_decision(product, "PreToolUse", DecisionAction::Block, None);
+            assert_eq!(
+                rendered(&block)["hookSpecificOutput"]["permissionDecisionReason"],
+                "agent-hook:agent-activity,semantic-conflict,owner-unclaimed,forge-label-reminder,empty-context"
+            );
+            for action in [DecisionAction::Context, DecisionAction::Warn] {
+                let supplied =
+                    textless_decision(product, "PreToolUse", action, Some("rule guidance"));
+                assert_eq!(
+                    rendered(&supplied)["hookSpecificOutput"]["additionalContext"],
+                    "rule guidance"
+                );
             }
         }
     }

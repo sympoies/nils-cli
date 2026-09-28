@@ -277,6 +277,94 @@ fn forged_payload_conflict_is_ignored_but_registry_conflict_blocks() {
     }
 }
 
+/// Provider context carries rule text, never the configured rule list: an
+/// allow-only dispatch renders the neutral `{}` and a textless warning names
+/// only the warning codes (sympoies/nils-cli#1878).
+#[test]
+fn provider_context_never_lists_allow_reason_codes() {
+    let allow_rules = r#"schema_version = "agent-hook.policy.v1"
+bundle_id = "runtime-kit"
+version = "2026.07.20.1"
+
+[[rules]]
+id = "runtime.first-allow"
+products = ["codex", "claude"]
+events = ["PreToolUse", "UserPromptSubmit"]
+priority = 100
+mode = "enforce"
+failure_posture = "closed"
+override_class = "locked"
+capability = { id = "decision.allow.v1", reason_code = "first-allow" }
+
+[[rules]]
+id = "runtime.second-allow"
+products = ["codex", "claude"]
+events = ["PreToolUse", "UserPromptSubmit"]
+priority = 120
+mode = "enforce"
+failure_posture = "closed"
+override_class = "locked"
+capability = { id = "decision.allow.v1", reason_code = "second-allow" }
+"#;
+    let with_conflict = format!(
+        r#"{allow_rules}
+[[rules]]
+id = "runtime.semantic-conflict"
+products = ["codex", "claude"]
+events = ["PreToolUse"]
+priority = 110
+mode = "enforce"
+failure_posture = "closed"
+override_class = "locked"
+capability = {{ id = "agent-session.semantic-conflict.v1", reason_code = "semantic-conflict" }}
+"#
+    );
+    let allow_only = Fixture::new(allow_rules);
+    let warned = Fixture::new(&with_conflict);
+    let bash = json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "cwd": warned.root,
+        "tool_input": {"command": "true"}
+    })
+    .to_string();
+    let prompt = r#"{"hook_event_name":"UserPromptSubmit","prompt":"hello"}"#;
+
+    for product in ["codex", "claude"] {
+        for payload in [bash.as_str(), prompt] {
+            let quiet = allow_only.run(
+                &["dispatch", "--product", product, "--format", "provider"],
+                Some(payload),
+            );
+            assert_eq!(quiet.code, 0, "stderr={}", quiet.stderr_text());
+            assert_eq!(quiet.stdout_json(), json!({}), "{product} {payload}");
+        }
+
+        let decision = warned.run(
+            &["dispatch", "--product", product, "--format", "json"],
+            Some(&bash),
+        );
+        assert_eq!(decision.code, 0, "stderr={}", decision.stderr_text());
+        assert_eq!(decision.stdout_json()["data"]["action"], "warn");
+
+        let rendered = warned.run(
+            &["dispatch", "--product", product, "--format", "provider"],
+            Some(&bash),
+        );
+        assert_eq!(rendered.code, 0, "stderr={}", rendered.stderr_text());
+        assert_eq!(
+            rendered.stdout_json(),
+            json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "additionalContext": "semantic-conflict",
+                }
+            }),
+            "{product} textless warning must not list allow codes"
+        );
+    }
+}
+
 #[test]
 fn invalid_runtime_mode_hint_never_tolerates_coordination_store_failure() {
     let fixture = Fixture::new(POLICY);

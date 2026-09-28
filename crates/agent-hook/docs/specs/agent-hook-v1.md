@@ -1077,7 +1077,10 @@ rule_id asc)`. A duplicate rule ID is invalid. Decision precedence is
 
 Multiple context values concatenate in rule order with a 16 KiB aggregate
 limit. Provider-native rendering uses that complete aggregate even when the
-first context rule supplied an otherwise reusable native envelope. Identical
+first context rule supplied an otherwise reusable native envelope. Codex and
+Claude context never lists the aggregate's reason codes: a `context` decision
+without text renders the neutral `{}`, and a `warn` decision without text
+names only its `warn` reason codes; `block` reasons are unchanged. Identical
 replacements coalesce. Different replacements are an explicit
 `transform-conflict` block; transforms never compose implicitly. Failure
 posture is typed per rule (`open`, `warn`, or `closed`), while locked privacy,
