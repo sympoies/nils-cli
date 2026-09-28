@@ -2316,7 +2316,8 @@ fn explicit_objective_pivot(text: &str) -> bool {
 /// intent; every other part is transcript scaffolding.
 fn human_prompt_text(text: &str) -> Option<&str> {
     let trimmed = text.trim();
-    if trimmed.starts_with("<local-command-") {
+    if trimmed.starts_with("<local-command-") || trimmed.starts_with("[Request interrupted by user")
+    {
         return None;
     }
     if trimmed.starts_with("<command-name>") || trimmed.starts_with("<command-message>") {
@@ -2506,10 +2507,22 @@ fn objective_context(value: &str) -> Option<String> {
     sanitize_text(&stripped, MAX_OBJECTIVE_CONTEXT_CHARS)
 }
 
+/// The provider may name the request as the title activity, and a `#N` in an
+/// activity fails the whole decision, so work numbers are dropped here; the
+/// verified ones already live in `work_references`.
 fn current_request(value: &str) -> Option<String> {
     let stripped =
         strip_image_reference_markers(&crate::provider_prompt::image_preview_text(value));
-    sanitize_text(&stripped, MAX_TEXT_CHARS)
+    let mut without_numbers = String::with_capacity(stripped.len());
+    let mut characters = stripped.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '#' && characters.peek().is_some_and(char::is_ascii_digit) {
+            while characters.next_if(char::is_ascii_digit).is_some() {}
+            continue;
+        }
+        without_numbers.push(character);
+    }
+    sanitize_text(&without_numbers, MAX_TEXT_CHARS)
 }
 
 fn valid_reference_number(value: &str) -> bool {
@@ -4483,7 +4496,7 @@ mod tests {
     }
 
     #[test]
-    fn slash_command_transcript_records_never_become_objectives() {
+    fn transcript_scaffolding_records_never_become_objectives() {
         let mut memory = SemanticMemory::default();
         reduce_messages(
             &mut memory,
@@ -4508,6 +4521,13 @@ mod tests {
                     "<command-message>fix-bug</command-message>\n<command-name>/fix-bug</command-name>\n<command-args>登入頁面當機</command-args>",
                     true,
                 ),
+                message("turn-esc", "user", "[Request interrupted by user]", true),
+                message(
+                    "turn-tool-esc",
+                    "user",
+                    "[Request interrupted by user for tool use]",
+                    true,
+                ),
             ],
         );
 
@@ -4517,7 +4537,7 @@ mod tests {
         );
         assert_eq!(memory.current_request.as_deref(), Some("登入頁面當機"));
         assert_eq!(memory.journey.len(), 2);
-        assert_eq!(memory.last_turn_id.as_deref(), Some("turn-skill"));
+        assert_eq!(memory.last_turn_id.as_deref(), Some("turn-tool-esc"));
         assert!(
             memory
                 .applied_message_ids
@@ -4525,7 +4545,13 @@ mod tests {
                 .any(|id| id == "turn-clear")
         );
         let durable = serde_json::to_string(&memory).unwrap();
-        for leaked in ["command · name", "stdout", "compact", "\\u001b"] {
+        for leaked in [
+            "command · name",
+            "stdout",
+            "compact",
+            "\\u001b",
+            "interrupted",
+        ] {
             assert!(!durable.contains(leaked), "leaked {leaked}: {durable}");
         }
 
@@ -4541,6 +4567,66 @@ mod tests {
         assert_eq!(
             memory.current_request.as_deref(),
             Some("why does the <command-name> tag reach retitle memory")
+        );
+    }
+
+    #[test]
+    fn a_current_request_never_carries_a_work_number_into_provider_input() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[
+                message("turn-1", "user", "修正 retitle 標題", true),
+                message(
+                    "turn-2",
+                    "user",
+                    "address the review on #1867 and sympoies/nils-cli#1865",
+                    true,
+                ),
+            ],
+        );
+
+        let request = memory.current_request.as_deref().unwrap();
+        assert!(request.starts_with("address the review on"), "{request}");
+        let provider = render_provider_input(&memory).unwrap();
+        for text in [request, provider.as_str()] {
+            assert!(
+                !text
+                    .as_bytes()
+                    .windows(2)
+                    .any(|pair| pair[0] == b'#' && pair[1].is_ascii_digit()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_managed_objective_pivot_clears_the_current_request() {
+        let mut memory = SemanticMemory::default();
+        reduce_messages(
+            &mut memory,
+            &[
+                message("turn-1", "user", "wait for the release to complete", true),
+                message("turn-2", "user", "check the deploy log too", true),
+            ],
+        );
+        assert_eq!(
+            memory.current_request.as_deref(),
+            Some("check the deploy log too")
+        );
+
+        let objective = crate::orchestration::ManagedTitleObjective {
+            role: crate::orchestration::ManagedTitleRole::Main,
+            owner_id: "run-1".to_string(),
+            summary: "Deliver the program wave".to_string(),
+        };
+        assert!(apply_managed_objective(&mut memory, &objective));
+
+        assert_eq!(memory.current_request, None);
+        assert!(
+            !render_provider_input(&memory)
+                .unwrap()
+                .contains("check the deploy log too")
         );
     }
 

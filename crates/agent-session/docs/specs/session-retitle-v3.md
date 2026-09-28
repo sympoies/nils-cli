@@ -356,8 +356,10 @@ The marker contains:
   into memory (see [Managed orchestration objectives](#managed-orchestration-objectives));
 - a sanitized, bounded current request: the latest substantive human
   follow-up that did not change the objective. A routine acknowledgement
-  leaves it unchanged, and a new origin or objective pivot clears it. It feeds
-  the title activity, never the topic;
+  leaves it unchanged, and a new origin or objective pivot clears it. `#N` work
+  numbers are dropped from it, since the verified ones live in the work
+  references and an activity carrying one is rejected. It feeds the title
+  activity, never the topic;
 - `current_activity`, which assistant progress may update;
 - bounded `milestones`, `decisions`, `blockers`, and `journey` ledgers;
 - bounded source `segments` and the current incremental `cursor`;
@@ -382,7 +384,8 @@ projections retain their cached state and use the provider path above when a
 later task is recorded only in the journey. Assistant, developer, system, tool,
 compact-summary, generated continuation, and terminal output can update neither
 `origin` nor `active_objective`. A Claude slash-command echo, its local command
-output, and a bare typed slash command are transcript scaffolding, not human
+output, a bare typed slash command, and a `[Request interrupted by user…]`
+marker are transcript scaffolding, not human
 objectives; only a command's non-empty arguments count as the human prompt.
 Only a record that opens with the command tags is scaffolding; a prompt that
 quotes them is ordinary text. Assistant text MAY update activity or a bounded
