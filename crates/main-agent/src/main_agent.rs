@@ -9971,11 +9971,12 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
         edit_authority_stale,
         blocked_resume_required: assignment.state == "blocked"
             && assignment.worker.is_some()
-            && !claim_active
             && !preclaim_blocker
             && !failed_preclaim,
         claim_renewal_required: claim_renewal_required && !failed_preclaim,
-        claim_absent: !claim_active,
+        // Same condition the recovery action uses to choose rebootstrap over
+        // renewal, so the summary and the action never disagree.
+        claim_absent: claim_id.is_none() || claim_revision.is_none(),
         orphan_guidance_quarantine_required,
         guidance_continuity_required: guidance.stale_incarnation_unread_count > 0
             && assignment.previous_worker.is_some(),
@@ -10713,14 +10714,15 @@ struct WorkerDiagnosisFacts {
     idle_claim_revocation_required: bool,
     coordination_broker_stale: bool,
     edit_authority_stale: bool,
-    /// The worker checkpointed `blocked` after bootstrap and holds no
-    /// assignment-derived claim. Bootstrap refuses a `blocked` assignment, so
-    /// only the manager `worker resume` transition can restore the claim;
-    /// asking the worker to renew a claim it no longer holds would loop.
+    /// The worker checkpointed `blocked` after bootstrap. It normally released
+    /// its assignment-derived claim, and may hold a self-acquired claim without
+    /// the checkout-shell grant instead. Bootstrap refuses a `blocked`
+    /// assignment, so only the manager `worker resume` transition can restore
+    /// the exact claim; asking the worker to renew would loop.
     blocked_resume_required: bool,
     claim_renewal_required: bool,
-    /// No active worker claim exists, so renewal is impossible and the exact
-    /// worker must re-run its bootstrap to re-acquire the claim.
+    /// The worker has no claim record to renew (no active claim id and
+    /// revision), so the exact worker must re-run its bootstrap instead.
     claim_absent: bool,
     orphan_guidance_quarantine_required: bool,
     guidance_continuity_required: bool,
@@ -10882,7 +10884,7 @@ fn classify_worker_diagnosis(facts: WorkerDiagnosisFacts) -> (&'static str, &'st
     } else if facts.blocked_resume_required {
         (
             "blocked_resume_required",
-            "the worker checkpointed a post-claim `blocked` and holds no assignment-derived claim, so it cannot act in its checkout until resumed: resolve the recorded blocker, then run `main-agent worker resume` with the current revision; the exact worker then re-runs its bootstrap argv to re-acquire its claim and checkout-shell grant. To abandon the lane instead, resume it and terminalize through the post-claim stop path; never cancel, reassign, or edit orchestration state by hand",
+            "the worker checkpointed a post-claim `blocked` and cannot re-acquire its exact assignment-derived claim until resumed: resolve the recorded blocker, then run `main-agent worker resume` with the current revision; the exact worker then re-runs its bootstrap argv to re-acquire its claim and checkout-shell grant. To abandon the lane instead, resume it and terminalize through the post-claim stop path; never cancel, reassign, or edit orchestration state by hand",
             false,
         )
     } else if facts.claim_renewal_required {
@@ -22402,10 +22404,36 @@ fn ensure_or_acquire_claim(
         )? {
             Some(true) => return Ok(()),
             Some(false) => {
+                // The worker holds another active claim, such as one it took
+                // itself without the checkout-shell grant. Only the worker can
+                // release it; bootstrap then re-derives the exact claim.
                 return Err(CliError::data(
                     "worker-bootstrap-claim-mismatch",
                     "worker bootstrap requires the exact assignment-derived claim and checkout-shell grant",
-                    None,
+                    Some(json!({
+                        "retryable": true,
+                        "next_action": "release-non-assignment-claim-then-rebootstrap",
+                        "recovery": {
+                            "kind": "worker-claim-release",
+                            "owner": "worker",
+                            "automatic": false,
+                            "argv_template": [
+                                "agent-session",
+                                "work-context",
+                                "release",
+                                "--session",
+                                record.id,
+                                "--claim",
+                                "<claim-id>",
+                                "--if-revision",
+                                "<claim-revision>",
+                                "--idempotency-key",
+                                "<idempotency-key>",
+                                "--format",
+                                "json"
+                            ]
+                        }
+                    })),
                 ));
             }
             None => {}

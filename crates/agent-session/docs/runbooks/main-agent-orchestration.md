@@ -483,8 +483,8 @@ Branch on `classification`, never on prose:
 | `uncertain_mutation` | Preserve the exact worker and reconcile the operation. Do not cancel, retire, or reassign. |
 | `coordination_broker_stale` | Route to the exact worker's authenticated broker owner. Do not copy its capability or renew its claim as a substitute. |
 | `edit_authority_stale` | Preserve the exact worker and perform a bounded supervision recheck; route only durable broker-lost evidence to broker recovery. |
-| `blocked_resume_required` | A post-claim blocked worker holds no claim and cannot act. Resolve its blocker, then fill the returned v8 `worker resume` template with a bounded reason and new key; the worker re-runs its bootstrap argv. |
-| `claim_renewal_required` | Ask the exact worker to renew its own current claim and revision using its own capability file. When no claim is active the action is `worker_rebootstrap`: ask the worker to re-run `main-agent bootstrap` with a new key instead. |
+| `blocked_resume_required` | A post-claim blocked worker cannot re-acquire its exact claim and cannot act in its checkout. Resolve its blocker, then fill the returned v8 `worker resume` template with a bounded reason and new key; the worker re-runs its bootstrap argv. |
+| `claim_renewal_required` | Ask the exact worker to renew its own current claim and revision using its own capability file. When no active claim record exists (null `claim_id`) the action is `worker_rebootstrap`: ask the worker to re-run `main-agent bootstrap` with a new key instead. |
 | `pre_bootstrap_attention_required` | Preserve the live starting worker and continue bounded bootstrap supervision. No claim exists to renew; do not send provider input or replace the worker. |
 | `provider_capacity_recovery_pending` | Preserve the exact worker and conversation while daemon-owned auto-resume applies its bounded capacity backoff and app-server continuation. Continue supervision; do not switch accounts, resend the prompt, or send raw terminal input. |
 | `provider_capacity_attention_required` | Preserve the exact worker and conversation, wait for capacity, and continue bounded supervision. Do not switch accounts, resend the prompt, or send raw terminal input. This requires exact structured `serverOverloaded` evidence, not rendered prose. |
@@ -1306,7 +1306,11 @@ Codex turn has already ended, retry that message's notification generation with
 re-run bootstrap re-acquires the exact assignment-derived claim, including the
 checkout-shell grant and, while the checkout is still on the declared
 `head_branch`, the pull-request head grant. Until it does, supervision returns a
-worker-owned `worker_rebootstrap` action rather than a supervision loop.
+worker-owned `worker_rebootstrap` action rather than a supervision loop. If the
+worker had acquired a claim of its own without the grant, bootstrap fails with
+`worker-bootstrap-claim-mismatch`; the worker releases that claim with
+`agent-session work-context release` (the error details carry the template) and
+re-runs bootstrap.
 
 To abandon a blocked lane instead of finishing it, resume it first. If the exact
 worker runtime is already stopped, `worker reconcile-stopped` with the resumed

@@ -470,16 +470,19 @@ retain their exact schema identifiers and projections.
 `blocked_resume_required` uses `main-agent.worker-diagnose-result.v8`,
 `main-agent.worker-supervise-result.v8`, and
 `main-agent.worker-recovery-action.v8`. It is reported for a post-claim
-`blocked` assignment with a bound worker and no active worker claim, ranked
-immediately above `claim_renewal_required`: the worker holds no claim to renew,
+`blocked` assignment with a bound worker, whatever its claim state, ranked
+immediately above `claim_renewal_required`: the worker normally released its
+claim, may instead hold a self-acquired claim without the checkout-shell grant,
 and bootstrap refuses `blocked`, so a renewal or recheck action would loop. Its
 Main-owned, non-executable action has kind `blocked_assignment_resume`, a null
 `argv`, and an `argv_template` for `worker resume` with the current revision;
 its `required_inputs` are `resume_reason` and `idempotency_key`. Independently,
-a `claim_renewal_required` action for an assignment with no active worker claim
-now has kind `worker_rebootstrap`: it is worker-owned, carries a null `argv` and
-an `argv_template` for `main-agent bootstrap` with a new idempotency key, and
-requires only `idempotency_key`, instead of re-running supervision. Existing
+a `claim_renewal_required` action for a worker with no active claim record (no
+claim id and revision to renew) now has kind `worker_rebootstrap`, and its
+`next_action` names the same bootstrap. The action is worker-owned, carries a
+null `argv` and an `argv_template` for `main-agent bootstrap` with a new
+idempotency key, and requires only `idempotency_key`, instead of re-running
+supervision. Existing
 v2-v7 classifications retain their exact schema identifiers.
 
 `worker stop-runtime` MUST authenticate the exact current Main controller and
@@ -704,7 +707,10 @@ the exact assignment-derived claim with its checkout-shell grant and, when the
 checkout branch still matches the declared `head_branch`, its pull-request
 head grant. No assignment record migration is needed: a `blocked` assignment
 written by an older release resumes as-is, whether its claim was released,
-expired, or revoked.
+expired, or revoked. When the worker instead holds a different active claim,
+such as one it acquired itself without the grant, bootstrap fails with
+`worker-bootstrap-claim-mismatch` whose details name the worker-owned
+`agent-session work-context release` of that claim before bootstrap is re-run.
 
 Abandoning a post-claim `blocked` lane uses the same resume transition followed
 by the post-claim stop path. When the exact worker runtime is already durably

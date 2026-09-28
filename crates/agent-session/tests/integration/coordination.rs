@@ -31609,7 +31609,7 @@ fn strand_blocked_delivery_worker(
     assert_eq!(data(&blocked)["assignment"]["revision"], 4);
     let claim_id = claim["claim_id"].as_str().expect("claim id").to_string();
     match claim_disposition {
-        "released" => {
+        "released" | "self-claimed" => {
             let released = run(
                 &worker_checkout,
                 &[
@@ -31645,6 +31645,16 @@ fn strand_blocked_delivery_worker(
             claim["expires_at_epoch"] = json!(978_307_200_i64);
         }),
         other => panic!("unknown claim disposition {other}"),
+    }
+    if claim_disposition == "self-claimed" {
+        // A stranded v1.29.0 worker may have claimed again on its own, which
+        // never carries the checkout-shell grant.
+        seed_active_claim(
+            &state_dir,
+            "worker-one",
+            "worker-incarnation-one",
+            "worker-self-claim",
+        );
     }
     (
         state_dir,
@@ -31708,7 +31718,7 @@ fn resume_assignment(
 
 #[test]
 fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
-    for disposition in ["released", "expired"] {
+    for disposition in ["released", "expired", "self-claimed"] {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let (state_dir, worker_checkout, worker_capability, main_capability) =
             strand_blocked_delivery_worker(tmp.path(), disposition);
@@ -31819,6 +31829,31 @@ fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
         );
         assert_eq!(replayed.code, 0, "{disposition}");
         assert_eq!(data(&replayed), data(&resumed), "{disposition}");
+        let changed_request = run_main_agent(
+            &main_checkout,
+            &[
+                "--state-dir",
+                &state,
+                "worker",
+                "resume",
+                "assignment-delivery",
+                "--if-revision",
+                "4",
+                "--reason",
+                "A different reason under the same key",
+                "--idempotency-key",
+                "worker-delivery-resume-0001",
+                "--format",
+                "json",
+            ],
+            &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+        );
+        assert_eq!(changed_request.code, 65, "{disposition}");
+        assert_eq!(
+            changed_request.stdout_json()["error"]["code"],
+            "idempotency-conflict",
+            "{disposition}"
+        );
         let not_blocked = resume_assignment(
             &state_dir,
             &main_checkout,
@@ -31834,27 +31869,75 @@ fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
             "{disposition}"
         );
 
-        // Until the worker re-bootstraps, supervision hands the worker its own
-        // bootstrap argv instead of looping.
-        let pending = supervise_assignment(
-            &state_dir,
-            &main_checkout,
-            &main_capability,
-            "assignment-delivery",
-        );
-        assert_eq!(pending["recovery_action"]["kind"], "worker_rebootstrap");
-        assert_eq!(pending["recovery_action"]["owner"]["role"], "worker");
-        assert_eq!(
-            pending["recovery_action"]["argv_template"],
-            json!([
-                "main-agent",
-                "bootstrap",
-                "--idempotency-key",
-                "<idempotency-key>",
-                "--format",
-                "json"
-            ])
-        );
+        if disposition == "self-claimed" {
+            // The self-acquired claim lacks the grant: bootstrap names the
+            // worker-owned release, and the worker's own capability does it.
+            let mismatch = run_main_agent(
+                &worker_checkout,
+                &[
+                    "--state-dir",
+                    &state,
+                    "bootstrap",
+                    "--idempotency-key",
+                    "worker-delivery-self-claim-bootstrap-0001",
+                    "--format",
+                    "json",
+                ],
+                &[("AGENT_SESSION_CAPABILITY_FILE", &worker_capability)],
+            );
+            assert_eq!(mismatch.code, 65, "{}", mismatch.stdout_text());
+            let error = &mismatch.stdout_json()["error"];
+            assert_eq!(error["code"], "worker-bootstrap-claim-mismatch");
+            assert_eq!(
+                error["details"]["next_action"],
+                "release-non-assignment-claim-then-rebootstrap"
+            );
+            assert_eq!(error["details"]["recovery"]["owner"], "worker");
+            let released = run(
+                &worker_checkout,
+                &[
+                    "--state-dir",
+                    &state,
+                    "work-context",
+                    "release",
+                    "--session",
+                    "worker-one",
+                    "--claim",
+                    "worker-self-claim",
+                    "--if-revision",
+                    "1",
+                    "--capability-file",
+                    &worker_capability,
+                    "--idempotency-key",
+                    "worker-delivery-self-claim-release-0001",
+                    "--format",
+                    "json",
+                ],
+            );
+            assert_eq!(released.code, 0, "{}", released.stdout_text());
+        } else {
+            // Until the worker re-bootstraps, supervision hands the worker its
+            // own bootstrap argv instead of looping.
+            let pending = supervise_assignment(
+                &state_dir,
+                &main_checkout,
+                &main_capability,
+                "assignment-delivery",
+            );
+            assert_eq!(pending["recovery_action"]["kind"], "worker_rebootstrap");
+            assert_eq!(pending["recovery_action"]["owner"]["role"], "worker");
+            assert_eq!(
+                pending["recovery_action"]["argv_template"],
+                json!([
+                    "main-agent",
+                    "bootstrap",
+                    "--idempotency-key",
+                    "<idempotency-key>",
+                    "--format",
+                    "json"
+                ])
+            );
+        }
 
         let rebootstrapped = run_main_agent(
             &worker_checkout,
@@ -32117,6 +32200,208 @@ fn main_agent_blocked_worker_with_stopped_runtime_resumes_into_reconcile_stopped
         false
     );
     assert_eq!(data(&reconciled)["worktree_preserved"], true);
+}
+
+/// A blocked worker has usually ended its provider turn, so after `worker
+/// resume` the controller wakes it through `worker message` plus `worker
+/// reenter`, which accepts the resumed revision like a review revision.
+#[test]
+fn main_agent_worker_reenter_wakes_an_idle_resumed_worker() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let checkout = tmp.path().join("checkout");
+    fs::create_dir(&state_dir).expect("state");
+    init_checkout(&checkout, "https://example.invalid/example/repository.git");
+    seed_brokers_at(
+        &state_dir,
+        &[
+            (
+                "main-one",
+                "main-incarnation-one",
+                "main-private-capability-material-0000000001",
+                checkout.as_path(),
+                Some("enforce"),
+            ),
+            (
+                "worker-one",
+                "worker-incarnation-one",
+                "worker-private-capability-material-0000000001",
+                checkout.as_path(),
+                Some("enforce"),
+            ),
+        ],
+    );
+    let main_capability = init_main_run(
+        tmp.path(),
+        &state_dir,
+        &checkout,
+        "main-one",
+        "run-resume-reenter",
+    );
+    let private_packet = json!({
+        "schema_version": "main-agent.assignment-input.v1",
+        "assignment_id": "assignment-resume-reenter",
+        "task_summary": "Exercise resumed re-entry",
+        "task": {},
+        "launch": {
+            "agent": "codex",
+            "cwd": checkout,
+            "title": null,
+            "session_id": "worker-one",
+            "coordination_mode": "enforce",
+            "agent_args": []
+        },
+        "repository": "example/repository",
+        "worktree": checkout,
+        "base_ref": "main",
+        "scopes": ["crates/agent-session"],
+        "durable_refs": []
+    });
+    insert_orchestration_assignment(
+        &state_dir,
+        "assignment-resume-reenter",
+        json!({
+            "schema_version": "agent-session.orchestration-assignment.v1",
+            "assignment_id": "assignment-resume-reenter",
+            "run_id": "run-resume-reenter",
+            "revision": 5,
+            "state": "blocked",
+            "task_summary": "Exercise resumed re-entry",
+            "private_packet_digest": "replaced-by-fixture",
+            "primary_manager": {
+                "session_id": "main-one",
+                "session_incarnation": "main-incarnation-one",
+                "session_created_at": "2030-01-01T00:00:00Z"
+            },
+            "worker": {
+                "session_id": "worker-one",
+                "session_incarnation": "worker-incarnation-one",
+                "session_created_at": "2030-01-01T00:00:00Z"
+            },
+            "collaborators": [],
+            "borrowed_by": [],
+            "repository": "example/repository",
+            "worktree": checkout,
+            "base_ref": "main",
+            "scopes": ["crates/agent-session"],
+            "durable_refs": [],
+            "checkpoint": {
+                "revision": 5,
+                "summary": "Blocked on an unassigned path",
+                "next_action": "Wait for Main Agent",
+                "updated_at": "2030-01-01T00:00:02Z"
+            },
+            "result_summary": null,
+            "blocker_summary": "The fix needs a path outside the assigned scope",
+            "created_at": "2030-01-01T00:00:01Z",
+            "updated_at": "2030-01-01T00:00:02Z"
+        }),
+        &private_packet,
+    );
+    let state = state_dir.to_string_lossy().into_owned();
+    let capability_env = [("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str())];
+    let resumed = run_main_agent(
+        &checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "resume",
+            "assignment-resume-reenter",
+            "--if-revision",
+            "5",
+            "--reason",
+            "The path is now assigned; re-run bootstrap",
+            "--idempotency-key",
+            "resume-reenter-0001",
+            "--format",
+            "json",
+        ],
+        &capability_env,
+    );
+    assert_eq!(resumed.code, 0, "{}", resumed.stdout_text());
+    assert_eq!(data(&resumed)["assignment"]["revision"], 6);
+
+    let body = tmp.path().join("resume-guidance.txt");
+    fs::write(&body, "re-run your bootstrap argv").expect("guidance body");
+    let messaged = run_main_agent(
+        &checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "message",
+            "assignment-resume-reenter",
+            "--body-file",
+            body.to_str().expect("body"),
+            "--idempotency-key",
+            "resume-reenter-message-0001",
+            "--format",
+            "json",
+        ],
+        &capability_env,
+    );
+    assert_eq!(messaged.code, 0, "{}", messaged.stdout_text());
+    assert_eq!(data(&messaged)["notification"]["generation"], 1);
+    rewrite_registry(&state_dir, |registry| {
+        let notification = registry["notifications"]
+            .as_object_mut()
+            .expect("notifications")
+            .values_mut()
+            .find(|notification| notification["target_session_id"] == "worker-one")
+            .expect("worker notification");
+        notification["state"] = json!("undeliverable");
+        notification["last_reason"] = json!("provider-unsupported");
+    });
+    seed_activity_state(
+        &state_dir,
+        "worker-one",
+        "worker-incarnation-one",
+        "waiting",
+        serde_json::Value::Null,
+        json!({
+            "provider_turn_id": "blocked-turn",
+            "started_at": "2030-01-01T00:00:01Z",
+            "completed_at": "2030-01-01T00:00:02Z",
+            "outcome": "completed"
+        }),
+    );
+    let tmux = tmp.path().join("tmux-resume-reentry");
+    fs::write(
+        &tmux,
+        "#!/bin/sh\ncase \"$1\" in\n  has-session) exit 0 ;;\n  display-message) printf '0\\n'; exit 0 ;;\n  *) exit 1 ;;\nesac\n",
+    )
+    .expect("tmux script");
+    fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).expect("tmux mode");
+    let tmux_arg = tmux.to_string_lossy().into_owned();
+    let reentered = run_main_agent(
+        &checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "reenter",
+            "assignment-resume-reenter",
+            "--worker-incarnation",
+            "worker-incarnation-one",
+            "--if-revision",
+            "6",
+            "--if-notification-generation",
+            "1",
+            "--idempotency-key",
+            "resume-reenter-0002",
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+            ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+        ],
+    );
+    assert_eq!(reentered.code, 0, "{}", reentered.stdout_text());
+    assert_eq!(data(&reentered)["assignment_revision"], 6);
+    assert_eq!(data(&reentered)["notification"]["state"], "queued");
+    assert_eq!(data(&reentered)["assignment_prompt_resent"], false);
 }
 
 #[test]
