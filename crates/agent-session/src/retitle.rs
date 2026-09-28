@@ -1487,7 +1487,7 @@ pub(crate) fn infer_semantic_memory_observed(
         trigger,
     };
     let input = format!(
-        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (empty array). Write a concise topic of at most 72 characters that captures the concrete task, not a verbatim voice transcription or preamble. Read human_objective for the actual task and use the bounded semantic-memory journey to detect an explicit change of objective. Keep an existing topic through routine progress, but update it for a new user-directed objective. Leave issue and PR references out of topic and activity; the daemon adds verified references. Do not use tools. Semantic memory:\n{semantic_memory}"
+        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (empty array). Write a concise topic of at most 72 characters that captures the concrete task, not a verbatim voice transcription or preamble. Read human_objective for the actual task and use the bounded semantic-memory journey to detect an explicit change of objective. Keep an existing topic through routine progress, but update it for a new user-directed objective. current_request, when present, is the user's latest follow-up within that objective: it never replaces the topic; set activity to a short phrase of at most 48 characters naming it, or null when it adds nothing to the topic. Leave issue and PR references out of topic and activity; the daemon adds verified references. Do not use tools. Semantic memory:\n{semantic_memory}"
     );
     if input.len() >= crate::retitle_v3::MAX_PROVIDER_INPUT_BYTES {
         return Err(ObservedInferenceError {

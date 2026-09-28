@@ -354,6 +354,12 @@ The marker contains:
   token with punctuation, or an explicit GitHub issue or pull URL;
 - an optional opaque hash of the last managed orchestration objective folded
   into memory (see [Managed orchestration objectives](#managed-orchestration-objectives));
+- a sanitized, bounded current request: the latest substantive human
+  follow-up that did not change the objective. A routine acknowledgement
+  leaves it unchanged, and a new origin or objective pivot clears it. `#N` work
+  numbers are dropped from it, since the verified ones live in the work
+  references and an activity carrying one is rejected. It feeds the title
+  activity, never the topic;
 - `current_activity`, which assistant progress may update;
 - bounded `milestones`, `decisions`, `blockers`, and `journey` ledgers;
 - bounded source `segments` and the current incremental `cursor`;
@@ -368,22 +374,34 @@ MUST NOT evict the active non-terminal operation.
 
 The origin is never automatically replaced. Routine human follow-ups update
 the journey but not the active objective. A deterministic, explicit pivot cue
-in a human-submitted turn can replace `active_objective`. A greeting-only origin
+in a human-submitted turn can replace `active_objective`. A cue counts only
+where the prompt opens with it, optionally after a conversational filler such
+as `現在`, `那`, or `ok`; the same word later in a sentence is ordinary prose,
+and `現在` alone is not a cue. A greeting-only origin
 is a placeholder: the first later human prompt that is neither another greeting
 nor a routine acknowledgement also replaces `active_objective`. Older
 projections retain their cached state and use the provider path above when a
 later task is recorded only in the journey. Assistant, developer, system, tool,
 compact-summary, generated continuation, and terminal output can update neither
-`origin` nor `active_objective`. Assistant text MAY update activity or a bounded
+`origin` nor `active_objective`. A Claude slash-command echo, its local command
+output, a bare typed slash command, and a `[Request interrupted by user…]`
+marker are transcript scaffolding, not human
+objectives; only a command's non-empty arguments count as the human prompt.
+Only a record that opens with the command tags is scaffolding; a prompt that
+quotes them is ordinary text. Assistant text MAY update activity or a bounded
 ledger after sanitization.
 
 The provider input is a deterministic JSON projection of the accepted memory
 and MUST be strictly smaller than 16 KiB. It includes sanitized human objective
 context, but excludes the public readable objective field, work references,
 cursor, segment, receipt, timestamp, path, credential, environment, and raw
-provider identity fields. When readable human context is present, the provider
-projection excludes assistant-derived activity and ledgers so instructions in
-the human prompt cannot copy that private memory into a public title.
+provider identity fields. When readable human context — the objective context or
+the current request — is present, the provider projection excludes assistant-derived activity and ledgers so instructions in
+the human prompt cannot copy that private memory into a public title. The
+current request is human prose and is included; the provider keeps the topic on
+the active objective and MAY name the current request as the title activity.
+When the rendered projection would reach 12 KiB, the oldest journey entries are
+dropped first; every other field is individually capped.
 Repeated rendering of the same memory revision MUST produce identical bytes.
 
 ## Managed orchestration objectives
@@ -415,7 +433,11 @@ from the summary, appends a `human_objective` journey entry, and counts as a
 semantic change. The next retitle therefore re-evaluates the title even
 without new history. Because the pivot fires only when that identity changes,
 a later explicit human pivot in a Main session still wins until the session
-starts a different run. The orchestration writer has already bounded and
+starts a different run. The pivot also clears the current request. It is folded
+only on a refresh page that has caught up with provider history; a multi-page
+replay, such as a projection rebuild, folds it after the replayed history, so
+page boundaries never decide precedence. A rebuilt Main session therefore ends
+on its active run objective until the next explicit human pivot. The orchestration writer has already bounded and
 validated the summary, and it is sanitized like any human objective before it
 enters memory. An unreadable registry is treated as no managed objective.
 
