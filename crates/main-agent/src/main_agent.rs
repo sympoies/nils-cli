@@ -3728,6 +3728,7 @@ fn run_worker_start_single_input(
         // A `quick` run synthesizes its ephemeral controller claim from this
         // same assignment and checks the other assignments before creating it.
         ensure_assignment_scopes_disjoint(
+            context,
             &input,
             &run.tier,
             (!run.ephemeral).then_some((record.id.as_str(), incarnation.as_str())),
@@ -13311,6 +13312,7 @@ const MAX_REPORTED_SCOPE_CONFLICTS: usize = 16;
 /// controller claim or a live assignment, before any provider side effect.
 /// Bootstrap claim acquisition remains the authority; this only fails early.
 fn ensure_assignment_scopes_disjoint(
+    context: &CliContext,
     input: &AssignmentInput,
     tier: &str,
     controller: Option<(&str, &str)>,
@@ -13326,7 +13328,10 @@ fn ensure_assignment_scopes_disjoint(
         "worker start requires the assignment packet to declare a repository",
     )?
     .validate_and_canonicalize()?;
-    let conflicts = assignment_scope_conflicts(&candidate, controller, registry, active_claims);
+    let conflicts =
+        assignment_scope_conflicts(&candidate, controller, registry, active_claims, |worker| {
+            worker_session_may_exist(context, &worker.session_id)
+        });
     let Some(first) = conflicts.first() else {
         return Ok(());
     };
@@ -13353,11 +13358,28 @@ fn ensure_assignment_scopes_disjoint(
     ))
 }
 
+/// Whether a worker session may still exist. Only a definite absence of the
+/// exact session directory proves the worker gone; an unreadable state keeps
+/// the assignment a live owner so the overlap check stays conservative.
+fn worker_session_may_exist(context: &CliContext, session_id: &str) -> bool {
+    session_dir(context, session_id)
+        .try_exists()
+        .unwrap_or(true)
+}
+
+/// Collect the owners a fresh worker claim could actually conflict with at
+/// bootstrap: the controller claim, every active unexpired worker claim bound
+/// to an assignment, and the declared scopes of a scope-reserving assignment
+/// that is still live. An assignment is live while it has no worker yet
+/// (launch in flight), its worker session still exists, or its worker holds an
+/// active claim. An orphan (worker session deleted, no active claim) reserves
+/// nothing: bootstrap admission would not see it.
 fn assignment_scope_conflicts(
     candidate: &WorkContextInput,
     controller: Option<(&str, &str)>,
     registry: &orchestration::Registry,
     active_claims: &[agent_session::internal::coordination::claims::ActiveClaimContext],
+    worker_session_may_exist: impl Fn(&SessionRef) -> bool,
 ) -> Vec<Value> {
     let claims_of = |session_id: &str, incarnation: &str| {
         active_claims
@@ -13388,8 +13410,17 @@ fn assignment_scope_conflicts(
     for assignment in registry.assignments.values() {
         let mut scopes = Vec::new();
         let mut provider_refs = Vec::new();
+        let worker_claims = assignment
+            .worker
+            .as_ref()
+            .map(|worker| claims_of(&worker.session_id, &worker.session_incarnation))
+            .unwrap_or_default();
         if SCOPE_RESERVING_ASSIGNMENT_STATES.contains(&assignment.state.as_str())
             && let Some(repository) = assignment.repository.as_ref()
+            && assignment
+                .worker
+                .as_ref()
+                .is_none_or(|worker| !worker_claims.is_empty() || worker_session_may_exist(worker))
         {
             scopes.extend(assignment.scopes.iter().filter_map(|value| {
                 agent_session::internal::coordination::context::canonicalize_targets(vec![Scope {
@@ -13401,11 +13432,9 @@ fn assignment_scope_conflicts(
                 .and_then(|mut scopes| scopes.pop())
             }));
         }
-        if let Some(worker) = assignment.worker.as_ref() {
-            for claim in claims_of(&worker.session_id, &worker.session_incarnation) {
-                scopes.extend(claim.scopes.iter().cloned());
-                provider_refs.extend(claim.provider_refs.iter().cloned());
-            }
+        for claim in worker_claims {
+            scopes.extend(claim.scopes.iter().cloned());
+            provider_refs.extend(claim.provider_refs.iter().cloned());
         }
         owners.push((
             Some(assignment.assignment_id.as_str()),
@@ -19571,6 +19600,7 @@ fn run_worker_extend_scope(
     let mut others = registry.clone();
     others.assignments.remove(&assignment.assignment_id);
     ensure_assignment_scopes_disjoint(
+        context,
         &extended,
         &run.tier,
         Some((record.id.as_str(), incarnation.as_str())),
@@ -22519,7 +22549,14 @@ fn run_quick(context: &CliContext, args: QuickArgs) -> Result<Value, CliError> {
         )?
         .is_none()
         {
-            ensure_assignment_scopes_disjoint(&input, &tier, None, &registry, &active_claims)?;
+            ensure_assignment_scopes_disjoint(
+                context,
+                &input,
+                &tier,
+                None,
+                &registry,
+                &active_claims,
+            )?;
         }
     }
     ensure_or_acquire_claim(

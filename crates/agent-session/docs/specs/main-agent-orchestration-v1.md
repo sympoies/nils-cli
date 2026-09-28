@@ -217,9 +217,15 @@ start` (single, each `--batch` lane, and `quick`) derives the exact claim its
 worker bootstrap will request and validates it with the work-context rules, so
 an invalid scope or an over-long claim summary fails before launch rather than
 at bootstrap. It then compares that claim's scopes with the controller's active
-claim and with every assignment that still reserves its declared scopes
+claim and with every live assignment that still reserves its declared scopes
 (`assigned`, `starting`, `working`, `blocked`, or `submitted`, in any run), plus
-any active claim still held by an assignment's bound worker. Overlap under the
+any active unexpired claim still held by an assignment's bound worker. An
+assignment is live while it has no bound worker yet (launch in flight), its
+bound worker's session directory still exists, or that worker holds an active
+unexpired claim. An orphaned assignment, whose worker session was deleted and
+which holds no active claim, reserves nothing: bootstrap claim admission would
+not see it either. When the session directory's existence cannot be
+determined, the assignment stays live. Overlap under the
 closed scope rules fails closed with `assignment-scope-conflict` before
 assignment persistence, session creation, or tmux launch. `quick` runs the same
 comparison, without the controller claim, before it acquires that claim or

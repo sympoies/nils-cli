@@ -31151,6 +31151,266 @@ fn main_agent_worker_start_rejects_scope_overlap_before_launch() {
     );
 }
 
+fn worker_ref(session_id: &str) -> serde_json::Value {
+    json!({
+        "session_id": session_id,
+        "session_incarnation": format!("{session_id}-incarnation"),
+        "session_created_at": "2030-01-01T00:00:00Z"
+    })
+}
+
+fn push_overlap_worker_claim(
+    state_dir: &Path,
+    session_id: &str,
+    scope: &str,
+    state: &str,
+    expires_at_epoch: i64,
+) {
+    rewrite_registry(state_dir, |registry| {
+        registry["claims"]
+            .as_array_mut()
+            .expect("claims")
+            .push(json!({
+                "schema_version": "agent-session.work-context.v1",
+                "session_id": session_id,
+                "session_incarnation": format!("{session_id}-incarnation"),
+                "claim_id": format!("{session_id}-claim"),
+                "revision": 1,
+                "state": state,
+                "intent": "implementation",
+                "tier": "direct",
+                "repositories": ["example/repository"],
+                "worktrees": [],
+                "provider_refs": [],
+                "plan_refs": [],
+                "scopes": [{
+                    "kind": "path-prefix",
+                    "repository": "example/repository",
+                    "value": scope
+                }],
+                "summary": "Overlap fixture worker claim",
+                "updated_at": "2030-01-01T00:00:00Z",
+                "expires_at": "2030-01-01T00:00:00Z",
+                "expires_at_epoch": expires_at_epoch
+            }));
+    });
+}
+
+/// Seed the three assignment shapes the pre-launch overlap set must tell
+/// apart: an orphan (worker session deleted, claim expired), a launch in
+/// flight (worker session present, no claim yet), and a lane whose worker
+/// session is gone but whose claim is still active.
+fn seed_orphan_overlap_fixture(state_dir: &Path, checkout: &Path) {
+    insert_overlap_assignment_with(
+        state_dir,
+        checkout,
+        ("run-one", "main-one", "main-incarnation-one"),
+        "assignment-orphan",
+        "working",
+        &["docs/orphan-lane"],
+        worker_ref("worker-orphan"),
+    );
+    push_overlap_worker_claim(state_dir, "worker-orphan", "docs/orphan-lane", "expired", 1);
+    insert_overlap_assignment_with(
+        state_dir,
+        checkout,
+        ("run-one", "main-one", "main-incarnation-one"),
+        "assignment-in-flight",
+        "starting",
+        &["docs/in-flight-lane"],
+        worker_ref("worker-in-flight"),
+    );
+    seed_session(
+        state_dir,
+        "worker-in-flight",
+        "worker-in-flight-incarnation",
+    );
+    insert_overlap_assignment_with(
+        state_dir,
+        checkout,
+        ("run-one", "main-one", "main-incarnation-one"),
+        "assignment-claimed",
+        "working",
+        &["docs/claimed-declared"],
+        worker_ref("worker-claimed"),
+    );
+    push_overlap_worker_claim(
+        state_dir,
+        "worker-claimed",
+        "docs/claimed-lane",
+        "active",
+        i64::MAX,
+    );
+}
+
+#[test]
+fn main_agent_worker_start_ignores_orphaned_assignment_scopes() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let checkout = tmp.path().join("checkout");
+    fs::create_dir(&state_dir).expect("state");
+    init_checkout(&checkout, "https://example.invalid/example/repository.git");
+    seed_brokers_at(
+        &state_dir,
+        &[(
+            "main-one",
+            "main-incarnation-one",
+            "main-private-capability-material-0000000001",
+            checkout.as_path(),
+            Some("enforce"),
+        )],
+    );
+    let main_capability = init_main_run(tmp.path(), &state_dir, &checkout, "main-one", "run-one");
+    seed_orphan_overlap_fixture(&state_dir, &checkout);
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let codex_bin = fake_agent(tmp.path(), "codex-worker");
+    let codex_home = tmp.path().join("codex-home");
+    write_trusted_codex_config(&codex_home, &[&checkout]);
+    let state = state_dir.to_string_lossy().into_owned();
+    let tmux_arg = tmux_bin.to_string_lossy().into_owned();
+    let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
+    let codex_arg = codex_bin.to_string_lossy().into_owned();
+    let codex_home_arg = codex_home.to_string_lossy().into_owned();
+    let envs = [
+        ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+        ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+        ("AGENT_SESSION_CODEX_BIN", codex_arg.as_str()),
+        ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+        ("CODEX_HOME", codex_home_arg.as_str()),
+    ];
+    let start = |assignment_id: &str, scopes: &[&str]| {
+        let path = tmp.path().join(format!("{assignment_id}.json"));
+        write_private_json(
+            &path,
+            &overlap_assignment_packet(assignment_id, &checkout, scopes),
+        );
+        run_main_agent(
+            &checkout,
+            &[
+                "--state-dir",
+                &state,
+                "worker",
+                "start",
+                "--assignment-file",
+                path.to_str().expect("assignment path"),
+                "--await-ready",
+                "0",
+                "--idempotency-key",
+                &format!("start-{assignment_id}"),
+                "--format",
+                "json",
+            ],
+            &envs,
+        )
+    };
+
+    let in_flight = start("assignment-in-flight-overlap", &["docs/in-flight-lane/a"]);
+    assert_eq!(in_flight.code, 65, "{}", in_flight.stdout_text());
+    assert_eq!(
+        in_flight.stdout_json()["error"]["details"]["conflicts"],
+        json!([{
+            "owner": "assignment",
+            "assignment_id": "assignment-in-flight",
+            "repository": "example/repository",
+            "scope": "docs/in-flight-lane/a",
+            "conflicting_scope": "docs/in-flight-lane"
+        }]),
+        "a pre-claim launch whose worker session exists still reserves its scopes"
+    );
+
+    let claimed = start("assignment-claimed-overlap", &["docs/claimed-lane/a"]);
+    assert_eq!(claimed.code, 65, "{}", claimed.stdout_text());
+    assert_eq!(
+        claimed.stdout_json()["error"]["details"]["conflicts"],
+        json!([{
+            "owner": "assignment",
+            "assignment_id": "assignment-claimed",
+            "repository": "example/repository",
+            "scope": "docs/claimed-lane/a",
+            "conflicting_scope": "docs/claimed-lane"
+        }]),
+        "an active unexpired worker claim still blocks without a worker session"
+    );
+    assert!(tmux_calls(&tmux_log).is_empty());
+
+    let orphan = start("assignment-orphan-overlap", &["docs/orphan-lane/child.md"]);
+    assert_eq!(orphan.code, 0, "{}", orphan.stdout_text());
+    assert!(
+        orchestration_registry(&state_dir)["assignments"]
+            .get("assignment-orphan-overlap")
+            .is_some(),
+        "an assignment with no worker session and no active claim is not a live owner"
+    );
+}
+
+#[test]
+fn main_agent_worker_extend_scope_ignores_orphaned_assignment_scopes() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (state_dir, _worker_checkout, _worker_capability, _claim) =
+        bootstrap_delivery_worker(tmp.path(), Some("fix/worker-delivery"));
+    let state = state_dir.to_string_lossy().into_owned();
+    let main_checkout = tmp.path().join("main-checkout");
+    let main_capability = capability(&state_dir, "main-one");
+    seed_orphan_overlap_fixture(&state_dir, &main_checkout);
+    let extend = |key: &str, scope: &str| {
+        let revision =
+            orchestration_registry(&state_dir)["assignments"]["assignment-delivery"]["revision"]
+                .as_u64()
+                .expect("assignment revision")
+                .to_string();
+        run_main_agent(
+            &main_checkout,
+            &[
+                "--state-dir",
+                &state,
+                "worker",
+                "extend-scope",
+                "assignment-delivery",
+                "--scope",
+                scope,
+                "--if-revision",
+                &revision,
+                "--idempotency-key",
+                key,
+                "--format",
+                "json",
+            ],
+            &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+        )
+    };
+
+    let in_flight = extend("extend-in-flight-0001", "docs/in-flight-lane/a");
+    assert_eq!(in_flight.code, 65, "{}", in_flight.stdout_text());
+    let error = &in_flight.stdout_json()["error"];
+    assert_eq!(error["code"], "assignment-scope-conflict");
+    assert_eq!(
+        error["details"]["conflicts"][0]["assignment_id"],
+        "assignment-in-flight"
+    );
+
+    let claimed = extend("extend-claimed-0001", "docs/claimed-lane/a");
+    assert_eq!(claimed.code, 65, "{}", claimed.stdout_text());
+    let error = &claimed.stdout_json()["error"];
+    assert_eq!(error["code"], "assignment-scope-conflict");
+    assert_eq!(
+        error["details"]["conflicts"][0]["assignment_id"],
+        "assignment-claimed"
+    );
+
+    let orphan = extend("extend-orphan-0001", "docs/orphan-lane/child.md");
+    assert_eq!(
+        orphan.code,
+        0,
+        "stdout={} stderr={}",
+        orphan.stdout_text(),
+        orphan.stderr_text()
+    );
+    assert_eq!(
+        data(&orphan)["assignment"]["scopes"],
+        json!(["docs/delivery-lane", "docs/orphan-lane/child.md"])
+    );
+}
+
 #[test]
 fn main_agent_quick_rejects_scope_overlap_before_creating_its_run() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
