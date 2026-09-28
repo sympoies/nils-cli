@@ -61,6 +61,7 @@ response_header() {
   fi
 }
 not_found() { response_header '404 Not Found'; printf '%s\n' '{"message":"Not Found"}'; exit 1; }
+empty_repository() { response_header '409 Conflict'; printf '%s\n' '{"message":"Git Repository is empty."}'; exit 1; }
 repo_json() {
   branch=${GH_TEST_DEFAULT_BRANCH:-main}
   if [ -f "$GH_TEST_BRANCH_FILE" ]; then branch=$(cat "$GH_TEST_BRANCH_FILE"); fi
@@ -89,11 +90,7 @@ case "$endpoint" in
     repo_json
     ;;
   repos/sympoies/widgets/git/refs)
-    [ -f "$GH_TEST_REMOTE_SHA" ] || {
-      response_header '409 Conflict'
-      printf '%s\n' '{"message":"Git Repository is empty."}'
-      exit 1
-    }
+    [ -f "$GH_TEST_REMOTE_SHA" ] || empty_repository
     response_header '200 OK'
     if [ "${GH_TEST_EXTRA_REF:-}" = yes ]; then
       printf '[{"ref":"refs/heads/main","object":{"sha":"%s"}},{"ref":"refs/tags/other","object":{"sha":"%s"}}]\n' "$(cat "$GH_TEST_REMOTE_SHA")" "$GH_TEST_SHA"
@@ -102,7 +99,9 @@ case "$endpoint" in
     fi
     ;;
   repos/sympoies/widgets/git/ref/heads/main)
-    [ -f "$GH_TEST_REMOTE_SHA" ] || not_found
+    # GitHub answers every single-ref read on a repository without commits
+    # with 409, not the 404 it returns for a missing branch.
+    [ -f "$GH_TEST_REMOTE_SHA" ] || empty_repository
     response_header '200 OK'
     printf '{"ref":"refs/heads/main","object":{"sha":"%s"}}\n' "$(cat "$GH_TEST_REMOTE_SHA")"
     ;;
