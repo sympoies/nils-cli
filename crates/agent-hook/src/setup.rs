@@ -1372,15 +1372,74 @@ fn strip_codex_block(raw: &str, expected: &str) -> Result<(String, usize, bool),
         ));
     }
     let begin = starts[0].0;
+    let end_begin = ends[0].0;
     let end = ends[0].1;
-    let block = &raw[begin..end];
     let overlaps_foreign = codex_owned_block_overlaps_foreign_manager(begin, end, &foreign_ranges)?;
-    let drifted = block != expected || overlaps_foreign;
-    let owned = block.matches("command = \"agent-hook dispatch").count();
-    let mut stripped = String::with_capacity(raw.len() - (end - begin));
+    // Codex saves new tables at end of file, which lands them inside this block
+    // when it is last. That suffix is not owned: compare only the owned prefix
+    // and move the suffix, byte for byte, ahead of the regenerated block.
+    let appended_begin =
+        codex_appended_suffix_begin(raw, starts[0].1, end_begin, &multiline_value_lines)?;
+    let owned_prefix = &raw[begin..appended_begin];
+    let appended = &raw[appended_begin..end_begin];
+    let drifted = format!("{owned_prefix}{}", &raw[end_begin..end]) != expected
+        || overlaps_foreign
+        || !appended.is_empty();
+    let owned = owned_prefix
+        .matches("command = \"agent-hook dispatch")
+        .count();
+    let mut stripped = String::with_capacity(raw.len() - (end - begin) + appended.len());
     stripped.push_str(&raw[..begin]);
+    stripped.push_str(appended);
     stripped.push_str(&raw[end..]);
     Ok((stripped, owned, drifted))
+}
+
+fn is_codex_owned_hook_table_path(path: &[String]) -> bool {
+    path.len() >= 2 && path[0] == "hooks" && path[1] != "state"
+}
+
+/// Returns the offset of the first non-owned table (with its directly
+/// preceding comment lines) inside the owned block body, or `body_end` when
+/// there is none. Every table from that offset to the closing marker must be
+/// non-owned, so moving the suffix cannot reorder or reparent hook arrays.
+fn codex_appended_suffix_begin(
+    raw: &str,
+    body_begin: usize,
+    body_end: usize,
+    multiline_value_lines: &[usize],
+) -> Result<usize, HookError> {
+    let mut offset = body_begin;
+    let mut comment_run_start = None;
+    let mut appended_begin = None;
+    for line in raw[body_begin..body_end].split_inclusive('\n') {
+        let line_start = offset;
+        offset += line.len();
+        if multiline_value_lines.binary_search(&line_start).is_ok() {
+            comment_run_start = None;
+            continue;
+        }
+        let without_newline = line.strip_suffix('\n').unwrap_or(line);
+        let content = without_newline
+            .strip_suffix('\r')
+            .unwrap_or(without_newline);
+        if content.trim_start().starts_with('#') {
+            comment_run_start.get_or_insert(line_start);
+            continue;
+        }
+        if let Some(path) = toml_table_header_path(content) {
+            if !is_codex_owned_hook_table_path(&path) {
+                appended_begin.get_or_insert(comment_run_start.unwrap_or(line_start));
+            } else if appended_begin.is_some() {
+                return Err(HookError::data(
+                    "provider-config-invalid",
+                    "Codex tables appended inside the agent-hook ingress block are followed by hook tables and cannot be relocated byte-for-byte",
+                ));
+            }
+        }
+        comment_run_start = None;
+    }
+    Ok(appended_begin.unwrap_or(body_end))
 }
 
 fn inspect_toml_handlers(document: &DocumentMut, loaded: &LoadedPolicy) -> (usize, usize) {

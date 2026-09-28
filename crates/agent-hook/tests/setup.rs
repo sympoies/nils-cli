@@ -1427,6 +1427,197 @@ fn seed_codex_owned_config(fixture: &Fixture) -> (std::path::PathBuf, String) {
     (config, seeded)
 }
 
+// Synthesized shape of the tables Codex itself saves at end of file: hook
+// trust records, a plugin marketplace, and plugin enablement.
+const CODEX_APPENDED_TABLES: &str = concat!(
+    "[hooks.state]\n",
+    "\n",
+    "[hooks.state.\"/fixture/codex/config.toml:pre_tool_use:0:0\"]\n",
+    "trusted_hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000001\"\n",
+    "\n",
+    "[hooks.state.\"/fixture/codex/config.toml:session_start:0:0\"]\n",
+    "trusted_hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000002\"\n",
+    "\n",
+    "[marketplaces.fixture-kit]\n",
+    "source_type = \"local\"\n",
+    "source = \"/fixture/marketplace\"\n",
+    "\n",
+    "[plugins.\"alpha@fixture-kit\"]\n",
+    "enabled = true\n",
+    "\n",
+    "[plugins.\"beta@fixture-kit\"]\n",
+    "enabled = true\n",
+    "\n",
+);
+
+const OWNED_START: &str = "# >>> agent-hook:provider-ingress:v1 >>>";
+const OWNED_END: &str = "# <<< agent-hook:provider-ingress:v1 <<<";
+
+/// Seeds a converged owned block (last in the file) and then appends
+/// `appended` inside it, before the closing marker, the way Codex saves new
+/// tables at end of file.
+fn seed_codex_config_with_appended_tables(
+    fixture: &Fixture,
+    appended: &str,
+) -> (PathBuf, String, String) {
+    let (config, seeded) = seed_codex_owned_config(fixture);
+    let owned_end = seeded.find(OWNED_END).expect("owned end");
+    assert!(
+        seeded[owned_end..].trim_end() == OWNED_END,
+        "the owned block must be last in the seeded config"
+    );
+    let original = format!("{}{appended}{}", &seeded[..owned_end], &seeded[owned_end..]);
+    fs::write(&config, &original).expect("codex-appended config");
+    (config, seeded, original)
+}
+
+fn codex_setup_json(fixture: &Fixture, args: &[&str]) -> serde_json::Value {
+    let mut full = vec!["setup", "--product", "codex"];
+    full.extend_from_slice(args);
+    full.extend_from_slice(&["--format", "json"]);
+    let output = fixture.run(&full, None);
+    assert_eq!(
+        output.code,
+        0,
+        "args={args:?} stdout={} stderr={}",
+        output.stdout_text(),
+        output.stderr_text()
+    );
+    output.stdout_json()["data"].clone()
+}
+
+#[test]
+fn codex_tables_appended_inside_the_owned_block_are_relocated_byte_for_byte() {
+    let fixture = Fixture::new(POLICY);
+    let (config, seeded, original) =
+        seed_codex_config_with_appended_tables(&fixture, CODEX_APPENDED_TABLES);
+    let owned_start = seeded.find(OWNED_START).expect("owned start");
+
+    let preview = codex_setup_json(&fixture, &["--dry-run"]);
+    assert_eq!(preview["status"], "drifted");
+    assert_eq!(preview["owned_count"], 2);
+    assert_eq!(preview["would_change"], true);
+    assert_eq!(preview["apply_allowed"], false);
+    assert_eq!(fs::read_to_string(&config).expect("preview"), original);
+    let digest = preview["plan_digest"].as_str().expect("digest").to_string();
+
+    let unreviewed = fixture.run(
+        &["setup", "--product", "codex", "--apply", "--format", "json"],
+        None,
+    );
+    assert_eq!(unreviewed.code, 65);
+    assert_eq!(
+        unreviewed.stdout_json()["error"]["code"],
+        "setup-plan-digest-required"
+    );
+    assert_eq!(fs::read_to_string(&config).expect("unreviewed"), original);
+
+    let applied = codex_setup_json(&fixture, &["--apply", "--expected-plan-digest", &digest]);
+    assert_eq!(applied["changed"], true);
+    assert_eq!(applied["configured"], true);
+    let relocated = fs::read_to_string(&config).expect("relocated config");
+    assert_eq!(
+        relocated,
+        format!(
+            "{}{CODEX_APPENDED_TABLES}{}",
+            &seeded[..owned_start],
+            &seeded[owned_start..]
+        )
+    );
+
+    let converged = codex_setup_json(&fixture, &["--dry-run"]);
+    assert_eq!(converged["status"], "converged");
+    assert_eq!(converged["would_change"], false);
+    assert_eq!(converged["apply_allowed"], true);
+    let repeated = codex_setup_json(&fixture, &["--apply"]);
+    assert_eq!(repeated["changed"], false);
+    assert_eq!(fs::read_to_string(&config).expect("repeat"), relocated);
+}
+
+#[test]
+fn codex_owned_drift_is_repaired_while_appended_tables_are_preserved() {
+    let fixture = Fixture::new(POLICY);
+    let (config, seeded, original) =
+        seed_codex_config_with_appended_tables(&fixture, CODEX_APPENDED_TABLES);
+    let owned_start = seeded.find(OWNED_START).expect("owned start");
+    let stale = original.replacen("timeout = 60\n", "timeout = 10\n", 1);
+    assert_ne!(stale, original);
+    fs::write(&config, &stale).expect("stale owned timeout");
+
+    let preview = codex_setup_json(&fixture, &["--dry-run"]);
+    assert_eq!(preview["status"], "drifted");
+    assert_eq!(preview["apply_allowed"], false);
+    let digest = preview["plan_digest"].as_str().expect("digest").to_string();
+
+    codex_setup_json(&fixture, &["--apply", "--expected-plan-digest", &digest]);
+    assert_eq!(
+        fs::read_to_string(&config).expect("repaired config"),
+        format!(
+            "{}{CODEX_APPENDED_TABLES}{}",
+            &seeded[..owned_start],
+            &seeded[owned_start..]
+        )
+    );
+    assert_eq!(
+        codex_setup_json(&fixture, &["--dry-run"])["status"],
+        "converged"
+    );
+}
+
+#[test]
+fn codex_remove_preserves_tables_appended_inside_the_owned_block() {
+    let fixture = Fixture::new(POLICY);
+    let (config, _seeded, original) =
+        seed_codex_config_with_appended_tables(&fixture, CODEX_APPENDED_TABLES);
+
+    let preview = codex_setup_json(&fixture, &["--remove", "--dry-run"]);
+    assert_eq!(preview["action"], "remove-dry-run");
+    assert_eq!(preview["would_change"], true);
+    assert_eq!(fs::read_to_string(&config).expect("preview"), original);
+    let digest = preview["plan_digest"].as_str().expect("digest").to_string();
+
+    codex_setup_json(&fixture, &["--remove", "--expected-plan-digest", &digest]);
+    let removed = fs::read_to_string(&config).expect("removed config");
+    assert!(removed.contains(CODEX_APPENDED_TABLES), "removed={removed}");
+    assert!(!removed.contains(OWNED_START));
+    assert!(!removed.contains(OWNED_END));
+    assert!(!removed.contains("agent-hook dispatch"));
+}
+
+#[test]
+fn codex_appended_tables_followed_by_hook_arrays_fail_closed_for_every_action() {
+    let interleaved = format!(
+        "{CODEX_APPENDED_TABLES}[[hooks.Stop]]\n\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"keep-user-hook\"\ntimeout = 7\n\n"
+    );
+    for action in ["--dry-run", "--apply", "--repair", "--remove"] {
+        let fixture = Fixture::new(POLICY);
+        let (config, _seeded, original) =
+            seed_codex_config_with_appended_tables(&fixture, &interleaved);
+
+        let rejected = fixture.run(
+            &["setup", "--product", "codex", action, "--format", "json"],
+            None,
+        );
+        assert_eq!(
+            rejected.code,
+            65,
+            "action={action} stdout={} stderr={}",
+            rejected.stdout_text(),
+            rejected.stderr_text()
+        );
+        assert_eq!(
+            rejected.stdout_json()["error"]["code"],
+            "provider-config-invalid",
+            "action={action}"
+        );
+        assert_eq!(
+            fs::read_to_string(&config).expect("interleaved bytes retained"),
+            original,
+            "action={action}"
+        );
+    }
+}
+
 #[test]
 fn codex_foreign_manager_block_inside_owned_span_fails_closed_for_every_action() {
     for action in ["--dry-run", "--apply", "--repair", "--remove"] {
