@@ -118,6 +118,7 @@ main-agent worker guidance-quarantine ASSIGNMENT_ID --if-revision N --idempotenc
 main-agent worker account-handoff ASSIGNMENT_ID --account ACCOUNT --if-revision N --authorize-account-change --idempotency-key KEY --format json
 main-agent worker account-handoff-cancel ASSIGNMENT_ID --reservation-id RESERVATION_ID --account ACCOUNT [--intent-id INTENT_ID] --if-revision N --authorize-account-change --idempotency-key KEY --format json
 main-agent worker request-changes ASSIGNMENT_ID --if-revision N --reason TEXT --idempotency-key KEY --format json
+main-agent worker resume ASSIGNMENT_ID --if-revision N --reason TEXT --idempotency-key KEY --format json
 main-agent worker reenter ASSIGNMENT_ID --worker-incarnation INCARNATION --if-revision N --if-notification-generation N --idempotency-key KEY --format json
 main-agent worker submit-recovery ASSIGNMENT_ID --if-revision N --timeout D --idempotency-key KEY --format json
 main-agent worker reconcile-recovery ASSIGNMENT_ID --if-revision N --idempotency-key KEY --format json
@@ -466,6 +467,21 @@ the prompt or send terminal input. All v7 actions are Main-owned bounded
 supervision rechecks and are not automatic-retry-safe. Existing v2-v6 classifications
 retain their exact schema identifiers and projections.
 
+`blocked_resume_required` uses `main-agent.worker-diagnose-result.v8`,
+`main-agent.worker-supervise-result.v8`, and
+`main-agent.worker-recovery-action.v8`. It is reported for a post-claim
+`blocked` assignment with a bound worker and no active worker claim, ranked
+immediately above `claim_renewal_required`: the worker holds no claim to renew,
+and bootstrap refuses `blocked`, so a renewal or recheck action would loop. Its
+Main-owned, non-executable action has kind `blocked_assignment_resume`, a null
+`argv`, and an `argv_template` for `worker resume` with the current revision;
+its `required_inputs` are `resume_reason` and `idempotency_key`. Independently,
+a `claim_renewal_required` action for an assignment with no active worker claim
+now has kind `worker_rebootstrap`: it is worker-owned, carries a null `argv` and
+an `argv_template` for `main-agent bootstrap` with a new idempotency key, and
+requires only `idempotency_key`, instead of re-running supervision. Existing
+v2-v7 classifications retain their exact schema identifiers.
+
 `worker stop-runtime` MUST authenticate the exact current Main controller and
 its active, unexpired claim; revalidate run ownership, assignment revision,
 primary manager, worker binding, and the final readiness receipt; and hold the
@@ -534,7 +550,7 @@ checkpoint-write, checkpoint-command, claim-release, and request-changes
 rebootstrap lifecycle.
 Workers MUST write later checkpoint JSON to that pre-created owner-only file
 before invoking `main-agent checkpoint --file` with the current revision and a
-stable idempotency key. After a request-changes transition, workers MUST use the
+stable idempotency key. After a request-changes or resume transition, workers MUST use the
 returned exact bootstrap argv with a new stable key before mutating.
 An arbitrary project output path is not the managed-worker checkpoint-write
 boundary. Before worker launch, compatibility-sensitive callers MUST require
@@ -666,6 +682,36 @@ when its authenticated controller principal, run, revision, worker, manager,
 checkpoint guidance, idempotency-key binding, and recomputed request digest
 all match the current assignment. Receipt absence, corruption, or more than one
 matching candidate is not transition authority and fails closed.
+
+A post-claim `blocked` checkpoint is a pause, not an exit. The worker releases
+its assignment-derived claim, including the private checkout-shell grant, after
+that checkpoint, and bootstrap refuses a `blocked` assignment, so the worker
+cannot re-acquire the claim on its own. `worker resume` is the second
+manager-only revision-fenced exception: it permits exactly `blocked -> working`
+under the same authentication, run, primary-manager, revision, mutation-seal,
+and idempotency rules as `worker request-changes`, clears the stale blocker and
+result summaries, records a bounded resume checkpoint and reason, and persists
+the same typed companion identity, so `worker reenter` applies to a resumed
+revision exactly as to a review revision. Its receipt operation is
+`worker-resume` and its result is `main-agent.worker-resume-result.v1`, which
+also carries a bounded `worker_next_action`. A `blocked` assignment whose
+blocker is a `[pre-claim:<code>]` bootstrap failure never held a claim and fails
+closed with `assignment-preclaim-blocked`; it stays on the cancel/reassign
+path. Every other source state fails with `assignment-state-conflict`. After a
+resume the exact worker re-runs its returned bootstrap argv with a new stable
+key; bootstrap re-derives the claim from the stored packet, so it re-acquires
+the exact assignment-derived claim with its checkout-shell grant and, when the
+checkout branch still matches the declared `head_branch`, its pull-request
+head grant. No assignment record migration is needed: a `blocked` assignment
+written by an older release resumes as-is, whether its claim was released,
+expired, or revoked.
+
+Abandoning a post-claim `blocked` lane uses the same resume transition followed
+by the post-claim stop path. When the exact worker runtime is already durably
+stopped, `worker resume` followed by `worker reconcile-stopped` terminalizes
+it without any worker claim. When the runtime is live, the worker first
+re-bootstraps, then `worker stop-claimed-runtime` and `worker reconcile-stopped`
+apply unchanged. `worker cancel` remains pre-claim only.
 
 `worker reenter` is the manager-only, idempotent notification retry for an
 already completed Codex `request-changes` turn. It accepts only the exact
@@ -999,7 +1045,8 @@ The full supervision classification set additionally includes
 `account_handoff_capability_gap`, `account_handoff_required`, and
 `stale_provider_activity`. The additive v7 set also includes
 `pre_bootstrap_attention_required`, `provider_capacity_recovery_pending`, and
-`provider_capacity_attention_required`. Broker-heartbeat/edit-authority staleness is not
+`provider_capacity_attention_required`, and the additive v8 set includes
+`blocked_resume_required`. Broker-heartbeat/edit-authority staleness is not
 claim-expiry evidence: only `claim_renewal_required` directs the exact worker to
 renew its own claim. `coordination_broker_stale` routes to exact-incarnation
 broker-owner recovery; `edit_authority_stale` requests a bounded recheck while

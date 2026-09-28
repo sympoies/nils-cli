@@ -130,6 +130,9 @@ _main__agent() {
             main__agent__worker,request-changes)
                 cmd="main__agent__worker__request__changes"
                 ;;
+            main__agent__worker,resume)
+                cmd="main__agent__worker__resume"
+                ;;
             main__agent__worker,retire)
                 cmd="main__agent__worker__retire"
                 ;;
@@ -936,7 +939,7 @@ _main__agent() {
             return 0
             ;;
         main__agent__worker)
-            opts="-h --state-dir --host --help start list show wait message guidance-reconcile guidance-quarantine account-handoff account-handoff-cancel request-changes reenter accept release delete retire diagnose supervise submit-recovery reconcile-recovery stop-runtime stop-claimed-runtime stop-provider-canary release-provider-canary reconcile-stopped revoke-claim cancel reassign"
+            opts="-h --state-dir --host --help start list show wait message guidance-reconcile guidance-quarantine account-handoff account-handoff-cancel request-changes resume reenter accept release delete retire diagnose supervise submit-recovery reconcile-recovery stop-runtime stop-claimed-runtime stop-provider-canary release-provider-canary reconcile-stopped revoke-claim cancel reassign"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1611,6 +1614,47 @@ _main__agent() {
             return 0
             ;;
         main__agent__worker__request__changes)
+            opts="-h --if-revision --reason --idempotency-key --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --if-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --reason)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        main__agent__worker__resume)
             opts="-h --if-revision --reason --idempotency-key --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

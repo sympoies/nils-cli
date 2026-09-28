@@ -31554,6 +31554,599 @@ fn main_agent_worker_bootstrap_grants_no_pull_request_head_without_a_matching_de
     }
 }
 
+fn worker_checkpoint_file(capability: &str) -> PathBuf {
+    let path = Path::new(capability);
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .and_then(|value| value.strip_prefix("capability-"))
+        .expect("capability file name");
+    path.with_file_name(format!("main-agent-checkpoint-{name}.json"))
+}
+
+/// Drive a bootstrapped delivery worker into the state a v1.29 worker leaves
+/// behind: it checkpoints `blocked`, and its assignment-derived claim is then
+/// gone, either released by the worker as its bootstrap instructions require
+/// or swept as expired. The assignment is `blocked` at revision 4.
+fn strand_blocked_delivery_worker(
+    tmp: &Path,
+    claim_disposition: &str,
+) -> (PathBuf, PathBuf, String, String) {
+    let (state_dir, worker_checkout, worker_capability, claim) =
+        bootstrap_delivery_worker(tmp, Some("fix/worker-delivery"));
+    let state = state_dir.to_string_lossy().into_owned();
+    let main_capability = capability(&state_dir, "main-one");
+    let checkpoint_file = worker_checkpoint_file(&worker_capability);
+    write_private_json(
+        &checkpoint_file,
+        &json!({
+            "schema_version": "main-agent.checkpoint-input.v1",
+            "summary": "Blocked on an unassigned path",
+            "next_action": "Wait for Main Agent to resolve the blocker",
+            "state": "blocked",
+            "blocker_summary": "The fix also needs a path outside the assigned scope"
+        }),
+    );
+    let blocked = run_main_agent(
+        &worker_checkout,
+        &[
+            "--state-dir",
+            &state,
+            "checkpoint",
+            "--file",
+            checkpoint_file.to_str().expect("checkpoint file"),
+            "--if-revision",
+            "3",
+            "--idempotency-key",
+            "worker-delivery-blocked-0001",
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_CAPABILITY_FILE", &worker_capability)],
+    );
+    assert_eq!(blocked.code, 0, "{}", blocked.stdout_text());
+    assert_eq!(data(&blocked)["assignment"]["state"], "blocked");
+    assert_eq!(data(&blocked)["assignment"]["revision"], 4);
+    let claim_id = claim["claim_id"].as_str().expect("claim id").to_string();
+    match claim_disposition {
+        "released" => {
+            let released = run(
+                &worker_checkout,
+                &[
+                    "--state-dir",
+                    &state,
+                    "work-context",
+                    "release",
+                    "--session",
+                    "worker-one",
+                    "--claim",
+                    &claim_id,
+                    "--if-revision",
+                    "1",
+                    "--capability-file",
+                    &worker_capability,
+                    "--idempotency-key",
+                    "worker-delivery-blocked-release-0001",
+                    "--format",
+                    "json",
+                ],
+            );
+            assert_eq!(released.code, 0, "{}", released.stdout_text());
+        }
+        "expired" => rewrite_registry(&state_dir, |registry| {
+            let claim = registry["claims"]
+                .as_array_mut()
+                .expect("claims")
+                .iter_mut()
+                .find(|claim| claim["claim_id"] == claim_id.as_str())
+                .expect("worker claim");
+            claim["state"] = json!("expired");
+            claim["expires_at"] = json!("2001-01-01T00:00:00Z");
+            claim["expires_at_epoch"] = json!(978_307_200_i64);
+        }),
+        other => panic!("unknown claim disposition {other}"),
+    }
+    (
+        state_dir,
+        worker_checkout,
+        worker_capability,
+        main_capability,
+    )
+}
+
+fn supervise_assignment(
+    state_dir: &Path,
+    main_checkout: &Path,
+    main_capability: &str,
+    assignment_id: &str,
+) -> serde_json::Value {
+    let supervised = run_main_agent(
+        main_checkout,
+        &[
+            "--state-dir",
+            state_dir.to_str().expect("state dir"),
+            "worker",
+            "supervise",
+            assignment_id,
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_CAPABILITY_FILE", main_capability)],
+    );
+    assert_eq!(supervised.code, 0, "{}", supervised.stdout_text());
+    data(&supervised)
+}
+
+fn resume_assignment(
+    state_dir: &Path,
+    main_checkout: &Path,
+    main_capability: &str,
+    assignment_id: &str,
+    if_revision: &str,
+    idempotency_key: &str,
+) -> CmdOutput {
+    run_main_agent(
+        main_checkout,
+        &[
+            "--state-dir",
+            state_dir.to_str().expect("state dir"),
+            "worker",
+            "resume",
+            assignment_id,
+            "--if-revision",
+            if_revision,
+            "--reason",
+            "The missing path is now assigned; continue the lane",
+            "--idempotency-key",
+            idempotency_key,
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_CAPABILITY_FILE", main_capability)],
+    )
+}
+
+#[test]
+fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
+    for disposition in ["released", "expired"] {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (state_dir, worker_checkout, worker_capability, main_capability) =
+            strand_blocked_delivery_worker(tmp.path(), disposition);
+        let main_checkout = tmp.path().join("main-checkout");
+        let state = state_dir.to_string_lossy().into_owned();
+
+        // The stranded worker cannot re-acquire its claim on its own: its
+        // bootstrap refuses the blocked assignment.
+        let self_bootstrap = run_main_agent(
+            &worker_checkout,
+            &[
+                "--state-dir",
+                &state,
+                "bootstrap",
+                "--idempotency-key",
+                "worker-delivery-blocked-bootstrap-0001",
+                "--format",
+                "json",
+            ],
+            &[("AGENT_SESSION_CAPABILITY_FILE", &worker_capability)],
+        );
+        assert_eq!(self_bootstrap.code, 65, "{disposition}");
+        assert_eq!(
+            self_bootstrap.stdout_json()["error"]["code"],
+            "worker-bootstrap-state",
+            "{disposition}"
+        );
+
+        // Supervision of the stranded worker names the typed resume, never a
+        // supervise self-loop.
+        let supervised = supervise_assignment(
+            &state_dir,
+            &main_checkout,
+            &main_capability,
+            "assignment-delivery",
+        );
+        assert_eq!(
+            supervised["classification"], "blocked_resume_required",
+            "{disposition}: {supervised}"
+        );
+        let action = &supervised["recovery_action"];
+        assert_eq!(action["kind"], "blocked_assignment_resume", "{disposition}");
+        assert_eq!(action["owner"]["role"], "main", "{disposition}");
+        assert_eq!(
+            action["argv_template"],
+            json!([
+                "main-agent",
+                "worker",
+                "resume",
+                "assignment-delivery",
+                "--if-revision",
+                "4",
+                "--reason",
+                "<bounded-resume-reason>",
+                "--idempotency-key",
+                "<idempotency-key>",
+                "--format",
+                "json"
+            ]),
+            "{disposition}"
+        );
+        assert!(
+            !action.to_string().contains("\"supervise\""),
+            "{disposition}: the recovery must not loop back to supervise: {action}"
+        );
+
+        let stale = resume_assignment(
+            &state_dir,
+            &main_checkout,
+            &main_capability,
+            "assignment-delivery",
+            "3",
+            "worker-delivery-resume-stale-0001",
+        );
+        assert_eq!(stale.code, 65, "{disposition}");
+        assert_eq!(
+            stale.stdout_json()["error"]["code"],
+            "orchestration-revision-conflict",
+            "{disposition}"
+        );
+        let resumed = resume_assignment(
+            &state_dir,
+            &main_checkout,
+            &main_capability,
+            "assignment-delivery",
+            "4",
+            "worker-delivery-resume-0001",
+        );
+        assert_eq!(resumed.code, 0, "{disposition}: {}", resumed.stdout_text());
+        assert_eq!(
+            resumed.stdout_json()["schema_version"],
+            "cli.main-agent.worker-resume.v1"
+        );
+        assert_eq!(
+            data(&resumed)["schema_version"],
+            "main-agent.worker-resume-result.v1"
+        );
+        assert_eq!(data(&resumed)["assignment"]["state"], "working");
+        assert_eq!(data(&resumed)["assignment"]["revision"], 5);
+        assert_eq!(data(&resumed)["assignment"]["blocker_summary"], json!(null));
+        let replayed = resume_assignment(
+            &state_dir,
+            &main_checkout,
+            &main_capability,
+            "assignment-delivery",
+            "4",
+            "worker-delivery-resume-0001",
+        );
+        assert_eq!(replayed.code, 0, "{disposition}");
+        assert_eq!(data(&replayed), data(&resumed), "{disposition}");
+        let not_blocked = resume_assignment(
+            &state_dir,
+            &main_checkout,
+            &main_capability,
+            "assignment-delivery",
+            "5",
+            "worker-delivery-resume-working-0001",
+        );
+        assert_eq!(not_blocked.code, 65, "{disposition}");
+        assert_eq!(
+            not_blocked.stdout_json()["error"]["code"],
+            "assignment-state-conflict",
+            "{disposition}"
+        );
+
+        // Until the worker re-bootstraps, supervision hands the worker its own
+        // bootstrap argv instead of looping.
+        let pending = supervise_assignment(
+            &state_dir,
+            &main_checkout,
+            &main_capability,
+            "assignment-delivery",
+        );
+        assert_eq!(pending["recovery_action"]["kind"], "worker_rebootstrap");
+        assert_eq!(pending["recovery_action"]["owner"]["role"], "worker");
+        assert_eq!(
+            pending["recovery_action"]["argv_template"],
+            json!([
+                "main-agent",
+                "bootstrap",
+                "--idempotency-key",
+                "<idempotency-key>",
+                "--format",
+                "json"
+            ])
+        );
+
+        let rebootstrapped = run_main_agent(
+            &worker_checkout,
+            &[
+                "--state-dir",
+                &state,
+                "bootstrap",
+                "--idempotency-key",
+                "worker-delivery-resumed-bootstrap-0001",
+                "--format",
+                "json",
+            ],
+            &[("AGENT_SESSION_CAPABILITY_FILE", &worker_capability)],
+        );
+        assert_eq!(
+            rebootstrapped.code,
+            0,
+            "{disposition}: {}",
+            rebootstrapped.stdout_text()
+        );
+        assert_eq!(data(&rebootstrapped)["claim"], "active");
+        assert_eq!(
+            data(&rebootstrapped)["assignment"]["record"]["state"],
+            "working"
+        );
+        assert_eq!(data(&rebootstrapped)["assignment"]["record"]["revision"], 6);
+        let claim = load_coordination_registry(&state_dir)["claims"]
+            .as_array()
+            .expect("claims")
+            .iter()
+            .find(|claim| {
+                claim["session_id"] == "worker-one"
+                    && claim["state"] == "active"
+                    && claim["expires_at_epoch"].as_i64() > Some(978_307_200)
+            })
+            .expect("re-acquired worker claim")
+            .clone();
+        assert_eq!(claim["checkout_shell_grant"], true, "{disposition}");
+        assert_eq!(
+            claim["pull_request_head"],
+            json!({"repository": "example/repository", "head": "fix/worker-delivery"}),
+            "{disposition}"
+        );
+
+        // The re-acquired claim admits the worker's own checkout shell (git
+        // status, commit, push); the pull-request head grant above covers PRs.
+        seed_activity_state(
+            &state_dir,
+            "worker-one",
+            "worker-incarnation-one",
+            "working",
+            json!({
+                "provider_turn_id": "turn-worker-resumed",
+                "started_at": "2030-01-01T00:00:01Z"
+            }),
+            serde_json::Value::Null,
+        );
+        let _runtime =
+            seed_live_runtime_identity(&state_dir, "worker-one", "worker-incarnation-one", 94);
+        let execution_token = tmp.path().join("worker-resumed-token");
+        fs::write(&execution_token, "execution-token-worker-resumed").expect("execution token");
+        fs::set_permissions(&execution_token, fs::Permissions::from_mode(0o600))
+            .expect("execution token mode");
+        let claim_id = claim["claim_id"].as_str().expect("claim id");
+        let claim_revision = claim["revision"]
+            .as_u64()
+            .expect("claim revision")
+            .to_string();
+        let targets = tmp.path().join("resumed-checkout-shell-targets.json");
+        fs::write(
+            &targets,
+            serde_json::to_vec(&json!({
+                "schema_version": "agent-session.operation-targets.v1",
+                "targets": [{
+                    "kind": "repository",
+                    "repository": "example/repository",
+                    "value": "."
+                }],
+                "provider_refs": [],
+                "checkouts": [{
+                    "repository": "example/repository",
+                    "path": worker_checkout
+                }]
+            }))
+            .expect("targets"),
+        )
+        .expect("targets file");
+        let admitted = run(
+            &worker_checkout,
+            &[
+                "--state-dir",
+                &state,
+                "work-context",
+                "admit",
+                "--session",
+                "worker-one",
+                "--claim",
+                claim_id,
+                "--if-revision",
+                &claim_revision,
+                "--targets-file",
+                targets.to_str().expect("targets"),
+                "--operation",
+                "shell",
+                "--execution-token-file",
+                execution_token.to_str().expect("execution token"),
+                "--capability-file",
+                &worker_capability,
+                "--idempotency-key",
+                "worker-resumed-admit-checkout-shell",
+                "--format",
+                "json",
+            ],
+        );
+        assert_eq!(
+            admitted.code,
+            0,
+            "{disposition}: {}",
+            admitted.stdout_text()
+        );
+        assert_eq!(data(&admitted)["operation"], "shell");
+    }
+}
+
+/// Abandoning a blocked lane whose worker runtime is gone: `worker resume`
+/// returns it to `working`, which is exactly the post-claim failure
+/// `worker reconcile-stopped` terminalizes, with no worker claim required.
+#[test]
+#[cfg(target_os = "linux")]
+fn main_agent_blocked_worker_with_stopped_runtime_resumes_into_reconcile_stopped() {
+    let fixture = StoppedPostClaimFixture::new();
+    let state = fixture.state_dir.to_string_lossy().into_owned();
+    let checkpoint_file = worker_checkpoint_file(&fixture.worker_capability);
+    write_private_json(
+        &checkpoint_file,
+        &json!({
+            "schema_version": "main-agent.checkpoint-input.v1",
+            "summary": "Blocked before the runtime stopped",
+            "next_action": "Wait for Main Agent",
+            "state": "blocked",
+            "blocker_summary": "The lane needs a controller decision"
+        }),
+    );
+    let blocked = run_main_agent(
+        &fixture.checkout,
+        &[
+            "--state-dir",
+            &state,
+            "checkpoint",
+            "--file",
+            checkpoint_file.to_str().expect("checkpoint file"),
+            "--if-revision",
+            "3",
+            "--idempotency-key",
+            "stopped-blocked-checkpoint-0001",
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_CAPABILITY_FILE", &fixture.worker_capability)],
+    );
+    assert_eq!(blocked.code, 0, "{}", blocked.stdout_text());
+    assert_eq!(data(&blocked)["assignment"]["revision"], 4);
+    let claim = load_coordination_registry(&fixture.state_dir)["claims"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|claim| claim["session_id"] == "worker-stopped" && claim["state"] == "active")
+        .expect("worker claim")
+        .clone();
+    let released = run(
+        &fixture.checkout,
+        &[
+            "--state-dir",
+            &state,
+            "work-context",
+            "release",
+            "--session",
+            "worker-stopped",
+            "--claim",
+            claim["claim_id"].as_str().expect("claim id"),
+            "--if-revision",
+            &claim["revision"]
+                .as_u64()
+                .expect("claim revision")
+                .to_string(),
+            "--capability-file",
+            &fixture.worker_capability,
+            "--idempotency-key",
+            "stopped-blocked-release-0001",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(released.code, 0, "{}", released.stdout_text());
+    let supervise = || {
+        let supervised = run_main_agent(
+            &fixture.checkout,
+            &[
+                "--state-dir",
+                &state,
+                "worker",
+                "supervise",
+                "assignment-stopped",
+                "--format",
+                "json",
+            ],
+            &fixture.envs(),
+        );
+        assert_eq!(supervised.code, 0, "{}", supervised.stdout_text());
+        data(&supervised)
+    };
+    assert_eq!(supervise()["classification"], "blocked_resume_required");
+
+    let resumed = run_main_agent(
+        &fixture.checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "resume",
+            "assignment-stopped",
+            "--if-revision",
+            "4",
+            "--reason",
+            "Abandon the lane through stopped-worker terminalization",
+            "--idempotency-key",
+            "stopped-blocked-resume-0001",
+            "--format",
+            "json",
+        ],
+        &fixture.envs(),
+    );
+    assert_eq!(resumed.code, 0, "{}", resumed.stdout_text());
+    assert_eq!(data(&resumed)["assignment"]["revision"], 5);
+    assert_eq!(supervise()["classification"], "post_claim_failure");
+
+    let reconciled = run_main_agent(
+        &fixture.checkout,
+        &[
+            "--state-dir",
+            &state,
+            "worker",
+            "reconcile-stopped",
+            "assignment-stopped",
+            "--if-revision",
+            "5",
+            "--reason",
+            "abandoned blocked lane",
+            "--idempotency-key",
+            "stopped-blocked-reconcile-0001",
+            "--format",
+            "json",
+        ],
+        &fixture.envs(),
+    );
+    assert_eq!(reconciled.code, 0, "{}", reconciled.stdout_text());
+    assert_eq!(data(&reconciled)["assignment"]["state"], "cancelled");
+    assert_eq!(
+        data(&reconciled)["proof"]["worker_claim"]["observed_at_stage1"],
+        false
+    );
+    assert_eq!(data(&reconciled)["worktree_preserved"], true);
+}
+
+#[test]
+fn main_agent_worker_resume_refuses_a_pre_claim_blocked_assignment() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (state_dir, _, _, main_capability) = strand_blocked_delivery_worker(tmp.path(), "released");
+    let main_checkout = tmp.path().join("main-checkout");
+    let mut assignments = orchestration_registry(&state_dir);
+    assignments["assignments"]["assignment-delivery"]["blocker_summary"] =
+        json!("[pre-claim:claim-conflict] worker bootstrap failed");
+    write_private_json(&state_dir.join("orchestration/registry.json"), &assignments);
+    let refused = resume_assignment(
+        &state_dir,
+        &main_checkout,
+        &main_capability,
+        "assignment-delivery",
+        "4",
+        "worker-delivery-resume-preclaim-0001",
+    );
+    assert_eq!(refused.code, 65, "{}", refused.stdout_text());
+    assert_eq!(
+        refused.stdout_json()["error"]["code"],
+        "assignment-preclaim-blocked"
+    );
+    assert_eq!(
+        orchestration_registry(&state_dir)["assignments"]["assignment-delivery"]["state"],
+        "blocked"
+    );
+}
+
 #[test]
 fn main_agent_worker_start_rejects_invalid_or_foreign_provider_refs() {
     let tmp = tempfile::TempDir::new().expect("tempdir");

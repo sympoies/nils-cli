@@ -62,7 +62,7 @@ const WORKER_PROMPT_OBSERVATION_MAX_READERS: usize = 4;
 static ACTIVE_WORKER_PROMPT_OBSERVATION_READERS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(test)]
 static WORKER_PROMPT_OBSERVATION_BLOCK_FOR_TEST: AtomicUsize = AtomicUsize::new(0);
-const MAIN_AGENT_AFTER_HELP: &str = "SAFE LIFECYCLE:\n  init -> rehydrate/status -> worker start --await-ready -> worker bootstrap\n  worker supervise -> accept -> closeout (retires terminal workers and closes)\n\nMACRO-FIRST RECOVERY:\n  Use worker supervise for repeatable diagnosis. Use self recover only for this\n  exact Main Agent controller's stale broker. Guidance continuity and managed\n  account handoff use their typed worker actions. Use worker reassign only when\n  supervision proves safe reassignment. If a macro stops, continue from its\n  last_proven_safe_state with worker diagnose, submit-recovery, cancel,\n  account-handoff-cancel, retire, or exact closeout replay. Account handoff\n  cancellation requires the current assignment revision and\n  --authorize-account-change. Never resend a prompt or inject an\n  unbounded/manual Enter.\n\nREVISION AND RETRY RULES:\n  Read the current run or assignment revision before each mutation. Retry an\n  ambiguous outcome with the identical request and idempotency key. After a\n  confirmed revision conflict, re-read state and use a new key for the revised\n  request. A partial closeout reuses its original run revision, checkpoint,\n  and key because its progress receipt owns later stage revisions.\n\nEXAMPLES:\n  main-agent init --packet-file objective.json --if-absent --idempotency-key init-001 --format json\n  main-agent self recover --idempotency-key controller-recover-001 --format json\n  main-agent worker start --assignment-file assignment.json --await-ready 5m --idempotency-key start-001 --format json\n  main-agent worker supervise ASSIGNMENT_ID --format json\n  main-agent worker reassign ASSIGNMENT_ID --assignment-file replacement.json --if-revision 3 --reason \"pre-claim bootstrap failure\" --idempotency-key reassign-001 --format json\n  main-agent closeout --if-run-revision 7 --checkpoint-file final.json --idempotency-key closeout-001 --format json\n\nOPERATOR RUNBOOK:\n  crates/agent-session/docs/runbooks/main-agent-orchestration.md\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error\n  65  invalid or stale data\n  69  temporarily unavailable";
+const MAIN_AGENT_AFTER_HELP: &str = "SAFE LIFECYCLE:\n  init -> rehydrate/status -> worker start --await-ready -> worker bootstrap\n  worker supervise -> accept -> closeout (retires terminal workers and closes)\n\nMACRO-FIRST RECOVERY:\n  Use worker supervise for repeatable diagnosis. Use self recover only for this\n  exact Main Agent controller's stale broker. Guidance continuity and managed\n  account handoff use their typed worker actions. Use worker reassign only when\n  supervision proves safe reassignment. If a macro stops, continue from its\n  last_proven_safe_state with worker diagnose, submit-recovery, cancel,\n  account-handoff-cancel, retire, or exact closeout replay. Account handoff\n  cancellation requires the current assignment revision and\n  --authorize-account-change. A post-claim blocked worker is paused, not\n  ended: resume it with worker resume. Never resend a prompt or inject an\n  unbounded/manual Enter.\n\nREVISION AND RETRY RULES:\n  Read the current run or assignment revision before each mutation. Retry an\n  ambiguous outcome with the identical request and idempotency key. After a\n  confirmed revision conflict, re-read state and use a new key for the revised\n  request. A partial closeout reuses its original run revision, checkpoint,\n  and key because its progress receipt owns later stage revisions.\n\nEXAMPLES:\n  main-agent init --packet-file objective.json --if-absent --idempotency-key init-001 --format json\n  main-agent self recover --idempotency-key controller-recover-001 --format json\n  main-agent worker start --assignment-file assignment.json --await-ready 5m --idempotency-key start-001 --format json\n  main-agent worker supervise ASSIGNMENT_ID --format json\n  main-agent worker reassign ASSIGNMENT_ID --assignment-file replacement.json --if-revision 3 --reason \"pre-claim bootstrap failure\" --idempotency-key reassign-001 --format json\n  main-agent closeout --if-run-revision 7 --checkpoint-file final.json --idempotency-key closeout-001 --format json\n\nOPERATOR RUNBOOK:\n  crates/agent-session/docs/runbooks/main-agent-orchestration.md\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error\n  65  invalid or stale data\n  69  temporarily unavailable";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -277,6 +277,10 @@ enum WorkerCommand {
     /// Return a submitted assignment to its exact worker for bounded revisions.
     #[command(name = "request-changes")]
     RequestChanges(WorkerRequestChangesArgs),
+    /// Return a post-claim blocked assignment to its exact worker as
+    /// `working`; the worker then re-runs its bootstrap argv to re-acquire its
+    /// exact assignment-derived claim.
+    Resume(WorkerRequestChangesArgs),
     /// Re-enter an exact idle Codex worker through its existing unread
     /// notification generation without resending assignment content.
     Reenter(WorkerReenterArgs),
@@ -3042,7 +3046,7 @@ fn worker_bootstrap_instructions(
                 "json"
             ]
         },
-        "claim_lifecycle": "After each submitted or blocked checkpoint succeeds, release the work-context claim before reporting that checkpoint.",
+        "claim_lifecycle": "After each submitted or blocked checkpoint succeeds, release the work-context claim before reporting that checkpoint. A blocked assignment is paused, not ended: after Main Agent request-changes or resume returns it to working, re-run the request_changes bootstrap argv to re-acquire the exact claim before any mutation.",
         "request_changes": {
             "required_before_mutation": true,
             "argv_template": [
@@ -3248,6 +3252,7 @@ fn run_worker(context: &CliContext, args: WorkerArgs) -> Result<Value, CliError>
             run_worker_account_handoff_cancel(context, args)
         }
         WorkerCommand::RequestChanges(args) => run_worker_request_changes(context, args),
+        WorkerCommand::Resume(args) => run_worker_resume(context, args),
         WorkerCommand::Reenter(args) => run_worker_reenter(context, args),
         WorkerCommand::Accept(args) => {
             run_assignment_state(context, args, "submitted", "accepted", "worker-accept")
@@ -9338,6 +9343,7 @@ fn run_worker_diagnose(context: &CliContext, args: WorkerDiagnoseArgs) -> Result
 fn run_worker_supervise(context: &CliContext, args: WorkerDiagnoseArgs) -> Result<Value, CliError> {
     let diagnosis = diagnose_worker(context, &args.assignment_id)?;
     let schema_version = match diagnosis["schema_version"].as_str() {
+        Some("main-agent.worker-diagnose-result.v8") => "main-agent.worker-supervise-result.v8",
         Some("main-agent.worker-diagnose-result.v7") => "main-agent.worker-supervise-result.v7",
         Some("main-agent.worker-diagnose-result.v6") => "main-agent.worker-supervise-result.v6",
         Some("main-agent.worker-diagnose-result.v5") => "main-agent.worker-supervise-result.v5",
@@ -9963,7 +9969,13 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
         idle_claim_revocation_required,
         coordination_broker_stale,
         edit_authority_stale,
+        blocked_resume_required: assignment.state == "blocked"
+            && assignment.worker.is_some()
+            && !claim_active
+            && !preclaim_blocker
+            && !failed_preclaim,
         claim_renewal_required: claim_renewal_required && !failed_preclaim,
+        claim_absent: !claim_active,
         orphan_guidance_quarantine_required,
         guidance_continuity_required: guidance.stale_incarnation_unread_count > 0
             && assignment.previous_worker.is_some(),
@@ -10016,7 +10028,9 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
             "attention_kind": attention_kind
         })
     });
-    let diagnosis_schema = if matches!(
+    let diagnosis_schema = if classification == "blocked_resume_required" {
+        "main-agent.worker-diagnose-result.v8"
+    } else if matches!(
         classification,
         "pre_bootstrap_attention_required"
             | "provider_capacity_recovery_pending"
@@ -10481,9 +10495,43 @@ fn worker_recovery_action(
                 action["executable"] = json!(false);
                 action["required_inputs"] = json!(["idempotency_key"]);
             } else {
-                action["kind"] = json!("worker_claim_identity_reconcile");
-                action["required_inputs"] = json!(["claim_id", "claim_revision"]);
+                // No claim exists to renew. The exact worker re-acquires its
+                // assignment-derived claim through its own authenticated
+                // bootstrap; re-running supervision would never change that.
+                action["kind"] = json!("worker_rebootstrap");
+                action["argv"] = Value::Null;
+                action["argv_template"] = json!([
+                    "main-agent",
+                    "bootstrap",
+                    "--idempotency-key",
+                    "<idempotency-key>",
+                    "--format",
+                    "json"
+                ]);
+                action["executable"] = json!(false);
+                action["required_inputs"] = json!(["idempotency_key"]);
             }
+        }
+        "blocked_resume_required" => {
+            action["schema_version"] = json!("main-agent.worker-recovery-action.v8");
+            action["kind"] = json!("blocked_assignment_resume");
+            action["argv"] = Value::Null;
+            action["argv_template"] = json!([
+                "main-agent",
+                "worker",
+                "resume",
+                assignment.assignment_id,
+                "--if-revision",
+                assignment.revision.to_string(),
+                "--reason",
+                "<bounded-resume-reason>",
+                "--idempotency-key",
+                "<idempotency-key>",
+                "--format",
+                "json"
+            ]);
+            action["executable"] = json!(false);
+            action["required_inputs"] = json!(["resume_reason", "idempotency_key"]);
         }
         "orphan_guidance_quarantine_required" => {
             action["kind"] = json!("guidance_quarantine");
@@ -10665,7 +10713,15 @@ struct WorkerDiagnosisFacts {
     idle_claim_revocation_required: bool,
     coordination_broker_stale: bool,
     edit_authority_stale: bool,
+    /// The worker checkpointed `blocked` after bootstrap and holds no
+    /// assignment-derived claim. Bootstrap refuses a `blocked` assignment, so
+    /// only the manager `worker resume` transition can restore the claim;
+    /// asking the worker to renew a claim it no longer holds would loop.
+    blocked_resume_required: bool,
     claim_renewal_required: bool,
+    /// No active worker claim exists, so renewal is impossible and the exact
+    /// worker must re-run its bootstrap to re-acquire the claim.
+    claim_absent: bool,
     orphan_guidance_quarantine_required: bool,
     guidance_continuity_required: bool,
     startup_dialog: bool,
@@ -10823,10 +10879,20 @@ fn classify_worker_diagnosis(facts: WorkerDiagnosisFacts) -> (&'static str, &'st
             "preserve the live starting worker and continue bounded authenticated-bootstrap supervision; no claim exists to renew, and no provider input or replacement is authorized",
             false,
         )
+    } else if facts.blocked_resume_required {
+        (
+            "blocked_resume_required",
+            "the worker checkpointed a post-claim `blocked` and holds no assignment-derived claim, so it cannot act in its checkout until resumed: resolve the recorded blocker, then run `main-agent worker resume` with the current revision; the exact worker then re-runs its bootstrap argv to re-acquire its claim and checkout-shell grant. To abandon the lane instead, resume it and terminalize through the post-claim stop path; never cancel, reassign, or edit orchestration state by hand",
+            false,
+        )
     } else if facts.claim_renewal_required {
         (
             "claim_renewal_required",
-            "request the exact worker run `agent-session work-context renew` for its current claim and revision using its own capability file before further mutation; the Main Agent must not copy or use the worker capability, restart the provider, or resend the prompt",
+            if facts.claim_absent {
+                "the exact worker holds no assignment-derived claim: request that it re-run its bootstrap argv with a new idempotency key using its own capability before further mutation; the Main Agent must not copy or use the worker capability, restart the provider, or resend the prompt"
+            } else {
+                "request the exact worker run `agent-session work-context renew` for its current claim and revision using its own capability file before further mutation; the Main Agent must not copy or use the worker capability, restart the provider, or resend the prompt"
+            },
             false,
         )
     } else if facts.orphan_guidance_quarantine_required {
@@ -19177,18 +19243,73 @@ fn run_assignment_state(
     Ok(outcome)
 }
 
+/// The two manager-only transitions that hand an assignment back to its exact
+/// bound worker as `working`. Both record the same typed companion identity,
+/// so `worker reenter` can re-queue the worker's unread guidance after either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkerReturnTransition {
+    /// `submitted -> working` after Main Agent review.
+    RequestChanges,
+    /// `blocked -> working` after Main Agent resolved a post-claim blocker.
+    Resume,
+}
+
+impl WorkerReturnTransition {
+    fn operation(self) -> &'static str {
+        match self {
+            Self::RequestChanges => "worker-request-changes",
+            Self::Resume => "worker-resume",
+        }
+    }
+
+    fn source_state(self) -> &'static str {
+        match self {
+            Self::RequestChanges => "submitted",
+            Self::Resume => "blocked",
+        }
+    }
+}
+
 fn run_worker_request_changes(
     context: &CliContext,
     args: WorkerRequestChangesArgs,
 ) -> Result<Value, CliError> {
+    return_assignment_to_worker(context, args, WorkerReturnTransition::RequestChanges)
+}
+
+/// `blocked` is a pause, not an exit. A worker that checkpointed `blocked`
+/// releases its assignment-derived claim (and with it the private
+/// checkout-shell grant), and bootstrap refuses a `blocked` assignment, so only
+/// this manager transition makes the worker's own bootstrap re-acquire that
+/// exact claim. A pre-claim bootstrap failure never held a claim and stays on
+/// the cancel/reassign path.
+fn run_worker_resume(
+    context: &CliContext,
+    args: WorkerRequestChangesArgs,
+) -> Result<Value, CliError> {
+    return_assignment_to_worker(context, args, WorkerReturnTransition::Resume)
+}
+
+fn return_assignment_to_worker(
+    context: &CliContext,
+    args: WorkerRequestChangesArgs,
+    transition: WorkerReturnTransition,
+) -> Result<Value, CliError> {
+    let operation = transition.operation();
     validate_idempotency_key(&args.idempotency_key)?;
-    validate_input_summary("request-changes reason", &args.reason)?;
+    validate_input_summary(
+        match transition {
+            WorkerReturnTransition::RequestChanges => "request-changes reason",
+            WorkerReturnTransition::Resume => "resume reason",
+        },
+        &args.reason,
+    )?;
     let (record, incarnation) = authenticated_self(context)?;
     ensure_active_claim(context, &record)?;
     let mut locked = orchestration::lock_registry(context)?;
     let run = require_current_main(&locked.registry, &record, &incarnation)?.clone();
     let request_digest = agent_session::internal::coordination::request_digest(
-        "worker-request-changes",
+        operation,
         &json!({
             "assignment_id": args.assignment_id,
             "if_revision": args.if_revision,
@@ -19200,7 +19321,7 @@ fn run_worker_request_changes(
         &record,
         &incarnation,
         &args.idempotency_key,
-        "worker-request-changes",
+        operation,
         &request_digest,
     )? {
         return Ok(value);
@@ -19214,14 +19335,33 @@ fn run_worker_request_changes(
     ensure_primary_manager(current, &record, &incarnation)?;
     ensure_revision(args.if_revision, current.revision, "assignment")?;
     ensure_assignment_mutation_admitted(context, current, AssignmentMutationOwner::Ordinary)?;
-    if current.state != "submitted" {
+    if current.state != transition.source_state() {
         return Err(CliError::data(
             "assignment-state-conflict",
-            "assignment must be submitted before Main Agent can request changes",
+            match transition {
+                WorkerReturnTransition::RequestChanges => {
+                    "assignment must be submitted before Main Agent can request changes"
+                }
+                WorkerReturnTransition::Resume => {
+                    "assignment must be blocked before Main Agent can resume it"
+                }
+            },
             Some(json!({
                 "assignment_id": current.assignment_id,
                 "state": current.state,
                 "revision": current.revision
+            })),
+        ));
+    }
+    if transition == WorkerReturnTransition::Resume && assignment_has_preclaim_blocker(current) {
+        return Err(CliError::data(
+            "assignment-preclaim-blocked",
+            "a pre-claim bootstrap failure never held a claim to restore; cancel or reassign this exact assignment",
+            Some(json!({
+                "assignment_id": current.assignment_id,
+                "state": current.state,
+                "revision": current.revision,
+                "next_action": "worker-cancel-or-reassign"
             })),
         ));
     }
@@ -19242,7 +19382,11 @@ fn run_worker_request_changes(
     current.updated_at = timestamp();
     current.checkpoint = Some(RunCheckpoint {
         revision: current.revision,
-        summary: "Main Agent requested revisions".to_string(),
+        summary: match transition {
+            WorkerReturnTransition::RequestChanges => "Main Agent requested revisions",
+            WorkerReturnTransition::Resume => "Main Agent resumed the blocked assignment",
+        }
+        .to_string(),
         next_action: args.reason,
         updated_at: current.updated_at.clone(),
     });
@@ -19252,16 +19396,23 @@ fn run_worker_request_changes(
         &request_digest,
         &args.idempotency_key,
     )?;
-    let outcome = json!({
-        "schema_version": "main-agent.worker-request-changes-result.v1",
-        "assignment": public_assignment_view(current)
-    });
+    let outcome = match transition {
+        WorkerReturnTransition::RequestChanges => json!({
+            "schema_version": "main-agent.worker-request-changes-result.v1",
+            "assignment": public_assignment_view(current)
+        }),
+        WorkerReturnTransition::Resume => json!({
+            "schema_version": "main-agent.worker-resume-result.v1",
+            "assignment": public_assignment_view(current),
+            "worker_next_action": "the exact worker re-runs its bootstrap argv with a new idempotency key to re-acquire its assignment-derived claim, including the checkout-shell grant, before any mutation"
+        }),
+    };
     store_receipt(
         &mut locked.registry,
         &record,
         &incarnation,
         &args.idempotency_key,
-        "worker-request-changes",
+        operation,
         &request_digest,
         outcome.clone(),
     )?;
@@ -23148,6 +23299,7 @@ fn command_name(command: &MainAgentCommand) -> &'static str {
             WorkerCommand::AccountHandoff(_) => "worker-account-handoff",
             WorkerCommand::AccountHandoffCancel(_) => "worker-account-handoff-cancel",
             WorkerCommand::RequestChanges(_) => "worker-request-changes",
+            WorkerCommand::Resume(_) => "worker-resume",
             WorkerCommand::Reenter(_) => "worker-reenter",
             WorkerCommand::Accept(_) => "worker-accept",
             WorkerCommand::Release(_) => "worker-release",
@@ -23207,6 +23359,7 @@ fn command_output_format(command: &MainAgentCommand) -> OutputFormat {
             WorkerCommand::AccountHandoff(args) => args.format,
             WorkerCommand::AccountHandoffCancel(args) => args.format,
             WorkerCommand::RequestChanges(args) => args.format,
+            WorkerCommand::Resume(args) => args.format,
             WorkerCommand::Reenter(args) => args.format,
             WorkerCommand::Accept(args)
             | WorkerCommand::Release(args)
@@ -25818,7 +25971,9 @@ mod tests {
             idle_claim_revocation_required: false,
             coordination_broker_stale: false,
             edit_authority_stale: false,
+            blocked_resume_required: false,
             claim_renewal_required: false,
+            claim_absent: false,
             orphan_guidance_quarantine_required: false,
             guidance_continuity_required: false,
             startup_dialog: false,
@@ -26921,6 +27076,7 @@ mod tests {
             "idle_claim_revocation_required",
             "coordination_broker_stale",
             "edit_authority_stale",
+            "blocked_resume_required",
             "claim_renewal_required",
             "orphan_guidance_quarantine_required",
             "guidance_continuity_required",
@@ -26942,7 +27098,9 @@ mod tests {
                 false,
                 None,
             );
-            let expected_schema = if matches!(
+            let expected_schema = if classification == "blocked_resume_required" {
+                "main-agent.worker-recovery-action.v8"
+            } else if matches!(
                 classification,
                 "pre_bootstrap_attention_required"
                     | "provider_capacity_recovery_pending"
@@ -27058,6 +27216,87 @@ mod tests {
                 "json"
             ])
         );
+
+        // Without a claim there is nothing to renew: the exact worker
+        // re-bootstraps instead of the Main Agent re-running supervision.
+        let rebootstrap = worker_recovery_action(
+            "claim_renewal_required",
+            &assignment,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        assert_eq!(rebootstrap["kind"], "worker_rebootstrap");
+        assert_eq!(rebootstrap["owner"]["role"], "worker");
+        assert_eq!(rebootstrap["argv"], Value::Null);
+        assert_eq!(
+            rebootstrap["argv_template"],
+            json!([
+                "main-agent",
+                "bootstrap",
+                "--idempotency-key",
+                "<idempotency-key>",
+                "--format",
+                "json"
+            ])
+        );
+
+        let resume = worker_recovery_action(
+            "blocked_resume_required",
+            &assignment,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        assert_eq!(resume["kind"], "blocked_assignment_resume");
+        assert_eq!(resume["owner"]["role"], "main");
+        assert_eq!(resume["argv"], Value::Null);
+        assert_eq!(resume["argv_template"][2], "resume");
+        assert_eq!(resume["argv_template"][5], assignment.revision.to_string());
+        assert_eq!(
+            resume["required_inputs"],
+            json!(["resume_reason", "idempotency_key"])
+        );
+    }
+
+    #[test]
+    fn blocked_resume_outranks_claim_renewal_and_absent_claims_rebootstrap() {
+        let blocked = classify_worker_diagnosis(WorkerDiagnosisFacts {
+            blocked_resume_required: true,
+            claim_renewal_required: true,
+            claim_absent: true,
+            ..base_diagnosis_facts()
+        });
+        assert_eq!(blocked.0, "blocked_resume_required");
+        assert!(blocked.1.contains("main-agent worker resume"));
+        assert!(!blocked.2);
+
+        let absent = classify_worker_diagnosis(WorkerDiagnosisFacts {
+            claim_renewal_required: true,
+            claim_absent: true,
+            ..base_diagnosis_facts()
+        });
+        assert_eq!(absent.0, "claim_renewal_required");
+        assert!(absent.1.contains("bootstrap"));
+        assert!(!absent.1.contains("work-context renew"));
+
+        let expiring = classify_worker_diagnosis(WorkerDiagnosisFacts {
+            claim_renewal_required: true,
+            ..base_diagnosis_facts()
+        });
+        assert!(expiring.1.contains("work-context renew"));
+
+        // Operation and runtime evidence keep their higher precedence.
+        let uncertain = classify_worker_diagnosis(WorkerDiagnosisFacts {
+            blocked_resume_required: true,
+            active_or_uncertain_operation: true,
+            ..base_diagnosis_facts()
+        });
+        assert_eq!(uncertain.0, "uncertain_mutation");
     }
 
     #[test]
