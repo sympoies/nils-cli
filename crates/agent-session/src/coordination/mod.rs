@@ -3443,6 +3443,67 @@ mod tests {
         }
     }
 
+    fn active_claim(
+        session: &str,
+        incarnation: &str,
+        expires_at_epoch: i64,
+    ) -> context::WorkContextRecord {
+        context::WorkContextRecord {
+            schema_version: String::new(),
+            session_id: session.to_string(),
+            session_incarnation: incarnation.to_string(),
+            claim_id: format!("{session}-claim"),
+            revision: 1,
+            state: "active".to_string(),
+            intent: String::new(),
+            tier: String::new(),
+            repositories: Vec::new(),
+            worktrees: Vec::new(),
+            checkout_shell_grant: false,
+            pull_request_head: None,
+            provider_refs: Vec::new(),
+            plan_refs: Vec::new(),
+            scopes: Vec::new(),
+            summary: String::new(),
+            updated_at: String::new(),
+            expires_at: String::new(),
+            expires_at_epoch,
+            terminal_at_epoch: None,
+        }
+    }
+
+    fn live_operation(
+        session: &str,
+        incarnation: &str,
+        expires_at_epoch: i64,
+    ) -> claims::OperationLease {
+        claims::OperationLease {
+            schema_version: String::new(),
+            lease_id: format!("{session}-lease"),
+            session_id: session.to_string(),
+            session_incarnation: incarnation.to_string(),
+            claim_id: format!("{session}-claim"),
+            claim_revision: 1,
+            operation: "edit".to_string(),
+            targets: Vec::new(),
+            provider_targets: Vec::new(),
+            pull_request_targets: Vec::new(),
+            state: "reconcile_pending".to_string(),
+            revision: 1,
+            started_at: String::new(),
+            expires_at: String::new(),
+            expires_at_epoch,
+            terminal_at_epoch: None,
+            execution_token_digest: String::new(),
+            activity_revision: 1,
+            activity_identity_digest: String::new(),
+            runtime_identity_digest: String::new(),
+            descendant: None,
+            reconcile_observed_at_epoch: None,
+            outcome: None,
+        }
+    }
+
     #[test]
     fn full_maintenance_prunes_only_stale_stopped_brokers_of_deleted_sessions() {
         let temporary = tempfile::TempDir::new().expect("temporary state");
@@ -3459,12 +3520,39 @@ mod tests {
                 ("deleted-recent", "stopped", now - 60),
                 ("present-stale", "stopped", two_days_ago),
                 ("deleted-ready", "ready", two_days_ago),
+                ("deleted-claimed", "stopped", two_days_ago),
+                ("deleted-operating", "stopped", two_days_ago),
+                ("deleted-other-claim", "stopped", two_days_ago),
+                ("deleted-capable", "stopped", two_days_ago),
             ] {
                 locked
                     .registry
                     .brokers
                     .insert(session.to_string(), broker_entry(session, state, epoch));
             }
+            // Live coordination state for the exact incarnation keeps its broker;
+            // a claim for another incarnation does not.
+            let far = now + 24 * 60 * 60;
+            locked.registry.claims.push(active_claim(
+                "deleted-claimed",
+                "deleted-claimed-inc",
+                far,
+            ));
+            locked
+                .registry
+                .claims
+                .push(active_claim("deleted-other-claim", "previous-inc", far));
+            locked.registry.operations.push(live_operation(
+                "deleted-operating",
+                "deleted-operating-inc",
+                far,
+            ));
+            locked
+                .registry
+                .brokers
+                .get_mut("deleted-capable")
+                .expect("capable broker")
+                .capability_digest = digest_bytes(b"still-capable");
             locked.save().expect("seed registry");
         }
         fs::create_dir_all(crate::session_dir(&context, "present-stale")).expect("session dir");
@@ -3472,7 +3560,7 @@ mod tests {
         let observed = lock_registry_observational(&context).expect("observational registry");
         assert_eq!(
             observed.registry.brokers.len(),
-            4,
+            8,
             "observation never prunes"
         );
         drop(observed);
@@ -3480,7 +3568,17 @@ mod tests {
         let maintained = lock_registry(&context).expect("maintained registry");
         let mut kept: Vec<_> = maintained.registry.brokers.keys().cloned().collect();
         kept.sort();
-        assert_eq!(kept, ["deleted-ready", "deleted-recent", "present-stale"]);
+        assert_eq!(
+            kept,
+            [
+                "deleted-capable",
+                "deleted-claimed",
+                "deleted-operating",
+                "deleted-ready",
+                "deleted-recent",
+                "present-stale",
+            ]
+        );
         drop(maintained);
 
         let persisted = lock_registry_observational(&context).expect("persisted registry");
