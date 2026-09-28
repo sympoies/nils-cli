@@ -1569,6 +1569,16 @@ pub(crate) struct SessionOrchestrationProjection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignment_state: Option<String>,
     pub objective_summary: String,
+    /// Worker only: the assignment's bounded task summary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_summary: Option<String>,
+    /// The latest run (Main) or assignment (worker) checkpoint summary. The
+    /// checkpoint's `next_action` stays unprojected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint_summary: Option<String>,
+    /// Worker only, and only while the assignment is `blocked`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocker_summary: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collaborators: Vec<SessionRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1944,6 +1954,11 @@ pub(crate) fn session_projection(
             run_state: run.state.clone(),
             assignment_state: None,
             objective_summary: run.objective_summary.clone(),
+            task_summary: None,
+            checkpoint_summary: projected_summary(
+                run.checkpoint.as_ref().map(|item| item.summary.as_str()),
+            ),
+            blocker_summary: None,
             collaborators: Vec::new(),
             borrowed_by: Vec::new(),
             relationship_state: (run.state != "active").then(|| run.state.clone()),
@@ -1990,6 +2005,16 @@ pub(crate) fn session_projection(
             run_state: run.state.clone(),
             assignment_state: Some(assignment.state.clone()),
             objective_summary: run.objective_summary.clone(),
+            task_summary: projected_summary(Some(&assignment.task_summary)),
+            checkpoint_summary: projected_summary(
+                assignment
+                    .checkpoint
+                    .as_ref()
+                    .map(|item| item.summary.as_str()),
+            ),
+            blocker_summary: (assignment.state == "blocked")
+                .then(|| projected_summary(assignment.blocker_summary.as_deref()))
+                .flatten(),
             collaborators: assignment.collaborators.clone(),
             borrowed_by,
             relationship_state,
@@ -1997,6 +2022,20 @@ pub(crate) fn session_projection(
         }));
     }
     Ok(None)
+}
+
+const PROJECTED_SUMMARY_MAX_CHARS: usize = 240;
+
+/// Bounds a stored summary for the public projection. Writers validate these
+/// fields, but some stored blockers are composed from a validated reason plus a
+/// prefix, so the projection re-bounds to the public 240-character limit and
+/// omits anything empty or carrying control characters.
+fn projected_summary(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return None;
+    }
+    Some(value.chars().take(PROJECTED_SUMMARY_MAX_CHARS).collect())
 }
 
 fn worker_counts(context: &CliContext, registry: &Registry, run: &RunRecord) -> WorkerCounts {
@@ -9001,6 +9040,22 @@ mod tests {
                 &runtime_identity_digest,
             )
             .expect("release proof remains authoritative")
+        );
+    }
+
+    #[test]
+    fn projected_summary_bounds_stored_summaries() {
+        assert_eq!(projected_summary(None), None);
+        assert_eq!(projected_summary(Some("   ")), None);
+        assert_eq!(projected_summary(Some("line\nbreak")), None);
+        assert_eq!(
+            projected_summary(Some("  task  ")),
+            Some("task".to_string())
+        );
+        let long = "x".repeat(PROJECTED_SUMMARY_MAX_CHARS + 20);
+        assert_eq!(
+            projected_summary(Some(&long)).map(|value| value.chars().count()),
+            Some(PROJECTED_SUMMARY_MAX_CHARS)
         );
     }
 
