@@ -359,7 +359,9 @@ pub(crate) fn unresolved_candidates(
 
 pub(crate) fn pending(context: &CliContext) -> Result<Vec<NotificationCandidate>, CliError> {
     let now = now_epoch();
-    let mut locked = super::lock_registry(context)?;
+    // Discovery polls every second from serve; it needs only notification
+    // normalization, not claim and lease maintenance (sympoies/nils-cli#1860).
+    let mut locked = super::lock_registry_observational(context)?;
     let changed = normalize_registry(&mut locked.registry, now);
     let candidates = pending_candidates(&mut locked.registry, now);
     if changed {
@@ -370,7 +372,9 @@ pub(crate) fn pending(context: &CliContext) -> Result<Vec<NotificationCandidate>
 
 pub(crate) fn unresolved(context: &CliContext) -> Result<Vec<NotificationCandidate>, CliError> {
     let now = now_epoch();
-    let mut locked = super::lock_registry(context)?;
+    // Discovery polls every second from serve; it needs only notification
+    // normalization, not claim and lease maintenance (sympoies/nils-cli#1860).
+    let mut locked = super::lock_registry_observational(context)?;
     let changed = normalize_registry(&mut locked.registry, now);
     let candidates = unresolved_candidates(&mut locked.registry, now);
     if changed {

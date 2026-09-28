@@ -2483,6 +2483,47 @@ pub(crate) fn lock_registry_observational(
     lock_registry_with_maintenance(context, RegistryMaintenance::Observational)
 }
 
+// A stopped broker outlives its session only to answer late callers for the
+// same incarnation. Once the session record is gone and the stop is this old,
+// nothing can present that incarnation again, and the entry only adds to the
+// registry every acquisition must parse (sympoies/nils-cli#1860).
+const STOPPED_BROKER_RETENTION_SECS: i64 = 24 * 60 * 60;
+
+fn prune_stale_stopped_brokers(context: &CliContext, registry: &mut Registry, now: i64) -> bool {
+    let cutoff = now.saturating_sub(STOPPED_BROKER_RETENTION_SECS);
+    let Registry {
+        brokers,
+        claims,
+        operations,
+        ..
+    } = registry;
+    let before = brokers.len();
+    brokers.retain(|session_id, broker| {
+        let prunable = broker.state == "stopped"
+            && broker.capability_digest.is_empty()
+            && broker.heartbeat_epoch <= cutoff
+            && !claims.iter().any(|claim| {
+                claim.session_id == *session_id
+                    && claim.session_incarnation == broker.incarnation
+                    && claim.state == "active"
+            })
+            && !operations.iter().any(|operation| {
+                operation.session_id == *session_id
+                    && operation.session_incarnation == broker.incarnation
+                    && matches!(
+                        operation.state.as_str(),
+                        "active" | "completing" | "reconcile_pending"
+                    )
+            })
+            && matches!(
+                fs::symlink_metadata(crate::session_dir(context, session_id)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound
+            );
+        !prunable
+    });
+    brokers.len() != before
+}
+
 fn lock_registry_with_maintenance(
     context: &CliContext,
     maintenance: RegistryMaintenance,
@@ -2563,6 +2604,9 @@ fn lock_registry_with_maintenance(
                 renewed = true;
             }
         }
+    }
+    if maintenance == RegistryMaintenance::Full {
+        renewed |= prune_stale_stopped_brokers(context, &mut registry, now);
     }
     if maintenance == RegistryMaintenance::Full {
         let operation_snapshots: Vec<_> = registry
@@ -3377,6 +3421,71 @@ pub fn read_bounded_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn broker_entry(session: &str, state: &str, heartbeat_epoch: i64) -> BrokerRecord {
+        BrokerRecord {
+            session_id: session.to_string(),
+            incarnation: format!("{session}-inc"),
+            coordination_mode: Default::default(),
+            capability_digest: if state == "stopped" {
+                String::new()
+            } else {
+                digest_bytes(session.as_bytes())
+            },
+            generation: 1,
+            state: state.to_string(),
+            heartbeat_at: timestamp(heartbeat_epoch),
+            heartbeat_epoch,
+            runtime_identity: None,
+            runtime_identity_digest: String::new(),
+            lost_since_epoch: None,
+            binary_version: None,
+        }
+    }
+
+    #[test]
+    fn full_maintenance_prunes_only_stale_stopped_brokers_of_deleted_sessions() {
+        let temporary = tempfile::TempDir::new().expect("temporary state");
+        let context = CliContext {
+            state_dir: temporary.path().join("state"),
+            host: None,
+        };
+        let now = now_epoch();
+        let two_days_ago = now - 2 * 24 * 60 * 60;
+        {
+            let mut locked = lock_registry_observational(&context).expect("registry");
+            for (session, state, epoch) in [
+                ("deleted-stale", "stopped", two_days_ago),
+                ("deleted-recent", "stopped", now - 60),
+                ("present-stale", "stopped", two_days_ago),
+                ("deleted-ready", "ready", two_days_ago),
+            ] {
+                locked
+                    .registry
+                    .brokers
+                    .insert(session.to_string(), broker_entry(session, state, epoch));
+            }
+            locked.save().expect("seed registry");
+        }
+        fs::create_dir_all(crate::session_dir(&context, "present-stale")).expect("session dir");
+
+        let observed = lock_registry_observational(&context).expect("observational registry");
+        assert_eq!(
+            observed.registry.brokers.len(),
+            4,
+            "observation never prunes"
+        );
+        drop(observed);
+
+        let maintained = lock_registry(&context).expect("maintained registry");
+        let mut kept: Vec<_> = maintained.registry.brokers.keys().cloned().collect();
+        kept.sort();
+        assert_eq!(kept, ["deleted-ready", "deleted-recent", "present-stale"]);
+        drop(maintained);
+
+        let persisted = lock_registry_observational(&context).expect("persisted registry");
+        assert!(!persisted.registry.brokers.contains_key("deleted-stale"));
+    }
 
     #[test]
     fn recovery_version_skew_preserves_singular_and_adds_supported_versions() {
