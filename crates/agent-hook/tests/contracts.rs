@@ -237,6 +237,30 @@ fn forged_payload_conflict_is_ignored_but_registry_conflict_blocks() {
             expected_action,
             "current={current_mode} peer={peer_mode}"
         );
+        if current_mode == "advisory" {
+            // A downgraded real conflict is a fired warning, so providers see
+            // its code even though it carries no text (sympoies/nils-cli#1878).
+            for product in ["codex", "claude"] {
+                let rendered = run_managed_as(
+                    &payload,
+                    managed_options(&fixture)
+                        .with_env("AGENT_SESSION_COORDINATION_MODE", current_mode),
+                    product,
+                    "provider",
+                );
+                assert_eq!(rendered.code, 0, "stderr={}", rendered.stderr_text());
+                assert_eq!(
+                    rendered.stdout_json(),
+                    json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "additionalContext": "semantic-conflict",
+                        }
+                    }),
+                    "{product} advisory conflict warning"
+                );
+            }
+        }
 
         if matches!(current_mode, "advisory" | "off") {
             let missing = dispatch_managed_without_hint(&fixture, &payload);
@@ -476,10 +500,19 @@ fn run_managed(
     payload: &str,
     options: nils_test_support::cmd::CmdOptions,
 ) -> nils_test_support::cmd::CmdOutput {
+    run_managed_as(payload, options, "codex", "json")
+}
+
+fn run_managed_as(
+    payload: &str,
+    options: nils_test_support::cmd::CmdOptions,
+    product: &str,
+    format: &str,
+) -> nils_test_support::cmd::CmdOutput {
     let options = options.with_stdin_str(payload);
     nils_test_support::cmd::run_resolved(
         "agent-hook",
-        &["dispatch", "--product", "codex", "--format", "json"],
+        &["dispatch", "--product", product, "--format", format],
         &options,
     )
 }

@@ -1037,6 +1037,7 @@ fn emergency_decision<'a>(
             rule_id: rule.id.clone(),
             code: code.to_string(),
             disposition: action_name(candidate).to_string(),
+            observation: false,
         });
     }
     Ok((
