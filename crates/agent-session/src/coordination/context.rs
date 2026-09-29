@@ -350,7 +350,7 @@ mod review_tests {
         let candidate: WorkContextInput = serde_json::from_value(json!({
             "schema_version": "agent-session.work-context-input.v1",
             "intent": "implementation",
-            "tier": "L2",
+            "tier": "program",
             "repositories": ["example/repository"],
             "worktrees": ["hmac-sha256:1:candidate"],
             "provider_refs": [],
@@ -366,7 +366,7 @@ mod review_tests {
             "revision": 1,
             "state": "active",
             "intent": "implementation",
-            "tier": "L2",
+            "tier": "program",
             "repositories": ["other/repository"],
             "worktrees": ["hmac-sha256:999:unknown"],
             "provider_refs": [],
@@ -818,17 +818,17 @@ fn reject_duplicates<T: Ord + Clone>(values: &[T], kind: &str) -> Result<(), Cli
     Ok(())
 }
 
-pub(crate) const WORK_MODE_EXPECTATION: &str = "tier must be direct, issue, program, program/plan, or program/dispatch (numbered L0-L3 codes accepted)";
+pub(crate) const WORK_MODE_EXPECTATION: &str =
+    "tier must be direct, issue, program, or program/dispatch";
 
-/// Resolve a `tier` value to its named work mode. The numbered `L0`-`L3` codes
-/// remain accepted input and normalize to the mode that replaced them.
+/// Resolve a new `tier` input to a retained work mode. Persisted historical
+/// claims are read as stored and are never passed through this input parser.
 pub fn canonical_work_mode(value: &str) -> Option<&'static str> {
     match value {
-        "direct" | "L0" => Some("direct"),
-        "issue" | "L1" => Some("issue"),
+        "direct" => Some("direct"),
+        "issue" => Some("issue"),
         "program" => Some("program"),
-        "program/plan" | "L2" => Some("program/plan"),
-        "program/dispatch" | "L3" => Some("program/dispatch"),
+        "program/dispatch" => Some("program/dispatch"),
         _ => None,
     }
 }
@@ -929,7 +929,7 @@ mod tests {
         let mut input = WorkContextInput {
             schema_version: WORK_CONTEXT_INPUT_VERSION.to_string(),
             intent: "implementation".to_string(),
-            tier: "L2".to_string(),
+            tier: "program".to_string(),
             repositories: vec!["example/repo".to_string()],
             worktrees: Vec::new(),
             provider_refs: Vec::new(),
@@ -958,13 +958,7 @@ mod tests {
 
     #[test]
     fn named_work_modes_are_accepted_unchanged() {
-        for mode in [
-            "direct",
-            "issue",
-            "program",
-            "program/plan",
-            "program/dispatch",
-        ] {
+        for mode in ["direct", "issue", "program", "program/dispatch"] {
             let canonical = input_with_tier(mode)
                 .validate_and_canonicalize()
                 .expect("named mode");
@@ -973,17 +967,9 @@ mod tests {
     }
 
     #[test]
-    fn numbered_tier_codes_normalize_to_named_work_modes() {
-        for (numbered, mode) in [
-            ("L0", "direct"),
-            ("L1", "issue"),
-            ("L2", "program/plan"),
-            ("L3", "program/dispatch"),
-        ] {
-            let canonical = input_with_tier(numbered)
-                .validate_and_canonicalize()
-                .expect("numbered code");
-            assert_eq!(canonical.tier, mode);
+    fn retired_work_modes_are_rejected_for_new_input() {
+        for tier in ["L0", "L1", "L2", "L3", "program/plan"] {
+            assert!(input_with_tier(tier).validate_and_canonicalize().is_err());
         }
     }
 

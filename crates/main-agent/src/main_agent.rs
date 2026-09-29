@@ -767,7 +767,7 @@ struct QuickArgs {
     /// Private assignment packet JSON file.
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     assignment_file: PathBuf,
-    /// Work mode for the synthesized ephemeral run (`direct` or `issue` delegate-all; numbered L0-L3 codes accepted).
+    /// Work mode for the synthesized ephemeral run (`direct` or `issue` delegate-all).
     #[arg(long, default_value = "direct")]
     tier: String,
     /// Bounded wait for the worker's authenticated checkpoint, with the same
@@ -22704,7 +22704,7 @@ fn run_close(context: &CliContext, args: RunMutationArgs) -> Result<Value, CliEr
     Ok(outcome)
 }
 
-/// Fast-path for L0/L1 delegate-all: acquire the claim, create an ephemeral
+/// Fast-path for direct/issue delegate-all: acquire the claim, create an ephemeral
 /// run synthesized from the assignment packet, then launch the assignment's
 /// worker — all in one call. The run is marked ephemeral so it auto-closes when
 /// the worker is torn down (see `finalize_worker_delete`), sparing the caller an
@@ -25024,7 +25024,7 @@ mod tests {
             run_id: id.to_string(),
             revision: 1,
             state: "active".to_string(),
-            tier: "L0".to_string(),
+            tier: "direct".to_string(),
             objective_summary: "summary".to_string(),
             objective_packet_digest: format!("sha256:{}", "a".repeat(64)),
             controller: SessionRef {

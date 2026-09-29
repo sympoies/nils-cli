@@ -685,7 +685,7 @@ fn presence_context(
         .unwrap_or_else(|| WorkContextInput {
             schema_version: WORK_CONTEXT_INPUT_VERSION.to_string(),
             intent: "presence".to_string(),
-            tier: "L0".to_string(),
+            tier: "direct".to_string(),
             repositories: Vec::new(),
             worktrees: Vec::new(),
             provider_refs: Vec::new(),

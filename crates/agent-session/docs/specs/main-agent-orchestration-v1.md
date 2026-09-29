@@ -136,7 +136,7 @@ main-agent worker retire ID --if-revision N --idempotency-key KEY --format json
 main-agent collaborate|borrow|handoff|adopt ...
 main-agent close --if-revision N --idempotency-key KEY --format json
 main-agent closeout --if-run-revision N --checkpoint-file FILE --idempotency-key KEY --format json
-main-agent quick --assignment-file FILE [--tier direct|issue|program|program/plan|program/dispatch] [--await-ready D] --idempotency-key KEY --format json
+main-agent quick --assignment-file FILE [--tier direct|issue|program|program/dispatch] [--await-ready D] --idempotency-key KEY --format json
 ```
 
 `init` first confirms or acquires the caller-owned coordination claim, then

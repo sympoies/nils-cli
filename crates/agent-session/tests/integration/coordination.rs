@@ -780,7 +780,7 @@ fn candidate(path: &Path, prefix: &str, summary: &str) {
         serde_json::to_vec_pretty(&json!({
             "schema_version": "agent-session.work-context-input.v1",
             "intent": "implementation",
-            "tier": "L2",
+            "tier": "program",
             "repositories": ["example/repository"],
             "worktrees": [],
             "provider_refs": [],
@@ -971,7 +971,7 @@ fn init_main_run(
         &json!({
             "schema_version": "main-agent.objective-packet.v1",
             "run_id": run_id,
-            "tier": "L0",
+            "tier": "direct",
             "objective_summary": "Exercise orchestration recovery",
             "objective": {},
             "done_criteria": ["Recovery converges"],
@@ -980,7 +980,7 @@ fn init_main_run(
             "work_context": {
                 "schema_version": "agent-session.work-context-input.v1",
                 "intent": "implementation",
-                "tier": "L0",
+                "tier": "direct",
                 "repositories": ["example/repository"],
                 "worktrees": [],
                 "provider_refs": [],
@@ -1147,7 +1147,7 @@ fn seed_active_claim(state_dir: &Path, session_id: &str, incarnation: &str, clai
                 "revision": 1,
                 "state": "active",
                 "intent": "implementation",
-                "tier": "L0",
+                "tier": "direct",
                 "repositories": [],
                 "worktrees": [],
                 "provider_refs": [],
@@ -1633,7 +1633,7 @@ fn frozen_base_v3_reader_rejects_unknown_nested_session_fields() {
                 "run_id": "run-one",
                 "revision": 1,
                 "state": "active",
-                "tier": "L0",
+                "tier": "direct",
                 "objective_summary": "compatibility control",
                 "objective_packet_digest": "a".repeat(64),
                 "controller": {
@@ -2708,7 +2708,7 @@ fn self_targeting_context_set_clear_and_acknowledge_hide_mechanical_inputs() {
                 "work-context",
                 "set",
                 "--tier",
-                "L2",
+                "program",
                 "--summary",
                 summary,
                 "--issue",
@@ -2879,13 +2879,39 @@ fn self_targeting_context_set_if_absent_preserves_an_existing_declaration() {
         ("AGENT_SESSION_CAPABILITY_FILE", alpha_cap.as_str()),
         ("AGENT_SESSION_STATE_DIR", state.as_ref()),
     ];
+    for retired in ["L0", "L1", "L2", "L3", "program/plan"] {
+        let rejected = run_with_env(
+            &checkout,
+            &[
+                "work-context",
+                "set",
+                "--tier",
+                retired,
+                "--summary",
+                "retired mode",
+                "--format",
+                "json",
+            ],
+            &env,
+        );
+        assert_eq!(
+            rejected.code,
+            65,
+            "tier={retired}: {}",
+            rejected.stdout_text()
+        );
+        assert_eq!(
+            rejected.stdout_json()["error"]["code"],
+            "invalid-work-context"
+        );
+    }
     let existing = run_with_env(
         &checkout,
         &[
             "work-context",
             "set",
             "--tier",
-            "L3",
+            "program/dispatch",
             "--summary",
             "tracked delivery",
             "--issue",
@@ -2898,6 +2924,11 @@ fn self_targeting_context_set_if_absent_preserves_an_existing_declaration() {
         &env,
     );
     assert_eq!(existing.code, 0, "stderr={}", existing.stderr_text());
+    // A pre-retirement claim can still be read. Do not reclassify its owner
+    // while an unrelated named-mode set-if-absent request checks the registry.
+    rewrite_registry(&state_dir, |registry| {
+        registry["claims"][0]["tier"] = json!("L2");
+    });
 
     let ensured = run_with_env(
         &checkout,
@@ -2906,7 +2937,7 @@ fn self_targeting_context_set_if_absent_preserves_an_existing_declaration() {
             "set",
             "--if-absent",
             "--tier",
-            "L2",
+            "program",
             "--summary",
             "generic DSH context",
             "--format",
@@ -2918,7 +2949,8 @@ fn self_targeting_context_set_if_absent_preserves_an_existing_declaration() {
     assert_eq!(ensured.code, 0, "stderr={}", ensured.stderr_text());
     assert_eq!(data(&ensured)["changed"], false);
     assert_eq!(data(&ensured)["mode"], "advisory");
-    assert_eq!(data(&ensured)["context"], data(&existing)["context"]);
+    assert_eq!(data(&ensured)["context"]["tier"], "L2");
+    assert_eq!(coordination_registry(&state_dir)["claims"][0]["tier"], "L2");
 
     let beta_cap = capability(&state_dir, "beta");
     let beta_env = [
@@ -2933,7 +2965,7 @@ fn self_targeting_context_set_if_absent_preserves_an_existing_declaration() {
             "set",
             "--if-absent",
             "--tier",
-            "L2",
+            "program",
             "--summary",
             "fresh DSH context",
             "--format",
@@ -2943,9 +2975,23 @@ fn self_targeting_context_set_if_absent_preserves_an_existing_declaration() {
     );
     assert_eq!(created.code, 0, "stderr={}", created.stderr_text());
     assert_eq!(data(&created)["changed"], true);
-    // Numbered tier codes stay accepted and are stored as their named work mode.
-    assert_eq!(data(&created)["context"]["tier"], "program/plan");
+    assert_eq!(data(&created)["context"]["tier"], "program");
     assert_eq!(data(&created)["context"]["summary"], "fresh DSH context");
+
+    let cleared = run_with_env(
+        &checkout,
+        &["work-context", "clear", "--format", "json"],
+        &env,
+    );
+    assert_eq!(cleared.code, 0, "stderr={}", cleared.stderr_text());
+    assert_eq!(data(&cleared)["released"], true);
+    assert!(
+        coordination_registry(&state_dir)["claims"]
+            .as_array()
+            .expect("claims")
+            .iter()
+            .all(|claim| claim["session_id"] != "alpha" || claim["state"] != "active")
+    );
 }
 
 #[test]
@@ -2982,7 +3028,7 @@ fn concurrent_context_set_if_absent_has_one_winner_without_overwrite() {
                     "set",
                     "--if-absent",
                     "--tier",
-                    "L2",
+                    "program",
                     "--summary",
                     "first contender",
                     "--format",
@@ -2999,7 +3045,7 @@ fn concurrent_context_set_if_absent_has_one_winner_without_overwrite() {
                     "set",
                     "--if-absent",
                     "--tier",
-                    "L3",
+                    "program/dispatch",
                     "--summary",
                     "second contender",
                     "--format",
@@ -3605,7 +3651,7 @@ fn coordination_public_identifiers_do_not_authorize_a_claim_or_echo_peer_data() 
         serde_json::to_vec_pretty(&json!({
             "schema_version": "agent-session.work-context-input.v1",
             "intent": "implementation",
-            "tier": "L2",
+            "tier": "program",
             "repositories": ["example/repository"],
             "worktrees": [],
             "provider_refs": [],
@@ -5665,7 +5711,7 @@ fn coordination_review_round2_unknown_fingerprint_epoch_is_not_a_definite_confli
             serde_json::to_vec_pretty(&json!({
                 "schema_version": "agent-session.work-context-input.v1",
                 "intent": "implementation",
-                "tier": "L2",
+                "tier": "program",
                 "repositories": [],
                 "worktrees": [fingerprint],
                 "provider_refs": [],
@@ -5862,7 +5908,7 @@ fn coordination_review_round3_frozen_v1_scope_grammar_and_limits_are_exact() {
             serde_json::to_vec_pretty(&json!({
                 "schema_version": "agent-session.work-context-input.v1",
                 "intent": "implementation",
-                "tier": "L2",
+                "tier": "program",
                 "repositories": repositories,
                 "worktrees": [],
                 "provider_refs": [],
@@ -6052,7 +6098,7 @@ fn coordination_review_round3_idempotency_keys_are_principal_scoped() {
             serde_json::to_vec_pretty(&json!({
                 "schema_version": "agent-session.work-context-input.v1",
                 "intent": "implementation",
-                "tier": "L2",
+                "tier": "program",
                 "repositories": [repository],
                 "worktrees": [],
                 "provider_refs": [],
@@ -6427,7 +6473,7 @@ fn main_agent_init_rehydrate_and_checkpoint_are_private_revision_fenced_and_idem
         serde_json::to_vec_pretty(&json!({
             "schema_version": "main-agent.objective-packet.v1",
             "run_id": "run-one",
-            "tier": "L0",
+            "tier": "direct",
             "objective_summary": "Deliver durable orchestration",
             "objective": { "private_note": privacy_canary },
             "done_criteria": ["Focused acceptance passes"],
@@ -6436,7 +6482,7 @@ fn main_agent_init_rehydrate_and_checkpoint_are_private_revision_fenced_and_idem
             "work_context": {
                 "schema_version": "agent-session.work-context-input.v1",
                 "intent": "implementation",
-                "tier": "L0",
+                "tier": "direct",
                 "repositories": ["example/repository"],
                 "worktrees": [],
                 "provider_refs": [],
@@ -23156,7 +23202,7 @@ impl ExhaustedReadinessRuntimeStopFixture {
                 "run_id": "run-two",
                 "revision": 1,
                 "state": "active",
-                "tier": "L0",
+                "tier": "direct",
                 "objective_summary": "Runtime stop ownership transfer fence",
                 "objective_packet_digest":
                     registry["runs"]["run-one"]["objective_packet_digest"].clone(),
@@ -23173,7 +23219,7 @@ impl ExhaustedReadinessRuntimeStopFixture {
                 "run_id": "run-three",
                 "revision": 1,
                 "state": "active",
-                "tier": "L0",
+                "tier": "direct",
                 "objective_summary": "Repeated runtime stop ownership transfer fence",
                 "objective_packet_digest":
                     registry["runs"]["run-one"]["objective_packet_digest"].clone(),
@@ -23190,7 +23236,7 @@ impl ExhaustedReadinessRuntimeStopFixture {
                 "run_id": "run-four",
                 "revision": 1,
                 "state": "active",
-                "tier": "L0",
+                "tier": "direct",
                 "objective_summary": "Partial runtime stop transfer recovery",
                 "objective_packet_digest":
                     registry["runs"]["run-one"]["objective_packet_digest"].clone(),
@@ -24446,7 +24492,7 @@ fn main_agent_revoke_claim_fences_exact_idle_live_worker_without_input() {
             "run_id": "run-two",
             "revision": 1,
             "state": "active",
-            "tier": "L0",
+            "tier": "direct",
             "objective_summary": "Claim revocation ownership transfer fence",
             "objective_packet_digest":
                 registry["runs"]["run-one"]["objective_packet_digest"].clone(),
@@ -30054,7 +30100,7 @@ fn main_agent_handoff_requires_operation_quiescence_and_adopt_requires_an_orphan
         "run_id": "run-two",
         "revision": 1,
         "state": "active",
-        "tier": "L0",
+        "tier": "direct",
         "objective_summary": "Adopt orphaned assignments",
         "objective_packet_digest": objective_digest,
         "controller": main_two_controller,
@@ -40175,7 +40221,7 @@ fn main_agent_quick_idempotency_binds_the_canonical_readiness_wait() {
                 "--assignment-file",
                 assignment_path.to_str().expect("assignment path"),
                 "--tier",
-                "L0",
+                "direct",
                 "--await-ready",
                 await_ready,
                 "--idempotency-key",
@@ -40205,7 +40251,7 @@ fn main_agent_quick_idempotency_binds_the_canonical_readiness_wait() {
 
     let launched = run("0");
     assert_eq!(launched.code, 0, "stderr={}", launched.stderr_text());
-    // The numbered `L0` input is stored as its named work mode.
+    // The named work mode is stored unchanged.
     assert_eq!(data(&launched)["run"]["tier"], "direct");
     let parent_receipt = "main-one:main-incarnation-one:quick-await-contract-0001";
     let pending_run = data(&launched)["run"].clone();
@@ -41286,7 +41332,7 @@ fn main_agent_closeout_preserves_an_unrelated_successor_claim_on_resume() {
             "revision": 1,
             "state": "active",
             "intent": "implementation",
-            "tier": "L0",
+            "tier": "direct",
             "repositories": ["example/other"],
             "worktrees": [],
             "provider_refs": [],
@@ -41718,12 +41764,12 @@ fn main_agent_init_unsupported_schema_names_expected_version_and_hints_packet_sc
         &packet,
         serde_json::to_vec(&json!({
             "schema_version": "main-agent.objective-packet.v0",
-            "tier": "L0",
+            "tier": "direct",
             "objective_summary": "demo",
             "work_context": {
                 "schema_version": "agent-session.work-context-input.v1",
                 "intent": "implementation",
-                "tier": "L0",
+                "tier": "direct",
                 "repositories": ["owner/name"],
                 "summary": "demo"
             }
@@ -41860,7 +41906,7 @@ fn main_agent_quick_no_longer_requires_an_idempotency_key() {
             &state_arg,
             "quick",
             "--tier",
-            "L0",
+            "direct",
             "--format",
             "json",
         ],
