@@ -100,6 +100,9 @@ _claude__cli() {
             claude__cli__auth,remote)
                 cmd="claude__cli__auth__remote"
                 ;;
+            claude__cli__auth,remove)
+                cmd="claude__cli__auth__remove"
+                ;;
             claude__cli__auth,save)
                 cmd="claude__cli__auth__save"
                 ;;
@@ -129,6 +132,9 @@ _claude__cli() {
                 ;;
             claude__cli__auth__help,remote)
                 cmd="claude__cli__auth__help__remote"
+                ;;
+            claude__cli__auth__help,remove)
+                cmd="claude__cli__auth__help__remove"
                 ;;
             claude__cli__auth__help,save)
                 cmd="claude__cli__auth__help__save"
@@ -237,6 +243,9 @@ _claude__cli() {
                 ;;
             claude__cli__help__auth,remote)
                 cmd="claude__cli__help__auth__remote"
+                ;;
+            claude__cli__help__auth,remove)
+                cmd="claude__cli__help__auth__remove"
                 ;;
             claude__cli__help__auth,save)
                 cmd="claude__cli__help__auth__save"
@@ -569,7 +578,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth)
-            opts="-h --help login status logout save use current refresh auto-refresh remote help"
+            opts="-h --help login status logout save use remove current refresh auto-refresh remote help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -626,7 +635,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth__help)
-            opts="login status logout save use current refresh auto-refresh remote help"
+            opts="login status logout save use remove current refresh auto-refresh remote help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -754,6 +763,20 @@ _claude__cli() {
         claude__cli__auth__help__remote__pull)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help__remove)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
@@ -989,8 +1012,26 @@ _claude__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        claude__cli__auth__remove)
+            opts="-y -h --yes --format --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         claude__cli__auth__save)
-            opts="-h --format --json --help"
+            opts="-y -h --yes --format --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1268,7 +1309,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__help__auth)
-            opts="login status logout save use current refresh auto-refresh remote"
+            opts="login status logout save use remove current refresh auto-refresh remote"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1382,6 +1423,20 @@ _claude__cli() {
         claude__cli__help__auth__remote__pull)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__auth__remove)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi

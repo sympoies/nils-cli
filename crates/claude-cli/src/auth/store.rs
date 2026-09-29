@@ -12,6 +12,7 @@
 use nils_common::cli_contract::exit;
 use nils_common::env as shared_env;
 use nils_common::fs;
+use nils_common::provider_runtime::accounts::{self, AccountStore};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
@@ -111,11 +112,25 @@ pub fn validate_profile_name(name: &str) -> AuthResult<()> {
     {
         Ok(())
     } else {
-        Err(AuthError::usage(
-            "invalid-profile-name",
-            "profile names use [A-Za-z0-9._-] and no .json suffix",
-        ))
+        Err(invalid_profile_name())
     }
+}
+
+/// The profile a command-line target names: `name` or `name.json`.
+pub fn profile_name_from_target(target: &str) -> AuthResult<String> {
+    let name = accounts::account_name(target);
+    if accounts::is_invalid_account_target(target) {
+        return Err(invalid_profile_name());
+    }
+    validate_profile_name(name)?;
+    Ok(name.to_string())
+}
+
+fn invalid_profile_name() -> AuthError {
+    AuthError::usage(
+        "invalid-profile-name",
+        "profile names use [A-Za-z0-9._-] and no .json suffix",
+    )
 }
 
 pub fn profile_file(name: &str) -> AuthResult<PathBuf> {
@@ -333,6 +348,42 @@ pub fn list_profiles() -> AuthResult<Vec<String>> {
         .collect();
     names.sort();
     Ok(names)
+}
+
+/// Delete the stored profile file `<name>.json`.
+pub fn remove_profile(name: &str) -> AuthResult<()> {
+    let path = profile_file(name)?;
+    std::fs::remove_file(&path).map_err(|err| {
+        AuthError::runtime(
+            "profile-remove-failed",
+            format!("cannot remove {}: {err}", path.display()),
+        )
+    })
+}
+
+/// The profile store as seen by the shared account resolver.
+pub struct ProfileStore;
+
+impl AccountStore for ProfileStore {
+    fn account_files(&self) -> Vec<String> {
+        list_profiles()
+            .unwrap_or_default()
+            .iter()
+            .map(|name| accounts::account_file_name(name))
+            .collect()
+    }
+
+    fn has_account(&self, file_name: &str) -> bool {
+        let name = accounts::account_name(file_name);
+        file_name.ends_with(".json") && profile_file(name).is_ok_and(|path| path.is_file())
+    }
+
+    fn account_email(&self, file_name: &str) -> Option<String> {
+        let path = profile_file(accounts::account_name(file_name)).ok()?;
+        let mut object = read_json_object(&path, "profile-invalid").ok()??;
+        let account = take_object(&mut object, "oauthAccount");
+        non_empty_str(account.get("emailAddress")).map(str::to_string)
+    }
 }
 
 pub fn read_current() -> AuthResult<Option<String>> {

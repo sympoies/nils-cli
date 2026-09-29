@@ -37,6 +37,7 @@ ENVIRONMENT:
 EXIT CODES:
   0   success
   1   runtime false/failed state
+  2   ambiguous profile target, or no current default profile
   64  command-line usage error
   65  invalid input data or unresolved session id
   69  required Claude capability unavailable";
@@ -200,7 +201,10 @@ pub enum AuthCommand {
     Logout,
     /// Save the active refresh-capable login as a named authority profile
     Save {
-        /// Profile name ([A-Za-z0-9._-])
+        /// Overwrite an existing profile of the same account without a prompt
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+        /// Profile name ([A-Za-z0-9._-]) or name.json
         #[arg(value_name = "name")]
         name: String,
         #[command(flatten)]
@@ -208,7 +212,18 @@ pub enum AuthCommand {
     },
     /// Make a profile the current default and project it as the active login
     Use {
-        /// Profile name
+        /// Profile name, name.json, email address, or email local part
+        #[arg(value_name = "name|name.json|email")]
+        name: String,
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
+    /// Remove a stored profile that is not the current default
+    Remove {
+        /// Remove the profile without a prompt
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+        /// Profile name or name.json
         #[arg(value_name = "name")]
         name: String,
         #[command(flatten)]

@@ -6,87 +6,52 @@ use crate::auth;
 use crate::auth::output::{self, AuthUseResult};
 use crate::paths;
 use nils_common::fs;
-use nils_common::provider_runtime::auth::{SecretFileResolution, resolve_secret_file_by_email};
+use nils_common::provider_runtime::accounts::{self, AccountResolution};
+use nils_common::provider_runtime::auth::JwtSecretDir;
 
 pub fn run(target: &str) -> Result<i32> {
     run_with_json(target, false)
 }
 
 pub fn run_with_json(target: &str, output_json: bool) -> Result<i32> {
+    let out = output::account_output("auth use", output_json);
     if target.is_empty() {
-        if output_json {
-            output::emit_error(
-                "auth use",
-                "invalid-usage",
-                "codex-use: usage: codex-use <name|name.json|email>",
-                None,
-            )?;
-        } else {
-            eprintln!("codex-use: usage: codex-use <name|name.json|email>");
-        }
-        return Ok(64);
+        return out.fail(
+            "invalid-usage",
+            "codex-use: usage: codex-use <name|name.json|email>",
+            None,
+            accounts::EXIT_USAGE,
+        );
     }
 
     if auth::is_invalid_secret_target(target) {
-        if output_json {
-            output::emit_error(
-                "auth use",
-                "invalid-secret-name",
-                format!("codex-use: invalid secret name: {target}"),
-                Some(json!({
-                    "target": target,
-                })),
-            )?;
-        } else {
-            eprintln!("codex-use: invalid secret name: {target}");
-        }
-        return Ok(64);
+        return out.fail(
+            "invalid-secret-name",
+            format!("codex-use: invalid secret name: {target}"),
+            Some(json!({
+                "target": target,
+            })),
+            accounts::EXIT_USAGE,
+        );
     }
 
-    let secret_dir = match paths::resolve_secret_dir() {
-        Some(dir) => dir,
-        None => {
-            if output_json {
-                output::emit_error(
-                    "auth use",
-                    "secret-not-found",
-                    format!("codex-use: secret not found: {target}"),
-                    Some(json!({
-                        "target": target,
-                    })),
-                )?;
-            } else {
-                eprintln!("codex-use: secret not found: {target}");
-            }
-            return Ok(1);
-        }
+    let not_found = || {
+        out.fail(
+            "secret-not-found",
+            format!("codex-use: secret not found: {target}"),
+            Some(json!({
+                "target": target,
+            })),
+            accounts::EXIT_FAILED,
+        )
     };
 
-    let is_email = target.contains('@');
-    let secret_name = if is_email {
-        target.to_string()
-    } else {
-        auth::normalize_secret_file_name(target)
+    let Some(secret_dir) = paths::resolve_secret_dir() else {
+        return not_found();
     };
 
-    if secret_dir.join(&secret_name).is_file() {
-        let (code, auth_file) = apply_secret(&secret_dir, &secret_name, output_json)?;
-        if output_json && code == 0 {
-            output::emit_result(
-                "auth use",
-                AuthUseResult {
-                    target: target.to_string(),
-                    matched_secret: Some(secret_name),
-                    applied: true,
-                    auth_file: auth_file.unwrap_or_default(),
-                },
-            )?;
-        }
-        return Ok(code);
-    }
-
-    match resolve_secret_file_by_email(&secret_dir, target) {
-        SecretFileResolution::Exact(name) => {
+    match accounts::resolve_account(&JwtSecretDir::new(&secret_dir), target) {
+        AccountResolution::Exact(name) => {
             let (code, auth_file) = apply_secret(&secret_dir, &name, output_json)?;
             if output_json && code == 0 {
                 output::emit_result(
@@ -101,38 +66,24 @@ pub fn run_with_json(target: &str, output_json: bool) -> Result<i32> {
             }
             Ok(code)
         }
-        SecretFileResolution::Ambiguous { candidates } => {
-            if output_json {
-                output::emit_error(
-                    "auth use",
-                    "ambiguous-secret",
-                    format!("codex-use: identifier matches multiple secrets: {target}"),
-                    Some(json!({
-                        "target": target,
-                        "candidates": candidates,
-                    })),
-                )?;
-            } else {
-                eprintln!("codex-use: identifier matches multiple secrets: {target}");
+        AccountResolution::Ambiguous { candidates } => {
+            let message = format!("codex-use: identifier matches multiple secrets: {target}");
+            if !output_json {
+                eprintln!("{message}");
                 eprintln!("codex-use: candidates: {}", candidates.join(", "));
+                return Ok(accounts::EXIT_UNMATCHED);
             }
-            Ok(2)
+            out.fail(
+                "ambiguous-secret",
+                message,
+                Some(json!({
+                    "target": target,
+                    "candidates": candidates,
+                })),
+                accounts::EXIT_UNMATCHED,
+            )
         }
-        SecretFileResolution::NotFound => {
-            if output_json {
-                output::emit_error(
-                    "auth use",
-                    "secret-not-found",
-                    format!("codex-use: secret not found: {target}"),
-                    Some(json!({
-                        "target": target,
-                    })),
-                )?;
-            } else {
-                eprintln!("codex-use: secret not found: {target}");
-            }
-            Ok(1)
-        }
+        AccountResolution::NotFound => not_found(),
     }
 }
 

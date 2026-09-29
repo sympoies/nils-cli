@@ -7,6 +7,7 @@ use crate::auth;
 use crate::auth::output::{self, AuthCurrentResult};
 use crate::paths;
 use nils_common::fs;
+use nils_common::provider_runtime::accounts;
 
 pub fn run() -> Result<i32> {
     run_with_json(false)
@@ -201,7 +202,7 @@ pub fn run_with_json(output_json: bool) -> Result<i32> {
             auth_file.display()
         );
     }
-    Ok(2)
+    Ok(accounts::EXIT_UNMATCHED)
 }
 
 #[derive(Copy, Clone)]
