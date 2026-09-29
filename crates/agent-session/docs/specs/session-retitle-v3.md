@@ -97,8 +97,10 @@ plus:
 
 `schema_version`, `capability`, and the fields above are the complete
 allowlist; session readiness MUST NOT emit any other key. Only
-`cursor_fence_hash` is optional, and it is present once memory holds a durable
-cursor. Values are drawn from the stable vocabulary in the table below and
+`cursor_fence_hash` is optional. It is present when memory holds a durable
+cursor, and also when a source discontinuity is observed, in which case it
+hashes the newly observed cursor. Clients MUST treat it as opaque and MUST NOT
+infer memory state from its presence. Values are drawn from the stable vocabulary in the table below and
 carry no transcript content, credential, provider identity, or private path.
 Both readiness allowlists are pinned by `tests/retitle_readiness_contract.rs`.
 

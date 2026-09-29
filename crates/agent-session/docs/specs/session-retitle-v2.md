@@ -28,11 +28,18 @@ The readiness object is a closed allowlist: exactly `schema_version`,
 `capability`, `status`, `reason_code`, `next_action`, and
 `context_capabilities`, plus the four optional keys above, and no other key.
 `context_capabilities` has exactly the keys `claude`, `codex`, and `hermes`,
-each `provider_transcript` or `unavailable`. Every value is a stable,
-content-free token: readiness never carries a credential, API-key value or
+each `provider_transcript` or `unavailable`. `status`, `reason_code`,
+`next_action`, `provider_kind`, and every `context_capabilities` value come
+from the stable vocabularies above, and `model_label` appears only when it
+passes the credential-shape filter described below. `account` is the account
+broker's nickname: at most 64 ASCII letters, digits, `.`, `_`, or `-`. `plan`
+is public plan metadata that readiness passes through from the account broker
+unchanged: at most 128 bytes with no line break or NUL, but otherwise free text
+whose content the broker owns. Readiness never adds an API-key value or
 environment name, command, base URL, private path, or raw provider or
 configuration error. The contract is pinned by
-`tests/retitle_readiness_contract.rs`.
+`tests/retitle_readiness_contract.rs`, which drives a fixture account broker
+for `account` and `plan`.
 
 Stable readiness reasons are `ready`, `provider_not_configured`,
 `config_invalid`, `account_broker_unavailable`, `account_missing`,

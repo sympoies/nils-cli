@@ -32,6 +32,11 @@ const CONFIG_CANARY: &str = "readiness-config-secret-canary";
 const MODEL_CANARY: &str = "sk-readiness-credential-model-canary";
 const PATH_CANARY: &str = "readiness-private-path-canary";
 const ASSISTANT_CANARY: &str = "readiness-assistant-output-canary";
+const BROKER_LABEL_CANARY: &str = "readiness-broker-label-canary";
+const BROKER_ACCOUNT: &str = "readiness-account";
+/// Broker plan metadata is free text, so the fixture uses a realistic value
+/// rather than a token-shaped one.
+const BROKER_PLAN: &str = "Team Plus";
 
 /// Every key `/retitle/readiness` v2 may emit.
 const V2_ALLOWED_KEYS: &[&str] = &[
@@ -67,7 +72,7 @@ const V2_REASONS: &[&str] = &[
     "api_key_missing",
     "provider_command_unavailable",
     "fallback_ready",
-    "legacy_command_provider",
+    "legacy_command_provider", // stale-audit: keep-contract (stable v2 reason code)
 ];
 const V2_ACTIONS: &[&str] = &[
     "none",
@@ -159,55 +164,75 @@ fn v2_readiness_keys_and_values_stay_inside_the_published_allowlist() {
     let malformed = format!(
         "{{\"provider\":\"command\",\"argv\":[\"{root}/{PATH_CANARY}\"],\"secret\":\"{CONFIG_CANARY}\""
     );
+    let codex = |account: &str| {
+        json!({
+            "provider": "codex_subscription",
+            "account": account,
+            "codex_bin": fixture.provider_bin,
+            "timeout_ms": 1000
+        })
+        .to_string()
+    };
 
     struct Case {
         name: &'static str,
         config: Option<String>,
         api_key: bool,
+        broker: bool,
         expected: (&'static str, &'static str, &'static str),
         provider_kind: Option<&'static str>,
         model_label: Option<&'static str>,
+        account: Option<&'static str>,
+        plan: Option<&'static str>,
     }
+    let base = || Case {
+        name: "",
+        config: None,
+        api_key: false,
+        broker: false,
+        expected: ("", "", ""),
+        provider_kind: None,
+        model_label: None,
+        account: None,
+        plan: None,
+    };
     let cases = [
         Case {
             name: "not configured",
-            config: None,
-            api_key: false,
             expected: (
                 "unavailable",
                 "provider_not_configured",
                 "configure_provider",
             ),
-            provider_kind: None,
-            model_label: None,
+            ..base()
         },
         Case {
             name: "unparseable config",
             config: Some(malformed),
             api_key: true,
             expected: ("unavailable", "config_invalid", "configure_provider"),
-            provider_kind: None,
-            model_label: None,
+            ..base()
         },
         Case {
             name: "compatibility command",
             config: Some(command(&fixture.provider_bin).to_string()),
-            api_key: false,
-            expected: ("degraded", "legacy_command_provider", "migrate_provider"),
+            expected: (
+                "degraded",
+                "legacy_command_provider", // stale-audit: keep-contract (stable v2 reason code)
+                "migrate_provider",
+            ),
             provider_kind: Some("command"),
-            model_label: None,
+            ..base()
         },
         Case {
             name: "missing command",
             config: Some(command(&fixture.missing_provider_bin).to_string()),
-            api_key: false,
             expected: (
                 "unavailable",
                 "provider_command_unavailable",
                 "install_provider_command",
             ),
-            provider_kind: None,
-            model_label: None,
+            ..base()
         },
         Case {
             name: "openai compatible",
@@ -216,6 +241,7 @@ fn v2_readiness_keys_and_values_stay_inside_the_published_allowlist() {
             expected: ("ready", "ready", "none"),
             provider_kind: Some("openai_compatible"),
             model_label: Some("readiness-contract-model"),
+            ..base()
         },
         Case {
             name: "credential-shaped model label",
@@ -223,15 +249,13 @@ fn v2_readiness_keys_and_values_stay_inside_the_published_allowlist() {
             api_key: true,
             expected: ("ready", "ready", "none"),
             provider_kind: Some("openai_compatible"),
-            model_label: None,
+            ..base()
         },
         Case {
             name: "missing api key",
             config: Some(openai("readiness-contract-model").to_string()),
-            api_key: false,
             expected: ("unavailable", "api_key_missing", "set_api_key"),
-            provider_kind: None,
-            model_label: None,
+            ..base()
         },
         Case {
             name: "fallback ready",
@@ -240,11 +264,40 @@ fn v2_readiness_keys_and_values_stay_inside_the_published_allowlist() {
             expected: ("degraded", "fallback_ready", "restore_primary"),
             provider_kind: Some("openai_compatible"),
             model_label: Some("readiness-contract-model"),
+            ..base()
+        },
+        Case {
+            name: "codex subscription",
+            config: Some(codex(BROKER_ACCOUNT)),
+            broker: true,
+            expected: ("ready", "ready", "none"),
+            provider_kind: Some("codex_subscription"),
+            account: Some(BROKER_ACCOUNT),
+            plan: Some(BROKER_PLAN),
+            ..base()
+        },
+        Case {
+            name: "codex subscription account missing",
+            config: Some(codex("absent-account")),
+            broker: true,
+            expected: ("unavailable", "account_missing", "select_account"),
+            ..base()
+        },
+        Case {
+            name: "codex subscription without broker",
+            config: Some(codex(BROKER_ACCOUNT)),
+            expected: (
+                "unavailable",
+                "account_broker_unavailable",
+                "configure_account_broker",
+            ),
+            ..base()
         },
     ];
 
     for case in cases {
-        let _server = ServeProcess::spawn(&fixture, case.config.as_deref(), case.api_key);
+        let _server =
+            ServeProcess::spawn(&fixture, case.config.as_deref(), case.api_key, case.broker);
         let response = fixture.request("GET", "/retitle/readiness");
         assert_eq!(
             response.status, 200,
@@ -267,6 +320,8 @@ fn v2_readiness_keys_and_values_stay_inside_the_published_allowlist() {
         let mut expected_keys = set(V2_REQUIRED_KEYS);
         expected_keys.extend(case.provider_kind.map(|_| "provider_kind".to_string()));
         expected_keys.extend(case.model_label.map(|_| "model_label".to_string()));
+        expected_keys.extend(case.account.map(|_| "account".to_string()));
+        expected_keys.extend(case.plan.map(|_| "plan".to_string()));
         assert_eq!(keys, expected_keys, "case={}", case.name);
 
         assert_eq!(
@@ -293,6 +348,8 @@ fn v2_readiness_keys_and_values_stay_inside_the_published_allowlist() {
         }
         assert_eq!(readiness["provider_kind"].as_str(), case.provider_kind);
         assert_eq!(readiness["model_label"].as_str(), case.model_label);
+        assert_eq!(readiness["account"].as_str(), case.account);
+        assert_eq!(readiness["plan"].as_str(), case.plan);
 
         let capabilities = &readiness["context_capabilities"];
         assert_eq!(
@@ -319,7 +376,7 @@ fn v3_machine_readiness_emits_exactly_the_published_keys_and_rows() {
         ("provider available", Some(command), V3_MACHINE_ROWS[0]),
         ("provider not configured", None, V3_MACHINE_ROWS[1]),
     ] {
-        let _server = ServeProcess::spawn(&fixture, config.as_deref(), false);
+        let _server = ServeProcess::spawn(&fixture, config.as_deref(), false, false);
         let response = fixture.request("GET", "/retitle/v3/readiness");
         assert_eq!(response.status, 200, "case={name} body={}", response.body);
         assert_outer_envelope(&response.body);
@@ -349,7 +406,7 @@ fn v3_session_readiness_emits_only_allowlisted_content_free_fields() {
     let fixture = Fixture::new();
     let config = json!({"provider": "command", "argv": [fixture.provider_bin], "timeout_ms": 1000})
         .to_string();
-    let _server = ServeProcess::spawn(&fixture, Some(&config), false);
+    let _server = ServeProcess::spawn(&fixture, Some(&config), false, false);
     let session_path = format!("/sessions/{SESSION_ID}/retitle-v3/readiness");
 
     let initial = fixture.request("GET", &session_path);
@@ -489,6 +546,8 @@ fn assert_member(object: &Value, key: &str, allowed: &[&str]) {
 
 /// Readiness is a content-free observation: no bearer, credential, fixture
 /// path, transcript text, or free-form provider error may appear in any value.
+/// The one exception is v2 `plan`, which is broker metadata passed through
+/// unchanged, so only the bounds the broker boundary enforces are asserted.
 fn assert_content_free(fixture: &Fixture, name: &str, body: &Value) {
     let rendered = body.to_string();
     let root = fixture.root.to_string_lossy();
@@ -500,6 +559,7 @@ fn assert_content_free(fixture: &Fixture, name: &str, body: &Value) {
         MODEL_CANARY,
         PATH_CANARY,
         ASSISTANT_CANARY,
+        BROKER_LABEL_CANARY,
         PROVIDER_SESSION_ID,
         INCARNATION,
         root.as_ref(),
@@ -512,7 +572,18 @@ fn assert_content_free(fixture: &Fixture, name: &str, body: &Value) {
             "case={name}: readiness leaked forbidden fixture value {index}"
         );
     }
-    for value in string_values(&body["data"]["retitle"]) {
+    let mut readiness = body["data"]["retitle"].clone();
+    if let Some(plan) = readiness
+        .as_object_mut()
+        .and_then(|fields| fields.remove("plan"))
+    {
+        let plan = plan.as_str().expect("plan is a string");
+        assert!(
+            plan.len() <= 128 && !plan.contains(['\n', '\r', '\0']),
+            "case={name}: plan exceeds the broker metadata bounds"
+        );
+    }
+    for value in string_values(&readiness) {
         assert!(
             value.len() <= 128
                 && value.bytes().all(|byte| byte.is_ascii_alphanumeric()
@@ -558,6 +629,7 @@ struct Fixture {
     tmux_bin: PathBuf,
     provider_bin: PathBuf,
     missing_provider_bin: PathBuf,
+    broker_bin: PathBuf,
     address: SocketAddr,
 }
 
@@ -572,12 +644,29 @@ impl Fixture {
         let tmux_bin = root.join("tmux");
         let provider_bin = private_bin.join("title-provider");
         let missing_provider_bin = private_bin.join("missing-title-provider");
+        let broker_bin = private_bin.join("account-broker");
         fs::create_dir_all(&home).expect("fixture home");
         fs::create_dir_all(&private_bin).expect("fixture provider directory");
         write_executable(&tmux_bin, "#!/bin/sh\nexit 0\n");
         write_executable(
             &provider_bin,
             "#!/bin/sh\nprintf '%s\\n' '{\"topic_action\":\"keep\",\"topic\":null,\"activity\":null,\"references\":[]}'\n",
+        );
+        // The broker label is public metadata that readiness must not project.
+        let accounts = json!({
+            "schema_version": "agent-session.codex-auth-broker.v1",
+            "accounts": [{
+                "account": BROKER_ACCOUNT,
+                "label": BROKER_LABEL_CANARY,
+                "plan": BROKER_PLAN
+            }],
+            "selection_strategies": []
+        });
+        write_executable(
+            &broker_bin,
+            &format!(
+                "#!/bin/sh\ncase \"$1\" in\n  list) printf '%s\\n' '{accounts}' ;;\n  *) exit 64 ;;\nesac\n"
+            ),
         );
         seed_session(&state_dir, SESSION_ID, true);
         seed_session(&state_dir, PROVIDERLESS_SESSION_ID, false);
@@ -594,6 +683,7 @@ impl Fixture {
             tmux_bin,
             provider_bin,
             missing_provider_bin,
+            broker_bin,
             address,
         }
     }
@@ -631,7 +721,7 @@ struct ServeProcess {
 }
 
 impl ServeProcess {
-    fn spawn(fixture: &Fixture, config: Option<&str>, api_key: bool) -> Self {
+    fn spawn(fixture: &Fixture, config: Option<&str>, api_key: bool, broker: bool) -> Self {
         let stderr_path = fixture.root.join("serve.stderr");
         let stderr = File::create(&stderr_path).expect("create serve stderr fixture");
         let mut command = Command::new(bin::resolve("agent-session"));
@@ -662,6 +752,12 @@ impl ServeProcess {
         }
         if api_key {
             command.env(API_KEY_ENV, API_KEY_CANARY);
+        }
+        if broker {
+            command.env(
+                "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+                json!([fixture.broker_bin]).to_string(),
+            );
         }
         let mut server = Self {
             child: command.spawn().expect("spawn agent-session serve"),
