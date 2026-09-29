@@ -54,6 +54,7 @@ and bind address. Give a development or test serve its own `--state-dir` or
 | Public coordination and broker reads | Bearer token. |
 | Session board reads (`GET /board/v1`, `GET /board/closed/v1`) | Bearer token, and only when started with `--board` or `AGENT_SESSION_BOARD=1`; otherwise `board-disabled` (HTTP 404). Returns home-relative working directories and the machine identity. |
 | Session-owner coordination and mailbox mutations | Bearer token plus `X-Agent-Session-Capability`. |
+| `POST /activity/hook/v1` provider hook ingress | `X-Agent-Session-Capability` only, from a direct loopback peer. |
 
 Loopback prevents remote network access; it does not authenticate local
 processes or users. Run the raw daemon only on a trusted single-user host or
@@ -183,6 +184,24 @@ Use `POST /sessions/{id}/prompt/v2` when a client needs a cross-version fence.
 It requires both exact prompt text and the expected session incarnation,
 rejects unknown fields, and is absent from older daemons. A replaced runtime
 returns `409 session-incarnation-conflict` before provider dispatch.
+
+### Report provider hooks without state-directory writes
+
+A provider whose file sandbox makes the state directory read-only can still
+report turn activity. Append `--via http` to each hook command, for example
+`agent-session activity hook --agent dsh --event pre_llm_call --via http`.
+The hook then posts the same payload to the daemon's loopback
+`POST /activity/hook/v1`, authenticated by the session capability that the
+managed runtime already exports through `AGENT_SESSION_CAPABILITY_FILE`.
+
+The sandbox must still allow the hook to read that capability file and
+`<state-dir>/coordination/daemon-endpoint.json`, and to connect to the
+daemon's loopback port. The daemon must be running: a hook that cannot reach
+it is dropped silently, whereas the default `--via file` transport works
+without a daemon. To diagnose, compare `agent-session activity status <id>`
+before and after a turn; ingestion failures still appear in
+`activity doctor`, because the daemon records them. The full contract is in
+[Activity stream v1](../specs/activity-stream-v1.md#provider-hook-ingress).
 
 ### Recover a locally busy Codex prompt
 

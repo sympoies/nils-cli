@@ -1148,8 +1148,12 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         let coordination_notification_task =
             tokio::spawn(coordination_notification_loop(state.clone()));
         let (stop_tx, stop_rx) = watch::channel(None);
-        let serve = axum::serve(listener, app)
-            .with_graceful_shutdown(serve_stop_signal(binary_identity, stop_tx));
+        // Peer addresses let the activity hook ingress admit loopback only.
+        let serve = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(serve_stop_signal(binary_identity, stop_tx));
         let result = tokio::select! {
             result = serve.into_future() => result,
             () = serve_binary_replaced_drain_deadline(stop_rx.clone()) => Ok(()),
@@ -1359,6 +1363,10 @@ fn router(state: Arc<ServeState>) -> Router {
             "/sessions/{id}",
             patch(update_session_handler).delete(delete_handler),
         )
+        .merge(crate::activity_ingress::router(
+            state.context.clone(),
+            state.machine.clone(),
+        ))
         .with_state(state)
 }
 
@@ -2468,7 +2476,7 @@ fn serve_schema() -> String {
     schema_version_for(BINARY, "serve", 1)
 }
 
-fn envelope_ok(data: Value) -> Response {
+pub(crate) fn envelope_ok(data: Value) -> Response {
     envelope_status(StatusCode::OK, data)
 }
 
@@ -2484,7 +2492,7 @@ fn envelope_status(status: StatusCode, data: Value) -> Response {
         .into_response()
 }
 
-fn envelope_err(err: CliError) -> Response {
+pub(crate) fn envelope_err(err: CliError) -> Response {
     let data = err.into_inner();
     let status = match data.code.as_str() {
         "session-not-found"
@@ -2547,7 +2555,7 @@ fn envelope_err(err: CliError) -> Response {
         .into_response()
 }
 
-fn status_json(status: StatusCode, code: &str, message: &str) -> Response {
+pub(crate) fn status_json(status: StatusCode, code: &str, message: &str) -> Response {
     (
         status,
         Json(json!({

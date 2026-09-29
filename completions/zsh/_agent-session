@@ -239,6 +239,7 @@ claude\:""
 hermes\:""
 dsh\:"DeepSeek Harness workers managed by an external runtime (the dsh-runtime-kit bundle); never tmux-launched by this crate"))' \
 '--event=[Provider event name when the raw payload does not carry one]:EVENT:_default' \
+'--via=[Transport\: write the session state directory, or report to the local serve daemon'\''s loopback activity ingress with the session capability]:VIA:(file http)' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '-h[Print help (see more with '\''--help'\'')]' \

@@ -195,6 +195,96 @@ Forward-compatible unknown fields from durable snapshots are deliberately
 excluded.
 
 Prompt, response, command, tool payload, terminal output, transcript/config
-paths or contents, and credentials are forbidden. Provider hook processes only
-perform their existing bounded local durable writes; they never contact the
-daemon, wait for a subscriber, or perform network I/O for streaming.
+paths or contents, and credentials are forbidden. By default provider hook
+processes only perform their existing bounded local durable writes. A hook that
+opts into the [provider hook ingress](#provider-hook-ingress) instead makes one
+bounded loopback request to the daemon; neither transport waits for a
+subscriber or performs network I/O for streaming.
+
+## Provider hook ingress
+
+`POST /activity/hook/v1` lets a provider hook report the same lifecycle payload
+without write access to the state directory. It is the HTTP form of
+`agent-session activity hook`: the daemon runs the identical normalization and
+durable ingestion, so both transports accept exactly the same payload schema
+and produce the same `turn_state` transition, activity diagnostic, and stream
+refresh.
+
+A hook opts in with `agent-session activity hook --agent <provider>
+[--event <name>] --via http`; the default is `--via file`. The declaration
+otherwise keeps its shape. The client reads the payload from stdin under the
+same 64 KiB bound, reads `AGENT_SESSION_ID`, `AGENT_SESSION_RUNTIME_ID`, the
+optional `AGENT_SESSION_ATTENTION_AUTHORITY`, and the capability named by
+`AGENT_SESSION_CAPABILITY_FILE` from the managed runtime environment, and
+reads the daemon's loopback URL from the owner-only
+`<state-dir>/coordination/daemon-endpoint.json` that `serve` publishes at
+startup. It needs read access to those two files and loopback network access,
+and writes nothing. It connects without any HTTP proxy, bounds the request to
+two seconds, stays silent, and always exits 0: like the file path, hook
+telemetry is fail-open and never blocks a prompt, permission, or turn.
+
+The request is `application/json` with the session capability in
+`X-Agent-Session-Capability`. The operator bearer is neither required nor
+consulted. The body rejects unknown fields:
+
+```json
+{
+  "schema_version": "agent-session.activity-hook.v1",
+  "session_id": "session-id",
+  "session_incarnation": "runtime-launch-id",
+  "agent": "claude",
+  "event": "UserPromptSubmit",
+  "attention_authority": "hook",
+  "payload": "{\"hook_event_name\":\"UserPromptSubmit\"}"
+}
+```
+
+`event` and `attention_authority` are optional and correspond to `--event` and
+the runtime's attention-authority environment. `payload` is the exact provider
+hook text the file path reads from stdin; a payload over 64 KiB or one that is
+not valid JSON fails with the file path's own `provider-hook-too-large` or
+`provider-hook-invalid` code. Selectors are bounded to 256 characters and the
+whole body to the escaped payload bound.
+
+Admission is fail-closed, in order:
+
+1. Only a direct loopback peer is accepted. A non-loopback peer, missing peer
+   information, or a `Forwarded`, `X-Forwarded-For`, or `X-Real-IP` header
+   returns 403 `activity-ingress-forbidden`. This matters when the daemon is
+   bound with `--allow-non-loopback`; it is not authentication, and a
+   same-host TCP forwarder remains indistinguishable from a local caller.
+2. A missing capability returns 401 `coordination-unauthorized`.
+3. A request must hold one of sixteen shared admission slots before its body is
+   read, and keeps it through authentication, so at most sixteen
+   unauthenticated bodies are buffered at once. A declared or actual body over
+   the bound returns 413 `activity-hook-request-too-large`; a declared
+   oversize is refused before any slot is taken. A body not received within
+   two seconds returns 408 `activity-hook-request-timeout`.
+4. A malformed body, content type, schema version, or provider returns 400.
+5. Admission slots are served in arrival order. Every admission wait in steps
+   3 and 7 shares one 1.5-second deadline that fits inside the client's
+   two-second budget; a request still waiting at the deadline returns 429
+   `rate-limited`. Waiting rather than rejecting matches the file path, which
+   waits on the same locks instead of dropping the event.
+6. The capability must authenticate the named session's ready broker, and
+   `session_incarnation` must equal the incarnation it binds. A capability for
+   another session, a replaced or stale incarnation, or an unknown capability
+   returns 401 `coordination-unauthorized` without mutating state. A matching
+   capability whose broker heartbeat is stale returns 500
+   `coordination-broker-lost`, as on the other capability routes.
+7. Each authenticated session draws from its own token bucket (burst 64,
+   refilled at 20 requests per second); an exhausted bucket returns 429
+   `rate-limited` at once. At most four requests of one session ingest at
+   once, so a session whose record lock is held elsewhere cannot tie up
+   unbounded work; further requests of that session wait under the shared
+   deadline. Unauthenticated requests never draw from a session's bucket or
+   ingest slots. They compete only for the shared admission slots, so a local
+   flood of invalid capabilities can delay other sessions' hooks up to the
+   deadline but cannot hold a slot beyond the body timeout and one
+   authentication.
+
+Success returns the ordinary serve envelope with
+`data.ingested`, which is `false` when the payload normalizes to no activity
+event, exactly as the file path ignores it. Ingestion failures return the file
+path's error code and record the same activity diagnostic. Responses never echo
+the capability or payload.

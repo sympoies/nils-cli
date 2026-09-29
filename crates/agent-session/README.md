@@ -417,7 +417,10 @@ at the fixed executable path under the active Codex config root, so an operator
 can diagnose and migrate older installations. Existing `activity hook` and
 `activity notify` ingestion paths
 also remain as fail-open runtime compatibility while `agent-hook` becomes the
-single provider-registration owner.
+single provider-registration owner. `activity hook --via http` reports the same
+payload to the daemon's loopback ingress with the session capability, for a
+provider whose sandbox cannot write the state directory; see
+[Activity stream v1](docs/specs/activity-stream-v1.md#provider-hook-ingress).
 
 Turn state also gates input. While a session is `needs_input` its pane belongs
 to a provider approval or question dialog, not to a prompt box, so the routes
