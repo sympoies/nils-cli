@@ -655,9 +655,44 @@ fn board_ids(output: &CmdOutput) -> Vec<String> {
         .collect()
 }
 
-/// Two stopped records plus one closed record from a real CLI delete.
+fn ago(seconds: i64) -> String {
+    jiff::Timestamp::from_second(jiff::Timestamp::now().as_second() - seconds)
+        .expect("timestamp")
+        .to_string()
+}
+
+const HOUR: i64 = 60 * 60;
+const DAY: i64 = 24 * HOUR;
+
+/// Stopped records updated 1 hour, 2 hours, 2 days, and 8 days ago (all
+/// relative to now, so the window filter is exercised and the test does not
+/// age), plus one closed record from a real CLI delete.
 fn board_fixture() -> Fixture {
     let fixture = fixture();
+    write_record(
+        &fixture.state_dir,
+        "20300101-000000-b",
+        &fixture.home.join("Project/board-repo"),
+        &ago(HOUR),
+    );
+    write_record(
+        &fixture.state_dir,
+        "20300101-000000-a",
+        &fixture.root.join("elsewhere/outside-repo"),
+        &ago(2 * HOUR),
+    );
+    write_record(
+        &fixture.state_dir,
+        "20300101-000000-e",
+        &fixture.home.join("Project/two-days"),
+        &ago(2 * DAY),
+    );
+    write_record(
+        &fixture.state_dir,
+        "20300101-000000-f",
+        &fixture.home.join("Project/eight-days"),
+        &ago(8 * DAY),
+    );
     write_never_launched_record(
         &fixture.state_dir,
         "20300101-000000-d",
@@ -683,18 +718,31 @@ fn board_local_mode_emits_a_board_view_of_this_machine() {
     assert_eq!(board["retention"], "7d");
     assert_eq!(board["since_capped"], false);
     assert_eq!(board["truncated"], false);
-    assert!(board["generated_at"].as_str().is_some(), "{board}");
-    assert!(board["effective_since"].as_str().is_some(), "{board}");
+    let seconds = |value: &Value| {
+        value
+            .as_str()
+            .expect("timestamp")
+            .parse::<jiff::Timestamp>()
+            .expect("rfc3339")
+            .as_second()
+    };
+    // The default window is the 7-day retention.
+    assert_eq!(
+        seconds(&board["generated_at"]) - seconds(&board["effective_since"]),
+        7 * DAY
+    );
     assert_eq!(
         board["machines"],
         json!([{"machine": MACHINE, "available": true, "last_seen_at": board["generated_at"]}])
     );
-    // Stopped rows newest first by updated_at, then closed rows.
+    // Stopped rows newest first by updated_at, then closed rows; the row
+    // older than the 7-day retention is outside the default window.
     assert_eq!(
         board_ids(&output),
         vec![
             "20300101-000000-b",
             "20300101-000000-a",
+            "20300101-000000-e",
             "20300101-000000-d"
         ]
     );
@@ -703,8 +751,8 @@ fn board_local_mode_emits_a_board_view_of_this_machine() {
         assert_eq!(record["messaging_supported"], false, "{record}");
         assert_eq!(record.get("console_owner"), None, "{record}");
     }
-    assert_eq!(board["records"][2]["state"], "closed");
-    assert_eq!(board["records"][2]["close_reason"], "deleted");
+    assert_eq!(board["records"][3]["state"], "closed");
+    assert_eq!(board["records"][3]["close_reason"], "deleted");
     assert_eq!(board["records"][0]["cwd"], "~/Project/board-repo");
 }
 
@@ -721,13 +769,31 @@ fn board_local_mode_applies_the_query_filters() {
     assert_eq!(ids(&["--state", "closed"]), vec!["20300101-000000-d"]);
     assert_eq!(
         ids(&["--state", "stopped"]),
-        vec!["20300101-000000-b", "20300101-000000-a"]
+        vec![
+            "20300101-000000-b",
+            "20300101-000000-a",
+            "20300101-000000-e"
+        ]
     );
+    // Stopped rows are windowed by updated_at, closed rows by closed_at.
+    assert_eq!(
+        ids(&["--since", "1d"]),
+        vec![
+            "20300101-000000-b",
+            "20300101-000000-a",
+            "20300101-000000-d"
+        ]
+    );
+    assert_eq!(
+        ids(&["--since", "90m"]),
+        vec!["20300101-000000-b", "20300101-000000-d"]
+    );
+    assert!(ids(&["--since", "3d"]).contains(&"20300101-000000-e".to_string()));
     assert_eq!(ids(&["--state", "live"]), Vec::<String>::new());
     assert_eq!(ids(&["--repo", "board-repo"]), vec!["20300101-000000-b"]);
     assert_eq!(ids(&["--repo", "Board-repo"]), Vec::<String>::new());
     assert_eq!(ids(&["--machine", "elsewhere"]), Vec::<String>::new());
-    assert_eq!(ids(&["--machine", MACHINE]).len(), 3);
+    assert_eq!(ids(&["--machine", MACHINE]).len(), 4);
 
     // A window longer than the 7-day ledger bound is clamped, not rejected.
     let capped = cli_board(&fixture, &["--since", "2w", "--format", "json"]);
@@ -735,6 +801,15 @@ fn board_local_mode_applies_the_query_filters() {
     let board = capped.stdout_json()["data"]["board"].clone();
     assert_eq!(board["since_capped"], true);
     assert_eq!(board["retention"], "7d");
+    // Clamped to 7 days: the 8-day-old row stays outside the window.
+    assert!(
+        !board["records"]
+            .as_array()
+            .expect("records")
+            .iter()
+            .any(|record| record["session_id"] == "20300101-000000-f"),
+        "{board}"
+    );
     // The closed row was closed just now, so a short window still keeps it.
     assert_eq!(ids(&["--since", "30m", "--state", "closed"]).len(), 1);
     let within = cli_board(&fixture, &["--since", "3d", "--format", "json"]);
@@ -770,6 +845,7 @@ fn board_local_mode_text_output_is_one_line_per_record() {
             "mode: local",
             "stopped  board-host  20300101-000000-b  board-repo  -  -  Title 20300101-000000-b",
             "stopped  board-host  20300101-000000-a  outside-repo  -  -  Title 20300101-000000-a",
+            "stopped  board-host  20300101-000000-e  two-days  -  -  Title 20300101-000000-e",
             "closed  board-host  20300101-000000-d  closed-repo  -  -  Title 20300101-000000-d",
         ],
         "{text}"
