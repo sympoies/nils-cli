@@ -2115,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-docs"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2136,7 +2136,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-hook"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-memory"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2176,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-out"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "chrono",
  "clap",
@@ -2193,7 +2193,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-runtime"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2214,7 +2214,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-scope-lock"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2230,7 +2230,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-session"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "axum",
  "clap",
@@ -2261,7 +2261,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-workflow-primitives"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2286,7 +2286,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-gql"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2301,7 +2301,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-grpc"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2317,7 +2317,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-rest"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2333,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-test"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2349,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-testing-core"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2373,7 +2373,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-websocket"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2389,11 +2389,11 @@ dependencies = [
 
 [[package]]
 name = "nils-build-info"
-version = "1.30.1"
+version = "1.30.2"
 
 [[package]]
 name = "nils-claude-cli"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "nils-cli-template"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "nils-build-info",
@@ -2431,7 +2431,7 @@ dependencies = [
 
 [[package]]
 name = "nils-codex-cli"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2458,7 +2458,7 @@ dependencies = [
 
 [[package]]
 name = "nils-common"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "nils-devlog"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2492,7 +2492,7 @@ dependencies = [
 
 [[package]]
 name = "nils-docker-tools"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2506,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "nils-evidence"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2527,7 +2527,7 @@ dependencies = [
 
 [[package]]
 name = "nils-forge-cli"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "chrono",
  "clap",
@@ -2552,7 +2552,7 @@ dependencies = [
 
 [[package]]
 name = "nils-fzf-cli"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2570,7 +2570,7 @@ dependencies = [
 
 [[package]]
 name = "nils-gemini-cli"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2585,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-cli"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2607,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-lock"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2623,7 +2623,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-scope"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2637,7 +2637,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-summary"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2654,7 +2654,7 @@ dependencies = [
 
 [[package]]
 name = "nils-github-app-cli"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2670,7 +2670,7 @@ dependencies = [
 
 [[package]]
 name = "nils-image-processing"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2692,7 +2692,7 @@ dependencies = [
 
 [[package]]
 name = "nils-macos-agent"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2712,7 +2712,7 @@ dependencies = [
 
 [[package]]
 name = "nils-main-agent"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2733,7 +2733,7 @@ dependencies = [
 
 [[package]]
 name = "nils-markdown"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2751,7 +2751,7 @@ dependencies = [
 
 [[package]]
 name = "nils-memo"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2771,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "nils-opencode-cli"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2784,7 +2784,7 @@ dependencies = [
 
 [[package]]
 name = "nils-plan-archive"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2804,7 +2804,7 @@ dependencies = [
 
 [[package]]
 name = "nils-plan-issue"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "chrono",
  "clap",
@@ -2825,7 +2825,7 @@ dependencies = [
 
 [[package]]
 name = "nils-plan-tooling"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2844,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "nils-provider-resume"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "jiff",
  "nils-common",
@@ -2854,7 +2854,7 @@ dependencies = [
 
 [[package]]
 name = "nils-screen-record"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "block2",
  "chrono",
@@ -2882,7 +2882,7 @@ dependencies = [
 
 [[package]]
 name = "nils-scrub"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "regex",
  "serde",
@@ -2891,7 +2891,7 @@ dependencies = [
 
 [[package]]
 name = "nils-secrets"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2907,7 +2907,7 @@ dependencies = [
 
 [[package]]
 name = "nils-semantic-commit"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2924,7 +2924,7 @@ dependencies = [
 
 [[package]]
 name = "nils-term"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "indicatif",
  "pretty_assertions",
@@ -2932,7 +2932,7 @@ dependencies = [
 
 [[package]]
 name = "nils-test-support"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "pretty_assertions",
  "serde",
@@ -2942,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "nils-web-evidence"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2958,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "nils-zsh-kit"
-version = "1.30.1"
+version = "1.30.2"
 dependencies = [
  "chrono",
  "clap",
