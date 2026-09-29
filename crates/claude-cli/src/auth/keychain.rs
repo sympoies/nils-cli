@@ -20,6 +20,9 @@ const SERVICE: &str = "Claude Code-credentials";
 const FALLBACK_ACCOUNT: &str = "claude-code-user";
 /// `security find-generic-password` exit status for a missing item.
 const ITEM_NOT_FOUND: i32 = 44;
+/// Longest `security -i` command line Claude Code itself sends on stdin; the
+/// interactive reader splits longer lines, which would store a truncated item.
+const MAX_INTERACTIVE_LINE: usize = 4032;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -110,6 +113,13 @@ fn write_item(value: &Value) -> AuthResult<()> {
         account(),
         service()
     );
+    if command.len() > MAX_INTERACTIVE_LINE {
+        // Never pass the secret on argv, and never send a line that could be split.
+        return Err(AuthError::runtime(
+            "keychain-item-too-large",
+            "the Claude Code Keychain item is too large to write through security -i",
+        ));
+    }
     let mut child = Command::new(security_bin())
         .arg("-i")
         .stdin(Stdio::piped())

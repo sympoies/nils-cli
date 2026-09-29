@@ -163,6 +163,7 @@ pub fn pull(options: &PullOptions<'_>) -> i32 {
                 code: failure.code,
                 message: failure.message,
                 exit_code: failure.exit_code,
+                details: failure.details,
             })?;
         let Value::Object(mut payload) = export.value else {
             return Err(AuthError::runtime(

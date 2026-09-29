@@ -32,6 +32,8 @@ pub struct AuthError {
     pub code: &'static str,
     pub message: String,
     pub exit_code: i32,
+    /// Public, non-secret context for JSON errors.
+    pub details: Option<Value>,
 }
 
 impl AuthError {
@@ -40,6 +42,7 @@ impl AuthError {
             code,
             message: message.into(),
             exit_code: exit::DATA,
+            details: None,
         }
     }
 
@@ -48,6 +51,7 @@ impl AuthError {
             code,
             message: message.into(),
             exit_code: exit::RUNTIME,
+            details: None,
         }
     }
 
@@ -56,6 +60,7 @@ impl AuthError {
             code,
             message: message.into(),
             exit_code: exit::USAGE,
+            details: None,
         }
     }
 }
@@ -238,6 +243,60 @@ pub fn write_profile(name: &str, profile: &Profile) -> AuthResult<()> {
     )
 }
 
+/// Keep a rotated login that could not be stored as its profile, so a
+/// refresh-capable token the server already issued is never lost. The file is
+/// not a `.json` profile and must be reviewed by hand.
+pub fn quarantine(
+    name: &str,
+    oauth: &Map<String, Value>,
+    account: &Map<String, Value>,
+) -> Option<PathBuf> {
+    let path = required_secret_dir()
+        .ok()?
+        .join(format!("{name}.refresh-quarantine"));
+    let value = Profile {
+        oauth: oauth.clone(),
+        account: account.clone(),
+    }
+    .to_value();
+    write_json(
+        &path,
+        &value,
+        fs::SECRET_FILE_MODE,
+        "quarantine-write-failed",
+    )
+    .ok()
+    .map(|()| path)
+}
+
+/// An exclusive advisory lock on the profile store, held for a whole
+/// save, use, or refresh so profile and active-login writes never interleave.
+pub struct StoreLock {
+    _file: std::fs::File,
+}
+
+pub fn lock_store() -> AuthResult<StoreLock> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let dir = required_secret_dir()?;
+    create_private_dir(&dir, "store-lock-failed")?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(fs::SECRET_FILE_MODE)
+        .open(dir.join(".lock"))
+        .map_err(|err| AuthError::runtime("store-lock-failed", err.to_string()))?;
+    // SAFETY: flock on an owned, open descriptor; released when `file` drops.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(AuthError::runtime(
+            "store-lock-failed",
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    Ok(StoreLock { _file: file })
+}
+
 pub fn list_profiles() -> AuthResult<Vec<String>> {
     let dir = required_secret_dir()?;
     let entries = match std::fs::read_dir(&dir) {
@@ -297,6 +356,14 @@ pub struct Identity {
 }
 
 impl Identity {
+    /// Same account; organizations compare only when both sides record one.
+    pub fn same_account(&self, other: &Identity) -> bool {
+        self.account_uuid == other.account_uuid
+            && (self.organization_uuid.is_empty()
+                || other.organization_uuid.is_empty()
+                || self.organization_uuid == other.organization_uuid)
+    }
+
     pub fn from_account(account: &Map<String, Value>) -> Option<Self> {
         Some(Self {
             account_uuid: non_empty_str(account.get("accountUuid"))?.to_string(),

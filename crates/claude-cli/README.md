@@ -48,8 +48,10 @@ claude-cli completion <bash|zsh>
 | Credential format, the OAuth exchange itself, browser login, managed policy | upstream Claude Code |
 | Shell aliases, Starship wiring, PATH/fpath registration | shell integration |
 
-The wrapper does not read, copy, export, refresh, or directly delete Claude
-Code credentials.
+Outside the token authority and replica commands described under
+[Token authority and access-only replicas](#token-authority-and-access-only-replicas),
+the wrapper does not read, copy, export, refresh, or directly delete Claude
+Code credentials. Those commands never delete credentials either.
 
 ## Agent commands
 
@@ -153,8 +155,9 @@ as `codex-cli auth remote`, and both use the shared
 `nils-common::provider_runtime::remote` transport.
 
 - `auth save <name>`: Store the active login (made with `/login`) as profile
-  `<name>` in `CLAUDE_SECRET_DIR`. Refuses a login without a refresh token and
-  an existing profile that belongs to another account.
+  `<name>` in `CLAUDE_SECRET_DIR`, then rewrite that source login access-only
+  so the profile is the only refresh-token holder. Refuses a login without a
+  refresh token and an existing profile that belongs to another account.
 - `auth use <name>`: Make `<name>` the current default and write it as the
   local active login, access-only.
 - `auth current`: Report the current default, its account identity, access
@@ -166,10 +169,17 @@ as `codex-cli auth remote`, and both use the shared
   the same account; the current default is re-projected. `auto-refresh`
   refreshes profiles with less than `CLAUDE_AUTH_REFRESH_MARGIN_SECONDS`
   (default four hours) of access token left. Exits `1` when any profile fails.
+  Refresh needs file credential storage, so it refuses Keychain hosts (macOS).
+  If the exchange succeeds but the result cannot be stored as the profile (for
+  example, it belongs to another account), the rotated login is kept in
+  `<profile>.refresh-quarantine` (mode 0600) instead of being discarded.
 - `auth remote export`: Print a profile's access-only payload (`profile`, the
   access fields of `claudeAiOauth`, `oauthAccount`) for SSH transport.
 - `auth remote pull`: Run `claude-cli auth remote export` on the authority and
   write the result as the active login.
+
+`save`, `use`, and `refresh` hold an exclusive lock on
+`CLAUDE_SECRET_DIR/.lock`, so profile and active-login writes never interleave.
 
 An access-only login stores `"refreshToken": ""`, which Claude Code treats as
 having no refresh token, so it never calls the token endpoint. A running Claude
@@ -181,7 +191,8 @@ rewritten only when it changes.
 On macOS Claude Code reads its login from the login Keychain before the file,
 so the projection also writes the `Claude Code-credentials` item (with
 Claude Code's config-dir suffix when `CLAUDE_CONFIG_DIR` is set). The secret is
-passed to `security -i` on stdin, never on argv. `--keychain auto` reports
+passed to `security -i` on stdin, never on argv; an item too large for one
+`security -i` line (4032 characters, Claude Code's own limit) is not written. `--keychain auto` reports
 `unavailable` when the Keychain is locked (for example over SSH), `required`
 fails instead, and `off` skips it. Run the pull from the GUI session (a
 LaunchAgent) so the Keychain is writable.

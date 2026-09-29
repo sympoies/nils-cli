@@ -63,6 +63,7 @@ pub fn save(name: &str, output_json: bool) -> i32 {
     let command = "auth save";
     let result = (|| -> AuthResult<SaveResult> {
         store::validate_profile_name(name)?;
+        let _lock = store::lock_store()?;
         let login = store::read_active_login()?;
         if login.refresh_token().is_none() {
             return Err(AuthError::data(
@@ -78,7 +79,10 @@ pub fn save(name: &str, output_json: bool) -> i32 {
         })?;
         let replaced = match store::read_profile(name) {
             Ok(existing) => {
-                if existing.identity().as_ref() != Some(&identity) {
+                if !existing
+                    .identity()
+                    .is_some_and(|existing| existing.same_account(&identity))
+                {
                     return Err(AuthError::data(
                         "profile-identity-mismatch",
                         format!("profile '{name}' belongs to a different account"),
@@ -90,6 +94,8 @@ pub fn save(name: &str, output_json: bool) -> i32 {
             Err(err) => return Err(err),
         };
         store::write_profile(name, &login)?;
+        // The profile is now the only refresher: leave the source login access-only.
+        store::write_active_access_only(&login.oauth, &login.account, keychain::Mode::Auto)?;
         Ok(SaveResult {
             profile: name.to_string(),
             account_uuid: identity.account_uuid,
@@ -104,6 +110,7 @@ pub fn save(name: &str, output_json: bool) -> i32 {
 pub fn use_profile(name: &str, output_json: bool) -> i32 {
     let command = "auth use";
     let result = (|| -> AuthResult<UseResult> {
+        let _lock = store::lock_store()?;
         let profile = store::read_profile(name)?;
         let written = store::write_active_access_only(
             &profile.oauth,
@@ -178,6 +185,10 @@ pub fn refresh(names: &[String], due_only: bool, output_json: bool) -> i32 {
         );
     }
 
+    let _lock = match store::lock_store() {
+        Ok(lock) => lock,
+        Err(err) => return emit_error(command, output_json, err),
+    };
     let margin_ms = shared_env::env_non_empty(REFRESH_MARGIN_ENV)
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(DEFAULT_REFRESH_MARGIN_SECONDS)
@@ -194,7 +205,16 @@ pub fn refresh(names: &[String], due_only: bool, output_json: bool) -> i32 {
                 return Ok(false);
             }
             let refreshed = exchange_refresh_token(&name, &profile)?;
-            store::write_profile(&name, &refreshed)?;
+            if let Err(mut err) = store::write_profile(&name, &refreshed) {
+                if let Some(path) = store::quarantine(&name, &refreshed.oauth, &refreshed.account) {
+                    err.message = format!(
+                        "{}; the rotated login was kept in {}",
+                        err.message,
+                        path.display()
+                    );
+                }
+                return Err(err);
+            }
             if current.as_deref() == Some(name.as_str()) {
                 store::write_active_access_only(
                     &refreshed.oauth,
@@ -243,6 +263,14 @@ pub fn refresh(names: &[String], due_only: bool, output_json: bool) -> i32 {
 /// Exchange a profile's refresh token through Claude Code's documented
 /// `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` login path, in an isolated config dir.
 fn exchange_refresh_token(name: &str, profile: &Profile) -> AuthResult<Profile> {
+    if keychain::enabled() {
+        // Claude Code would store the exchanged login in a Keychain item named
+        // after the temporary config dir, not in its credentials file.
+        return Err(AuthError::runtime(
+            "refresh-unsupported-on-keychain-host",
+            "authority refresh needs file credential storage; run it on a Linux authority",
+        ));
+    }
     let refresh_token = profile.refresh_token().ok_or_else(|| {
         AuthError::data(
             "profile-without-refresh-token",
@@ -267,7 +295,6 @@ fn exchange_refresh_token(name: &str, profile: &Profile) -> AuthResult<Profile> 
         .env(store::CONFIG_DIR_ENV, workdir.path())
         .env("CLAUDE_CODE_OAUTH_REFRESH_TOKEN", refresh_token)
         .env("CLAUDE_CODE_OAUTH_SCOPES", scopes.join(" "))
-        .env("CLAUDE_AUTH_KEYCHAIN", "off")
         .env_remove("CLAUDE_CODE_OAUTH_TOKEN")
         .env_remove("ANTHROPIC_API_KEY")
         .env_remove("ANTHROPIC_AUTH_TOKEN")
@@ -322,23 +349,47 @@ fn exchange_refresh_token(name: &str, profile: &Profile) -> AuthResult<Profile> 
         );
     }
 
-    let refreshed_account = store::read_json_object(
-        &workdir.path().join(".claude.json"),
-        "refresh-output-invalid",
-    )?
-    .map(|mut config| store::take_object(&mut config, "oauthAccount"))
-    .unwrap_or_default();
-    let mut account = profile.account.clone();
-    if !refreshed_account.is_empty() {
-        if Identity::from_account(&refreshed_account) != profile.identity() {
-            return Err(AuthError::data(
-                "refresh-identity-mismatch",
-                format!("the refreshed login for '{name}' belongs to a different account"),
-            ));
+    // From here the exchange has issued a new login; a later failure keeps it
+    // in quarantine instead of dropping a token the server already rotated.
+    let account = (|| -> AuthResult<Map<String, Value>> {
+        let refreshed_account = store::read_json_object(
+            &workdir.path().join(".claude.json"),
+            "refresh-output-invalid",
+        )?
+        .map(|mut config| store::take_object(&mut config, "oauthAccount"))
+        .unwrap_or_default();
+        let mut account = profile.account.clone();
+        if !refreshed_account.is_empty() {
+            let same = match (
+                Identity::from_account(&refreshed_account),
+                profile.identity(),
+            ) {
+                (Some(refreshed), Some(stored)) => refreshed.same_account(&stored),
+                _ => false,
+            };
+            if !same {
+                return Err(AuthError::data(
+                    "refresh-identity-mismatch",
+                    format!("the refreshed login for '{name}' belongs to a different account"),
+                ));
+            }
+            merge(&mut account, refreshed_account);
         }
-        merge(&mut account, refreshed_account);
+        Ok(account)
+    })();
+    match account {
+        Ok(account) => Ok(Profile { oauth, account }),
+        Err(mut err) => {
+            if let Some(path) = store::quarantine(name, &oauth, &profile.account) {
+                err.message = format!(
+                    "{}; the rotated login was kept in {}",
+                    err.message,
+                    path.display()
+                );
+            }
+            Err(err)
+        }
     }
-    Ok(Profile { oauth, account })
 }
 
 fn merge(target: &mut Map<String, Value>, source: Map<String, Value>) {
@@ -378,7 +429,16 @@ fn finish<T: Serialize>(
 
 pub(crate) fn emit_error(command: &str, output_json: bool, err: AuthError) -> i32 {
     if output_json {
-        let _ = diag_output::emit_error(AUTH_SCHEMA_VERSION, command, err.code, err.message, None);
+        let _ = diag_output::emit_error(
+            AUTH_SCHEMA_VERSION,
+            command,
+            err.code,
+            err.message,
+            err.details,
+        );
+    } else if err.message.starts_with("claude-remote-") {
+        // Shared transport messages already carry their own prefix.
+        eprintln!("{}", err.message);
     } else {
         eprintln!("claude-cli {command}: {}", err.message);
     }
