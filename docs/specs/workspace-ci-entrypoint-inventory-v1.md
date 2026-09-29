@@ -30,7 +30,7 @@ out of scope for this governance inventory; flag it as a follow-up.
 | `changes` | `Prove full CI on exact base main commit` | exact-base `.github/scripts/release-ci-gate.cjs` (`waitForTrustedMainCi`, falling back to `findTrustedMainCi` for an older base) | keep | A canonical candidate becomes eligible for the reduced lane only when the exact base SHA has a unique successful push CI run whose required jobs contain the full-validation marker. While that run is still queued or in progress the step polls, deciding each attempt from one run listing, for at most 45 minutes of wall-clock time (base push CI is ~30 minutes plus macOS queueing), well under the job's 60-minute timeout because a timed-out `changes` job would skip the required checks. No run, a non-success conclusion, an exhausted wait, API errors, and ambiguous evidence fail closed to full CI. |
 | `changes` | `Finalize fail-closed CI lane` | workflow-local boolean conjunction | keep | Emits `release_only=true` only when both the semantic candidate and exact-base CI proof are true; all other states emit false. |
 | `test`, `test_macos` | `Checkout`, `Set up Rust`, `Cache cargo` | Upstream GitHub Actions | keep | Shared setup for full, docs-only, and release-only lanes; checkout fetches full history so exact-base policy scripts can be extracted. `Cache cargo` saves only on `main` (`save-if`): the cache holds dependencies, not workspace crates, so PR copies duplicated `main`'s and evicted it under the repository cache quota. On `test` it uses `shared-key: linux-test` so `test_containment` restores the same cache. |
-| `test`, `test_macos` | `Set up Node.js` and non-release tool bootstrap | Upstream GitHub Actions + runner bootstrap shell | keep | Runs only when `release_only != 'true'`; docs-only validation still needs Node, ripgrep, and plan tooling. |
+| `test`, `test_macos` | `Set up Node.js` and non-release tool bootstrap | Upstream GitHub Actions + runner bootstrap shell | keep | Runs only when `release_only != 'true'`; docs-only validation still needs Node and ripgrep. |
 | `test`, `test_macos` | full/docs-only `Nils CLI checks` path | `scripts/ci/nils-cli-checks-entrypoint.sh` -> `./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh` | keep | Full CI verification contract after setup; passes `--docs-only` when `docs_only == 'true'` and runs whenever `release_only != 'true'`. |
 | `test`, `test_macos` | release-only `Nils CLI checks` path | exact-base `scripts/ci/release-only-checks.sh` (which re-runs exact-base `scripts/ci/detect-release-only.sh`) | keep | Fetches full history, loads both scripts from the exact base SHA, revalidates the canonical transform, then runs lockstep, third-party, publish-order, and locked workspace checks. Required job names remain unchanged. |
 | `test`, `test_macos` | `Third-party artifact audit` (removed) | replaced by required-checks script ordering | delete | Duplicate workflow fragment removed. |
@@ -102,7 +102,6 @@ records the keep/delete decision plus the active caller evidence.
 | `scripts/ci/markdownlint-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` docs-only and full passes |
 | `scripts/ci/nils-cli-checks-entrypoint.sh` | keep | `.github/workflows/ci.yml` `test` and `test_macos` jobs + `docs/runbooks/workspace-maintenance-reference.md` local-fast and CI/full commands |
 | `scripts/ci/nils-cli-local-fast.sh` | keep | `scripts/ci/nils-cli-checks-entrypoint.sh --local-fast` delegates changed-scope planning/execution here |
-| `scripts/ci/plan-bundle-validate.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` docs-only/full checks list + `project-verify-required-checks.sh` docs-only and full passes |
 | `scripts/ci/publish-order-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step + `scripts/ci/tests/publish-order-audit.test.sh` |
 | `scripts/ci/release-tarball-third-party-audit.sh` | keep | `.github/workflows/release.yml` `build` job |
 | `scripts/ci/release-only-checks.sh` | keep | exact-base reduced lane in `.github/workflows/ci.yml` `test` and `test_macos` jobs + `scripts/ci/tests/release-workflow-contract.test.sh` |
@@ -120,7 +119,6 @@ records the keep/delete decision plus the active caller evidence.
 | --- | --- | --- |
 | `.github/scripts/release-ci-gate.cjs` | keep | `.github/workflows/ci.yml` exact-base main CI proof + `.github/workflows/release.yml` tag gate + `scripts/ci/tests/release-ci-gate.test.cjs` |
 | `scripts/ci/lib/doc_classify.py` | keep | imported by `scripts/ci/nils-cli-local-fast.sh` planner + `scripts/ci/detect-docs-only.sh` |
-| `wrappers/plan-tooling` | keep | `README.md` wrapper contributor flow + workspace wrapper directory contract |
 | `wrappers/git-cli` | keep | `README.md` wrapper contributor flow + `git-cli` wrapper behavior |
 
 ## Validation Commands

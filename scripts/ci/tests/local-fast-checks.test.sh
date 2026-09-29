@@ -50,9 +50,9 @@ assert_not_contains() {
 assert_package_crate_uses_package_mode() {
   echo "== package crate uses package mode =="
   local output
-  output="$(plan_for --changed-file crates/plan-tooling/src/validate.rs)"
+  output="$(plan_for --changed-file crates/semantic-commit/src/commit.rs)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-plan-tooling"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-semantic-commit"
   echo "ok"
 }
 
@@ -128,7 +128,7 @@ assert_docs_only_uses_docs_mode() {
 assert_rust_only_change_runs_docs_hygiene() {
   echo "== Rust-only change runs docs-hygiene audit (matches unconditional CI run) =="
   local output
-  output="$(plan_for --changed-file crates/plan-tooling/src/validate.rs)"
+  output="$(plan_for --changed-file crates/semantic-commit/src/commit.rs)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_DOCS_CHECKS=0"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_DOCS_HYGIENE=1"
@@ -182,9 +182,9 @@ assert_crate_src_asset_md_runs_package() {
 assert_crate_root_embedded_md_runs_package() {
   echo "== crate-root embedded .md runs package mode, not docs-only =="
   local output
-  output="$(plan_for --changed-file crates/plan-tooling/plan-template.md)"
+  output="$(plan_for --changed-file crates/semantic-commit/template.md)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-plan-tooling"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-semantic-commit"
   assert_not_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=docs-only"
   echo "ok"
 }
@@ -192,16 +192,16 @@ assert_crate_root_embedded_md_runs_package() {
 assert_crate_test_fixture_md_runs_package() {
   echo "== crate test fixture .md runs package mode, not docs-only =="
   local output
-  output="$(plan_for --changed-file crates/plan-tooling/tests/fixtures/plan_bundle/valid-plan.md)"
+  output="$(plan_for --changed-file crates/semantic-commit/tests/fixtures/example.md)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-plan-tooling"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-semantic-commit"
   echo "ok"
 }
 
 assert_crate_readme_stays_docs_only() {
   echo "== crate README stays docs-only =="
   local output
-  output="$(plan_for --changed-file crates/plan-tooling/README.md)"
+  output="$(plan_for --changed-file crates/semantic-commit/README.md)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=docs-only"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_DOCS_CHECKS=1"
   echo "ok"
@@ -210,7 +210,7 @@ assert_crate_readme_stays_docs_only() {
 assert_crate_docs_tree_stays_docs_only() {
   echo "== crate docs/ tree stays docs-only =="
   local output
-  output="$(plan_for --changed-file crates/plan-tooling/docs/specs/plan-source-bundle-contract-v1.md)"
+  output="$(plan_for --changed-file crates/semantic-commit/docs/README.md)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=docs-only"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_DOCS_CHECKS=1"
   echo "ok"
@@ -229,9 +229,9 @@ assert_workspace_manifest_escalates_to_workspace() {
 assert_package_manifest_requests_third_party_artifacts() {
   echo "== package manifest requests third-party artifact audit =="
   local output
-  output="$(plan_for --changed-file crates/plan-tooling/Cargo.toml)"
+  output="$(plan_for --changed-file crates/semantic-commit/Cargo.toml)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-plan-tooling"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-semantic-commit"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_THIRD_PARTY_ARTIFACTS=1"
   echo "ok"
 }
@@ -252,11 +252,11 @@ assert_docs_plus_package_runs_both() {
   local output
   output="$(plan_for \
     --changed-file docs/runbooks/example.md \
-    --changed-file crates/plan-tooling/src/validate.rs)"
+    --changed-file crates/semantic-commit/src/commit.rs)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_DOCS_CHECKS=1"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_DOCS_HYGIENE=1"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-plan-tooling"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-semantic-commit"
   echo "ok"
 }
 

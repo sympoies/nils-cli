@@ -102,7 +102,6 @@ Workspace crates that depend on `nils-term` (see each crate's `Cargo.toml` and t
 - `fzf-cli`
 - `git-lock`, `git-scope`, `git-summary`
 - `image-processing`
-- `plan-tooling`
 - `semantic-commit`
 
 To re-derive this list: `rg -nl '^nils-term\b|"nils-term"' crates/*/Cargo.toml` (excluding the crate itself).

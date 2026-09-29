@@ -17,10 +17,10 @@
 //! (`provider`, `url`, comment author/url/timestamps) and asserts the
 //! remaining observable is byte-identical across all three.
 //!
-//! Half A (issue/timeline) is conformance-tested for **behaviour**; Half B
-//! (PR/CI, locally seeded) for **shape**. The scenario subset is documented in
-//! `crates/plan-issue/docs/specs/local-provider-contract-v1.md`
-//! §"Conformance Scenario Subset".
+//! The issue/timeline side is conformance-tested for **behaviour**; the seeded
+//! PR/CI read side is tested for **shape**. See
+//! `crates/forge-cli/docs/specs/local-provider-contract-v1.md` for the store
+//! boundary and supported operations.
 
 use std::path::Path;
 

@@ -31,9 +31,6 @@ nils-git-scope
 nils-image-processing
 nils-zsh-kit
 nils-evidence
-nils-plan-archive
-nils-plan-tooling
-nils-plan-issue
 nils-semantic-commit
 nils-macos-agent
 nils-api-gql

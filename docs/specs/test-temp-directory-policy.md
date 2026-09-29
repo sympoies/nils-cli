@@ -94,8 +94,7 @@ no race involved. Give any such API a parent the fixture owns.
 1. **Never give a temp-dir handle to a `static`.** Rust does not drop statics, so
    its destructor can never run. `OnceLock`, `LazyLock`, and `Lazy` all count.
    When a process-scoped directory is genuinely needed, name it after the process
-   and sweep stale siblings on startup — see
-   `crates/plan-issue/tests/integration/common.rs`.
+   and sweep stale siblings on startup.
 2. **Do not disarm cleanup.** `keep()` and `into_path()` hand back a bare path and
    cancel removal. Return the handle alongside the path and let the caller hold
    it for the test's duration.

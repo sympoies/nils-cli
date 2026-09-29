@@ -1,7 +1,7 @@
 //! File-backed JSON store for `Provider::Local`.
 //!
 //! Implements the on-disk contract frozen in
-//! `crates/plan-issue/docs/specs/local-provider-contract-v1.md`:
+//! `crates/forge-cli/docs/specs/local-provider-contract-v1.md`:
 //!
 //! ```text
 //! <store-root>/
@@ -88,7 +88,7 @@ pub struct PrComment {
 }
 
 /// `prs/<n>.json` — STUB PR record. Every field is seeded by the test /
-/// driver; mirrors `plan-issue`'s `PrMergeSummary` plus a comment stream.
+/// driver; supplies the PR read surface plus a comment stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrRecord {
     pub number: u64,

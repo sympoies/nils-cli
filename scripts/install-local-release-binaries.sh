@@ -10,6 +10,8 @@ Builds selected Rust binaries in release mode and installs them into a local
 directory (default: ~/.local/nils-cli/bin). The build command uses the same
 binary list that will be installed, so stale target/release binaries are not
 copied from prior builds.
+The default full install also removes retired plan command binaries from the
+destination directory.
 
 Options:
   --prefix PATH   Destination directory (default: ~/.local/nils-cli/bin)
@@ -30,6 +32,7 @@ USAGE
 
 prefix="${HOME}/.local/nils-cli/bin"
 skip_build=0
+explicit_bins=0
 bins=()
 
 while [[ $# -gt 0 ]]; do
@@ -52,6 +55,7 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       bins+=( "${2}" )
+      explicit_bins=1
       shift 2
       ;;
     --skip-build)
@@ -135,6 +139,12 @@ for bin in "${bins[@]}"; do
   fi
   run install -m 0755 "$src" "$prefix/"
 done
+
+if [[ "$explicit_bins" -eq 0 ]]; then
+  for retired in plan-issue plan-issue-local plan-tooling plan-archive; do
+    run rm -f -- "$prefix/$retired"
+  done
+fi
 
 echo "ok: installed ${#bins[@]} binaries into: $prefix"
 echo "note: add to PATH if needed:"

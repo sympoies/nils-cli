@@ -44,24 +44,24 @@ assert_verdict() {
 assert_verdict "repo docs runbook"        true  --changed-file docs/runbooks/example.md
 assert_verdict "plan bundle (lint still runs)" true --changed-file docs/plans/foo/foo-plan.md
 assert_verdict "root README"              true  --changed-file README.md
-assert_verdict "crate README"             true  --changed-file crates/plan-tooling/README.md
-assert_verdict "crate docs tree"          true  --changed-file crates/plan-tooling/docs/specs/plan-source-bundle-contract-v1.md
+assert_verdict "crate README"             true  --changed-file crates/semantic-commit/README.md
+assert_verdict "crate docs tree"          true  --changed-file crates/semantic-commit/docs/README.md
 assert_verdict "multiple docs"            true  --changed-file README.md --changed-file docs/runbooks/example.md
 
 # Source / test assets that merely end in .md -> full CI.
 assert_verdict "crate src embedded md"    false --changed-file crates/agent-docs/src/templates/agents_default.md
-assert_verdict "crate-root embedded md"   false --changed-file crates/plan-tooling/plan-template.md
-assert_verdict "crate test fixture md"    false --changed-file crates/plan-tooling/tests/fixtures/plan_bundle/valid-plan.md
+assert_verdict "crate-root embedded md"   false --changed-file crates/semantic-commit/template.md
+assert_verdict "crate test fixture md"    false --changed-file crates/semantic-commit/tests/fixtures/example.md
 
 # Mixed / code / config -> full CI.
-assert_verdict "docs + rust"              false --changed-file docs/runbooks/example.md --changed-file crates/plan-tooling/src/validate.rs
+assert_verdict "docs + rust"              false --changed-file docs/runbooks/example.md --changed-file crates/semantic-commit/src/commit.rs
 assert_verdict "workflow change"          false --changed-file .github/workflows/ci.yml
 assert_verdict "ci script change"         false --changed-file scripts/ci/detect-docs-only.sh
 
 # Third-party artifact inputs escape docs-only (even THIRD_PARTY_*.md).
 assert_verdict "Cargo.lock"               false --changed-file Cargo.lock
 assert_verdict "third-party notice md"    false --changed-file THIRD_PARTY_LICENSES.md
-assert_verdict "crate manifest"           false --changed-file crates/plan-tooling/Cargo.toml
+assert_verdict "crate manifest"           false --changed-file crates/semantic-commit/Cargo.toml
 
 # Degenerate bases fall back to full CI.
 assert_verdict "empty base"               false --base ""

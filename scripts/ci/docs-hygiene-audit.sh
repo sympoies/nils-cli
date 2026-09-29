@@ -123,8 +123,6 @@ declare -a removed_transient_docs=(
   "docs/runbooks/image-processing-llm-svg.md"
   "docs/runbooks/wrappers-mode-usage.md"
   "docs/specs/markdown-github-handling-audit-v1.md"
-  "crates/plan-issue/docs/specs/plan-issue-contract-v1.md"
-  "crates/plan-tooling/docs/runbooks/split-prs-migration.md"
   "crates/api-test/docs/runbooks/api-test-websocket-adoption.md"
   "crates/api-websocket/docs/runbooks/api-websocket-rollout.md"
   "crates/memo/docs/runbooks/memo-rollout.md"
@@ -189,7 +187,6 @@ else
       -not -path '*/src/*' \
       -not -path '*/assets/*' \
       -not -path 'crates/*/README.md' \
-      -not -path 'crates/plan-tooling/plan-template.md' \
       | sort
   )"
   declared_crate_docs="$(

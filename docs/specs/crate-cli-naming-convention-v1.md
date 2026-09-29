@@ -24,7 +24,7 @@ Applies to every crate under `crates/`. Enforced by
 - An internal shared library crate is prefixed `nils-`
   (for example `nils-common`, `nils-term`, `nils-markdown`).
 - A domain/service crate uses a plain descriptive name
-  (for example `agent-docs`, `screen-record`, `plan-archive`).
+  (for example `agent-docs`, `screen-record`, `agent-out`).
 
 ### Package name
 
@@ -45,10 +45,9 @@ crates MUST NOT rely on these patterns.
 
 | Crate dir | Package name | Binary name(s) | Reason |
 | --- | --- | --- | --- |
-| `plan-issue` | `nils-plan-issue` | `plan-issue-local` | Second `plan-issue-local` binary diverges from `<bin> == <dir>` |
 | `nils-markdown` | `nils-markdown` | `md-render` | Published binary |
 | `agent-workflow-primitives` | `nils-agent-workflow-primitives` | multi-tool set (`agent-run`, `browser-session`, ...) | One crate, many primitive binaries |
-| `nils-evidence` | `nils-evidence` | `evidence` | Short user-facing binary, mirrors plan-archive's short bin |
+| `nils-evidence` | `nils-evidence` | `evidence` | Short user-facing binary for the evidence CLI |
 
 ## Enforcement
 

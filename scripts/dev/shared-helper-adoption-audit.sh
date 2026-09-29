@@ -165,10 +165,6 @@ seed_manifest() {
     'Command::new\("git"\)' \
     "Manual git show/cat-file execution is a shared-wrapper candidate."
 
-  add_row "crates/plan-tooling/src/validate.rs" \
-    "runtime.git_process" "nils-common::git/process" "candidate" "Task 2.4" "low" \
-    'Command::new\("git"\)' \
-    "git ls-files discovery wrapper may reuse shared process plumbing."
   add_row "crates/semantic-commit/src/commit.rs" \
     "runtime.git_process" "nils-common::git/process" "candidate" "Task 2.4" "medium" \
     'Command::new\("git"\)' \

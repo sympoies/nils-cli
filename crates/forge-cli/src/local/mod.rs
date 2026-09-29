@@ -6,7 +6,7 @@
 //! op swaps [`crate::backend::ProcessRunner`] for [`LocalRunner`], which serves
 //! the call from a [`store::Store`] instead of spawning `gh`. The on-disk
 //! contract is frozen in
-//! `crates/plan-issue/docs/specs/local-provider-contract-v1.md`.
+//! `crates/forge-cli/docs/specs/local-provider-contract-v1.md`.
 //!
 //! The store root comes from `--store-root <path>` (overriding the
 //! `FORGE_CLI_LOCAL_STORE` env); the repo slug comes from `--repo` with a
@@ -57,7 +57,7 @@ pub fn resolve_slug(repo: Option<&str>) -> String {
 }
 
 /// Whether `--provider local` models this command. Local is a file-backed
-/// issue/plan store: it serves the issue lifecycle (REAL) and the PR read
+/// issue store: it serves the issue lifecycle (REAL) and the PR read
 /// surface (seeded), but not PR mutation, repo/auth/label/inbox, or the
 /// `pr deliver` macro. The dispatcher rejects unsupported commands up front via
 /// [`unsupported_command`] so they never spawn a backend binary.

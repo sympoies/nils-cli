@@ -1,4 +1,0 @@
-# task_id	summary	pr_group
-S1T1	Define split-prs CLI contract and output schema	s1
-S1T2	Capture deterministic parity fixtures from current task-spec behavior	s1
-S1T3	Define deterministic normalization and error matrix	s1

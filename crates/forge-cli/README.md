@@ -426,10 +426,9 @@ GitHub's eventually-consistent auto-close, not a workaround for a broken link.
   landed; left untouched), or `error` (the state check or close failed).
 - It is **best-effort**: the merge has already landed, so a fetch/close failure
   records an `ok:false` step but never fails the delivery.
-- It only ever acts on genuine closing keywords. Plan-tracking / dispatch flows
+- It only ever acts on genuine closing keywords. Issue and dispatch flows
   that link issues with a non-closing `Refs #N` produce an empty
-  `closingIssuesReferences`, so they are untouched and still close through
-  `plan-issue record close`.
+  `closingIssuesReferences`; close those issues explicitly after delivery.
 - GitLab is a no-op today: `glab mr view` does not expose the closes-issues
   connection, so `closing_issue_refs` is always empty there.
 - Pass `--no-issue-closeout` to skip the step entirely.

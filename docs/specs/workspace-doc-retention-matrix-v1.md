@@ -55,8 +55,7 @@ find crates -type f -name '*.md' \
   -not -path '*/tests/*' \
   -not -path '*/src/*' \
   -not -path '*/assets/*' \
-  -not -path 'crates/*/README.md' \
-  -not -path 'crates/plan-tooling/plan-template.md'
+  -not -path 'crates/*/README.md'
 ```
 
 Top-level `crates/<crate>/README.md` files and `crates/<crate>/docs/README.md` index files are
@@ -100,6 +99,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/codex-cli/docs/specs/execution-capsule-v1.md`
 - `crates/forge-cli/docs/runbooks/pr-head-repair-loop.md`
 - `crates/forge-cli/docs/specs/forge-cli-spec-v1.md`
+- `crates/forge-cli/docs/specs/local-provider-contract-v1.md`
 - `crates/git-cli/docs/specs/dirty-checkout-adoption-json-contract-v1.md`
 - `crates/git-cli/docs/specs/git-cli-remote-surfaces.md`
 - `crates/git-cli/docs/specs/git-cli-worktree-convention.md`
@@ -112,19 +112,6 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/memo/docs/specs/memo-workflow-extension-contract-v1.md`
 - `crates/nils-common/docs/specs/markdown-helpers-contract-v1.md`
 - `crates/nils-markdown/CHANGELOG.md`
-- `crates/plan-issue/CHANGELOG.md`
-- `crates/plan-issue/docs/runbooks/provider-routing-runbook.md`
-- `crates/plan-issue/docs/specs/issue-backed-plan-record-contract-v2.md`
-- `crates/plan-issue/docs/specs/local-provider-contract-v1.md`
-- `crates/plan-issue/docs/specs/local-provider-service-feasibility.md`
-- `crates/plan-issue/docs/specs/plan-issue-contract-v2.md`
-- `crates/plan-issue/docs/specs/plan-issue-gate-matrix-v1.md`
-- `crates/plan-issue/docs/specs/plan-issue-state-machine-v1.md`
-- `crates/plan-issue/docs/specs/plan-issue-state-machine-v2.md`
-- `crates/plan-tooling/docs/runbooks/split-prs-build-task-spec-cutover.md`
-- `crates/plan-tooling/docs/specs/plan-source-bundle-contract-v1.md`
-- `crates/plan-tooling/docs/specs/split-prs-contract-v1.md`
-- `crates/plan-tooling/docs/specs/split-prs-contract-v2.md`
 
 ## Crate Top-Level README Inventory (Keep)
 
@@ -134,7 +121,7 @@ as the GitHub crate-directory landing page) and a `docs/README.md` index for cra
 These files are excluded from the canonical Crate-Local Inventory `find` pattern, so they are
 tracked here.
 
-Top-level crate READMEs (one per workspace member, 46 total):
+Top-level crate READMEs (one per workspace member, 43 total):
 
 - `crates/agent-docs/README.md`
 - `crates/agent-hook/README.md`
@@ -174,16 +161,13 @@ Top-level crate READMEs (one per workspace member, 46 total):
 - `crates/nils-scrub/README.md`
 - `crates/nils-term/README.md`
 - `crates/nils-test-support/README.md`
-- `crates/plan-archive/README.md`
-- `crates/plan-issue/README.md`
-- `crates/plan-tooling/README.md`
 - `crates/screen-record/README.md`
 - `crates/secrets/README.md`
 - `crates/semantic-commit/README.md`
 - `crates/web-evidence/README.md`
 - `crates/zsh-kit/README.md`
 
-Crate `docs/README.md` index files (one per workspace member, 46 total):
+Crate `docs/README.md` index files (one per workspace member, 43 total):
 
 - `crates/agent-docs/docs/README.md`
 - `crates/agent-hook/docs/README.md`
@@ -223,9 +207,6 @@ Crate `docs/README.md` index files (one per workspace member, 46 total):
 - `crates/nils-scrub/docs/README.md`
 - `crates/nils-term/docs/README.md`
 - `crates/nils-test-support/docs/README.md`
-- `crates/plan-archive/docs/README.md`
-- `crates/plan-issue/docs/README.md`
-- `crates/plan-tooling/docs/README.md`
 - `crates/screen-record/docs/README.md`
 - `crates/secrets/docs/README.md`
 - `crates/semantic-commit/docs/README.md`

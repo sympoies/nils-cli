@@ -1,8 +1,7 @@
 # nils-scrub
 
-Shared secret-scrub library for the nils-cli workspace. Extracted from
-`plan-archive` so multiple CLIs (`plan-archive refresh`, `evidence migrate`)
-reuse one stable v1 pattern set and one scrub-log format.
+Shared secret-scrub library for the nils-cli workspace. The `evidence` CLI
+uses one stable v1 pattern set and one scrub-log format.
 
 ## Surface
 
@@ -13,7 +12,7 @@ reuse one stable v1 pattern set and one scrub-log format.
   `REDACTION_TOKEN` (`"[REDACTED]"`).
 - `format_log(label, matches)` / `write_log_if_any(label, path, matches)` —
   emit a stable, diffable `<label> scrub log`. The caller passes its own label
-  (`plan-archive`, `evidence`, ...) so each consumer's logs self-identify.
+  (for example, `evidence`) so its logs self-identify.
 
 ## v1 pattern set
 

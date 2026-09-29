@@ -1,9 +1,8 @@
 # nils-evidence
 
 The `evidence` CLI — query and migrate a durable, scrubbed **skill-usage
-evidence archive**. The sibling of `plan-archive` (plan history), for runtime
-skill-usage records. Both skill-owned v1 records and generalized v2 owner
-records are accepted, so archives remain readable while workflows and intents
+evidence archive** for runtime skill-usage records. Both skill-owned v1 records
+and generalized v2 owner records are accepted, so archives remain readable while workflows and intents
 adopt the shared evidence format. Depends on the shared `nils-scrub` crate for
 redaction.
 
