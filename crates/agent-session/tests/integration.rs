@@ -1,3 +1,5 @@
+#[path = "integration/board.rs"]
+mod board;
 #[path = "integration/cli.rs"]
 mod cli;
 #[path = "integration/coordination.rs"]

@@ -2,6 +2,7 @@
 pub mod activity;
 #[doc(hidden)]
 pub mod auto_resume;
+mod board;
 #[doc(hidden)]
 pub mod cli;
 #[doc(hidden)]
@@ -577,7 +578,11 @@ fn run_one_shot(context: &CliContext, args: cli::RunArgs) -> i32 {
 
 fn run_list(context: &CliContext, args: cli::ListArgs) -> i32 {
     match list_sessions(context, None) {
-        Ok(results) => render_list_success(args.format, &results),
+        Ok(results) => render_list_success(
+            args.format,
+            &results,
+            &board::machine_identity(None, context),
+        ),
         Err(err) => render_error(LIST_COMMAND, args.format, err),
     }
 }
@@ -11327,16 +11332,39 @@ fn list_sessions_with_shadow_sampling(
     tmux_bin: Option<&Path>,
     schedule_shadow_sampling: bool,
 ) -> Result<Vec<SessionView>, CliError> {
+    let mut records = Vec::new();
+    visit_session_views(context, tmux_bin, schedule_shadow_sampling, &mut |view| {
+        records.push(view?);
+        Ok(())
+    })?;
+    records.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| b.created_at.cmp(&a.created_at))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    Ok(records)
+}
+
+/// Build one view per session directory, in directory order, handing each
+/// per-entry result to `visit`. `list` stops at the first failed entry; the
+/// session board (`board.rs`) instead skips and counts it. An error from the
+/// sessions root itself, or one `visit` returns, ends the walk.
+fn visit_session_views(
+    context: &CliContext,
+    tmux_bin: Option<&Path>,
+    schedule_shadow_sampling: bool,
+    visit: &mut dyn FnMut(Result<SessionView, CliError>) -> Result<(), CliError>,
+) -> Result<(), CliError> {
     let sessions_root = context.state_dir.join("sessions");
     if !sessions_root.exists() {
-        return Ok(Vec::new());
+        return Ok(());
     }
     let tmux_bin = tmux_bin
         .map(Path::to_path_buf)
         .unwrap_or_else(|| resolve_tmux_bin(None));
     let tmux_snapshots = tmux_session_snapshots(&tmux_bin);
     let coordination_registry = coordination::public_summary_registry_snapshot(context);
-    let mut records = Vec::new();
     for entry in fs::read_dir(&sessions_root).map_err(|err| {
         CliError::runtime(
             "session-list-failed",
@@ -11344,25 +11372,39 @@ fn list_sessions_with_shadow_sampling(
             Some(json!({ "path": display_path(&sessions_root) })),
         )
     })? {
-        let entry = entry.map_err(|err| {
-            CliError::runtime(
-                "session-list-failed",
-                format!("failed to read session entry: {err}"),
-                None,
-            )
-        })?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                visit(Err(CliError::runtime(
+                    "session-list-failed",
+                    format!("failed to read session entry: {err}"),
+                    None,
+                )))?;
+                continue;
+            }
+        };
         if entry.path().is_dir() {
             let entry_name = entry.file_name().to_string_lossy().to_string();
             let record_path = entry.path().join("session.json");
             if record_path.is_file() {
-                let resolved = ensure_record_in_session_dir(
-                    context,
-                    &record_path,
-                    &entry.path(),
-                    &entry_name,
-                )?;
-                let record = read_session_record(&resolved.record_path)?;
-                validate_record_id(&record, &resolved.expected_id, &resolved.record_path)?;
+                let record =
+                    ensure_record_in_session_dir(context, &record_path, &entry.path(), &entry_name)
+                        .and_then(|resolved| {
+                            let record = read_session_record(&resolved.record_path)?;
+                            validate_record_id(
+                                &record,
+                                &resolved.expected_id,
+                                &resolved.record_path,
+                            )?;
+                            Ok(record)
+                        });
+                let record = match record {
+                    Ok(record) => record,
+                    Err(err) => {
+                        visit(Err(err))?;
+                        continue;
+                    }
+                };
                 let (status, observed_last_terminal_activity_at) = session_list_runtime_snapshot(
                     context,
                     &tmux_bin,
@@ -11388,7 +11430,7 @@ fn list_sessions_with_shadow_sampling(
                 } else {
                     backfill_provider_resume(context, record)
                 };
-                records.push(session_view_from_parts(
+                visit(Ok(session_view_from_parts(
                     context,
                     &record,
                     status,
@@ -11403,17 +11445,11 @@ fn list_sessions_with_shadow_sampling(
                             )
                         })
                         .unwrap_or_default(),
-                ));
+                )))?;
             }
         }
     }
-    records.sort_by(|a, b| {
-        b.updated_at
-            .cmp(&a.updated_at)
-            .then_with(|| b.created_at.cmp(&a.created_at))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    Ok(records)
+    Ok(())
 }
 
 fn load_session_view(
@@ -18211,10 +18247,13 @@ fn render_single_success<T: Serialize>(
     }
 }
 
-fn render_list_success(format: OutputFormat, results: &[SessionView]) -> i32 {
+fn render_list_success(format: OutputFormat, results: &[SessionView], machine: &str) -> i32 {
     match format {
         OutputFormat::Json => {
-            let envelope = Envelope::success(schema_version_for(BINARY, LIST_COMMAND, 1), results);
+            let envelope = Envelope::success(
+                schema_version_for(BINARY, LIST_COMMAND, 1),
+                board::list_records(results, machine),
+            );
             print_json(&envelope)
         }
         OutputFormat::Text => {

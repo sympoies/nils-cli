@@ -73,8 +73,8 @@ use crate::{
     glance_session, load_session_record, non_empty_env, prepare_session_attachment,
     profile_unavailable, repo_remote_url_from_cwd, resolve_tmux_bin, resume_session_by_id,
     search_workdirs, send_auto_resume_input, send_input_serialized, session_clipboard_buffer,
-    session_dir, session_status, short_hostname, start_dsh_history_resume_session,
-    start_provider_resume_session, start_session, update_session_title_if_revision,
+    session_dir, session_status, start_dsh_history_resume_session, start_provider_resume_session,
+    start_session, update_session_title_if_revision,
 };
 
 const ATTACH_LIVE_FIFO_NAME: &str = "attach-live.fifo";
@@ -192,6 +192,8 @@ struct ServeState {
     context: CliContext,
     machine: String,
     token: Option<String>,
+    /// Session board routes (`board.rs`) answer only when enabled.
+    board: bool,
     federation: Option<crate::coordination::remote::Config>,
     max_attachment_bytes: u64,
     tmux_bin: PathBuf,
@@ -979,13 +981,8 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         }
     };
 
-    let machine = args
-        .machine
-        .clone()
-        .or_else(|| non_empty_env("AGENT_SESSION_MACHINE"))
-        .or_else(|| context.host.clone())
-        .or_else(short_hostname)
-        .unwrap_or_else(|| "unknown".to_string());
+    let machine = crate::board::machine_identity(args.machine.clone(), context);
+    let board = crate::board::serve_enabled(args.board);
 
     let federation = match crate::coordination::remote::Config::from_environment(&machine) {
         Ok(value) => value,
@@ -1081,6 +1078,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             context: context.clone(),
             machine,
             token,
+            board,
             federation,
             max_attachment_bytes,
             tmux_bin,
@@ -1180,6 +1178,7 @@ fn router(state: Arc<ServeState>) -> Router {
             get(remote_delivery_handler),
         )
         .route("/healthz", get(healthz))
+        .route("/board/v1", get(board_snapshot_handler))
         .route("/sessions", get(list_handler).post(create_handler))
         .route("/history/sessions", get(history_list_handler))
         .route(
@@ -4860,6 +4859,37 @@ fn sanitize_retitle_error(error: CliError) -> CliError {
         error
     } else {
         retitle_worker_failed()
+    }
+}
+
+/// `GET /board/v1` (`docs/specs/session-board-v1.md`); the projection lives in
+/// `board.rs`.
+async fn board_snapshot_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+) -> Response {
+    if !state.board {
+        return status_json(
+            StatusCode::NOT_FOUND,
+            crate::board::DISABLED_CODE,
+            crate::board::DISABLED_MESSAGE,
+        );
+    }
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    let tmux = state.tmux_bin.clone();
+    let machine = state.machine.clone();
+    let federation = state.federation.is_some();
+    match tokio::task::spawn_blocking(move || {
+        crate::board::snapshot(&context, &tmux, &machine, federation)
+    })
+    .await
+    {
+        Ok(Ok(board)) => envelope_ok(json!({ "machine": state.machine, "board": board })),
+        Ok(Err(err)) => envelope_err(err),
+        Err(_) => join_err(),
     }
 }
 
@@ -15954,6 +15984,7 @@ mod tests {
             },
             machine: MACHINE.to_string(),
             token: token.map(str::to_string),
+            board: false,
             federation: None,
             max_attachment_bytes: DEFAULT_MAX_ATTACHMENT_BYTES,
             tmux_bin,
