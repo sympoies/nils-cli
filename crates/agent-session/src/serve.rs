@@ -863,12 +863,11 @@ impl ServeBinaryIdentity {
 }
 
 fn serve_binary_identity() -> Option<ServeBinaryIdentity> {
-    if non_empty_env(SERVE_BINARY_WATCH_ENV).is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "0" | "false" | "no" | "off"
-        )
-    }) {
+    // Without the transient tmux scope, a supervisor cleaning up the exited
+    // service cgroup would take every live session with it.
+    if !crate::env_truthy("AGENT_SESSION_TMUX_SCOPE")
+        || non_empty_env(SERVE_BINARY_WATCH_ENV).is_some_and(|value| !crate::is_truthy_flag(&value))
+    {
         return None;
     }
     match ServeBinaryIdentity::capture() {

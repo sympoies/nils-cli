@@ -4,6 +4,7 @@
 //! the new binary, without touching the tmux sessions it already launched.
 
 use std::fs;
+use std::io::Write;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,9 @@ use pretty_assertions::assert_eq;
 /// `EX_TEMPFAIL`: the documented "restart me on the new binary" exit code.
 const BINARY_REPLACED_EXIT: i32 = 75;
 const OPT_OUT_ENV: &str = "AGENT_SESSION_SERVE_EXIT_ON_BINARY_CHANGE";
+const TMUX_SCOPE_ENV: &str = "AGENT_SESSION_TMUX_SCOPE";
+/// The supported restart setup: sessions live in their own tmux scope.
+const SCOPED: &[(&str, &str)] = &[(TMUX_SCOPE_ENV, "1")];
 
 /// A versioned install prefix holding a private copy of the built binary, so
 /// the test can replace or remove it without disturbing the Cargo artifact.
@@ -87,7 +91,7 @@ struct Serve {
 }
 
 impl Serve {
-    fn spawn(root: &Path, install: &Install, opt_out: Option<&str>) -> Self {
+    fn spawn(root: &Path, install: &Install, env: &[(&str, &str)]) -> Self {
         let home = root.join("home");
         fs::create_dir_all(&home).expect("serve home");
         let (tmux, tmux_log) = fake_tmux(root);
@@ -104,6 +108,7 @@ impl Serve {
             .env_remove("XDG_STATE_HOME")
             .env("AGENT_SESSION_TMUX_BIN", &tmux)
             .env_remove(OPT_OUT_ENV)
+            .env_remove(TMUX_SCOPE_ENV)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::from(
@@ -112,9 +117,7 @@ impl Serve {
         for key in nils_test_support::cmd::MANAGED_SESSION_ENV {
             command.env_remove(key);
         }
-        if let Some(value) = opt_out {
-            command.env(OPT_OUT_ENV, value);
-        }
+        command.envs(env.iter().copied());
         let child = command.spawn().expect("spawn serve");
         let mut serve = Self {
             child,
@@ -178,7 +181,7 @@ impl Drop for Serve {
 fn assert_exits_for_restart(change: impl FnOnce(&Install)) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let install = Install::new(&tmp.path().join("prefix"));
-    let mut serve = Serve::spawn(tmp.path(), &install, None);
+    let mut serve = Serve::spawn(tmp.path(), &install, SCOPED);
 
     change(&install);
 
@@ -210,17 +213,60 @@ fn serve_exits_for_restart_when_its_release_is_removed() {
 }
 
 #[test]
-fn serve_keeps_running_after_replacement_when_opted_out() {
+fn serve_bounds_the_drain_when_a_request_stays_open() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let install = Install::new(&tmp.path().join("prefix"));
-    let mut serve = Serve::spawn(tmp.path(), &install, Some("0"));
+    let mut serve = Serve::spawn(tmp.path(), &install, SCOPED);
+    // An unfinished request holds graceful shutdown open, as a long-lived
+    // attach or activity stream would, so only the drain deadline ends it.
+    let mut held = TcpStream::connect(serve.addr).expect("held connection");
+    held.write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n")
+        .expect("partial request");
+
+    let replaced_at = Instant::now();
+    install.replace();
+
+    let status = serve
+        .wait_exit(Duration::from_secs(30))
+        .unwrap_or_else(|| panic!("serve kept running: {}", serve.stderr()));
+    assert_eq!(
+        status.code(),
+        Some(BINARY_REPLACED_EXIT),
+        "{}",
+        serve.stderr()
+    );
+    assert!(
+        serve.stderr().contains("drain deadline elapsed"),
+        "{}",
+        serve.stderr()
+    );
+    assert!(replaced_at.elapsed() >= Duration::from_secs(9));
+    assert_eq!(serve.destructive_tmux_calls(), Vec::<String>::new());
+}
+
+fn assert_keeps_running_after_replacement(env: &[(&str, &str)]) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let install = Install::new(&tmp.path().join("prefix"));
+    let mut serve = Serve::spawn(tmp.path(), &install, env);
 
     install.replace();
 
     assert!(
         serve.wait_exit(Duration::from_secs(4)).is_none(),
-        "opted-out serve exited: {}",
+        "serve exited: {}",
         serve.stderr()
     );
     assert!(TcpStream::connect(serve.addr).is_ok());
+}
+
+#[test]
+fn serve_keeps_running_after_replacement_when_opted_out() {
+    assert_keeps_running_after_replacement(&[(TMUX_SCOPE_ENV, "1"), (OPT_OUT_ENV, "0")]);
+}
+
+/// Unscoped sessions share the service cgroup, so exiting would let the
+/// supervisor's cleanup kill them; serve keeps running instead.
+#[test]
+fn serve_keeps_running_after_replacement_without_tmux_scope() {
+    assert_keeps_running_after_replacement(&[]);
 }
