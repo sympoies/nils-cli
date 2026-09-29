@@ -1486,9 +1486,7 @@ pub(crate) fn infer_semantic_memory_observed(
         },
         trigger,
     };
-    let input = format!(
-        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (empty array). Write a concise topic of at most 72 characters that captures the concrete task, not a verbatim voice transcription or preamble. Read human_objective for the actual task and use the bounded semantic-memory journey to detect an explicit change of objective. Keep an existing topic through routine progress, but update it for a new user-directed objective. current_request, when present, is the user's latest follow-up within that objective: it never replaces the topic; set activity to a short phrase of at most 48 characters naming it, or null when it adds nothing to the topic. Leave issue and PR references out of topic and activity; the daemon adds verified references. Do not use tools. Semantic memory:\n{semantic_memory}"
-    );
+    let input = semantic_memory_input(semantic_memory);
     if input.len() >= crate::retitle_v3::MAX_PROVIDER_INPUT_BYTES {
         return Err(ObservedInferenceError {
             error: retitle_error(
@@ -1831,10 +1829,20 @@ fn fallback_eligible(code: &str) -> bool {
     )
 }
 
+/// Language-neutral on purpose: titles follow whatever the user writes, so no
+/// language is hard-coded and script variants are never converted.
+const SAME_LANGUAGE_RULE: &str = "Write topic and activity in the same language and writing system the user writes in; never translate them or convert between script variants.";
+
+fn semantic_memory_input(semantic_memory: &str) -> String {
+    format!(
+        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (empty array). Write a concise topic of at most 72 characters that captures the concrete task, not a verbatim voice transcription or preamble. Read human_objective for the actual task and use the bounded semantic-memory journey to detect an explicit change of objective. Keep an existing topic through routine progress, but update it for a new user-directed objective. current_request, when present, is the user's latest follow-up within that objective: it never replaces the topic; set activity to a short phrase of at most 48 characters naming it, or null when it adds nothing to the topic. {SAME_LANGUAGE_RULE} When an existing automatic topic uses a different language or writing system from the user, set a rewritten topic. Leave issue and PR references out of topic and activity; the daemon adds verified references. Do not use tools. Semantic memory:\n{semantic_memory}"
+    )
+}
+
 fn model_input(context: &TitleContextV2) -> Result<String, CliError> {
     let context = serde_json::to_string(context).map_err(|_| provider_malformed())?;
     Ok(format!(
-        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (array of at most two distinct #number strings). Preserve the durable first user objective through routine follow-ups; change an automatic topic only for a clear user-directed objective change. Never invent references. Do not use tools. Context:\n{context}"
+        "Return only one JSON object with keys topic_action (keep|set|clear), topic (string|null), activity (string|null), references (array of at most two distinct #number strings). Preserve the durable first user objective through routine follow-ups; change an automatic topic only for a clear user-directed objective change. {SAME_LANGUAGE_RULE} Never invent references. Do not use tools. Context:\n{context}"
     ))
 }
 
@@ -3858,6 +3866,35 @@ mod tests {
         assert_eq!(result.topic.as_deref(), Some("User title"));
         assert_eq!(result.references, vec!["#449"]);
         assert_eq!(result.activity.as_deref(), Some("Review"));
+    }
+
+    #[test]
+    fn provider_prompts_keep_the_users_language_and_writing_system() {
+        let rule = "same language and writing system the user writes in";
+        let semantic = semantic_memory_input("{}");
+        assert!(semantic.contains(rule), "{semantic}");
+        assert!(
+            semantic.contains("different language or writing system from the user"),
+            "{semantic}"
+        );
+
+        let context = TitleContextV2 {
+            schema_version: "agent-session.title-context.v2",
+            session: TitleContextSession {
+                agent: "claude".to_string(),
+                repo_name: None,
+                title_state: None,
+            },
+            turns: vec![turn(1, "修復 dashboard 排序")],
+            coverage: TitleContextCoverage {
+                source: "provider_transcript",
+                complete: true,
+                truncated: false,
+            },
+            trigger: RetitleTrigger::Initial,
+        };
+        let v2 = model_input(&context).unwrap();
+        assert!(v2.contains(rule), "{v2}");
     }
 
     #[test]
