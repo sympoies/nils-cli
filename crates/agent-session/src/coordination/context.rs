@@ -346,6 +346,42 @@ mod review_tests {
     use serde_json::json;
 
     #[test]
+    fn historical_plan_refs_do_not_create_a_conflict() {
+        let candidate: WorkContextInput = serde_json::from_value(json!({
+            "schema_version": WORK_CONTEXT_INPUT_VERSION,
+            "intent": "implementation",
+            "tier": "L2",
+            "repositories": ["example/one"],
+            "plan_refs": ["historical/plan.md"],
+            "summary": "historical candidate"
+        }))
+        .expect("historical candidate");
+        let peer: WorkContextRecord = serde_json::from_value(json!({
+            "schema_version": WORK_CONTEXT_VERSION,
+            "session_id": "peer",
+            "session_incarnation": "peer-incarnation",
+            "claim_id": "peer-claim",
+            "revision": 1,
+            "state": "active",
+            "intent": "implementation",
+            "tier": "L2",
+            "repositories": ["example/two"],
+            "worktrees": [],
+            "provider_refs": [],
+            "plan_refs": ["historical/plan.md"],
+            "scopes": [],
+            "summary": "historical peer",
+            "updated_at": "2030-01-01T00:00:00Z",
+            "expires_at": "2030-01-01T01:00:00Z",
+            "expires_at_epoch": 1
+        }))
+        .expect("historical peer");
+        let evaluation = evaluate(None, &candidate, &[peer], true, false);
+        assert_eq!(evaluation.classification, ConflictClassification::Clear);
+        assert!(evaluation.reasons.is_empty());
+    }
+
+    #[test]
     fn coordination_review_unsupported_peer_schema_makes_the_universe_incomplete() {
         let candidate: WorkContextInput = serde_json::from_value(json!({
             "schema_version": "agent-session.work-context-input.v1",

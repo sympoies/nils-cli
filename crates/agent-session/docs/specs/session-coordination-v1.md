@@ -199,7 +199,7 @@ The high-level `work-context advise` result uses
 `agent-session.work-context-advisory.v1`. It reports managed state, mode,
 availability, severity (`none`, `info`, `warning`, or `degraded`), bounded
 suppression state, stably sorted reasons, and privacy-safe peers. Same physical
-worktree, provider ref, plan ref, or overlapping declared scope is `warning`;
+worktree, provider ref, or overlapping declared scope is `warning`;
 same repository in a different worktree is `info`; incomplete broker/peer
 evaluation with no stronger known overlap is `degraded`. These are descriptive
 severities, never admission results in advisory mode.
@@ -449,8 +449,9 @@ summary. They never expose a PID as authority, a credential path, or a token.
 ## Scope grammar and canonicalization
 
 Repositories are canonical lowercase `owner/name` values. Provider references
-are `(kind, repository, numeric id)`. Plan references are normalized
-repository-relative paths without `..`, absolute roots, NUL, or control bytes.
+are `(kind, repository, numeric id)`. New plan references are rejected;
+historical values remain readable in v1 projections and are ignored for
+conflict matching.
 
 V1 scope kinds are closed:
 
@@ -474,7 +475,6 @@ registry projection. An unknown epoch is incomparable rather than clear.
 | --- | --- |
 | Same active worktree fingerprint | `conflict` |
 | Same provider ref | `conflict` |
-| Same plan ref | `conflict` |
 | Same repository with overlapping closed scopes | `conflict` |
 | Same repository with omitted, broad, or incomparable scopes | `potential_conflict` |
 | Relevant live peer without valid/supported context | `unknown` |
