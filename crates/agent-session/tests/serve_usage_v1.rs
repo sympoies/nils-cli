@@ -54,9 +54,10 @@ fn now_epoch() -> i64 {
         .as_secs() as i64
 }
 
-/// Stubbed `codex-cli` and `claude-cli`. Each run appends its argv to a log and
-/// prints the configured output with the configured exit status, so a test can
-/// change a provider's answer between requests.
+/// Stubbed `codex-cli` and `claude-cli`. Each run appends its argv to a log,
+/// reads the configured output when it starts, optionally sleeps, and then
+/// prints that output with the configured exit status, so a test can change a
+/// provider's answer between requests.
 struct Stubs {
     dir: PathBuf,
 }
@@ -79,7 +80,7 @@ impl Stubs {
             );
             for (verb, kind) in kinds {
                 script.push_str(&format!(
-                    "  {verb}) [ -f '{delay}' ] && sleep \"$(cat '{delay}')\"; cat '{out}'; exit \"$(cat '{code}')\" ;;\n",
+                    "  {verb}) body=$(cat '{out}'); [ -f '{delay}' ] && sleep \"$(cat '{delay}')\"; printf '%s' \"$body\"; exit \"$(cat '{code}')\" ;;\n",
                     delay = stubs.dir.join(format!("{kind}.delay")).display(),
                     out = stubs.dir.join(format!("{kind}.out")).display(),
                     code = stubs.dir.join(format!("{kind}.exit")).display(),
@@ -136,6 +137,16 @@ impl Stubs {
 
 /// `claude-cli` reports when its snapshot was taken; windows older than the
 /// staleness cap are hidden, so a stub answer must be current.
+fn diag_with_alpha_credits(count: u64) -> Value {
+    let mut body = fixture("codex-diag-all.json");
+    body["results"][0]["reset_credits"]["available_count"] = json!(count);
+    body
+}
+
+fn alpha_credits(body: &Value) -> Value {
+    body["data"]["usage"]["providers"][0]["reset_credits"]["available_count"].clone()
+}
+
 fn fresh_claude(mut body: Value) -> Value {
     body["result"]["updated_at"] = json!(now_epoch());
     body
@@ -231,15 +242,26 @@ impl Serve {
     }
 
     fn post(&self, path: &str, token: Option<&str>, body: &Value) -> (u16, String) {
-        let mut request = reqwest::blocking::Client::new()
+        self.post_with(reqwest::blocking::Client::new(), path, token, body)
+            .expect("serve request")
+    }
+
+    fn post_with(
+        &self,
+        client: reqwest::blocking::Client,
+        path: &str,
+        token: Option<&str>,
+        body: &Value,
+    ) -> reqwest::Result<(u16, String)> {
+        let mut request = client
             .post(format!("http://{}{path}", self.addr))
             .json(body);
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }
-        let response = request.send().expect("serve request");
+        let response = request.send()?;
         let status = response.status().as_u16();
-        (status, response.text().expect("body text"))
+        Ok((status, response.text()?))
     }
 
     fn usage(&self, path: &str) -> Value {
@@ -368,10 +390,37 @@ fn usage_v1_serves_the_cached_snapshot_until_a_refresh_is_forced() {
     assert_eq!(stubs.calls("codex-cli", "diag").len(), 1);
     assert_eq!(stubs.calls("claude-cli", "usage").len(), 1);
 
+    stubs.answer("codex-diag", &diag_with_alpha_credits(1), 0);
     let forced = serve.usage("/usage/v1?refresh=1");
     assert_eq!(stubs.calls("codex-cli", "diag").len(), 2);
     assert_eq!(stubs.calls("claude-cli", "usage").len(), 2);
     assert_eq!(forced["data"]["usage"]["providers"][0]["stale"], false);
+    assert_eq!(alpha_credits(&forced), 1);
+}
+
+#[test]
+fn usage_v1_forced_refresh_waits_for_a_run_that_starts_after_the_request() {
+    let (tmp, stubs) = setup();
+    let serve = Serve::spawn(
+        tmp.path(),
+        &stubs,
+        &[("AGENT_SESSION_USAGE_V1_REFRESH_SECONDS", "1")],
+    );
+    serve.usage("/usage/v1");
+
+    // A background refresh starts with the old answer and is still running
+    // when the answer changes and a forced read arrives.
+    fs::write(stubs.dir.join("codex-diag.delay"), "1").expect("delay");
+    stubs.answer("codex-diag", &diag_with_alpha_credits(5), 0);
+    thread::sleep(Duration::from_millis(1100));
+    serve.usage("/usage/v1");
+    stubs.wait_for_calls("codex-cli", "diag", 2);
+    stubs.answer("codex-diag", &diag_with_alpha_credits(1), 0);
+
+    let forced = serve.usage("/usage/v1?refresh=1");
+    assert_eq!(alpha_credits(&forced), 1, "{forced}");
+    assert_eq!(forced["data"]["usage"]["providers"][0]["stale"], false);
+    assert_eq!(stubs.calls("codex-cli", "diag").len(), 3);
 }
 
 #[test]
@@ -492,6 +541,7 @@ fn codex_reset_consumes_one_credit_and_returns_the_refreshed_usage() {
     serve.usage("/usage/v1");
     assert_eq!(stubs.calls("codex-cli", "diag").len(), 1);
 
+    stubs.answer("codex-diag", &diag_with_alpha_credits(1), 0);
     let request = json!({ "account": "alpha", "idempotency_key": RESET_KEY });
     let (status, text) = serve.post("/codex/reset/v1", Some(TOKEN), &request);
     assert_eq!(status, 200, "{text}");
@@ -514,6 +564,11 @@ fn codex_reset_consumes_one_credit_and_returns_the_refreshed_usage() {
         "agent-session.provider-usage.v1"
     );
     assert_eq!(body["usage"]["providers"][0]["account"], "alpha");
+    assert_eq!(
+        body["usage"]["providers"][0]["reset_credits"]["available_count"],
+        1
+    );
+    assert_eq!(body["replayed"], false);
 
     // A retry with the same key replays the recorded outcome without a second
     // redemption; the same key for another account is a conflict.
@@ -522,7 +577,10 @@ fn codex_reset_consumes_one_credit_and_returns_the_refreshed_usage() {
     let replay: Value = serde_json::from_str(&text).expect("replay json");
     assert_eq!(replay["outcome"], "reset");
     assert_eq!(replay["windows_reset"], 2);
+    assert_eq!(replay["replayed"], true);
     assert_eq!(stubs.calls("codex-cli", "account").len(), 1);
+    // A replay serves the cached snapshot instead of forcing another refresh.
+    assert_eq!(stubs.calls("codex-cli", "diag").len(), 2);
 
     let (status, text) = serve.post(
         "/codex/reset/v1",
@@ -563,4 +621,94 @@ fn codex_reset_failure_is_not_recorded_so_the_same_key_can_retry() {
     let (status, text) = serve.post("/codex/reset/v1", Some(TOKEN), &request);
     assert_eq!(status, 200, "{text}");
     assert_eq!(stubs.calls("codex-cli", "account").len(), 2);
+}
+
+fn reset_serve(tmp: &tempfile::TempDir, stubs: &Stubs) -> Serve {
+    Serve::spawn(
+        tmp.path(),
+        stubs,
+        &[("AGENT_SESSION_CODEX_RESET_ACCOUNTS", "alpha")],
+    )
+}
+
+#[test]
+fn concurrent_same_key_resets_redeem_once() {
+    let (tmp, stubs) = setup();
+    let serve = reset_serve(&tmp, &stubs);
+    serve.usage("/usage/v1");
+    fs::write(stubs.dir.join("codex-reset.delay"), "1").expect("delay");
+    let request = json!({ "account": "alpha", "idempotency_key": RESET_KEY });
+
+    let replays: Vec<bool> = thread::scope(|scope| {
+        let posts: Vec<_> = (0..2)
+            .map(|_| {
+                scope.spawn(|| {
+                    let (status, text) = serve.post("/codex/reset/v1", Some(TOKEN), &request);
+                    assert_eq!(status, 200, "{text}");
+                    let body: Value = serde_json::from_str(&text).expect("reset json");
+                    body["replayed"].as_bool().expect("replayed flag")
+                })
+            })
+            .collect();
+        posts
+            .into_iter()
+            .map(|post| post.join().expect("post"))
+            .collect()
+    });
+
+    assert_eq!(replays.iter().filter(|replayed| **replayed).count(), 1);
+    assert_eq!(stubs.calls("codex-cli", "account").len(), 1);
+}
+
+#[test]
+fn a_disconnected_reset_still_finishes_and_is_replayed() {
+    let (tmp, stubs) = setup();
+    let serve = reset_serve(&tmp, &stubs);
+    serve.usage("/usage/v1");
+    fs::write(stubs.dir.join("codex-reset.delay"), "2").expect("delay");
+    let request = json!({ "account": "alpha", "idempotency_key": RESET_KEY });
+
+    let impatient = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(300))
+        .build()
+        .expect("client");
+    assert!(
+        serve
+            .post_with(impatient, "/codex/reset/v1", Some(TOKEN), &request)
+            .is_err(),
+        "the first request should time out while the reset runs"
+    );
+
+    let (status, text) = serve.post("/codex/reset/v1", Some(TOKEN), &request);
+    assert_eq!(status, 200, "{text}");
+    let body: Value = serde_json::from_str(&text).expect("reset json");
+    assert_eq!(body["replayed"], true);
+    assert_eq!(stubs.calls("codex-cli", "account").len(), 1);
+}
+
+#[test]
+fn a_reset_answers_within_its_budget_when_the_refresh_is_slow() {
+    let (tmp, stubs) = setup();
+    let serve = reset_serve(&tmp, &stubs);
+    serve.usage("/usage/v1");
+    fs::write(stubs.dir.join("codex-diag.delay"), "8").expect("delay");
+    let request = json!({ "account": "alpha", "idempotency_key": RESET_KEY });
+
+    let started = Instant::now();
+    let (status, text) = serve.post("/codex/reset/v1", Some(TOKEN), &request);
+    let elapsed = started.elapsed();
+
+    assert_eq!(status, 200, "{text}");
+    assert!(
+        elapsed < Duration::from_millis(7500),
+        "reset took {elapsed:?}"
+    );
+    let body: Value = serde_json::from_str(&text).expect("reset json");
+    assert_eq!(body["outcome"], "reset");
+    let alpha = &body["usage"]["providers"][0];
+    assert_eq!(alpha["stale"], true);
+    assert_eq!(
+        alpha["note"],
+        "Refreshing Codex usage; showing the last completed result."
+    );
 }

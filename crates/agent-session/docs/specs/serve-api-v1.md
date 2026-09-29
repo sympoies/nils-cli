@@ -914,11 +914,12 @@ synthetic fixtures under `tests/fixtures/usage-v1/` pin that projection.
   `claude-cli usage --format json --source auto`. A result without windows,
   such as a signed-out account, stays `ok: true` with `stale: true`, a fixed
   `note`, and its `reason_code`.
-- When a helper cannot run, times out after 30 seconds, or returns an
-  unusable document, a provider with no earlier success is reported as one
-  entry with `account: null`, `stale: true`, and `reason_code`
-  `service_unavailable` or `timeout`, or the helper's own classified reason.
-  Codex marks that entry `ok: false`.
+- A helper can fail to run, time out after 30 seconds, or return an unusable
+  document. If the provider has no earlier success, or its last success is
+  600 seconds old or more, it is then reported as one entry with
+  `account: null`, `stale: true`, and a `reason_code` of `service_unavailable`,
+  `timeout`, or the helper's own classified reason. That entry replaces any
+  per-account entries. Codex marks it `ok: false`.
 - `reason_code` is always `null` or one of `auth_required`, `auth_expired`,
   `billing_past_due`, `subscription_inactive`, `organization_disabled`,
   `permission_denied`, `rate_limited`, `service_unavailable`, `timeout`, or
@@ -935,9 +936,11 @@ a time. A failed refresh keeps serving that snapshot with a backoff note and
 retries after one more interval. Windows are hidden (and the entry marked
 stale) once their `updated_at` is 600 seconds old or more than 5 seconds in
 the future, so a persistent outage never pins old numbers. `?refresh=1`
-starts a refresh at once and waits up to 7 seconds for it; a cold daemon
-waits the same bound for its first result. Any other query is
-`400 invalid-query`.
+marks the current snapshot stale and waits up to 7 seconds for a refresh that
+starts after the request. If a refresh is already running, one more run
+starts when it finishes, so a forced read never returns numbers from before
+the request. A cold daemon waits the same bound for its first result. Any
+other query is `400 invalid-query`.
 
 **Codex reset.** `POST /codex/reset/v1` takes exactly
 `{"account": "<nickname>", "idempotency_key": "<uuid>"}` and consumes at most
@@ -952,8 +955,10 @@ one earned reset through
   receives it as the redemption id, so a repeated key never consumes a second
   credit. The daemon serializes resets and replays a recorded outcome for the
   same key and account for 24 hours (`replayed: true`, no second CLI run); the
-  same key for another account is `409 idempotency-key-reused`. A failed run
-  is not recorded, so the caller retries with the same key.
+  same key for another account is `409 idempotency-key-reused`. A reset keeps
+  running and is recorded even when its caller disconnects, so a retry with
+  the same key replays it. A failed run is not recorded, so the caller retries
+  with the same key.
 - A malformed body is `422 invalid-request`. CLI failures are
   `502 codex-reset-failed`, `502 codex-reset-invalid-response`,
   `502 codex-reset-unavailable`, or `504 codex-reset-timeout` (30 seconds, an
@@ -977,7 +982,10 @@ the console reset client checks:
 
 `outcome` is `reset`, `nothing_to_reset`, `no_credit`, or `already_redeemed`,
 and `windows_reset` is present only when the CLI reports it. `usage` is the
-`GET /usage/v1` snapshot after a forced Codex refresh; a replay returns the
+`GET /usage/v1` snapshot after a forced Codex refresh. The response waits for
+that refresh only until 6 seconds after the request arrived, so a client with
+an 8-second timeout still receives the outcome. A slower refresh leaves the
+Codex entries `stale: true` with the refreshing note. A replay returns the
 cached snapshot instead.
 
 ## Response and authentication

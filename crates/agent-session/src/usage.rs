@@ -39,9 +39,13 @@ const MAX_REFRESH_SECONDS: u64 = 300;
 /// the clock, are hidden and the entry is marked stale.
 const MAX_STALE_SECONDS: i64 = 600;
 const FUTURE_SKEW_SECONDS: i64 = 5;
-/// How long a forced refresh, a cold read, or a post-reset read waits for the
-/// in-flight refresh before serving what the cache holds.
+/// How long a forced refresh or a cold read waits for its refresh before
+/// serving what the cache holds.
 const REFRESH_WAIT: Duration = Duration::from_secs(7);
+/// A reset answers within this budget from its arrival, so a consumer with an
+/// 8-second client timeout sees the outcome; a refresh that takes longer is
+/// served as the last snapshot with a refreshing note.
+const RESET_RESPONSE_BUDGET: Duration = Duration::from_secs(6);
 const HELPER_TIMEOUT: Duration = Duration::from_secs(30);
 /// `claude-cli` may fall back to a PTY probe; leave room to kill it cleanly.
 const CLAUDE_INNER_TIMEOUT_SECONDS: u64 = 25;
@@ -758,6 +762,9 @@ struct SlotState {
     fresh_until: Option<Instant>,
     retry_after: Option<Instant>,
     refreshing: bool,
+    /// A forced read arrived while a refresh was already running, so one more
+    /// run starts when it completes.
+    rerun: bool,
     completions: u64,
 }
 
@@ -786,34 +793,55 @@ impl Slot {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    async fn read(self: &Arc<Self>, force: bool) -> Vec<Entry> {
+    /// Serve the cache. A forced read (or a cold one) waits up to `wait` for a
+    /// refresh that started after it arrived; a forced read also stops treating
+    /// the current snapshot as fresh.
+    async fn read(self: &Arc<Self>, force: bool, wait: Duration) -> Vec<Entry> {
         let mut completed = self.completed.subscribe();
-        let (seen, wait) = {
+        let (target, should_wait) = {
             let mut state = self.lock();
             let now = Instant::now();
             let fresh = state.fresh_until.is_some_and(|until| now < until);
             let may_retry = state.retry_after.is_none_or(|after| now >= after);
-            if (force || !fresh) && !state.refreshing && (force || may_retry) {
-                state.refreshing = true;
-                let slot = Arc::clone(self);
-                tokio::task::spawn_blocking(move || {
-                    let refresh = match slot.provider {
-                        Provider::Codex => refresh_codex(),
-                        Provider::Claude => refresh_claude(),
-                    };
-                    slot.complete(refresh);
-                });
+            let mut target = state.completions;
+            if force {
+                state.fresh_until = None;
+                if state.refreshing {
+                    // The running refresh predates this request; wait for the next.
+                    state.rerun = true;
+                    target += 1;
+                } else {
+                    self.start_refresh(&mut state);
+                }
+            } else if !fresh && !state.refreshing && may_retry {
+                self.start_refresh(&mut state);
             }
-            (state.completions, force || state.last.is_none())
+            (target, force || state.last.is_none())
         };
-        if wait {
-            let _ =
-                tokio::time::timeout(REFRESH_WAIT, completed.wait_for(|count| *count > seen)).await;
+        if should_wait {
+            let _ = tokio::time::timeout(wait, completed.wait_for(|count| *count > target)).await;
         }
         self.project()
     }
 
-    fn complete(&self, refresh: Refresh) {
+    fn start_refresh(self: &Arc<Self>, state: &mut SlotState) {
+        state.refreshing = true;
+        let slot = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            loop {
+                let refresh = match slot.provider {
+                    Provider::Codex => refresh_codex(),
+                    Provider::Claude => refresh_claude(),
+                };
+                if !slot.complete(refresh) {
+                    break;
+                }
+            }
+        });
+    }
+
+    /// Record a finished refresh; true when a queued rerun must start now.
+    fn complete(&self, refresh: Refresh) -> bool {
         let mut state = self.lock();
         let now = Instant::now();
         match refresh {
@@ -843,9 +871,11 @@ impl Slot {
                 state.retry_after = Some(now + self.refresh_interval);
             }
         }
-        state.refreshing = false;
+        let rerun = std::mem::take(&mut state.rerun);
+        state.refreshing = rerun;
         state.completions += 1;
         self.completed.send_replace(state.completions);
+        rerun
     }
 
     fn project(&self) -> Vec<Entry> {
@@ -866,11 +896,11 @@ impl Slot {
             .iter()
             .cloned()
             .map(|mut entry| {
+                entry.expire(now);
                 if !fresh && last.good && entry.ok && !entry.stale {
                     entry.stale = true;
                     entry.note = Some(note);
                 }
-                entry.expire(now);
                 entry
             })
             .collect()
@@ -907,7 +937,7 @@ pub(crate) struct UsageService {
     claude: Arc<Slot>,
     reset_accounts: Vec<String>,
     /// Serializes resets and remembers recent outcomes by idempotency key.
-    resets: tokio::sync::Mutex<VecDeque<RecordedReset>>,
+    resets: Arc<tokio::sync::Mutex<VecDeque<RecordedReset>>>,
 }
 
 impl UsageService {
@@ -934,18 +964,20 @@ impl UsageService {
             codex: Slot::new(Provider::Codex, refresh_interval),
             claude: Slot::new(Provider::Claude, refresh_interval),
             reset_accounts,
-            resets: tokio::sync::Mutex::new(VecDeque::new()),
+            resets: Arc::new(tokio::sync::Mutex::new(VecDeque::new())),
         }
     }
 
     /// `data.usage` for `GET /usage/v1`: Codex accounts, then Claude.
     pub(crate) async fn snapshot(&self, force: bool) -> Value {
-        self.snapshot_with(force, force).await
+        self.snapshot_with(force, force, REFRESH_WAIT).await
     }
 
-    async fn snapshot_with(&self, force_codex: bool, force_claude: bool) -> Value {
-        let (codex, claude) =
-            tokio::join!(self.codex.read(force_codex), self.claude.read(force_claude));
+    async fn snapshot_with(&self, force_codex: bool, force_claude: bool, wait: Duration) -> Value {
+        let (codex, claude) = tokio::join!(
+            self.codex.read(force_codex, wait),
+            self.claude.read(force_claude, wait)
+        );
         let providers: Vec<Value> = codex
             .iter()
             .chain(claude.iter())
@@ -961,6 +993,7 @@ impl UsageService {
         machine: &str,
         body: &[u8],
     ) -> Result<Value, UsageApiError> {
+        let started = Instant::now();
         if self.reset_accounts.is_empty() {
             return Err(api_error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -976,31 +1009,27 @@ impl UsageService {
                 "the requested Codex account is not allowlisted for resets",
             ));
         }
-        let mut resets = self.resets.lock().await;
-        resets.retain(|recorded| recorded.at.elapsed() < RESET_REPLAY_TTL);
-        let (outcome, windows_reset, replayed) =
+        // The lookup, the CLI run, and the record happen in one task that owns
+        // the lock, so a disconnected caller cannot release it mid-run or lose
+        // the outcome a same-key retry must replay.
+        let resets = Arc::clone(&self.resets);
+        let task = tokio::spawn(async move {
+            let mut resets = resets.lock_owned().await;
+            resets.retain(|recorded| recorded.at.elapsed() < RESET_REPLAY_TTL);
             match resets.iter().find(|recorded| recorded.key == key) {
-                Some(recorded) if recorded.account != account => {
-                    return Err(api_error(
-                        StatusCode::CONFLICT,
-                        "idempotency-key-reused",
-                        "the idempotency key was already used for another account",
-                    ));
-                }
-                Some(recorded) => (recorded.outcome, recorded.windows_reset, true),
+                Some(recorded) if recorded.account != account => Err(api_error(
+                    StatusCode::CONFLICT,
+                    "idempotency-key-reused",
+                    "the idempotency key was already used for another account",
+                )),
+                Some(recorded) => Ok((recorded.outcome, recorded.windows_reset, true)),
                 None => {
                     let (run_account, run_key) = (account.clone(), key.clone());
                     let (outcome, windows_reset) = tokio::task::spawn_blocking(move || {
                         run_codex_reset(&run_account, &run_key)
                     })
                     .await
-                    .map_err(|_| {
-                        api_error(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "serve-task-failed",
-                            "internal task failed",
-                        )
-                    })??;
+                    .map_err(|_| task_failed())??;
                     if resets.len() >= RESET_REPLAY_CAPACITY {
                         resets.pop_front();
                     }
@@ -1011,11 +1040,15 @@ impl UsageService {
                         windows_reset,
                         at: Instant::now(),
                     });
-                    (outcome, windows_reset, false)
+                    Ok((outcome, windows_reset, false))
                 }
-            };
-        drop(resets);
-        let usage = self.snapshot_with(!replayed, false).await;
+            }
+        });
+        let (outcome, windows_reset, replayed) = task.await.map_err(|_| task_failed())??;
+        let wait = RESET_RESPONSE_BUDGET
+            .saturating_sub(started.elapsed())
+            .min(REFRESH_WAIT);
+        let usage = self.snapshot_with(!replayed, false, wait).await;
         let mut result = Map::new();
         result.insert("schema_version".into(), json!(RESET_SCHEMA_VERSION));
         result.insert("outcome".into(), json!(outcome));
@@ -1027,6 +1060,14 @@ impl UsageService {
         result.insert("usage".into(), usage);
         Ok(Value::Object(result))
     }
+}
+
+fn task_failed() -> UsageApiError {
+    api_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "serve-task-failed",
+        "internal task failed",
+    )
 }
 
 fn parse_reset_request(body: &[u8]) -> Result<(String, String), UsageApiError> {
@@ -1223,6 +1264,28 @@ mod tests {
         current.expire(now);
         assert_eq!(current.windows.len(), 1);
         assert!(!current.stale);
+    }
+
+    #[test]
+    fn an_expired_last_good_snapshot_carries_the_expired_note() {
+        let slot = Slot::new(Provider::Codex, Duration::from_secs(60));
+        {
+            let mut state = slot.lock();
+            let mut entry = Entry::new(Provider::Codex, true);
+            entry.account = Some("alpha".to_string());
+            entry.windows = vec![json!({ "key": "5h" })];
+            entry.updated_at = Some(now_epoch() - MAX_STALE_SECONDS);
+            state.last = Some(Snapshot {
+                entries: vec![entry],
+                good: true,
+                completed_at: Instant::now(),
+            });
+            state.refreshing = true;
+        }
+        let entries = slot.project();
+        assert!(entries[0].windows.is_empty());
+        assert!(entries[0].stale);
+        assert_eq!(entries[0].note, Some(Provider::Codex.expired_note()));
     }
 
     #[test]
