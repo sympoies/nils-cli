@@ -565,7 +565,8 @@ built, for one principal:
   caller the aggregator cannot scope is refused and receives no view:
   `ownership-unknown` (403) when no owner is known, `session-incarnation-conflict`
   (409) when the owner is known for another incarnation, and
-  `machine-forbidden` (403) when the owner may not use the relay's machine.
+  `machine-forbidden` (403) when the aggregator does not permit a board view
+  from the relay's machine, for example because the owner may not use it.
 - A deployment with a single operator and no principals may serve the
   unscoped view.
 
@@ -670,7 +671,7 @@ type within v1.
 | `board-relay-unavailable` | 502 | Relay network failure, non-success, or unexpected schema |
 | `board-relay-unauthorized` | 502 | Aggregator rejected the relay credential |
 | `ownership-unknown` | 422 | Relay route; the aggregator cannot attribute the calling session |
-| `machine-forbidden` | 422 | Relay route; the caller's principal may not use this machine |
+| `machine-forbidden` | 422 | Relay route; the aggregator does not permit a board view from this machine |
 
 Relay capability failures reuse `coordination-unauthorized` and
 `session-incarnation-conflict`; an aggregator `session-incarnation-conflict`

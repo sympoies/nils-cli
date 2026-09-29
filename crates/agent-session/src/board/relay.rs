@@ -61,7 +61,7 @@ fn scope_refusal(status: u16, body: Option<&Value>) -> Option<CliError> {
             "the board aggregator cannot attribute this session to a principal"
         }
         (403, "machine-forbidden") => {
-            "this session's principal may not use the board from this machine"
+            "the board aggregator does not permit this session's board view from this machine"
         }
         (409, "session-incarnation-conflict") => {
             "the board aggregator holds another incarnation of this session"
