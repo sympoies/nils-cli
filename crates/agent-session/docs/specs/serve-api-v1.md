@@ -72,7 +72,9 @@ account selection, and requires that provider's configured model to be
 `gpt-6-luna`. Local and other fallback providers are not used for clipboard
 extraction. The response `data` contains the machine name and a strict JSON
 model output string. The edge validates that output against the original
-selection before copying. The daemon does not store or log the selection or
+selection before copying. A standalone absolute filesystem path is returned
+with `kind: path`; URL and shell results keep their existing kinds. The daemon
+does not store or log the selection or
 model output.
 
 ### Provider session history
