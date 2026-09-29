@@ -10,8 +10,6 @@
 - [execution-capsule-v1.md](specs/execution-capsule-v1.md)
 - [execution-capsule-receipt-v1.schema.json](specs/execution-capsule-receipt-v1.schema.json)
 - [execution-capsule-error-v1.schema.json](specs/execution-capsule-error-v1.schema.json)
-- [../../../docs/specs/codex-gemini-cli-parity-contract-v1.md](../../../docs/specs/codex-gemini-cli-parity-contract-v1.md) (workspace
-  canonical parity contract)
 
 ## Runbooks
 

@@ -58,5 +58,4 @@ pub struct ExecProfile {
 #[derive(Debug, Clone, Copy)]
 pub enum ExecInvocation {
     CodexStyle,
-    GeminiStyle,
 }

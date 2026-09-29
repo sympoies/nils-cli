@@ -156,7 +156,6 @@ mkdir -p \
   "$unmatched_glob_repo/docs/specs" \
   "$unmatched_glob_repo/docs/runbooks" \
   "$unmatched_glob_repo/crates/codex-cli/src" \
-  "$unmatched_glob_repo/crates/gemini-cli/src" \
   "$unmatched_glob_repo/crates/macos-agent/src" \
   "$unmatched_glob_repo/crates/api-testing-core/src/websocket" \
   "$unmatched_glob_repo/crates/api-websocket/docs/specs" \
@@ -171,7 +170,6 @@ printf '# binary dependencies\n' >"$unmatched_glob_repo/BINARY_DEPENDENCIES.md"
 printf '# macos agent\n' >"$unmatched_glob_repo/crates/macos-agent/README.md"
 printf '# image processing\n' >"$unmatched_glob_repo/crates/image-processing/README.md"
 printf '%s\n' '// codex fixture' >"$unmatched_glob_repo/crates/codex-cli/src/main.rs"
-printf '%s\n' '// gemini fixture' >"$unmatched_glob_repo/crates/gemini-cli/src/main.rs"
 printf '%s\n' '// macos fixture' >"$unmatched_glob_repo/crates/macos-agent/src/cli.rs"
 printf '%s\n' '// websocket fixture' \
   >"$unmatched_glob_repo/crates/api-testing-core/src/websocket/schema.rs"

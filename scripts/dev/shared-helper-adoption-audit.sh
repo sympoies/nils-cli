@@ -151,10 +151,6 @@ seed_manifest() {
     'NO_COLOR|unsafe \{ std::env::(set_var|remove_var)' \
     "Local NO_COLOR semantics and raw env mutation in unit tests."
 
-  add_row "crates/gemini-cli/src/agent/commit.rs" \
-    "runtime.process_probe+source-test-helpers" "nils-common::process + nils-test-support" "candidate" "Task 2.2" "medium" \
-    'fn command_exists|split_paths|fn env_lock|struct EnvGuard|write_executable\(' \
-    "Manual PATH probe plus local test env/executable helpers in same file."
 
   add_row "crates/git-lock/src/diff.rs" \
     "runtime.git_process" "nils-common::git/process" "candidate" "Task 2.3" "medium" \
@@ -195,52 +191,16 @@ seed_manifest() {
     "runtime.fs_primitives" "nils-common::fs (extended)" "candidate" "Task 3.2" "high" \
     'sha256_file|write_atomic|write_timestamp|nils_common::fs' \
     "Codex fs coverage records the shared primitive migration boundary."
-  add_row "crates/gemini-cli/tests/integration/fs.rs" \
-    "runtime.fs_primitives" "nils-common::fs (extended)" "candidate" "Task 3.2" "high" \
-    'sha256_file|write_atomic|write_timestamp|nils_common::fs' \
-    "Gemini fs coverage records the shared primitive migration boundary."
-  add_row "crates/gemini-cli/src/auth/mod.rs" \
-    "runtime.auth_fs_primitives" "nils-common::fs/json helpers (via adapter)" "candidate" "Task 3.3" "high" \
-    'pub\(crate\) fn (write_atomic|write_timestamp|strip_newlines|normalize_iso)' \
-    "Auth-local storage helpers duplicate broader shared primitive behavior."
 
   add_row "crates/git-cli/src/commit.rs" \
     "source-test.env_guard" "nils-test-support::EnvGuard/GlobalStateLock" "candidate" "Task 4.1" "low" \
     'struct EnvGuard' \
     "File-local test EnvGuard duplicates nils-test-support."
-  add_row "crates/gemini-cli/src/auth/login.rs" \
-    "source-test.env_guard+stubs" "nils-test-support guards/stubs/fs" "candidate" "Task 4.2" "medium" \
-    'fn env_lock|struct EnvGuard|fn prepend_path|fn write_script' \
-    "Source tests define custom env lock/guard/path prepend/script writers."
-  add_row "crates/gemini-cli/src/auth/auto_refresh.rs" \
-    "source-test.env_guard" "nils-test-support guards" "candidate" "Task 4.2" "low" \
-    'fn env_lock|struct EnvGuard' \
-    "Source tests define custom env guard pattern."
 
-  add_row "crates/gemini-cli/tests/integration/paths.rs" \
-    "integration-test.env_guard" "nils-test-support::EnvGuard/GlobalStateLock" "candidate" "Task 5.1" "medium" \
-    'struct EnvVarGuard|fn env_lock|unsafe \{ std::env::(set_var|remove_var)' \
-    "Integration tests define custom env guards and raw unsafe env mutation."
-  add_row "crates/gemini-cli/tests/integration/prompts.rs" \
-    "integration-test.env_guard+fs" "nils-test-support::EnvGuard/GlobalStateLock + fs" "candidate" "Task 5.1" "medium" \
-    'struct EnvVarGuard|fn env_lock|set_mode\(|unsafe \{ std::env::(set_var|remove_var)' \
-    "Integration tests define custom env guards and manual chmod helper."
-  add_row "crates/gemini-cli/tests/integration/agent_prompt.rs" \
-    "integration-test.tempdir+fs" "nils-test-support::StubBinDir/fs + tempfile::TempDir" "candidate" "Task 5.1" "medium" \
-    'fn temp_dir|fn write_executable\(' \
-    "Custom tempdir and executable writer overlap shared helpers."
-  add_row "crates/gemini-cli/tests/integration/auth_refresh.rs" \
-    "integration-test.path_prepend+fs" "nils-test-support::CmdOptions::with_path_prepend + fs" "candidate" "Task 5.1" "medium" \
-    'fn write_curl_stub|fn path_with_stub|set_mode\(|std::env::var\("PATH"\)' \
-    "Manual stub writer and PATH prepend helper."
 
   add_row "crates/codex-cli/tests/integration/agent_commit.rs" \
     "integration-test.git_setup" "nils-test-support::git + fs" "candidate" "Task 5.2" "medium" \
     'Command::new\("git"\)|fn init_repo' \
-    "Manual repo init/config/git calls in fallback commit tests."
-  add_row "crates/gemini-cli/tests/integration/agent_commit_fallback.rs" \
-    "integration-test.git_setup" "nils-test-support::git + fs" "candidate" "Task 5.2" "medium" \
-    'Command::new\("git"\)|fn init_repo|fn git_stdout' \
     "Manual repo init/config/git calls in fallback commit tests."
 
   add_row "crates/git-scope/tests/integration/help_outside_repo.rs" \
@@ -281,10 +241,6 @@ seed_manifest() {
   add_row "crates/codex-cli/tests/integration/auth_json_contract.rs" \
     "integration-test.path_prepend" "nils-test-support::CmdOptions::with_path_prepend" "candidate" "Task 5.7" "low" \
     'current_path = std::env::var\("PATH"\)|path = format!\("\{\}:\{current_path\}"' \
-    "Manual PATH prepend string composition."
-  add_row "crates/gemini-cli/tests/integration/agent_templates.rs" \
-    "integration-test.path_prepend" "nils-test-support::CmdOptions::with_path_prepend" "candidate" "Task 5.7" "low" \
-    'std::env::var\("PATH"\)|combined_path = format!' \
     "Manual PATH prepend string composition."
 
   add_row "crates/fzf-cli/tests/integration/open_and_file.rs" \

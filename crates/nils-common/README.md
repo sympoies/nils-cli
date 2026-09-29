@@ -45,7 +45,7 @@ Workspace-level keep/delete ownership decisions are tracked in
   trailers) plus a markdown-aware scan and a verbatim per-line predicate pair, shared by `semantic-commit`'s blocked-message rules and
   `forge-cli`'s provider-egress Rule 17.
 - `provider_runtime`: provider-runtime substrate (paths, profiles, auth persistence, exec invocation, JSON/JWT helpers, structured errors)
-  shared by Codex/Gemini-style CLIs without provider-specific UX copy.
+  used by the Codex CLI without provider-specific UX copy.
 - `provider_usage`: stable provider-neutral usage failure reasons plus HTTP/message classification; callers retain provider-specific UX copy.
 - `rate_limits`: shared `diag rate-limits` orchestration. `driver::run` owns flag validation, target selection, `--all`, `--async`,
   `--watch`, `--jobs`, and the JSON collection envelopes; `schema` owns the `*.diag.rate-limits.v1` result shape; `table` renders the
@@ -171,8 +171,7 @@ These mirror the workspace shared-crate-boundary spec
 ([`docs/specs/workspace-shared-crate-boundary-v1.md`](../../docs/specs/workspace-shared-crate-boundary-v1.md)) at the crate level:
 
 - Moving provider-specific message wording, JSON envelope copy, or exit-code mapping into `nils-common`.
-- Merging Codex and Gemini command-level UX into one behavior surface (parity-sensitive secret-dir routing stays crate-local until
-  characterization proves a safe merge).
+- Moving Codex-specific secret-dir rules into shared primitives without a second live consumer.
 - Treating `nils-term` as a generic runtime helper crate; progress bars, spinners, and TTY presentation policy stay in `nils-term`.
 - Defining CLI-specific UX copy, warning templates, or emoji policy.
 - Owning command-level business logic for a single CLI.

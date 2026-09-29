@@ -292,5 +292,4 @@ Auth examples:
 
 - [Docs index](docs/README.md)
 - [Execution Capsule v1](docs/specs/execution-capsule-v1.md)
-- [Cross-lane parity contract](../../docs/specs/codex-gemini-cli-parity-contract-v1.md)
 - [JSON consumers runbook](docs/runbooks/json-consumers.md)

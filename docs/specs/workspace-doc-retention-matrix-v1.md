@@ -31,8 +31,6 @@ Decision fields:
 | `docs/runbooks/workspace-maintenance-reference.md` | `workspace-level` | `canonical` | `keep` | Detailed setup, validation, coverage, artifact, and publishing reference. |
 | `docs/specs/cli-output-contract-v1.md` | `workspace-level` | `canonical` | `keep` | Workspace CLI output envelope and exit-code contract. |
 | `docs/specs/cli-service-json-contract-guideline-v1.md` | `workspace-level` | `canonical` | `keep` | Service-consumed CLI JSON contract guidance. |
-| `docs/specs/codex-gemini-cli-parity-contract-v1.md` | `workspace-level` | `canonical` | `keep` | Shared Codex/Gemini parity contract. |
-| `docs/specs/codex-gemini-runtime-contract.md` | `workspace-level` | `canonical` | `keep` | Shared provider runtime contract. |
 | `docs/specs/completion-contract-template.md` | `workspace-level` | `canonical` | `keep` | Per-crate completion migration contract template. |
 | `docs/specs/completion-coverage-matrix-v1.md` | `workspace-level` | `canonical` | `keep` | Completion obligations and enforcement metadata matrix. |
 | `docs/specs/crate-cli-naming-convention-v1.md` | `workspace-level` | `canonical` | `keep` | Workspace crate and binary naming contract. |
@@ -102,8 +100,6 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/codex-cli/docs/specs/execution-capsule-v1.md`
 - `crates/forge-cli/docs/runbooks/pr-head-repair-loop.md`
 - `crates/forge-cli/docs/specs/forge-cli-spec-v1.md`
-- `crates/gemini-cli/docs/runbooks/json-consumers.md`
-- `crates/gemini-cli/docs/specs/gemini-cli-diag-rate-limits-and-auth-json-contract-v1.md`
 - `crates/git-cli/docs/specs/dirty-checkout-adoption-json-contract-v1.md`
 - `crates/git-cli/docs/specs/git-cli-remote-surfaces.md`
 - `crates/git-cli/docs/specs/git-cli-worktree-convention.md`
@@ -138,7 +134,7 @@ as the GitHub crate-directory landing page) and a `docs/README.md` index for cra
 These files are excluded from the canonical Crate-Local Inventory `find` pattern, so they are
 tracked here.
 
-Top-level crate READMEs (one per workspace member, 47 total):
+Top-level crate READMEs (one per workspace member, 46 total):
 
 - `crates/agent-docs/README.md`
 - `crates/agent-hook/README.md`
@@ -161,7 +157,6 @@ Top-level crate READMEs (one per workspace member, 47 total):
 - `crates/docker-tools/README.md`
 - `crates/forge-cli/README.md`
 - `crates/fzf-cli/README.md`
-- `crates/gemini-cli/README.md`
 - `crates/git-cli/README.md`
 - `crates/git-lock/README.md`
 - `crates/git-scope/README.md`
@@ -179,7 +174,6 @@ Top-level crate READMEs (one per workspace member, 47 total):
 - `crates/nils-scrub/README.md`
 - `crates/nils-term/README.md`
 - `crates/nils-test-support/README.md`
-- `crates/opencode-cli/README.md`
 - `crates/plan-archive/README.md`
 - `crates/plan-issue/README.md`
 - `crates/plan-tooling/README.md`
@@ -189,7 +183,7 @@ Top-level crate READMEs (one per workspace member, 47 total):
 - `crates/web-evidence/README.md`
 - `crates/zsh-kit/README.md`
 
-Crate `docs/README.md` index files (one per workspace member, 47 total):
+Crate `docs/README.md` index files (one per workspace member, 46 total):
 
 - `crates/agent-docs/docs/README.md`
 - `crates/agent-hook/docs/README.md`
@@ -212,7 +206,6 @@ Crate `docs/README.md` index files (one per workspace member, 47 total):
 - `crates/docker-tools/docs/README.md`
 - `crates/forge-cli/docs/README.md`
 - `crates/fzf-cli/docs/README.md`
-- `crates/gemini-cli/docs/README.md`
 - `crates/git-cli/docs/README.md`
 - `crates/git-lock/docs/README.md`
 - `crates/git-scope/docs/README.md`
@@ -230,7 +223,6 @@ Crate `docs/README.md` index files (one per workspace member, 47 total):
 - `crates/nils-scrub/docs/README.md`
 - `crates/nils-term/docs/README.md`
 - `crates/nils-test-support/docs/README.md`
-- `crates/opencode-cli/docs/README.md`
 - `crates/plan-archive/docs/README.md`
 - `crates/plan-issue/docs/README.md`
 - `crates/plan-tooling/docs/README.md`

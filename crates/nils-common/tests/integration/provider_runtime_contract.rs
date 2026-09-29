@@ -13,12 +13,8 @@ use std::sync::atomic::AtomicBool;
 
 const CODEX_SECRET_HOME: &[&str] = &[".config", "codex_secrets"];
 const CODEX_AUTH_HOME: &[&str] = &[".agents", "auth.json"];
-const GEMINI_SECRET_HOME_MODERN: &[&str] = &[".gemini", "secrets"];
-const GEMINI_AUTH_HOME_MODERN: &[&str] = &[".gemini", "oauth_creds.json"];
-const GEMINI_CACHE_HOME: &[&str] = &[".gemini", "cache", "secrets"];
 
 static WARNED_CODEX: AtomicBool = AtomicBool::new(false);
-static WARNED_GEMINI: AtomicBool = AtomicBool::new(false);
 
 static CODEX_PROFILE: ProviderProfile = ProviderProfile {
     provider_name: "codex",
@@ -54,43 +50,6 @@ static CODEX_PROFILE: ProviderProfile = ProviderProfile {
         failed_exec_message_prefix: "codex-tools: failed to run codex exec",
         invocation: ExecInvocation::CodexStyle,
         warned_invalid_allow_dangerous: &WARNED_CODEX,
-    },
-};
-
-static GEMINI_PROFILE: ProviderProfile = ProviderProfile {
-    provider_name: "gemini",
-    env: ProviderEnvKeys {
-        model: "GEMINI_CLI_MODEL",
-        reasoning: "GEMINI_CLI_REASONING",
-        allow_dangerous_enabled: "GEMINI_ALLOW_DANGEROUS_ENABLED",
-        secret_dir: "GEMINI_SECRET_DIR",
-        auth_file: "GEMINI_AUTH_FILE",
-        secret_cache_dir: "GEMINI_SECRET_CACHE_DIR",
-        prompt_segment_enabled: "GEMINI_PROMPT_SEGMENT_ENABLED",
-        auto_refresh_enabled: "GEMINI_AUTO_REFRESH_ENABLED",
-        auto_refresh_min_days: "GEMINI_AUTO_REFRESH_MIN_DAYS",
-    },
-    defaults: ProviderDefaults {
-        model: "gemini-2.5-flash",
-        reasoning: "medium",
-        prompt_segment_enabled: "false",
-        auto_refresh_enabled: "false",
-        auto_refresh_min_days: "5",
-    },
-    paths: PathsProfile {
-        feature_name: "gemini",
-        feature_tool_script: "gemini-tools.zsh",
-        secret_dir_home: HomePathSelection::ModernOnly(GEMINI_SECRET_HOME_MODERN),
-        auth_file_home: HomePathSelection::ModernOnly(GEMINI_AUTH_HOME_MODERN),
-        secret_cache_home: Some(GEMINI_CACHE_HOME),
-    },
-    exec: ExecProfile {
-        default_caller_prefix: "gemini",
-        missing_prompt_label: "_gemini_exec_dangerous",
-        binary_name: "gemini",
-        failed_exec_message_prefix: "gemini-tools: failed to run gemini exec",
-        invocation: ExecInvocation::GeminiStyle,
-        warned_invalid_allow_dangerous: &WARNED_GEMINI,
     },
 };
 
@@ -156,30 +115,20 @@ fn provider_runtime_paths_use_modern_home_locations_only() {
     let lock = GlobalStateLock::new();
     let dir = tempfile::TempDir::new().expect("tempdir");
     let home = dir.path().join("home");
-    fs::create_dir_all(home.join(".config").join("gemini_secrets")).expect("prior secret dir");
-    fs::create_dir_all(home.join(".agents")).expect("prior auth dir");
-    fs::write(home.join(".agents").join("auth.json"), "{}").expect("prior auth file");
+    fs::create_dir_all(home.join(".agents")).expect("auth dir");
 
     let _home = EnvGuard::set(&lock, "HOME", home.to_str().expect("utf-8"));
-    let _secret = EnvGuard::remove(&lock, "GEMINI_SECRET_DIR");
-    let _auth = EnvGuard::remove(&lock, "GEMINI_AUTH_FILE");
-    let _cache = EnvGuard::remove(&lock, "GEMINI_SECRET_CACHE_DIR");
-    let _zcache = EnvGuard::remove(&lock, "ZSH_CACHE_DIR");
+    let _secret = EnvGuard::remove(&lock, "CODEX_SECRET_DIR");
+    let _auth = EnvGuard::remove(&lock, "CODEX_AUTH_FILE");
 
     assert_eq!(
-        nils_common::provider_runtime::paths::resolve_secret_dir(&GEMINI_PROFILE)
+        nils_common::provider_runtime::paths::resolve_secret_dir(&CODEX_PROFILE)
             .expect("secret dir"),
-        home.join(".gemini").join("secrets")
+        home.join(".config").join("codex_secrets")
     );
     assert_eq!(
-        nils_common::provider_runtime::paths::resolve_auth_file(&GEMINI_PROFILE)
-            .expect("auth file"),
-        home.join(".gemini").join("oauth_creds.json")
-    );
-    assert_eq!(
-        nils_common::provider_runtime::paths::resolve_secret_cache_dir(&GEMINI_PROFILE)
-            .expect("cache dir"),
-        home.join(".gemini").join("cache").join("secrets")
+        nils_common::provider_runtime::paths::resolve_auth_file(&CODEX_PROFILE).expect("auth file"),
+        home.join(".agents").join("auth.json")
     );
 }
 
@@ -306,57 +255,6 @@ done
             "--ephemeral",
             "--",
             "hello world",
-        ]
-        .into_iter()
-        .map(|value| value.to_string())
-        .collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn provider_runtime_exec_gemini_command_shape_is_stable() {
-    let lock = GlobalStateLock::new();
-    let stub = StubBinDir::new();
-    let args_log = tempfile::NamedTempFile::new().expect("args log");
-    let args_log_path = args_log.path().to_string_lossy().to_string();
-
-    stub.write_exe(
-        "gemini",
-        r#"#!/bin/bash
-set -euo pipefail
-out="${GEMINI_TEST_ARGV_LOG:?missing GEMINI_TEST_ARGV_LOG}"
-: > "$out"
-for a in "$@"; do
-  echo "$a" >> "$out"
-done
-"#,
-    );
-
-    let _path = prepend_path(&lock, stub.path());
-    let _danger = EnvGuard::set(&lock, "GEMINI_ALLOW_DANGEROUS_ENABLED", "true");
-    let _model = EnvGuard::set(&lock, "GEMINI_CLI_MODEL", "gemini-test");
-    let _argv_log = EnvGuard::set(&lock, "GEMINI_TEST_ARGV_LOG", &args_log_path);
-
-    let mut stderr = Vec::new();
-    let code = exec::exec_dangerous(&GEMINI_PROFILE, "hello world", "caller", &mut stderr);
-
-    assert_eq!(code, 0);
-    assert!(stderr.is_empty());
-
-    let args = fs::read_to_string(args_log.path())
-        .expect("read args")
-        .lines()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        args,
-        vec![
-            "--prompt=hello world",
-            "--model",
-            "gemini-test",
-            "--approval-mode",
-            "yolo",
         ]
         .into_iter()
         .map(|value| value.to_string())

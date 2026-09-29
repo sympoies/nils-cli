@@ -461,13 +461,13 @@ mod tests {
     #[test]
     fn only_an_absent_sibling_is_skippable() {
         let absent = Sibling::Absent
-            .unusable("gemini-cli", "nils-gemini-cli")
+            .unusable("claude-cli", "nils-claude-cli")
             .expect("an absent sibling is unusable");
         assert!(absent.skippable);
         assert!(
             absent
                 .message
-                .contains("cargo build -p nils-gemini-cli --bins"),
+                .contains("cargo build -p nils-claude-cli --bins"),
             "message={}",
             absent.message
         );

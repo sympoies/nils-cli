@@ -50,7 +50,7 @@ pub(crate) fn stderr(output: &CmdOutput) -> String {
 pub(crate) const UNROUTABLE_ENDPOINT: &str = "http://127.0.0.1:9/usage";
 
 /// Bound the fast-fail so it stays fast on a host that drops rather than refuses
-/// loopback traffic. `gemini-cli` pins its timeouts alongside its unroutable
+/// loopback traffic. Provider CLI tests pin timeouts alongside their unroutable
 /// endpoint for the same reason.
 pub(crate) const FAST_FAIL_MAX_TIME_SECONDS: &str = "1";
 

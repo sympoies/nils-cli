@@ -54,7 +54,6 @@ From the current `execution-manifest.md`:
 | cli-template | 0 | 1 | 0 | parallel |
 | codex-cli | 0 | 29 | 11 | parallel |
 | fzf-cli | 0 | 18 | 1 | serial-4 |
-| gemini-cli | 0 | 30 | 10 | parallel |
 | git-cli | 13 | 22 | 2 | serial-1 |
 | git-lock | 0 | 15 | 2 | parallel |
 | git-scope | 0 | 15 | 3 | parallel |

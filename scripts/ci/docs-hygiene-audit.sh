@@ -224,9 +224,6 @@ deep_links="$(rg_scan_existing -n '\.\./\.\./\.\./docs/' --audit-paths crates/*/
 if [[ -n "$deep_links" ]]; then
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    if [[ "$line" == *"codex-gemini-cli-parity-contract-v1.md"* ]]; then
-      continue
-    fi
     record_issue error "unexpected deep crate-docs cross-link: $line"
   done <<<"$deep_links"
 fi
@@ -283,9 +280,9 @@ if [[ -n "$legacy_rs_hits" ]]; then
 fi
 
 removed_redirect_hits="$(rg_scan_existing -n -S 'handle_legacy_redirect|"provider" \| "debug" \| "workflow" \| "automation"' \
-  --audit-paths crates/codex-cli/src/main.rs crates/gemini-cli/src/main.rs)"
+  --audit-paths crates/codex-cli/src/main.rs)"
 if [[ -n "$removed_redirect_hits" ]]; then
-  record_issue error "removed codex/gemini redirect surfaces were reintroduced"
+  record_issue error "removed codex redirect surfaces were reintroduced"
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     record_issue error "  redirect-hit: $line"
