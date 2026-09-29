@@ -23,6 +23,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `POST /history/sessions/{history_id}/star` | Bearer | This specification |
 | `POST /history/sessions/{history_id}/resume` | Bearer | This specification |
 | `GET /codex/accounts` | Bearer | This specification |
+| `POST /clipboard/unwrap/v1` | Bearer | This specification |
 | `GET /activity/events` | Bearer | [Activity stream v1](activity-stream-v1.md) |
 | `GET /usage` | Open | This specification |
 | `GET /workdirs` | Bearer | This specification |
@@ -58,6 +59,18 @@ comma-separated route segments below are exact alternatives, not wildcards.
 `agent-session serve` exposes the session control plane over loopback HTTP for a per-machine edge (e.g. the agent-console
 web console). It builds its own tokio runtime and reuses the synchronous lifecycle functions via `spawn_blocking`, so there
 is no second state model.
+
+### Clipboard extraction
+
+`POST /clipboard/unwrap/v1` accepts `{ "selection": string }` with at most
+4,096 characters (and 16 KiB of UTF-8), rejecting empty and control-bearing
+selections. It shares retitle's bounded provider queue and Codex subscription
+account selection, and requires that provider's configured model to be
+`gpt-6-luna`. Local and other fallback providers are not used for clipboard
+extraction. The response `data` contains the machine name and a strict JSON
+model output string. The edge validates that output against the original
+selection before copying. The daemon does not store or log the selection or
+model output.
 
 ### Provider session history
 

@@ -1193,6 +1193,7 @@ fn router(state: Arc<ServeState>) -> Router {
         )
         .route("/codex/accounts", get(codex_accounts_handler))
         .route("/retitle/readiness", get(retitle_readiness_handler))
+        .route("/clipboard/unwrap/v1", post(clipboard_unwrap_handler))
         .route("/sessions/{id}/retitle", post(session_retitle_handler))
         .route("/retitle/v3/readiness", get(retitle_v3_readiness_handler))
         .route(
@@ -3585,6 +3586,59 @@ async fn retitle_readiness_handler(
             "retitle": readiness,
         })),
         Err(_) => join_err(),
+    }
+}
+
+async fn clipboard_unwrap_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let selection = body.ok().and_then(|Json(value)| {
+        value
+            .get("selection")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    let Some(selection) = selection else {
+        return envelope_err(CliError::usage(
+            "invalid-clipboard-selection",
+            "clipboard selection is invalid",
+            None,
+        ));
+    };
+    if !crate::retitle::valid_clipboard_selection(&selection) {
+        return envelope_err(CliError::usage(
+            "invalid-clipboard-selection",
+            "clipboard selection is invalid",
+            None,
+        ));
+    }
+    let permit = match state.retitle.acquire().await {
+        Ok(permit) => permit,
+        Err(error) => return envelope_err(error),
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _cancel_on_disconnect = ClipboardCancellation(cancelled.clone());
+    match tokio::task::spawn_blocking(move || {
+        crate::retitle::infer_clipboard(&permit, &selection, &cancelled)
+    })
+    .await
+    {
+        Ok(Ok(output)) => envelope_ok(json!({"machine": state.machine, "output": output})),
+        Ok(Err(error)) => envelope_err(error),
+        Err(_) => join_err(),
+    }
+}
+
+struct ClipboardCancellation(Arc<AtomicBool>);
+
+impl Drop for ClipboardCancellation {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
     }
 }
 
@@ -16046,6 +16100,48 @@ mod tests {
             coordination_notification_wake: Arc::new(tokio::sync::Notify::new()),
             remote_outbox_wake: Arc::new(tokio::sync::Notify::new()),
         })
+    }
+
+    #[tokio::test]
+    async fn clipboard_route_authenticates_and_rejects_invalid_input_before_provider_access() {
+        let lock = nils_test_support::GlobalStateLock::new();
+        let _config = nils_test_support::EnvGuard::set(&lock, "AGENT_SESSION_RETITLE_CONFIG", "");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = state(tmp.path(), Some(TOKEN), PathBuf::from("tmux"));
+        let uri = "/clipboard/unwrap/v1";
+        let (status, _) = call(
+            router(state.clone()),
+            post_json(uri, None, json!({"selection":"echo hi"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        for selection in ["   ", "a\0b", "x\u{7f}y"] {
+            let (status, body) = call(
+                router(state.clone()),
+                post_json(uri, Some(TOKEN), json!({"selection": selection})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(body["error"]["code"], "invalid-clipboard-selection");
+        }
+        let (status, body) = call(
+            router(state.clone()),
+            post_json(uri, Some(TOKEN), json!({"selection": "x".repeat(4097)})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "invalid-clipboard-selection");
+        let (status, body) = call(
+            router(state),
+            post_json(
+                uri,
+                Some(TOKEN),
+                json!({"selection": "https://example.test/"}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["error"]["code"], "retitle-provider-not-configured");
     }
 
     #[tokio::test]
