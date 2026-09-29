@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 
 const TOKEN: &str = "board-operator-token";
@@ -306,6 +306,13 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
         );
 
         fixture.corrupt_record(true);
+        // The session list still fails closed on the corrupt record that the
+        // board skips and counts below.
+        let (status, body) = serve.get("/sessions", &[]);
+        assert_ne!(status, 200, "{body}");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"]["code"], "session-json-invalid");
+
         let (status, body) = serve.get("/board/v1", &[]);
         assert_eq!(status, 401, "{body}");
         assert_eq!(body["error"]["code"], "unauthorized");

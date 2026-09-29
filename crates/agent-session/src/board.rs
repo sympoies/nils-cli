@@ -4,6 +4,10 @@
 //! carries only the allowlisted record fields, a home-relative `cwd`, and the
 //! serving machine's identity. `serve.rs` only registers the routes and calls
 //! into this module.
+//!
+//! This module also owns the machine label shared by `serve`, the always-on
+//! `list --format json` `machine` field, and board CLI local mode, so all
+//! three resolve the same identity.
 
 use std::path::{Component, Path, PathBuf};
 
