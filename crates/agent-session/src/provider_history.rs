@@ -2965,7 +2965,14 @@ fn normalize_message(
                     std::str::from_utf8(raw_line).ok()?,
                 )
                 .is_some();
-            if role == "user" && !human_prompt {
+            // Older Codex transcripts have no content_item_kinds. Keep those
+            // rows visible, but do not promote them into retitle memory: an
+            // unclassified user frame could also be injected context.
+            let classified_non_human = payload
+                .pointer("/internal_chat_message_metadata_passthrough/content_item_kinds")
+                .and_then(Value::as_array)
+                .is_some_and(|kinds| !kinds.iter().any(|kind| kind.as_str() == Some("user.text")));
+            if role == "user" && !human_prompt && classified_non_human {
                 return None;
             }
             let text = content_text(payload.get("content")?);
@@ -4117,6 +4124,25 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         });
         let raw = serde_json::to_vec(&internal).unwrap();
         assert!(normalize_message("codex", "provider-goal", &raw, &internal).is_none());
+    }
+
+    #[test]
+    fn unclassified_codex_user_frame_stays_visible_without_becoming_a_retitle_prompt() {
+        let unclassified = serde_json::json!({
+            "timestamp": "2026-09-09T00:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "Older user prompt" }]
+            }
+        });
+        let raw = serde_json::to_vec(&unclassified).unwrap();
+        let normalized = normalize_message("codex", "older-session", &raw, &unclassified)
+            .expect("unclassified user messages remain visible");
+        assert_eq!(normalized.0, "user");
+        assert_eq!(normalized.1, "Older user prompt");
+        assert!(!normalized.3);
     }
 
     #[test]
