@@ -113,6 +113,7 @@ cursor.
 | `status` | Meaning | Representative reason | Action |
 | --- | --- | --- | --- |
 | `ready` | Usable memory is caught up to verified history | `ready` | `none` |
+| `unavailable` | Verified history has no human prompt or active Goal objective | `no_usable_objective` | `provide_objective` |
 | `catching_up` | Bounded projection has more complete records to consume | `memory_not_initialized` or `history_catching_up` | `refresh_memory` |
 | `stale` | New history or a source discontinuity was observed | `history_advanced` or `history_stale` | `refresh_memory` |
 | `degraded` | Usable memory exists, but the history/provider refresh path failed | `history_read_degraded` or `degraded_cached` | `use_cached_memory_or_retry` |
@@ -467,11 +468,13 @@ The projector:
 
 1. Verifies source identity, file length, and the continuity hash at the old
    offset.
-2. Reads at most 1 MiB plus one byte for one refresh step.
+2. Reads at most 1 MiB plus one byte for an ordinary refresh step. A Codex
+   image-bearing record may require one bounded read of at most 16 MiB plus
+   one byte; image URL bytes are discarded before JSON parsing or reduction.
 3. Parses only complete provider records. It does not advance past an
    incomplete trailing line.
-4. Discards an oversized record across bounded pages without buffering more
-   than the line limit, then resumes at the following complete record.
+4. Discards other oversized records across bounded pages without buffering
+   more than the line limit, then resumes at the following complete record.
 5. Redacts and reduces eligible semantic messages and advances the cursor in
    the same locked memory commit.
 
@@ -650,6 +653,7 @@ Stable v3 error codes include:
 - `retitle-v3-history-unavailable`;
 - `retitle-v3-history-degraded`;
 - `retitle-v3-memory-not-ready`;
+- `retitle-v3-objective-unavailable`;
 - `retitle-v3-memory-invalid`;
 - `retitle-v3-memory-version-unsupported`;
 - `retitle-v3-memory-too-large`;
@@ -692,7 +696,8 @@ paths and token-shaped values before any retained summary is formed.
 
 - Private semantic marker: at most 16 KiB serialized JSON.
 - Provider input: strictly less than 16 KiB.
-- One incremental refresh read: at most 1 MiB plus one byte.
+- One incremental refresh read: at most 1 MiB plus one byte for ordinary
+  records; at most 16 MiB plus one byte for a Codex image-bearing record.
 - Semantic fact: at most 320 Unicode scalar values.
 - Each ledger: at most six entries.
 - Source segments: at most eight.
