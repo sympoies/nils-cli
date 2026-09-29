@@ -628,3 +628,150 @@ fn a_ledger_failure_never_fails_the_delete_and_a_runtime_exit_writes_nothing() {
         assert_eq!(body["error"]["code"], "board-ledger-unavailable");
     }
 }
+
+fn cli_board(fixture: &Fixture, args: &[&str]) -> CmdOutput {
+    let state = fixture.state_dir.to_string_lossy().to_string();
+    let tmux = fake_tmux(&fixture.root).to_string_lossy().to_string();
+    let home = fixture.home.to_string_lossy().to_string();
+    let mut argv = vec!["--state-dir", state.as_str(), "board"];
+    argv.extend_from_slice(args);
+    run(
+        &fixture.root,
+        &argv,
+        &[
+            ("AGENT_SESSION_TMUX_BIN", tmux.as_str()),
+            ("HOME", home.as_str()),
+            ("AGENT_SESSION_MACHINE", MACHINE),
+        ],
+    )
+}
+
+fn board_ids(output: &CmdOutput) -> Vec<String> {
+    output.stdout_json()["data"]["board"]["records"]
+        .as_array()
+        .expect("records")
+        .iter()
+        .map(|record| record["session_id"].as_str().expect("id").to_string())
+        .collect()
+}
+
+/// Two stopped records plus one closed record from a real CLI delete.
+fn board_fixture() -> Fixture {
+    let fixture = fixture();
+    write_never_launched_record(
+        &fixture.state_dir,
+        "20300101-000000-d",
+        &fixture.home.join("Project/closed-repo"),
+    );
+    let deleted = cli_delete(&fixture, "20300101-000000-d");
+    assert_eq!(deleted.code, 0, "stderr={}", deleted.stderr_text());
+    fixture
+}
+
+#[test]
+fn board_local_mode_emits_a_board_view_of_this_machine() {
+    let fixture = board_fixture();
+    let output = cli_board(&fixture, &["--format", "json"]);
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let envelope = output.stdout_json();
+    assert_eq!(envelope["schema_version"], "cli.agent-session.board.v1");
+    assert_eq!(envelope["ok"], true);
+    assert_eq!(envelope["data"]["mode"], "local");
+    let board = &envelope["data"]["board"];
+    assert_eq!(board["schema_version"], "agent-session.board-view.v1");
+    assert_eq!(board["record_schema"], "agent-session.board-record.v1");
+    assert_eq!(board["retention"], "7d");
+    assert_eq!(board["since_capped"], false);
+    assert_eq!(board["truncated"], false);
+    assert!(board["generated_at"].as_str().is_some(), "{board}");
+    assert!(board["effective_since"].as_str().is_some(), "{board}");
+    assert_eq!(
+        board["machines"],
+        json!([{"machine": MACHINE, "available": true, "last_seen_at": board["generated_at"]}])
+    );
+    // Stopped rows newest first by updated_at, then closed rows.
+    assert_eq!(
+        board_ids(&output),
+        vec![
+            "20300101-000000-b",
+            "20300101-000000-a",
+            "20300101-000000-d"
+        ]
+    );
+    for record in board["records"].as_array().expect("records") {
+        assert_eq!(record["machine"], MACHINE, "{record}");
+        assert_eq!(record["messaging_supported"], false, "{record}");
+        assert_eq!(record.get("console_owner"), None, "{record}");
+    }
+    assert_eq!(board["records"][2]["state"], "closed");
+    assert_eq!(board["records"][2]["close_reason"], "deleted");
+    assert_eq!(board["records"][0]["cwd"], "~/Project/board-repo");
+}
+
+#[test]
+fn board_local_mode_applies_the_query_filters() {
+    let fixture = board_fixture();
+    let ids = |args: &[&str]| {
+        let mut argv = args.to_vec();
+        argv.extend_from_slice(&["--format", "json"]);
+        let output = cli_board(&fixture, &argv);
+        assert_eq!(output.code, 0, "{args:?}: stderr={}", output.stderr_text());
+        board_ids(&output)
+    };
+    assert_eq!(ids(&["--state", "closed"]), vec!["20300101-000000-d"]);
+    assert_eq!(
+        ids(&["--state", "stopped"]),
+        vec!["20300101-000000-b", "20300101-000000-a"]
+    );
+    assert_eq!(ids(&["--state", "live"]), Vec::<String>::new());
+    assert_eq!(ids(&["--repo", "board-repo"]), vec!["20300101-000000-b"]);
+    assert_eq!(ids(&["--repo", "Board-repo"]), Vec::<String>::new());
+    assert_eq!(ids(&["--machine", "elsewhere"]), Vec::<String>::new());
+    assert_eq!(ids(&["--machine", MACHINE]).len(), 3);
+
+    // A window longer than the 7-day ledger bound is clamped, not rejected.
+    let capped = cli_board(&fixture, &["--since", "2w", "--format", "json"]);
+    assert_eq!(capped.code, 0, "stderr={}", capped.stderr_text());
+    let board = capped.stdout_json()["data"]["board"].clone();
+    assert_eq!(board["since_capped"], true);
+    assert_eq!(board["retention"], "7d");
+    // The closed row was closed just now, so a short window still keeps it.
+    assert_eq!(ids(&["--since", "30m", "--state", "closed"]).len(), 1);
+    let within = cli_board(&fixture, &["--since", "3d", "--format", "json"]);
+    assert_eq!(within.stdout_json()["data"]["board"]["since_capped"], false);
+
+    for args in [
+        vec!["--since", "3x"],
+        vec!["--since", "0d"],
+        vec!["--since", "d"],
+        vec!["--state", "running"],
+    ] {
+        let mut argv = args.clone();
+        argv.extend_from_slice(&["--format", "json"]);
+        let output = cli_board(&fixture, &argv);
+        assert_eq!(output.code, 64, "{args:?}: {}", output.stdout_text());
+        let envelope = output.stdout_json();
+        assert_eq!(envelope["schema_version"], "cli.agent-session.board.v1");
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["error"]["code"], "board-query-invalid", "{args:?}");
+    }
+}
+
+#[test]
+fn board_local_mode_text_output_is_one_line_per_record() {
+    let fixture = board_fixture();
+    let output = cli_board(&fixture, &[]);
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let text = output.stdout_text();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "mode: local",
+            "stopped  board-host  20300101-000000-b  board-repo  -  -  Title 20300101-000000-b",
+            "stopped  board-host  20300101-000000-a  outside-repo  -  -  Title 20300101-000000-a",
+            "closed  board-host  20300101-000000-d  closed-repo  -  -  Title 20300101-000000-d",
+        ],
+        "{text}"
+    );
+}

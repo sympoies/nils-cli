@@ -66,6 +66,9 @@ pub enum Command {
     Run(RunArgs),
     /// List recorded agent sessions.
     List(ListArgs),
+    /// Show which sessions exist, where they run, and what they are doing,
+    /// including recently closed ones (session board v1).
+    Board(BoardArgs),
     /// Print the attach command for a session.
     #[command(name = "command")]
     Show(SessionRefArgs),
@@ -298,6 +301,31 @@ pub struct RunArgs {
 
 #[derive(Debug, Args)]
 pub struct ListArgs {
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct BoardArgs {
+    /// Only records in this state: live, stopped, closed, or all.
+    #[arg(long, value_name = "STATE", default_value = "all")]
+    pub state: String,
+
+    /// Only stopped rows updated, and closed rows closed, within this window
+    /// (`<n>` with unit m, h, d, w, or mo). Defaults to, and is clamped to, the
+    /// source's retention.
+    #[arg(long, value_name = "DURATION")]
+    pub since: Option<String>,
+
+    /// Only records whose repository name matches exactly.
+    #[arg(long, value_name = "NAME")]
+    pub repo: Option<String>,
+
+    /// Only records from this machine.
+    #[arg(long, value_name = "NAME")]
+    pub machine: Option<String>,
+
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,

@@ -17,8 +17,10 @@ use serde_json::{Map, Value, json};
 use crate::{CliContext, CliError, SessionRecord, SessionView};
 
 mod ledger;
+mod view;
 
 pub(crate) use ledger::{CloseReason, cursor_invalid};
+pub(crate) use view::run;
 
 pub(crate) const BOARD_SCHEMA: &str = "agent-session.board.v1";
 pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";
