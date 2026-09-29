@@ -830,8 +830,10 @@ enum ServeStop {
     BinaryReplaced,
 }
 
-/// The installed file this serve was started from, by device and inode.
+/// The installed file this serve was started from, by device and inode, and
+/// the path it was invoked through.
 struct ServeBinaryIdentity {
+    invocation: PathBuf,
     path: PathBuf,
     dev: u64,
     ino: u64,
@@ -839,13 +841,18 @@ struct ServeBinaryIdentity {
 
 impl ServeBinaryIdentity {
     fn capture() -> io::Result<Self> {
+        Self::from_invocation(std::path::absolute(std::env::current_exe()?)?)
+    }
+
+    fn from_invocation(invocation: PathBuf) -> io::Result<Self> {
         use std::os::unix::fs::MetadataExt;
 
         // macOS reports the invocation path, which is a link for a Homebrew
         // `bin/` install; watch the linked release file itself.
-        let path = fs::canonicalize(std::env::current_exe()?)?;
+        let path = fs::canonicalize(&invocation)?;
         let metadata = fs::metadata(&path)?;
         Ok(Self {
+            invocation,
             path,
             dev: metadata.dev(),
             ino: metadata.ino(),
@@ -855,6 +862,11 @@ impl ServeBinaryIdentity {
     fn changed(&self) -> bool {
         use std::os::unix::fs::MetadataExt;
 
+        // An upgrade that keeps the old release installed only repoints the
+        // invocation link at the new one.
+        if fs::canonicalize(&self.invocation).is_ok_and(|target| target != self.path) {
+            return true;
+        }
         match fs::metadata(&self.path) {
             Ok(metadata) => metadata.dev() != self.dev || metadata.ino() != self.ino,
             Err(error) => error.kind() == io::ErrorKind::NotFound,
@@ -11474,6 +11486,34 @@ mod tests {
 
     const MACHINE: &str = "test-machine";
     const TOKEN: &str = "s3cr3t-token";
+
+    /// A Homebrew upgrade without cleanup repoints the `bin/` link at the new
+    /// release and leaves the old one installed (sympoies/nils-cli#1817).
+    #[test]
+    fn serve_binary_identity_detects_a_repointed_invocation_link() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let release = |version: &str| {
+            let dir = tmp.path().join("Cellar/nils-cli").join(version).join("bin");
+            fs::create_dir_all(&dir).expect("release dir");
+            let binary = dir.join("agent-session");
+            fs::write(&binary, version).expect("release binary");
+            binary
+        };
+        let old = release("1.0.0");
+        let bin = tmp.path().join("bin");
+        fs::create_dir_all(&bin).expect("bin dir");
+        let link = bin.join("agent-session");
+        symlink(&old, &link).expect("bin link");
+        let identity = ServeBinaryIdentity::from_invocation(link.clone()).expect("identity");
+        assert!(!identity.changed());
+
+        let staged = bin.join("agent-session.new");
+        symlink(release("1.0.1"), &staged).expect("staged link");
+        fs::rename(&staged, &link).expect("repoint bin link");
+
+        assert!(old.exists());
+        assert!(identity.changed());
+    }
 
     #[tokio::test]
     async fn session_retitle_readiness_is_an_authenticated_sanitized_contract() {
