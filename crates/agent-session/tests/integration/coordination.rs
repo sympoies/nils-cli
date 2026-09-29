@@ -32112,10 +32112,20 @@ fn own_pull_request_head_grant_survives_a_registry_rewrite_by_a_pre_grant_writer
     // The private grant record binds the exact claim it was minted with.
     let grant_path =
         state_dir.join("sessions/worker-one/coordination/pull-request-head-grant.json");
-    let minted = fs::read(&grant_path).expect("private grant record");
-    let mut rebound: serde_json::Value = serde_json::from_slice(&minted).expect("grant json");
-    rebound["claim_id"] = json!("another-claim");
-    write_private_json(&grant_path, &rebound);
+    // Read without requiring the record so a reverted fix still reaches the
+    // own-head admission below and fails there.
+    let minted = fs::read(&grant_path).ok();
+    write_private_json(
+        &grant_path,
+        &json!({
+            "schema_version": "agent-session.pull-request-head-grant.v1",
+            "session_id": "worker-one",
+            "session_incarnation": "worker-incarnation-one",
+            "claim_id": "another-claim",
+            "repository": "example/repository",
+            "head": "fix/worker-delivery"
+        }),
+    );
     let rebound_refused = admit("rebound-own-pull-request", own_head.clone());
     assert_eq!(
         rebound_refused.stdout_json()["error"]["code"],
@@ -32123,8 +32133,14 @@ fn own_pull_request_head_grant_survives_a_registry_rewrite_by_a_pre_grant_writer
         "{}",
         rebound_refused.stdout_text()
     );
-    fs::write(&grant_path, &minted).expect("restore grant record");
-    fs::set_permissions(&grant_path, fs::Permissions::from_mode(0o600)).expect("grant mode");
+    match minted {
+        Some(minted) => {
+            fs::write(&grant_path, minted).expect("restore grant record");
+            fs::set_permissions(&grant_path, fs::Permissions::from_mode(0o600))
+                .expect("grant mode");
+        }
+        None => fs::remove_file(&grant_path).expect("remove rebound record"),
+    }
     let admitted = admit("rewritten-own-pull-request", own_head);
     assert_eq!(
         admitted.code,
