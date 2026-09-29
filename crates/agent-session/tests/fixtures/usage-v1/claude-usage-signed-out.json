@@ -1,0 +1,13 @@
+{
+  "schema_version": "claude-cli.usage.v1",
+  "command": "usage",
+  "ok": true,
+  "result": {
+    "provider": "claude",
+    "source": "none",
+    "stale": true,
+    "windows": [],
+    "reason_code": "auth_required",
+    "note": "free-form helper text from /srv/SECRET-MARKER"
+  }
+}

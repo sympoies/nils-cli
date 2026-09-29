@@ -1,0 +1,5 @@
+{
+  "schema_version": "agent-console.codex-rate-limit-reset.v1",
+  "outcome": "reset",
+  "windows_reset": 2
+}

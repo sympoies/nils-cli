@@ -1,0 +1,30 @@
+[
+  {
+    "provider": "codex",
+    "account": null,
+    "label": "Codex",
+    "ok": false,
+    "stale": true,
+    "plan": null,
+    "windows": [],
+    "updated_at": null,
+    "note": "Your Codex sign-in has expired. Sign in again.",
+    "error": "Your Codex sign-in has expired. Sign in again.",
+    "reason_code": "auth_expired",
+    "reset_credits": null
+  },
+  {
+    "provider": "claude",
+    "account": null,
+    "label": "Claude",
+    "ok": true,
+    "stale": true,
+    "plan": null,
+    "windows": [],
+    "updated_at": null,
+    "note": "Sign in to Claude to view usage.",
+    "error": null,
+    "reason_code": "auth_required",
+    "reset_credits": null
+  }
+]

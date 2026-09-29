@@ -1,0 +1,6 @@
+{
+  "schema_version": "codex-cli.account.reset-rate-limits.v1",
+  "command": "account reset-rate-limits",
+  "ok": true,
+  "result": { "provider": "codex", "outcome": "reset", "windows_reset": 2 }
+}

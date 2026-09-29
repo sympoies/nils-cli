@@ -1,0 +1,71 @@
+{
+  "schema_version": "codex-cli.diag.rate-limits.v1",
+  "command": "diag rate-limits",
+  "mode": "all",
+  "ok": true,
+  "results": [
+    {
+      "provider": "codex",
+      "name": "alpha",
+      "target_file": "alpha.json",
+      "status": "ok",
+      "ok": true,
+      "source": "network",
+      "summary": {
+        "non_weekly_label": "5h",
+        "non_weekly_remaining": 94,
+        "weekly_remaining": 87.5,
+        "weekly_reset_epoch": 4102444800,
+        "non_weekly_reset_epoch": 4102400000
+      },
+      "windows": [
+        { "label": "5h", "used_percent": 6, "remaining_percent": 94, "reset_at_epoch": 4102400000 },
+        { "label": "Weekly", "used_percent": 12.5, "remaining_percent": 87.5, "reset_at_epoch": 4102444800 },
+        { "label": "burst window", "used_percent": 1, "remaining_percent": 99 }
+      ],
+      "reset_credits": { "available_count": 2 },
+      "raw_usage": {
+        "plan_type": "team",
+        "email": "owner@example.invalid",
+        "user_id": "user-SECRET-MARKER"
+      }
+    },
+    {
+      "provider": "codex",
+      "name": "bravo",
+      "target_file": "bravo.json",
+      "status": "error",
+      "ok": false,
+      "source": "network",
+      "reason_code": "auth_expired",
+      "error": {
+        "code": "request-failed",
+        "message": "token rejected for /srv/SECRET-MARKER/bravo.json",
+        "details": { "target_file": "bravo.json", "reason_code": "auth_expired" }
+      }
+    },
+    {
+      "provider": "codex",
+      "name": "charlie",
+      "target_file": "charlie.json",
+      "status": "ok",
+      "ok": true,
+      "source": "cache-fallback",
+      "summary": {
+        "non_weekly_label": "5h",
+        "non_weekly_remaining": 40,
+        "weekly_remaining": null,
+        "non_weekly_reset_epoch": 4102401000
+      }
+    },
+    {
+      "provider": "codex",
+      "name": "../SECRET-MARKER",
+      "target_file": "escape.json",
+      "status": "ok",
+      "ok": true,
+      "source": "network",
+      "windows": []
+    }
+  ]
+}

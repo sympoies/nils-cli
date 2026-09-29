@@ -212,6 +212,8 @@ struct ServeState {
     coordination_wait_workers: Arc<tokio::sync::Semaphore>,
     coordination_notification_wake: Arc<tokio::sync::Notify>,
     remote_outbox_wake: Arc<tokio::sync::Notify>,
+    /// `GET /usage/v1` and `POST /codex/reset/v1` (`usage.rs`).
+    provider_usage: Arc<crate::usage::UsageService>,
 }
 
 #[derive(Default)]
@@ -1119,6 +1121,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             )),
             coordination_notification_wake: Arc::new(tokio::sync::Notify::new()),
             remote_outbox_wake: Arc::new(tokio::sync::Notify::new()),
+            provider_usage: Arc::new(crate::usage::UsageService::from_environment()),
         });
         let listener = match bind_listener_and_start_delete_tombstone_cleanup(context, bind).await {
             Ok(listener) => listener,
@@ -1239,6 +1242,8 @@ fn router(state: Arc<ServeState>) -> Router {
         )
         .route("/activity/events", get(activity_events_handler))
         .route("/usage", get(usage_handler))
+        .route("/usage/v1", get(usage_v1_handler))
+        .route("/codex/reset/v1", post(codex_reset_v1_handler))
         .route("/workdirs", get(workdirs_handler))
         .route("/repos/remote-url", get(repo_remote_url_handler))
         .route("/sessions/{id}/glance", get(glance_handler))
@@ -2644,6 +2649,55 @@ async fn usage_handler(State(state): State<Arc<ServeState>>) -> Response {
             providers,
         },
     }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UsageV1Query {
+    refresh: Option<String>,
+}
+
+/// `GET /usage/v1[?refresh=1]`; the cached provider snapshot lives in `usage.rs`.
+async fn usage_v1_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    query: Result<Query<UsageV1Query>, QueryRejection>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let force = match query.as_ref().map(|Query(query)| query.refresh.as_deref()) {
+        Ok(None | Some("0")) => false,
+        Ok(Some("1")) => true,
+        _ => {
+            return status_json(
+                StatusCode::BAD_REQUEST,
+                "invalid-query",
+                "the only query parameter is refresh=0 or refresh=1",
+            );
+        }
+    };
+    let usage = state.provider_usage.snapshot(force).await;
+    envelope_ok(json!({ "machine": state.machine, "usage": usage }))
+}
+
+/// `POST /codex/reset/v1`: a raw versioned result on success (`usage.rs`).
+async fn codex_reset_v1_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    match state
+        .provider_usage
+        .codex_reset(&state.machine, &body)
+        .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => status_json(error.status, error.code, error.message),
+    }
 }
 
 fn usage_timeout() -> Duration {
@@ -16162,6 +16216,7 @@ mod tests {
             )),
             coordination_notification_wake: Arc::new(tokio::sync::Notify::new()),
             remote_outbox_wake: Arc::new(tokio::sync::Notify::new()),
+            provider_usage: Arc::new(crate::usage::UsageService::from_environment()),
         })
     }
 
