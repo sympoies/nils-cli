@@ -660,7 +660,8 @@ recorded in `sympoies/nils-cli#1409`.
   [Claude account broker](#claude-account-broker). It is rejected for other
   providers (`claude-account-agent-conflict`), with an `agent_profile`
   (`claude-account-profile-conflict`), and in provider-import mode
-  (`claude-account-provider-resume-conflict`). When `provider_resume_id` is present (alias: `resume_id`), the daemon imports an existing Codex or
+  (`claude-account-provider-resume-conflict`).
+  When `provider_resume_id` is present (alias: `resume_id`), the daemon imports an existing Codex or
   Claude provider conversation instead: it resolves the original cwd from the selected local provider history, persists exact
   `provider_resume` metadata, and starts tmux with the canonical resume command. A capable Codex import uses the daemon-managed
   app-server transport so account and auto-resume controls remain available; unsupported or explicitly raw Codex runtimes retain
@@ -1058,11 +1059,15 @@ limits as the Codex broker. It speaks the provider-neutral
 `agent-session.codex-auth-broker.v1` unchanged. The daemon appends a
 subcommand, `--provider claude`, its arguments, and `--format json`:
 
-| Invocation | Response (`schema_version` and `"provider": "claude"` are required) |
-| --- | --- |
-| `list --provider claude --format json` | `accounts: [{account, label?, plan?}]`, `selection_strategies: ["current_default"]` |
-| `select --provider claude --strategy current_default --format json` | `account` |
-| `materialize --provider claude --account <nickname> --format json` | `account` (must echo the request), `config_dir` |
+- `list --provider claude --format json` returns
+  `accounts: [{account, label?, plan?}]` and `selection_strategies`
+  (`current_default` is the only strategy the daemon uses).
+- `select --provider claude --strategy current_default --format json`
+  returns `account`.
+- `materialize --provider claude --account <nickname> --format json` returns
+  `account`, which must echo the request, and `config_dir`.
+
+Every response also carries `schema_version` and `"provider": "claude"`.
 
 No token ever crosses this broker. `materialize` prepares a per-account Claude
 configuration directory and returns only its path. Before any Claude process
