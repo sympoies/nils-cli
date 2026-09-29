@@ -9,9 +9,10 @@
 //! - [`select`] applies a [`Strategy`] to a set of assessed candidates. It is
 //!   pure and deterministic: candidates are ordered by nickname (byte order)
 //!   regardless of input order.
-//! - [`discover_candidates`] and [`assess_candidates`] read configured
-//!   profiles and their capacity, preferring the shared rate-limit cache
-//!   (`CODEX_RATE_LIMITS_CACHE_TTL`) and fetching only cache misses.
+//! - [`discover_candidates`], [`assess_candidates`], and
+//!   [`assess_for_strategy`] read configured profiles and their capacity,
+//!   preferring the shared rate-limit cache (`CODEX_RATE_LIMITS_CACHE_TTL`)
+//!   and fetching only cache misses.
 //! - [`run`] is the `codex-cli account select` command.
 //!
 //! Output carries nicknames, percentages, and epochs only. Tokens, account
@@ -23,7 +24,6 @@ use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::thread;
 
 use crate::diag_output;
@@ -42,8 +42,6 @@ pub const MIN_REMAINING_PERCENT: i64 = 1;
 pub const MAX_CANDIDATES: usize = 64;
 /// Nicknames follow the account-broker grammar: `[A-Za-z0-9._-]{1,64}`.
 pub const MAX_NICKNAME_BYTES: usize = 64;
-/// Concurrent usage fetches for cache misses.
-pub const FETCH_JOBS: usize = 5;
 
 const WEEKLY_LABEL: &str = "weekly";
 
@@ -267,12 +265,31 @@ impl SelectError {
     }
 }
 
+/// The rotation origin [`select`] uses: for `next-with-capacity`, `after`
+/// when given, else the default profile; `None` for every other strategy.
+/// Callers that report the origin use this so it cannot drift from selection.
+pub fn effective_origin<'a>(
+    strategy: Strategy,
+    candidates: &'a [CandidateCapacity],
+    after: Option<&'a str>,
+) -> Option<&'a str> {
+    match strategy {
+        Strategy::NextWithCapacity => after.or_else(|| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.default)
+                .map(|candidate| candidate.name.as_str())
+        }),
+        _ => None,
+    }
+}
+
 /// Applies `strategy` to assessed candidates and returns the selected nickname.
 ///
 /// Candidates form a ring sorted by nickname (byte order), so the result never
 /// depends on input order. `next-with-capacity` walks the ring starting after
-/// the origin (`origin`, else the default profile) and wraps, never returning
-/// the origin itself; with no origin it starts at the first nickname.
+/// the [`effective_origin`] and wraps, never returning the origin itself; with
+/// no origin it starts at the first nickname.
 /// `default-with-capacity` keeps an available default, refuses an unknown one,
 /// and otherwise walks the ring after the default. Excluded and non-`available`
 /// candidates are never returned by a capacity strategy.
@@ -291,13 +308,13 @@ pub fn select(
             .map(|candidate| candidate.name.clone())
             .ok_or(SelectError::DefaultUnavailable),
         Strategy::NextWithCapacity => {
-            let start = match origin {
+            let start = match effective_origin(strategy, candidates, origin) {
                 Some(name) => Some(
                     ring.iter()
                         .position(|candidate| candidate.name == name)
                         .ok_or(SelectError::UnknownOrigin)?,
                 ),
-                None => default.and_then(|d| ring.iter().position(|c| c.name == d.name)),
+                None => None,
             };
             first_eligible_after(&ring, start)
         }
@@ -349,6 +366,10 @@ pub fn valid_nickname(value: &str) -> bool {
 pub struct Candidate {
     pub name: String,
     pub path: PathBuf,
+    /// Whether this profile owns its shared rate-limit cache entry. False when
+    /// its cache key collides with another candidate's (for example `Alpha`
+    /// and `alpha`); such a profile never reads or writes the shared cache.
+    pub shared_cache: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -378,7 +399,11 @@ pub fn discover_candidates() -> std::result::Result<CandidateSet, DiscoveryError
                 .to_str()?
                 .strip_suffix(".json")?
                 .to_string();
-            valid_nickname(&name).then_some(Candidate { name, path })
+            valid_nickname(&name).then_some(Candidate {
+                name,
+                path,
+                shared_cache: true,
+            })
         })
         .collect();
     if candidates.is_empty() {
@@ -386,6 +411,7 @@ pub fn discover_candidates() -> std::result::Result<CandidateSet, DiscoveryError
     }
     candidates.sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()));
     candidates.truncate(MAX_CANDIDATES);
+    mark_cache_collisions(&mut candidates);
     let paths: Vec<PathBuf> = candidates.iter().map(|c| c.path.clone()).collect();
     let default = crate::rate_limits::current_secret_basename(&paths)
         .filter(|name| candidates.iter().any(|c| &c.name == name));
@@ -393,6 +419,24 @@ pub fn discover_candidates() -> std::result::Result<CandidateSet, DiscoveryError
         candidates,
         default,
     })
+}
+
+fn mark_cache_collisions(candidates: &mut [Candidate]) {
+    let keys: Vec<Option<PathBuf>> = candidates
+        .iter()
+        .map(|candidate| cache::cache_file_for_target(&candidate.path).ok())
+        .collect();
+    for (index, candidate) in candidates.iter_mut().enumerate() {
+        candidate.shared_cache = match &keys[index] {
+            Some(key) => {
+                keys.iter()
+                    .filter(|other| other.as_ref() == Some(key))
+                    .count()
+                    == 1
+            }
+            None => false,
+        };
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -412,9 +456,15 @@ pub fn assess_candidates(
     let mut snapshots: Vec<(Option<RateLimitSnapshot>, CapacitySource)> = set
         .candidates
         .iter()
-        .map(|candidate| match fresh_cache_snapshot(&candidate.path) {
-            Some(snapshot) => (Some(snapshot), CapacitySource::Cache),
-            None => (None, CapacitySource::None),
+        .map(|candidate| {
+            match candidate
+                .shared_cache
+                .then(|| fresh_cache_snapshot(&candidate.path))
+                .flatten()
+            {
+                Some(snapshot) => (Some(snapshot), CapacitySource::Cache),
+                None => (None, CapacitySource::None),
+            }
         })
         .collect();
 
@@ -447,6 +497,36 @@ pub fn assess_candidates(
         .collect()
 }
 
+/// Assesses candidates the way `strategy` needs: `current-default` is
+/// cache-only; `default-with-capacity` returns the cache-only assessment when
+/// it already shows a non-excluded, `available` default, and otherwise fetches
+/// misses; `next-with-capacity` always fetches misses.
+pub fn assess_for_strategy(
+    set: &CandidateSet,
+    excluded: &BTreeSet<String>,
+    strategy: Strategy,
+) -> Vec<CandidateCapacity> {
+    match strategy {
+        Strategy::CurrentDefault => assess_candidates(set, excluded, AssessMode::CacheOnly),
+        Strategy::DefaultWithCapacity => {
+            let cached = assess_candidates(set, excluded, AssessMode::CacheOnly);
+            let settled = cached.iter().any(|candidate| {
+                candidate.default
+                    && !candidate.excluded
+                    && candidate.capacity == Capacity::Available
+            });
+            if settled {
+                cached
+            } else {
+                assess_candidates(set, excluded, AssessMode::CacheThenNetwork)
+            }
+        }
+        Strategy::NextWithCapacity => {
+            assess_candidates(set, excluded, AssessMode::CacheThenNetwork)
+        }
+    }
+}
+
 fn fresh_cache_snapshot(target_file: &Path) -> Option<RateLimitSnapshot> {
     let read = cache::read_cache_entry_allow_stale(target_file).ok()?;
     if read.stale {
@@ -462,27 +542,31 @@ fn fetch_snapshots(
     if indexes.is_empty() {
         return Vec::new();
     }
-    let queue = Mutex::new(indexes.to_vec());
-    let results = Mutex::new(Vec::with_capacity(indexes.len()));
+    // One wave: every miss (at most MAX_CANDIDATES) is fetched concurrently, so
+    // the fetch phase takes about one CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS.
     thread::scope(|scope| {
-        for _ in 0..FETCH_JOBS.min(indexes.len()) {
-            scope.spawn(|| {
-                loop {
-                    let next = queue.lock().ok().and_then(|mut queue| queue.pop());
-                    let Some(index) = next else { break };
-                    let snapshot = fetch_snapshot(&set.candidates[index].path);
-                    if let Ok(mut results) = results.lock() {
-                        results.push((index, snapshot));
-                    }
-                }
-            });
-        }
-    });
-    results.into_inner().unwrap_or_default()
+        let handles: Vec<_> = indexes
+            .iter()
+            .map(|&index| {
+                let candidate = &set.candidates[index];
+                scope.spawn(move || {
+                    (
+                        index,
+                        fetch_snapshot(&candidate.path, candidate.shared_cache),
+                    )
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .filter_map(|handle| handle.join().ok())
+            .collect()
+    })
 }
 
-/// Fetches usage once (no auth refresh) and writes the shared cache.
-fn fetch_snapshot(target_file: &Path) -> Option<RateLimitSnapshot> {
+/// Fetches usage once (no auth refresh) and, when the profile owns its cache
+/// entry, writes the shared cache.
+fn fetch_snapshot(target_file: &Path, write_cache: bool) -> Option<RateLimitSnapshot> {
     let request = UsageRequest {
         target_file: target_file.to_path_buf(),
         refresh_on_401: false,
@@ -499,7 +583,9 @@ fn fetch_snapshot(target_file: &Path) -> Option<RateLimitSnapshot> {
         return None;
     }
     let fetched_at_epoch = Utc::now().timestamp();
-    let _ = cache::write_prompt_segment_cache(target_file, fetched_at_epoch, &values);
+    if write_cache {
+        let _ = cache::write_prompt_segment_cache(target_file, fetched_at_epoch, &values);
+    }
     Some(RateLimitSnapshot::from_weekly_values(
         fetched_at_epoch,
         &values,
@@ -580,16 +666,8 @@ pub fn run(options: &SelectOptions) -> Result<i32> {
     }
 
     let excluded: BTreeSet<String> = options.exclude.iter().cloned().collect();
-    let mode = if options.strategy.needs_capacity() {
-        AssessMode::CacheThenNetwork
-    } else {
-        AssessMode::CacheOnly
-    };
-    let candidates = assess_candidates(&set, &excluded, mode);
-    let origin = match options.strategy {
-        Strategy::NextWithCapacity => options.after.as_deref().or(set.default.as_deref()),
-        _ => None,
-    };
+    let candidates = assess_for_strategy(&set, &excluded, options.strategy);
+    let origin = effective_origin(options.strategy, &candidates, options.after.as_deref());
 
     match select(options.strategy, &candidates, options.after.as_deref()) {
         Ok(selected) => {

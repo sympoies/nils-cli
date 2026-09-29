@@ -1,7 +1,7 @@
 use chrono::Utc;
 use codex_cli::account::select::{
     CandidateCapacity, Capacity, CapacitySource, MIN_REMAINING_PERCENT, RateLimitSnapshot,
-    SelectError, Strategy, select,
+    SelectError, Strategy, effective_origin, select,
 };
 use nils_test_support::bin;
 use nils_test_support::cmd::{self, CmdOptions, CmdOutput};
@@ -137,6 +137,31 @@ fn select_is_deterministic_regardless_of_input_order() {
         assert_eq!(select(strategy, &ordered, None).unwrap(), "bravo");
         assert_eq!(select(strategy, &shuffled, None).unwrap(), "bravo");
     }
+}
+
+#[test]
+fn select_effective_origin_matches_the_origin_select_uses() {
+    let candidates = vec![
+        available("alpha"),
+        as_default(available("bravo")),
+        available("charlie"),
+    ];
+    assert_eq!(
+        effective_origin(Strategy::NextWithCapacity, &candidates, None),
+        Some("bravo")
+    );
+    assert_eq!(
+        effective_origin(Strategy::NextWithCapacity, &candidates, Some("charlie")),
+        Some("charlie")
+    );
+    assert_eq!(
+        effective_origin(Strategy::DefaultWithCapacity, &candidates, Some("charlie")),
+        None
+    );
+    assert_eq!(
+        select(Strategy::NextWithCapacity, &candidates, None).unwrap(),
+        "charlie"
+    );
 }
 
 #[test]
@@ -282,7 +307,16 @@ impl Fixture {
     }
 
     fn run(&self, server: &LoopbackServer, args: &[&str]) -> CmdOutput {
-        let options = CmdOptions::default()
+        self.run_with_env(server, args, &[])
+    }
+
+    fn run_with_env(
+        &self,
+        server: &LoopbackServer,
+        args: &[&str],
+        extra: &[(&str, &str)],
+    ) -> CmdOutput {
+        let mut options = CmdOptions::default()
             .with_env("HOME", &self.home.to_string_lossy())
             .with_env("CODEX_SECRET_DIR", &self.secrets.to_string_lossy())
             .with_env("CODEX_AUTH_FILE", &self.auth_file.to_string_lossy())
@@ -293,6 +327,9 @@ impl Fixture {
             .with_env("CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS", "3")
             .with_env_remove("CODEX_RATE_LIMITS_CACHE_ALLOW_STALE")
             .with_env_remove("CODEX_HOME");
+        for (key, value) in extra {
+            options = options.with_env(key, value);
+        }
         cmd::run_with(&bin::resolve("codex-cli"), args, &options)
     }
 }
@@ -563,11 +600,167 @@ fn account_select_fetches_cache_misses_once_and_shares_the_cache() {
 
 #[test]
 fn account_select_treats_stale_cache_and_failed_fetch_as_unknown() {
+    // Past the 5m TTL but inside the 600s display ceiling, so only the TTL
+    // staleness rule can reject it. ALLOW_STALE must not change that.
+    for allow_stale in ["false", "true"] {
+        let fixture = Fixture::new(&["alpha", "bravo"], "alpha");
+        fixture.write_cache("alpha", 0, 60);
+        fixture.write_cache_at("bravo", Utc::now().timestamp() - 400, 50, 50);
+        let server = LoopbackServer::new().expect("server");
+        server.add_route("GET", "/wham/usage", HttpResponse::new(503, "{}"));
+
+        let output = fixture.run_with_env(
+            &server,
+            &[
+                "account",
+                "select",
+                "--strategy",
+                "next-with-capacity",
+                "--format",
+                "json",
+            ],
+            &[("CODEX_RATE_LIMITS_CACHE_ALLOW_STALE", allow_stale)],
+        );
+
+        assert_eq!(output.code, 1, "stdout: {}", output.stdout_text());
+        let payload = json(&output);
+        assert_eq!(payload["ok"], false);
+        assert_eq!(payload["error"]["code"], "no-account-with-capacity");
+        let bravo = &payload["error"]["details"]["candidates"][1];
+        assert_eq!(bravo["capacity"], "unknown");
+        assert_eq!(bravo["source"], "none");
+        let requests = server.take_requests();
+        assert_eq!(requests.len(), 1, "the stale entry is refetched");
+        assert_eq!(
+            requests[0].header_value("chatgpt-account-id").as_deref(),
+            Some("acct-bravo")
+        );
+    }
+}
+
+#[test]
+fn account_select_never_fetches_excluded_candidates() {
     let fixture = Fixture::new(&["alpha", "bravo"], "alpha");
     fixture.write_cache("alpha", 0, 60);
-    fixture.write_cache_at("bravo", Utc::now().timestamp() - 3_600, 50, 50);
     let server = LoopbackServer::new().expect("server");
-    server.add_route("GET", "/wham/usage", HttpResponse::new(503, "{}"));
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(200, usage_body(10, 10)),
+    );
+
+    let output = fixture.run(
+        &server,
+        &[
+            "account",
+            "select",
+            "--strategy",
+            "next-with-capacity",
+            "--exclude",
+            "bravo",
+            "--format",
+            "json",
+        ],
+    );
+
+    assert_eq!(output.code, 1, "stdout: {}", output.stdout_text());
+    assert!(
+        server.take_requests().is_empty(),
+        "excluded misses are not fetched"
+    );
+    let payload = json(&output);
+    assert_eq!(payload["error"]["code"], "no-account-with-capacity");
+    let bravo = &payload["error"]["details"]["candidates"][1];
+    assert_eq!(bravo["excluded"], true);
+    assert_eq!(bravo["source"], "none");
+}
+
+#[test]
+fn account_select_default_with_capacity_skips_fetches_when_cached_default_is_available() {
+    let fixture = Fixture::new(&["alpha", "bravo", "charlie"], "bravo");
+    fixture.write_cache("bravo", 40, 60);
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(200, usage_body(10, 10)),
+    );
+
+    let output = fixture.run(
+        &server,
+        &[
+            "account",
+            "select",
+            "--strategy",
+            "default-with-capacity",
+            "--format",
+            "json",
+        ],
+    );
+
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    assert!(
+        server.take_requests().is_empty(),
+        "the cached default settles it"
+    );
+    let payload = json(&output);
+    assert_eq!(payload["result"]["selected"], "bravo");
+    assert_eq!(payload["result"]["candidates"][0]["source"], "none");
+    assert_eq!(payload["result"]["candidates"][1]["source"], "cache");
+}
+
+#[test]
+fn account_select_short_ttl_forces_network_confirmation() {
+    let fixture = Fixture::new(&["alpha", "bravo"], "alpha");
+    fixture.write_cache("alpha", 0, 60);
+    fixture.write_cache_at("bravo", Utc::now().timestamp() - 5, 50, 50);
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(200, usage_body(20, 30)),
+    );
+
+    let output = fixture.run_with_env(
+        &server,
+        &[
+            "account",
+            "select",
+            "--strategy",
+            "next_with_capacity",
+            "--format",
+            "json",
+        ],
+        &[("CODEX_RATE_LIMITS_CACHE_TTL", "1s")],
+    );
+
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    let payload = json(&output);
+    assert_eq!(payload["result"]["selected"], "bravo");
+    assert_eq!(payload["result"]["candidates"][1]["source"], "network");
+    // alpha's entry is younger than the 1s TTL; only bravo's 5s-old entry is
+    // refetched.
+    let requests = server.take_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].header_value("chatgpt-account-id").as_deref(),
+        Some("acct-bravo")
+    );
+}
+
+#[test]
+fn account_select_isolates_profiles_whose_cache_keys_collide() {
+    // `a.b` and `a_b` normalize to the same cache key `a_b`.
+    let fixture = Fixture::new(&["a.b", "a_b", "bravo"], "bravo");
+    fixture.write_cache("bravo", 0, 60);
+    fixture.write_cache("a_b", 0, 0);
+    let shared = fs::read_to_string(cache_kv_path(&fixture.cache_root, "a_b")).unwrap();
+    let server = LoopbackServer::new().expect("server");
+    server.add_route(
+        "GET",
+        "/wham/usage",
+        HttpResponse::new(200, usage_body(20, 30)),
+    );
 
     let output = fixture.run(
         &server,
@@ -581,13 +774,20 @@ fn account_select_treats_stale_cache_and_failed_fetch_as_unknown() {
         ],
     );
 
-    assert_eq!(output.code, 1, "stdout: {}", output.stdout_text());
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
     let payload = json(&output);
-    assert_eq!(payload["ok"], false);
-    assert_eq!(payload["error"]["code"], "no-account-with-capacity");
-    let bravo = &payload["error"]["details"]["candidates"][1];
-    assert_eq!(bravo["capacity"], "unknown");
-    assert_eq!(bravo["source"], "none");
+    assert_eq!(payload["result"]["selected"], "a.b");
+    for index in [0, 1] {
+        let entry = &payload["result"]["candidates"][index];
+        assert_eq!(entry["source"], "network", "entry {index}: {entry}");
+        assert_eq!(entry["capacity"], "available");
+    }
+    assert_eq!(server.take_requests().len(), 2);
+    assert_eq!(
+        fs::read_to_string(cache_kv_path(&fixture.cache_root, "a_b")).unwrap(),
+        shared,
+        "colliding profiles never write the shared entry"
+    );
 }
 
 #[test]

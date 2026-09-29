@@ -28,6 +28,9 @@ the kebab-case name.
   `diag rate-limits --all` uses to mark the current account.
 - Candidates are ordered by nickname in byte order. This order is the only
   tie-breaker, so a result never depends on directory listing order.
+- Two nicknames can map to the same rate-limit cache key, for example `a.b`
+  and `a_b`. Such profiles never read or write the shared cache. They are
+  always fetched, so one profile's capacity is never reported for another.
 
 ## Capacity assessment
 
@@ -52,12 +55,17 @@ Snapshots are read in this order:
 2. For `next-with-capacity` and `default-with-capacity`, each cache miss is
    fetched once, without auth refresh, from the usage endpoint. A successful
    fetch is written back to the same cache and reported as `source=network`.
-   Misses are fetched concurrently (up to 5 at a time) and honor
-   `CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS` and
-   `CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS`.
+   All misses are fetched concurrently in one wave, so the fetch phase takes
+   about one `CODEX_RATE_LIMITS_CURL_MAX_TIME_SECONDS` (default `8`, with a
+   connect timeout of `CODEX_RATE_LIMITS_CURL_CONNECT_TIMEOUT_SECONDS`, default
+   `2`).
 3. Anything else is `capacity=unknown`, `source=none`. That covers a failed or
    empty fetch, `current-default` (which never uses the network), and excluded
    candidates (which are never fetched).
+
+`default-with-capacity` first reads the cache only. When that already shows
+the default as `available` and not excluded, it selects the default without
+any fetch, and the other candidates keep their cache-only assessment.
 
 ## Strategies
 
@@ -172,7 +180,10 @@ other surfaces can assess capacity without calling the binary:
 - `discover_candidates()` returns the candidate set and the default nickname.
 - `assess_candidates(set, excluded, AssessMode)` returns
   `Vec<CandidateCapacity>`. It uses `CacheOnly` or `CacheThenNetwork`.
+- `assess_for_strategy(set, excluded, strategy)` applies the per-strategy
+  snapshot order above.
 - `select(strategy, candidates, origin)` is pure and deterministic.
+  `effective_origin(strategy, candidates, after)` returns the origin it uses.
 - `CandidateCapacity::from_snapshot` classifies one `RateLimitSnapshot`.
 
 ## Delegation from an agent-session account broker
@@ -199,8 +210,25 @@ this command instead of computing capacity itself:
    `next_with_capacity`, `no-account-with-capacity` is the expected "no
    failover target" result.
 
-Selection order is nickname order, not the broker allowlist order. A broker
-that depends on a custom order must keep its own policy. Selection and a usage
-reporter that runs `diag rate-limits` or `prompt-segment` read and write the
-same cache. Within `CODEX_RATE_LIMITS_CACHE_TTL` of a usage refresh, selection
-does no provider fetch.
+Selection and a usage reporter that runs `diag rate-limits` or
+`prompt-segment` read and write the same cache. Within
+`CODEX_RATE_LIMITS_CACHE_TTL` of a usage refresh, selection does no provider
+fetch.
+
+Delegation is not fully equivalent to a broker that computes capacity itself
+from `diag rate-limits --all`. A broker that needs its previous guarantees keeps
+these checks on its side:
+
+- **Freshness.** A capacity strategy may select from a cache entry up to
+  `CODEX_RATE_LIMITS_CACHE_TTL` old (`source=cache`). A broker that promises a
+  network-confirmed account, as the `next_with_capacity` failover contract
+  does, sets `CODEX_RATE_LIMITS_CACHE_TTL=1s` in the child environment. Every
+  older entry is then refetched. It can also accept the result only when the
+  selected candidate's `source` is `network`.
+- **Unconfigured default.** When the broker excludes every profile outside
+  its allowlist, `default-with-capacity` fails over from an excluded default to
+  an allowlisted profile. A broker that must instead refuse when the active
+  default is not allowlisted checks `result.default_account` against its
+  allowlist.
+- **Order.** Rotation follows nickname byte order, not the broker's allowlist
+  order. A broker that depends on a custom order must keep its own policy.
