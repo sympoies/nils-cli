@@ -33,6 +33,7 @@ documented here.
   [Session Retitle v3](docs/specs/session-retitle-v3.md),
   [Session public metadata v1](docs/specs/session-public-metadata-v1.md),
   [Session coordination v1](docs/specs/session-coordination-v1.md),
+  [Session board v1](docs/specs/session-board-v1.md),
   [Main Agent orchestration v1](docs/specs/main-agent-orchestration-v1.md),
   [turn-state contract](docs/turn-state-contract.md), and
   [activity stream v1](docs/specs/activity-stream-v1.md).
