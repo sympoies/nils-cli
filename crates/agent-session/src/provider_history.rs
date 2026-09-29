@@ -1049,6 +1049,10 @@ fn scan_catalog(
     let mut sessions = Vec::new();
     let mut incremental_segments = BTreeMap::<String, Vec<HistorySession>>::new();
     let mut seen = HashSet::new();
+    // Configured roots may overlap through symlinks (for example a Claude
+    // account directory whose `projects/` links to the shared tree), so each
+    // physical transcript is attributed to the first source that reaches it.
+    let mut seen_transcripts = HashSet::new();
     let mut catalog_stamps = IncrementalCatalogStampCache::default();
 
     for source in sources {
@@ -1067,6 +1071,10 @@ fn scan_catalog(
             if Instant::now() >= deadline {
                 truncated = true;
                 break;
+            }
+            let physical = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            if !seen_transcripts.insert(physical) {
+                continue;
             }
             let Some(mut session) =
                 inspect_history_file(source, &path, deadline, &mut catalog_stamps, &mut truncated)
@@ -4795,6 +4803,51 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         .unwrap();
         assert_eq!(second.messages.len(), 1);
         assert_eq!(second.messages[0].text, "second");
+    }
+
+    #[test]
+    fn claude_history_counts_a_transcript_reached_through_an_account_symlink_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shared = tmp.path().join("home-claude/projects");
+        let project = shared.join("repo");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("claude-id.jsonl"),
+            "{\"sessionId\":\"claude-id\",\"cwd\":\"/work/claude\",\"type\":\"user\",\"promptSource\":\"typed\",\"message\":{\"role\":\"user\",\"content\":\"first\"}}\n",
+        )
+        .unwrap();
+        // An account directory links `projects/` back to the shared tree, so
+        // the same transcript is reachable from two configured roots.
+        let account = tmp.path().join("accounts/alpha");
+        fs::create_dir_all(&account).unwrap();
+        std::os::unix::fs::symlink(&shared, account.join("projects")).unwrap();
+        let sources = [
+            HistorySource {
+                provider: "claude".into(),
+                agent_profile: Some("claude-alpha".into()),
+                root: account.join("projects"),
+            },
+            HistorySource {
+                provider: "claude".into(),
+                agent_profile: None,
+                root: shared.clone(),
+            },
+        ];
+
+        let page = list(
+            &sources,
+            HistoryRoots {
+                archives: &tmp.path().join("archives"),
+                stars: &tmp.path().join("stars"),
+            },
+            "test",
+            None,
+            Some("claude"),
+            None,
+            10,
+        )
+        .unwrap();
+        assert_eq!(page.sessions.len(), 1, "{:?}", page.sessions);
     }
 
     #[test]

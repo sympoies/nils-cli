@@ -1,9 +1,11 @@
+mod account_broker;
 #[doc(hidden)]
 pub mod activity;
 mod activity_ingress;
 #[doc(hidden)]
 pub mod auto_resume;
 mod board;
+mod claude_account;
 #[doc(hidden)]
 pub mod cli;
 #[doc(hidden)]
@@ -1656,6 +1658,10 @@ pub struct SessionView {
     startup: Option<StartupProjection>,
     auto_resume: auto_resume::AutoResumeView,
     codex_account: codex_account::CodexAccountView,
+    /// Additive Claude account projection. Present only for Claude sessions
+    /// on a daemon with a Claude account broker, or that carry binding state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claude_account: Option<claude_account::ClaudeAccountView>,
     #[serde(flatten)]
     coordination: coordination::CoordinationSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2021,7 +2027,52 @@ pub fn start_session_with_create_guard(
     failure_disposition: StartFailureDisposition,
     prompt_delivery: PromptDelivery,
     create_guard: Option<&mut dyn FnMut() -> Result<(), CliError>>,
+    lifecycle_guards: StartLifecycleGuards<'_>,
+) -> Result<StartView, CliError> {
+    start_session_inner(
+        context,
+        args,
+        failure_disposition,
+        prompt_delivery,
+        create_guard,
+        lifecycle_guards,
+        None,
+    )
+}
+
+/// Daemon-selected Claude account for a fresh session: nickname plus its
+/// selection provenance (`explicit` or `default_at_launch`).
+pub(crate) struct InitialClaudeAccount {
+    pub(crate) account: String,
+    pub(crate) selection_source: &'static str,
+}
+
+pub(crate) fn start_session_with_claude_account(
+    context: &CliContext,
+    args: cli::StartArgs,
+    failure_disposition: StartFailureDisposition,
+    prompt_delivery: PromptDelivery,
+    claude_account: Option<InitialClaudeAccount>,
+) -> Result<StartView, CliError> {
+    start_session_inner(
+        context,
+        args,
+        failure_disposition,
+        prompt_delivery,
+        None,
+        StartLifecycleGuards::default(),
+        claude_account,
+    )
+}
+
+fn start_session_inner(
+    context: &CliContext,
+    args: cli::StartArgs,
+    failure_disposition: StartFailureDisposition,
+    prompt_delivery: PromptDelivery,
+    create_guard: Option<&mut dyn FnMut() -> Result<(), CliError>>,
     mut lifecycle_guards: StartLifecycleGuards<'_>,
+    claude_account: Option<InitialClaudeAccount>,
 ) -> Result<StartView, CliError> {
     if args.agent == AgentKind::Dsh {
         // Refused before any durable side effect: dsh session records are
@@ -2088,6 +2139,16 @@ pub fn start_session_with_create_guard(
         cleanup_created_record(context, &created);
         return Err(err);
     }
+    if let Some(initial) = claude_account.as_ref()
+        && let Err(err) = claude_account::bind_initial(
+            &mut created.record,
+            &initial.account,
+            initial.selection_source,
+        )
+    {
+        cleanup_created_record(context, &created);
+        return Err(err);
+    }
 
     if let Err(err) = configure_provider_stop_canary(
         context,
@@ -2098,7 +2159,7 @@ pub fn start_session_with_create_guard(
         cleanup_created_record(context, &created);
         return Err(err);
     }
-    if args.initial_codex_account.is_some() {
+    if args.initial_codex_account.is_some() || claude_account.is_some() {
         write_session_record(context, &created.record)?;
     }
 
@@ -10293,6 +10354,9 @@ fn resume_session_locked(
         codex_account::recover_next_after_restart(&mut record)?;
         codex_app_server::configure_runtime(context, &agent_bin, &mut record, true)?;
     }
+    if agent == AgentKind::Claude {
+        claude_account::prepare_launch(&mut record)?;
+    }
     record.updated_at = now.timestamp().to_string();
     write_session_record(context, &record)?;
     activity::activate_runtime(context, &record)?;
@@ -10650,7 +10714,7 @@ fn add_runtime_tmux_environment(
     }
     if let (Some(agent), Some(config_dir)) = (
         AgentKind::from_name(&record.agent),
-        session_provider_config_dir(record),
+        session_effective_provider_config_dir(record),
     ) {
         let env_key = match agent {
             AgentKind::Codex => Some("CODEX_HOME"),
@@ -12414,6 +12478,7 @@ fn session_view_from_parts(
         startup: startup_projection_for_view(record),
         auto_resume: auto_resume::view_for_record(context, record),
         codex_account: codex_account::view_for_record(record),
+        claude_account: claude_account::view_for_record(record),
         coordination: coordination_summary,
         orchestration: orchestration::session_projection(context, record)
             .ok()
@@ -12436,6 +12501,13 @@ pub(crate) fn session_agent_profile(record: &SessionRecord) -> Option<&str> {
 
 pub(crate) fn session_provider_config_dir(record: &SessionRecord) -> Option<PathBuf> {
     runtime_extra_string(record, AGENT_PROFILE_PROVIDER_CONFIG_DIR_RUNTIME_KEY).map(PathBuf::from)
+}
+
+/// Provider config root the session's current runtime actually runs in: the
+/// launch profile's root, else the bound Claude account directory. Profile
+/// resume identity keeps using [`session_provider_config_dir`] alone.
+pub(crate) fn session_effective_provider_config_dir(record: &SessionRecord) -> Option<PathBuf> {
+    session_provider_config_dir(record).or_else(|| claude_account::config_dir_for_runtime(record))
 }
 
 /// Authoritative Codex usage account nickname persisted for a `claude` launch

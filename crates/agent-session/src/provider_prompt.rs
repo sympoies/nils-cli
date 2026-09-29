@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::{
     AgentKind, SessionRecord, claude_projects_root, codex_sessions_root, read_claude_session_cwd,
     read_codex_resumable_session_meta, resolve_provider_transcript_path_from_roots,
-    session_provider_config_dir,
+    session_effective_provider_config_dir,
 };
 
 pub(crate) const PROVIDER_PROMPT_CAPABILITY: &str = "provider-prompt.v1";
@@ -1070,7 +1070,7 @@ fn claude_projects_root_for_record(
     record: &SessionRecord,
     fallback: Option<PathBuf>,
 ) -> Option<PathBuf> {
-    session_provider_config_dir(record)
+    session_effective_provider_config_dir(record)
         .map(|config_dir| config_dir.join("projects"))
         .or(fallback)
 }
