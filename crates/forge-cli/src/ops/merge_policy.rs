@@ -327,15 +327,18 @@ pub fn wait_for_merge<R: BackendRunner, C: Clock>(
         if merged || entry.is_null() {
             let now = clock.now();
             let since = *transitional_since.get_or_insert(now);
-            if now.duration_since(since) >= QUEUE_EXIT_GRACE
-                || now.duration_since(started) >= timeout
-            {
+            let grace_over = now.duration_since(since) >= QUEUE_EXIT_GRACE;
+            if grace_over || now.duration_since(started) >= timeout {
                 // A merge without a reported commit still landed; the caller
-                // reads the commit from the pull request view instead.
+                // reads the commit from the pull request view instead. An open
+                // pull request is dequeued only once the whole grace passed;
+                // the timeout cutting the grace short may still see it land.
                 return if merged {
                     Ok(None)
-                } else {
+                } else if grace_over {
                     Err(dequeued(pr, state))
+                } else {
+                    Err(queue_timeout(pr, "none", timeout))
                 };
             }
             clock.sleep(QUEUE_EXIT_POLL_INTERVAL);
@@ -354,19 +357,26 @@ pub fn wait_for_merge<R: BackendRunner, C: Clock>(
             ));
         }
         if clock.now().duration_since(started) >= timeout {
-            return Err(ForgeError::unavailable(
-                schema_err(),
-                "merge_queue_timeout",
-                "the pull request is still queued and will merge unless it is dequeued; the wait timed out before it landed",
-                Some(format!(
-                    "pr={pr}; entry_state={}; timeout_secs={}",
-                    entry["state"].as_str().unwrap_or("unknown"),
-                    timeout.as_secs()
-                )),
+            return Err(queue_timeout(
+                pr,
+                entry["state"].as_str().unwrap_or("unknown"),
+                timeout,
             ));
         }
         clock.sleep(QUEUE_POLL_INTERVAL);
     }
+}
+
+fn queue_timeout(pr: u64, entry_state: &str, timeout: Duration) -> ForgeError {
+    ForgeError::unavailable(
+        schema_err(),
+        "merge_queue_timeout",
+        "the pull request is still queued and will merge unless it is dequeued; the wait timed out before it landed",
+        Some(format!(
+            "pr={pr}; entry_state={entry_state}; timeout_secs={}",
+            timeout.as_secs()
+        )),
+    )
 }
 
 fn dequeued(pr: u64, state: &str) -> ForgeError {
@@ -643,8 +653,23 @@ mod tests {
     #[test]
     fn the_grace_never_outlasts_the_queue_timeout() {
         let left = poll("OPEN", "null");
-        let err = wait(&[&left], Duration::ZERO).unwrap_err();
-        assert_eq!(err.kind(), "merge_queue_dequeued");
+        let clock = StepClock::new();
+        let err = wait_for_merge(
+            &ScriptedRunner::new(&[&left]),
+            &clock,
+            &github(),
+            "acme",
+            "widgets",
+            7,
+            Duration::ZERO,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            "merge_queue_timeout",
+            "a timeout inside the grace may still see the pull request land"
+        );
+        assert_eq!(clock.offset.get(), Duration::ZERO);
     }
 
     #[test]
