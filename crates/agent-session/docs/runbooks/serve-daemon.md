@@ -307,6 +307,9 @@ fail-closed.
   [Codex runtime directory](#codex-runtime-directory).
 - `AGENT_SESSION_USAGE_TIMEOUT_MS`: bounds provider usage collection.
 
+The broker, launch profiles, retitle provider, and extra `PATH` entries can
+instead come from one [configuration file](#configuration-file).
+
 ## Codex runtime directory
 
 The Codex app-server runtime listens on a private Unix socket. Serve places it
@@ -337,6 +340,119 @@ To recover, fix the reported directory's owner or mode (`chmod 700`), or point
 `XDG_RUNTIME_DIR` at a short private directory, then recreate the affected
 sessions. Each new session resolves the directory again, so serve itself does
 not need a restart unless its environment changed.
+
+## Configuration file
+
+`agent-session serve --config <file>` reads one versioned document instead of
+the JSON-in-environment values above. The extension selects the syntax:
+`.toml` or `.json`, with identical structure. The file is at most 256 KiB.
+
+```toml
+schema_version = "agent-session.serve-config.v1"
+
+[path]
+append = ["/opt/tools/bin"]
+
+[codex_account_broker]
+argv = ["/absolute/path/to/broker"]
+
+[retitle]
+provider = "openai_compatible"
+base_url = "http://127.0.0.1:1237/v1"
+model = "example-model"
+api_key_env = "EXAMPLE_API_KEY"
+
+[retitle.context]
+max_chars = 12000
+
+[[launch_profiles]]
+id = "dsh-tui"
+label = "DSH TUI"
+agent = "hermes"
+agent_bin = "/absolute/path/to/dsh"
+```
+
+Each table uses the fields and bounds of the value it replaces:
+`launch_profiles` entries are the objects of `AGENT_SESSION_LAUNCH_PROFILES`,
+`retitle` is the object described in
+[Session retitle v2](../specs/session-retitle-v2.md#provider-configuration),
+and `codex_account_broker.argv` is the argv array of
+`AGENT_SESSION_CODEX_ACCOUNT_BROKER`. `path.append` holds at most 16 absolute
+directories without `:` or control characters. Every table is optional; only
+`schema_version` is required. An unknown key is an error rather than ignored.
+
+Validate a document, together with the environment it will merge with, without
+starting the daemon:
+
+```bash
+agent-session serve --config serve.toml --check --format json
+```
+
+`--check` exits before token resolution, state-root ownership, or any network
+bind. On success it prints a `cli.agent-session.serve-config.v1` envelope that
+names each input's source (`none`, `file`, `environment`, or `merged`), the
+effective launch-profile ids, the number of configured `path.append` entries
+(`data.path.append`, counted before inherited duplicates are skipped), and a
+warning for every file value the environment overrides or shadows. It never
+prints paths or values. The launch-profile readiness probe still runs only when
+serve starts.
+
+### Precedence
+
+A non-empty environment variable takes precedence over the file. An empty or
+whitespace-only variable counts as unset, as it does without a config file.
+
+| Environment variable | Config key | When both are set |
+| --- | --- | --- |
+| `AGENT_SESSION_LAUNCH_PROFILES` | `[[launch_profiles]]` | Merged: environment entries first, then file entries in order. The first entry for an id wins; a later file entry with the same id is dropped with a warning. The merged list must stay within 16 profiles. |
+| `AGENT_SESSION_RETITLE_CONFIG` | `[retitle]` | The environment value replaces the whole table, with a warning. |
+| `AGENT_SESSION_CODEX_ACCOUNT_BROKER` | `[codex_account_broker] argv` | The environment value replaces the whole table, with a warning. |
+| `PATH` (a launcher's appended entries) | `[path] append` | File entries are appended after the inherited `PATH`, never before it; entries already present are skipped. |
+
+The ordered, first-id-wins launch-profile merge is the same one a launcher
+performs when it concatenates several profile sources into
+`AGENT_SESSION_LAUNCH_PROFILES`. File entries are validated strictly: duplicate
+ids inside the file are an error rather than a dropped entry. An unavailable
+profile executable is still not an error; the readiness probe simply does not
+advertise that profile.
+
+Serve applies the resolved values to its own environment before it starts any
+thread, exactly as a launcher that exported them would. Managed sessions
+therefore inherit the same `PATH` and variables they inherit today.
+
+### Secrets
+
+The schema has no field that holds a secret value. Credentials are referenced
+by environment variable name, as in `retitle.api_key_env`. A credential-shaped
+key is refused anywhere in the document, including inside `retitle.extra_body`.
+Such a key contains `secret`, `password`, `passwd`, `apikey`, `credential`,
+`bearer`, or `authorization`, or a pair such as `api_key`, `private_key`, or
+`secret_key`, or ends in `token`. A key such as `stop_token_ids` only mentions
+tokens and is accepted. A schema field such as `api_key_env` is a
+reference and is accepted, but inside `extra_body` every key is sent to the
+provider verbatim, so a `*_env` or `*_file` suffix does not excuse a credential
+there. Supply an `extra_body` parameter whose name is credential-shaped through
+`AGENT_SESSION_RETITLE_CONFIG` instead. Keep the serve bearer on
+`--token-stdin` as described in [Start safely](#start-safely).
+
+### Errors
+
+A rejected document exits `64` before serving. With `--format json` the failure
+is a `cli.agent-session.serve-config.v1` envelope; in text form it is one
+`error: <code>: <message>` line on stderr. Messages and `error.details` name
+the offending key (for example `launch_profiles[1].id` or `path.append[0]`) and
+its `source` (`file` or `environment`), never the file location or a value.
+
+| Code | Meaning |
+| --- | --- |
+| `serve-config-unreadable` | The file is missing, unreadable, or not a regular file (`details.reason`). |
+| `serve-config-unsupported-format` | The extension is not `.toml` or `.json`. |
+| `serve-config-too-large` | The file exceeds 256 KiB. |
+| `serve-config-parse-failed` | Invalid TOML, JSON, or UTF-8; `details` carries only the line and column. |
+| `serve-config-unsupported-version` | `schema_version` is missing or not `agent-session.serve-config.v1`. |
+| `serve-config-unknown-key` | A key the schema does not define. |
+| `serve-config-invalid-value` | A value outside the field's type or bounds, including an invalid `AGENT_SESSION_LAUNCH_PROFILES` it must merge with. |
+| `serve-config-inline-secret` | A credential-shaped key holds an inline value. |
 
 ## Operational checks
 

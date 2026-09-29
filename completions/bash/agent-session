@@ -2062,7 +2062,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__serve)
-            opts="-h --bind --token --token-stdin --machine --allow-non-loopback --board --tmux-bin --state-dir --host --help"
+            opts="-h --bind --token --token-stdin --machine --allow-non-loopback --board --tmux-bin --config --check --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2093,6 +2093,25 @@ _agent__session() {
                     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
                         compopt -o filenames
                     fi
+                    return 0
+                    ;;
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
                     ;;
                 --state-dir)

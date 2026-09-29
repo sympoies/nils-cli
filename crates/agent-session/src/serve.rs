@@ -116,7 +116,7 @@ const PROVIDER_PROMPT_DISCOVERY_MAX_ENTRIES: usize = 64;
 const PROVIDER_PROMPT_DISCOVERY_MAX_CONCURRENT_SCANS: usize = 4;
 const PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS: usize = 2;
 const MAX_CONCURRENT_AUTO_RESUME_TICKS: usize = 4;
-const MAX_AGENT_LAUNCH_PROFILES: usize = 16;
+pub(crate) const MAX_AGENT_LAUNCH_PROFILES: usize = 16;
 // The DSH TUI draws its composer before it accepts pasted input. The ordinary
 // 1.2-second launch delay can submit the prompt during that interval and leave
 // an apparently ready session with no first turn.
@@ -723,6 +723,18 @@ fn run_agent_profile_readiness(mut command: ProcessCommand, timeout: Duration) -
     }
 }
 
+/// Validate a launch-profile array exactly as `AGENT_SESSION_LAUNCH_PROFILES`
+/// is parsed at startup, returning the accepted ids in order.
+pub(crate) fn validate_launch_profiles_json(raw: &str) -> Result<Vec<String>, CliError> {
+    AgentLaunchProfiles::from_json(raw).map(|profiles| {
+        profiles
+            .entries
+            .into_iter()
+            .map(|profile| profile.id)
+            .collect()
+    })
+}
+
 fn valid_agent_profile_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 32
@@ -938,6 +950,14 @@ async fn serve_binary_replaced_drain_deadline(mut stop: watch::Receiver<Option<S
 }
 
 pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
+    // First, while the process is still single-threaded: a check exits here,
+    // and an applied config is visible to every environment read below.
+    if let Some(config) = args.config.as_deref()
+        && let std::ops::ControlFlow::Break(code) =
+            crate::serve_config::apply_for_serve(config, args.check, args.format)
+    {
+        return code;
+    }
     let bind: SocketAddr = match args.bind.parse() {
         Ok(addr) => addr,
         Err(err) => {

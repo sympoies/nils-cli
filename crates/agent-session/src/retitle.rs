@@ -437,6 +437,13 @@ impl RetitleConfig {
     }
 }
 
+/// Whether `raw` is a retitle configuration the daemon accepts, parsed exactly
+/// as `AGENT_SESSION_RETITLE_CONFIG` is. `serve --config` validates its
+/// `retitle` table through this before materializing it.
+pub(crate) fn config_is_valid(raw: &str) -> bool {
+    RetitleConfig::parse(raw).is_ok()
+}
+
 fn safe_label(value: &str, max: usize) -> bool {
     !value.trim().is_empty()
         && value.len() <= max

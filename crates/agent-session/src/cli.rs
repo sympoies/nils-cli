@@ -1177,6 +1177,21 @@ pub struct ServeArgs {
     /// tmux binary override.
     #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub tmux_bin: Option<PathBuf>,
+
+    /// Versioned serve config (TOML or JSON by extension) holding launch
+    /// profiles, retitle, the Codex account broker, and extra PATH entries.
+    /// Non-empty environment variables take precedence over the file.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub config: Option<PathBuf>,
+
+    /// Validate --config against the current environment and exit without
+    /// serving.
+    #[arg(long, requires = "config")]
+    pub check: bool,
+
+    /// Output format for --check results and --config errors.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, Args)]

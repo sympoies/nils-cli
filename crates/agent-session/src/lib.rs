@@ -30,6 +30,7 @@ pub mod provider_prompt;
 mod retitle;
 mod retitle_v3;
 mod serve;
+mod serve_config;
 
 /// Unstable engine surface for the `nils-main-agent` workspace crate.
 ///
