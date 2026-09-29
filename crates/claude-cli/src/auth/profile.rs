@@ -94,8 +94,15 @@ pub fn save(name: &str, output_json: bool) -> i32 {
             Err(err) => return Err(err),
         };
         store::write_profile(name, &login)?;
-        // The profile is now the only refresher: leave the source login access-only.
-        store::write_active_access_only(&login.oauth, &login.account, keychain::Mode::Auto)?;
+        // The profile is now the only refresher: leave the source login
+        // access-only. On a Keychain host the Keychain copy is what Claude Code
+        // reads first, so failing to rewrite it must fail the save.
+        let mode = if keychain::enabled() {
+            keychain::Mode::Required
+        } else {
+            keychain::Mode::Auto
+        };
+        store::write_active_access_only(&login.oauth, &login.account, mode)?;
         Ok(SaveResult {
             profile: name.to_string(),
             account_uuid: identity.account_uuid,
