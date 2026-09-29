@@ -2569,21 +2569,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nils-gemini-cli"
-version = "1.30.2"
-dependencies = [
- "anyhow",
- "clap",
- "clap_complete",
- "nils-build-info",
- "nils-common",
- "nils-test-support",
- "pretty_assertions",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "nils-git-cli"
 version = "1.30.2"
 dependencies = [
@@ -2766,19 +2751,6 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "nils-opencode-cli"
-version = "1.30.2"
-dependencies = [
- "clap",
- "clap_complete",
- "nils-build-info",
- "nils-common",
- "nils-test-support",
- "pretty_assertions",
  "tempfile",
 ]
 

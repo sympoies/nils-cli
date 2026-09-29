@@ -106,7 +106,6 @@ pub fn exec_dangerous_with_options_and_model(
         ExecInvocation::CodexStyle => {
             exec_dangerous_codex_style(profile, prompt, stderr, options, model_override)
         }
-        ExecInvocation::GeminiStyle => exec_dangerous_gemini_style(profile, prompt, stderr),
     }
 }
 
@@ -140,24 +139,6 @@ fn exec_dangerous_codex_style(
 
     let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     run_exec(profile, &arg_refs, stderr)
-}
-
-fn exec_dangerous_gemini_style(
-    profile: &ProviderProfile,
-    prompt: &str,
-    stderr: &mut impl Write,
-) -> i32 {
-    let model = shared_env::env_or_default(profile.env.model, profile.defaults.model);
-    let prompt_arg = format!("--prompt={prompt}");
-    let args = [
-        prompt_arg.as_str(),
-        "--model",
-        model.as_str(),
-        "--approval-mode",
-        "yolo",
-    ];
-
-    run_exec(profile, &args, stderr)
 }
 
 fn run_exec(profile: &ProviderProfile, args: &[&str], stderr: &mut impl Write) -> i32 {

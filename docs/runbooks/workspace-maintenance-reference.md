@@ -138,7 +138,7 @@ This runs changed-scope validation against `origin/main` by default:
 - a package-scoped lane does not build binaries another package owns, so a test
   that needs one skips with a reason naming the build command; see
   `bin::sibling_or_skip` in `crates/nils-test-support`. Build the sibling — for
-  example `cargo build -p nils-gemini-cli --bins` — to run those tests locally.
+  example `cargo build -p nils-claude-cli --bins` — to run those tests locally.
   A *stale* sibling fails instead of skipping, because an artifact from an
   earlier release is an operator error rather than a property of the run. The
   workspace lane and CI build every default-feature binary, and CI additionally

@@ -35,7 +35,7 @@ Completion obligations for those binaries are tracked in
 | Agent policy and evidence | `agent-runtime`, `agent-docs`, `agent-hook`, `agent-memory`, `agent-out`, `agent-session`, `main-agent`, `agent-scope-lock`, `agent-run`, `test-first-evidence`, `web-evidence`, `browser-session`, `canary-check`, `docs-impact`, `heuristic-inbox`, `model-cross-check`, `repo-retro`, `review-evidence`, `review-specialists`, `skill-usage`, `evidence` | Render/install/audit runtime-kit surfaces, resolve agent policy docs, dispatch one shared cross-provider hook policy, manage local agent memory stores, run project commands through explicit env handling, allocate artifact paths, start tmux-backed agent sessions, operate durable Main Agent and interactive worker lifecycles, enforce edit scope, inspect repo retrospectives, merge specialist review evidence, persist deterministic workflow evidence, or migrate and query the durable skill-usage evidence archive. |
 | Planning and delivery | `plan-tooling`, `plan-issue`, `plan-issue-local`, `plan-archive`, `semantic-commit` | Validate/split implementation plans, orchestrate issue delivery, rehearse local plan flows, query archived plans, or run validated commit workflows. |
 | Development log | `devlog` | Record durable outcomes in a repository development log, check its structural integrity, and search past decisions. |
-| Provider lanes | `codex-cli`, `gemini-cli`, `claude-cli`, `opencode-cli` | Run provider-specific diagnostics, auth checks, and workflow adapters. |
+| Provider lanes | `codex-cli`, `claude-cli` | Run provider-specific diagnostics, auth checks, and workflow adapters. |
 | Markdown rendering | `md-render` | Render `.md.tera` templates from JSON view data through the shared `nils-markdown` engine. |
 | Desktop, media, and local utilities | `docker-tools`, `macos-agent`, `screen-record`, `image-processing`, `fzf-cli`, `memo`, `secrets`, `zsh-kit` | Operate containers, automate desktop tasks, capture or convert media, use interactive shell helpers, manage the encrypted environment store, record/search local memos, or bootstrap an operator-supplied Zsh repository at runtime. |
 | Development-only/internal | `cli-template` | Validate packaging and new-crate patterns; excluded from user-facing completion obligations. |
@@ -125,10 +125,6 @@ Each crate is either a standalone CLI binary, a multi-binary crate, or a shared 
 - [crates/claude-cli](crates/claude-cli): Provider-specific CLI lane for Claude workflows and usage/auth adapters.
 - [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, diagnostics, execution flows, Starship),
   with adapters over `nils-common::provider_runtime`.
-- [crates/gemini-cli](crates/gemini-cli): Provider-specific CLI lane for Gemini workflows, with adapters over
-  `nils-common::provider_runtime`.
-- [crates/opencode-cli](crates/opencode-cli): Provider-specific CLI lane for OpenCode prompt and semantic-commit helpers migrated from
-  zsh-kit.
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for staged context, Semantic Commit validation, commit amend, and cleanup commit workflows.
 - [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (`to-json`, `validate`, `batches`, `artifact-audit`,
   `split-prs`, `scaffold`, `completion`), with bundle validation, advisory durable-artifact classification, deterministic/auto grouping

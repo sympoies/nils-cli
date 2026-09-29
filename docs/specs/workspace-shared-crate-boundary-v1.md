@@ -30,7 +30,7 @@ Audit inputs:
 ### What stays crate-local (`keep-local` / `defer`)
 
 - Provider-specific warning/error text, JSON envelope wording, and exit-code mapping.
-- Parity-sensitive secret-dir UX behavior where Codex/Gemini semantics intentionally diverge (`defer` until characterization proves safe merge).
+- Codex-specific secret-dir UX behavior remains in its adapter.
 - Command composition and product-specific policy (auth prompts, sync messaging, diagnostics output).
 
 ## Hotspot Lane Matrix
@@ -39,7 +39,7 @@ Audit inputs:
 | --- | --- | --- | --- | --- |
 | process/env/no-color primitives | `manual_process_probe`, `manual_env_mutation`, `manual_no_color_logic` | `extract` to `nils-common` with crate-local adapters | `S2T2` | Keep UX text and exit semantics in crate-local adapters. |
 | provider auth persistence + atomic fs | `manual_atomic_fs` | `extract` to `nils-common::provider_runtime` substrate | `S2T3` | Shared sync substrate + timestamp path rules; keep provider JSON/text copy local. |
-| parity-sensitive secret-dir routing | `manual_secret_dir_resolution` | `keep-local` (`defer` full unification pending explicit parity evidence) | `S2T3` | Do not force full Codex/Gemini secret-dir unification without explicit parity evidence. |
+| provider-specific secret-dir routing | `manual_secret_dir_resolution` | `keep-local` (single live consumer) | `S2T3` | Keep Codex secret-dir rules in its adapter until a live second consumer justifies extraction. |
 | redundant local wrappers post-extraction | `dependency_present` + wrapper shims | `keep-local` only if still contract-relevant, otherwise delete | `S2T4` | Wrapper removal depends on process/env and provider-runtime substrate landing. |
 
 ## Keep/Remove Rules for Runtime Helpers
@@ -48,13 +48,12 @@ Audit inputs:
 - `keep-local` when helper exists only to preserve user-visible contract fidelity.
 - `defer` when migration risks parity-sensitive behavior without characterization coverage.
 - `remove` when no live caller remains after extraction and wrapper no longer provides contract value.
-- Current baseline: `crates/codex-cli/src/fs.rs`, `crates/gemini-cli/src/fs.rs`, and `crates/git-cli/src/util.rs` are removed; callers
+- Current baseline: `crates/codex-cli/src/fs.rs` and `crates/git-cli/src/util.rs` are removed; callers
   consume `nils-common` primitives directly.
 
 ## Non-goals
 
 - Moving provider-specific message wording into `nils-common`.
-- Merging Codex and Gemini command-level UX into one behavior surface.
 - Treating `nils-term` as a generic runtime helper crate.
 - Keeping compatibility-only wrappers once shared helpers are canonical.
 

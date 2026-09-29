@@ -65,8 +65,6 @@ mod json;
 mod jwt;
 #[path = "integration/main_entrypoint.rs"]
 mod main_entrypoint;
-#[path = "integration/parity_oracle.rs"]
-mod parity_oracle;
 #[path = "integration/paths.rs"]
 mod paths;
 #[path = "integration/prompt_segment_cached.rs"]

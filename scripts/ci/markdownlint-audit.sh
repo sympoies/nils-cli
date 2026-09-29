@@ -54,6 +54,7 @@ fi
 
 declare -a md_files=()
 while IFS= read -r -d '' path; do
+  [[ -f "$path" ]] || continue
   if [[ "$path" == "README.md" || "$path" == "DEVELOPMENT.md" || "$path" == "AGENTS.md" ]]; then
     md_files+=("$path")
     continue

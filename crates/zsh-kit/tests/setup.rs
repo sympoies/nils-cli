@@ -137,7 +137,7 @@ fn write_zshenv_preserves_features_and_sources_zdotdir_env() {
             &dest.to_string_lossy(),
             "--apply",
             "--features",
-            "docker,opencode",
+            "docker,sample",
             "--write-zshenv",
             "--format",
             "json",
@@ -148,7 +148,7 @@ fn write_zshenv_preserves_features_and_sources_zdotdir_env() {
     assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
     let zshenv = fs::read_to_string(home.join(".zshenv")).expect("read zshenv");
     assert!(zshenv.contains("# Managed by zsh-kit."));
-    assert!(zshenv.contains("export ZSH_FEATURES='docker,opencode'"));
+    assert!(zshenv.contains("export ZSH_FEATURES='docker,sample'"));
     assert!(zshenv.contains(r#"if [[ -r "$ZDOTDIR/.zshenv" ]]; then"#));
     assert!(zshenv.contains(r#"source "$ZDOTDIR/.zshenv""#));
 }
