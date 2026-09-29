@@ -391,7 +391,8 @@ agent-session serve --config serve.toml --check --format json
 `--check` exits before token resolution, state-root ownership, or any network
 bind. On success it prints a `cli.agent-session.serve-config.v1` envelope that
 names each input's source (`none`, `file`, `environment`, or `merged`), the
-effective launch-profile ids, the number of appended `PATH` entries, and a
+effective launch-profile ids, the number of configured `path.append` entries
+(`data.path.append`, counted before inherited duplicates are skipped), and a
 warning for every file value the environment overrides or shadows. It never
 prints paths or values. The launch-profile readiness probe still runs only when
 serve starts.
@@ -422,11 +423,14 @@ therefore inherit the same `PATH` and variables they inherit today.
 ### Secrets
 
 The schema has no field that holds a secret value. Credentials are referenced
-by environment variable name, as in `retitle.api_key_env`. A key whose name
-marks it as a credential (for example `token`, `api_key`, `client_secret`, or
-`password`) is refused anywhere in the document, including inside
-`retitle.extra_body`, unless it ends in `_env` or `_file`. Keep the serve bearer
-on `--token-stdin` as described in [Start safely](#start-safely).
+by environment variable name, as in `retitle.api_key_env`. A key whose final
+word marks it as a credential (for example `token`, `api_key`, `x-api-key`,
+`client_secret`, or `password`) is refused anywhere in the document, including
+inside `retitle.extra_body`. A key such as `stop_token_ids` only mentions a
+credential word and is accepted, and so is a `*_env` or `*_file` reference.
+Supply an `extra_body` parameter that must end in a credential word through
+`AGENT_SESSION_RETITLE_CONFIG` instead. Keep the serve bearer on
+`--token-stdin` as described in [Start safely](#start-safely).
 
 ### Errors
 

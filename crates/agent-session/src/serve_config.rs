@@ -87,8 +87,8 @@ const RETITLE_KEYS: &[&str] = &[
 const RETITLE_ROOT_ONLY_KEYS: &[&str] = &["fallback", "max_concurrency", "queue_size", "context"];
 const RETITLE_CONTEXT_KEYS: &[&str] = &["max_chars", "per_message_chars", "recent_turns"];
 
-/// Key-name words that mark a value as a credential. A key built from one of
-/// these must instead name an environment variable (`*_env`) or a file
+/// Key-name words that mark a value as a credential when a key ends in one.
+/// Such a key must instead name an environment variable (`*_env`) or a file
 /// (`*_file`).
 const SECRET_WORDS: &[&str] = &[
     "token",
@@ -498,13 +498,15 @@ fn is_secret_key(key: &str) -> bool {
         .split(['_', '-', '.'])
         .filter(|word| !word.is_empty())
         .collect();
-    if matches!(words.last(), Some(&"env") | Some(&"file")) {
-        return false;
+    // Only the final word names what a key holds: `client_secret` and
+    // `x-api-key` are credentials, while `stop_token_ids` is a provider
+    // parameter that merely mentions tokens. `*_env` and `*_file` references
+    // end in a different word and so pass.
+    match words.as_slice() {
+        [.., last] if SECRET_WORDS.contains(last) => true,
+        [.., first, last] => SECRET_PAIRS.contains(&(*first, *last)),
+        _ => false,
     }
-    words.iter().any(|word| SECRET_WORDS.contains(word))
-        || words
-            .windows(2)
-            .any(|pair| SECRET_PAIRS.contains(&(pair[0], pair[1])))
 }
 
 fn reject_inline_secrets(value: &Value, prefix: &str) -> Result<(), CliError> {
@@ -648,6 +650,13 @@ fn resolve_retitle(value: Option<&Value>) -> Result<Option<String>, CliError> {
         return Ok(None);
     };
     let table = section(value, "retitle")?;
+    // The retitle parser is authoritative. The key lists only name the
+    // offending key after it has refused the table, so a field added to the
+    // parser is accepted here without a matching list edit.
+    let raw = value.to_string();
+    if crate::retitle::config_is_valid(&raw) {
+        return Ok(Some(raw));
+    }
     check_retitle_keys(table, "retitle", false)?;
     let fallback = match table.get("fallback") {
         Some(fallback) => {
@@ -657,10 +666,6 @@ fn resolve_retitle(value: Option<&Value>) -> Result<Option<String>, CliError> {
         }
         None => None,
     };
-    let raw = value.to_string();
-    if crate::retitle::config_is_valid(&raw) {
-        return Ok(Some(raw));
-    }
     // Attribute a failure to the fallback when that provider is invalid on its
     // own; otherwise the primary (or the shared timeout budget) is at fault.
     let key = if fallback.is_some_and(|fallback| {
@@ -687,19 +692,17 @@ fn resolve_file_launch_profiles(value: Option<&Value>) -> Result<Vec<(String, Va
     for (index, item) in items.iter().enumerate() {
         let key = format!("launch_profiles[{index}]");
         let table = section(item, &key)?;
-        reject_unknown_keys(table, LAUNCH_PROFILE_KEYS, &key)?;
-        if let Some(history) = table.get("dsh_history") {
-            let history_key = format!("{key}.dsh_history");
-            reject_unknown_keys(
-                section(history, &history_key)?,
-                DSH_HISTORY_KEYS,
-                &history_key,
-            )?;
-        }
-        let ids = crate::serve::validate_launch_profiles_json(
+        // The startup validator is authoritative; the key lists only name an
+        // unknown key after it has refused the entry.
+        let ids = match crate::serve::validate_launch_profiles_json(
             &Value::from(vec![item.clone()]).to_string(),
-        )
-        .map_err(|error| invalid_value(&key, error.message()))?;
+        ) {
+            Ok(ids) => ids,
+            Err(error) => {
+                name_unknown_launch_profile_key(table, &key)?;
+                return Err(invalid_value(&key, error.message()));
+            }
+        };
         let id = ids.into_iter().next().unwrap_or_default();
         if profiles.iter().any(|(existing, _)| *existing == id) {
             return Err(invalid_value(
@@ -710,6 +713,14 @@ fn resolve_file_launch_profiles(value: Option<&Value>) -> Result<Vec<(String, Va
         profiles.push((id, item.clone()));
     }
     Ok(profiles)
+}
+
+fn name_unknown_launch_profile_key(table: &Map<String, Value>, key: &str) -> Result<(), CliError> {
+    reject_unknown_keys(table, LAUNCH_PROFILE_KEYS, key)?;
+    if let Some(history) = table.get("dsh_history").and_then(Value::as_object) {
+        reject_unknown_keys(history, DSH_HISTORY_KEYS, &format!("{key}.dsh_history"))?;
+    }
+    Ok(())
 }
 
 fn merge_launch_profiles(
@@ -970,14 +981,17 @@ mod tests {
     }
 
     #[test]
-    fn secret_shaped_keys_are_recognized_by_word() {
+    fn secret_shaped_keys_are_recognized_by_their_final_word() {
         for key in [
             "token",
             "api_key",
+            "x-api-key",
             "client_secret",
+            "access_token",
             "private-key",
             "Password",
             "apikey",
+            "Authorization",
         ] {
             assert!(is_secret_key(key), "{key}");
         }
@@ -985,10 +999,86 @@ mod tests {
             "api_key_env",
             "token_file",
             "max_output_tokens",
+            "stop_token_ids",
             "codex_bin",
             "keyring",
         ] {
             assert!(!is_secret_key(key), "{key}");
+        }
+    }
+
+    /// The key lists only name keys for diagnostics; the startup validators
+    /// decide. Every listed key must appear in a document those validators
+    /// accept, so a list entry cannot outlive the struct field it mirrors.
+    #[test]
+    fn every_listed_key_is_accepted_by_the_authoritative_validators() {
+        const PROFILE: &str = r#"
+[[launch_profiles]]
+id = "dsh"
+label = "DSH"
+agent = "hermes"
+agent_bin = "/opt/dsh"
+provider_config_dir = "/opt/dsh-home"
+readiness_args = ["--version"]
+auto_resume_supported = true
+graceful_shutdown = "double-ctrl-c"
+codex_usage_account = "main"
+[launch_profiles.dsh_history]
+command = "/opt/dsh-history"
+root = "/opt/dsh-root"
+compression = "zstd"
+resume = "exact-id"
+"#;
+        const OPENAI_WITH_FALLBACK: &str = r#"
+[retitle]
+provider = "openai_compatible"
+base_url = "http://127.0.0.1:1/v1"
+model = "m"
+api_key_env = "EXAMPLE_KEY"
+timeout_ms = 20000
+max_output_tokens = 100
+temperature = 0.0
+json_response = true
+max_concurrency = 1
+queue_size = 4
+[retitle.extra_body]
+stop_token_ids = [1]
+[retitle.context]
+max_chars = 12000
+per_message_chars = 2000
+recent_turns = 12
+[retitle.fallback]
+provider = "codex_subscription"
+account = "main"
+codex_bin = "/opt/codex"
+model = "m"
+reasoning_effort = "low"
+timeout_ms = 20000
+"#;
+        const COMMAND: &str = "[retitle]\nprovider = \"command\"\nargv = [\"/opt/title\"]\n";
+        const SUBSCRIPTION: &str = "[retitle]\nprovider = \"codex_subscription\"\n\
+             account_selection = \"default_with_capacity\"\ncodex_bin = \"/opt/codex\"\n";
+        let bodies = [
+            format!("{PROFILE}{OPENAI_WITH_FALLBACK}"),
+            COMMAND.to_string(),
+            SUBSCRIPTION.to_string(),
+        ];
+        for body in &bodies {
+            let resolved = resolve(DocumentFormat::Toml, &document(body), &lookup_from(&[]))
+                .unwrap_or_else(|error| panic!("{}: {body}", error.message()));
+            assert_eq!(resolved.summary.retitle.source, Source::File);
+        }
+        let all = bodies.join("\n");
+        for key in LAUNCH_PROFILE_KEYS
+            .iter()
+            .chain(DSH_HISTORY_KEYS)
+            .chain(RETITLE_KEYS)
+            .chain(RETITLE_CONTEXT_KEYS)
+        {
+            assert!(
+                all.contains(&format!("\n{key} = ")) || all.contains(&format!(".{key}]")),
+                "{key} is listed but no accepted fixture uses it"
+            );
         }
     }
 

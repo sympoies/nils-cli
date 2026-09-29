@@ -301,6 +301,14 @@ fn invalid_values_name_the_offending_key() {
             "[retitle]\nprovider = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\nmodel = \"m\"\ntimeout_ms = 5\n",
             "retitle",
         ),
+        (
+            "[retitle]\nprovider = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\nmodel = \"m\"\n[retitle.fallback]\nprovider = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:2/v1\"\nmodel = \"f\"\ntimeout_ms = 5\n",
+            "retitle.fallback",
+        ),
+        (
+            "[retitle]\nprovider = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\nmodel = \"m\"\n[retitle.fallback]\nprovider = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:2/v1\"\nmodel = \"f\"\nmax_concurrency = 2\n",
+            "retitle.fallback.max_concurrency",
+        ),
     ] {
         let config = fixture.write(
             "serve.toml",
@@ -606,4 +614,34 @@ fn serve_refuses_to_start_on_an_invalid_config() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unknown"), "{stderr}");
     assert!(!fixture.state_dir().join("serve.lock").exists());
+}
+
+#[test]
+fn path_append_reports_the_configured_entry_count() {
+    let fixture = Fixture::new();
+    let config = fixture.write(
+        "serve.toml",
+        "schema_version = \"agent-session.serve-config.v1\"\n[path]\nappend = [\"/usr/bin\", \"/opt/example/bin\"]\n",
+    );
+
+    // `/usr/bin` is already inherited and is not appended twice, but the
+    // summary reports the configured `path.append` count.
+    let output = fixture.check(&config, &[("PATH", "/usr/bin:/bin")]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(envelope(&output)["data"]["path"]["append"], 2);
+}
+
+#[test]
+fn provider_parameters_that_mention_tokens_are_not_secrets() {
+    let fixture = Fixture::new();
+    let config = fixture.write(
+        "serve.toml",
+        "schema_version = \"agent-session.serve-config.v1\"\n[retitle]\nprovider = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\nmodel = \"m\"\n[retitle.extra_body]\nstop_token_ids = [1, 2]\n",
+    );
+
+    let output = fixture.check(&config, &[]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(envelope(&output)["data"]["retitle"]["source"], "file");
 }
