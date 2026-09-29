@@ -84,8 +84,10 @@ Agent flag notes:
   forwarding behavior in inherited mode.
 - Isolated `agent commit` exposes only staged-context to the model, accepts
   strict structured message fields, detects HEAD/index drift, and delegates the
-  commit exclusively to `semantic-commit`. The inherited path retains its
-  compatibility fallback.
+  commit exclusively to `semantic-commit`. If the configured model is rejected
+  for a ChatGPT account, message generation retries with `gpt-6-luna`, then
+  with the Codex account default if Luna is also rejected.
+  The inherited path retains its compatibility fallback.
 - `resume --cd <dir>`: Bypass automatic cwd resolution and resume in `<dir>` (must be an existing directory).
 - `agent run` is separate from the isolated/inherited one-shot prompt modes. It
   deliberately retains project instructions, home instructions, hook
@@ -221,7 +223,12 @@ Auth examples:
 
 - `CODEX_CLI_AGENT_RUNTIME`: `isolated` (default) or explicit `inherited` for one-shot agent commands.
 - `CODEX_ALLOW_DANGEROUS_ENABLED`: gate for inherited `agent` commands (default: `false`).
-- `CODEX_CLI_MODEL`: `codex exec` default model (default: `gpt-5.1-codex-mini`).
+- `CODEX_CLI_MODEL`: `codex exec` default model (default: `gpt-6-luna`).
+- Persist a model with `codex-cli config set model gpt-6-luna --persist`.
+  The file is `$XDG_CONFIG_HOME/codex-cli/config.toml`, or
+  `~/.config/codex-cli/config.toml` when XDG_CONFIG_HOME is unset. Model
+  precedence is `CODEX_CLI_MODEL` environment, then this file, then the built-in
+  default. Without `--persist`, `config set` keeps printing a shell export.
 - `CODEX_CLI_REASONING`: `codex exec` default reasoning level (default: `medium`).
 - `CODEX_CLI_EPHEMERAL_ENABLED`: append `--ephemeral` to `codex exec` for agent commands (default: `false`).
 - `CODEX_SECRET_DIR`: secret directory path (default: `~/.config/codex_secrets`).

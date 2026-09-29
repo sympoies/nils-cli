@@ -1280,7 +1280,7 @@ _codex__cli() {
             return 0
             ;;
         codex__cli__config__set)
-            opts="-h --help"
+            opts="-h --persist --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

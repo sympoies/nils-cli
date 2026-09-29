@@ -405,8 +405,14 @@ pub struct ConfigArgs {
 pub enum ConfigCommand {
     /// Show current configuration
     Show,
-    /// Set configuration value (current shell only)
-    Set { key: String, value: String },
+    /// Print a shell export, or persist the model under XDG_CONFIG_HOME/codex-cli
+    Set {
+        key: String,
+        value: String,
+        /// Save model to config.toml instead of printing a shell export
+        #[arg(long)]
+        persist: bool,
+    },
 }
 
 #[derive(Args)]

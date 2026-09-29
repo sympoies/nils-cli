@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -57,6 +57,13 @@ pub struct GeneratedCommitMessage {
     pub subject: String,
     #[serde(default)]
     pub body_bullets: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+enum ModelChoice<'a> {
+    Configured,
+    Named(&'a str),
+    AccountDefault,
 }
 
 impl IsolatedHome {
@@ -121,7 +128,7 @@ pub fn exec_isolated(prompt: &str, profile: AgentCommandProfile, stderr: &mut im
             return 1;
         }
     };
-    let mut command = isolated_command(&home, profile);
+    let mut command = isolated_command(&home, profile, ModelChoice::Configured);
     command
         .args(["--", prompt])
         .stdin(Stdio::inherit())
@@ -167,19 +174,70 @@ pub fn generate_commit_message(
     )
     .map_err(|error| format!("isolated-home-create-failed: {error}"))?;
 
-    let mut command = isolated_command(&home, AgentCommandProfile::Commit);
-    command
-        .args(["--output-schema"])
-        .arg(&schema_path)
-        .args(["--output-last-message"])
-        .arg(&output_path)
-        .args(["--", prompt])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit());
-    let status = command.status().map_err(|error| {
-        format!("codex-cli agent commit: failed to run isolated codex: {error}")
-    })?;
+    let run_model =
+        |model_choice: ModelChoice<'_>| -> Result<(std::process::ExitStatus, Vec<u8>), String> {
+            let mut command = isolated_command(&home, AgentCommandProfile::Commit, model_choice);
+            command
+                .args(["--output-schema"])
+                .arg(&schema_path)
+                .args(["--output-last-message"])
+                .arg(&output_path)
+                .args(["--", prompt])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped());
+            let mut child = command.spawn().map_err(|error| {
+                format!("codex-cli agent commit: failed to run isolated codex: {error}")
+            })?;
+            let pipe = child
+                .stderr
+                .take()
+                .ok_or_else(|| "codex-cli agent commit: missing model stderr pipe".to_string())?;
+            let capture = std::thread::spawn(move || read_bounded_stderr(pipe));
+            let status = child.wait().map_err(|error| {
+                format!("codex-cli agent commit: failed to wait for isolated codex: {error}")
+            })?;
+            let captured = capture
+                .join()
+                .map_err(|_| "codex-cli agent commit: model stderr capture panicked".to_string())?
+                .map_err(|error| {
+                    format!("codex-cli agent commit: failed to read model stderr: {error}")
+                })?;
+            Ok((status, captured))
+        };
+    let (mut status, mut model_stderr) = run_model(ModelChoice::Configured)?;
+    let selected_model = crate::config::effective_model();
+    let clear_output = || match fs::remove_file(&output_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "codex-cli agent commit: failed to clear previous model output: {error}"
+        )),
+    };
+    if !status.success()
+        && unsupported_chatgpt_model(&model_stderr)
+        && selected_model != "gpt-6-luna"
+    {
+        let _ = writeln!(
+            stderr,
+            "codex-cli agent commit: {selected_model} is unavailable for this ChatGPT account; retrying with gpt-6-luna"
+        );
+        clear_output()?;
+        let (retry_status, retry_stderr) = run_model(ModelChoice::Named("gpt-6-luna"))?;
+        status = retry_status;
+        model_stderr = retry_stderr;
+    }
+    if !status.success() && unsupported_chatgpt_model(&model_stderr) {
+        let _ = writeln!(
+            stderr,
+            "codex-cli agent commit: gpt-6-luna is unavailable for this ChatGPT account; retrying with the Codex account default model"
+        );
+        clear_output()?;
+        let (retry_status, retry_stderr) = run_model(ModelChoice::AccountDefault)?;
+        status = retry_status;
+        model_stderr = retry_stderr;
+    }
+    let _ = stderr.write_all(&model_stderr);
     warn_if_auth_replaced(&home, stderr);
     if !status.success() {
         return Err(format!(
@@ -198,6 +256,25 @@ pub fn generate_commit_message(
         .map_err(|error| format!("codex-cli agent commit: invalid model output: {error}"))?;
     validate_generated_message(&message)?;
     Ok(message)
+}
+
+fn unsupported_chatgpt_model(stderr: &[u8]) -> bool {
+    String::from_utf8_lossy(stderr)
+        .contains("is not supported when using Codex with a ChatGPT account")
+}
+
+fn read_bounded_stderr(mut pipe: impl Read) -> std::io::Result<Vec<u8>> {
+    let mut captured = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let count = pipe.read(&mut chunk)?;
+        if count == 0 {
+            break;
+        }
+        let retained = count.min(64 * 1024 - captured.len());
+        captured.extend_from_slice(&chunk[..retained]);
+    }
+    Ok(captured)
 }
 
 pub fn doctor_isolated(json_output: bool) -> i32 {
@@ -345,7 +422,11 @@ fn hook_surface_absent(home: &Path) -> bool {
         .all(|entry| fs::symlink_metadata(home.join(entry)).is_err())
 }
 
-fn isolated_command(home: &IsolatedHome, profile: AgentCommandProfile) -> Command {
+fn isolated_command(
+    home: &IsolatedHome,
+    profile: AgentCommandProfile,
+    model_choice: ModelChoice<'_>,
+) -> Command {
     let mut command = Command::new("codex");
     command
         .args(["--ask-for-approval", "never", "exec"])
@@ -358,12 +439,11 @@ fn isolated_command(home: &IsolatedHome, profile: AgentCommandProfile) -> Comman
             command.args(["--disable", feature]);
         }
     }
-    let model = std::env::var("CODEX_CLI_MODEL").unwrap_or_else(|_| {
-        crate::provider_profile::CODEX_PROVIDER_PROFILE
-            .defaults
-            .model
-            .to_string()
-    });
+    let model = match model_choice {
+        ModelChoice::Configured => Some(crate::config::effective_model()),
+        ModelChoice::Named(model) => Some(model.to_string()),
+        ModelChoice::AccountDefault => None,
+    };
     let reasoning = std::env::var("CODEX_CLI_REASONING").unwrap_or_else(|_| {
         crate::provider_profile::CODEX_PROVIDER_PROFILE
             .defaults
@@ -376,9 +456,11 @@ fn isolated_command(home: &IsolatedHome, profile: AgentCommandProfile) -> Comman
         | AgentCommandProfile::Knowledge
         | AgentCommandProfile::Commit => "read-only",
     };
+    command.args(["-c", "project_doc_max_bytes=0"]);
+    if let Some(model) = model {
+        command.args(["--model", model.as_str()]);
+    }
     command
-        .args(["-c", "project_doc_max_bytes=0"])
-        .args(["--model", model.as_str()])
         .args(["-c", &format!("model_reasoning_effort=\"{reasoning}\"")])
         .args(["--sandbox", sandbox])
         .env("CODEX_HOME", home.path());
@@ -433,4 +515,23 @@ fn validate_generated_message(message: &GeneratedCommitMessage) -> Result<(), St
 
 fn warn_if_auth_replaced(home: &IsolatedHome, stderr: &mut impl Write) {
     child_home::warn_if_auth_replaced(home.path(), stderr);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_bounded_stderr, unsupported_chatgpt_model};
+    use pretty_assertions::assert_eq;
+    use std::io::Cursor;
+
+    #[test]
+    fn stderr_capture_drains_input_and_retains_only_first_64_kib() {
+        let marker = b"is not supported when using Codex with a ChatGPT account";
+        let mut input = marker.to_vec();
+        input.resize(256 * 1024, b'x');
+        let mut cursor = Cursor::new(input);
+        let captured = read_bounded_stderr(&mut cursor).expect("capture stderr");
+        assert_eq!(captured.len(), 64 * 1024);
+        assert_eq!(cursor.position(), 256 * 1024);
+        assert!(unsupported_chatgpt_model(&captured));
+    }
 }

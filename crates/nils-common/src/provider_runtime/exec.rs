@@ -78,6 +78,17 @@ pub fn exec_dangerous_with_options(
     stderr: &mut impl Write,
     options: ExecOptions,
 ) -> i32 {
+    exec_dangerous_with_options_and_model(profile, prompt, caller, stderr, options, None)
+}
+
+pub fn exec_dangerous_with_options_and_model(
+    profile: &ProviderProfile,
+    prompt: &str,
+    caller: &str,
+    stderr: &mut impl Write,
+    options: ExecOptions,
+    model_override: Option<&str>,
+) -> i32 {
     if prompt.is_empty() {
         let _ = writeln!(
             stderr,
@@ -92,7 +103,9 @@ pub fn exec_dangerous_with_options(
     }
 
     match profile.exec.invocation {
-        ExecInvocation::CodexStyle => exec_dangerous_codex_style(profile, prompt, stderr, options),
+        ExecInvocation::CodexStyle => {
+            exec_dangerous_codex_style(profile, prompt, stderr, options, model_override)
+        }
         ExecInvocation::GeminiStyle => exec_dangerous_gemini_style(profile, prompt, stderr),
     }
 }
@@ -102,8 +115,11 @@ fn exec_dangerous_codex_style(
     prompt: &str,
     stderr: &mut impl Write,
     options: ExecOptions,
+    model_override: Option<&str>,
 ) -> i32 {
-    let model = shared_env::env_or_default(profile.env.model, profile.defaults.model);
+    let model = model_override
+        .map(str::to_string)
+        .unwrap_or_else(|| shared_env::env_or_default(profile.env.model, profile.defaults.model));
     let reasoning = shared_env::env_or_default(profile.env.reasoning, profile.defaults.reasoning);
     let reasoning_arg = format!("model_reasoning_effort=\"{}\"", reasoning);
     let mut args = vec![

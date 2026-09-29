@@ -262,7 +262,11 @@ fn handle_diag(args: &cli::DiagArgs) -> i32 {
 fn handle_config(args: &cli::ConfigArgs) -> i32 {
     match &args.command {
         Some(cli::ConfigCommand::Show) => config::show(),
-        Some(cli::ConfigCommand::Set { key, value }) => config::set(key, value),
+        Some(cli::ConfigCommand::Set {
+            key,
+            value,
+            persist,
+        }) => config::set(key, value, *persist),
         None => print_subcommand_help("config"),
     }
 }

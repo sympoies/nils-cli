@@ -24,7 +24,7 @@ pub static CODEX_PROVIDER_PROFILE: ProviderProfile = ProviderProfile {
         auto_refresh_min_days: "CODEX_AUTO_REFRESH_MIN_DAYS",
     },
     defaults: ProviderDefaults {
-        model: "gpt-5.1-codex-mini",
+        model: "gpt-6-luna",
         reasoning: "medium",
         prompt_segment_enabled: "false",
         auto_refresh_enabled: "false",
