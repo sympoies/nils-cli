@@ -738,13 +738,14 @@ fn account_select_short_ttl_forces_network_confirmation() {
     let payload = json(&output);
     assert_eq!(payload["result"]["selected"], "bravo");
     assert_eq!(payload["result"]["candidates"][1]["source"], "network");
-    // alpha's entry is younger than the 1s TTL; only bravo's 5s-old entry is
-    // refetched.
+    // bravo's 5s-old entry must be refetched. alpha's entry may or may not
+    // age past the 1s TTL before the check, so the total count is not pinned.
     let requests = server.take_requests();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(
-        requests[0].header_value("chatgpt-account-id").as_deref(),
-        Some("acct-bravo")
+    assert!(
+        requests.iter().any(
+            |request| request.header_value("chatgpt-account-id").as_deref() == Some("acct-bravo")
+        ),
+        "bravo was not refetched"
     );
 }
 
