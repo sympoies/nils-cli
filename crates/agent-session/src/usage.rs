@@ -487,6 +487,10 @@ const CODEX_DIAG_ARGS: &[&str] = &[
 /// `(key, label, window_minutes)` for a codex-cli window label: `Weekly`, or a
 /// provider duration such as `5h` or `1d`.
 fn codex_window_spec(label: &str) -> Option<(String, String, Number)> {
+    // The grammar is ASCII, and the byte split below needs ASCII boundaries.
+    if !label.is_ascii() {
+        return None;
+    }
     if label.eq_ignore_ascii_case("weekly") {
         return Some((
             "weekly".to_string(),
@@ -848,10 +852,13 @@ impl Slot {
         let slot = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
             loop {
-                let refresh = match slot.provider {
+                // A parser panic must still complete the refresh; otherwise the
+                // slot would stay marked as refreshing forever.
+                let refresh = std::panic::catch_unwind(|| match slot.provider {
                     Provider::Codex => refresh_codex(),
                     Provider::Claude => refresh_claude(),
-                };
+                })
+                .unwrap_or(Refresh::Failed(ProviderUsageReason::ServiceUnavailable));
                 if !slot.complete(refresh) {
                     break;
                 }
@@ -1250,7 +1257,18 @@ mod tests {
             codex_window_spec("90s"),
             Some(("90s".into(), "90s".into(), Number::from_f64(1.5).unwrap()))
         );
-        for bad in ["", "h", "05h", "5x", " 5h", "burst window", "1234567890h"] {
+        for bad in [
+            "",
+            "h",
+            "05h",
+            "5x",
+            " 5h",
+            "burst window",
+            "1234567890h",
+            "5\u{e9}",
+            "\u{e9}",
+            "5\u{2014}h",
+        ] {
             assert_eq!(codex_window_spec(bad), None, "{bad}");
         }
     }
