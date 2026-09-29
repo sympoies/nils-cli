@@ -17,14 +17,14 @@ use std::time::{Duration, Instant};
 use axum::Router;
 use axum::body::to_bytes;
 use axum::extract::{ConnectInfo, Request, State};
-use axum::http::header::CONTENT_TYPE;
+use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::activity::{self, MAX_EVENT_BYTES, ProviderHookInput};
 use crate::cli::AgentKind;
@@ -41,21 +41,25 @@ const FORWARDING_HEADERS: [&str; 3] = ["forwarded", "x-forwarded-for", "x-real-i
 /// The payload travels as a JSON string, whose escaping can expand one byte
 /// into six; the provider payload limit itself is enforced after decoding.
 const MAX_REQUEST_BYTES: usize = 6 * (MAX_EVENT_BYTES as usize + 1) + 4096;
-/// Concurrent capability authentications across all callers.
-const MAX_AUTHENTICATING: usize = 8;
+/// Requests admitted to read, parse, and authenticate at once, across all
+/// callers. Holding one covers the buffered body until authentication, so at
+/// most this many unauthenticated bodies are ever in memory.
+const MAX_ADMITTING: usize = 16;
 const SESSION_BURST: f64 = 64.0;
 const SESSION_REFILL_PER_SECOND: f64 = 20.0;
 /// Concurrent ingests per session. Ingests of one session serialize on its
 /// record lock anyway; the cap only stops a session whose lock is held
 /// elsewhere from tying up an unbounded number of blocking threads.
 const MAX_SESSION_IN_FLIGHT: usize = 4;
-/// How long a request may wait for an authentication or ingest slot. The file
+/// How long a request may wait for an admission or ingest slot. The file
 /// path waits on the same locks rather than dropping the event, so admission
 /// waits too, inside the client's two-second budget.
 const ADMISSION_WAIT: Duration = Duration::from_millis(1500);
 const MAX_TRACKED_SESSIONS: usize = 1024;
 const MAX_SELECTOR_CHARS: usize = 256;
-const BODY_READ_TIMEOUT: Duration = Duration::from_secs(5);
+/// A hook client sends its small body at once within its own two-second
+/// budget, so a slower sender only holds an admission slot this long.
+const BODY_READ_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIENT_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 const DAEMON_ENDPOINT_FILE: &str = "coordination/daemon-endpoint.json";
@@ -80,7 +84,7 @@ struct HookRequest {
 struct IngressState {
     context: CliContext,
     machine: String,
-    authenticating: Arc<Semaphore>,
+    admitting: Arc<Semaphore>,
     limiter: Arc<SessionRateLimiter>,
 }
 
@@ -94,7 +98,7 @@ where
         .with_state(Arc::new(IngressState {
             context,
             machine,
-            authenticating: Arc::new(Semaphore::new(MAX_AUTHENTICATING)),
+            admitting: Arc::new(Semaphore::new(MAX_ADMITTING)),
             limiter: Arc::new(SessionRateLimiter::default()),
         }))
 }
@@ -111,16 +115,27 @@ async fn hook_handler(State(state): State<Arc<IngressState>>, request: Request) 
     let Some(capability) = capability(&parts.headers) else {
         return envelope_err(coordination::unauthorized());
     };
+    let declared_length = parts
+        .headers
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok());
+    if declared_length.is_some_and(|length| length > MAX_REQUEST_BYTES) {
+        return request_too_large();
+    }
+    // One deadline bounds every admission wait. The admission slot is taken
+    // before the body is buffered and held through authentication, so
+    // concurrent callers cannot buffer an unbounded number of bodies.
+    let deadline = tokio::time::Instant::now() + ADMISSION_WAIT;
+    let Ok(Ok(admission)) =
+        tokio::time::timeout_at(deadline, state.admitting.clone().acquire_owned()).await
+    else {
+        return envelope_err(rate_limited());
+    };
     let bytes =
         match tokio::time::timeout(BODY_READ_TIMEOUT, to_bytes(body, MAX_REQUEST_BYTES)).await {
             Ok(Ok(bytes)) => bytes,
-            Ok(Err(_)) => {
-                return status_json(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "activity-hook-request-too-large",
-                    "activity hook request exceeds the ingress body limit",
-                );
-            }
+            Ok(Err(_)) => return request_too_large(),
             Err(_) => {
                 return status_json(
                     StatusCode::REQUEST_TIMEOUT,
@@ -133,7 +148,7 @@ async fn hook_handler(State(state): State<Arc<IngressState>>, request: Request) 
         Ok(parsed) => parsed,
         Err(error) => return envelope_err(error),
     };
-    match admit_and_ingest(&state, capability, agent, request).await {
+    match admit_and_ingest(&state, admission, deadline, capability, agent, request).await {
         Ok(ingested) => envelope_ok(json!({
             "machine": state.machine,
             "ingested": ingested,
@@ -142,27 +157,30 @@ async fn hook_handler(State(state): State<Arc<IngressState>>, request: Request) 
     }
 }
 
-/// Authenticate, then ingest under the session's admission. Slots are taken
-/// only once the body is in hand, so a slow sender cannot hold one, and each
-/// wait is bounded by one shared deadline.
+fn request_too_large() -> Response {
+    status_json(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "activity-hook-request-too-large",
+        "activity hook request exceeds the ingress body limit",
+    )
+}
+
+/// Authenticate under the admission slot, then ingest under one of the
+/// session's ingest slots, waiting for it no later than `deadline`.
 async fn admit_and_ingest(
     state: &IngressState,
+    admission: OwnedSemaphorePermit,
+    deadline: tokio::time::Instant,
     capability: String,
     agent: AgentKind,
     request: HookRequest,
 ) -> Result<bool, CliError> {
-    let deadline = tokio::time::Instant::now() + ADMISSION_WAIT;
-    let auth_permit =
-        tokio::time::timeout_at(deadline, state.authenticating.clone().acquire_owned())
-            .await
-            .map_err(|_| rate_limited())?
-            .map_err(|_| rate_limited())?;
     let context = state.context.clone();
     let request = Arc::new(request);
     let incarnation = {
         let request = request.clone();
         tokio::task::spawn_blocking(move || {
-            let _auth_permit = auth_permit;
+            let _admission = admission;
             authenticate(&context, &capability, &request)
         })
         .await
@@ -316,7 +334,7 @@ fn rate_limited() -> CliError {
 /// semaphore bounds concurrent ingests. Only authenticated requests are
 /// admitted here, so a caller without the capability cannot drain another
 /// session's budget; unauthenticated load is bounded by the shared
-/// authentication semaphore instead.
+/// admission semaphore instead.
 #[derive(Default)]
 struct SessionRateLimiter {
     buckets: Mutex<HashMap<String, Bucket>>,
@@ -538,6 +556,63 @@ mod tests {
                 .is_some(),
             "refilled idle buckets are reclaimed for a new session"
         );
+    }
+
+    fn saturated_state() -> Arc<IngressState> {
+        Arc::new(IngressState {
+            context: CliContext {
+                state_dir: std::path::PathBuf::from("/nonexistent-activity-ingress-state"),
+                host: None,
+            },
+            machine: "test".to_string(),
+            admitting: Arc::new(Semaphore::new(0)),
+            limiter: Arc::new(SessionRateLimiter::default()),
+        })
+    }
+
+    fn loopback_request(body: axum::body::Body, content_length: Option<usize>) -> Request {
+        let mut builder = axum::http::Request::builder()
+            .method("POST")
+            .uri(ROUTE)
+            .header(CONTENT_TYPE, "application/json")
+            .header(
+                CAPABILITY_HEADER,
+                "unverified-capability-material-000000001",
+            );
+        if let Some(length) = content_length {
+            builder = builder.header(CONTENT_LENGTH, length);
+        }
+        let mut request = builder.body(body).expect("request");
+        request
+            .extensions_mut()
+            .insert(ConnectInfo("127.0.0.1:4000".parse::<SocketAddr>().unwrap()));
+        request
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bodies_are_not_buffered_without_an_admission_slot() {
+        let polled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = polled.clone();
+        let body = axum::body::Body::from_stream(futures_util::stream::poll_fn(move |_| {
+            observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            std::task::Poll::Ready(None::<Result<axum::body::Bytes, std::io::Error>>)
+        }));
+        let response = hook_handler(State(saturated_state()), loopback_request(body, None)).await;
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            !polled.load(std::sync::atomic::Ordering::SeqCst),
+            "the body must not be read before an admission slot is held"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_oversized_declared_body_is_refused_before_admission() {
+        let response = hook_handler(
+            State(saturated_state()),
+            loopback_request(axum::body::Body::empty(), Some(MAX_REQUEST_BYTES + 1)),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     fn parts(peer: Option<&str>, headers: &[(&str, &str)]) -> Parts {

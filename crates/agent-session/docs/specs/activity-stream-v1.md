@@ -254,15 +254,18 @@ Admission is fail-closed, in order:
    bound with `--allow-non-loopback`; it is not authentication, and a
    same-host TCP forwarder remains indistinguishable from a local caller.
 2. A missing capability returns 401 `coordination-unauthorized`.
-3. A body over the bound returns 413 `activity-hook-request-too-large`, and a
-   body not received within five seconds returns 408
-   `activity-hook-request-timeout`.
+3. A request must hold one of sixteen shared admission slots before its body is
+   read, and keeps it through authentication, so at most sixteen
+   unauthenticated bodies are buffered at once. A declared or actual body over
+   the bound returns 413 `activity-hook-request-too-large`; a declared
+   oversize is refused before any slot is taken. A body not received within
+   two seconds returns 408 `activity-hook-request-timeout`.
 4. A malformed body, content type, schema version, or provider returns 400.
-5. At most eight requests authenticate at once. A request waits for a slot, and
-   every admission wait in steps 5 and 7 shares one 1.5-second deadline that
-   fits inside the client's two-second budget; a request still waiting at the
-   deadline returns 429 `rate-limited`. Waiting rather than rejecting matches
-   the file path, which waits on the same locks instead of dropping the event.
+5. Admission slots are served in arrival order. Every admission wait in steps
+   3 and 7 shares one 1.5-second deadline that fits inside the client's
+   two-second budget; a request still waiting at the deadline returns 429
+   `rate-limited`. Waiting rather than rejecting matches the file path, which
+   waits on the same locks instead of dropping the event.
 6. The capability must authenticate the named session's ready broker, and
    `session_incarnation` must equal the incarnation it binds. A capability for
    another session, a replaced or stale incarnation, or an unknown capability
@@ -275,10 +278,10 @@ Admission is fail-closed, in order:
    once, so a session whose record lock is held elsewhere cannot tie up
    unbounded work; further requests of that session wait under the shared
    deadline. Unauthenticated requests never draw from a session's bucket or
-   ingest slots. They compete only for the shared authentication slots, which
-   are served in arrival order, so a local flood of invalid capabilities can
-   delay other sessions' hooks up to the deadline but cannot hold a slot
-   indefinitely.
+   ingest slots. They compete only for the shared admission slots, so a local
+   flood of invalid capabilities can delay other sessions' hooks up to the
+   deadline but cannot hold a slot beyond the body timeout and one
+   authentication.
 
 Success returns the ordinary serve envelope with
 `data.ingested`, which is `false` when the payload normalizes to no activity
