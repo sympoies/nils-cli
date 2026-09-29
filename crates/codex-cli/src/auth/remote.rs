@@ -2,7 +2,6 @@ use anyhow::Result;
 use chrono::Utc;
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 use crate::auth;
 use crate::auth::output::{self, AuthRemotePullResult};
@@ -10,6 +9,7 @@ use crate::json;
 use crate::paths;
 use nils_common::env as shared_env;
 use nils_common::fs;
+use nils_common::provider_runtime::remote::{self, RemoteExport, RemoteSelector};
 
 const COMMAND_PULL: &str = "auth remote pull";
 pub const ENV_AUTH_REMOTE_SSH: &str = "CODEX_AUTH_REMOTE_SSH";
@@ -30,13 +30,7 @@ pub struct RemoteEnvError {
     pub details: Value,
 }
 
-#[derive(Debug, Clone)]
-pub struct RemotePullFailure {
-    pub code: &'static str,
-    pub message: String,
-    pub details: Option<Value>,
-    pub exit_code: i32,
-}
+pub use nils_common::provider_runtime::remote::RemotePullFailure;
 
 #[derive(Debug, Clone)]
 pub struct RemoteAccessOnlyPayload {
@@ -44,11 +38,46 @@ pub struct RemoteAccessOnlyPayload {
     pub config: ConfiguredRemotePull,
 }
 
-struct RemoteExportSuccess {
-    output: Output,
-    refresh_attempted: bool,
-    refresh_fallback: bool,
-    refresh_error_code: Option<String>,
+/// Codex credential shape for the shared access-only remote transport.
+struct CodexRemote;
+
+impl remote::AccessOnlyAdapter for CodexRemote {
+    fn log_prefix(&self) -> &str {
+        "codex-remote-pull"
+    }
+
+    fn export_command(&self, selector: &RemoteSelector, refresh: bool) -> Vec<String> {
+        let mut command = ["codex-cli", "auth", "remote", "export", "--name"]
+            .map(str::to_string)
+            .to_vec();
+        command.push(selector.describe().to_string());
+        command.push("--access-only".to_string());
+        if refresh {
+            command.push("--refresh".to_string());
+        }
+        command
+    }
+
+    fn sanitize_access_only(&self, value: Value) -> Value {
+        sanitize_access_only(value)
+    }
+
+    fn has_access_token(&self, value: &Value) -> bool {
+        has_oauth_access_token(value)
+    }
+}
+
+fn fetch_access_only(
+    ssh_host: &str,
+    name: &str,
+    refresh: bool,
+) -> std::result::Result<RemoteExport, RemotePullFailure> {
+    remote::fetch_access_only(
+        &CodexRemote,
+        ssh_host,
+        &RemoteSelector::Name(name.to_string()),
+        refresh,
+    )
 }
 
 pub fn pull_with_json(
@@ -186,14 +215,10 @@ pub fn export_access_only_for_target_from_env(
         return Ok(None);
     };
 
-    let remote_export =
-        match run_remote_export_with_fallback(&config.ssh, &config.name, config.refresh) {
-            Ok(success) => success,
-            Err(failure) => anyhow::bail!(failure.message),
-        };
-
-    let mut imported = sanitize_remote_output(&remote_export.output, &config.ssh, &config.name)
-        .map_err(|failure| anyhow::anyhow!(failure.message))?;
+    let mut imported = match fetch_access_only(&config.ssh, &config.name, config.refresh) {
+        Ok(export) => export.value,
+        Err(failure) => anyhow::bail!(failure.message),
+    };
     ensure_last_refresh(&mut imported);
     ensure_access_only_refresh_placeholder(&mut imported);
 
@@ -208,14 +233,11 @@ pub fn pull_access_only_to_active(
     name: &str,
     refresh: bool,
 ) -> Result<std::result::Result<AuthRemotePullResult, RemotePullFailure>> {
-    let remote_export = match run_remote_export_with_fallback(ssh_host, name, refresh) {
-        Ok(success) => success,
+    let remote_export = match fetch_access_only(ssh_host, name, refresh) {
+        Ok(export) => export,
         Err(failure) => return Ok(Err(failure)),
     };
-    let mut imported = match sanitize_remote_output(&remote_export.output, ssh_host, name) {
-        Ok(value) => value,
-        Err(failure) => return Ok(Err(failure)),
-    };
+    let mut imported = remote_export.value;
     ensure_last_refresh(&mut imported);
     ensure_access_only_refresh_placeholder(&mut imported);
 
@@ -260,119 +282,6 @@ pub fn pull_access_only_to_active(
         remote_refresh_fallback: remote_export.refresh_fallback.then_some(true),
         remote_refresh_error_code: remote_export.refresh_error_code,
     }))
-}
-
-fn sanitize_remote_output(
-    output: &Output,
-    ssh_host: &str,
-    name: &str,
-) -> std::result::Result<Value, RemotePullFailure> {
-    let imported: Value = match serde_json::from_slice(&output.stdout) {
-        Ok(value) => value,
-        Err(_) => {
-            return Err(RemotePullFailure {
-                code: "remote-export-invalid-json",
-                message: "codex-remote-pull: remote export returned invalid JSON".to_string(),
-                details: Some(serde_json::json!({
-                    "ssh": ssh_host,
-                    "name": name,
-                })),
-                exit_code: 1,
-            });
-        }
-    };
-    let imported = sanitize_access_only(imported);
-    if !has_oauth_access_token(&imported) {
-        return Err(RemotePullFailure {
-            code: "remote-export-missing-access-token",
-            message: "codex-remote-pull: remote export did not include an OAuth access token"
-                .to_string(),
-            details: Some(serde_json::json!({
-                "ssh": ssh_host,
-                "name": name,
-            })),
-            exit_code: 1,
-        });
-    }
-    Ok(imported)
-}
-
-fn run_remote_export_with_fallback(
-    ssh_host: &str,
-    name: &str,
-    refresh: bool,
-) -> std::result::Result<RemoteExportSuccess, RemotePullFailure> {
-    match run_remote_export(ssh_host, name, refresh) {
-        Ok(output) if output.status.success() => Ok(RemoteExportSuccess {
-            output,
-            refresh_attempted: refresh,
-            refresh_fallback: false,
-            refresh_error_code: None,
-        }),
-        Ok(output) => {
-            let primary_failure = remote_export_status_failure(ssh_host, name, &output);
-            if !refresh {
-                return Err(primary_failure);
-            }
-
-            match run_remote_export(ssh_host, name, false) {
-                Ok(fallback_output) if fallback_output.status.success() => {
-                    Ok(RemoteExportSuccess {
-                        output: fallback_output,
-                        refresh_attempted: true,
-                        refresh_fallback: true,
-                        refresh_error_code: Some(primary_failure.code.to_string()),
-                    })
-                }
-                Ok(_) | Err(_) => Err(primary_failure),
-            }
-        }
-        Err(failure) => Err(failure),
-    }
-}
-
-fn run_remote_export(
-    ssh_host: &str,
-    name: &str,
-    refresh: bool,
-) -> std::result::Result<Output, RemotePullFailure> {
-    let mut command = Command::new("ssh");
-    command
-        .arg(ssh_host)
-        .arg("codex-cli")
-        .arg("auth")
-        .arg("remote")
-        .arg("export")
-        .arg("--name")
-        .arg(name)
-        .arg("--access-only");
-    if refresh {
-        command.arg("--refresh");
-    }
-
-    match command.output() {
-        Ok(output) => Ok(output),
-        Err(err) => Err(RemotePullFailure {
-            code: "ssh-exec-failed",
-            message: format!("codex-remote-pull: failed to run ssh: {err}"),
-            details: None,
-            exit_code: 1,
-        }),
-    }
-}
-
-fn remote_export_status_failure(ssh_host: &str, name: &str, output: &Output) -> RemotePullFailure {
-    let exit_code = output.status.code().unwrap_or(1);
-    RemotePullFailure {
-        code: "remote-export-failed",
-        message: format!("codex-remote-pull: remote export failed (exit {exit_code})"),
-        details: Some(serde_json::json!({
-            "ssh": ssh_host,
-            "name": name,
-            "exit_code": exit_code,
-        })),
-        exit_code: 1,
-    }
 }
 
 pub fn export(name: &str, access_only: bool, refresh: bool) -> Result<i32> {
@@ -705,20 +614,11 @@ fn has_non_empty_string(value: &Value, path: &[&str]) -> bool {
 }
 
 fn is_valid_ssh_host(host: &str) -> bool {
-    !host.is_empty()
-        && !host.starts_with('-')
-        && !host
-            .chars()
-            .any(|ch| ch.is_whitespace() || matches!(ch, '\'' | '"' | '`' | '$' | ';' | '&' | '|'))
+    remote::is_valid_ssh_host(host)
 }
 
 fn is_valid_secret_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.starts_with('-')
-        && !auth::is_invalid_secret_target(name)
-        && name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    !auth::is_invalid_secret_target(name) && remote::is_valid_secret_name(name)
 }
 
 #[cfg(test)]
