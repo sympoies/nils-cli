@@ -4,7 +4,7 @@
 //! the new binary, without touching the tmux sessions it already launched.
 
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -82,6 +82,26 @@ fn unused_loopback_addr() -> SocketAddr {
         .expect("loopback port")
 }
 
+/// Spawns the private binary copy, retrying while Linux reports `ETXTBSY`.
+/// Tests in this binary copy and exec concurrently, so a sibling thread's
+/// spawn can briefly inherit the copy's write descriptor across its fork until
+/// that child execs; the busy state clears on its own within that window.
+fn spawn_retrying_text_busy(command: &mut Command) -> Child {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match command.spawn() {
+            Ok(child) => return child,
+            Err(error)
+                if error.kind() == io::ErrorKind::ExecutableFileBusy
+                    && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("spawn serve: {error}"),
+        }
+    }
+}
+
 /// Kills its serve on drop, so a failed assertion cannot orphan a daemon.
 struct Serve {
     child: Child,
@@ -118,7 +138,7 @@ impl Serve {
             command.env_remove(key);
         }
         command.envs(env.iter().copied());
-        let child = command.spawn().expect("spawn serve");
+        let child = spawn_retrying_text_busy(&mut command);
         let mut serve = Self {
             child,
             addr,
