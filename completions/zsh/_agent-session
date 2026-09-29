@@ -771,6 +771,7 @@ _arguments "${_arguments_options[@]}" : \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '(--token)--token-stdin[Read the bearer token once from stdin instead of process arguments]' \
 '--allow-non-loopback[Deliberately allow binding a non-loopback address. Without this, a non-loopback --bind is refused because it exposes a remote shell]' \
+'--board[Serve the operator-authenticated session board routes. Also enabled by AGENT_SESSION_BOARD=1; otherwise they answer \`board-disabled\`]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0

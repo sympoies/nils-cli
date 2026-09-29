@@ -1141,6 +1141,11 @@ pub struct ServeArgs {
     #[arg(long = "allow-non-loopback")]
     pub allow_non_loopback: bool,
 
+    /// Serve the operator-authenticated session board routes. Also enabled
+    /// by AGENT_SESSION_BOARD=1; otherwise they answer `board-disabled`.
+    #[arg(long)]
+    pub board: bool,
+
     /// tmux binary override.
     #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub tmux_bin: Option<PathBuf>,

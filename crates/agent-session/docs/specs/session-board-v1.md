@@ -48,6 +48,18 @@ failure code.
   collision detection. Local collision awareness remains the coordination
   work-context contract.
 
+### List machine label
+
+`agent-session list --format json` records carry an additive `machine`
+string whether or not the board is enabled. It is a list field, not a board
+field: it names the machine, never a path, and `GET /sessions` records do not
+gain it because that envelope already carries `data.machine`. A CLI process
+cannot see a serve `--machine` flag, so it resolves `AGENT_SESSION_MACHINE`,
+then the `--host` / `AGENT_SESSION_HOST` identity, then the short hostname:
+serve's order without its flag. The disabled-board guarantee above covers the
+board projection and the coordination allowlist; it does not remove this
+label.
+
 ## Enablement
 
 The daemon enables board routes with `agent-session serve --board` or
@@ -110,7 +122,7 @@ field.
 
 | Group | Field | Type | Source |
 | --- | --- | --- | --- |
-| Identity | `machine` | string | New per-record field, stamped by the process that serves the record, never stored: on daemon routes it is the existing serve machine identity (`--machine`, `AGENT_SESSION_MACHINE`, `--host`, short hostname), today only in the serve envelope `data.machine`; in CLI local mode see [Mode selection](#mode-selection). It always equals the enclosing envelope `machine`. |
+| Identity | `machine` | string | New per-record field, stamped by the process that serves the record, never stored: on daemon routes it is the existing serve machine identity (`--machine`, `AGENT_SESSION_MACHINE`, `--host`, short hostname), also reported in the serve envelope `data.machine`; in CLI local mode see [Mode selection](#mode-selection). It always equals the enclosing envelope `machine`. |
 | Identity | `session_id` | string | `SessionView.id`. |
 | Identity | `session_incarnation` | string or null | `SessionView.session_incarnation`; null when the record has no current runtime launch. |
 | Identity | `messaging_supported` | bool | New derivation, same meaning as `messaging_supported` in `agent-session.remote-peers.v1`: this session can currently receive a remote message. See [Messaging support](#messaging-support). |
@@ -554,7 +566,7 @@ an omitted `--since` means the full retained window of the source.
 Local mode builds the same records as `GET /board/v1` from the local state
 directory, adds closed rows from the local ledger, and applies the filters
 itself. Because a CLI process cannot see daemon configuration, local mode
-takes `machine` from `AGENT_SESSION_MACHINE`, else the short hostname, and
+takes `machine` as the [list label](#list-machine-label) does and
 always emits `messaging_supported: false`. `machines` has one available entry for the local machine, `retention`
 is `7d` (the ledger bound), and `since` is clamped to it.
 
