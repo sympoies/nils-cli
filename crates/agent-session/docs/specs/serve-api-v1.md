@@ -304,7 +304,17 @@ recorded in `sympoies/nils-cli#1409`.
   `startup` is the metadata-only `agent-session.startup.v1` projection shared by
   create, list, and glance responses. Its state is `starting`, `ready`, or
   `failed`; its bounded stage is `record`, `tmux`, `runtime`, `app_server`,
-  `proxy`, `provider_client`, or `initial_connection`. Failed projections add
+  `proxy`, `provider_client`, or `initial_connection`.
+  A Codex session whose automatic runtime selection kept the raw TUI adds
+  `runtime_fallback` with one allowlisted reason: `codex-unavailable`,
+  `codex-version-unrecognized`, `codex-version-too-old`,
+  `codex-app-server-transport-unavailable`,
+  `codex-app-server-runtime-dir-unavailable`,
+  `codex-app-server-runtime-dir-unsafe`,
+  `codex-app-server-socket-path-too-long`, or
+  `codex-app-server-runtime-unavailable`. It is absent for an app-server
+  runtime and for an explicit `AGENT_SESSION_CODEX_RUNTIME=raw`.
+  Failed projections add
   an RFC 3339 `occurred_at` captured from the private failure marker, boolean
   `retry_safe`, one reviewed message, and one
   allowlisted code: `runtime-helper-unavailable`, `agent-binary-unavailable`,
@@ -480,7 +490,12 @@ recorded in `sympoies/nils-cli#1409`.
   the configured host credential broker. The additive `readiness` projection
   reports whether the installed Codex version meets the minimum app-server
   floor and currently advertises Unix listen support, with only a canonical
-  provider version and stable safe reason code. Newer stable Codex releases are
+  provider version and stable safe reason code. A capable CLI also needs a
+  usable private runtime directory (see the Codex runtime selection below);
+  otherwise readiness reports `supported: false` with
+  `codex-app-server-runtime-dir-unavailable`,
+  `codex-app-server-runtime-dir-unsafe`, or
+  `codex-app-server-socket-path-too-long`. Newer stable Codex releases are
   accepted by capability instead of an exact-version allowlist; exact protocol
   attention remains limited to explicitly audited versions and otherwise falls
   back to hook authority. The response never contains access tokens, ChatGPT
@@ -623,8 +638,12 @@ recorded in `sympoies/nils-cli#1409`.
   Exact protocol-attention authority is audited only for Codex `0.144.1` and
   `0.144.3`; newer transport-compatible versions fall back to hook authority.
   An eligible CLI is launched as a remote TUI over a private short socket below an
-  owned, non-symlinked mode-`0700` `XDG_RUNTIME_DIR`; otherwise auto mode
-  degrades to the existing raw TUI. `AGENT_SESSION_CODEX_RUNTIME=raw` forces
+  owned, non-symlinked mode-`0700` runtime root: an absolute `XDG_RUNTIME_DIR`
+  when set, otherwise a platform default created mode `0700` (the daemon state
+  directory's `run/`, or `/tmp/agent-session-<uid>` when the state directory is
+  too long for a Unix socket). The default passes the same validation;
+  otherwise auto mode degrades to the existing raw TUI and records the reason
+  in `startup.runtime_fallback`. `AGENT_SESSION_CODEX_RUNTIME=raw` forces
   the fallback and `AGENT_SESSION_CODEX_RUNTIME=app-server` requires both the
   same capability probe and a private Unix socket. Standalone `agent-session
   start` remains raw because no serve daemon owns its control connection.

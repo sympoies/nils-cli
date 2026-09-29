@@ -5458,9 +5458,10 @@ async fn codex_accounts_handler(
         return response;
     }
     let agent_bin = crate::resolve_agent_bin(AgentKind::Codex, None);
+    let state_dir = state.context.state_dir.clone();
     match tokio::task::spawn_blocking(move || {
         crate::codex_account::list_accounts().map(|accounts| {
-            let readiness = codex_app_server::account_binding_readiness(&agent_bin);
+            let readiness = codex_app_server::account_binding_readiness(&agent_bin, &state_dir);
             (accounts, readiness)
         })
     })
