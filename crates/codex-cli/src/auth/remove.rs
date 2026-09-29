@@ -1,12 +1,12 @@
 use anyhow::Result;
 use serde_json::json;
-use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 use crate::auth;
 use crate::auth::output::{self, AuthRemoveResult};
 use crate::paths;
 use nils_common::fs;
+use nils_common::provider_runtime::accounts::{self, ConfirmAction, Confirmation};
 
 pub fn run(target: &str, yes: bool) -> Result<i32> {
     run_with_json(target, yes, false)
@@ -99,22 +99,29 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> Result<i32> 
         return Ok(1);
     }
 
-    if !yes {
-        if !interactive_io_available() {
-            emit_confirmation_usage_error(output_json, &target_file)?;
-            return Ok(64);
+    let action = ConfirmAction::Remove;
+    match accounts::confirm(yes, output_json, "codex-remove: remove target file?")? {
+        Confirmation::Confirmed => {}
+        Confirmation::Required => {
+            return output::account_output("auth remove", output_json).fail(
+                action.required_error_code(),
+                format!(
+                    "codex-remove: {} exists; rerun with --yes to remove",
+                    target_file.display()
+                ),
+                Some(json!({
+                    "target_file": target_file.display().to_string(),
+                    "removed": false,
+                })),
+                action.required_exit_code(),
+            );
         }
-        if output_json {
-            emit_confirmation_usage_error(true, &target_file)?;
-            return Ok(64);
-        }
-
-        if !confirm_remove(&target_file)? {
+        Confirmation::Declined => {
             eprintln!(
                 "codex-remove: removal declined for {}",
                 target_file.display()
             );
-            return Ok(1);
+            return Ok(action.declined_exit_code());
         }
     }
 
@@ -151,29 +158,6 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> Result<i32> 
     Ok(0)
 }
 
-fn emit_confirmation_usage_error(output_json: bool, target_file: &Path) -> Result<()> {
-    if output_json {
-        output::emit_error(
-            "auth remove",
-            "usage-error",
-            format!(
-                "codex-remove: {} exists; rerun with --yes to remove",
-                target_file.display()
-            ),
-            Some(json!({
-                "target_file": target_file.display().to_string(),
-                "removed": false,
-            })),
-        )?;
-    } else {
-        eprintln!(
-            "codex-remove: {} exists; rerun with --yes to remove",
-            target_file.display()
-        );
-    }
-    Ok(())
-}
-
 fn usage_error(output_json: bool, message: &str) -> Result<i32> {
     if output_json {
         output::emit_error("auth remove", "invalid-usage", message, None)?;
@@ -183,24 +167,9 @@ fn usage_error(output_json: bool, message: &str) -> Result<i32> {
     Ok(64)
 }
 
-fn interactive_io_available() -> bool {
-    io::stdin().is_terminal() && io::stdout().is_terminal()
-}
-
 fn print_secret_dir_setup_hint(prefix: &str) {
     eprintln!("{prefix}: hint: export CODEX_SECRET_DIR=\"$HOME/.config/codex_secrets\"");
     eprintln!("{prefix}: hint: mkdir -p \"$CODEX_SECRET_DIR\" && chmod 700 \"$CODEX_SECRET_DIR\"");
-}
-
-fn confirm_remove(target: &Path) -> Result<bool> {
-    let _ = target;
-    eprint!("codex-remove: remove target file? [y/N]: ");
-    io::stderr().flush()?;
-
-    let mut line = String::new();
-    io::stdin().read_line(&mut line)?;
-    let normalized = line.trim().to_ascii_lowercase();
-    Ok(matches!(normalized.as_str(), "y" | "yes"))
 }
 
 fn remove_target_timestamp(target_file: &Path) {

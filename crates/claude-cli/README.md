@@ -20,8 +20,9 @@ claude-cli agent resume <SESSION_ID> [--cd <dir>]
 claude-cli auth login [--claudeai|--console] [--email <email>] [--sso]
 claude-cli auth status [--format text|json]
 claude-cli auth logout
-claude-cli auth save <name> [--format text|json]
-claude-cli auth use <name> [--format text|json]
+claude-cli auth save [-y|--yes] <name|name.json> [--format text|json]
+claude-cli auth use <name|name.json|email> [--format text|json]
+claude-cli auth remove [-y|--yes] <name|name.json> [--format text|json]
 claude-cli auth current [--format text|json]
 claude-cli auth refresh <name>... [--accounts-dir <dir>] [--format text|json]
 claude-cli auth auto-refresh [--accounts-dir <dir>] [--format text|json]
@@ -156,14 +157,28 @@ refresh token, so the authority is the only refresher. This is the same model
 as `codex-cli auth remote`, and both use the shared
 `nils-common::provider_runtime::remote` transport.
 
-- `auth save <name>`: Store the active login (made with `/login`) as profile
-  `<name>` in `CLAUDE_SECRET_DIR`, then rewrite that source login access-only
-  so the profile is the only refresh-token holder. Refuses a login without a
-  refresh token and an existing profile that belongs to another account.
-- `auth use <name>`: Make `<name>` the current default and write it as the
-  local active login, access-only.
+- `auth save [-y] <name>`: Store the active login (made with `/login`) as
+  profile `<name>` in `CLAUDE_SECRET_DIR`, then rewrite that source login
+  access-only so the profile is the only refresh-token holder. Refuses a login
+  without a refresh token and, even with `--yes`, an existing profile that
+  belongs to another account (`profile-identity-mismatch`, exit `65`).
+  Replacing a profile of the same account asks `[y/N]` on a terminal; `--yes`
+  skips the prompt, and JSON output or a non-interactive run without `--yes`
+  fails with `overwrite-confirmation-required` (exit `1`).
+- `auth use <name|name.json|email>`: Make the matching profile the current
+  default and write it as the local active login, access-only. A target with
+  `@` matches a profile's `oauthAccount.emailAddress`; a bare target that is
+  not a profile name matches the email local part. Several matches exit `2`
+  (`ambiguous-profile`, with `candidates`), no match exits `1`
+  (`profile-not-found`), and an invalid name exits `64`.
+- `auth remove [-y] <name>`: Delete `<name>.json` from `CLAUDE_SECRET_DIR`.
+  Refuses the current default (`profile-is-current-default`, exit `1`) and a
+  missing profile (`profile-not-found`, exit `1`). It asks `[y/N]` on a
+  terminal; JSON output or a non-interactive run without `--yes` exits `64`
+  (`usage-error`).
 - `auth current`: Report the current default, its account identity, access
-  token expiry, and the stored profile names. Never prints tokens.
+  token expiry, and the stored profile names. Never prints tokens. Exits `2`
+  with `matched: false` when no current default is recorded.
 - `auth refresh <name>...` / `auth auto-refresh`: Exchange a profile's refresh
   token through Claude Code's documented `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` +
   `CLAUDE_CODE_OAUTH_SCOPES` `claude auth login` path, in a private temporary
@@ -189,8 +204,13 @@ as `codex-cli auth remote`, and both use the shared
   `<accounts-dir>/<profile>/`, for use as `CLAUDE_CONFIG_DIR`. The default
   login is not touched. See [Per-account config directories](#per-account-config-directories).
 
-`save`, `use`, and `refresh` hold an exclusive lock on
+`save`, `use`, `remove`, and `refresh` hold an exclusive lock on
 `CLAUDE_SECRET_DIR/.lock`, so profile and active-login writes never interleave.
+A confirmation prompt is answered before the lock is taken, and the checks run
+again under the lock.
+
+Name resolution, the confirmation flow, and these exit codes are shared with
+`codex-cli auth` through `nils-common::provider_runtime::accounts`.
 
 An access-only login stores `"refreshToken": ""`, which Claude Code treats as
 having no refresh token, so it never calls the token endpoint. A running Claude

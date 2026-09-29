@@ -3,8 +3,11 @@
 use nils_common::cli_contract::exit;
 use nils_common::diag_output;
 use nils_common::env as shared_env;
+use nils_common::provider_runtime::accounts::{
+    self, AccountResolution, ConfirmAction, Confirmation,
+};
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -32,6 +35,7 @@ struct SaveResult {
 
 #[derive(Serialize)]
 struct UseResult {
+    target: String,
     profile: String,
     account_uuid: Option<String>,
     credentials_file: String,
@@ -40,7 +44,14 @@ struct UseResult {
 }
 
 #[derive(Serialize)]
+struct RemoveResult {
+    profile: String,
+    removed: bool,
+}
+
+#[derive(Serialize)]
 struct CurrentResult {
+    matched: bool,
     profile: Option<String>,
     account_uuid: Option<String>,
     organization_uuid: Option<String>,
@@ -68,41 +79,60 @@ struct RefreshResult {
     projection_failed: Vec<RefreshFailure>,
 }
 
-pub fn save(name: &str, output_json: bool) -> i32 {
+/// The refresh-capable active login to save as `name`, and whether it would
+/// replace an existing profile of the same account.
+fn saveable_login(name: &str) -> AuthResult<(Profile, Identity, bool)> {
+    let login = store::read_active_login()?;
+    if login.refresh_token().is_none() {
+        return Err(AuthError::data(
+            "active-login-access-only",
+            "the active login has no refresh token; save a login made with /login",
+        ));
+    }
+    let identity = login.identity().ok_or_else(|| {
+        AuthError::data(
+            "active-login-without-account",
+            "the active login has no oauthAccount in the Claude Code config",
+        )
+    })?;
+    let replaced = match store::read_profile(name) {
+        Ok(existing) => {
+            if !existing
+                .identity()
+                .is_some_and(|existing| existing.same_account(&identity))
+            {
+                return Err(AuthError::data(
+                    "profile-identity-mismatch",
+                    format!("profile '{name}' belongs to a different account"),
+                ));
+            }
+            true
+        }
+        Err(err) if err.code == "profile-not-found" => false,
+        Err(err) => return Err(err),
+    };
+    Ok((login, identity, replaced))
+}
+
+pub fn save(target: &str, yes: bool, output_json: bool) -> i32 {
     let command = "auth save";
     let result = (|| -> AuthResult<SaveResult> {
-        store::validate_profile_name(name)?;
-        let _lock = store::lock_store()?;
-        let login = store::read_active_login()?;
-        if login.refresh_token().is_none() {
-            return Err(AuthError::data(
-                "active-login-access-only",
-                "the active login has no refresh token; save a login made with /login",
-            ));
+        let name = store::profile_name_from_target(target)?;
+        // Ask before taking the store lock so a pending prompt never blocks a
+        // concurrent refresh; the checks run again under the lock.
+        let (_, _, replaces) = saveable_login(&name)?;
+        if replaces {
+            confirm(
+                ConfirmAction::Overwrite,
+                yes,
+                output_json,
+                &format!("claude-cli auth save: profile '{name}' exists. overwrite?"),
+                &name,
+            )?;
         }
-        let identity = login.identity().ok_or_else(|| {
-            AuthError::data(
-                "active-login-without-account",
-                "the active login has no oauthAccount in the Claude Code config",
-            )
-        })?;
-        let replaced = match store::read_profile(name) {
-            Ok(existing) => {
-                if !existing
-                    .identity()
-                    .is_some_and(|existing| existing.same_account(&identity))
-                {
-                    return Err(AuthError::data(
-                        "profile-identity-mismatch",
-                        format!("profile '{name}' belongs to a different account"),
-                    ));
-                }
-                true
-            }
-            Err(err) if err.code == "profile-not-found" => false,
-            Err(err) => return Err(err),
-        };
-        store::write_profile(name, &login)?;
+        let _lock = store::lock_store()?;
+        let (login, identity, replaced) = saveable_login(&name)?;
+        store::write_profile(&name, &login)?;
         // The profile is now the only refresher: leave the source login
         // access-only. On a Keychain host the Keychain copy is what Claude Code
         // reads first, so failing to rewrite it must fail the save.
@@ -113,7 +143,7 @@ pub fn save(name: &str, output_json: bool) -> i32 {
         };
         store::write_active_access_only(&login.oauth, &login.account, mode)?;
         Ok(SaveResult {
-            profile: name.to_string(),
+            profile: name,
             account_uuid: identity.account_uuid,
             replaced,
         })
@@ -123,19 +153,60 @@ pub fn save(name: &str, output_json: bool) -> i32 {
     })
 }
 
-pub fn use_profile(name: &str, output_json: bool) -> i32 {
+/// The profile `target` names: a profile name, `name.json`, a full email
+/// address, or an email local part.
+fn resolve_profile(target: &str) -> AuthResult<String> {
+    if !target.contains('@') || accounts::is_invalid_account_target(target) {
+        store::profile_name_from_target(target)?;
+    }
+    let details = |candidates: Option<Vec<String>>| {
+        let mut details = json!({ "target": target });
+        if let Some(candidates) = candidates {
+            details["candidates"] = json!(candidates);
+        }
+        Some(details)
+    };
+    match accounts::resolve_account(&store::ProfileStore, target) {
+        AccountResolution::Exact(file_name) => Ok(accounts::account_name(&file_name).to_string()),
+        AccountResolution::Ambiguous { candidates } => {
+            let candidates: Vec<String> = candidates
+                .iter()
+                .map(|file_name| accounts::account_name(file_name).to_string())
+                .collect();
+            Err(AuthError {
+                code: "ambiguous-profile",
+                message: format!(
+                    "'{target}' matches several profiles: {}",
+                    candidates.join(", ")
+                ),
+                exit_code: accounts::EXIT_UNMATCHED,
+                details: details(Some(candidates)),
+            })
+        }
+        AccountResolution::NotFound => Err(AuthError {
+            code: "profile-not-found",
+            message: format!("no profile matches '{target}'"),
+            exit_code: accounts::EXIT_FAILED,
+            details: details(None),
+        }),
+    }
+}
+
+pub fn use_profile(target: &str, output_json: bool) -> i32 {
     let command = "auth use";
     let result = (|| -> AuthResult<UseResult> {
         let _lock = store::lock_store()?;
-        let profile = store::read_profile(name)?;
+        let name = resolve_profile(target)?;
+        let profile = store::read_profile(&name)?;
         let written = store::write_active_access_only(
             &profile.oauth,
             &profile.account,
             keychain::Mode::Auto,
         )?;
-        store::write_current(name)?;
+        store::write_current(&name)?;
         Ok(UseResult {
-            profile: name.to_string(),
+            target: target.to_string(),
+            profile: name,
             account_uuid: profile.identity().map(|identity| identity.account_uuid),
             credentials_file: written.credentials_file.display().to_string(),
             config_updated: written.config_updated,
@@ -147,12 +218,88 @@ pub fn use_profile(name: &str, output_json: bool) -> i32 {
     })
 }
 
+/// Refuse removing a missing profile or the current default.
+fn removable_profile(name: &str) -> AuthResult<()> {
+    if !store::profile_file(name)?.is_file() {
+        return Err(AuthError::runtime(
+            "profile-not-found",
+            format!("profile '{name}' does not exist"),
+        ));
+    }
+    if store::read_current()?.as_deref() == Some(name) {
+        return Err(AuthError::runtime(
+            "profile-is-current-default",
+            format!(
+                "profile '{name}' is the current default; switch with `claude-cli auth use <name>` first"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+pub fn remove(target: &str, yes: bool, output_json: bool) -> i32 {
+    let command = "auth remove";
+    let result = (|| -> AuthResult<RemoveResult> {
+        let name = store::profile_name_from_target(target)?;
+        removable_profile(&name)?;
+        confirm(
+            ConfirmAction::Remove,
+            yes,
+            output_json,
+            &format!("claude-cli auth remove: remove profile '{name}'?"),
+            &name,
+        )?;
+        let _lock = store::lock_store()?;
+        removable_profile(&name)?;
+        store::remove_profile(&name)?;
+        Ok(RemoveResult {
+            profile: name,
+            removed: true,
+        })
+    })();
+    finish(command, output_json, result, |result| {
+        format!("claude-cli: removed profile '{}'", result.profile)
+    })
+}
+
+/// Run the shared confirmation flow for `action` on profile `name`.
+fn confirm(
+    action: ConfirmAction,
+    yes: bool,
+    output_json: bool,
+    prompt: &str,
+    name: &str,
+) -> AuthResult<()> {
+    let verb = match action {
+        ConfirmAction::Overwrite => "overwrite",
+        ConfirmAction::Remove => "remove",
+    };
+    let answer = accounts::confirm(yes, output_json, prompt)
+        .map_err(|err| AuthError::runtime("confirmation-failed", err.to_string()))?;
+    match answer {
+        Confirmation::Confirmed => Ok(()),
+        Confirmation::Required => Err(AuthError {
+            code: action.required_error_code(),
+            message: format!("profile '{name}' exists; rerun with --yes to {verb} it"),
+            exit_code: action.required_exit_code(),
+            details: Some(json!({ "profile": name })),
+        }),
+        Confirmation::Declined => Err(AuthError {
+            code: "confirmation-declined",
+            message: format!("{verb} declined for profile '{name}'"),
+            exit_code: action.declined_exit_code(),
+            details: Some(json!({ "profile": name })),
+        }),
+    }
+}
+
 pub fn current(output_json: bool) -> i32 {
     let command = "auth current";
     let result = (|| -> AuthResult<CurrentResult> {
         let profiles = store::list_profiles()?;
         let Some(name) = store::read_current()? else {
             return Ok(CurrentResult {
+                matched: false,
                 profile: None,
                 account_uuid: None,
                 organization_uuid: None,
@@ -163,6 +310,7 @@ pub fn current(output_json: bool) -> i32 {
         let profile = store::read_profile(&name)?;
         let identity = profile.identity();
         Ok(CurrentResult {
+            matched: true,
             profile: Some(name),
             account_uuid: identity.as_ref().map(|id| id.account_uuid.clone()),
             organization_uuid: identity.map(|id| id.organization_uuid),
@@ -170,12 +318,18 @@ pub fn current(output_json: bool) -> i32 {
             profiles,
         })
     })();
-    finish(command, output_json, result, |result| {
+    let matched = result.as_ref().is_ok_and(|result| result.matched);
+    let code = finish(command, output_json, result, |result| {
         format!(
             "claude-cli: current profile {}",
             result.profile.as_deref().unwrap_or("(none)")
         )
-    })
+    });
+    if code == exit::SUCCESS && !matched {
+        accounts::EXIT_UNMATCHED
+    } else {
+        code
+    }
 }
 
 /// Refresh the named profiles, or with `due_only` every profile near expiry.

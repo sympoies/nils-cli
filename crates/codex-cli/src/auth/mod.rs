@@ -11,6 +11,7 @@ pub mod sync;
 pub mod use_secret;
 
 use anyhow::Result;
+use nils_common::provider_runtime::accounts;
 use std::path::Path;
 
 pub const ACCESS_ONLY_REFRESH_TOKEN_PLACEHOLDER: &str = "codex-remote-access-only-placeholder";
@@ -36,14 +37,11 @@ pub fn identity_key_from_auth_file(path: &Path) -> Result<Option<String>> {
 }
 
 pub fn is_invalid_secret_target(target: &str) -> bool {
-    target.contains('/') || target.contains('\\') || target.contains("..")
+    accounts::is_invalid_account_target(target)
 }
 
 pub fn normalize_secret_file_name(target: &str) -> String {
-    if target.ends_with(".json") {
-        return target.to_string();
-    }
-    format!("{target}.json")
+    accounts::account_file_name(target)
 }
 
 pub fn is_real_refresh_token(value: &str) -> bool {

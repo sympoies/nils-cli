@@ -749,3 +749,235 @@ fn decode_hex(hex: &str) -> Vec<u8> {
         .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).expect("hex"))
         .collect()
 }
+
+#[test]
+fn auth_use_resolves_json_suffix_full_email_and_local_part() {
+    for target in ["max.json", "beta@example.com", "BETA@example.com", "beta"] {
+        let fx = Fixture::new();
+        fx.write_active_login("", "alpha");
+        fx.write_profile("max", "access-max", "refresh-max", FUTURE_MS, "beta");
+        fx.write_profile("team", "access-team", "refresh-team", FUTURE_MS, "gamma");
+
+        let output = run(&["auth", "use", target, "--format", "json"], &fx.options());
+
+        assert_exit(&output, 0);
+        let result = &output.stdout_json()["result"];
+        assert_eq!(result["profile"], "max", "{target}");
+        assert_eq!(result["target"], target, "{target}");
+        assert_eq!(
+            std::fs::read_to_string(fx.secret_dir().join("current")).expect("current"),
+            "max\n",
+            "{target}"
+        );
+        let credentials = read_json(&fx.config_dir().join(".credentials.json"));
+        assert_eq!(credentials["claudeAiOauth"]["accessToken"], "access-max");
+    }
+}
+
+#[test]
+fn auth_use_reports_ambiguous_missing_and_invalid_targets() {
+    let fx = Fixture::new();
+    fx.write_active_login("", "alpha");
+    fx.write_profile("beta-1", "access-1", "refresh-1", FUTURE_MS, "beta");
+    fx.write_profile("beta-2", "access-2", "refresh-2", FUTURE_MS, "beta");
+
+    let output = run(&["auth", "use", "beta", "--format", "json"], &fx.options());
+    assert_exit(&output, 2);
+    let error = &output.stdout_json()["error"];
+    assert_eq!(error["code"], "ambiguous-profile");
+    assert_eq!(
+        error["details"],
+        json!({ "target": "beta", "candidates": ["beta-1", "beta-2"] })
+    );
+
+    let output = run(&["auth", "use", "beta"], &fx.options());
+    assert_exit(&output, 2);
+    assert!(
+        stderr(&output).contains("beta-1, beta-2"),
+        "{}",
+        stderr(&output)
+    );
+
+    let output = run(
+        &["auth", "use", "missing@example.com", "--format", "json"],
+        &fx.options(),
+    );
+    assert_exit(&output, 1);
+    assert_eq!(output.stdout_json()["error"]["code"], "profile-not-found");
+
+    for target in ["../escape", "bad name", "a/b"] {
+        let output = run(&["auth", "use", target, "--format", "json"], &fx.options());
+        assert_exit(&output, 64);
+        assert_eq!(
+            output.stdout_json()["error"]["code"],
+            "invalid-profile-name",
+            "{target}"
+        );
+    }
+    assert!(!fx.secret_dir().join("current").exists());
+}
+
+#[test]
+fn auth_save_requires_confirmation_to_overwrite_the_same_account() {
+    let fx = Fixture::new();
+    fx.write_profile("team", "access-0", "refresh-0", FUTURE_MS, "alpha");
+    fx.write_active_login("refresh-1", "alpha");
+
+    let output = run(&["auth", "save", "team", "--format", "json"], &fx.options());
+    assert_exit(&output, 1);
+    let error = &output.stdout_json()["error"];
+    assert_eq!(error["code"], "overwrite-confirmation-required");
+    assert_eq!(error["details"]["profile"], "team");
+
+    let output = run(&["auth", "save", "team"], &fx.options());
+    assert_exit(&output, 1);
+    assert!(stderr(&output).contains("--yes"), "{}", stderr(&output));
+
+    // Neither refusal touched the profile or the refresh-capable source login.
+    assert_eq!(
+        fx.profile("team")["claudeAiOauth"]["refreshToken"],
+        "refresh-0"
+    );
+    let active = read_json(&fx.config_dir().join(".credentials.json"));
+    assert_eq!(active["claudeAiOauth"]["refreshToken"], "refresh-1");
+
+    let output = run(
+        &["auth", "save", "-y", "team.json", "--format", "json"],
+        &fx.options(),
+    );
+    assert_exit(&output, 0);
+    assert_eq!(output.stdout_json()["result"]["replaced"], true);
+    assert_eq!(
+        fx.profile("team")["claudeAiOauth"]["refreshToken"],
+        "refresh-1"
+    );
+    let active = read_json(&fx.config_dir().join(".credentials.json"));
+    assert_eq!(active["claudeAiOauth"]["refreshToken"], "");
+}
+
+#[test]
+fn auth_save_yes_still_refuses_a_different_account() {
+    let fx = Fixture::new();
+    fx.write_profile("team", "access-0", "refresh-0", FUTURE_MS, "beta");
+    fx.write_active_login("refresh-1", "alpha");
+
+    let output = run(
+        &["auth", "save", "--yes", "team", "--format", "json"],
+        &fx.options(),
+    );
+
+    assert_exit(&output, 65);
+    assert_eq!(
+        output.stdout_json()["error"]["code"],
+        "profile-identity-mismatch"
+    );
+    assert_eq!(
+        fx.profile("team")["claudeAiOauth"]["refreshToken"],
+        "refresh-0"
+    );
+}
+
+#[test]
+fn auth_remove_deletes_only_the_named_profile() {
+    let fx = Fixture::new();
+    fx.write_profile("max", "access-max", "refresh-max", FUTURE_MS, "beta");
+    fx.write_profile("team", "access-team", "refresh-team", FUTURE_MS, "alpha");
+    std::fs::write(fx.secret_dir().join("current"), "team\n").expect("current");
+    std::fs::write(fx.secret_dir().join("max.refresh-quarantine"), "{}").expect("quarantine");
+
+    let output = run(
+        &["auth", "remove", "-y", "max.json", "--format", "json"],
+        &fx.options(),
+    );
+
+    assert_exit(&output, 0);
+    assert_eq!(
+        output.stdout_json()["result"],
+        json!({ "profile": "max", "removed": true })
+    );
+    assert!(!fx.secret_dir().join("max.json").exists());
+    assert!(fx.secret_dir().join("team.json").exists());
+    assert!(fx.secret_dir().join("max.refresh-quarantine").exists());
+    assert_eq!(
+        std::fs::read_to_string(fx.secret_dir().join("current")).expect("current"),
+        "team\n"
+    );
+
+    let output = run(&["auth", "remove", "--yes", "team"], &fx.options());
+    assert_exit(&output, 1);
+    assert!(
+        stderr(&output).contains("current default"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(fx.secret_dir().join("team.json").exists());
+}
+
+#[test]
+fn auth_remove_reports_each_refusal_with_its_exit_code() {
+    let fx = Fixture::new();
+    fx.write_profile("max", "access-max", "refresh-max", FUTURE_MS, "beta");
+    std::fs::write(fx.secret_dir().join("current"), "max\n").expect("current");
+
+    let output = run(
+        &["auth", "remove", "--yes", "max", "--format", "json"],
+        &fx.options(),
+    );
+    assert_exit(&output, 1);
+    assert_eq!(
+        output.stdout_json()["error"]["code"],
+        "profile-is-current-default"
+    );
+
+    std::fs::remove_file(fx.secret_dir().join("current")).expect("clear current");
+    let output = run(
+        &["auth", "remove", "max", "--format", "json"],
+        &fx.options(),
+    );
+    assert_exit(&output, 64);
+    assert_eq!(output.stdout_json()["error"]["code"], "usage-error");
+    let output = run(&["auth", "remove", "max"], &fx.options());
+    assert_exit(&output, 64);
+    assert!(stderr(&output).contains("--yes"), "{}", stderr(&output));
+    assert!(fx.secret_dir().join("max.json").exists());
+
+    let output = run(
+        &["auth", "remove", "--yes", "missing", "--format", "json"],
+        &fx.options(),
+    );
+    assert_exit(&output, 1);
+    assert_eq!(output.stdout_json()["error"]["code"], "profile-not-found");
+
+    let output = run(
+        &["auth", "remove", "--yes", "../max", "--format", "json"],
+        &fx.options(),
+    );
+    assert_exit(&output, 64);
+    assert_eq!(
+        output.stdout_json()["error"]["code"],
+        "invalid-profile-name"
+    );
+    assert!(fx.secret_dir().join("max.json").exists());
+}
+
+#[test]
+fn auth_current_exits_two_without_a_current_default() {
+    let fx = Fixture::new();
+    fx.write_profile("max", "access-max", "refresh-max", FUTURE_MS, "beta");
+
+    let output = run(&["auth", "current", "--format", "json"], &fx.options());
+    assert_exit(&output, 2);
+    let result = &output.stdout_json()["result"];
+    assert_eq!(result["matched"], false);
+    assert_eq!(result["profile"], Value::Null);
+    assert_eq!(result["profiles"], json!(["max"]));
+
+    let output = run(&["auth", "current"], &fx.options());
+    assert_exit(&output, 2);
+
+    std::fs::write(fx.secret_dir().join("current"), "max\n").expect("current");
+    let output = run(&["auth", "current", "--format", "json"], &fx.options());
+    assert_exit(&output, 0);
+    assert_eq!(output.stdout_json()["result"]["matched"], true);
+    assert_eq!(output.stdout_json()["result"]["profile"], "max");
+}

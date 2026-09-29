@@ -1,12 +1,12 @@
 use anyhow::Result;
 use serde_json::json;
-use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 use crate::auth;
 use crate::auth::output::{self, AuthSaveResult};
 use crate::paths;
 use nils_common::fs;
+use nils_common::provider_runtime::accounts::{self, ConfirmAction, Confirmation};
 
 pub fn run(target: &str, yes: bool) -> Result<i32> {
     run_with_json(target, yes, false)
@@ -112,40 +112,35 @@ pub fn run_with_json(target: &str, yes: bool, output_json: bool) -> Result<i32> 
     let target_file = secret_dir.join(&secret_name);
     let mut overwritten = false;
     if target_file.exists() {
-        if yes {
-            overwritten = true;
-        } else if output_json {
-            output::emit_error(
-                "auth save",
-                "overwrite-confirmation-required",
-                format!(
-                    "codex-save: {} exists; rerun with --yes to overwrite",
-                    target_file.display()
-                ),
-                Some(json!({
-                    "target_file": target_file.display().to_string(),
-                    "overwritten": false,
-                })),
-            )?;
-            return Ok(1);
-        } else if !interactive_io_available() {
-            eprintln!(
-                "codex-save: {} exists; rerun with --yes to overwrite",
-                target_file.display()
-            );
-            return Ok(1);
-        } else {
-            match confirm_overwrite(&target_file)? {
-                true => {
-                    overwritten = true;
-                }
-                false => {
-                    eprintln!(
-                        "codex-save: overwrite declined for {}",
+        let action = ConfirmAction::Overwrite;
+        match accounts::confirm(
+            yes,
+            output_json,
+            "codex-save: target file exists. overwrite?",
+        )? {
+            Confirmation::Confirmed => {
+                overwritten = true;
+            }
+            Confirmation::Required => {
+                return output::account_output("auth save", output_json).fail(
+                    action.required_error_code(),
+                    format!(
+                        "codex-save: {} exists; rerun with --yes to overwrite",
                         target_file.display()
-                    );
-                    return Ok(1);
-                }
+                    ),
+                    Some(json!({
+                        "target_file": target_file.display().to_string(),
+                        "overwritten": false,
+                    })),
+                    action.required_exit_code(),
+                );
+            }
+            Confirmation::Declined => {
+                eprintln!(
+                    "codex-save: overwrite declined for {}",
+                    target_file.display()
+                );
+                return Ok(action.declined_exit_code());
             }
         }
     }
@@ -231,24 +226,9 @@ fn usage_error(output_json: bool, message: &str) -> Result<i32> {
     Ok(64)
 }
 
-fn interactive_io_available() -> bool {
-    io::stdin().is_terminal() && io::stdout().is_terminal()
-}
-
 fn print_secret_dir_setup_hint(prefix: &str) {
     eprintln!("{prefix}: hint: export CODEX_SECRET_DIR=\"$HOME/.config/codex_secrets\"");
     eprintln!("{prefix}: hint: mkdir -p \"$CODEX_SECRET_DIR\" && chmod 700 \"$CODEX_SECRET_DIR\"");
-}
-
-fn confirm_overwrite(target: &Path) -> Result<bool> {
-    let _ = target;
-    eprint!("codex-save: target file exists. overwrite? [y/N]: ");
-    io::stderr().flush()?;
-
-    let mut line = String::new();
-    io::stdin().read_line(&mut line)?;
-    let normalized = line.trim().to_ascii_lowercase();
-    Ok(matches!(normalized.as_str(), "y" | "yes"))
 }
 
 fn write_target_timestamp(target_file: &Path, auth_file: &Path) -> Result<()> {

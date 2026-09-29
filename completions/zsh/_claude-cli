@@ -193,10 +193,12 @@ _arguments "${_arguments_options[@]}" : \
 (save)
 _arguments "${_arguments_options[@]}" : \
 '--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'-y[Overwrite an existing profile of the same account without a prompt]' \
+'--yes[Overwrite an existing profile of the same account without a prompt]' \
 '(--format)--json[Hidden alias for \`--format json\`]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':name -- Profile name (\[A-Za-z0-9._-\]):_default' \
+':name -- Profile name (\[A-Za-z0-9._-\]) or name.json:_default' \
 && ret=0
 ;;
 (use)
@@ -205,7 +207,18 @@ _arguments "${_arguments_options[@]}" : \
 '(--format)--json[Hidden alias for \`--format json\`]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':name -- Profile name:_default' \
+':name -- Profile name, name.json, email address, or email local part:_default' \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'-y[Remove the profile without a prompt]' \
+'--yes[Remove the profile without a prompt]' \
+'(--format)--json[Hidden alias for \`--format json\`]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':name -- Profile name or name.json:_default' \
 && ret=0
 ;;
 (current)
@@ -336,6 +349,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (use)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remove)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -617,6 +634,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (current)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -838,6 +859,7 @@ _claude-cli__subcmd__auth_commands() {
 'logout:Sign out through the upstream Claude Code authentication flow' \
 'save:Save the active refresh-capable login as a named authority profile' \
 'use:Make a profile the current default and project it as the active login' \
+'remove:Remove a stored profile that is not the current default' \
 'current:Show the current default profile without exposing secrets' \
 'refresh:Refresh the named profiles through Claude Code'\''s refresh-token login' \
 'auto-refresh:Refresh every profile whose access token is close to expiry' \
@@ -864,6 +886,7 @@ _claude-cli__subcmd__auth__subcmd__help_commands() {
 'logout:Sign out through the upstream Claude Code authentication flow' \
 'save:Save the active refresh-capable login as a named authority profile' \
 'use:Make a profile the current default and project it as the active login' \
+'remove:Remove a stored profile that is not the current default' \
 'current:Show the current default profile without exposing secrets' \
 'refresh:Refresh the named profiles through Claude Code'\''s refresh-token login' \
 'auto-refresh:Refresh every profile whose access token is close to expiry' \
@@ -919,6 +942,11 @@ _claude-cli__subcmd__auth__subcmd__help__subcmd__remote__subcmd__export_commands
 _claude-cli__subcmd__auth__subcmd__help__subcmd__remote__subcmd__pull_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli auth help remote pull commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__remove_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth help remove commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__save_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__help__subcmd__save_commands() {
@@ -992,6 +1020,11 @@ _claude-cli__subcmd__auth__subcmd__remote__subcmd__help__subcmd__pull_commands()
 _claude-cli__subcmd__auth__subcmd__remote__subcmd__pull_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli auth remote pull commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__remove_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth remove commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__auth__subcmd__save_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__save_commands() {
@@ -1119,6 +1152,7 @@ _claude-cli__subcmd__help__subcmd__auth_commands() {
 'logout:Sign out through the upstream Claude Code authentication flow' \
 'save:Save the active refresh-capable login as a named authority profile' \
 'use:Make a profile the current default and project it as the active login' \
+'remove:Remove a stored profile that is not the current default' \
 'current:Show the current default profile without exposing secrets' \
 'refresh:Refresh the named profiles through Claude Code'\''s refresh-token login' \
 'auto-refresh:Refresh every profile whose access token is close to expiry' \
@@ -1168,6 +1202,11 @@ _claude-cli__subcmd__help__subcmd__auth__subcmd__remote__subcmd__export_commands
 _claude-cli__subcmd__help__subcmd__auth__subcmd__remote__subcmd__pull_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli help auth remote pull commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__remove_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli help auth remove commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__save_commands] )) ||
 _claude-cli__subcmd__help__subcmd__auth__subcmd__save_commands() {

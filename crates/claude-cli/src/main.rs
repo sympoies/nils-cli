@@ -130,11 +130,14 @@ fn handle_auth(args: &cli::AuthArgs) -> i32 {
         }),
         Some(cli::AuthCommand::Status { output }) => claude_cli::auth::status(output.is_json()),
         Some(cli::AuthCommand::Logout) => claude_cli::auth::logout(),
-        Some(cli::AuthCommand::Save { name, output }) => {
-            claude_cli::auth::profile::save(name, output.is_json())
+        Some(cli::AuthCommand::Save { yes, name, output }) => {
+            claude_cli::auth::profile::save(name, *yes, output.is_json())
         }
         Some(cli::AuthCommand::Use { name, output }) => {
             claude_cli::auth::profile::use_profile(name, output.is_json())
+        }
+        Some(cli::AuthCommand::Remove { yes, name, output }) => {
+            claude_cli::auth::profile::remove(name, *yes, output.is_json())
         }
         Some(cli::AuthCommand::Current { output }) => {
             claude_cli::auth::profile::current(output.is_json())

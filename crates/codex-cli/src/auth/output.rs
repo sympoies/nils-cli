@@ -3,6 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::diag_output;
+use nils_common::provider_runtime::accounts::AccountOutput;
 
 pub const AUTH_SCHEMA_VERSION: &str = "codex-cli.auth.v1";
 
@@ -147,4 +148,13 @@ pub fn emit_error(
     details: Option<Value>,
 ) -> Result<()> {
     diag_output::emit_error(AUTH_SCHEMA_VERSION, command, code, message, details)
+}
+
+/// The shared account-command reporter for `command`.
+pub fn account_output(command: &'static str, output_json: bool) -> AccountOutput<'static> {
+    AccountOutput {
+        schema_version: AUTH_SCHEMA_VERSION,
+        command,
+        output_json,
+    }
 }

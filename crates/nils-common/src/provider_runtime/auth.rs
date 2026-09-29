@@ -2,6 +2,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use super::accounts::{self, AccountResolution, AccountStore};
 use super::error::CoreError;
 use super::json;
 use super::jwt;
@@ -46,43 +47,43 @@ pub fn identity_key_from_auth_file(path: &Path) -> Result<Option<String>, CoreEr
 }
 
 pub fn resolve_secret_file_by_email(secret_dir: &Path, target: &str) -> SecretFileResolution {
-    let query = target.to_lowercase();
-    let want_full = target.contains('@');
+    accounts::resolve_account_by_email(&JwtSecretDir::new(secret_dir), target)
+}
 
-    let mut matches = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(secret_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
-            }
+/// A secret directory of `<name>.json` auth files whose email comes from the
+/// stored JWT.
+#[derive(Debug, Clone, Copy)]
+pub struct JwtSecretDir<'a> {
+    dir: &'a Path,
+}
 
-            let email = match email_from_auth_file(&path) {
-                Ok(Some(value)) => value,
-                _ => continue,
-            };
-            let email_lower = email.to_lowercase();
-            if want_full {
-                if email_lower == query {
-                    matches.push(file_name(&path));
-                }
-            } else if let Some(local_part) = email_lower.split('@').next()
-                && local_part == query
-            {
-                matches.push(file_name(&path));
-            }
-        }
+impl<'a> JwtSecretDir<'a> {
+    pub fn new(dir: &'a Path) -> Self {
+        Self { dir }
     }
-    matches.sort();
+}
 
-    if matches.len() == 1 {
-        SecretFileResolution::Exact(matches.remove(0))
-    } else if matches.is_empty() {
-        SecretFileResolution::NotFound
-    } else {
-        SecretFileResolution::Ambiguous {
-            candidates: matches,
-        }
+impl AccountStore for JwtSecretDir<'_> {
+    fn account_files(&self) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(self.dir) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
+            .map(|path| file_name(&path))
+            .collect()
+    }
+
+    fn has_account(&self, file_name: &str) -> bool {
+        self.dir.join(file_name).is_file()
+    }
+
+    fn account_email(&self, file_name: &str) -> Option<String> {
+        email_from_auth_file(&self.dir.join(file_name))
+            .ok()
+            .flatten()
     }
 }
 
@@ -124,12 +125,7 @@ fn file_name(path: &Path) -> String {
         .to_string()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SecretFileResolution {
-    Exact(String),
-    Ambiguous { candidates: Vec<String> },
-    NotFound,
-}
+pub type SecretFileResolution = AccountResolution;
 
 #[cfg(test)]
 mod tests {
