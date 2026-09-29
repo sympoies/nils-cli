@@ -31946,54 +31946,17 @@ fn main_agent_bootstrapped_worker_claim_covers_its_child_issue_and_own_pull_requ
         "the private pull-request head grant never enters a public projection"
     );
 
-    seed_activity_state(
-        &state_dir,
-        "worker-one",
-        "worker-incarnation-one",
-        "working",
-        json!({
-            "provider_turn_id": "turn-worker-delivery",
-            "started_at": "2030-01-01T00:00:01Z"
-        }),
-        serde_json::Value::Null,
-    );
-    let _runtime =
-        seed_live_runtime_identity(&state_dir, "worker-one", "worker-incarnation-one", 93);
-    let execution_token = tmp.path().join("worker-delivery-token");
-    fs::write(&execution_token, "execution-token-worker-delivery").expect("execution token");
-    fs::set_permissions(&execution_token, fs::Permissions::from_mode(0o600))
-        .expect("execution token mode");
+    let (_runtime, execution_token) = prepare_delivery_worker_admission(tmp.path(), &state_dir);
     let admit = |name: &str, targets: serde_json::Value| {
-        let path = tmp.path().join(format!("{name}-targets.json"));
-        let mut document = targets;
-        document["schema_version"] = json!("agent-session.operation-targets.v1");
-        fs::write(&path, serde_json::to_vec(&document).expect("targets")).expect("targets file");
-        run(
+        admit_delivery_worker_targets(
+            tmp.path(),
+            &state_dir,
             &worker_checkout,
-            &[
-                "--state-dir",
-                &state,
-                "work-context",
-                "admit",
-                "--session",
-                "worker-one",
-                "--claim",
-                &claim_id,
-                "--if-revision",
-                "1",
-                "--targets-file",
-                path.to_str().expect("targets"),
-                "--operation",
-                "provider",
-                "--execution-token-file",
-                execution_token.to_str().expect("execution token"),
-                "--capability-file",
-                &worker_capability,
-                "--idempotency-key",
-                &format!("worker-delivery-admit-{name}"),
-                "--format",
-                "json",
-            ],
+            &worker_capability,
+            &execution_token,
+            &claim_id,
+            name,
+            targets,
         )
     };
     for (name, targets) in [
@@ -32038,15 +32001,159 @@ fn main_agent_bootstrapped_worker_claim_covers_its_child_issue_and_own_pull_requ
     );
 }
 
+/// Seed the live turn and runtime evidence a delivery worker admission needs.
+/// The returned runtime must outlive every admission.
+fn prepare_delivery_worker_admission(tmp: &Path, state_dir: &Path) -> (TestProcessGroup, PathBuf) {
+    seed_activity_state(
+        state_dir,
+        "worker-one",
+        "worker-incarnation-one",
+        "working",
+        json!({
+            "provider_turn_id": "turn-worker-delivery",
+            "started_at": "2030-01-01T00:00:01Z"
+        }),
+        serde_json::Value::Null,
+    );
+    let runtime = seed_live_runtime_identity(state_dir, "worker-one", "worker-incarnation-one", 93);
+    let execution_token = tmp.join("worker-delivery-token");
+    fs::write(&execution_token, "execution-token-worker-delivery").expect("execution token");
+    fs::set_permissions(&execution_token, fs::Permissions::from_mode(0o600))
+        .expect("execution token mode");
+    (runtime, execution_token)
+}
+
+/// Admit `targets` for the bootstrapped delivery worker's claim at revision 1.
+#[allow(clippy::too_many_arguments)]
+fn admit_delivery_worker_targets(
+    tmp: &Path,
+    state_dir: &Path,
+    worker_checkout: &Path,
+    worker_capability: &str,
+    execution_token: &Path,
+    claim_id: &str,
+    name: &str,
+    targets: serde_json::Value,
+) -> CmdOutput {
+    let state = state_dir.to_string_lossy().into_owned();
+    let path = tmp.join(format!("{name}-targets.json"));
+    let mut document = targets;
+    document["schema_version"] = json!("agent-session.operation-targets.v1");
+    fs::write(&path, serde_json::to_vec(&document).expect("targets")).expect("targets file");
+    run(
+        worker_checkout,
+        &[
+            "--state-dir",
+            &state,
+            "work-context",
+            "admit",
+            "--session",
+            "worker-one",
+            "--claim",
+            claim_id,
+            "--if-revision",
+            "1",
+            "--targets-file",
+            path.to_str().expect("targets"),
+            "--operation",
+            "provider",
+            "--execution-token-file",
+            execution_token.to_str().expect("execution token"),
+            "--capability-file",
+            worker_capability,
+            "--idempotency-key",
+            &format!("worker-delivery-admit-{name}"),
+            "--format",
+            "json",
+        ],
+    )
+}
+
+#[test]
+fn own_pull_request_head_grant_survives_a_registry_rewrite_by_a_pre_grant_writer() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (state_dir, worker_checkout, worker_capability, claim) =
+        bootstrap_delivery_worker(tmp.path(), Some("fix/worker-delivery"));
+    let claim_id = claim["claim_id"].as_str().expect("claim id").to_string();
+    // A pre-grant agent-session, such as a long-lived broker heartbeat sidecar
+    // still running a release from before the grant existed, round-trips the
+    // shared registry through a claim record without the field and drops it.
+    rewrite_registry(&state_dir, |registry| {
+        for claim in registry["claims"].as_array_mut().expect("claims") {
+            claim
+                .as_object_mut()
+                .expect("claim")
+                .remove("pull_request_head");
+        }
+    });
+    let (_runtime, execution_token) = prepare_delivery_worker_admission(tmp.path(), &state_dir);
+    let admit = |name: &str, targets: serde_json::Value| {
+        admit_delivery_worker_targets(
+            tmp.path(),
+            &state_dir,
+            &worker_checkout,
+            &worker_capability,
+            &execution_token,
+            &claim_id,
+            name,
+            targets,
+        )
+    };
+    let own_head = json!({"pull_requests": [{"kind": "pull-request-head", "repository": "example/repository", "head": "fix/worker-delivery"}]});
+    let refused = admit(
+        "rewritten-other-branch",
+        json!({"pull_requests": [{"kind": "pull-request-head", "repository": "example/repository", "head": "fix/other-lane"}]}),
+    );
+    assert_ne!(refused.code, 0, "{}", refused.stdout_text());
+    assert_eq!(
+        refused.stdout_json()["error"]["code"],
+        "uncovered-mutation-scope"
+    );
+    // The private grant record binds the exact claim it was minted with.
+    let grant_path =
+        state_dir.join("sessions/worker-one/coordination/pull-request-head-grant.json");
+    let minted = fs::read(&grant_path).expect("private grant record");
+    let mut rebound: serde_json::Value = serde_json::from_slice(&minted).expect("grant json");
+    rebound["claim_id"] = json!("another-claim");
+    write_private_json(&grant_path, &rebound);
+    let rebound_refused = admit("rebound-own-pull-request", own_head.clone());
+    assert_eq!(
+        rebound_refused.stdout_json()["error"]["code"],
+        "uncovered-mutation-scope",
+        "{}",
+        rebound_refused.stdout_text()
+    );
+    fs::write(&grant_path, &minted).expect("restore grant record");
+    fs::set_permissions(&grant_path, fs::Permissions::from_mode(0o600)).expect("grant mode");
+    let admitted = admit("rewritten-own-pull-request", own_head);
+    assert_eq!(
+        admitted.code,
+        0,
+        "the bootstrap grant must survive a registry writer that predates it: stdout={} stderr={}",
+        admitted.stdout_text(),
+        admitted.stderr_text()
+    );
+    assert_eq!(
+        data(&admitted)["pull_request_targets"],
+        json!([{"kind": "pull-request-head", "repository": "example/repository", "head": "fix/worker-delivery"}])
+    );
+}
+
 #[test]
 fn main_agent_worker_bootstrap_grants_no_pull_request_head_without_a_matching_declared_branch() {
     for declared in [None, Some("fix/other-lane")] {
         let tmp = tempfile::TempDir::new().expect("tempdir");
-        let (_, _, _, claim) = bootstrap_delivery_worker(tmp.path(), declared);
+        let (state_dir, _, _, claim) = bootstrap_delivery_worker(tmp.path(), declared);
         assert_eq!(claim["checkout_shell_grant"], true, "{declared:?}");
         assert!(
             claim.get("pull_request_head").is_none(),
             "a checkout branch the packet did not declare mints no pull-request head grant: {declared:?}"
+        );
+        assert!(
+            !state_dir
+                .join("sessions/worker-one/coordination/pull-request-head-grant.json")
+                .exists(),
+            "no private grant record without a grant: {declared:?}"
         );
     }
 }
