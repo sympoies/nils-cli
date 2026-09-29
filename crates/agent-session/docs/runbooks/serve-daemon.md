@@ -427,7 +427,10 @@ by environment variable name, as in `retitle.api_key_env`. A key whose final
 word marks it as a credential (for example `token`, `api_key`, `x-api-key`,
 `client_secret`, or `password`) is refused anywhere in the document, including
 inside `retitle.extra_body`. A key such as `stop_token_ids` only mentions a
-credential word and is accepted, and so is a `*_env` or `*_file` reference.
+credential word and is accepted. A schema field such as `api_key_env` is a
+reference and is accepted, but inside `extra_body` every key is sent to the
+provider verbatim, so a `*_env` or `*_file` suffix does not excuse a credential
+there.
 Supply an `extra_body` parameter that must end in a credential word through
 `AGENT_SESSION_RETITLE_CONFIG` instead. Keep the serve bearer on
 `--token-stdin` as described in [Start safely](#start-safely).

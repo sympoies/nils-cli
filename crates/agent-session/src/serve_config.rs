@@ -391,7 +391,7 @@ fn resolve(
     document: &Value,
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<ResolvedServeConfig, CliError> {
-    reject_inline_secrets(document, "")?;
+    reject_inline_secrets(document, "", false)?;
     let root = document.as_object().ok_or_else(|| {
         keyed_error(
             "serve-config-unsupported-version",
@@ -492,16 +492,24 @@ fn resolve(
     })
 }
 
-fn is_secret_key(key: &str) -> bool {
+/// Whether `key` names a credential. In a schema-owned table a `*_env` or
+/// `*_file` key is a reference and ends in a different word, so it passes. In a
+/// free-form payload (`retitle.extra_body`) the same key is sent to the
+/// provider verbatim, so the reference suffix is ignored there.
+fn is_secret_key(key: &str, payload: bool) -> bool {
     let lower = key.to_ascii_lowercase();
-    let words: Vec<&str> = lower
+    let mut words: Vec<&str> = lower
         .split(['_', '-', '.'])
         .filter(|word| !word.is_empty())
         .collect();
+    if payload {
+        while matches!(words.last(), Some(&"env") | Some(&"file")) {
+            words.pop();
+        }
+    }
     // Only the final word names what a key holds: `client_secret` and
     // `x-api-key` are credentials, while `stop_token_ids` is a provider
-    // parameter that merely mentions tokens. `*_env` and `*_file` references
-    // end in a different word and so pass.
+    // parameter that merely mentions tokens.
     match words.as_slice() {
         [.., last] if SECRET_WORDS.contains(last) => true,
         [.., first, last] => SECRET_PAIRS.contains(&(*first, *last)),
@@ -509,12 +517,16 @@ fn is_secret_key(key: &str) -> bool {
     }
 }
 
-fn reject_inline_secrets(value: &Value, prefix: &str) -> Result<(), CliError> {
+/// Free-form tables whose keys are forwarded to a provider rather than
+/// interpreted by serve.
+const PAYLOAD_KEYS: &[&str] = &["extra_body"];
+
+fn reject_inline_secrets(value: &Value, prefix: &str, payload: bool) -> Result<(), CliError> {
     match value {
         Value::Object(object) => {
             for (key, child) in object {
                 let path = join_key(prefix, key);
-                if is_secret_key(key) {
+                if is_secret_key(key, payload) {
                     return Err(keyed_error(
                         "serve-config-inline-secret",
                         &path,
@@ -522,12 +534,13 @@ fn reject_inline_secrets(value: &Value, prefix: &str) -> Result<(), CliError> {
                         "secrets must not be written inline; name an environment variable with a *_env key",
                     ));
                 }
-                reject_inline_secrets(child, &path)?;
+                let child_payload = payload || PAYLOAD_KEYS.contains(&key.as_str());
+                reject_inline_secrets(child, &path, child_payload)?;
             }
         }
         Value::Array(items) => {
             for (index, child) in items.iter().enumerate() {
-                reject_inline_secrets(child, &format!("{prefix}[{index}]"))?;
+                reject_inline_secrets(child, &format!("{prefix}[{index}]"), payload)?;
             }
         }
         _ => {}
@@ -993,7 +1006,8 @@ mod tests {
             "apikey",
             "Authorization",
         ] {
-            assert!(is_secret_key(key), "{key}");
+            assert!(is_secret_key(key, false), "{key}");
+            assert!(is_secret_key(key, true), "{key}");
         }
         for key in [
             "api_key_env",
@@ -1003,7 +1017,15 @@ mod tests {
             "codex_bin",
             "keyring",
         ] {
-            assert!(!is_secret_key(key), "{key}");
+            assert!(!is_secret_key(key, false), "{key}");
+        }
+        // Inside a forwarded payload a reference suffix is just part of the
+        // key the provider receives, so it does not excuse a credential.
+        for key in ["api_key_env", "token_file", "client_secret_env"] {
+            assert!(is_secret_key(key, true), "{key}");
+        }
+        for key in ["stop_token_ids", "max_output_tokens", "profile"] {
+            assert!(!is_secret_key(key, true), "{key}");
         }
     }
 
