@@ -12,7 +12,8 @@ or integrating a specific subsystem.
   operator lifecycle, input packets, retry fences, interactive worker
   acceptance, relationship transfer, recovery, and cleanup.
 - [Serve daemon operations](runbooks/serve-daemon.md): safe startup,
-  authentication boundaries, HTTP session creation, and restart survival.
+  authentication boundaries, HTTP session creation, restart survival, and the
+  versioned `serve --config` file.
 
 ## Stable contracts
 

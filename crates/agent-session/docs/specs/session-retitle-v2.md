@@ -149,8 +149,11 @@ values are removed before any provider request is constructed.
 
 ## Provider configuration
 
-Set one JSON object in `AGENT_SESSION_RETITLE_CONFIG`. Changes take effect when
-the daemon restarts. Common bounds are `timeout_ms` 1000–120000,
+Set one JSON object in `AGENT_SESSION_RETITLE_CONFIG`, or the same object as the
+`retitle` table of a
+[`serve --config` file](../runbooks/serve-daemon.md#configuration-file); a
+non-empty environment value takes precedence. Changes take effect when the
+daemon restarts. Common bounds are `timeout_ms` 1000–120000,
 `max_output_tokens` 1–4096, `max_concurrency` 1–8, `queue_size` 0–64, and
 `context.max_chars` 1000–65536, `per_message_chars` 128–8192,
 `recent_turns` 1–32. One `timeout_ms` deadline is shared by semaphore queue wait,

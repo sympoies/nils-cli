@@ -1796,6 +1796,15 @@ fn ensure_schema(schema: &str) -> Result<(), CliError> {
     }
 }
 
+/// Bounds shared by the broker environment variable and `serve --config`.
+pub(crate) fn valid_broker_argv(argv: &[String]) -> bool {
+    !argv.is_empty()
+        && argv.len() <= MAX_BROKER_ARGV
+        && argv
+            .iter()
+            .all(|arg| !arg.is_empty() && arg.len() <= MAX_BROKER_ARG_BYTES && !arg.contains('\0'))
+}
+
 fn broker_argv() -> Result<Option<Vec<String>>, CliError> {
     let Some(raw) = env::var(BROKER_ENV)
         .ok()
@@ -1809,12 +1818,7 @@ fn broker_argv() -> Result<Option<Vec<String>>, CliError> {
             "Codex account broker configuration must be a JSON argv array",
         )
     })?;
-    if argv.is_empty()
-        || argv.len() > MAX_BROKER_ARGV
-        || argv
-            .iter()
-            .any(|arg| arg.is_empty() || arg.len() > MAX_BROKER_ARG_BYTES || arg.contains('\0'))
-    {
+    if !valid_broker_argv(&argv) {
         return Err(broker_error(
             "codex-account-broker-invalid-config",
             "Codex account broker configuration is invalid",
