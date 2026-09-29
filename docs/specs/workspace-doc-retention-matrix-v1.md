@@ -55,8 +55,7 @@ find crates -type f -name '*.md' \
   -not -path '*/tests/*' \
   -not -path '*/src/*' \
   -not -path '*/assets/*' \
-  -not -path 'crates/*/README.md' \
-  -not -path 'crates/plan-tooling/plan-template.md'
+  -not -path 'crates/*/README.md'
 ```
 
 Top-level `crates/<crate>/README.md` files and `crates/<crate>/docs/README.md` index files are
