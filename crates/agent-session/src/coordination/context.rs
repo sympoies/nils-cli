@@ -184,7 +184,11 @@ impl WorkContextInput {
         self.summary = bounded_text("summary", self.summary, 240)?;
         canonicalize_unique(&mut self.repositories, 8, canonical_repository)?;
         canonicalize_unique(&mut self.worktrees, 8, canonical_worktree)?;
-        canonicalize_unique(&mut self.plan_refs, 16, canonical_plan_ref)?;
+        if !self.plan_refs.is_empty() {
+            return Err(invalid_context(
+                "plan references are retired for new work contexts",
+            ));
+        }
         if self.provider_refs.len() > 16 || self.scopes.len() > 32 {
             return Err(invalid_context("work context exceeds collection limits"));
         }
@@ -271,10 +275,6 @@ pub fn evaluate(
             reasons.push(reason("same-provider-ref", peer, None));
             peer_conflict = true;
         }
-        if intersects(&candidate.plan_refs, &peer.plan_refs) {
-            reasons.push(reason("same-plan-ref", peer, None));
-            peer_conflict = true;
-        }
         for repository in candidate
             .repositories
             .iter()
@@ -317,7 +317,7 @@ pub fn evaluate(
     let has_conflict = reasons.iter().any(|reason| {
         matches!(
             reason.code.as_str(),
-            "same-worktree" | "same-provider-ref" | "same-plan-ref" | "overlapping-scope"
+            "same-worktree" | "same-provider-ref" | "overlapping-scope"
         )
     });
     let classification = if has_conflict {
@@ -346,11 +346,47 @@ mod review_tests {
     use serde_json::json;
 
     #[test]
+    fn historical_plan_refs_do_not_create_a_conflict() {
+        let candidate: WorkContextInput = serde_json::from_value(json!({
+            "schema_version": WORK_CONTEXT_INPUT_VERSION,
+            "intent": "implementation",
+            "tier": "L2",
+            "repositories": ["example/one"],
+            "plan_refs": ["historical/plan.md"],
+            "summary": "historical candidate"
+        }))
+        .expect("historical candidate");
+        let peer: WorkContextRecord = serde_json::from_value(json!({
+            "schema_version": WORK_CONTEXT_VERSION,
+            "session_id": "peer",
+            "session_incarnation": "peer-incarnation",
+            "claim_id": "peer-claim",
+            "revision": 1,
+            "state": "active",
+            "intent": "implementation",
+            "tier": "L2",
+            "repositories": ["example/two"],
+            "worktrees": [],
+            "provider_refs": [],
+            "plan_refs": ["historical/plan.md"],
+            "scopes": [],
+            "summary": "historical peer",
+            "updated_at": "2030-01-01T00:00:00Z",
+            "expires_at": "2030-01-01T01:00:00Z",
+            "expires_at_epoch": 1
+        }))
+        .expect("historical peer");
+        let evaluation = evaluate(None, &candidate, &[peer], true, false);
+        assert_eq!(evaluation.classification, ConflictClassification::Clear);
+        assert!(evaluation.reasons.is_empty());
+    }
+
+    #[test]
     fn coordination_review_unsupported_peer_schema_makes_the_universe_incomplete() {
         let candidate: WorkContextInput = serde_json::from_value(json!({
             "schema_version": "agent-session.work-context-input.v1",
             "intent": "implementation",
-            "tier": "L2",
+            "tier": "program",
             "repositories": ["example/repository"],
             "worktrees": ["hmac-sha256:1:candidate"],
             "provider_refs": [],
@@ -366,7 +402,7 @@ mod review_tests {
             "revision": 1,
             "state": "active",
             "intent": "implementation",
-            "tier": "L2",
+            "tier": "program",
             "repositories": ["other/repository"],
             "worktrees": ["hmac-sha256:999:unknown"],
             "provider_refs": [],
@@ -757,10 +793,6 @@ pub fn fingerprint_epoch(value: &str) -> Option<u64> {
     (digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(epoch)
 }
 
-fn canonical_plan_ref(value: String) -> Result<String, CliError> {
-    canonical_relative_path(&value, false)
-}
-
 fn canonical_relative_path(value: &str, _require_trailing_slash: bool) -> Result<String, CliError> {
     let value = value.trim().replace('\\', "/");
     if value.is_empty()
@@ -818,17 +850,17 @@ fn reject_duplicates<T: Ord + Clone>(values: &[T], kind: &str) -> Result<(), Cli
     Ok(())
 }
 
-pub(crate) const WORK_MODE_EXPECTATION: &str = "tier must be direct, issue, program, program/plan, or program/dispatch (numbered L0-L3 codes accepted)";
+pub(crate) const WORK_MODE_EXPECTATION: &str =
+    "tier must be direct, issue, program, or program/dispatch";
 
-/// Resolve a `tier` value to its named work mode. The numbered `L0`-`L3` codes
-/// remain accepted input and normalize to the mode that replaced them.
+/// Resolve a new `tier` input to a retained work mode. Persisted historical
+/// claims are read as stored and are never passed through this input parser.
 pub fn canonical_work_mode(value: &str) -> Option<&'static str> {
     match value {
-        "direct" | "L0" => Some("direct"),
-        "issue" | "L1" => Some("issue"),
+        "direct" => Some("direct"),
+        "issue" => Some("issue"),
         "program" => Some("program"),
-        "program/plan" | "L2" => Some("program/plan"),
-        "program/dispatch" | "L3" => Some("program/dispatch"),
+        "program/dispatch" => Some("program/dispatch"),
         _ => None,
     }
 }
@@ -929,7 +961,7 @@ mod tests {
         let mut input = WorkContextInput {
             schema_version: WORK_CONTEXT_INPUT_VERSION.to_string(),
             intent: "implementation".to_string(),
-            tier: "L2".to_string(),
+            tier: "program".to_string(),
             repositories: vec!["example/repo".to_string()],
             worktrees: Vec::new(),
             provider_refs: Vec::new(),
@@ -958,13 +990,7 @@ mod tests {
 
     #[test]
     fn named_work_modes_are_accepted_unchanged() {
-        for mode in [
-            "direct",
-            "issue",
-            "program",
-            "program/plan",
-            "program/dispatch",
-        ] {
+        for mode in ["direct", "issue", "program", "program/dispatch"] {
             let canonical = input_with_tier(mode)
                 .validate_and_canonicalize()
                 .expect("named mode");
@@ -973,18 +999,17 @@ mod tests {
     }
 
     #[test]
-    fn numbered_tier_codes_normalize_to_named_work_modes() {
-        for (numbered, mode) in [
-            ("L0", "direct"),
-            ("L1", "issue"),
-            ("L2", "program/plan"),
-            ("L3", "program/dispatch"),
-        ] {
-            let canonical = input_with_tier(numbered)
-                .validate_and_canonicalize()
-                .expect("numbered code");
-            assert_eq!(canonical.tier, mode);
+    fn retired_work_modes_are_rejected_for_new_input() {
+        for tier in ["L0", "L1", "L2", "L3", "program/plan"] {
+            assert!(input_with_tier(tier).validate_and_canonicalize().is_err());
         }
+    }
+
+    #[test]
+    fn new_work_context_rejects_plan_references() {
+        let mut input = input_with_tier("issue");
+        input.plan_refs.push("historical/plan.md".to_string());
+        assert!(input.validate_and_canonicalize().is_err());
     }
 
     #[test]

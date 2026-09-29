@@ -105,7 +105,7 @@ Presence derives only:
 - a private-keyed fingerprint of the canonical checkout root;
 - the canonical `owner/repository` origin when available;
 - the public managed session selector and mode; and
-- optional explicitly declared provider, plan, and path context.
+- optional explicitly declared provider and path context.
 
 Raw checkout paths, capabilities, host/user identity, prompts, transcripts,
 logs, terminal bytes, and mailbox bodies are never projected.
@@ -131,7 +131,7 @@ Public claims use `agent-session.work-context.v1`:
   "provider_refs": [
     {"kind": "issue", "repository": "owner/repository", "number": 123}
   ],
-  "plan_refs": ["docs/plans/2026-07-19-topic/topic-plan.md"],
+  "plan_refs": [],
   "scopes": [
     {"kind": "path-prefix", "repository": "owner/repository", "value": "src"}
   ],
@@ -156,23 +156,24 @@ The exact claim/check input schema is `agent-session.work-context-input.v1`:
   "repositories": ["owner/repository"],
   "worktrees": [],
   "provider_refs": [{"kind": "issue", "repository": "owner/repository", "number": 123}],
-  "plan_refs": ["docs/plans/2026-07-19-topic/topic-plan.md"],
+  "plan_refs": [],
   "scopes": [{"kind": "path-prefix", "repository": "owner/repository", "value": "src"}],
   "summary": "Implement session coordination"
 }
 ```
 
-`tier` names the work's tracking mode: `direct`, `issue`, `program`,
-`program/plan`, or `program/dispatch`. The earlier numbered codes remain
-accepted input and normalize to the mode that replaced them (`L0` -> `direct`,
-`L1` -> `issue`, `L2` -> `program/plan`, `L3` -> `program/dispatch`); stored
-and projected records carry the named value. The field name is unchanged and
-the value is informational: it never grants or denies work. Records written
-before this normalization may still carry a numbered code.
+`tier` names the work's tracking mode: `direct`, `issue`, `program`, or
+`program/dispatch`. New input rejects the retired numbered codes and
+`program/plan`. The field name is unchanged and the value is informational:
+it never grants or denies work. Historical persisted claims retain their
+original value on read and continue to participate in conflict evaluation
+until they expire or their owner releases them; reading a claim does not
+silently rewrite the owner's state.
 
 `summary` is bounded to 240 UTF-8 bytes. Collection limits are 8 repositories,
-8 worktree fingerprints, 16 provider references, 16 plan references, and 32
-scopes.
+8 worktree fingerprints, 16 provider references, and 32 scopes. New input
+rejects nonempty `plan_refs`; the field remains in v1 records so historical
+claims can be read and released without rewriting their owner's state.
 
 ### Conflict result
 
@@ -198,7 +199,7 @@ The high-level `work-context advise` result uses
 `agent-session.work-context-advisory.v1`. It reports managed state, mode,
 availability, severity (`none`, `info`, `warning`, or `degraded`), bounded
 suppression state, stably sorted reasons, and privacy-safe peers. Same physical
-worktree, provider ref, plan ref, or overlapping declared scope is `warning`;
+worktree, provider ref, or overlapping declared scope is `warning`;
 same repository in a different worktree is `info`; incomplete broker/peer
 evaluation with no stronger known overlap is `degraded`. These are descriptive
 severities, never admission results in advisory mode.
@@ -448,8 +449,9 @@ summary. They never expose a PID as authority, a credential path, or a token.
 ## Scope grammar and canonicalization
 
 Repositories are canonical lowercase `owner/name` values. Provider references
-are `(kind, repository, numeric id)`. Plan references are normalized
-repository-relative paths without `..`, absolute roots, NUL, or control bytes.
+are `(kind, repository, numeric id)`. New plan references are rejected;
+historical values remain readable in v1 projections and are ignored for
+conflict matching.
 
 V1 scope kinds are closed:
 
@@ -473,7 +475,6 @@ registry projection. An unknown epoch is incomparable rather than clear.
 | --- | --- |
 | Same active worktree fingerprint | `conflict` |
 | Same provider ref | `conflict` |
-| Same plan ref | `conflict` |
 | Same repository with overlapping closed scopes | `conflict` |
 | Same repository with omitted, broad, or incomparable scopes | `potential_conflict` |
 | Relevant live peer without valid/supported context | `unknown` |
@@ -865,7 +866,7 @@ Every leaf command has its own CLI envelope identity, for example
 
 ```text
 agent-session work-context status
-agent-session work-context set [--if-absent] [--summary TEXT] [--intent NAME] [--tier direct|issue|program|program/plan|program/dispatch] [--repository OWNER/REPO] [--path PATH]... [--issue N]... [--pr N]... [--plan-ref REF]...
+agent-session work-context set [--if-absent] [--summary TEXT] [--intent NAME] [--tier direct|issue|program|program/dispatch] [--repository OWNER/REPO] [--path PATH]... [--issue N]... [--pr N]...
 agent-session work-context clear
 agent-session work-context advise [--targets-file JSON]
 agent-session work-context acknowledge [--for DURATION]

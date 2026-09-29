@@ -68,7 +68,7 @@ Save as `objective.json`:
 
 `run_id`, `objective`, `done_criteria`, `constraints`, `durable_refs`, and
 `next_action` are optional. Add `repositories`, `worktrees`, `provider_refs`,
-`plan_refs`, and `scopes` to `work_context` when they improve coordination.
+and `scopes` to `work_context` when they improve coordination.
 
 ### Assignment packet
 

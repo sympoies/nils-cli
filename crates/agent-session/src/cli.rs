@@ -384,7 +384,7 @@ pub struct WorkContextSetArgs {
     /// Work intent label.
     #[arg(long, default_value = "implementation")]
     pub intent: String,
-    /// Tracking work mode: direct, issue, program, program/plan, or program/dispatch (numbered L0-L3 codes accepted).
+    /// Tracking work mode: direct, issue, program, or program/dispatch.
     #[arg(long, default_value = "direct")]
     pub tier: String,
     /// Canonical owner/repository. Defaults to the current checkout's origin.
@@ -399,9 +399,6 @@ pub struct WorkContextSetArgs {
     /// Pull/merge request number in the inferred repository. Repeatable.
     #[arg(long, value_name = "NUMBER")]
     pub pr: Vec<u64>,
-    /// Public plan reference. Repeatable.
-    #[arg(long = "plan-ref", value_name = "REF")]
-    pub plan_refs: Vec<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }

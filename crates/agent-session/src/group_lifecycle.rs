@@ -2062,7 +2062,7 @@ mod tests {
             run_id: id.to_string(),
             revision: 1,
             state: "active".to_string(),
-            tier: "L0".to_string(),
+            tier: "direct".to_string(),
             objective_summary: "summary".to_string(),
             objective_packet_digest: format!("sha256:{}", "a".repeat(64)),
             controller: SessionRef {

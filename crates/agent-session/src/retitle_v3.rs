@@ -7204,7 +7204,7 @@ mod tests {
                     "run_id": "run-one",
                     "revision": 2,
                     "state": run_state,
-                    "tier": "L0",
+                    "tier": "direct",
                     "objective_summary": objective,
                     "objective_packet_digest": digest("a"),
                     "controller": managed_session_ref(controller),
