@@ -19,4 +19,4 @@
 ## Links
 
 - Back to crate README: [`../README.md`](../README.md)
-- Consumers: `plan-archive` (`refresh`) and `nils-evidence` (`migrate`).
+- Consumer: `nils-evidence` (`migrate`).

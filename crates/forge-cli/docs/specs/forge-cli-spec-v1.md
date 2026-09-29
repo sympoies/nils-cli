@@ -37,9 +37,8 @@ Non-goals (v1):
   questions / v2 candidates" for the re-evaluation criteria. v1
   callers that need a non-CRUD call must keep using `gh api` / `glab
   api` directly from the bash shell until then.
-- Issue *macros* beyond create/view/edit/comment/close/reopen — the
-  full plan-issue / dispatch-pr-review orchestration stays in
-  agent-runtime-kit skills for now.
+- Issue *macros* beyond create/view/edit/comment/close/reopen — dispatch
+  orchestration stays in agent-runtime-kit skills for now.
 
 ## Scope
 
@@ -2129,8 +2128,7 @@ and `glab mr create …` invocations are removed.
 - Repo creation (`gh repo create`) — out of v1; rarely called from
   skills.
 - Issue macros (`issue deliver`, `issue close-when-prs-merged`,
-  `issue cross-link`) — depend on plan-issue / dispatch-pr-review
-  skills converging first; tracked separately.
+  `issue cross-link`) — tracked separately from the agent-runtime-kit skills.
 - Gitea / Forgejo backend — would require a new third backend or a
   Forge-API client. Deliberately deferred until a concrete user
   surfaces.

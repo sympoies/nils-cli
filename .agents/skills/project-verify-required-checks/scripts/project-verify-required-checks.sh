@@ -10,7 +10,6 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/docs-placement-audit.sh --strict
   - bash scripts/ci/docs-hygiene-audit.sh --strict
   - bash scripts/ci/markdownlint-audit.sh --strict
-  - bash scripts/ci/plan-bundle-validate.sh --strict
   - bash scripts/ci/cli-output-contract-lint.sh --strict
   - bash scripts/ci/forge-cli-fixture-lint.sh --strict
   - bash scripts/ci/tests/install-local-release-binaries.test.sh
@@ -48,7 +47,6 @@ Modes:
       - bash scripts/ci/docs-placement-audit.sh --strict
       - bash scripts/ci/docs-hygiene-audit.sh --strict
       - bash scripts/ci/markdownlint-audit.sh --strict
-      - bash scripts/ci/plan-bundle-validate.sh --strict
       - bash scripts/ci/cli-output-contract-lint.sh --strict
     Skip fmt/clippy/workspace tests/zsh completion tests.
 
@@ -171,7 +169,6 @@ run_doc_tests() {
 run bash scripts/ci/docs-placement-audit.sh --strict
 run bash scripts/ci/docs-hygiene-audit.sh --strict
 run bash scripts/ci/markdownlint-audit.sh --strict
-run bash scripts/ci/plan-bundle-validate.sh --strict
 run bash scripts/ci/cli-output-contract-lint.sh --strict
 run bash scripts/ci/forge-cli-fixture-lint.sh --strict
 if [[ "$docs_only" -eq 1 ]]; then

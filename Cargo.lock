@@ -1165,15 +1165,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "getopts"
-version = "0.2.24"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfe4fbac503b8d1f88e6676011885f34b7174f46e59956bba534ba83abded4df"
-dependencies = [
- "unicode-width",
-]
-
-[[package]]
 name = "getrandom"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2755,66 +2746,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nils-plan-archive"
-version = "1.31.0"
-dependencies = [
- "clap",
- "clap_complete",
- "indexmap",
- "nils-build-info",
- "nils-common",
- "nils-scrub",
- "nils-test-support",
- "pretty_assertions",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
-name = "nils-plan-issue"
-version = "1.31.0"
-dependencies = [
- "chrono",
- "clap",
- "clap_complete",
- "libc",
- "nils-build-info",
- "nils-common",
- "nils-markdown",
- "nils-plan-tooling",
- "nils-test-support",
- "pretty_assertions",
- "pulldown-cmark",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
-]
-
-[[package]]
-name = "nils-plan-tooling"
-version = "1.31.0"
-dependencies = [
- "anyhow",
- "clap",
- "clap_complete",
- "libc",
- "nils-build-info",
- "nils-common",
- "nils-term",
- "nils-test-support",
- "pretty_assertions",
- "pulldown-cmark",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "nils-provider-resume"
 version = "1.31.0"
 dependencies = [
@@ -3574,25 +3505,6 @@ checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
-
-[[package]]
-name = "pulldown-cmark"
-version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
-dependencies = [
- "bitflags 2.13.0",
- "getopts",
- "memchr",
- "pulldown-cmark-escape",
- "unicase",
-]
-
-[[package]]
-name = "pulldown-cmark-escape"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "007d8adb5ddab6f8e3f491ac63566a7d5002cc7ed73901f72057943fa71ae1ae"
 
 [[package]]
 name = "pxfm"

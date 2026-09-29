@@ -134,13 +134,13 @@ assert_explicit_bins_build_exact_selection() {
   local tmp
   tmp="$(mktemp -d)"
   local output
-  output="$(run_with_fake_tools "$tmp" --prefix "$tmp/install" --bin git-cli --bin plan-tooling)"
+  output="$(run_with_fake_tools "$tmp" --prefix "$tmp/install" --bin git-cli --bin semantic-commit)"
 
-  assert_contains "$FUNCNAME" "$output" "build --release --bin git-cli --bin plan-tooling"
+  assert_contains "$FUNCNAME" "$output" "build --release --bin git-cli --bin semantic-commit"
   assert_contains "$FUNCNAME" "$output" "install -m 0755 $tmp/repo/target/release/git-cli $tmp/install/"
-  assert_contains "$FUNCNAME" "$output" "install -m 0755 $tmp/repo/target/release/plan-tooling $tmp/install/"
+  assert_contains "$FUNCNAME" "$output" "install -m 0755 $tmp/repo/target/release/semantic-commit $tmp/install/"
   [[ -x "$tmp/install/git-cli" ]]
-  [[ -x "$tmp/install/plan-tooling" ]]
+  [[ -x "$tmp/install/semantic-commit" ]]
   rm -rf "$tmp"
   echo "ok"
 }

@@ -36,7 +36,6 @@ Docs-only checks require:
 
 - `git`
 - `npx`
-- `plan-tooling`
 
 Local fast changed-scope checks also require:
 
@@ -175,12 +174,6 @@ If all changed files are documentation-only (`*.md`, `docs/**`, `crates/*/docs/*
 bash scripts/ci/nils-cli-checks-entrypoint.sh --docs-only
 ```
 
-This also validates touched `docs/plans/**` bundles with:
-
-```bash
-bash scripts/ci/plan-bundle-validate.sh --strict
-```
-
 The docs-only entrypoint additionally runs the CLI output contract lint
 (`docs/specs/cli-output-contract-v1.md`) so envelope and exit-code drift gets
 caught even on PRs that only touch documentation:
@@ -275,7 +268,6 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/docs-placement-audit.sh --strict`
 - `bash scripts/ci/docs-hygiene-audit.sh --strict`
 - `bash scripts/ci/markdownlint-audit.sh --strict`
-- `bash scripts/ci/plan-bundle-validate.sh --strict`
 - `bash scripts/ci/cli-output-contract-lint.sh --strict`
 - `bash scripts/ci/forge-cli-fixture-lint.sh --strict`
 - `bash scripts/ci/tests/install-local-release-binaries.test.sh`

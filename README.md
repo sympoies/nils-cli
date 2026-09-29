@@ -33,7 +33,7 @@ Completion obligations for those binaries are tracked in
 | Git tooling | `git-scope`, `git-cli`, `git-summary`, `git-lock` | Inspect changes, run Git helper flows, summarize commits, or manage repo-local commit locks. |
 | Forge automation | `forge-cli`, `github-app-cli` | Drive PR/MR + Issue lifecycle and repository label catalog maintenance on GitHub (via `gh`) or GitLab (via `glab`), or mint GitHub App installation tokens. |
 | Agent policy and evidence | `agent-runtime`, `agent-docs`, `agent-hook`, `agent-memory`, `agent-out`, `agent-session`, `main-agent`, `agent-scope-lock`, `agent-run`, `test-first-evidence`, `web-evidence`, `browser-session`, `canary-check`, `docs-impact`, `heuristic-inbox`, `model-cross-check`, `repo-retro`, `review-evidence`, `review-specialists`, `skill-usage`, `evidence` | Render/install/audit runtime-kit surfaces, resolve agent policy docs, dispatch one shared cross-provider hook policy, manage local agent memory stores, run project commands through explicit env handling, allocate artifact paths, start tmux-backed agent sessions, operate durable Main Agent and interactive worker lifecycles, enforce edit scope, inspect repo retrospectives, merge specialist review evidence, persist deterministic workflow evidence, or migrate and query the durable skill-usage evidence archive. |
-| Planning and delivery | `plan-tooling`, `plan-issue`, `plan-issue-local`, `plan-archive`, `semantic-commit` | Validate/split implementation plans, orchestrate issue delivery, rehearse local plan flows, query archived plans, or run validated commit workflows. |
+| Commit delivery | `semantic-commit` | Run validated commit workflows. |
 | Development log | `devlog` | Record durable outcomes in a repository development log, check its structural integrity, and search past decisions. |
 | Provider lanes | `codex-cli`, `claude-cli` | Run provider-specific diagnostics, auth checks, and workflow adapters. |
 | Markdown rendering | `md-render` | Render `.md.tera` templates from JSON view data through the shared `nils-markdown` engine. |
@@ -126,17 +126,6 @@ Each crate is either a standalone CLI binary, a multi-binary crate, or a shared 
 - [crates/codex-cli](crates/codex-cli): Provider-specific CLI for OpenAI/Codex workflows (auth, diagnostics, execution flows, Starship),
   with adapters over `nils-common::provider_runtime`.
 - [crates/semantic-commit](crates/semantic-commit): Helper CLI for staged context, Semantic Commit validation, commit amend, and cleanup commit workflows.
-- [crates/plan-tooling](crates/plan-tooling): Plan Format v1 tooling CLI (`to-json`, `validate`, `batches`, `artifact-audit`,
-  `split-prs`, `scaffold`, `completion`), with bundle validation, advisory durable-artifact classification, deterministic/auto grouping
-  primitives, and strict lane-metadata validation gates.
-- [crates/plan-issue](crates/plan-issue): Plan issue orchestration binaries (`plan-issue`, `plan-issue-local`).
-  The v3 issue-backed lifecycle is owned by `record open`, `record post`,
-  `record repair-dashboard`, `record audit`, and `record close` (see
-  [`docs/specs/issue-backed-plan-record-contract-v2.md`](crates/plan-issue/docs/specs/issue-backed-plan-record-contract-v2.md)).
-  `Task Decomposition` orchestration remains available through `start-plan`,
-  `start-sprint`, etc., with runtime lane metadata materialized from plan
-  content + split-prs grouping results.
-- [crates/plan-archive](crates/plan-archive): Query and search interface for archived implementation-plan records.
 
 ## Shared helper policy (`nils-common`)
 

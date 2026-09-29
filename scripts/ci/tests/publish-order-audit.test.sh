@@ -83,7 +83,7 @@ assert_fails "duplicate entry fails" 1 \
   "duplicate publish-order entry: nils-scrub" \
   --order-file "$tmp_dir/dup.txt"
 
-# Dependency absent from the order: drop nils-scrub, which nils-plan-archive
+# Dependency absent from the order: drop nils-scrub, which nils-evidence
 # (still listed) depends on. The 'absent' topological branch fires alongside
 # the missing-member finding; assert the specific 'absent' wording.
 grep -v '^nils-scrub$' "$real_order" >"$tmp_dir/absent.txt"
