@@ -599,7 +599,9 @@ session ID, repo name, turn phase, age of `last_progress_at` (or of
 `session_id` and `session_incarnation`) ends with `(this session)`; any other
 record with `messaging_supported: true` ends with its `message send` target,
 `send: --to-machine <machine> --to <session_id> (incarnation <session_incarnation>)`.
-Text truncates for width and never prints `summary` or `console_owner`.
+The target names the exact identifiers and is omitted when one cannot be
+printed exactly (whitespace, control characters, or over 256 bytes). Other
+text truncates for width and never prints `summary` or `console_owner`.
 
 Usage errors exit 64, data and contract errors use the workspace data exit
 code, and runtime, storage, and relay failures use the runtime exit code, as

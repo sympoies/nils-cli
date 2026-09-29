@@ -319,6 +319,36 @@ fn is_caller(record: &Value, caller: Option<&Caller>) -> bool {
     })
 }
 
+/// The longest identifier a send target prints; a longer one is omitted.
+const MAX_IDENTIFIER_BYTES: usize = 256;
+
+/// An identifier printed exactly as a command argument: a non-empty, bounded
+/// string with no whitespace or control characters, or `None`.
+fn exact_identifier(value: &Value) -> Option<&str> {
+    let text = value.as_str()?;
+    (!text.is_empty()
+        && text.len() <= MAX_IDENTIFIER_BYTES
+        && !text
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace()))
+    .then_some(text)
+}
+
+/// The `message send` target of a peer that can currently receive a remote
+/// message. It names the exact identifiers, never the truncated columns, and
+/// is omitted when any of them cannot be printed exactly.
+fn send_target(record: &Value) -> Option<String> {
+    if record["messaging_supported"] != true {
+        return None;
+    }
+    Some(format!(
+        "  send: --to-machine {} --to {} (incarnation {})",
+        exact_identifier(&record["machine"])?,
+        exact_identifier(&record["session_id"])?,
+        exact_identifier(&record["session_incarnation"])?,
+    ))
+}
+
 /// Mode, then one line per unavailable machine, then one line per record.
 /// The caller's own session is marked, and a peer that can currently receive
 /// a remote message carries its `message send` target. `summary` is never
@@ -355,14 +385,8 @@ fn render_text(data: &Value, caller: Option<&Caller>) -> String {
         ));
         if is_caller(record, caller) {
             out.push_str("  (this session)");
-        } else if record["messaging_supported"] == true && record["session_incarnation"].is_string()
-        {
-            out.push_str(&format!(
-                "  send: --to-machine {} --to {} (incarnation {})",
-                field(&record["machine"], REPO_WIDTH),
-                field(&record["session_id"], TITLE_WIDTH),
-                field(&record["session_incarnation"], TITLE_WIDTH),
-            ));
+        } else if let Some(target) = send_target(record) {
+            out.push_str(&target);
         }
         out.push('\n');
     }
@@ -424,6 +448,50 @@ mod tests {
             .map(|record| record["session_id"].as_str().expect("id"))
             .collect();
         assert_eq!(ids, vec!["l1", "l2", "s2", "s1", "c1"]);
+    }
+
+    #[test]
+    fn send_targets_name_exact_identifiers_or_are_omitted() {
+        let machine = "m".repeat(40);
+        let record = |machine: &str, id: &str| {
+            json!({
+                "state": "live",
+                "machine": machine,
+                "session_id": id,
+                "session_incarnation": "i".repeat(50),
+                "messaging_supported": true,
+                "repo_name": "repo",
+                "title": "t",
+                "turn_state": null
+            })
+        };
+        let data = json!({
+            "mode": "relay",
+            "board": {
+                "generated_at": "2030-01-01T01:00:00Z",
+                "machines": [],
+                "records": [
+                    record(&machine, &"s".repeat(70)),
+                    record("host-b", "bad\u{1b}[2Jid"),
+                    record(&"x".repeat(300), "s1")
+                ]
+            }
+        });
+        let text = render_text(&data, None);
+        let lines: Vec<&str> = text.lines().collect();
+        // Columns truncate, but the send target names the exact values.
+        assert!(
+            lines[1].ends_with(&format!(
+                "  send: --to-machine {machine} --to {} (incarnation {})",
+                "s".repeat(70),
+                "i".repeat(50)
+            )),
+            "{}",
+            lines[1]
+        );
+        // A value that cannot be printed exactly gets no send target.
+        assert!(!lines[2].contains("send:"), "{}", lines[2]);
+        assert!(!lines[3].contains("send:"), "{}", lines[3]);
     }
 
     #[test]
