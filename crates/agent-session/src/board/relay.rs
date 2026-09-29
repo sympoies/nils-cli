@@ -50,6 +50,27 @@ fn relay_unauthorized() -> CliError {
     )
 }
 
+/// A principal-scoped aggregator's refusal of the calling session, which is
+/// not a credential failure: the aggregator could not scope the caller. Only
+/// the three relay ownership codes, each on its own status, are kept; the
+/// message is fixed so no aggregator text is trusted.
+fn scope_refusal(status: u16, body: Option<&Value>) -> Option<CliError> {
+    let code = body?.pointer("/error/code")?.as_str()?;
+    let message = match (status, code) {
+        (403, "ownership-unknown") => {
+            "the board aggregator cannot attribute this session to a principal"
+        }
+        (403, "machine-forbidden") => {
+            "this session's principal may not use the board from this machine"
+        }
+        (409, "session-incarnation-conflict") => {
+            "the board aggregator holds another incarnation of this session"
+        }
+        _ => return None,
+    };
+    Some(CliError::data(code, message, None))
+}
+
 /// A bounded, single-line, non-empty diagnostic string, or `None`.
 fn bounded_line(value: &Value) -> Option<&str> {
     let text = value.as_str()?.trim();
@@ -134,10 +155,14 @@ pub(crate) fn relay_route(
         .send()
         .map_err(|_| aggregator_unavailable())?;
     let status = response.status();
+    let body = read_json(response);
+    if let Some(refusal) = scope_refusal(status.as_u16(), body.as_ref()) {
+        return Err(refusal);
+    }
     if matches!(status.as_u16(), 401 | 403) {
         return Err(relay_unauthorized());
     }
-    let body = read_json(response).ok_or_else(aggregator_unavailable)?;
+    let body = body.ok_or_else(aggregator_unavailable)?;
     if status.is_success() {
         return checked_view(body).ok_or_else(aggregator_unavailable);
     }
@@ -238,9 +263,10 @@ fn forwarded(code: &str, message: &Value) -> CliError {
     let message = bounded_line(message).unwrap_or("the board relay request failed");
     match code {
         QUERY_INVALID_CODE => CliError::usage(code, message, None),
-        "coordination-unauthorized" | "session-incarnation-conflict" => {
-            CliError::data(code, message, None)
-        }
+        "coordination-unauthorized"
+        | "session-incarnation-conflict"
+        | "ownership-unknown"
+        | "machine-forbidden" => CliError::data(code, message, None),
         _ => CliError::runtime(code, message, None),
     }
 }
@@ -272,6 +298,35 @@ mod tests {
     }
 
     #[test]
+    fn scope_refusals_need_their_exact_status_and_code() {
+        let body = |code: &str| json!({"error": {"code": code, "message": "\u{1b}[2J untrusted"}});
+        for (status, code) in [
+            (403, "ownership-unknown"),
+            (403, "machine-forbidden"),
+            (409, "session-incarnation-conflict"),
+        ] {
+            let error = scope_refusal(status, Some(&body(code)))
+                .expect(code)
+                .into_inner();
+            assert_eq!((error.code.as_str(), error.exit_code), (code, 65));
+            assert!(!error.message.contains("untrusted"), "{}", error.message);
+        }
+        for (status, code) in [
+            (401, "ownership-unknown"),
+            (409, "ownership-unknown"),
+            (403, "session-incarnation-conflict"),
+            (403, "principal-forbidden"),
+            (403, "unauthorized"),
+        ] {
+            assert!(
+                scope_refusal(status, Some(&body(code))).is_none(),
+                "{status} {code}"
+            );
+        }
+        assert!(scope_refusal(403, None).is_none());
+    }
+
+    #[test]
     fn forwarded_failures_keep_only_safe_shapes() {
         let error = forwarded("board-query-invalid", &json!("bad since")).into_inner();
         assert_eq!(
@@ -287,6 +342,10 @@ mod tests {
                 65
             )
         );
+        for code in ["ownership-unknown", "machine-forbidden"] {
+            let error = forwarded(code, &json!("refused")).into_inner();
+            assert_eq!((error.code.as_str(), error.exit_code), (code, 65), "{code}");
+        }
         for code in ["", "Bad", "-lead", "has space", &"x".repeat(65)] {
             let error = forwarded(code, &json!("line\u{1b}[2J")).into_inner();
             assert_eq!(

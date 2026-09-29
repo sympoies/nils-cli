@@ -633,6 +633,66 @@ fn relay_failures_map_to_stable_codes_and_never_fall_back_to_local() {
 }
 
 #[test]
+fn aggregator_scope_refusals_keep_their_own_codes() {
+    // A principal-scoped aggregator refuses a caller its access store cannot
+    // attribute. Those refusals are not credential failures: each keeps its
+    // code through the daemon route and the CLI, with a data exit code.
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let serve = fixture.serve(&["--board"], Some(&aggregator));
+    let route = format!("/sessions/{SESSION}/board/v1");
+    fixture.heartbeat();
+
+    let cases = [
+        (403, "ownership-unknown", 422),
+        (403, "machine-forbidden", 422),
+        (409, "session-incarnation-conflict", 409),
+    ];
+    for (status, code, daemon_status) in cases {
+        let failure =
+            json!({"ok": false, "error": {"code": code, "message": "refused by the aggregator"}});
+        aggregator.reply_json(status, &failure);
+        let (seen_status, body) = serve.get(&route, Some(CAPABILITY));
+        assert_eq!(seen_status, daemon_status, "{code}: {body}");
+        assert_eq!(body["error"]["code"], code, "{body}");
+
+        aggregator.reply_json(status, &failure);
+        let output = fixture.board(&["--format", "json"]);
+        assert_eq!(output.code, 65, "{code}: stdout={}", output.stdout_text());
+        let error = error_of(&output);
+        assert_eq!(error["code"], code);
+        assert!(
+            error["message"]
+                .as_str()
+                .is_some_and(|message| !message.is_empty()),
+            "{error}"
+        );
+    }
+
+    // Any other 401 or 403 is still the relay credential's rejection, and a
+    // scope code on an unexpected status is not trusted.
+    for (status, code) in [
+        (403, "principal-forbidden"),
+        (401, "ownership-unknown"),
+        (403, "session-incarnation-conflict"),
+    ] {
+        aggregator.reply_json(status, &json!({"error": {"code": code}}));
+        let output = fixture.board(&["--format", "json"]);
+        assert_eq!(
+            output.code,
+            1,
+            "{status} {code}: stdout={}",
+            output.stdout_text()
+        );
+        assert_eq!(error_of(&output)["code"], "board-relay-unauthorized");
+    }
+    aggregator.reply_json(409, &json!({"error": {"code": "ownership-unknown"}}));
+    let output = fixture.board(&["--format", "json"]);
+    assert_eq!(output.code, 1, "stdout={}", output.stdout_text());
+    assert_eq!(error_of(&output)["code"], "board-relay-unavailable");
+}
+
+#[test]
 fn relay_disabled_or_board_disabled_daemon_selects_local_mode() {
     let fixture = Fixture::new();
     let aggregator = Aggregator::start();
