@@ -327,6 +327,21 @@ fn diag_rate_limits_named_profile_reports_a_single_result() {
 }
 
 #[test]
+fn diag_rate_limits_json_rejects_an_invalid_profile_name_with_a_json_error() {
+    let fx = Fixture::new();
+
+    let output = fx.run(&["diag", "rate-limits", "--format", "json", "../x"]);
+
+    assert_exit(&output, 64);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["schema_version"], SCHEMA);
+    assert_eq!(payload["command"], "diag rate-limits");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "invalid-profile-name");
+    assert!(fx.requests().is_empty());
+}
+
+#[test]
 fn diag_rate_limits_without_a_target_reads_the_active_login() {
     let fx = Fixture::new();
     fx.write_profile("alpha", "access-alpha", FUTURE_MS);

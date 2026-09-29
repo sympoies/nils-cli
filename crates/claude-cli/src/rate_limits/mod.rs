@@ -241,32 +241,36 @@ fn run_single(
     let target = match args.secret.as_deref() {
         Some(name) => {
             if store::validate_profile_name(name).is_err() {
-                eprintln!("{TOOL}: invalid profile name");
-                return Ok(64);
+                return emit_single_error(
+                    args.json,
+                    "invalid-profile-name",
+                    format!("{TOOL}: invalid profile name"),
+                    None,
+                    64,
+                );
             }
             let target = provider.secret_dir().join(format!("{name}.json"));
             if !target.is_file() {
-                let message = format!("{TOOL}: profile '{name}' not found");
-                if args.json {
-                    diag_output::emit_error(
-                        SCHEMA_VERSION,
-                        COMMAND,
-                        "target-not-found",
-                        message,
-                        Some(serde_json::json!({ "target_file": target_file_name(&target) })),
-                    )?;
-                } else {
-                    eprintln!("{message}");
-                }
-                return Ok(1);
+                return emit_single_error(
+                    args.json,
+                    "target-not-found",
+                    format!("{TOOL}: profile '{name}' not found"),
+                    Some(serde_json::json!({ "target_file": target_file_name(&target) })),
+                    1,
+                );
             }
             target
         }
         None => match store::credentials_file() {
             Some(path) => path,
             None => {
-                eprintln!("{TOOL}: cannot resolve the Claude config directory");
-                return Ok(1);
+                return emit_single_error(
+                    args.json,
+                    "config-dir-unresolved",
+                    format!("{TOOL}: cannot resolve the Claude config directory"),
+                    None,
+                    1,
+                );
             }
         },
     };
@@ -329,6 +333,22 @@ fn run_single(
         println!("{} {}% • {}", window.label, window.remaining_percent, reset);
     }
     Ok(rc)
+}
+
+/// Reports a single-target failure as a JSON error envelope or on stderr.
+fn emit_single_error(
+    json: bool,
+    code: &str,
+    message: String,
+    details: Option<Value>,
+    exit_code: i32,
+) -> Result<i32> {
+    if json {
+        diag_output::emit_error(SCHEMA_VERSION, COMMAND, code, message, details)?;
+    } else {
+        eprintln!("{message}");
+    }
+    Ok(exit_code)
 }
 
 fn json_result(
