@@ -564,7 +564,10 @@ an omitted `--since` means the full retained window of the source.
 - Any other relay failure is returned as that error. The CLI never falls back
   to local mode silently, because a local view would present one machine as
   the whole deployment. A daemon that does not answer behind an existing
-  endpoint file is such a failure (`board-relay-unavailable`). The CLI
+  endpoint file is such a failure (`board-relay-unavailable`), and so is a
+  claimed managed identity (`AGENT_SESSION_ID` with a capability file) that
+  fails authentication while the endpoint exists, which keeps its own code
+  (for example `coordination-unauthorized`). The CLI
   forwards the daemon's `error.code` and `error.message` when each is a
   bounded, single-line string, and `board-relay-unavailable` with a fixed
   message otherwise.

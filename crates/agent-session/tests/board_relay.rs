@@ -260,10 +260,13 @@ impl Fixture {
         );
     }
 
+    /// Written once: rewriting it while a daemon runs it fails with ETXTBSY.
     fn fake_tmux(&self) -> PathBuf {
         let bin = self.root.join("tmux");
-        fs::write(&bin, "#!/bin/sh\nexit 1\n").expect("fake tmux");
-        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).expect("fake tmux mode");
+        if !bin.exists() {
+            fs::write(&bin, "#!/bin/sh\nexit 1\n").expect("fake tmux");
+            fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).expect("fake tmux mode");
+        }
         bin
     }
 
@@ -428,6 +431,8 @@ fn view() -> Value {
         Some("quiet-incarnation"),
         false,
     );
+    // The caller's session id on another machine is not the caller.
+    let namesake = record("host-b", SESSION, Some("namesake-incarnation"), true);
     json!({
         "schema_version": "agent-session.board-view.v1",
         "record_schema": "agent-session.board-record.v1",
@@ -440,7 +445,7 @@ fn view() -> Value {
             {"machine": "host-b", "available": true, "last_seen_at": "2030-01-01T00:04:50Z"},
             {"machine": "host-c", "available": false, "last_seen_at": null}
         ],
-        "records": [own, peer, quiet],
+        "records": [own, peer, quiet, namesake],
         "truncated": false
     })
 }
@@ -533,6 +538,7 @@ fn relay_text_marks_the_caller_and_offers_send_targets_only_to_messageable_peers
             "live  host-a  20300101-000000-self  nils-cli  working  1m  Title 20300101-000000-self  (this session)",
             "live  host-b  20300101-000000-peer  nils-cli  working  1m  Title 20300101-000000-peer  send: --to-machine host-b --to 20300101-000000-peer (incarnation peer-incarnation)",
             "live  host-b  20300101-000000-quiet  nils-cli  working  1m  Title 20300101-000000-quiet",
+            "live  host-b  20300101-000000-self  nils-cli  working  1m  Title 20300101-000000-self  send: --to-machine host-b --to 20300101-000000-self (incarnation namesake-incarnation)",
         ]
     );
 }
@@ -688,6 +694,64 @@ fn relay_route_requires_the_current_session_capability_and_known_filters() {
         aggregator.seen()[0].query()[0],
         ("state".into(), "closed".into())
     );
+}
+
+#[test]
+fn a_claimed_identity_that_fails_authentication_is_an_error_not_a_local_view() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let _serve = fixture.serve(&["--board"], Some(&aggregator));
+    let heartbeat = fixture
+        .state_dir
+        .join("sessions")
+        .join(SESSION)
+        .join("coordination/heartbeat");
+    let capability = fs::read(&fixture.capability_file).expect("capability");
+
+    // A rotated capability no longer matches the broker.
+    private_file(
+        &fixture.capability_file,
+        b"board-relay-rotated-capability-00000000000001",
+    );
+    let output = fixture.board(&["--format", "json"]);
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(error_of(&output)["code"], "coordination-unauthorized");
+    private_file(&fixture.capability_file, &capability);
+
+    // A stale broker heartbeat: the broker is lost.
+    let run_stale = || {
+        let state = fixture.state_dir.to_string_lossy().to_string();
+        let capability = fixture.capability_file.to_string_lossy().to_string();
+        private_file(
+            &heartbeat,
+            format!("{INCARNATION}:{}\n", now_epoch() - 600).as_bytes(),
+        );
+        let options = CmdOptions::new()
+            .with_cwd(&fixture.root)
+            .without_ambient_managed_session_env()
+            .with_env_remove_many(&ISOLATED_ENV)
+            .with_envs(&[
+                ("AGENT_SESSION_MACHINE", MACHINE),
+                ("AGENT_SESSION_ID", SESSION),
+                ("AGENT_SESSION_CAPABILITY_FILE", capability.as_str()),
+            ]);
+        run_resolved(
+            "agent-session",
+            &["--state-dir", state.as_str(), "board", "--format", "json"],
+            &options,
+        )
+    };
+    let output = run_stale();
+    assert_eq!(output.code, 1, "stdout={}", output.stdout_text());
+    assert_eq!(error_of(&output)["code"], "coordination-broker-lost");
+    assert_eq!(aggregator.seen().len(), 0);
+
+    // Without a daemon endpoint there is no relay to fail: local mode.
+    fs::remove_file(fixture.state_dir.join("coordination/daemon-endpoint.json"))
+        .expect("drop endpoint");
+    let output = run_stale();
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    assert_eq!(output.stdout_json()["data"]["mode"], "local");
 }
 
 #[test]

@@ -159,35 +159,43 @@ pub(super) struct Caller {
     token: String,
 }
 
-/// `None` when there is no trusted managed identity, which selects local mode.
-pub(super) fn caller(context: &CliContext) -> Option<Caller> {
-    let session_id = crate::non_empty_env("AGENT_SESSION_ID")?;
-    let token = crate::coordination::capability_token_from_file(None).ok()?;
-    let (_, incarnation) =
-        crate::coordination::authenticate_token(context, &session_id, &token).ok()?;
-    Some(Caller {
-        session_id,
+/// The managed session this CLI claims to run in: `AGENT_SESSION_ID` with a
+/// capability file. Without one there is no managed identity.
+pub(super) fn claimed_session() -> Option<String> {
+    crate::non_empty_env(crate::coordination::CAPABILITY_ENV)?;
+    crate::non_empty_env("AGENT_SESSION_ID")
+}
+
+/// Whether the daemon published its endpoint; without one there is no relay.
+pub(super) fn endpoint_present(context: &CliContext) -> bool {
+    let endpoint = context.state_dir.join("coordination/daemon-endpoint.json");
+    !matches!(
+        std::fs::symlink_metadata(endpoint),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+/// Verify the claimed session against its exact current incarnation.
+pub(super) fn authenticate(context: &CliContext, session_id: &str) -> Result<Caller, CliError> {
+    let token = crate::coordination::capability_token_from_file(None)?;
+    let (_, incarnation) = crate::coordination::authenticate_token(context, session_id, &token)?;
+    Ok(Caller {
+        session_id: session_id.to_string(),
         incarnation,
         token,
     })
 }
 
 /// Relay mode: the aggregator view through the local daemon. `Ok(None)`
-/// selects local mode, which happens only without a daemon endpoint or when
-/// the daemon answers `board-disabled` or `board-relay-disabled`. Every other
-/// failure, an unreachable daemon included, is returned: a local view would
-/// present one machine as the whole deployment.
+/// selects local mode, which happens only when the daemon answers
+/// `board-disabled` or `board-relay-disabled`. Every other failure, an
+/// unreachable daemon included, is returned: a local view would present one
+/// machine as the whole deployment.
 pub(super) fn fetch(
     context: &CliContext,
     caller: &Caller,
     filters: &[(&str, &str)],
 ) -> Result<Option<Value>, CliError> {
-    let endpoint = context.state_dir.join("coordination/daemon-endpoint.json");
-    if let Err(error) = std::fs::symlink_metadata(&endpoint)
-        && error.kind() == std::io::ErrorKind::NotFound
-    {
-        return Ok(None);
-    }
     let unreachable = || relay_unavailable("the local agent-session daemon is unreachable");
     let mut url = remote::daemon_url(context).map_err(|_| unreachable())?;
     url.path_segments_mut()

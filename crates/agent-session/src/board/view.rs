@@ -100,17 +100,22 @@ fn parse_query(args: &BoardArgs) -> Result<Query, CliError> {
     })
 }
 
-/// Relay mode when a trusted managed session reaches the daemon relay route;
-/// local mode without a trusted identity or daemon endpoint, or when the
-/// daemon answers `board-disabled` or `board-relay-disabled`. Any other relay
-/// failure is returned, never replaced by a local view.
+/// Relay mode when a managed session reaches the daemon relay route; local
+/// mode without a managed identity or daemon endpoint, or when the daemon
+/// answers `board-disabled` or `board-relay-disabled`. Any other relay
+/// failure, a claimed identity that does not authenticate included, is
+/// returned, never replaced by a local view. The verified caller is returned
+/// alongside for marking its own session.
 fn select_mode(
     context: &CliContext,
     args: &BoardArgs,
     query: &Query,
-    caller: Option<&Caller>,
-) -> Result<Value, CliError> {
-    if let Some(caller) = caller {
+) -> Result<(Value, Option<Caller>), CliError> {
+    let claimed = relay::claimed_session();
+    if let Some(session_id) = &claimed
+        && relay::endpoint_present(context)
+    {
+        let caller = relay::authenticate(context, session_id)?;
         let mut filters = vec![("state", args.state.as_str())];
         for (key, value) in [
             ("since", &args.since),
@@ -121,19 +126,20 @@ fn select_mode(
                 filters.push((key, value.as_str()));
             }
         }
-        if let Some(board) = relay::fetch(context, caller, &filters)? {
-            return Ok(json!({ "mode": "relay", "board": board }));
+        if let Some(board) = relay::fetch(context, &caller, &filters)? {
+            return Ok((json!({ "mode": "relay", "board": board }), Some(caller)));
         }
+        return local_view(context, query)
+            .map(|board| (json!({ "mode": "local", "board": board }), Some(caller)));
     }
-    local_view(context, query).map(|board| json!({ "mode": "local", "board": board }))
+    // No relay to try. The caller is still marked when its identity verifies.
+    let caller = claimed.and_then(|session_id| relay::authenticate(context, &session_id).ok());
+    local_view(context, query).map(|board| (json!({ "mode": "local", "board": board }), caller))
 }
 
 pub(crate) fn run(context: &CliContext, args: BoardArgs) -> i32 {
     let format = args.format;
-    let result = parse_query(&args).and_then(|query| {
-        let caller = relay::caller(context);
-        select_mode(context, &args, &query, caller.as_ref()).map(|data| (data, caller))
-    });
+    let result = parse_query(&args).and_then(|query| select_mode(context, &args, &query));
     match result {
         Ok((data, caller)) => match format {
             OutputFormat::Json => {
@@ -141,7 +147,7 @@ pub(crate) fn run(context: &CliContext, args: BoardArgs) -> i32 {
             }
             OutputFormat::Text => {
                 print!("{}", render_text(&data, caller.as_ref()));
-                0
+                nils_common::cli_contract::exit::SUCCESS
             }
         },
         Err(err) => crate::render_error(COMMAND, format, err),
