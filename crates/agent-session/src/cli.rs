@@ -399,9 +399,6 @@ pub struct WorkContextSetArgs {
     /// Pull/merge request number in the inferred repository. Repeatable.
     #[arg(long, value_name = "NUMBER")]
     pub pr: Vec<u64>,
-    /// Public plan reference. Repeatable.
-    #[arg(long = "plan-ref", value_name = "REF")]
-    pub plan_refs: Vec<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }

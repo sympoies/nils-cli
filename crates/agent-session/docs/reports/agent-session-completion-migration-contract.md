@@ -49,7 +49,7 @@ commands below.
 | `agent-session metadata show` | `crates/agent-session/src/cli.rs` | exact session id, optional label, format enum | bounded public read-back projection |
 | `agent-session work-context` | `crates/agent-session/src/cli.rs` | nested advisory and enforce commands | managed coordination group |
 | `agent-session work-context status` | `crates/agent-session/src/cli.rs` | format enum | self-targeting presence/context read |
-| `agent-session work-context set` | `crates/agent-session/src/cli.rs` | tier, repository, path, issue/PR, plan reference, and format flags | self-targeting context replacement |
+| `agent-session work-context set` | `crates/agent-session/src/cli.rs` | tier, repository, path, issue/PR, and format flags | self-targeting context replacement |
 | `agent-session work-context clear` | `crates/agent-session/src/cli.rs` | format enum | self-targeting context removal |
 | `agent-session work-context advise` | `crates/agent-session/src/cli.rs` | optional operation-targets path and format enum | privacy-safe overlap evaluation |
 | `agent-session work-context acknowledge` | `crates/agent-session/src/cli.rs` | bounded duration and format enum | exact-warning suppression |

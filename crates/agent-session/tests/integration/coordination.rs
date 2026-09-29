@@ -1690,6 +1690,9 @@ fn coordination_help_exposes_closed_work_context_and_mailbox_command_families() 
             "missing work-context command {command}: {work_context_help}"
         );
     }
+    let set_help = run(tmp.path(), &["work-context", "set", "--help"]);
+    assert_eq!(set_help.code, 0, "stderr={}", set_help.stderr_text());
+    assert!(!set_help.stdout_text().contains("--plan-ref"));
 
     let start = run(tmp.path(), &["start", "--help"]);
     assert_eq!(start.code, 0, "stderr={}", start.stderr_text());
@@ -2715,8 +2718,6 @@ fn self_targeting_context_set_clear_and_acknowledge_hide_mechanical_inputs() {
                 "1318",
                 "--pr",
                 "42",
-                "--plan-ref",
-                "issue:1318",
                 "--path",
                 "src/",
                 "--format",
@@ -2738,7 +2739,7 @@ fn self_targeting_context_set_clear_and_acknowledge_hide_mechanical_inputs() {
         );
         assert_eq!(data(&set)["context"]["provider_refs"][0]["kind"], "issue");
         assert_eq!(data(&set)["context"]["provider_refs"][1]["kind"], "pr");
-        assert_eq!(data(&set)["context"]["plan_refs"][0], "issue:1318");
+        assert_eq!(data(&set)["context"]["plan_refs"], json!([]));
         assert_eq!(data(&set)["context"]["scopes"][0]["kind"], "path-prefix");
     }
 
@@ -2928,6 +2929,7 @@ fn self_targeting_context_set_if_absent_preserves_an_existing_declaration() {
     // while an unrelated named-mode set-if-absent request checks the registry.
     rewrite_registry(&state_dir, |registry| {
         registry["claims"][0]["tier"] = json!("L2");
+        registry["claims"][0]["plan_refs"] = json!(["historical/plan.md"]);
     });
 
     let ensured = run_with_env(
@@ -2950,6 +2952,10 @@ fn self_targeting_context_set_if_absent_preserves_an_existing_declaration() {
     assert_eq!(data(&ensured)["changed"], false);
     assert_eq!(data(&ensured)["mode"], "advisory");
     assert_eq!(data(&ensured)["context"]["tier"], "L2");
+    assert_eq!(
+        data(&ensured)["context"]["plan_refs"],
+        json!(["historical/plan.md"])
+    );
     assert_eq!(coordination_registry(&state_dir)["claims"][0]["tier"], "L2");
 
     let beta_cap = capability(&state_dir, "beta");

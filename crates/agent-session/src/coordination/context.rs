@@ -184,7 +184,11 @@ impl WorkContextInput {
         self.summary = bounded_text("summary", self.summary, 240)?;
         canonicalize_unique(&mut self.repositories, 8, canonical_repository)?;
         canonicalize_unique(&mut self.worktrees, 8, canonical_worktree)?;
-        canonicalize_unique(&mut self.plan_refs, 16, canonical_plan_ref)?;
+        if !self.plan_refs.is_empty() {
+            return Err(invalid_context(
+                "plan references are retired for new work contexts",
+            ));
+        }
         if self.provider_refs.len() > 16 || self.scopes.len() > 32 {
             return Err(invalid_context("work context exceeds collection limits"));
         }
@@ -271,10 +275,6 @@ pub fn evaluate(
             reasons.push(reason("same-provider-ref", peer, None));
             peer_conflict = true;
         }
-        if intersects(&candidate.plan_refs, &peer.plan_refs) {
-            reasons.push(reason("same-plan-ref", peer, None));
-            peer_conflict = true;
-        }
         for repository in candidate
             .repositories
             .iter()
@@ -317,7 +317,7 @@ pub fn evaluate(
     let has_conflict = reasons.iter().any(|reason| {
         matches!(
             reason.code.as_str(),
-            "same-worktree" | "same-provider-ref" | "same-plan-ref" | "overlapping-scope"
+            "same-worktree" | "same-provider-ref" | "overlapping-scope"
         )
     });
     let classification = if has_conflict {
@@ -757,10 +757,6 @@ pub fn fingerprint_epoch(value: &str) -> Option<u64> {
     (digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(epoch)
 }
 
-fn canonical_plan_ref(value: String) -> Result<String, CliError> {
-    canonical_relative_path(&value, false)
-}
-
 fn canonical_relative_path(value: &str, _require_trailing_slash: bool) -> Result<String, CliError> {
     let value = value.trim().replace('\\', "/");
     if value.is_empty()
@@ -971,6 +967,13 @@ mod tests {
         for tier in ["L0", "L1", "L2", "L3", "program/plan"] {
             assert!(input_with_tier(tier).validate_and_canonicalize().is_err());
         }
+    }
+
+    #[test]
+    fn new_work_context_rejects_plan_references() {
+        let mut input = input_with_tier("issue");
+        input.plan_refs.push("historical/plan.md".to_string());
+        assert!(input.validate_and_canonicalize().is_err());
     }
 
     #[test]

@@ -131,7 +131,7 @@ Public claims use `agent-session.work-context.v1`:
   "provider_refs": [
     {"kind": "issue", "repository": "owner/repository", "number": 123}
   ],
-  "plan_refs": ["docs/plans/2026-07-19-topic/topic-plan.md"],
+  "plan_refs": [],
   "scopes": [
     {"kind": "path-prefix", "repository": "owner/repository", "value": "src"}
   ],
@@ -156,7 +156,7 @@ The exact claim/check input schema is `agent-session.work-context-input.v1`:
   "repositories": ["owner/repository"],
   "worktrees": [],
   "provider_refs": [{"kind": "issue", "repository": "owner/repository", "number": 123}],
-  "plan_refs": ["docs/plans/2026-07-19-topic/topic-plan.md"],
+  "plan_refs": [],
   "scopes": [{"kind": "path-prefix", "repository": "owner/repository", "value": "src"}],
   "summary": "Implement session coordination"
 }
@@ -171,8 +171,9 @@ until they expire or their owner releases them; reading a claim does not
 silently rewrite the owner's state.
 
 `summary` is bounded to 240 UTF-8 bytes. Collection limits are 8 repositories,
-8 worktree fingerprints, 16 provider references, 16 plan references, and 32
-scopes.
+8 worktree fingerprints, 16 provider references, and 32 scopes. New input
+rejects nonempty `plan_refs`; the field remains in v1 records so historical
+claims can be read and released without rewriting their owner's state.
 
 ### Conflict result
 
@@ -865,7 +866,7 @@ Every leaf command has its own CLI envelope identity, for example
 
 ```text
 agent-session work-context status
-agent-session work-context set [--if-absent] [--summary TEXT] [--intent NAME] [--tier direct|issue|program|program/dispatch] [--repository OWNER/REPO] [--path PATH]... [--issue N]... [--pr N]... [--plan-ref REF]...
+agent-session work-context set [--if-absent] [--summary TEXT] [--intent NAME] [--tier direct|issue|program|program/dispatch] [--repository OWNER/REPO] [--path PATH]... [--issue N]... [--pr N]...
 agent-session work-context clear
 agent-session work-context advise [--targets-file JSON]
 agent-session work-context acknowledge [--for DURATION]

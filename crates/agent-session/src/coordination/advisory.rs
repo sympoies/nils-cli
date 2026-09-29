@@ -226,7 +226,7 @@ pub(crate) fn set(context: &CliContext, args: WorkContextSetArgs) -> Result<Valu
         repositories: vec![repository],
         worktrees: Vec::new(),
         provider_refs,
-        plan_refs: args.plan_refs,
+        plan_refs: Vec::new(),
         scopes,
         summary: args
             .summary
@@ -781,7 +781,7 @@ fn merge_targets(candidate: &mut WorkContextInput, path: &Path) -> Result<(), Cl
 
 fn reason_rank(code: &str) -> u8 {
     match code {
-        "same-worktree" | "same-provider-ref" | "same-plan-ref" | "overlapping-scope" => 0,
+        "same-worktree" | "same-provider-ref" | "overlapping-scope" => 0,
         "same-repository" => 1,
         _ => 2,
     }

@@ -767,7 +767,7 @@ struct QuickArgs {
     /// Private assignment packet JSON file.
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     assignment_file: PathBuf,
-    /// Work mode for the synthesized ephemeral run (`direct` or `issue` delegate-all).
+    /// Work mode for the synthesized ephemeral run: direct, issue, program, or program/dispatch.
     #[arg(long, default_value = "direct")]
     tier: String,
     /// Bounded wait for the worker's authenticated checkpoint, with the same

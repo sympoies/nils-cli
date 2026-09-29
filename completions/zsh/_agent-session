@@ -327,12 +327,11 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 _arguments "${_arguments_options[@]}" : \
 '--summary=[Short public description of the current work]:TEXT:_default' \
 '--intent=[Work intent label]:INTENT:_default' \
-'--tier=[Tracking work mode\: direct, issue, program, program/plan, or program/dispatch (numbered L0-L3 codes accepted)]:TIER:_default' \
+'--tier=[Tracking work mode\: direct, issue, program, or program/dispatch]:TIER:_default' \
 '--repository=[Canonical owner/repository. Defaults to the current checkout'\''s origin]:OWNER/REPO:_default' \
 '*--path=[Repository-relative exact or prefix path to declare. Repeatable]:PATH:_default' \
 '*--issue=[Issue number in the inferred repository. Repeatable]:NUMBER:_default' \
 '*--pr=[Pull/merge request number in the inferred repository. Repeatable]:NUMBER:_default' \
-'*--plan-ref=[Public plan reference. Repeatable]:REF:_default' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
