@@ -79,6 +79,12 @@ _claude__cli() {
             claude__cli__agent__help,resume)
                 cmd="claude__cli__agent__help__resume"
                 ;;
+            claude__cli__auth,auto-refresh)
+                cmd="claude__cli__auth__auto__refresh"
+                ;;
+            claude__cli__auth,current)
+                cmd="claude__cli__auth__current"
+                ;;
             claude__cli__auth,help)
                 cmd="claude__cli__auth__help"
                 ;;
@@ -88,8 +94,26 @@ _claude__cli() {
             claude__cli__auth,logout)
                 cmd="claude__cli__auth__logout"
                 ;;
+            claude__cli__auth,refresh)
+                cmd="claude__cli__auth__refresh"
+                ;;
+            claude__cli__auth,remote)
+                cmd="claude__cli__auth__remote"
+                ;;
+            claude__cli__auth,save)
+                cmd="claude__cli__auth__save"
+                ;;
             claude__cli__auth,status)
                 cmd="claude__cli__auth__status"
+                ;;
+            claude__cli__auth,use)
+                cmd="claude__cli__auth__use"
+                ;;
+            claude__cli__auth__help,auto-refresh)
+                cmd="claude__cli__auth__help__auto__refresh"
+                ;;
+            claude__cli__auth__help,current)
+                cmd="claude__cli__auth__help__current"
                 ;;
             claude__cli__auth__help,help)
                 cmd="claude__cli__auth__help__help"
@@ -100,8 +124,44 @@ _claude__cli() {
             claude__cli__auth__help,logout)
                 cmd="claude__cli__auth__help__logout"
                 ;;
+            claude__cli__auth__help,refresh)
+                cmd="claude__cli__auth__help__refresh"
+                ;;
+            claude__cli__auth__help,remote)
+                cmd="claude__cli__auth__help__remote"
+                ;;
+            claude__cli__auth__help,save)
+                cmd="claude__cli__auth__help__save"
+                ;;
             claude__cli__auth__help,status)
                 cmd="claude__cli__auth__help__status"
+                ;;
+            claude__cli__auth__help,use)
+                cmd="claude__cli__auth__help__use"
+                ;;
+            claude__cli__auth__help__remote,export)
+                cmd="claude__cli__auth__help__remote__export"
+                ;;
+            claude__cli__auth__help__remote,pull)
+                cmd="claude__cli__auth__help__remote__pull"
+                ;;
+            claude__cli__auth__remote,export)
+                cmd="claude__cli__auth__remote__export"
+                ;;
+            claude__cli__auth__remote,help)
+                cmd="claude__cli__auth__remote__help"
+                ;;
+            claude__cli__auth__remote,pull)
+                cmd="claude__cli__auth__remote__pull"
+                ;;
+            claude__cli__auth__remote__help,export)
+                cmd="claude__cli__auth__remote__help__export"
+                ;;
+            claude__cli__auth__remote__help,help)
+                cmd="claude__cli__auth__remote__help__help"
+                ;;
+            claude__cli__auth__remote__help,pull)
+                cmd="claude__cli__auth__remote__help__pull"
                 ;;
             claude__cli__config,help)
                 cmd="claude__cli__config__help"
@@ -160,14 +220,38 @@ _claude__cli() {
             claude__cli__help__agent,resume)
                 cmd="claude__cli__help__agent__resume"
                 ;;
+            claude__cli__help__auth,auto-refresh)
+                cmd="claude__cli__help__auth__auto__refresh"
+                ;;
+            claude__cli__help__auth,current)
+                cmd="claude__cli__help__auth__current"
+                ;;
             claude__cli__help__auth,login)
                 cmd="claude__cli__help__auth__login"
                 ;;
             claude__cli__help__auth,logout)
                 cmd="claude__cli__help__auth__logout"
                 ;;
+            claude__cli__help__auth,refresh)
+                cmd="claude__cli__help__auth__refresh"
+                ;;
+            claude__cli__help__auth,remote)
+                cmd="claude__cli__help__auth__remote"
+                ;;
+            claude__cli__help__auth,save)
+                cmd="claude__cli__help__auth__save"
+                ;;
             claude__cli__help__auth,status)
                 cmd="claude__cli__help__auth__status"
+                ;;
+            claude__cli__help__auth,use)
+                cmd="claude__cli__help__auth__use"
+                ;;
+            claude__cli__help__auth__remote,export)
+                cmd="claude__cli__help__auth__remote__export"
+                ;;
+            claude__cli__help__auth__remote,pull)
+                cmd="claude__cli__help__auth__remote__pull"
                 ;;
             claude__cli__help__config,set)
                 cmd="claude__cli__help__config__set"
@@ -485,7 +569,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth)
-            opts="-h --help login status logout help"
+            opts="-h --help login status logout save use current refresh auto-refresh remote help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -498,9 +582,73 @@ _claude__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        claude__cli__auth__help)
-            opts="login status logout help"
+        claude__cli__auth__auto__refresh)
+            opts="-h --format --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__current)
+            opts="-h --format --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help)
+            opts="login status logout save use current refresh auto-refresh remote help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help__auto__refresh)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help__current)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
@@ -554,7 +702,91 @@ _claude__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        claude__cli__auth__help__refresh)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help__remote)
+            opts="pull export"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help__remote__export)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help__remote__pull)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help__save)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         claude__cli__auth__help__status)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help__use)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -600,7 +832,179 @@ _claude__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        claude__cli__auth__refresh)
+            opts="-h --format --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__remote)
+            opts="-h --help pull export help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__remote__export)
+            opts="-h --name --current --access-only --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --name)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__remote__help)
+            opts="pull export help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__remote__help__export)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__remote__help__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__remote__help__pull)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__remote__pull)
+            opts="-h --ssh --name --current --access-only --write-active --keychain --format --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --ssh)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --name)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --keychain)
+                    COMPREPLY=($(compgen -W "auto required off" -- "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__save)
+            opts="-h --format --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         claude__cli__auth__status)
+            opts="-h --format --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__use)
             opts="-h --format --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -843,8 +1247,36 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__help__auth)
-            opts="login status logout"
+            opts="login status logout save use current refresh auto-refresh remote"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__auth__auto__refresh)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__auth__current)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
@@ -884,7 +1316,91 @@ _claude__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        claude__cli__help__auth__refresh)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__auth__remote)
+            opts="pull export"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__auth__remote__export)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__auth__remote__pull)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__auth__save)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         claude__cli__help__auth__status)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__auth__use)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

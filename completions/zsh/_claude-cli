@@ -190,6 +190,118 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(save)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'(--format)--json[Hidden alias for \`--format json\`]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':name -- Profile name (\[A-Za-z0-9._-\]):_default' \
+&& ret=0
+;;
+(use)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'(--format)--json[Hidden alias for \`--format json\`]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':name -- Profile name:_default' \
+&& ret=0
+;;
+(current)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'(--format)--json[Hidden alias for \`--format json\`]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(refresh)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'(--format)--json[Hidden alias for \`--format json\`]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::names -- Profile names:_default' \
+&& ret=0
+;;
+(auto-refresh)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'(--format)--json[Hidden alias for \`--format json\`]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(remote)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_claude-cli__subcmd__auth__subcmd__remote_commands" \
+"*::: :->remote" \
+&& ret=0
+
+    case $state in
+    (remote)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:claude-cli-auth-remote-command-$line[1]:"
+        case $line[1] in
+            (pull)
+_arguments "${_arguments_options[@]}" : \
+'--ssh=[SSH destination of the token authority]:host:_default' \
+'(--current)--name=[Authority profile name]:name:_default' \
+'--keychain=[macOS Keychain handling for the active login]:KEYCHAIN:(auto required off)' \
+'--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'--current[Use the authority'\''s current default profile]' \
+'--access-only[Required\: never transfer a refresh token]' \
+'--write-active[Required\: write the pulled login as the active login]' \
+'(--format)--json[Hidden alias for \`--format json\`]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+'(--current)--name=[Profile name]:name:_default' \
+'--current[Use the current default profile]' \
+'--access-only[Required\: never print a refresh token]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_claude-cli__subcmd__auth__subcmd__remote__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:claude-cli-auth-remote-help-command-$line[1]:"
+        case $line[1] in
+            (pull)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 ":: :_claude-cli__subcmd__auth__subcmd__help_commands" \
@@ -213,6 +325,50 @@ _arguments "${_arguments_options[@]}" : \
 (logout)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
+;;
+(save)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(use)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(current)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(refresh)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(auto-refresh)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remote)
+_arguments "${_arguments_options[@]}" : \
+":: :_claude-cli__subcmd__auth__subcmd__help__subcmd__remote_commands" \
+"*::: :->remote" \
+&& ret=0
+
+    case $state in
+    (remote)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:claude-cli-auth-help-remote-command-$line[1]:"
+        case $line[1] in
+            (pull)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
 ;;
 (help)
 _arguments "${_arguments_options[@]}" : \
@@ -448,6 +604,50 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(save)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(use)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(current)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(refresh)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(auto-refresh)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remote)
+_arguments "${_arguments_options[@]}" : \
+":: :_claude-cli__subcmd__help__subcmd__auth__subcmd__remote_commands" \
+"*::: :->remote" \
+&& ret=0
+
+    case $state in
+    (remote)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:claude-cli-help-auth-remote-command-$line[1]:"
+        case $line[1] in
+            (pull)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
         esac
     ;;
 esac
@@ -631,9 +831,25 @@ _claude-cli__subcmd__auth_commands() {
 'login:Sign in through the upstream Claude Code authentication flow' \
 'status:Show redacted authentication status' \
 'logout:Sign out through the upstream Claude Code authentication flow' \
+'save:Save the active refresh-capable login as a named authority profile' \
+'use:Make a profile the current default and project it as the active login' \
+'current:Show the current default profile without exposing secrets' \
+'refresh:Refresh the named profiles through Claude Code'\''s refresh-token login' \
+'auto-refresh:Refresh every profile whose access token is close to expiry' \
+'remote:Move access-only logins between a token authority and replicas' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'claude-cli auth commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__auto-refresh_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__auto-refresh_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth auto-refresh commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__current_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__current_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth current commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__auth__subcmd__help_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__help_commands() {
@@ -641,9 +857,25 @@ _claude-cli__subcmd__auth__subcmd__help_commands() {
 'login:Sign in through the upstream Claude Code authentication flow' \
 'status:Show redacted authentication status' \
 'logout:Sign out through the upstream Claude Code authentication flow' \
+'save:Save the active refresh-capable login as a named authority profile' \
+'use:Make a profile the current default and project it as the active login' \
+'current:Show the current default profile without exposing secrets' \
+'refresh:Refresh the named profiles through Claude Code'\''s refresh-token login' \
+'auto-refresh:Refresh every profile whose access token is close to expiry' \
+'remote:Move access-only logins between a token authority and replicas' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'claude-cli auth help commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__auto-refresh_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__auto-refresh_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth help auto-refresh commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__current_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__current_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth help current commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__help_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__help__subcmd__help_commands() {
@@ -660,10 +892,43 @@ _claude-cli__subcmd__auth__subcmd__help__subcmd__logout_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli auth help logout commands' commands "$@"
 }
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__refresh_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__refresh_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth help refresh commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__remote_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__remote_commands() {
+    local commands; commands=(
+'pull:Pull an access-only login over SSH and make it the active login' \
+'export:Print a profile'\''s access-only payload for SSH transport' \
+    )
+    _describe -t commands 'claude-cli auth help remote commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__remote__subcmd__export_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__remote__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth help remote export commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__remote__subcmd__pull_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__remote__subcmd__pull_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth help remote pull commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__save_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__save_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth help save commands' commands "$@"
+}
 (( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__status_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__help__subcmd__status_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli auth help status commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__use_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__use_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth help use commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__auth__subcmd__login_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__login_commands() {
@@ -675,10 +940,68 @@ _claude-cli__subcmd__auth__subcmd__logout_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli auth logout commands' commands "$@"
 }
+(( $+functions[_claude-cli__subcmd__auth__subcmd__refresh_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__refresh_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth refresh commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__remote_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__remote_commands() {
+    local commands; commands=(
+'pull:Pull an access-only login over SSH and make it the active login' \
+'export:Print a profile'\''s access-only payload for SSH transport' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'claude-cli auth remote commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__remote__subcmd__export_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__remote__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth remote export commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__remote__subcmd__help_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__remote__subcmd__help_commands() {
+    local commands; commands=(
+'pull:Pull an access-only login over SSH and make it the active login' \
+'export:Print a profile'\''s access-only payload for SSH transport' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'claude-cli auth remote help commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__remote__subcmd__help__subcmd__export_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__remote__subcmd__help__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth remote help export commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__remote__subcmd__help__subcmd__help_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__remote__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth remote help help commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__remote__subcmd__help__subcmd__pull_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__remote__subcmd__help__subcmd__pull_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth remote help pull commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__remote__subcmd__pull_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__remote__subcmd__pull_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth remote pull commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__save_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__save_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth save commands' commands "$@"
+}
 (( $+functions[_claude-cli__subcmd__auth__subcmd__status_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__status_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli auth status commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__use_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__use_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth use commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__completion_commands] )) ||
 _claude-cli__subcmd__completion_commands() {
@@ -789,8 +1112,24 @@ _claude-cli__subcmd__help__subcmd__auth_commands() {
 'login:Sign in through the upstream Claude Code authentication flow' \
 'status:Show redacted authentication status' \
 'logout:Sign out through the upstream Claude Code authentication flow' \
+'save:Save the active refresh-capable login as a named authority profile' \
+'use:Make a profile the current default and project it as the active login' \
+'current:Show the current default profile without exposing secrets' \
+'refresh:Refresh the named profiles through Claude Code'\''s refresh-token login' \
+'auto-refresh:Refresh every profile whose access token is close to expiry' \
+'remote:Move access-only logins between a token authority and replicas' \
     )
     _describe -t commands 'claude-cli help auth commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__auto-refresh_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__auto-refresh_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli help auth auto-refresh commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__current_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__current_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli help auth current commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__login_commands] )) ||
 _claude-cli__subcmd__help__subcmd__auth__subcmd__login_commands() {
@@ -802,10 +1141,43 @@ _claude-cli__subcmd__help__subcmd__auth__subcmd__logout_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli help auth logout commands' commands "$@"
 }
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__refresh_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__refresh_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli help auth refresh commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__remote_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__remote_commands() {
+    local commands; commands=(
+'pull:Pull an access-only login over SSH and make it the active login' \
+'export:Print a profile'\''s access-only payload for SSH transport' \
+    )
+    _describe -t commands 'claude-cli help auth remote commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__remote__subcmd__export_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__remote__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli help auth remote export commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__remote__subcmd__pull_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__remote__subcmd__pull_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli help auth remote pull commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__save_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__save_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli help auth save commands' commands "$@"
+}
 (( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__status_commands] )) ||
 _claude-cli__subcmd__help__subcmd__auth__subcmd__status_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli help auth status commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__use_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__use_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli help auth use commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__help__subcmd__completion_commands] )) ||
 _claude-cli__subcmd__help__subcmd__completion_commands() {
