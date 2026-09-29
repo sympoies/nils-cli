@@ -49,8 +49,7 @@ Before marking a candidate `remove`, include all of the following:
 - Confirmation that `contract-allowlist.tsv` does not protect the candidate path.
 - Replacement test evidence when user-visible behavior could change.
 - Explicit validation command outputs in the PR (`test-stale-audit`, focused or
-  local-fast checks). CI enforces the coverage floor on `main` pushes,
-  merge-queue runs, and release PRs.
+  local-fast checks, and CI coverage gate).
 
 For `rewrite`, document:
 
@@ -78,8 +77,7 @@ For `rewrite`, document:
   - `test`
   - `test_macos`
   - `coverage`
-- Coverage gate command used by CI on `main` pushes, merge-queue runs, and
-  `chore/release-*` PRs:
+- Coverage gate command used by CI:
   - `cargo llvm-cov nextest --profile ci --workspace --lcov --output-path target/coverage/lcov.info --fail-under-lines 85`
   - `scripts/ci/coverage-summary.sh target/coverage/lcov.info`
 

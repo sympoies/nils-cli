@@ -117,9 +117,8 @@ already complete.
 ## 3. Canonical validation flows
 
 Local development defaults to changed-scope validation. The full workspace test
-stack is a CI responsibility for normal PRs, and the coverage gate runs on
-`main` pushes, merge-queue runs, and `chore/release-*` PRs (section 3.4); run
-them locally only when you need CI parity, release-quality verification, coverage
+stack and coverage gate are CI responsibilities for normal PRs; run them
+locally only when you need CI parity, release-quality verification, coverage
 maintenance, or explicit debugging evidence.
 
 Primary local entrypoint for day-to-day implementation work:
@@ -230,22 +229,20 @@ Notes:
 - Because doctests are not included in nextest, the entrypoint also runs
   `cargo test --workspace --doc` when `NILS_CLI_TEST_RUNNER=nextest`.
 - `NILS_CLI_SKIP_DOCTESTS=1` skips that doc run in both the `nextest` and
-  `llvm-cov` runner modes. CI sets it only on `test_macos` (llvm-cov on the
-  full-coverage lane, nextest otherwise), because the Linux `test` job already runs the same doc tests. It does not
+  `llvm-cov` runner modes. CI sets it only on `test_macos` (llvm-cov runner),
+  because the Linux `test` job already runs the same doc tests. It does not
   affect the trailing doc run of `--with-coverage`.
+- `NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1` skips the stale-test and completion
+  freshness/parity audits, whose result does not depend on the OS. CI sets it
+  only on `test_macos`; the Linux `test` job runs them.
 
 ### 3.4 Full coverage flow (CI gate / explicit local parity)
 
-Coverage gate is mandatory in CI for non-doc changes on `main` pushes, merge-queue
-runs, and canonical `chore/release-*` pull requests, and in explicit release-quality
-verification (total line coverage must stay `>= 85.00%`). On that
-full-coverage lane the `test_macos` job runs the workspace tests once under
+Coverage gate is mandatory in CI for non-doc changes and in explicit
+release-quality verification (total line coverage must stay `>= 85.00%`).
+In CI, the `test_macos` job runs the workspace tests once under
 `NILS_CLI_TEST_RUNNER=llvm-cov`, which enforces the floor, and the `coverage`
-job publishes the summary from that run's LCOV artifact. Other pull requests
-run plain `nextest` on macOS, skip the OS-independent audits
-that the Linux `test` job runs (`NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1`), and
-get no coverage comment; a coverage drop surfaces on the `main` push run,
-which the release gate requires.
+job publishes the summary from that run's LCOV artifact.
 The Linux cgroup containment and provider-stop canaries run in their own
 `test_containment` job beside `test`; `coverage` requires it to succeed.
 Normal local development does not need to run coverage before opening a PR:

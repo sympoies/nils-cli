@@ -112,11 +112,16 @@ fi
 echo "ok: the release cache warmer builds the same targets, runners, and toolchain as release.yml"
 assert_contains .github/workflows/ci.yml "key: llvm-cov" \
   "the instrumented macOS job caches its llvm-cov dependencies under their own key"
+assert_contains .github/workflows/ci.yml "NILS_CLI_TEST_RUNNER: llvm-cov" \
+  "the macOS full lane runs the instrumented tests that enforce the coverage floor"
 assert_contains .github/workflows/ci.yml "needs: [changes, test_macos, test_containment]" \
   "coverage reports from the macOS instrumented run instead of repeating it"
 # test_containment is not a required check; only the coverage job's own guard
 # connects it to merge and the release gate, so assert inside that job.
 coverage_job="$(mktemp "${TMPDIR:-/tmp}/ci-coverage-job.XXXXXX")"
+linux_test_job="$(mktemp "${TMPDIR:-/tmp}/ci-test-job.XXXXXX")"
+macos_job="$(mktemp "${TMPDIR:-/tmp}/ci-macos-job.XXXXXX")"
+trap 'rm -f "$coverage_job" "$linux_test_job" "$macos_job"' EXIT
 awk '/^  coverage:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
   .github/workflows/ci.yml >"$coverage_job"
 assert_contains "$coverage_job" "if: \${{ !cancelled() }}" \
@@ -125,24 +130,18 @@ assert_contains "$coverage_job" "TEST_CONTAINMENT_RESULT: \${{ needs.test_contai
   "coverage reads the parallel containment canaries' result"
 assert_contains "$coverage_job" "[ \"\${TEST_CONTAINMENT_RESULT}\" != \"success\" ]; then" \
   "coverage fails closed unless the parallel containment canaries succeeded"
-# Main pushes, merge-queue runs, and canonical release branches (the only pull
-# request runs the tag gate trusts) keep the instrumented run that enforces the
-# coverage floor: every green check a tag could be released from enforced it.
-full_coverage_lane="FULL_COVERAGE_LANE: \${{ github.event_name == 'push' || github.event_name == 'merge_group' || startsWith(github.head_ref, 'chore/release-') }}"
-macos_job="$(mktemp "${TMPDIR:-/tmp}/ci-macos-job.XXXXXX")"
-trap 'rm -f "$coverage_job" "$macos_job"' EXIT
+# The stale-test and completion freshness/parity audits give the same answer
+# on every OS, so only the Linux `test` job runs them.
+awk '/^  test:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
+  .github/workflows/ci.yml >"$linux_test_job"
 awk '/^  test_macos:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
   .github/workflows/ci.yml >"$macos_job"
-assert_contains "$macos_job" "$full_coverage_lane" \
-  "test_macos derives the full-coverage lane from the event and the canonical release branch"
-assert_contains "$macos_job" "NILS_CLI_TEST_RUNNER: \${{ env.FULL_COVERAGE_LANE == 'true' && 'llvm-cov' || 'nextest' }}" \
-  "main pushes and release branches run the instrumented tests that enforce the coverage floor"
-assert_contains "$macos_job" "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: \${{ env.FULL_COVERAGE_LANE == 'true' && '0' || '1' }}" \
-  "other pull requests leave the OS-independent audits to the Linux lane"
-assert_contains "$coverage_job" "$full_coverage_lane" \
-  "coverage derives the same full-coverage lane"
-assert_contains "$coverage_job" "if: env.FULL_COVERAGE_LANE == 'true' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'" \
-  "coverage requires LCOV and the full-validation marker only on the full-coverage lane"
+assert_contains "$macos_job" "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: \"1\"" \
+  "the macOS lane leaves the OS-independent audits to the Linux lane"
+assert_contains "$linux_test_job" "NILS_CLI_TEST_RUNNER: nextest" \
+  "the Linux test job block was extracted"
+assert_not_contains "$linux_test_job" "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS" \
+  "the Linux test lane runs the OS-independent audits"
 assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
   "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS" \
   "the required-checks runner honours the OS-independent audit skip"
