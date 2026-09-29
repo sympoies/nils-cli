@@ -96,13 +96,48 @@ impl Fixture {
                 if line.starts_with("Last update: ") {
                     "Last update: <now>".to_string()
                 } else {
-                    line.to_string()
+                    sorted_raw_usage_window_keys(line)
                 }
             })
             .collect::<Vec<_>>()
             .join("\n");
         format!("$ {}\nexit={}\n{stdout}\n", args.join(" "), output.code)
     }
+}
+
+/// `raw_usage` is a `serde_json` map, so its key order follows serde_json's
+/// `preserve_order` feature, which workspace feature unification turns on or
+/// off depending on which packages share the build. Put its window keys back
+/// in sorted order so the transcript pins everything else byte for byte.
+fn sorted_raw_usage_window_keys(line: &str) -> String {
+    const USED: &str = "\"used_percent\":";
+    const RESET: &str = ",\"reset_at\":";
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(start) = rest.find(USED) {
+        let after_used = &rest[start + USED.len()..];
+        let used_len = after_used
+            .find(|ch: char| !ch.is_ascii_digit())
+            .unwrap_or(after_used.len());
+        let after_value = &after_used[used_len..];
+        let Some(after_reset) = after_value.strip_prefix(RESET) else {
+            out.push_str(&rest[..start + USED.len()]);
+            rest = after_used;
+            continue;
+        };
+        let reset_len = after_reset
+            .find(|ch: char| !ch.is_ascii_digit())
+            .unwrap_or(after_reset.len());
+        out.push_str(&rest[..start]);
+        out.push_str(&format!(
+            "\"reset_at\":{},{USED}{}",
+            &after_reset[..reset_len],
+            &after_used[..used_len]
+        ));
+        rest = &after_reset[reset_len..];
+    }
+    out.push_str(rest);
+    out
 }
 
 #[test]
