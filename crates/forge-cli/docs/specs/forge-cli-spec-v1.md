@@ -1558,8 +1558,14 @@ backend implementations cannot diverge.
       bounded by `--queue-timeout` (default 2700 s). Failures:
       - `merge_queue_enqueue_rejected` (`RUNTIME 1`): the enqueue mutation
         returned GraphQL errors or no queue entry.
-      - `merge_queue_dequeued` (`RUNTIME 1`): the PR was dequeued or closed
-        without merging.
+      - `merge_queue_dequeued` (`RUNTIME 1`): the PR was closed, or stayed open
+        without a queue entry through the whole 60 s grace. The provider can
+        drop the entry of a PR it merged before the PR reads as merged, so
+        that reading is re-polled first; when `--queue-timeout` ends the wait
+        inside the grace, the result is `merge_queue_timeout`. A PR that reads
+        merged before its merge commit is reported is re-polled through the
+        same grace, bounded by the timeout, then its commit is read from the
+        PR view.
       - `merge_queue_checks_failed` (`RUNTIME 1`): the entry was reported
         unmergeable.
       - `merge_queue_poll_failed` (`UNAVAILABLE 69`): a poll returned GraphQL

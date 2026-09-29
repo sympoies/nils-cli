@@ -2276,7 +2276,7 @@ fn pr_merge_reports_a_pull_request_dequeued_by_the_merge_queue() {
     let stub = StubEnv::new();
     let merged = stub.tempdir.path().join("github-merged");
     let extra = r#"      *"ForgeEnqueuePullRequest"*) printf '%s\n' '{"data":{"enqueuePullRequest":{"mergeQueueEntry":{"state":"QUEUED","position":1}}}}' ;;
-      *"ForgeMergeQueuePoll"*) printf '%s\n' '{"data":{"repository":{"pullRequest":{"state":"OPEN","mergeCommit":null,"mergeQueueEntry":null}}}}' ;;"#;
+      *"ForgeMergeQueuePoll"*) printf '%s\n' '{"data":{"repository":{"pullRequest":{"state":"CLOSED","mergeCommit":null,"mergeQueueEntry":null}}}}' ;;"#;
     let body = github_merge_stub_full(
         &stub,
         "",
