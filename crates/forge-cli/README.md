@@ -192,7 +192,10 @@ typed:
 
 - `merge_queue_enqueue_rejected`: the enqueue mutation was rejected.
 - `merge_queue_poll_failed`: a queue poll returned GraphQL errors.
-- `merge_queue_dequeued`: the PR left the queue without merging.
+- `merge_queue_dequeued`: the PR left the queue without merging. An open PR
+  with no queue entry is re-read for up to 60 seconds, never past
+  `--queue-timeout`, because the provider can drop the entry of a PR it merged
+  before the PR reads as merged.
 - `merge_queue_checks_failed`: the queue reports the PR as unmergeable.
 - `merge_queue_timeout`: the wait exceeded `--queue-timeout`. The PR is still
   queued and will merge unless it is dequeued; rerun `pr merge` to resume.

@@ -30,6 +30,11 @@ pub const FREEZE_LABEL: &str = "merge-freeze";
 /// Default bound on waiting for a merge queue to merge an enqueued PR.
 pub const DEFAULT_QUEUE_TIMEOUT: Duration = Duration::from_secs(45 * 60);
 const QUEUE_POLL_INTERVAL: Duration = Duration::from_secs(15);
+/// How long an open PR may read as out of the queue, or a merged PR as having
+/// no merge commit, before that reading is final. GitHub removes the queue
+/// entry of a PR it merged before the PR's state flips to `MERGED`.
+const QUEUE_EXIT_GRACE: Duration = Duration::from_secs(60);
+const QUEUE_EXIT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 const POLICY_QUERY: &str = "query ForgeMergePolicy($owner:String!,$name:String!,$base:String!,$pr:Int!){repository(owner:$owner,name:$name){mergeQueue(branch:$base){configuration{mergeMethod}} issues(first:20,states:OPEN,labels:[\"merge-freeze\"]){nodes{number title url author{login} createdAt}} pullRequest(number:$pr){id isInMergeQueue state}}}";
 
@@ -280,6 +285,11 @@ pub fn enqueue<R: BackendRunner>(
 
 /// Poll until the queue merges the PR. Returns the merge commit when the
 /// provider reports one.
+///
+/// A PR that reads `OPEN` with no queue entry, or `MERGED` with no merge
+/// commit, may be mid-transition: GitHub drops the entry of a PR it merged
+/// before the PR's state flips. Such a reading is re-polled for up to
+/// [`QUEUE_EXIT_GRACE`], never past `timeout`, before it is final.
 pub fn wait_for_merge<R: BackendRunner, C: Clock>(
     runner: &R,
     clock: &C,
@@ -290,6 +300,7 @@ pub fn wait_for_merge<R: BackendRunner, C: Clock>(
     timeout: Duration,
 ) -> Result<Option<String>, ForgeError> {
     let started = clock.now();
+    let mut transitional_since = None;
     loop {
         let call = graphql_call(
             ctx,
@@ -302,18 +313,35 @@ pub fn wait_for_merge<R: BackendRunner, C: Clock>(
         reject_errors(&value, "merge queue poll", poll_failed)?;
         let pull = &value["data"]["repository"]["pullRequest"];
         let state = pull["state"].as_str().unwrap_or_default();
-        if state.eq_ignore_ascii_case("MERGED") {
-            return Ok(pull["mergeCommit"]["oid"].as_str().map(str::to_string));
-        }
         let entry = &pull["mergeQueueEntry"];
-        if state.eq_ignore_ascii_case("CLOSED") || entry.is_null() {
-            return Err(ForgeError::runtime_failure(
-                schema_err(),
-                "merge_queue_dequeued",
-                "the pull request left the merge queue without being merged",
-                Some(format!("pr={pr}; state={state}")),
-            ));
+        let merged = state.eq_ignore_ascii_case("MERGED");
+        let merge_commit = pull["mergeCommit"]["oid"]
+            .as_str()
+            .filter(|oid| !oid.is_empty());
+        if merged && let Some(oid) = merge_commit {
+            return Ok(Some(oid.to_string()));
         }
+        if state.eq_ignore_ascii_case("CLOSED") {
+            return Err(dequeued(pr, state));
+        }
+        if merged || entry.is_null() {
+            let now = clock.now();
+            let since = *transitional_since.get_or_insert(now);
+            if now.duration_since(since) >= QUEUE_EXIT_GRACE
+                || now.duration_since(started) >= timeout
+            {
+                // A merge without a reported commit still landed; the caller
+                // reads the commit from the pull request view instead.
+                return if merged {
+                    Ok(None)
+                } else {
+                    Err(dequeued(pr, state))
+                };
+            }
+            clock.sleep(QUEUE_EXIT_POLL_INTERVAL);
+            continue;
+        }
+        transitional_since = None;
         if entry["state"]
             .as_str()
             .is_some_and(|state| state.eq_ignore_ascii_case("UNMERGEABLE"))
@@ -339,6 +367,15 @@ pub fn wait_for_merge<R: BackendRunner, C: Clock>(
         }
         clock.sleep(QUEUE_POLL_INTERVAL);
     }
+}
+
+fn dequeued(pr: u64, state: &str) -> ForgeError {
+    ForgeError::runtime_failure(
+        schema_err(),
+        "merge_queue_dequeued",
+        "the pull request left the merge queue without being merged",
+        Some(format!("pr={pr}; state={state}")),
+    )
 }
 
 pub(crate) fn parse_freeze(node: &serde_json::Value) -> Option<Freeze> {
@@ -539,6 +576,92 @@ mod tests {
         let closed = poll("CLOSED", "null");
         let err = wait(&[&closed], Duration::from_secs(600)).unwrap_err();
         assert_eq!(err.kind(), "merge_queue_dequeued");
+    }
+
+    #[test]
+    fn a_queue_merge_seen_before_the_state_flips_is_still_a_merge() {
+        let queued = poll("OPEN", r#"{"state":"MERGEABLE","position":1}"#);
+        let left = poll("OPEN", "null");
+        let merged = r#"{"data":{"repository":{"pullRequest":{"state":"MERGED","mergeCommit":{"oid":"abc"},"mergeQueueEntry":null}}}}"#;
+        assert_eq!(
+            wait(&[&queued, &left, &left, merged], Duration::from_secs(600))
+                .unwrap()
+                .as_deref(),
+            Some("abc")
+        );
+    }
+
+    #[test]
+    fn an_open_pull_request_out_of_the_queue_past_the_grace_reports_dequeued() {
+        let queued = poll("OPEN", r#"{"state":"QUEUED","position":1}"#);
+        let left = poll("OPEN", "null");
+        let runner = ScriptedRunner::new(&[&queued, &left]);
+        let clock = StepClock::new();
+        let err = wait_for_merge(
+            &runner,
+            &clock,
+            &github(),
+            "acme",
+            "widgets",
+            7,
+            Duration::from_secs(600),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), "merge_queue_dequeued");
+        assert!(
+            err.detail()
+                .is_some_and(|detail| detail.contains("state=OPEN")),
+            "{:?}",
+            err.detail()
+        );
+        let waited = clock.offset.get();
+        assert!(
+            waited >= QUEUE_POLL_INTERVAL + QUEUE_EXIT_GRACE,
+            "dequeued only after the grace: waited {waited:?}"
+        );
+        assert!(
+            waited < QUEUE_POLL_INTERVAL + QUEUE_EXIT_GRACE + QUEUE_POLL_INTERVAL,
+            "the grace stays bounded: waited {waited:?}"
+        );
+    }
+
+    #[test]
+    fn a_pull_request_closed_after_leaving_the_queue_reports_dequeued() {
+        let queued = poll("OPEN", r#"{"state":"QUEUED","position":1}"#);
+        let left = poll("OPEN", "null");
+        let closed = poll("CLOSED", "null");
+        let err = wait(&[&queued, &left, &closed], Duration::from_secs(600)).unwrap_err();
+        assert_eq!(err.kind(), "merge_queue_dequeued");
+        assert!(
+            err.detail()
+                .is_some_and(|detail| detail.contains("state=CLOSED")),
+            "{:?}",
+            err.detail()
+        );
+    }
+
+    #[test]
+    fn the_grace_never_outlasts_the_queue_timeout() {
+        let left = poll("OPEN", "null");
+        let err = wait(&[&left], Duration::ZERO).unwrap_err();
+        assert_eq!(err.kind(), "merge_queue_dequeued");
+    }
+
+    #[test]
+    fn a_merge_reported_before_its_commit_waits_briefly_for_the_commit() {
+        let merged_pending = poll("MERGED", "null");
+        let merged = r#"{"data":{"repository":{"pullRequest":{"state":"MERGED","mergeCommit":{"oid":"abc"},"mergeQueueEntry":null}}}}"#;
+        assert_eq!(
+            wait(&[&merged_pending, merged], Duration::from_secs(600))
+                .unwrap()
+                .as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            wait(&[&merged_pending], Duration::from_secs(600)).unwrap(),
+            None,
+            "a merge whose commit never appears still succeeds and falls back to the view"
+        );
     }
 
     #[test]

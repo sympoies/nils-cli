@@ -2289,7 +2289,9 @@ fn pr_merge_reports_a_pull_request_dequeued_by_the_merge_queue() {
     );
     let stub = stub.gh_stub(&body);
 
-    let out = run_github_merge(&stub, &repo_path, &[]);
+    // A zero bound skips the real-clock grace an open pull request out of the
+    // queue is re-read for before it counts as dequeued.
+    let out = run_github_merge(&stub, &repo_path, &["--queue-timeout", "0"]);
 
     assert_ne!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
     assert_eq!(
