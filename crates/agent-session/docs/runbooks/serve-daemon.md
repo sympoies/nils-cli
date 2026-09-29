@@ -252,6 +252,36 @@ When a user systemd manager or `systemd-run` is unavailable, the daemon falls
 back to direct tmux launch. Pair the isolated scope with `KillMode=process` on
 the serve service for defense in depth.
 
+### Restart after a binary upgrade
+
+A package-manager upgrade replaces or removes the installed `agent-session`
+while serve is still running, which would leave new session launches unable to
+exec their helper. When `AGENT_SESSION_TMUX_SCOPE` is enabled, serve records the
+device and inode of its own executable at startup, resolving a linked
+invocation path such as a Homebrew `bin/` link to the release file, and checks
+it once per second. When that file is replaced or removed, or the invocation
+link is repointed at another release while the old one stays installed, serve
+logs `serve-binary-replaced` to stderr, stops accepting connections, gives
+in-flight HTTP requests and streams up to 10 seconds to finish, and exits `75`
+(`EX_TEMPFAIL`). Serve itself kills no tmux session; the scoped panes survive
+exactly as they do across a manual restart.
+
+Without the tmux scope, sessions share the service cgroup, and a supervisor
+cleaning up the exited service would kill them. Serve therefore does not watch
+its binary unless the scope is enabled; an unscoped serve keeps running on the
+replaced binary until it is restarted deliberately.
+
+The supervisor must restart on that non-zero exit:
+
+- systemd: `Restart=on-failure` (or `Restart=always`), together with
+  `KillMode=process` and `AGENT_SESSION_TMUX_SCOPE=1` as above.
+- launchd: `KeepAlive` set to `true`, or a `KeepAlive` dictionary with
+  `SuccessfulExit` set to `false`.
+
+A scoped deployment that restarts serve itself can opt out with
+`AGENT_SESSION_SERVE_EXIT_ON_BINARY_CHANGE=0`; serve then keeps running on the
+replaced binary.
+
 At startup, historical session records may remain even when tmux has no server
 or live sessions. A recognized tmux missing-server diagnostic is an
 authoritative empty live-session snapshot, so the Codex account reconnect fence
