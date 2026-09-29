@@ -583,12 +583,19 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth__auto__refresh)
-            opts="-h --format --json --help"
+            opts="-h --accounts-dir --format --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --accounts-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
@@ -833,12 +840,19 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth__refresh)
-            opts="-h --format --json --help"
+            opts="-h --accounts-dir --format --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --accounts-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
@@ -865,7 +879,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth__remote__export)
-            opts="-h --name --current --access-only --help"
+            opts="-h --name --current --all --access-only --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -939,7 +953,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth__remote__pull)
-            opts="-h --ssh --name --current --access-only --write-active --keychain --format --json --help"
+            opts="-h --ssh --name --current --all --into --access-only --write-active --keychain --format --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -951,6 +965,13 @@ _claude__cli() {
                     ;;
                 --name)
                     COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --into)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
                     return 0
                     ;;
                 --keychain)

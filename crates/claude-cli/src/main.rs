@@ -139,11 +139,23 @@ fn handle_auth(args: &cli::AuthArgs) -> i32 {
         Some(cli::AuthCommand::Current { output }) => {
             claude_cli::auth::profile::current(output.is_json())
         }
-        Some(cli::AuthCommand::Refresh { names, output }) => {
-            claude_cli::auth::profile::refresh(names, false, output.is_json())
-        }
-        Some(cli::AuthCommand::AutoRefresh { output }) => {
-            claude_cli::auth::profile::refresh(&[], true, output.is_json())
+        Some(cli::AuthCommand::Refresh {
+            names,
+            accounts,
+            output,
+        }) => claude_cli::auth::profile::refresh(
+            names,
+            false,
+            accounts.accounts_dir.as_deref(),
+            output.is_json(),
+        ),
+        Some(cli::AuthCommand::AutoRefresh { accounts, output }) => {
+            claude_cli::auth::profile::refresh(
+                &[],
+                true,
+                accounts.accounts_dir.as_deref(),
+                output.is_json(),
+            )
         }
         Some(cli::AuthCommand::Remote(remote)) => handle_auth_remote(remote),
         None => print_subcommand_help("auth"),
@@ -157,6 +169,8 @@ fn handle_auth_remote(args: &cli::AuthRemoteArgs) -> i32 {
             ssh,
             name,
             current,
+            all,
+            into,
             access_only,
             write_active,
             keychain: keychain_arg,
@@ -165,6 +179,8 @@ fn handle_auth_remote(args: &cli::AuthRemoteArgs) -> i32 {
             ssh,
             name: name.as_deref(),
             current: *current,
+            all: *all,
+            into: into.as_deref(),
             access_only: *access_only,
             write_active: *write_active,
             keychain: match keychain_arg {
@@ -177,8 +193,9 @@ fn handle_auth_remote(args: &cli::AuthRemoteArgs) -> i32 {
         Some(cli::AuthRemoteCommand::Export {
             name,
             current,
+            all,
             access_only,
-        }) => remote::export(name.as_deref(), *current, *access_only),
+        }) => remote::export(name.as_deref(), *current, *all, *access_only),
         None => {
             let mut cmd = cli::Cli::command();
             if let Some(auth) = cmd.find_subcommand_mut("auth")

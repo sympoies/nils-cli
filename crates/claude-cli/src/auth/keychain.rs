@@ -52,13 +52,16 @@ fn security_bin() -> String {
 /// The item name Claude Code uses for the current config dir.
 fn service() -> String {
     match shared_env::env_non_empty(store::CONFIG_DIR_ENV) {
-        Some(dir) => {
-            let digest = Sha256::digest(dir.as_bytes());
-            let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-            format!("{SERVICE}-{}", &hex[..8])
-        }
+        Some(dir) => service_for_config_dir(&dir),
         None => SERVICE.to_string(),
     }
+}
+
+/// The item name Claude Code uses when `CLAUDE_CONFIG_DIR` is exactly `dir`.
+pub fn service_for_config_dir(dir: &str) -> String {
+    let digest = Sha256::digest(dir.as_bytes());
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("{SERVICE}-{}", &hex[..8])
 }
 
 /// The item account Claude Code uses: `$USER` when it is a safe name.
@@ -73,13 +76,17 @@ fn account() -> String {
 
 /// Read the stored credentials object, or `None` when there is no item.
 pub fn read_item() -> AuthResult<Option<Map<String, Value>>> {
+    read_service_item(&service())
+}
+
+fn read_service_item(service: &str) -> AuthResult<Option<Map<String, Value>>> {
     let output = Command::new(security_bin())
         .args([
             "find-generic-password",
             "-a",
             &account(),
             "-s",
-            &service(),
+            service,
             "-w",
         ])
         .stdin(Stdio::null())
@@ -104,14 +111,14 @@ pub fn read_item() -> AuthResult<Option<Map<String, Value>>> {
     }
 }
 
-fn write_item(value: &Value) -> AuthResult<()> {
+fn write_item(service: &str, value: &Value) -> AuthResult<()> {
     let bytes = serde_json::to_vec(value)
         .map_err(|err| AuthError::runtime("keychain-write-failed", err.to_string()))?;
     let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
     let command = format!(
         "add-generic-password -U -a \"{}\" -s \"{}\" -X {hex}\n",
         account(),
-        service()
+        service
     );
     if command.len() > MAX_INTERACTIVE_LINE {
         // Never pass the secret on argv, and never send a line that could be split.
@@ -148,6 +155,23 @@ fn write_item(value: &Value) -> AuthResult<()> {
 ///
 /// Returns `off`, `written`, or (in [`Mode::Auto`]) `unavailable`.
 pub fn project(access: &Map<String, Value>, mode: Mode) -> AuthResult<&'static str> {
+    project_service(&service(), access, mode)
+}
+
+/// [`project`] into the item of the config dir `dir` instead of the current one.
+pub fn project_for_config_dir(
+    dir: &str,
+    access: &Map<String, Value>,
+    mode: Mode,
+) -> AuthResult<&'static str> {
+    project_service(&service_for_config_dir(dir), access, mode)
+}
+
+fn project_service(
+    service: &str,
+    access: &Map<String, Value>,
+    mode: Mode,
+) -> AuthResult<&'static str> {
     if mode == Mode::Off || !enabled() {
         if mode == Mode::Required {
             return Err(AuthError::runtime(
@@ -157,10 +181,10 @@ pub fn project(access: &Map<String, Value>, mode: Mode) -> AuthResult<&'static s
         }
         return Ok("off");
     }
-    let result = read_item().and_then(|item| {
+    let result = read_service_item(service).and_then(|item| {
         let mut item = item.unwrap_or_default();
         item.insert("claudeAiOauth".to_string(), Value::Object(access.clone()));
-        write_item(&Value::Object(item))
+        write_item(service, &Value::Object(item))
     });
     match (result, mode) {
         (Ok(()), _) => Ok("written"),

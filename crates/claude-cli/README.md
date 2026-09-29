@@ -23,12 +23,14 @@ claude-cli auth logout
 claude-cli auth save <name> [--format text|json]
 claude-cli auth use <name> [--format text|json]
 claude-cli auth current [--format text|json]
-claude-cli auth refresh <name>... [--format text|json]
-claude-cli auth auto-refresh [--format text|json]
-claude-cli auth remote export (--name <name>|--current) --access-only
+claude-cli auth refresh <name>... [--accounts-dir <dir>] [--format text|json]
+claude-cli auth auto-refresh [--accounts-dir <dir>] [--format text|json]
+claude-cli auth remote export (--name <name>|--current|--all) --access-only
 claude-cli auth remote pull --ssh <host> (--name <name>|--current) --access-only
                             --write-active [--keychain auto|required|off]
                             [--format text|json]
+claude-cli auth remote pull --ssh <host> --all --into <accounts-dir> --access-only
+                            [--keychain auto|required|off] [--format text|json]
 claude-cli config show
 claude-cli config set <key> <value>
 claude-cli prompt-segment [options]
@@ -173,10 +175,19 @@ as `codex-cli auth remote`, and both use the shared
   If the exchange succeeds but the result cannot be stored as the profile (for
   example, it belongs to another account), the rotated login is kept in
   `<profile>.refresh-quarantine` (mode 0600) instead of being discarded.
+  With `--accounts-dir <dir>` (or `CLAUDE_ACCOUNTS_DIR`), each refreshed
+  profile is also re-projected access-only into `<dir>/<profile>/` (files
+  only); the JSON result lists them in `projected`, and a failed projection is
+  reported in `projection_failed` and exits `1`.
 - `auth remote export`: Print a profile's access-only payload (`profile`, the
-  access fields of `claudeAiOauth`, `oauthAccount`) for SSH transport.
+  access fields of `claudeAiOauth`, `oauthAccount`) for SSH transport. `--all`
+  prints `{"current": <name|null>, "profiles": [<payload>...]}` in one call.
 - `auth remote pull`: Run `claude-cli auth remote export` on the authority and
   write the result as the active login.
+- `auth remote pull --all --into <accounts-dir>`: Export every profile in one
+  SSH round trip and write each into its own Claude Code config dir,
+  `<accounts-dir>/<profile>/`, for use as `CLAUDE_CONFIG_DIR`. The default
+  login is not touched. See [Per-account config directories](#per-account-config-directories).
 
 `save`, `use`, and `refresh` hold an exclusive lock on
 `CLAUDE_SECRET_DIR/.lock`, so profile and active-login writes never interleave.
@@ -196,6 +207,35 @@ passed to `security -i` on stdin, never on argv; an item too large for one
 `unavailable` when the Keychain is locked (for example over SSH), `required`
 fails instead, and `off` skips it. Run the pull from the GUI session (a
 LaunchAgent) so the Keychain is writable.
+
+### Per-account config directories
+
+`auth remote pull --all --into <accounts-dir>` keeps one config dir per
+authority profile, so separate sessions can run as separate accounts with
+`CLAUDE_CONFIG_DIR=<accounts-dir>/<profile>`. For each profile it writes:
+
+- `.credentials.json`: a real file (mode 0600) with the access-only
+  `claudeAiOauth` and `"refreshToken": ""`; other entries are kept.
+- `.claude.json`: `oauthAccount` is set; a missing file is created with
+  `{"hasCompletedOnboarding": true}` plus the account, and an existing file
+  keeps everything else.
+- `.claude-cli-account`: the ownership marker.
+- On a Keychain host, the item `Claude Code-credentials-<first 8 hex of
+  sha256(<config dir>)>`, the name Claude Code uses for that
+  `CLAUDE_CONFIG_DIR`. The path is made absolute but not canonicalized, so set
+  `CLAUDE_CONFIG_DIR` to the reported `config_dir` exactly.
+
+An existing non-empty directory without the marker is never adopted: that
+profile fails with `account-dir-not-owned`, and profile names made only of dots
+are refused. Directories of profiles that no longer exist on the authority are removed, but
+only real directories that hold the ownership marker; symlinks inside them are
+unlinked, never followed. An export with no profiles is refused, so nothing is
+pruned. Shared files such as `settings.json` or `projects/` are not managed
+here. The JSON result (`claude-cli.auth.v1`) reports `current`, `into`,
+`pruned`, and per profile `name`, `config_dir`, `written`, `keychain`,
+`expires_at`, and `has_refresh_token` (always `false`); a profile that could
+not be written carries an `error` and makes the command exit `1`. Pulls and
+refresh projections hold `<accounts-dir>/.lock`.
 
 ## Configuration commands
 
@@ -267,6 +307,8 @@ forwarded.
 - `CLAUDE_SECRET_DIR`: authority profile dir; default `~/.config/claude_secrets`.
 - `CLAUDE_AUTH_REFRESH_MARGIN_SECONDS`: `auto-refresh` margin; default `14400`.
 - `CLAUDE_AUTH_KEYCHAIN`: `on` or `off` overrides the macOS Keychain default.
+- `CLAUDE_ACCOUNTS_DIR`: default `--accounts-dir` for `refresh` and
+  `auto-refresh`.
 - `CLAUDE_CLI_MODEL`, `CLAUDE_CLI_EFFORT`: one-shot defaults.
 - `CLAUDE_CLI_AGENT_RUNTIME`: `safe` (default) or `inherited`.
 - `CLAUDE_CLI_NO_SESSION_PERSISTENCE`: default `true`; safe mode always
