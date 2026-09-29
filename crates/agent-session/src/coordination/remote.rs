@@ -189,7 +189,8 @@ pub(crate) struct Submit {
     pub reply_revision: Option<u64>,
 }
 
-fn client() -> Result<reqwest::blocking::Client, CliError> {
+/// Bounded federation HTTP client: 15-second timeout, redirects refused.
+pub(crate) fn client() -> Result<reqwest::blocking::Client, CliError> {
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
@@ -761,19 +762,9 @@ pub(crate) fn write_endpoint(
     )
     .map_err(|_| unavailable())
 }
-fn local_request(
-    context: &CliContext,
-    session: &str,
-    capability: Option<&Path>,
-    path: &str,
-    body: Option<Value>,
-) -> Result<Value, CliError> {
-    let capability = super::mailbox::resolve_capability_file(capability)?;
-    authenticate_from_file(context, session, Some(&capability))?;
-    let token = String::from_utf8(
-        super::read_private_file(&capability, 256).map_err(|_| super::unauthorized())?,
-    )
-    .map_err(|_| super::unauthorized())?;
+/// The loopback URL the local daemon published in
+/// `coordination/daemon-endpoint.json`.
+pub(crate) fn daemon_url(context: &CliContext) -> Result<reqwest::Url, CliError> {
     let endpoint: Value = serde_json::from_slice(
         &super::read_private_file(
             &context.state_dir.join("coordination/daemon-endpoint.json"),
@@ -791,6 +782,22 @@ fn local_request(
     {
         return Err(unavailable());
     }
+    Ok(url)
+}
+fn local_request(
+    context: &CliContext,
+    session: &str,
+    capability: Option<&Path>,
+    path: &str,
+    body: Option<Value>,
+) -> Result<Value, CliError> {
+    let capability = super::mailbox::resolve_capability_file(capability)?;
+    authenticate_from_file(context, session, Some(&capability))?;
+    let token = String::from_utf8(
+        super::read_private_file(&capability, 256).map_err(|_| super::unauthorized())?,
+    )
+    .map_err(|_| super::unauthorized())?;
+    let url = daemon_url(context)?;
     let client = client()?;
     let request = match body {
         Some(body) => client

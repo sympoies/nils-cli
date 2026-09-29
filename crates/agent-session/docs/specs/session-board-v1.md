@@ -9,9 +9,8 @@
   retention, and the query route in [Aggregator query contract](#aggregator-query-contract).
 - Program key: `agent-console-board-2026-09`, item A0. Implementation items A1
   (local projection), A2 (closed ledger), and A5 (CLI) follow this contract.
-  A5 ships in two steps: A5a is the CLI with local mode only, and A5b adds the
-  daemon relay route and relay mode. Until A5b, every `agent-session board`
-  run is local mode and reports `data.mode: local`.
+  A5 shipped in two steps: A5a is the CLI with local mode, and A5b adds the
+  daemon relay route and relay mode.
 - Code placement: board projection, ledger, relay, and CLI code lives in its
   own module (`crates/agent-session/src/board.rs` or a `board/` directory),
   not in `serve.rs` or `lib.rs`. Those files only register routes and the
@@ -564,7 +563,14 @@ an omitted `--since` means the full retained window of the source.
   "no relay is configured".
 - Any other relay failure is returned as that error. The CLI never falls back
   to local mode silently, because a local view would present one machine as
-  the whole deployment.
+  the whole deployment. A daemon that does not answer behind an existing
+  endpoint file is such a failure (`board-relay-unavailable`), and so is a
+  claimed managed identity (`AGENT_SESSION_ID` with a capability file) that
+  fails authentication while the endpoint exists, which keeps its own code
+  (for example `coordination-unauthorized`). The CLI
+  forwards the daemon's `error.code` and `error.message` when each is a
+  bounded, single-line string, and `board-relay-unavailable` with a fixed
+  message otherwise.
 
 Local mode builds the same records as `GET /board/v1` from the local state
 directory, adds closed rows from the local ledger, and applies the filters
@@ -589,8 +595,13 @@ JSON uses the `cli.agent-session.board.v1` envelope:
 `agent-session.board-view.v1` object. Text output prints the mode, then one
 line per unavailable machine, then one line per record with state, machine,
 session ID, repo name, turn phase, age of `last_progress_at` (or of
-`phase_changed_at` when absent), and title. Text truncates for width and
-never prints `summary`.
+`phase_changed_at` when absent), and title. The caller's own session (same
+`session_id` and `session_incarnation`) ends with `(this session)`; any other
+record with `messaging_supported: true` ends with its `message send` target,
+`send: --to-machine <machine> --to <session_id> (incarnation <session_incarnation>)`.
+The target names the exact identifiers and is omitted when one cannot be
+printed exactly (whitespace, control characters, or over 256 bytes). Other
+text truncates for width and never prints `summary` or `console_owner`.
 
 Usage errors exit 64, data and contract errors use the workspace data exit
 code, and runtime, storage, and relay failures use the runtime exit code, as
