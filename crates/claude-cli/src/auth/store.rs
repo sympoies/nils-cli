@@ -4,6 +4,10 @@
 //! Profiles live in `CLAUDE_SECRET_DIR` (default `~/.config/claude_secrets`)
 //! as `<name>.json` holding `{"claudeAiOauth": ..., "oauthAccount": ...}`.
 //! `<secret dir>/current` names the authority's current default profile.
+//!
+//! An accounts directory holds one Claude Code config dir per profile,
+//! `<accounts dir>/<profile>/`, each with an access-only login and an
+//! ownership marker so only directories claude-cli created are ever pruned.
 
 use nils_common::cli_contract::exit;
 use nils_common::env as shared_env;
@@ -16,6 +20,8 @@ use super::keychain;
 pub const SECRET_DIR_ENV: &str = "CLAUDE_SECRET_DIR";
 pub const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 const CURRENT_FILE: &str = "current";
+/// Marks an account config dir as created and owned by claude-cli.
+pub const ACCOUNT_MARKER: &str = ".claude-cli-account";
 const PRIVATE_DIR_MODE: u32 = 0o700;
 
 /// The `claudeAiOauth` fields an access-only replica may hold.
@@ -276,21 +282,29 @@ pub struct StoreLock {
 }
 
 pub fn lock_store() -> AuthResult<StoreLock> {
+    lock_dir(&required_secret_dir()?, "store-lock-failed")
+}
+
+/// An exclusive lock on an accounts directory, held while it is written or pruned.
+pub fn lock_accounts(accounts_dir: &Path) -> AuthResult<StoreLock> {
+    lock_dir(accounts_dir, "accounts-lock-failed")
+}
+
+fn lock_dir(dir: &Path, code: &'static str) -> AuthResult<StoreLock> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
-    let dir = required_secret_dir()?;
-    create_private_dir(&dir, "store-lock-failed")?;
+    create_private_dir(dir, code)?;
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .mode(fs::SECRET_FILE_MODE)
         .open(dir.join(".lock"))
-        .map_err(|err| AuthError::runtime("store-lock-failed", err.to_string()))?;
+        .map_err(|err| AuthError::runtime(code, err.to_string()))?;
     // SAFETY: flock on an owned, open descriptor; released when `file` drops.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
         return Err(AuthError::runtime(
-            "store-lock-failed",
+            code,
             std::io::Error::last_os_error().to_string(),
         ));
     }
@@ -427,32 +441,12 @@ pub fn write_active_access_only(
     let access = access_only_oauth(oauth);
     let credentials_file = credentials_file()
         .ok_or_else(|| AuthError::runtime("config-dir-unresolved", "cannot resolve ~/.claude"))?;
-    let mut credentials =
-        read_json_object(&credentials_file, "active-credentials-invalid")?.unwrap_or_default();
-    credentials.insert("claudeAiOauth".to_string(), Value::Object(access.clone()));
-    let credentials = Value::Object(credentials);
-    write_json(
-        &credentials_file,
-        &credentials,
-        fs::SECRET_FILE_MODE,
-        "active-credentials-write-failed",
-    )?;
+    write_access_credentials(&credentials_file, &access)?;
 
     let config_file = global_config_file().ok_or_else(|| {
         AuthError::runtime("config-dir-unresolved", "cannot resolve ~/.claude.json")
     })?;
-    let mut config = read_json_object(&config_file, "active-config-invalid")?.unwrap_or_default();
-    let config_updated = config.get("oauthAccount") != Some(&Value::Object(account.clone()));
-    if config_updated {
-        let mode = existing_mode(&config_file).unwrap_or(fs::SECRET_FILE_MODE);
-        config.insert("oauthAccount".to_string(), Value::Object(account.clone()));
-        write_json(
-            &config_file,
-            &Value::Object(config),
-            mode,
-            "active-config-write-failed",
-        )?;
-    }
+    let config_updated = write_config_account(&config_file, account, Map::new())?;
 
     let keychain = keychain::project(&access, keychain_mode)?;
     Ok(ActiveWrite {
@@ -460,6 +454,157 @@ pub fn write_active_access_only(
         config_updated,
         keychain,
     })
+}
+
+/// Replace only `claudeAiOauth` in a credentials file, keeping other entries.
+fn write_access_credentials(path: &Path, access: &Map<String, Value>) -> AuthResult<()> {
+    let mut credentials = read_json_object(path, "active-credentials-invalid")?.unwrap_or_default();
+    credentials.insert("claudeAiOauth".to_string(), Value::Object(access.clone()));
+    write_json(
+        path,
+        &Value::Object(credentials),
+        fs::SECRET_FILE_MODE,
+        "active-credentials-write-failed",
+    )
+}
+
+/// Set `oauthAccount` in a Claude Code config, creating it from `seed` when
+/// absent. Returns whether the file was written.
+fn write_config_account(
+    path: &Path,
+    account: &Map<String, Value>,
+    seed: Map<String, Value>,
+) -> AuthResult<bool> {
+    let mut config = read_json_object(path, "active-config-invalid")?.unwrap_or(seed);
+    if config.get("oauthAccount") == Some(&Value::Object(account.clone())) {
+        return Ok(false);
+    }
+    let mode = existing_mode(path).unwrap_or(fs::SECRET_FILE_MODE);
+    config.insert("oauthAccount".to_string(), Value::Object(account.clone()));
+    write_json(
+        path,
+        &Value::Object(config),
+        mode,
+        "active-config-write-failed",
+    )?;
+    Ok(true)
+}
+
+/// Resolve an accounts directory to the absolute path its Keychain items are
+/// named after; Claude Code must see the same path as `CLAUDE_CONFIG_DIR`.
+pub fn absolute_accounts_dir(dir: &Path) -> AuthResult<PathBuf> {
+    std::path::absolute(dir).map_err(|err| {
+        AuthError::usage(
+            "invalid-accounts-dir",
+            format!("cannot resolve {}: {err}", dir.display()),
+        )
+    })
+}
+
+/// Result of projecting a login into its account config dir.
+#[derive(Debug)]
+pub struct AccountWrite {
+    pub config_dir: PathBuf,
+    pub keychain: &'static str,
+}
+
+/// Write an access-only copy of a profile into `<accounts_dir>/<name>/`, a
+/// Claude Code config dir of its own.
+///
+/// The directory gets the ownership marker, a real `.credentials.json` with
+/// `refreshToken: ""`, and `oauthAccount` in its `.claude.json` (seeded with
+/// `hasCompletedOnboarding` when absent). With a Keychain the item named after
+/// that config dir is written as well. `accounts_dir` must be absolute, since
+/// the Keychain item name is derived from the path.
+pub fn write_account_access_only(
+    accounts_dir: &Path,
+    name: &str,
+    oauth: &Map<String, Value>,
+    account: &Map<String, Value>,
+    keychain_mode: keychain::Mode,
+) -> AuthResult<AccountWrite> {
+    validate_profile_name(name)?;
+    let config_dir = accounts_dir.join(name);
+    create_private_dir(accounts_dir, "account-dir-write-failed")?;
+    match std::fs::symlink_metadata(&config_dir) {
+        Ok(meta) if !meta.is_dir() => {
+            return Err(AuthError::data(
+                "account-dir-invalid",
+                format!("{} is not a directory", config_dir.display()),
+            ));
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            create_private_dir(&config_dir, "account-dir-write-failed")?;
+        }
+        Err(err) => {
+            return Err(AuthError::runtime(
+                "account-dir-write-failed",
+                format!("cannot inspect {}: {err}", config_dir.display()),
+            ));
+        }
+    }
+    fs::write_atomic(
+        &config_dir.join(ACCOUNT_MARKER),
+        format!("{name}\n").as_bytes(),
+        fs::SECRET_FILE_MODE,
+    )
+    .map_err(|err| AuthError::runtime("account-dir-write-failed", err.to_string()))?;
+
+    let access = access_only_oauth(oauth);
+    write_access_credentials(&config_dir.join(".credentials.json"), &access)?;
+    let mut seed = Map::new();
+    seed.insert("hasCompletedOnboarding".to_string(), Value::Bool(true));
+    write_config_account(&config_dir.join(".claude.json"), account, seed)?;
+    let keychain =
+        keychain::project_for_config_dir(&config_dir.to_string_lossy(), &access, keychain_mode)?;
+    Ok(AccountWrite {
+        config_dir,
+        keychain,
+    })
+}
+
+/// Remove the account config dirs under `accounts_dir` whose profile is not
+/// in `keep`. Only real directories holding the ownership marker are removed;
+/// symlinks inside them are unlinked, never followed.
+pub fn prune_account_dirs(
+    accounts_dir: &Path,
+    keep: &std::collections::BTreeSet<String>,
+) -> AuthResult<Vec<String>> {
+    let entries = match std::fs::read_dir(accounts_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(AuthError::runtime(
+                "account-prune-failed",
+                format!("cannot read {}: {err}", accounts_dir.display()),
+            ));
+        }
+    };
+    let mut pruned = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if keep.contains(&name) {
+            continue;
+        }
+        let dir = entry.path();
+        let owned = std::fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir())
+            && std::fs::symlink_metadata(dir.join(ACCOUNT_MARKER)).is_ok_and(|meta| meta.is_file());
+        if !owned {
+            continue;
+        }
+        std::fs::remove_dir_all(&dir).map_err(|err| {
+            AuthError::runtime(
+                "account-prune-failed",
+                format!("cannot remove {}: {err}", dir.display()),
+            )
+        })?;
+        pruned.push(name);
+    }
+    pruned.sort();
+    Ok(pruned)
 }
 
 /// The access-only subset of `claudeAiOauth`, with the empty refresh token.

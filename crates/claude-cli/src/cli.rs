@@ -11,6 +11,7 @@ EXAMPLES:
   claude-cli auth status --format json
   claude-cli auth current --format json
   claude-cli auth remote pull --ssh authority --current --access-only --write-active
+  claude-cli auth remote pull --ssh authority --all --into ~/.claude-accounts --access-only
   claude-cli config show
   claude-cli prompt-segment
   claude-cli prompt-segment --refresh
@@ -22,6 +23,7 @@ EXAMPLES:
 ENVIRONMENT:
   CLAUDE_CLI_BIN, CLAUDE_CLI_MODEL, CLAUDE_CLI_EFFORT
   CLAUDE_CONFIG_DIR, CLAUDE_SECRET_DIR, CLAUDE_AUTH_REFRESH_MARGIN_SECONDS, CLAUDE_AUTH_KEYCHAIN
+  CLAUDE_ACCOUNTS_DIR
   CLAUDE_CLI_AGENT_RUNTIME, CLAUDE_CLI_NO_SESSION_PERSISTENCE
   CLAUDE_PROMPT_TTL, CLAUDE_PROMPT_STALE_SUFFIX
   CLAUDE_PROMPT_SEGMENT_TTL, CLAUDE_PROMPT_SEGMENT_STALE_SUFFIX
@@ -223,15 +225,27 @@ pub enum AuthCommand {
         #[arg(value_name = "name", required = true)]
         names: Vec<String>,
         #[command(flatten)]
+        accounts: AccountsDirArgs,
+        #[command(flatten)]
         output: OutputModeArgs,
     },
     /// Refresh every profile whose access token is close to expiry
     AutoRefresh {
         #[command(flatten)]
+        accounts: AccountsDirArgs,
+        #[command(flatten)]
         output: OutputModeArgs,
     },
     /// Move access-only logins between a token authority and replicas
     Remote(AuthRemoteArgs),
+}
+
+#[derive(Args, Clone, Debug, Default)]
+pub struct AccountsDirArgs {
+    /// Also re-project each refreshed profile access-only into <dir>/<profile>/
+    /// (default: CLAUDE_ACCOUNTS_DIR)
+    #[arg(long = "accounts-dir", value_name = "dir", value_hint = ValueHint::DirPath)]
+    pub accounts_dir: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -253,13 +267,23 @@ pub enum AuthRemoteCommand {
         /// Use the authority's current default profile
         #[arg(long)]
         current: bool,
+        /// Pull every authority profile into its own config dir under --into
+        #[arg(
+            long,
+            requires = "into",
+            conflicts_with_all = ["name", "current", "write_active"]
+        )]
+        all: bool,
+        /// Accounts directory for --all: writes <dir>/<profile>/ per profile
+        #[arg(long, value_name = "dir", value_hint = ValueHint::DirPath)]
+        into: Option<PathBuf>,
         /// Required: never transfer a refresh token
         #[arg(long)]
         access_only: bool,
-        /// Required: write the pulled login as the active login
+        /// Required without --all: write the pulled login as the active login
         #[arg(long)]
         write_active: bool,
-        /// macOS Keychain handling for the active login
+        /// macOS Keychain handling for the pulled logins
         #[arg(long, value_enum, default_value_t = KeychainArg::Auto)]
         keychain: KeychainArg,
         #[command(flatten)]
@@ -273,6 +297,9 @@ pub enum AuthRemoteCommand {
         /// Use the current default profile
         #[arg(long)]
         current: bool,
+        /// Print every profile and the current default in one payload
+        #[arg(long, conflicts_with_all = ["name", "current"])]
+        all: bool,
         /// Required: never print a refresh token
         #[arg(long)]
         access_only: bool,

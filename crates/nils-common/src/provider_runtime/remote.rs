@@ -32,6 +32,8 @@ pub enum RemoteSelector {
     Name(String),
     /// The authority's current default.
     Current,
+    /// Every stored secret, exported in one payload.
+    All,
 }
 
 impl RemoteSelector {
@@ -39,6 +41,7 @@ impl RemoteSelector {
         match self {
             Self::Name(name) => name,
             Self::Current => "current",
+            Self::All => "all",
         }
     }
 }

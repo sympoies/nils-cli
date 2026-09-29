@@ -5,6 +5,7 @@ use nils_common::diag_output;
 use nils_common::env as shared_env;
 use serde::Serialize;
 use serde_json::{Map, Value};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -15,6 +16,8 @@ use crate::agent::oneshot::claude_binary;
 use crate::process::{ProcessOutputError, output_with_limits_retry_io};
 
 const REFRESH_MARGIN_ENV: &str = "CLAUDE_AUTH_REFRESH_MARGIN_SECONDS";
+/// Accounts directory refreshed profiles are re-projected into.
+pub const ACCOUNTS_DIR_ENV: &str = "CLAUDE_ACCOUNTS_DIR";
 /// Refresh a profile once less than this much access-token lifetime is left.
 const DEFAULT_REFRESH_MARGIN_SECONDS: i64 = 4 * 60 * 60;
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(90);
@@ -57,6 +60,12 @@ struct RefreshResult {
     refreshed: Vec<String>,
     skipped: Vec<String>,
     failed: Vec<RefreshFailure>,
+    /// Refreshed profiles re-projected into the accounts directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    projected: Option<Vec<String>>,
+    /// Refreshed profiles whose account projection failed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    projection_failed: Vec<RefreshFailure>,
 }
 
 pub fn save(name: &str, output_json: bool) -> i32 {
@@ -170,7 +179,16 @@ pub fn current(output_json: bool) -> i32 {
 }
 
 /// Refresh the named profiles, or with `due_only` every profile near expiry.
-pub fn refresh(names: &[String], due_only: bool, output_json: bool) -> i32 {
+///
+/// With an accounts directory (`accounts_dir`, else `CLAUDE_ACCOUNTS_DIR`),
+/// each refreshed profile is also re-projected access-only into
+/// `<accounts dir>/<profile>/`, file storage only.
+pub fn refresh(
+    names: &[String],
+    due_only: bool,
+    accounts_dir: Option<&Path>,
+    output_json: bool,
+) -> i32 {
     let command = if due_only {
         "auth auto-refresh"
     } else {
@@ -192,7 +210,25 @@ pub fn refresh(names: &[String], due_only: bool, output_json: bool) -> i32 {
         );
     }
 
+    let accounts_dir = match accounts_dir
+        .map(Path::to_path_buf)
+        .or_else(|| shared_env::env_non_empty(ACCOUNTS_DIR_ENV).map(Into::into))
+        .map(|dir| store::absolute_accounts_dir(&dir))
+        .transpose()
+    {
+        Ok(dir) => dir,
+        Err(err) => return emit_error(command, output_json, err),
+    };
+
     let _lock = match store::lock_store() {
+        Ok(lock) => lock,
+        Err(err) => return emit_error(command, output_json, err),
+    };
+    let _accounts_lock = match accounts_dir
+        .as_deref()
+        .map(store::lock_accounts)
+        .transpose()
+    {
         Ok(lock) => lock,
         Err(err) => return emit_error(command, output_json, err),
     };
@@ -201,7 +237,10 @@ pub fn refresh(names: &[String], due_only: bool, output_json: bool) -> i32 {
         .unwrap_or(DEFAULT_REFRESH_MARGIN_SECONDS)
         .saturating_mul(1000);
     let current = store::read_current().ok().flatten();
-    let mut result = RefreshResult::default();
+    let mut result = RefreshResult {
+        projected: accounts_dir.as_ref().map(|_| Vec::new()),
+        ..RefreshResult::default()
+    };
     for name in names {
         let outcome = store::read_profile(&name).and_then(|profile| {
             if due_only
@@ -229,6 +268,27 @@ pub fn refresh(names: &[String], due_only: bool, output_json: bool) -> i32 {
                     keychain::Mode::Auto,
                 )?;
             }
+            if let Some(dir) = accounts_dir.as_deref() {
+                // Authority refresh already refuses Keychain hosts: file only.
+                let projection = store::write_account_access_only(
+                    dir,
+                    &name,
+                    &refreshed.oauth,
+                    &refreshed.account,
+                    keychain::Mode::Off,
+                );
+                match projection {
+                    Ok(_) => result
+                        .projected
+                        .get_or_insert_with(Vec::new)
+                        .push(name.clone()),
+                    Err(err) => result.projection_failed.push(RefreshFailure {
+                        profile: name.clone(),
+                        code: err.code,
+                        message: err.message,
+                    }),
+                }
+            }
             Ok(true)
         });
         match outcome {
@@ -242,7 +302,7 @@ pub fn refresh(names: &[String], due_only: bool, output_json: bool) -> i32 {
         }
     }
 
-    let code = if result.failed.is_empty() {
+    let code = if result.failed.is_empty() && result.projection_failed.is_empty() {
         exit::SUCCESS
     } else {
         exit::RUNTIME
@@ -263,6 +323,18 @@ pub fn refresh(names: &[String], due_only: bool, output_json: bool) -> i32 {
                 .collect::<Vec<_>>()
                 .join(",")
         );
+        if let Some(projected) = &result.projected {
+            println!(
+                "claude-cli: projected={} projection_failed={}",
+                projected.join(","),
+                result
+                    .projection_failed
+                    .iter()
+                    .map(|failure| format!("{}({})", failure.profile, failure.code))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+        }
     }
     code
 }

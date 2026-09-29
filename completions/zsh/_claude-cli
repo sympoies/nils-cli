@@ -218,6 +218,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (refresh)
 _arguments "${_arguments_options[@]}" : \
+'--accounts-dir=[Also re-project each refreshed profile access-only into <dir>/<profile>/ (default\: CLAUDE_ACCOUNTS_DIR)]:dir:_files -/' \
 '--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
 '(--format)--json[Hidden alias for \`--format json\`]' \
 '-h[Print help]' \
@@ -227,6 +228,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (auto-refresh)
 _arguments "${_arguments_options[@]}" : \
+'--accounts-dir=[Also re-project each refreshed profile access-only into <dir>/<profile>/ (default\: CLAUDE_ACCOUNTS_DIR)]:dir:_files -/' \
 '--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
 '(--format)--json[Hidden alias for \`--format json\`]' \
 '-h[Print help]' \
@@ -251,11 +253,13 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--ssh=[SSH destination of the token authority]:host:_default' \
 '(--current)--name=[Authority profile name]:name:_default' \
-'--keychain=[macOS Keychain handling for the active login]:KEYCHAIN:(auto required off)' \
+'--into=[Accounts directory for --all\: writes <dir>/<profile>/ per profile]:dir:_files -/' \
+'--keychain=[macOS Keychain handling for the pulled logins]:KEYCHAIN:(auto required off)' \
 '--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
 '--current[Use the authority'\''s current default profile]' \
+'(--name --current --write-active)--all[Pull every authority profile into its own config dir under --into]' \
 '--access-only[Required\: never transfer a refresh token]' \
-'--write-active[Required\: write the pulled login as the active login]' \
+'--write-active[Required without --all\: write the pulled login as the active login]' \
 '(--format)--json[Hidden alias for \`--format json\`]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -265,6 +269,7 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '(--current)--name=[Profile name]:name:_default' \
 '--current[Use the current default profile]' \
+'(--name --current)--all[Print every profile and the current default in one payload]' \
 '--access-only[Required\: never print a refresh token]' \
 '-h[Print help]' \
 '--help[Print help]' \
