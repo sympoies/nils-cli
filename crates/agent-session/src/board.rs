@@ -14,7 +14,11 @@ use std::path::{Component, Path, PathBuf};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-use crate::{CliContext, CliError, SessionView};
+use crate::{CliContext, CliError, SessionRecord, SessionView};
+
+mod ledger;
+
+pub(crate) use ledger::{CloseReason, cursor_invalid};
 
 pub(crate) const BOARD_SCHEMA: &str = "agent-session.board.v1";
 pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";
@@ -67,6 +71,28 @@ pub(crate) fn snapshot(
     machine: &str,
     federation_configured: bool,
 ) -> Result<Value, CliError> {
+    snapshot_with(
+        context,
+        tmux_bin,
+        machine,
+        federation_configured,
+        &mut || {},
+    )
+}
+
+/// `snapshot` with a hook between reading the ledger head and enumerating
+/// records, so a test can remove a record in exactly that window.
+fn snapshot_with(
+    context: &CliContext,
+    tmux_bin: &Path,
+    machine: &str,
+    federation_configured: bool,
+    after_ledger_head: &mut dyn FnMut(),
+) -> Result<Value, CliError> {
+    // Read before enumeration: a record removed after this point is in the
+    // closed ledger after this cursor.
+    let ledger_cursor = ledger::head_cursor(context)?;
+    after_ledger_head();
     let home = home_dir();
     let mut records = Vec::new();
     let mut skipped_count = 0_u64;
@@ -92,9 +118,68 @@ pub(crate) fn snapshot(
         "record_schema": RECORD_SCHEMA,
         "machine": machine,
         "generated_at": jiff::Timestamp::now().to_string(),
+        "ledger_cursor": ledger_cursor,
         "records": records,
         "skipped_count": skipped_count,
     }))
+}
+
+/// `GET /board/closed/v1` data: retained closed records after `since`.
+pub(crate) fn closed(
+    context: &CliContext,
+    since: Option<&str>,
+    machine: &str,
+) -> Result<Value, CliError> {
+    ledger::read_since(context, since, machine)
+}
+
+/// The closed record for a session about to be removed, built while its
+/// state is still readable. `None` when it cannot be projected; the removal
+/// then proceeds and the aggregator later classifies the row as vanished.
+pub(crate) fn closed_record(
+    context: &CliContext,
+    record: &SessionRecord,
+    reason: CloseReason,
+) -> Option<Value> {
+    let view = crate::session_view_from_parts(
+        context,
+        record,
+        "stopped".to_string(),
+        None,
+        &crate::resolve_tmux_bin(None),
+        false,
+        crate::coordination::CoordinationSummary::default(),
+    );
+    let view = serde_json::to_value(&view).ok()?;
+    let mut closed = project_record(&view, "", home_dir().as_deref(), false)?;
+    let object = closed.as_object_mut()?;
+    // Ledger entries never store `machine`: the serving daemon stamps it.
+    object.remove("machine");
+    object.insert("state".into(), json!("closed"));
+    object.insert("runtime_status".into(), Value::Null);
+    object.insert("messaging_supported".into(), json!(false));
+    object.insert("close_reason".into(), json!(reason.as_str()));
+    Some(closed)
+}
+
+/// Append a close after the removal committed. A failure never reaches the
+/// caller; it is recorded content-free in the observation spool.
+pub(crate) fn record_close(context: &CliContext, closed: Option<Value>) {
+    let appended = closed.is_some_and(|closed| ledger::append(context, closed).is_ok());
+    if appended {
+        return;
+    }
+    use nils_common::observation::{self, Component, Event, Severity};
+    if let Ok(event) = Event::new(
+        Component::AgentSession,
+        "board-ledger",
+        "board-ledger-append-failed",
+        Severity::Warn,
+        env!("CARGO_PKG_VERSION"),
+        jiff::Timestamp::now().as_second(),
+    ) {
+        let _ = observation::append(&context.state_dir, &event);
+    }
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -231,6 +316,25 @@ fn project_turn_state(turn_state: &Map<String, Value>) -> Value {
         "last_turn": last_turn,
         "source": source,
     })
+}
+
+/// `(session_id, close_reason)` for every retained closed entry, in order.
+#[cfg(test)]
+pub(crate) fn closed_reasons_for_test(context: &CliContext) -> Vec<(String, String)> {
+    closed(context, None, "test").expect("closed ledger")["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|entry| {
+            let field = |key: &str| {
+                entry["record"][key]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            (field("session_id"), field("close_reason"))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -512,6 +616,92 @@ mod tests {
         }
         assert_eq!(home_relative_cwd("/home/user/x", None), None);
         assert_eq!(home_relative_cwd("/x", Some(Path::new("/"))), None);
+    }
+
+    fn stored_session(context: &CliContext, id: &str) -> crate::SessionRecord {
+        let record: crate::SessionRecord = serde_json::from_value(json!({
+            "schema_version": crate::SESSION_DOCUMENT_VERSION,
+            "id": id,
+            "agent": "codex",
+            "mode": "interactive",
+            "title": "Closing",
+            "cwd": "/srv/outside-home",
+            "tmux_session": format!("agent-{id}"),
+            "prompt_file": null,
+            "log_file": null,
+            "created_at": "2030-01-01T00:00:00Z",
+            "updated_at": "2030-01-01T00:04:00Z",
+            "runtime": {
+                "kind": "tmux",
+                "tmux_session": format!("agent-{id}"),
+                "generation": 1,
+                "started_at": "2030-01-01T00:00:00Z",
+                "launch_id": "live-incarnation"
+            }
+        }))
+        .expect("record");
+        std::fs::create_dir_all(crate::session_dir(context, id)).expect("session dir");
+        crate::write_session_record(context, &record).expect("write record");
+        record
+    }
+
+    fn remove(context: &CliContext, record: crate::SessionRecord, reason: CloseReason) {
+        let session_dir = crate::session_dir(context, &record.id);
+        let fence = crate::SessionRegistryFence::from_record(&record);
+        crate::finish_session_delete(context, record, session_dir, fence, reason)
+            .expect("remove record");
+    }
+
+    #[test]
+    fn a_closed_record_never_claims_a_runtime_or_messaging() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let record = stored_session(&context, "closing");
+        let closed = closed_record(&context, &record, CloseReason::Archived).expect("closed");
+        assert_eq!(closed.get("machine"), None);
+        assert_eq!(closed["state"], "closed");
+        assert_eq!(closed["runtime_status"], Value::Null);
+        assert_eq!(closed["messaging_supported"], false);
+        assert_eq!(closed["close_reason"], "archived");
+        assert_eq!(closed["session_incarnation"], "live-incarnation");
+        assert_eq!(closed["cwd"], Value::Null);
+        assert_eq!(closed["updated_at"], "2030-01-01T00:04:00Z");
+    }
+
+    #[test]
+    fn a_record_removed_after_the_ledger_head_is_read_follows_the_snapshot_cursor() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let tmux = tmp.path().join("tmux-absent");
+        let kept = stored_session(&context, "kept");
+        drop(kept);
+        let mut removed = Some(stored_session(&context, "removed"));
+        let snapshot = snapshot_with(&context, &tmux, "host-a", false, &mut || {
+            if let Some(record) = removed.take() {
+                remove(&context, record, CloseReason::Deleted);
+            }
+        })
+        .expect("snapshot");
+        let ids: Vec<&str> = snapshot["records"]
+            .as_array()
+            .expect("records")
+            .iter()
+            .map(|record| record["session_id"].as_str().expect("id"))
+            .collect();
+        assert_eq!(ids, vec!["kept"]);
+        let cursor = snapshot["ledger_cursor"].as_str().expect("ledger cursor");
+        let closed = closed(&context, Some(cursor), "host-a").expect("closed");
+        let entries = closed["entries"].as_array().expect("entries");
+        assert_eq!(entries.len(), 1, "{closed}");
+        assert_eq!(entries[0]["record"]["session_id"], "removed");
+        assert_eq!(entries[0]["record"]["machine"], "host-a");
+        assert_eq!(entries[0]["record"]["close_reason"], "deleted");
     }
 
     #[test]

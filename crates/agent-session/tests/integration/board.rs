@@ -1,5 +1,6 @@
 //! Session board v1 (`docs/specs/session-board-v1.md`): the daemon's local
-//! projection and the `machine` label on `agent-session list`.
+//! projection, the closed-session ledger, and the `machine` label on
+//! `agent-session list`.
 
 use std::fs;
 use std::net::SocketAddr;
@@ -161,6 +162,17 @@ impl Serve {
 
     fn get_operator(&self, path: &str) -> (u16, Value) {
         self.get(path, &[("Authorization", &format!("Bearer {TOKEN}"))])
+    }
+
+    fn post_operator(&self, path: &str, body: &Value) -> (u16, Value) {
+        let response = reqwest::blocking::Client::new()
+            .post(format!("http://{}{path}", self.addr))
+            .header("Authorization", format!("Bearer {TOKEN}"))
+            .json(body)
+            .send()
+            .expect("serve request");
+        let status = response.status().as_u16();
+        (status, response.json::<Value>().expect("json body"))
     }
 }
 
@@ -376,5 +388,243 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
             "{inside}"
         );
         fixture.corrupt_record(false);
+    }
+}
+
+/// A record whose runtime is proven never launched, so ordinary deletion
+/// needs no tmux runtime to terminate.
+fn write_never_launched_record(state_dir: &Path, id: &str, cwd: &Path) {
+    write_record(state_dir, id, cwd, "2030-01-01T00:04:00Z");
+    let path = state_dir.join("sessions").join(id).join("session.json");
+    let mut record: Value =
+        serde_json::from_slice(&fs::read(&path).expect("record")).expect("json");
+    record["runtime"] = json!({
+        "kind": "tmux",
+        "tmux_session": format!("agent-{id}"),
+        "generation": 1,
+        "started_at": "2030-01-01T00:00:00Z",
+        "launch_id": "never-launched-fixture",
+    });
+    record["tmux_runtime_never_launched"] = json!("never-launched-fixture");
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&record).expect("record json"),
+    )
+    .expect("record");
+}
+
+fn ledger_entries(state_dir: &Path) -> Vec<Value> {
+    let ledger: Value = serde_json::from_slice(
+        &fs::read(state_dir.join("board/closed-ledger.json")).expect("closed ledger"),
+    )
+    .expect("ledger json");
+    ledger["entries"].as_array().expect("entries").clone()
+}
+
+fn cli_delete(fixture: &Fixture, id: &str) -> CmdOutput {
+    let state = fixture.state_dir.to_string_lossy().to_string();
+    let tmux = fake_tmux(&fixture.root).to_string_lossy().to_string();
+    let home = fixture.home.to_string_lossy().to_string();
+    run(
+        &fixture.root,
+        &["--state-dir", &state, "delete", id, "--format", "json"],
+        &[
+            ("AGENT_SESSION_TMUX_BIN", tmux.as_str()),
+            ("HOME", home.as_str()),
+        ],
+    )
+}
+
+#[test]
+fn a_cli_delete_with_the_board_disabled_is_served_as_one_closed_record() {
+    let fixture = fixture();
+    let id = "20300101-000000-d";
+    write_never_launched_record(
+        &fixture.state_dir,
+        id,
+        &fixture.home.join("Project/closed-repo"),
+    );
+
+    let deleted = cli_delete(&fixture, id);
+    assert_eq!(deleted.code, 0, "stderr={}", deleted.stderr_text());
+    let entries = ledger_entries(&fixture.state_dir);
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0]["seq"], 1);
+    // The CLI process cannot know the serve identity, so nothing is stored.
+    assert_eq!(entries[0]["record"].get("machine"), None);
+
+    let disabled = Serve::spawn(&fixture.root, &fixture.state_dir, &fixture.home, &[], &[]);
+    let (status, body) = disabled.get_operator("/board/closed/v1");
+    assert_eq!(status, 404, "{body}");
+    assert_eq!(body["error"]["code"], "board-disabled");
+    drop(disabled);
+
+    let serve = Serve::spawn(
+        &fixture.root,
+        &fixture.state_dir,
+        &fixture.home,
+        &["--board"],
+        &[],
+    );
+    let (status, body) = serve.get("/board/closed/v1", &[]);
+    assert_eq!(status, 401, "{body}");
+    let (status, body) = serve.get(
+        "/board/closed/v1",
+        &[
+            ("Authorization", "Bearer session-capability"),
+            ("X-Agent-Session-Capability", "session-capability"),
+        ],
+    );
+    assert_eq!(status, 401, "{body}");
+
+    let (status, body) = serve.get_operator("/board/closed/v1");
+    assert_eq!(status, 200, "{body}");
+    let closed = &body["data"]["board_closed"];
+    assert_eq!(body["data"]["machine"], MACHINE);
+    assert_eq!(closed["schema_version"], "agent-session.board-closed.v1");
+    assert_eq!(closed["record_schema"], "agent-session.board-record.v1");
+    assert_eq!(closed["machine"], MACHINE);
+    let entries = closed["entries"].as_array().expect("entries");
+    assert_eq!(entries.len(), 1, "{closed}");
+    let record = &entries[0]["record"];
+    assert_eq!(closed["next_cursor"], entries[0]["cursor"]);
+    assert!(record["closed_at"].as_str().is_some(), "{record}");
+    assert_eq!(
+        record,
+        &json!({
+            "machine": MACHINE,
+            "session_id": id,
+            "session_incarnation": "never-launched-fixture",
+            "messaging_supported": false,
+            "repo_name": "closed-repo",
+            "cwd": "~/Project/closed-repo",
+            "provider": "claude",
+            "agent_profile": null,
+            "title": format!("Title {id}"),
+            "title_state": null,
+            "turn_state": record["turn_state"],
+            "state": "closed",
+            "runtime_status": null,
+            "created_at": "2030-01-01T00:00:00Z",
+            "updated_at": record["updated_at"],
+            "closed_at": record["closed_at"],
+            "close_reason": "deleted",
+            "summary": null,
+        })
+    );
+
+    // The snapshot names the ledger head; nothing is newer than it.
+    let (status, snapshot) = serve.get_operator("/board/v1");
+    assert_eq!(status, 200, "{snapshot}");
+    let head = snapshot["data"]["board"]["ledger_cursor"]
+        .as_str()
+        .expect("ledger cursor")
+        .to_string();
+    assert_eq!(head, entries[0]["cursor"].as_str().expect("cursor"));
+    let (status, tail) = serve.get_operator(&format!("/board/closed/v1?since={head}"));
+    assert_eq!(status, 200, "{tail}");
+    assert_eq!(tail["data"]["board_closed"]["entries"], json!([]));
+    assert_eq!(tail["data"]["board_closed"]["next_cursor"], head);
+
+    let (status, body) = serve.get_operator("/board/closed/v1?since=not-a-cursor");
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["error"]["code"], "board-cursor-invalid");
+    let expired = "v1:00000000-0000-4000-8000-000000000000:0";
+    let (status, body) = serve.get_operator(&format!("/board/closed/v1?since={expired}"));
+    assert_eq!(status, 410, "{body}");
+    assert_eq!(body["error"]["code"], "board-cursor-expired");
+}
+
+#[test]
+fn record_only_removal_appends_a_deleted_entry() {
+    let fixture = fixture();
+    let id = "20300101-000000-b";
+    let serve = Serve::spawn(
+        &fixture.root,
+        &fixture.state_dir,
+        &fixture.home,
+        &["--board"],
+        &[],
+    );
+    let preview_path = format!(
+        "/sessions/{id}/maintenance?operation=delete&schema_version=agent-session.session-maintenance.v2"
+    );
+    let (status, preview) = serve.get_operator(&preview_path);
+    assert_eq!(status, 200, "{preview}");
+    let preview = &preview["data"]["maintenance"];
+    assert!(
+        preview["actions"]
+            .as_array()
+            .expect("actions")
+            .iter()
+            .any(|action| action["id"] == "remove_console_record"),
+        "{preview}"
+    );
+    let (status, body) = serve.post_operator(
+        &format!("/sessions/{id}/maintenance/actions"),
+        &json!({
+            "schema_version": "agent-session.session-maintenance.v2",
+            "operation": "delete",
+            "action": "remove_console_record",
+            "expected_session_incarnation": preview["session_incarnation"],
+            "expected_session_generation": preview["session_generation"],
+            "expected_preview_digest": preview["preview_digest"],
+            "confirmed": true,
+        }),
+    );
+    assert_eq!(status, 200, "{body}");
+    let entries = ledger_entries(&fixture.state_dir);
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0]["record"]["session_id"], id);
+    assert_eq!(entries[0]["record"]["close_reason"], "deleted");
+}
+
+#[test]
+fn a_ledger_failure_never_fails_the_delete_and_a_runtime_exit_writes_nothing() {
+    let fixture = fixture();
+    // A stopped record that stays behind never becomes a closed entry.
+    let serve = Serve::spawn(
+        &fixture.root,
+        &fixture.state_dir,
+        &fixture.home,
+        &["--board"],
+        &[],
+    );
+    let (status, snapshot) = serve.get_operator("/board/v1");
+    assert_eq!(status, 200, "{snapshot}");
+    assert_eq!(
+        snapshot["data"]["board"]["records"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    let (status, closed) = serve.get_operator("/board/closed/v1");
+    assert_eq!(status, 200, "{closed}");
+    assert_eq!(closed["data"]["board_closed"]["entries"], json!([]));
+    drop(serve);
+
+    // An untrusted ledger store fails the append, not the deletion.
+    let elsewhere = fixture.root.join("elsewhere-board");
+    fs::create_dir_all(&elsewhere).expect("elsewhere");
+    fs::remove_dir_all(fixture.state_dir.join("board")).expect("drop ledger store");
+    std::os::unix::fs::symlink(&elsewhere, fixture.state_dir.join("board")).expect("symlink");
+    let id = "20300101-000000-d";
+    write_never_launched_record(&fixture.state_dir, id, &fixture.home.join("Project/x"));
+    let deleted = cli_delete(&fixture, id);
+    assert_eq!(deleted.code, 0, "stderr={}", deleted.stderr_text());
+    assert!(!fixture.state_dir.join("sessions").join(id).exists());
+    assert!(!elsewhere.join("closed-ledger.json").exists());
+
+    let serve = Serve::spawn(
+        &fixture.root,
+        &fixture.state_dir,
+        &fixture.home,
+        &["--board"],
+        &[],
+    );
+    for path in ["/board/v1", "/board/closed/v1"] {
+        let (status, body) = serve.get_operator(path);
+        assert_eq!(status, 503, "{path}: {body}");
+        assert_eq!(body["error"]["code"], "board-ledger-unavailable");
     }
 }

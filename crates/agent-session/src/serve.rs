@@ -1179,6 +1179,7 @@ fn router(state: Arc<ServeState>) -> Router {
         )
         .route("/healthz", get(healthz))
         .route("/board/v1", get(board_snapshot_handler))
+        .route("/board/closed/v1", get(board_closed_handler))
         .route("/sessions", get(list_handler).post(create_handler))
         .route("/history/sessions", get(history_list_handler))
         .route(
@@ -2497,6 +2498,7 @@ fn envelope_err(err: CliError) -> Response {
         | "provider-session-already-running"
         | "agent-blocked" => StatusCode::CONFLICT,
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
+        "board-cursor-expired" => StatusCode::GONE,
         "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
             StatusCode::SERVICE_UNAVAILABLE
         }
@@ -4888,6 +4890,44 @@ async fn board_snapshot_handler(
     .await
     {
         Ok(Ok(board)) => envelope_ok(json!({ "machine": state.machine, "board": board })),
+        Ok(Err(err)) => envelope_err(err),
+        Err(_) => join_err(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoardClosedQuery {
+    since: Option<String>,
+}
+
+/// `GET /board/closed/v1?since=<cursor>`; the ledger lives in `board/ledger.rs`.
+async fn board_closed_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    query: Result<Query<BoardClosedQuery>, QueryRejection>,
+) -> Response {
+    if !state.board {
+        return status_json(
+            StatusCode::NOT_FOUND,
+            crate::board::DISABLED_CODE,
+            crate::board::DISABLED_MESSAGE,
+        );
+    }
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let Ok(Query(query)) = query else {
+        return envelope_err(crate::board::cursor_invalid());
+    };
+    let context = state.context.clone();
+    let machine = state.machine.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::board::closed(&context, query.since.as_deref(), &machine)
+    })
+    .await
+    {
+        Ok(Ok(closed)) => envelope_ok(json!({ "machine": state.machine, "board_closed": closed })),
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
     }
@@ -19739,6 +19779,15 @@ esac
             std::fs::metadata(archive).unwrap().permissions().mode() & 0o777,
             0o600
         );
+        // Only the successful archive removed the record: one closed entry.
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        assert_eq!(
+            crate::board::closed_reasons_for_test(&context),
+            vec![("archive-me".to_string(), "archived".to_string())]
+        );
     }
 
     #[tokio::test]
@@ -27102,6 +27151,15 @@ esac
                 .join(format!("{borrower_history_id}.json"))
                 .exists(),
             "borrowed session must remain outside the archive group"
+        );
+        // Failed and conflicting attempts removed nothing; the completed group
+        // archive closed exactly the worker and then the main session.
+        assert_eq!(
+            crate::board::closed_reasons_for_test(&st.context),
+            vec![
+                (worker.id.clone(), "archived".to_string()),
+                (main.id.clone(), "archived".to_string()),
+            ]
         );
     }
 

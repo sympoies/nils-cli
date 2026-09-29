@@ -840,8 +840,13 @@ fn execute_inner(
             // quarantine commit ordinary deletion uses, so the existing janitor
             // finishes the physical cleanup and no recursive delete is added.
             let registry_fence = SessionRegistryFence::from_record(&record);
-            let deleted =
-                finish_session_delete(context, record, resolved.session_dir, registry_fence)?;
+            let deleted = finish_session_delete(
+                context,
+                record,
+                resolved.session_dir,
+                registry_fence,
+                crate::board::CloseReason::Deleted,
+            )?;
             let deleted_registry_fence = deleted.registry_fence.clone();
             Ok(MaintenanceActionResult {
                 schema_version: contract.as_str(),
