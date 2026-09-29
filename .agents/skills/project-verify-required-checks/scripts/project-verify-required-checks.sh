@@ -65,6 +65,10 @@ Environment:
   NILS_CLI_SKIP_DOCTESTS=1
     With the nextest or llvm-cov runner, skip `cargo test --workspace --doc`.
     For a CI lane whose sibling lane already runs the doc tests.
+  NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1
+    Skip the audits whose result does not depend on the OS:
+    test-stale-audit, completion-freshness-audit, completion-flag-parity-audit.
+    For a CI lane whose sibling lane already runs them.
 
 Exit codes:
   0  all checks passed
@@ -148,6 +152,14 @@ run() {
   fi
 }
 
+run_os_independent_audit() {
+  if [[ "${NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS:-0}" == "1" ]]; then
+    echo "skip: $* (NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1)"
+    return 0
+  fi
+  run "$@"
+}
+
 run_doc_tests() {
   if [[ "${NILS_CLI_SKIP_DOCTESTS:-0}" == "1" ]]; then
     echo "skip: cargo test --workspace --doc (NILS_CLI_SKIP_DOCTESTS=1)"
@@ -182,14 +194,14 @@ run bash scripts/ci/tests/docs-hygiene-audit.test.sh
 run bash scripts/ci/tests/workspace-test-stale-audit.test.sh
 run bash scripts/ci/tests/prepare-private-release-workflow.test.sh
 run bash scripts/ci/skill-shell-suites.sh
-run bash scripts/ci/test-stale-audit.sh --strict
+run_os_independent_audit bash scripts/ci/test-stale-audit.sh --strict
 run bash scripts/ci/workspace-version-lockstep.sh --strict
 run bash scripts/ci/crate-naming-audit.sh
 run bash scripts/ci/publish-order-audit.sh --strict
 run bash scripts/ci/third-party-artifacts-audit.sh --strict
 run bash scripts/ci/completion-asset-audit.sh --strict
-run bash scripts/ci/completion-freshness-audit.sh --strict
-run bash scripts/ci/completion-flag-parity-audit.sh --strict
+run_os_independent_audit bash scripts/ci/completion-freshness-audit.sh --strict
+run_os_independent_audit bash scripts/ci/completion-flag-parity-audit.sh --strict
 run zsh -f tests/zsh/completion.test.zsh
 run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings

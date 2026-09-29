@@ -235,11 +235,16 @@ Notes:
 
 ### 3.4 Full coverage flow (CI gate / explicit local parity)
 
-Coverage gate is mandatory in CI for non-doc changes and in explicit
-release-quality verification (total line coverage must stay `>= 85.00%`).
-In CI, the `test_macos` job runs the workspace tests once under
+Coverage gate is mandatory in CI for non-doc changes on `main` and on
+canonical `chore/release-*` pull requests, and in explicit release-quality
+verification (total line coverage must stay `>= 85.00%`). On that
+full-coverage lane the `test_macos` job runs the workspace tests once under
 `NILS_CLI_TEST_RUNNER=llvm-cov`, which enforces the floor, and the `coverage`
-job publishes the summary from that run's LCOV artifact.
+job publishes the summary from that run's LCOV artifact. Other pull requests
+and merge groups run plain `nextest` on macOS, skip the OS-independent audits
+that the Linux `test` job runs (`NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1`), and
+get no coverage comment; a coverage drop surfaces on the `main` push run,
+which the release gate requires.
 The Linux cgroup containment and provider-stop canaries run in their own
 `test_containment` job beside `test`; `coverage` requires it to succeed.
 Normal local development does not need to run coverage before opening a PR:
