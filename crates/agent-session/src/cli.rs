@@ -1068,6 +1068,17 @@ pub struct ActivityHookArgs {
     /// Provider event name when the raw payload does not carry one.
     #[arg(long, hide = true)]
     pub event: Option<String>,
+
+    /// Transport: write the session state directory, or report to the local
+    /// serve daemon's loopback activity ingress with the session capability.
+    #[arg(long, value_enum, default_value_t = ActivityHookVia::File)]
+    pub via: ActivityHookVia,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ActivityHookVia {
+    File,
+    Http,
 }
 
 #[derive(Debug, Args)]

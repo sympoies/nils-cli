@@ -24,6 +24,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `POST /history/sessions/{history_id}/resume` | Bearer | This specification |
 | `GET /codex/accounts` | Bearer | This specification |
 | `GET /activity/events` | Bearer | [Activity stream v1](activity-stream-v1.md) |
+| `POST /activity/hook/v1` | Session capability only; direct loopback peers only | [Activity stream v1](activity-stream-v1.md#provider-hook-ingress) |
 | `GET /usage` | Open | This specification |
 | `GET /workdirs` | Bearer | This specification |
 | `GET /repos/remote-url` | Bearer | This specification |
@@ -945,7 +946,9 @@ provider usage, auto-resume state, and the server-global tmux clipboard.
 Loopback blocks remote access but does not authenticate same-host principals;
 the raw daemon therefore requires a trusted single-user host or an equivalent
 local access-control boundary. Path-bearing
-reads (`workdirs`), activity streaming, writes, and attach require the bearer token. Front the daemon with the agent-console edge (which
+reads (`workdirs`), activity streaming, writes, and attach require the bearer token.
+The provider hook ingress instead requires the session's own capability and a
+direct loopback peer; it grants no operator authority. Front the daemon with the agent-console edge (which
 applies its own auth) and do **not** `tailscale serve` the raw serve port; expose only the edge, tailnet-only, no funnel.
 Browser WebSocket clients cannot set an `Authorization` header, so the edge must proxy the attach and inject the bearer
 server-side — never put the token in the `ws://` URL/query.

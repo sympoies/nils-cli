@@ -303,7 +303,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__activity__hook)
-            opts="-h --agent --event --state-dir --host --help"
+            opts="-h --agent --event --via --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -315,6 +315,10 @@ _agent__session() {
                     ;;
                 --event)
                     COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --via)
+                    COMPREPLY=($(compgen -W "file http" -- "${cur}"))
                     return 0
                     ;;
                 --state-dir)

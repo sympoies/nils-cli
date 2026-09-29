@@ -39,7 +39,7 @@ const ACTIVITY_DIAGNOSTIC_FILE: &str = "activity.diagnostic.json";
 const ACTIVITY_LOCK_FILE: &str = ".activity.lock";
 const ACTIVITY_HEALTH_LOCK_FILE: &str = ".activity-health.lock";
 const ACTIVITY_UNHEALTHY_FILE: &str = "activity.unhealthy.json";
-const MAX_EVENT_BYTES: u64 = 64 * 1024;
+pub(crate) const MAX_EVENT_BYTES: u64 = 64 * 1024;
 const MAX_JOURNAL_EVENTS: usize = 256;
 const MAX_JOURNAL_BYTES: usize = 64 * 1024;
 const MAX_DEDUPE_EVENTS: usize = 4096;
@@ -3176,18 +3176,38 @@ pub(crate) fn ingest_provider_hook(
     agent: AgentKind,
     event_override: Option<&str>,
 ) -> Result<bool, CliError> {
-    let Some(id) = std::env::var("AGENT_SESSION_ID")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-    else {
+    let Some((id, runtime_id)) = provider_hook_runtime_from_env() else {
         return Ok(false);
     };
-    let Some(runtime_id) = std::env::var("AGENT_SESSION_RUNTIME_ID")
+    let bytes = read_provider_hook_stdin()?;
+    let injected_authority = std::env::var(crate::codex_app_server::ATTENTION_AUTHORITY_ENV).ok();
+    ingest_provider_hook_input(
+        context,
+        agent,
+        event_override,
+        ProviderHookInput {
+            id: &id,
+            runtime_id: &runtime_id,
+            payload: &bytes,
+            attention_authority: injected_authority.as_deref(),
+        },
+    )
+}
+
+/// The managed session and runtime a provider hook process reports for.
+pub(crate) fn provider_hook_runtime_from_env() -> Option<(String, String)> {
+    let id = std::env::var("AGENT_SESSION_ID")
         .ok()
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return Ok(false);
-    };
+        .filter(|value| !value.trim().is_empty())?;
+    let runtime_id = std::env::var("AGENT_SESSION_RUNTIME_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())?;
+    Some((id, runtime_id))
+}
+
+/// Read at most one byte past the payload limit so an oversized payload is
+/// rejected by [`ingest_provider_hook_input`] rather than silently truncated.
+pub(crate) fn read_provider_hook_stdin() -> Result<Vec<u8>, CliError> {
     let mut bytes = Vec::new();
     io::stdin()
         .take(MAX_EVENT_BYTES + 1)
@@ -3199,6 +3219,33 @@ pub(crate) fn ingest_provider_hook(
                 None,
             )
         })?;
+    Ok(bytes)
+}
+
+/// One provider hook report, whichever transport delivered it.
+pub(crate) struct ProviderHookInput<'a> {
+    pub(crate) id: &'a str,
+    pub(crate) runtime_id: &'a str,
+    pub(crate) payload: &'a [u8],
+    pub(crate) attention_authority: Option<&'a str>,
+}
+
+/// Normalize and ingest one provider hook payload. Both the file path
+/// (`activity hook`) and the loopback HTTP ingress share this function, so
+/// they accept exactly the same payload schema and produce the same
+/// `turn_state` transition.
+pub(crate) fn ingest_provider_hook_input(
+    context: &CliContext,
+    agent: AgentKind,
+    event_override: Option<&str>,
+    input: ProviderHookInput<'_>,
+) -> Result<bool, CliError> {
+    let ProviderHookInput {
+        id,
+        runtime_id,
+        payload: bytes,
+        attention_authority: injected_authority,
+    } = input;
     if bytes.len() as u64 > MAX_EVENT_BYTES {
         return Err(CliError::data(
             "provider-hook-too-large",
@@ -3206,7 +3253,7 @@ pub(crate) fn ingest_provider_hook(
             None,
         ));
     }
-    let raw: Value = serde_json::from_slice(&bytes).map_err(|_| {
+    let raw: Value = serde_json::from_slice(bytes).map_err(|_| {
         CliError::data(
             "provider-hook-invalid",
             "provider hook payload is not valid JSON",
@@ -3217,10 +3264,8 @@ pub(crate) fn ingest_provider_hook(
         .or_else(|| raw.get("hook_event_name").and_then(Value::as_str))
         .or_else(|| raw.get("event").and_then(Value::as_str));
     if agent == AgentKind::Codex && raw_event_name == Some("PermissionRequest") {
-        let record = load_session_record(context, &id)?;
-        let injected_authority =
-            std::env::var(crate::codex_app_server::ATTENTION_AUTHORITY_ENV).ok();
-        match codex_hook_attention_disposition(&record, injected_authority.as_deref()) {
+        let record = load_session_record(context, id)?;
+        match codex_hook_attention_disposition(&record, injected_authority) {
             CodexHookAttentionDisposition::Accept => {}
             CodexHookAttentionDisposition::Suppress => {
                 // The managed app-server adapter is the sole attention
@@ -3231,8 +3276,8 @@ pub(crate) fn ingest_provider_hook(
             CodexHookAttentionDisposition::Breach => {
                 mark_runtime_unhealthy(
                     context,
-                    &id,
-                    &runtime_id,
+                    id,
+                    runtime_id,
                     "codex_attention_authority_mismatch",
                 )?;
                 return Err(CliError::data(
@@ -3243,18 +3288,12 @@ pub(crate) fn ingest_provider_hook(
             }
         }
     }
-    let Some(event) = normalize_provider_hook(agent, event_override, &runtime_id, &raw)? else {
+    let Some(event) = normalize_provider_hook(agent, event_override, runtime_id, &raw)? else {
         return Ok(false);
     };
-    let provider_resume = provider_resume_from_user_prompt_hook(
-        context,
-        &id,
-        agent,
-        &runtime_id,
-        event_override,
-        &raw,
-    );
-    let _ = ingest_event(context, &id, event)?;
+    let provider_resume =
+        provider_resume_from_user_prompt_hook(context, id, agent, runtime_id, event_override, &raw);
+    let _ = ingest_event(context, id, event)?;
     provider_resume?;
     Ok(true)
 }
@@ -3551,15 +3590,24 @@ pub(crate) fn record_hook_diagnostic(context: &CliContext, agent: AgentKind, cod
     else {
         return;
     };
-    let Ok(record) = load_session_record(context, &id) else {
+    let runtime_id = std::env::var("AGENT_SESSION_RUNTIME_ID").ok();
+    record_hook_diagnostic_for(context, agent, &id, runtime_id.as_deref(), code);
+}
+
+pub(crate) fn record_hook_diagnostic_for(
+    context: &CliContext,
+    agent: AgentKind,
+    id: &str,
+    runtime_id: Option<&str>,
+    code: &str,
+) {
+    let Ok(record) = load_session_record(context, id) else {
         return;
     };
     let Some(runtime) = record.runtime.as_ref() else {
         return;
     };
-    let runtime_matches = std::env::var("AGENT_SESSION_RUNTIME_ID")
-        .ok()
-        .is_some_and(|runtime_id| runtime.launch_id == runtime_id);
+    let runtime_matches = runtime_id.is_some_and(|runtime_id| runtime.launch_id == runtime_id);
     if record.agent != agent.as_str() || !runtime_matches {
         return;
     }
@@ -3575,7 +3623,7 @@ pub(crate) fn record_hook_diagnostic(context: &CliContext, agent: AgentKind, cod
         return;
     };
     let _ = write_atomic(
-        &session_dir(context, &id).join(ACTIVITY_DIAGNOSTIC_FILE),
+        &session_dir(context, id).join(ACTIVITY_DIAGNOSTIC_FILE),
         &bytes,
         SECRET_FILE_MODE,
     );
@@ -3588,18 +3636,26 @@ pub(crate) fn clear_hook_diagnostic(context: &CliContext, agent: AgentKind) {
     else {
         return;
     };
-    if load_session_record(context, &id).is_ok_and(|record| {
+    let runtime_id = std::env::var("AGENT_SESSION_RUNTIME_ID").ok();
+    clear_hook_diagnostic_for(context, agent, &id, runtime_id.as_deref());
+}
+
+pub(crate) fn clear_hook_diagnostic_for(
+    context: &CliContext,
+    agent: AgentKind,
+    id: &str,
+    runtime_id: Option<&str>,
+) {
+    if load_session_record(context, id).is_ok_and(|record| {
         record.agent == agent.as_str()
-            && std::env::var("AGENT_SESSION_RUNTIME_ID")
-                .ok()
-                .is_some_and(|runtime_id| {
-                    record
-                        .runtime
-                        .as_ref()
-                        .is_some_and(|runtime| runtime.launch_id == runtime_id)
-                })
+            && runtime_id.is_some_and(|runtime_id| {
+                record
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|runtime| runtime.launch_id == runtime_id)
+            })
     }) {
-        let _ = fs::remove_file(session_dir(context, &id).join(ACTIVITY_DIAGNOSTIC_FILE));
+        let _ = fs::remove_file(session_dir(context, id).join(ACTIVITY_DIAGNOSTIC_FILE));
     }
 }
 

@@ -1,5 +1,6 @@
 #[doc(hidden)]
 pub mod activity;
+mod activity_ingress;
 #[doc(hidden)]
 pub mod auto_resume;
 mod board;
@@ -702,7 +703,18 @@ fn run_activity(context: &CliContext, args: cli::ActivityArgs) -> i32 {
         cli::ActivityCommand::Hook(args) => {
             // Provider telemetry is deliberately fail-open: malformed or stale
             // hook input must never block a prompt, permission, or turn.
-            activity::ingest_provider_hook_fail_open(context, args.agent, args.event.as_deref());
+            match args.via {
+                cli::ActivityHookVia::File => activity::ingest_provider_hook_fail_open(
+                    context,
+                    args.agent,
+                    args.event.as_deref(),
+                ),
+                cli::ActivityHookVia::Http => activity_ingress::forward_provider_hook_fail_open(
+                    context,
+                    args.agent,
+                    args.event.as_deref(),
+                ),
+            }
             exit::SUCCESS
         }
         cli::ActivityCommand::Notify(args) => {
