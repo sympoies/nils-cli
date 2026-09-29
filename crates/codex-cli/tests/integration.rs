@@ -5,6 +5,8 @@
 
 #[path = "integration/account_reset_rate_limits.rs"]
 mod account_reset_rate_limits;
+#[path = "integration/account_select.rs"]
+mod account_select;
 #[path = "integration/agent_commit.rs"]
 mod agent_commit;
 #[path = "integration/agent_exec.rs"]

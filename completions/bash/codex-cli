@@ -46,11 +46,17 @@ _codex__cli() {
             codex__cli__account,reset-rate-limits)
                 cmd="codex__cli__account__reset__rate__limits"
                 ;;
+            codex__cli__account,select)
+                cmd="codex__cli__account__select"
+                ;;
             codex__cli__account__help,help)
                 cmd="codex__cli__account__help__help"
                 ;;
             codex__cli__account__help,reset-rate-limits)
                 cmd="codex__cli__account__help__reset__rate__limits"
+                ;;
+            codex__cli__account__help,select)
+                cmd="codex__cli__account__help__select"
                 ;;
             codex__cli__agent,advice)
                 cmd="codex__cli__agent__advice"
@@ -244,6 +250,9 @@ _codex__cli() {
             codex__cli__help__account,reset-rate-limits)
                 cmd="codex__cli__help__account__reset__rate__limits"
                 ;;
+            codex__cli__help__account,select)
+                cmd="codex__cli__help__account__select"
+                ;;
             codex__cli__help__agent,advice)
                 cmd="codex__cli__help__agent__advice"
                 ;;
@@ -355,7 +364,7 @@ _codex__cli() {
             return 0
             ;;
         codex__cli__account)
-            opts="-h --help reset-rate-limits help"
+            opts="-h --help reset-rate-limits select help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -369,7 +378,7 @@ _codex__cli() {
             return 0
             ;;
         codex__cli__account__help)
-            opts="reset-rate-limits help"
+            opts="reset-rate-limits select help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -410,6 +419,20 @@ _codex__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        codex__cli__account__help__select)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         codex__cli__account__reset__rate__limits)
             opts="-y -h --yes --idempotency-key --no-refresh-auth --format --json --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
@@ -418,6 +441,36 @@ _codex__cli() {
             fi
             case "${prev}" in
                 --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        codex__cli__account__select)
+            opts="-h --strategy --after --exclude --format --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --strategy)
+                    COMPREPLY=($(compgen -W "current-default next-with-capacity default-with-capacity" -- "${cur}"))
+                    return 0
+                    ;;
+                --after)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --exclude)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -1400,7 +1453,7 @@ _codex__cli() {
             return 0
             ;;
         codex__cli__help__account)
-            opts="reset-rate-limits"
+            opts="reset-rate-limits select"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1414,6 +1467,20 @@ _codex__cli() {
             return 0
             ;;
         codex__cli__help__account__reset__rate__limits)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        codex__cli__help__account__select)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

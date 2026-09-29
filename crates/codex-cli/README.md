@@ -16,7 +16,7 @@ Usage:
 
 Groups:
   agent           prompt | advice | knowledge | commit | resume | run | doctor
-  account         reset-rate-limits
+  account         reset-rate-limits | select
   auth            login | use | save | remove | refresh | auto-refresh | status | current | sync | remote pull
   diag            rate-limits
   config          show | set
@@ -170,6 +170,16 @@ Auth examples:
 - The command reports only the stable outcome
   `reset|nothing_to_reset|no_credit|already_redeemed`; provider credit IDs,
   tokens, account IDs, absolute paths, and raw provider bodies are never emitted.
+- `select --strategy <current-default|next-with-capacity|default-with-capacity>
+  [--after <nick>] [--exclude <nick>]... [--format <text|json>]`: Select one
+  `CODEX_SECRET_DIR` profile and report each candidate's capacity (`available`
+  when every window has at least 1% remaining). Fresh entries in the shared
+  rate-limit cache (`CODEX_RATE_LIMITS_CACHE_TTL`) are reused. Capacity
+  strategies fetch only cache misses, without auth refresh, and write them
+  back. Ties break by nickname order. Output carries nicknames, percentages,
+  and epochs only. The contract, including how an `agent-session` account
+  broker can delegate to this command, is in
+  `docs/specs/codex-cli-account-select-json-contract-v1.md`.
 
 ### diag
 
@@ -213,10 +223,11 @@ Auth examples:
 
 - Human-readable text is the default output mode.
 - Machine-readable JSON mode is explicit: use `--format json` (preferred) or `--json` where supported for compatibility.
-- Contract specs: `docs/specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md`
-  and `docs/specs/codex-cli-account-reset-rate-limits-json-contract-v1.md`
+- Contract specs: `docs/specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md`,
+  `docs/specs/codex-cli-account-reset-rate-limits-json-contract-v1.md`, and
+  `docs/specs/codex-cli-account-select-json-contract-v1.md`
 - Consumer runbook: `docs/runbooks/json-consumers.md`
-- Covered surfaces: `agent run`, `account reset-rate-limits`, `diag rate-limits` (single/all/async),
+- Covered surfaces: `agent run`, `account reset-rate-limits|select`, `diag rate-limits` (single/all/async),
   `auth login|use|save|remove|refresh|auto-refresh|status|current|sync|remote pull`, and `prompt-segment status`.
 
 ## Environment
@@ -235,7 +246,8 @@ Auth examples:
 - `CODEX_AUTH_FILE`: active auth file path (default: `~/.agents/auth.json`).
 - `CODEX_SECRET_CACHE_DIR`: secret timestamp cache directory. If unset, resolver order is:
   `ZSH_CACHE_DIR/codex/secrets` -> `ZDOTDIR/cache/codex/secrets` -> `~/.config/zsh/cache/codex/secrets`.
-- `CODEX_RATE_LIMITS_CACHE_TTL`: `diag rate-limits --cached` TTL (default: `3m`; supports `s|m|h|d|w` suffixes or raw seconds).
+- `CODEX_RATE_LIMITS_CACHE_TTL`: `diag rate-limits --cached` and `account select` cache freshness TTL
+  (default: `3m`; supports `s|m|h|d|w` suffixes or raw seconds).
 - `CODEX_RATE_LIMITS_CACHE_ALLOW_STALE`: allow stale cache in `--cached` mode (default: `false`).
 - `CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED`: default `diag rate-limits` to `--all` when no target is provided (default: `false`).
 - `CODEX_PROMPT_SEGMENT_ENABLED`: enable prompt-segment output (default: `false`; set `true` to enable).

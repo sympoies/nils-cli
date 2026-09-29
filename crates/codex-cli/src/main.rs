@@ -72,6 +72,18 @@ fn handle_account(args: &cli::AccountArgs) -> i32 {
             })
             .unwrap_or(1)
         }
+        Some(cli::AccountCommand::Select {
+            strategy,
+            after,
+            exclude,
+            output,
+        }) => account::select::run(&account::select::SelectOptions {
+            strategy: (*strategy).into(),
+            after: after.clone(),
+            exclude: exclude.clone(),
+            output_json: output.is_json(),
+        })
+        .unwrap_or(1),
         None => print_subcommand_help("account"),
     }
 }
