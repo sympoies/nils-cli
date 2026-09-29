@@ -52,7 +52,7 @@ and bind address. Give a development or test serve its own `--state-dir` or
 | `GET /sessions/{id}/auto-resume` | Open; returns that session's auto-resume state. |
 | Path-bearing reads, account inventory, activity stream, writes, and WebSocket attach | Bearer token. |
 | Public coordination and broker reads | Bearer token. |
-| Session board reads (`GET /board/v1`) | Bearer token, and only when started with `--board` or `AGENT_SESSION_BOARD=1`; otherwise `board-disabled` (HTTP 404). Returns home-relative working directories and the machine identity. |
+| Session board reads (`GET /board/v1`, `GET /board/closed/v1`) | Bearer token, and only when started with `--board` or `AGENT_SESSION_BOARD=1`; otherwise `board-disabled` (HTTP 404). Returns home-relative working directories and the machine identity. |
 | Session-owner coordination and mailbox mutations | Bearer token plus `X-Agent-Session-Capability`. |
 
 Loopback prevents remote network access; it does not authenticate local

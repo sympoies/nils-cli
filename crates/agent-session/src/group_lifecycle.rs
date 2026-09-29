@@ -2659,6 +2659,13 @@ mod tests {
         assert!(!session_dir(&context, "main").exists());
         let registry = orchestration::load_registry_readonly(&context).unwrap();
         assert_eq!(registry.runs["run-one"].state, "closed");
+        assert_eq!(
+            crate::board::closed_reasons_for_test(&context),
+            vec![
+                ("worker".to_string(), "deleted".to_string()),
+                ("main".to_string(), "deleted".to_string()),
+            ]
+        );
     }
 
     #[test]

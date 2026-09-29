@@ -12843,8 +12843,12 @@ where
         record,
         resolved.session_dir,
         &tmux_bin,
-        PANE_INPUT_COMMAND_TIMEOUT,
-        DELETE_TERMINATION_VERIFY_TIMEOUT,
+        (
+            PANE_INPUT_COMMAND_TIMEOUT,
+            DELETE_TERMINATION_VERIFY_TIMEOUT,
+        ),
+        // Only archive routes through this incarnation-fenced helper.
+        board::CloseReason::Archived,
         prepare,
     )
 }
@@ -13050,8 +13054,8 @@ fn delete_session_locked_with_timeouts(
         record,
         session_dir,
         tmux_bin,
-        kill_timeout,
-        verify_timeout,
+        (kill_timeout, verify_timeout),
+        board::CloseReason::Deleted,
         |_| Ok(()),
     )
     .map(|(_, deleted)| deleted)
@@ -13062,8 +13066,8 @@ fn delete_session_locked_with_timeouts_and_prepare<T, F>(
     mut record: SessionRecord,
     session_dir: PathBuf,
     tmux_bin: &Path,
-    kill_timeout: Duration,
-    verify_timeout: Duration,
+    (kill_timeout, verify_timeout): (Duration, Duration),
+    close_reason: board::CloseReason,
     prepare: F,
 ) -> Result<(T, DeleteResult), CliError>
 where
@@ -13111,7 +13115,8 @@ where
         }
         let registry_fence = SessionRegistryFence::from_record(&record);
         let prepared = prepare(&record)?;
-        let deleted = finish_session_delete(context, record, session_dir, registry_fence)?;
+        let deleted =
+            finish_session_delete(context, record, session_dir, registry_fence, close_reason)?;
         return Ok((prepared, deleted));
     }
     let registry_fence = SessionRegistryFence::from_record(&record);
@@ -13132,7 +13137,8 @@ where
         session_termination_error(&record, reason, SessionTerminationOperation::Delete)
     })?;
     let prepared = prepare(&record)?;
-    let deleted = finish_session_delete(context, record, session_dir, registry_fence)?;
+    let deleted =
+        finish_session_delete(context, record, session_dir, registry_fence, close_reason)?;
     Ok((prepared, deleted))
 }
 
@@ -13152,7 +13158,13 @@ fn delete_session_locked_after_failed_canary_proof(
         ));
     }
     let registry_fence = SessionRegistryFence::from_record(&record);
-    finish_session_delete(context, record, session_dir, registry_fence)
+    finish_session_delete(
+        context,
+        record,
+        session_dir,
+        registry_fence,
+        board::CloseReason::Deleted,
+    )
 }
 
 fn finish_session_delete(
@@ -13160,11 +13172,16 @@ fn finish_session_delete(
     record: SessionRecord,
     session_dir: PathBuf,
     registry_fence: SessionRegistryFence,
+    close_reason: board::CloseReason,
 ) -> Result<DeleteResult, CliError> {
     ensure_session_lifecycle_mutation_allowed(context, &record)?;
+    // Built while the record's state is readable; appended to the closed
+    // ledger only after the removal commits, and never failing it.
+    let closed = board::closed_record(context, &record, close_reason);
     coordination::revoke(context, &record)?;
     codex_app_server::cleanup_runtime_files(context, &record)?;
     let cleanup_pending = commit_session_directory_delete(context, &record.id, &session_dir)?;
+    board::record_close(context, closed);
     Ok(DeleteResult {
         id: record.id,
         tmux_session: record.tmux_session,

@@ -15,6 +15,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | --- | --- | --- |
 | `GET /healthz` | Open | This specification |
 | `GET /board/v1` | Bearer; only with `serve --board` or `AGENT_SESSION_BOARD=1` | [Session board v1](session-board-v1.md#daemon-local-snapshot) |
+| `GET /board/closed/v1` | Bearer; only with `serve --board` or `AGENT_SESSION_BOARD=1` | [Session board v1](session-board-v1.md#closed-session-ledger) |
 | `GET /sessions` | Open | This specification |
 | `POST /sessions` | Bearer | This specification |
 | `GET /history/sessions` | Bearer | This specification |
