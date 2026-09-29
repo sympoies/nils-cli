@@ -232,6 +232,9 @@ Notes:
   `llvm-cov` runner modes. CI sets it only on `test_macos` (llvm-cov runner),
   because the Linux `test` job already runs the same doc tests. It does not
   affect the trailing doc run of `--with-coverage`.
+- `NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1` skips the stale-test and completion
+  freshness/parity audits, whose result does not depend on the OS. CI sets it
+  only on `test_macos`; the Linux `test` job runs them.
 
 ### 3.4 Full coverage flow (CI gate / explicit local parity)
 

@@ -428,6 +428,10 @@ jobs:
       - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, tempdir-leak-audit, test-stale-audit)
         env:
           NILS_CLI_TEST_RUNNER: llvm-cov
+          # The stale-test and completion freshness/parity audits give the same
+          # answer on every OS, and the Linux `test` job runs them. Here they
+          # cost ~2-3 min, mostly a debug build of every binary.
+          NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: "1"
           NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"
           # The Linux lane runs the workspace doc tests. Here they cost ~85 s,
           # because llvm-cov builds into its own target directory and the doc

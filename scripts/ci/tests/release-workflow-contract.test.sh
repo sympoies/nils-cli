@@ -119,7 +119,9 @@ assert_contains .github/workflows/ci.yml "needs: [changes, test_macos, test_cont
 # test_containment is not a required check; only the coverage job's own guard
 # connects it to merge and the release gate, so assert inside that job.
 coverage_job="$(mktemp "${TMPDIR:-/tmp}/ci-coverage-job.XXXXXX")"
-trap 'rm -f "$coverage_job"' EXIT
+linux_test_job="$(mktemp "${TMPDIR:-/tmp}/ci-test-job.XXXXXX")"
+macos_job="$(mktemp "${TMPDIR:-/tmp}/ci-macos-job.XXXXXX")"
+trap 'rm -f "$coverage_job" "$linux_test_job" "$macos_job"' EXIT
 awk '/^  coverage:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
   .github/workflows/ci.yml >"$coverage_job"
 assert_contains "$coverage_job" "if: \${{ !cancelled() }}" \
@@ -128,6 +130,21 @@ assert_contains "$coverage_job" "TEST_CONTAINMENT_RESULT: \${{ needs.test_contai
   "coverage reads the parallel containment canaries' result"
 assert_contains "$coverage_job" "[ \"\${TEST_CONTAINMENT_RESULT}\" != \"success\" ]; then" \
   "coverage fails closed unless the parallel containment canaries succeeded"
+# The stale-test and completion freshness/parity audits give the same answer
+# on every OS, so only the Linux `test` job runs them.
+awk '/^  test:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
+  .github/workflows/ci.yml >"$linux_test_job"
+awk '/^  test_macos:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
+  .github/workflows/ci.yml >"$macos_job"
+assert_contains "$macos_job" "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: \"1\"" \
+  "the macOS lane leaves the OS-independent audits to the Linux lane"
+assert_contains "$linux_test_job" "NILS_CLI_TEST_RUNNER: nextest" \
+  "the Linux test job block was extracted"
+assert_not_contains "$linux_test_job" "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS" \
+  "the Linux test lane runs the OS-independent audits"
+assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
+  "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS" \
+  "the required-checks runner honours the OS-independent audit skip"
 assert_contains .github/workflows/ci.yml "NILS_CLI_SKIP_DOCTESTS: \"1\"" \
   "the macOS lane leaves the workspace doc tests to the Linux lane"
 assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
