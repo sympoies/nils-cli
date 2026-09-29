@@ -5,6 +5,9 @@ on:
     branches:
       - main
   pull_request:
+  # A required merge queue runs every required check on its temporary merge
+  # branch before landing the pull request.
+  merge_group:
 
 # A newer push to a pull request supersedes its older CI run, so cancel the old
 # one instead of letting it hold runners for half an hour. Push runs on main are
@@ -43,6 +46,8 @@ jobs:
           EVENT_SHA: ${{ github.sha }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
@@ -51,6 +56,9 @@ jobs:
           if [ -n "${PR_BASE_SHA}" ]; then
             base="${PR_BASE_SHA}"
             head="${PR_HEAD_SHA}"
+          elif [ -n "${MERGE_GROUP_BASE_SHA}" ]; then
+            base="${MERGE_GROUP_BASE_SHA}"
+            head="${MERGE_GROUP_HEAD_SHA}"
           else
             base="${PUSH_BEFORE_SHA}"
             head="${EVENT_SHA}"

@@ -61,8 +61,9 @@ In scope (v1):
   `reopen`.
 - Repository label lifecycle: `label list`, `label audit`, and
   `label ensure`.
-- Repository helpers: read-only `repo view` and the explicitly governed
-  `repo push-default` delivery exception.
+- Repository helpers: read-only `repo view`, the explicitly governed
+  `repo push-default` delivery exception, and the GitHub merge-freeze record
+  `repo freeze start|end|status`.
 - Macro ops: `pr deliver` (kind = `feature` | `bug`), composing the
   atoms above into the agent-runtime-kit standard "open draft → wait CI →
   ready → merge → cleanup" flow.
@@ -143,6 +144,7 @@ Parity matrix (v1):
 | `auth status`                               | `gh auth status --hostname <authority>`                                                                                                      | `glab auth status --hostname <authority>`                              | exact (text → typed)                                                                                                     |
 | `repo view`                                 | `gh repo view <slug-or-host/slug> --json …`                                                                                                  | `glab repo view <slug-or-https-url> -F json`                           | exact                                                                                                                    |
 | `repo push-default`                         | local Git validation/push plus host-qualified `gh repo view --json …` default-branch resolution                                              | local Git validation/push plus host-qualified `glab repo view -F json` | exact; no provider force path                                                                                            |
+| `repo freeze` (start, end, status)          | `gh label list/create`, `gh issue create/list/close` on the `merge-freeze` label                                                             | `provider_unsupported`                                                 | GitHub-only in v1                                                                                                        |
 | `inbox list`                                | `gh search prs/issues --json …`                                                                                                              | `glab api --hostname <host> …`                                         | normalized aggregation                                                                                                   |
 | `inbox status`                              | same provider reads as `inbox list`                                                                                                          | same provider reads as `inbox list`                                    | bounded counts                                                                                                           |
 | `inbox next`                                | same provider reads as `inbox list`                                                                                                          | same provider reads as `inbox list`                                    | ranked bounded subset                                                                                                    |
@@ -1198,6 +1200,11 @@ distinctions that cannot be proven offline.
     `--allow-unchecked-tasks-reason` (the description is the delivery
     contract: every `- [ ]` is checked off or rewritten as
     dispositioned before merge);
+  - on GitHub, no active merge freeze (an open `merge-freeze` issue) OR every
+    active freeze named with `--allow-merge-freeze` plus a recorded
+    `--allow-merge-freeze-reason`. A base branch that requires a merge queue
+    lands through `enqueuePullRequest` instead of the direct merge API (policy
+    18);
   - `--method squash|merge|rebase` (default `squash`, configurable
     per repo).
 - Direct callers may pass `--expected-head <sha>`. The first provider snapshot
@@ -1521,6 +1528,52 @@ backend implementations cannot diverge.
     Enforced by `pr create`, `pr edit`, `issue create`, `issue edit`,
     `pr comment`, `issue comment`, `pr review`, `pr review-threads reply`, and
     `pr review-threads resolve`.
+18. **Merge freeze and merge queue (GitHub).** Right after the repository
+    read, `pr merge` issues one GraphQL policy read (`ForgeMergePolicy`): the
+    open issues labelled `merge-freeze`, the base branch's `mergeQueue`, and the
+    PR node id, queue membership, and state. The read is repeated immediately
+    before the merge or enqueue mutation, after the review-convergence and
+    review-loop rechecks, and the freeze gate runs again with the same
+    overrides. A freeze started while the gates ran therefore still blocks.
+    - A failed or partial read fails closed with `merge_policy_unavailable`
+      (`UNAVAILABLE 69`). One case is not a failure: a host whose schema has no
+      merge queue (an older GitHub Enterprise Server) reports that `mergeQueue`
+      or `isInMergeQueue` does not exist. It is treated as having no queue, and
+      the freeze list alone is read (`ForgeMergeFreezes`).
+    - An open `merge-freeze` issue is an active freeze. The merge is refused
+      with `merge_freeze_active`, whose detail names each freeze (number, title,
+      author, start, URL). The freeze holder bypasses it with one
+      `--allow-merge-freeze <issue>` per active freeze plus a required
+      `--allow-merge-freeze-reason`; the bypass is recorded as
+      `merge_freeze_override`. A freeze lives on the provider, so it applies to
+      private repositories whose plan offers no branch protection or merge
+      queue. `repo freeze start|end|status` manages the record; ending one that
+      is not open is `merge_freeze_not_active`, and ending without `--issue`
+      while several are open is `merge_freeze_ambiguous`.
+    - When the base requires a merge queue, the direct merge API is not used.
+      After every other gate passes, the verified head is enqueued with
+      `enqueuePullRequest` and `expectedHeadOid`. Enqueue is skipped when the PR
+      is already queued or already merged, so a retried merge resumes the wait
+      instead of failing. The command then polls until the PR is merged,
+      bounded by `--queue-timeout` (default 2700 s). Failures:
+      - `merge_queue_enqueue_rejected` (`RUNTIME 1`): the enqueue mutation
+        returned GraphQL errors or no queue entry.
+      - `merge_queue_dequeued` (`RUNTIME 1`): the PR was dequeued or closed
+        without merging.
+      - `merge_queue_checks_failed` (`RUNTIME 1`): the entry was reported
+        unmergeable.
+      - `merge_queue_poll_failed` (`UNAVAILABLE 69`): a poll returned GraphQL
+        errors.
+      - `merge_queue_timeout` (`UNAVAILABLE 69`): the bound was exceeded. The
+        PR is still queued and will merge unless it is dequeued, so rerunning
+        `pr merge` resumes the wait.
+    - The queue's configured method wins. An explicit `--method` that differs is
+      refused with `merge_queue_method_mismatch` before enqueue; `pr deliver`
+      without `--method` lets the queue decide. The payload sets
+      `merge_queue: true`, and `deleted_branch` is false because the queue
+      applies the repository's own head-branch deletion setting.
+    Enforced by `pr merge` and the `pr deliver` merge step. `pr deliver` has no
+    freeze bypass; a freeze holder merges with `pr merge --allow-merge-freeze`.
 
 Violations map to `DATA 65` with one of these `data.error.kind` values:
 
@@ -1569,6 +1622,16 @@ Violations map to `DATA 65` with one of these `data.error.kind` values:
 | `keep_branch_conflict`                     | 10                    |
 | `local_path_present`                       | 11                    |
 | `agent_attribution_present`                | 17                    |
+| `merge_freeze_active`                      | 18                    |
+| `merge_freeze_not_active`                  | 18                    |
+| `merge_freeze_ambiguous`                   | 18                    |
+| `merge_queue_method_mismatch`              | 18                    |
+| `merge_policy_unavailable`                 | 18 (`UNAVAILABLE 69`) |
+| `merge_queue_enqueue_rejected`             | 18 (`RUNTIME 1`)      |
+| `merge_queue_dequeued`                     | 18 (`RUNTIME 1`)      |
+| `merge_queue_checks_failed`                | 18 (`RUNTIME 1`)      |
+| `merge_queue_poll_failed`                  | 18 (`UNAVAILABLE 69`) |
+| `merge_queue_timeout`                      | 18 (`UNAVAILABLE 69`) |
 | `review_changes_requested`                 | 12                    |
 | `review_convergence_head_missing`          | 12                    |
 | `review_convergence_head_changed`          | 12                    |

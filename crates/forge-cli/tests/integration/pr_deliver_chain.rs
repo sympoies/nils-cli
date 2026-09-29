@@ -682,6 +682,9 @@ EOF
     ;;
   "api graphql")
     case "$*" in
+      *"ForgeMergePolicy"*)
+        printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":null,"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false}}}}}}}}'
+        ;;
       *"authorAssociation body createdAt"*)
         printf '%s\n' '{{"data":{{"viewer":{{"login":"testuser-gh"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[{review_state_node}],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
         ;;
@@ -818,6 +821,9 @@ EOF
     ;;
   "api graphql")
     case "$*" in
+      *"ForgeMergePolicy"*)
+        printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":null,"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false}}}}}}}}'
+        ;;
       *"authorAssociation body createdAt"*)
         printf '%s\n' '{{"data":{{"viewer":{{"login":"testuser-gh"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[{review_state_node}],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
         ;;
@@ -1008,9 +1014,16 @@ EOF
     :
     ;;
   "api graphql")
-    cat <<'EOF'
+    case "$*" in
+      *"ForgeMergePolicy"*)
+        printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":null,"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false}}}}}}}}'
+        ;;
+      *)
+        cat <<'EOF'
 {{ "data": {{ "repository": {{ "pullRequest": {{ "headRefOid": "{thread_head_sha}", "reviewThreads": {{ "nodes": [], "pageInfo": {{ "hasNextPage": false, "endCursor": null }} }} }} }} }} }}
 EOF
+        ;;
+    esac
     ;;
   "pr merge")
     touch {merge_sentinel}
@@ -1842,7 +1855,7 @@ fn local_deliver_args(evidence: &Path) -> PrDeliverArgs {
         body_file: None,
         head: Some("feat/sample".into()),
         base: Some("main".into()),
-        method: MergeMethodFlag::Squash,
+        method: Some(MergeMethodFlag::Squash),
         reviewers: Vec::new(),
         labels: Vec::new(),
         label_catalog: None,
@@ -2854,5 +2867,105 @@ fn pr_deliver_no_issue_closeout_flag_skips_the_step() {
     assert!(
         !close_sentinel.exists(),
         "no backend `issue close` when closeout is disabled"
+    );
+}
+
+#[test]
+fn pr_deliver_without_method_lets_a_merge_commit_queue_decide() {
+    let tempdir = make_git_repo();
+    let repo_path = tempdir.path().join("repo");
+
+    let stub = StubEnv::new();
+    let gh_path = write_full_chain_stub(&stub);
+    let enqueued = stub.tempdir.path().join("enqueued");
+    let direct_merge = stub.tempdir.path().join("direct-merge");
+    let body = fs::read_to_string(&gh_path).expect("read chain stub");
+    let queue_arms = format!(
+        r#"      *"ForgeMergePolicy"*)
+        printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":{{"configuration":{{"mergeMethod":"MERGE"}}}},"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false,"state":"OPEN"}}}}}}}}'
+        ;;
+      *"ForgeEnqueuePullRequest"*)
+        touch {enqueued}
+        printf '%s\n' '{{"data":{{"enqueuePullRequest":{{"mergeQueueEntry":{{"state":"QUEUED","position":1}}}}}}}}'
+        ;;
+      *"ForgeMergeQueuePoll"*)
+        printf '%s\n' '{{"data":{{"repository":{{"pullRequest":{{"state":"MERGED","mergeCommit":{{"oid":"abc123def456"}},"mergeQueueEntry":null}}}}}}}}'
+        ;;
+"#,
+        enqueued = enqueued.display()
+    );
+    let policy_arm_start = body
+        .find("      *\"ForgeMergePolicy\"*)")
+        .expect("chain stub answers the merge policy");
+    let policy_arm_end = policy_arm_start
+        + body[policy_arm_start..]
+            .find(";;\n")
+            .expect("policy arm terminator")
+        + 3;
+    let body = format!(
+        "{}{}{}",
+        &body[..policy_arm_start],
+        queue_arms,
+        &body[policy_arm_end..]
+    )
+    .replace(
+        "\"mergeCommitAllowed\": false",
+        "\"mergeCommitAllowed\": true",
+    )
+    // A queued merge enqueues the verified head, so the PR view carries one.
+    .replace(
+        "\"headRefName\": \"feat/sample\",",
+        "\"headRefName\": \"feat/sample\", \"headRefOid\": \"head123\",",
+    )
+    .replacen(
+        "  \"pr merge\")\n",
+        &format!("  \"pr merge\")\n    touch {}\n", direct_merge.display()),
+        1,
+    );
+    fs::write(&gh_path, body).expect("write queue chain stub");
+    let stub = stub.env("FORGE_CLI_GH_BIN", gh_path.to_string_lossy());
+
+    let out = run_in_repo(
+        &stub,
+        &repo_path,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "deliver",
+            "--kind",
+            "feature",
+            "--title",
+            "feat: sample feature",
+            "--body",
+            "## Summary\n\nLand the new feature.\n\n## Test plan\n\nVerified.\n",
+            "--head",
+            "feat/sample",
+            "--base",
+            "main",
+            "--timeout",
+            "5s",
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    let merge = envelope["data"]["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .find(|step| step["step"] == "merge")
+        .expect("merge step");
+    assert_eq!(merge["payload"]["method"], "merge");
+    assert_eq!(merge["payload"]["merge_queue"], true);
+    assert!(
+        enqueued.exists(),
+        "pr deliver must enter the required queue"
+    );
+    assert!(
+        !direct_merge.exists(),
+        "the direct merge API must not be used"
     );
 }

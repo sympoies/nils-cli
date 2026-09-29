@@ -79,6 +79,10 @@ assert_contains .github/workflows/ci.yml "cancel-in-progress: \${{ github.event_
   "CI cancels only superseded pull request runs"
 assert_contains .github/workflows/ci.yml "|| github.run_id }}" \
   "main push CI runs never share a concurrency group, so release provenance is never cancelled"
+assert_contains .github/workflows/ci.yml "  merge_group:" \
+  "CI runs on merge groups, so the required checks report for a required merge queue"
+assert_contains .github/workflows/ci.yml "base=\"\${MERGE_GROUP_BASE_SHA}\"" \
+  "CI change detection resolves a merge group's base instead of falling back to an empty push base"
 assert_contains .github/workflows/ci.yml "save-if: \${{ github.ref == 'refs/heads/main' }}" \
   "CI saves the Rust cache only from main"
 assert_contains .github/workflows/release.yml "save-if: false" \
