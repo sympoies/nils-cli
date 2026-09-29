@@ -212,6 +212,21 @@ again under the lock.
 Name resolution, the confirmation flow, and these exit codes are shared with
 `codex-cli auth` through `nils-common::provider_runtime::accounts`.
 
+#### Behavior changes (account-management parity)
+
+Callers written against earlier `claude-cli` releases must update:
+
+- `auth current` exits `2` (result `matched: false`) when no current default
+  is set; it used to exit `0`. Do not treat exit `0` from `auth current` as a
+  capability probe; check for the new surface with
+  `claude-cli auth remove --help` instead.
+- `auth save` over an existing profile of the same account now needs
+  `-y/--yes` in JSON or non-interactive runs; without it the command exits `1`
+  with `overwrite-confirmation-required`. The same applies when that profile
+  appears between the confirmation check and the locked write.
+- `auth use` on a missing profile exits `1` (`profile-not-found`) instead of
+  `65`.
+
 An access-only login stores `"refreshToken": ""`, which Claude Code treats as
 having no refresh token, so it never calls the token endpoint. A running Claude
 Code session picks up a replaced login on its next request. Only

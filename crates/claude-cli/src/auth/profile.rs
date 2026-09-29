@@ -132,6 +132,7 @@ pub fn save(target: &str, yes: bool, output_json: bool) -> i32 {
         }
         let _lock = store::lock_store()?;
         let (login, identity, replaced) = saveable_login(&name)?;
+        overwrite_allowed_under_lock(&name, replaces, replaced, yes)?;
         store::write_profile(&name, &login)?;
         // The profile is now the only refresher: leave the source login
         // access-only. On a Keychain host the Keychain copy is what Claude Code
@@ -262,6 +263,39 @@ pub fn remove(target: &str, yes: bool, output_json: bool) -> i32 {
     })
 }
 
+/// Whether the locked save may write profile `name`: a profile that appeared
+/// after the unlocked check was never confirmed, so it needs `--yes`.
+fn overwrite_allowed_under_lock(
+    name: &str,
+    confirmed: bool,
+    replaced: bool,
+    yes: bool,
+) -> AuthResult<()> {
+    if replaced && !confirmed && !yes {
+        return Err(confirmation_required(ConfirmAction::Overwrite, name));
+    }
+    Ok(())
+}
+
+fn confirm_verb(action: ConfirmAction) -> &'static str {
+    match action {
+        ConfirmAction::Overwrite => "overwrite",
+        ConfirmAction::Remove => "remove",
+    }
+}
+
+fn confirmation_required(action: ConfirmAction, name: &str) -> AuthError {
+    AuthError {
+        code: action.required_error_code(),
+        message: format!(
+            "profile '{name}' exists; rerun with --yes to {} it",
+            confirm_verb(action)
+        ),
+        exit_code: action.required_exit_code(),
+        details: Some(json!({ "profile": name })),
+    }
+}
+
 /// Run the shared confirmation flow for `action` on profile `name`.
 fn confirm(
     action: ConfirmAction,
@@ -270,20 +304,12 @@ fn confirm(
     prompt: &str,
     name: &str,
 ) -> AuthResult<()> {
-    let verb = match action {
-        ConfirmAction::Overwrite => "overwrite",
-        ConfirmAction::Remove => "remove",
-    };
+    let verb = confirm_verb(action);
     let answer = accounts::confirm(yes, output_json, prompt)
         .map_err(|err| AuthError::runtime("confirmation-failed", err.to_string()))?;
     match answer {
         Confirmation::Confirmed => Ok(()),
-        Confirmation::Required => Err(AuthError {
-            code: action.required_error_code(),
-            message: format!("profile '{name}' exists; rerun with --yes to {verb} it"),
-            exit_code: action.required_exit_code(),
-            details: Some(json!({ "profile": name })),
-        }),
+        Confirmation::Required => Err(confirmation_required(action, name)),
         Confirmation::Declined => Err(AuthError {
             code: "confirmation-declined",
             message: format!("{verb} declined for profile '{name}'"),
@@ -676,4 +702,35 @@ pub(crate) fn emit_error(command: &str, output_json: bool, err: AuthError) -> i3
         eprintln!("claude-cli {command}: {}", err.message);
     }
     err.exit_code
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn locked_save_refuses_a_profile_that_appeared_after_the_unlocked_check() {
+        let err = overwrite_allowed_under_lock("team", false, true, false)
+            .expect_err("a profile created after the pre-lock check needs confirmation");
+        assert_eq!(err.code, "overwrite-confirmation-required");
+        assert_eq!(err.exit_code, 1);
+        assert_eq!(err.details, Some(json!({ "profile": "team" })));
+    }
+
+    #[test]
+    fn locked_save_allows_confirmed_yes_and_new_profiles() {
+        // Confirmed before the lock, --yes given, or still a new profile.
+        for (confirmed, replaced, yes) in [
+            (true, true, false),
+            (false, true, true),
+            (false, false, false),
+            (true, false, false),
+        ] {
+            assert!(
+                overwrite_allowed_under_lock("team", confirmed, replaced, yes).is_ok(),
+                "confirmed={confirmed} replaced={replaced} yes={yes}"
+            );
+        }
+    }
 }
