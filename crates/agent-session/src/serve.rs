@@ -7260,13 +7260,19 @@ fn claude_account_switch_locked(
         ));
     }
     crate::claude_account::queue_next(&mut record, account)?;
-    let now = jiff::Timestamp::now().to_string();
-    record.updated_at = now.clone();
-    write_session_record(context, &record)?;
     let idle = crate::claude_account::has_queued_next(&record)
         && crate::session_status(context, tmux_bin, &record) == "running"
         && crate::activity::state_for_view(context, &record)
             .is_some_and(|activity| activity.phase == crate::activity::TurnPhase::Waiting);
+    if idle {
+        // Prepare the new account before anything is stopped. A refusal
+        // returns before the intent is written, so durable state (including
+        // any previously queued intent) is left exactly as it was.
+        crate::claude_account::preflight_next(&record)?;
+    }
+    let now = jiff::Timestamp::now().to_string();
+    record.updated_at = now.clone();
+    write_session_record(context, &record)?;
     if !idle {
         return Ok((launch_id, crate::claude_account::view_for_record(&record)));
     }
@@ -27901,7 +27907,8 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts"
 
     /// A fake Claude account broker speaking `agent-session.account-broker.v2`.
     /// It never touches a real Claude login: `materialize` returns a fixture
-    /// directory holding a placeholder `.credentials.json`.
+    /// directory holding a placeholder `.credentials.json`. The listed
+    /// `gamma` account always fails to materialize.
     fn claude_broker_fixture(lock: &GlobalStateLock, root: &Path) -> ClaudeBrokerFixture {
         let accounts_root = root.join("claude-accounts");
         for account in ["alpha", "beta"] {
@@ -27915,9 +27922,9 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts"
 printf '%s\n' "$*" >> {log}
 [ "$2" = --provider ] && [ "$3" = claude ] || exit 64
 case "$1" in
-  list) printf '%s\n' '{{"schema_version":"agent-session.account-broker.v2","provider":"claude","accounts":[{{"account":"alpha","label":"Alpha","plan":"max"}},{{"account":"beta"}}],"selection_strategies":["current_default"]}}' ;;
+  list) printf '%s\n' '{{"schema_version":"agent-session.account-broker.v2","provider":"claude","accounts":[{{"account":"alpha","label":"Alpha","plan":"max"}},{{"account":"beta"}},{{"account":"gamma"}}],"selection_strategies":["current_default"]}}' ;;
   select) printf '%s\n' '{{"schema_version":"agent-session.account-broker.v2","provider":"claude","account":"alpha"}}' ;;
-  materialize) printf '{{"schema_version":"agent-session.account-broker.v2","provider":"claude","account":"%s","config_dir":"%s/%s"}}\n' "$5" {root} "$5" ;;
+  materialize) [ "$5" = gamma ] && exit 3; printf '{{"schema_version":"agent-session.account-broker.v2","provider":"claude","account":"%s","config_dir":"%s/%s"}}\n' "$5" {root} "$5" ;;
   *) exit 1 ;;
 esac
 "#,
@@ -28240,7 +28247,8 @@ esac
             body["data"]["accounts"],
             json!([
                 {"account":"alpha","label":"Alpha","plan":"max"},
-                {"account":"beta"}
+                {"account":"beta"},
+                {"account":"gamma"}
             ])
         );
         assert_eq!(
@@ -28431,12 +28439,62 @@ esac
         };
         assert_eq!(launches(&log).len(), 1, "a busy turn must not restart");
 
+        // A nickname the broker does not list is refused before queueing.
+        let (status, body) = call(
+            router(st.clone()),
+            put_json(
+                "/sessions/claude-live/account",
+                Some(TOKEN),
+                json!({"account":"delta","expected_session_incarnation":first_launch}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
+        assert_eq!(body["error"]["code"], "claude-account-unknown");
+
+        crate::activity::ingest_event(&st.context, &record.id, turn("turn-done", "turn_completed"))
+            .unwrap();
+
+        // An idle switch materializes the next account before stopping
+        // anything. A broker refusal leaves the running session and its
+        // durable account state untouched.
+        let before_refusal = session_record_json(tmp.path(), "claude-live");
+        let (status, body) = call(
+            router(st.clone()),
+            put_json(
+                "/sessions/claude-live/account",
+                Some(TOKEN),
+                json!({"account":"gamma","expected_session_incarnation":first_launch}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body={body}");
+        assert_eq!(body["error"]["code"], "claude-account-switch-refused");
+        assert_eq!(
+            body["error"]["details"]["cause"],
+            "claude-account-broker-rejected"
+        );
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(
+            !calls.contains("kill-session") && !calls.contains("if-shell"),
+            "a refused preflight must never stop the runtime: {calls:?}"
+        );
+        assert!(running.exists(), "the session must still be running");
+        assert_eq!(launches(&log).len(), 1);
+        let after_refusal = session_record_json(tmp.path(), "claude-live");
+        assert_eq!(
+            after_refusal["claude_account_binding"],
+            before_refusal["claude_account_binding"]
+        );
+        assert_eq!(
+            after_refusal["claude_account_next"], before_refusal["claude_account_next"],
+            "a refused preflight keeps the previously queued intent unchanged"
+        );
+
         // At the idle boundary the switch restarts the runtime. This fixture
         // pane has no dedicated control group, so the verified stop refuses
         // and the switch fails safe: nothing relaunches, the applied account
         // is unchanged, and the intent stays queued for the next resume.
-        crate::activity::ingest_event(&st.context, &record.id, turn("turn-done", "turn_completed"))
-            .unwrap();
         let (status, body) = call(
             router(st.clone()),
             put_json(
@@ -28453,9 +28511,13 @@ esac
         let account = crate::claude_account::view_for_record(&persisted).unwrap();
         assert_eq!(account.selected_account.as_deref(), Some("alpha"));
         assert!(crate::claude_account::has_queued_next(&persisted));
-        assert!(
-            !broker.calls().contains("--account beta"),
-            "the next account materializes only when a relaunch is admitted"
+        assert_eq!(
+            broker
+                .calls()
+                .matches("materialize --provider claude --account beta")
+                .count(),
+            1,
+            "the idle switch preflights the next account once, before the stop"
         );
     }
 

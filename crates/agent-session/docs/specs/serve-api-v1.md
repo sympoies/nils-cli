@@ -1100,11 +1100,18 @@ and non-zero exit fail closed with `claude-account-broker-*` codes.
 - Switch: `PUT /sessions/{id}/account` with
   `{ "account", "expected_session_incarnation" }` on a Claude session durably
   queues `agent-session.claude-account-next.v1`; requesting the bound account
-  cancels a queued intent. Claude Code has no live credential swap, so the
-  switch is applied only by a relaunch: when the session is running and its
-  turn is `waiting`, the daemon stops the runtime through the verified stop
-  path and resumes the same conversation (`--resume <session-id>`) in the new
-  account directory, then returns the new `session_incarnation`. While a turn
+  cancels a queued intent. A nickname the broker does not list is refused
+  with `claude-account-unknown`. Nicknames are at most 64 bytes of ASCII
+  letters, digits, `.`, `_`, and `-`, and start with a letter or digit.
+  Claude Code has no live credential swap, so the switch is applied only by a
+  relaunch: when the session is running and its turn is `waiting`, the daemon
+  first materializes and validates the new account directory. A refusal
+  returns `claude-account-switch-refused` (HTTP 422, with the broker's
+  `cause` code) before anything is stopped or written, so the running session,
+  its binding, and any previously queued intent stay unchanged. Otherwise it
+  stops the runtime through the verified stop path and resumes the same
+  conversation (`--resume <session-id>`) in the new account directory, then
+  returns the new `session_incarnation`. While a turn
   is busy, or while the session is stopped, the intent stays queued and the
   next resume applies it. If the verified stop is refused, nothing relaunches
   and the intent stays queued. There is no automatic failover for Claude.

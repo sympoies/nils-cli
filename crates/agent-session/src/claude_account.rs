@@ -354,6 +354,17 @@ pub(crate) fn queue_next(record: &mut SessionRecord, account: &str) -> Result<()
         record.extra.remove(NEXT_KEY);
         return Ok(());
     }
+    if !list_accounts()?
+        .accounts
+        .iter()
+        .any(|listed| listed.account == account)
+    {
+        return Err(CliError::usage(
+            "claude-account-unknown",
+            "Claude account is not configured in the account broker",
+            None,
+        ));
+    }
     let prior_next_revision = match decode_next(record) {
         Decoded::Valid(next) => next.revision,
         Decoded::Absent | Decoded::Invalid => 0,
@@ -376,6 +387,26 @@ pub(crate) fn queue_next(record: &mut SessionRecord, account: &str) -> Result<()
 
 pub(crate) fn has_queued_next(record: &SessionRecord) -> bool {
     matches!(decode_next(record), Decoded::Valid(_))
+}
+
+/// Materializes the queued next account before a running session is stopped
+/// for it, so a broker refusal or an unsafe directory never costs the user a
+/// running session. The refusal is typed and carries the broker's code.
+pub(crate) fn preflight_next(record: &SessionRecord) -> Result<(), CliError> {
+    let Decoded::Valid(next) = decode_next(record) else {
+        return Ok(());
+    };
+    materialize(&next.account).map(|_| ()).map_err(|error| {
+        let mut details = json!({ "id": record.id, "cause": error.code() });
+        if let Some(reason) = error.details().and_then(|value| value.get("reason")) {
+            details["reason"] = reason.clone();
+        }
+        CliError::data(
+            "claude-account-switch-refused",
+            "the next Claude account could not be prepared; the running session was left unchanged",
+            Some(details),
+        )
+    })
 }
 
 pub(crate) fn list_accounts() -> Result<ClaudeAccountInventory, CliError> {
@@ -495,6 +526,7 @@ pub(crate) fn validate_config_dir(path: &Path, uid: u32) -> Result<(), CliError>
 pub(crate) fn validate_account(account: &str) -> Result<(), CliError> {
     if account.is_empty()
         || account.len() > MAX_ACCOUNT_BYTES
+        || !account.as_bytes()[0].is_ascii_alphanumeric()
         || !account
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
@@ -770,7 +802,18 @@ mod tests {
     #[test]
     fn account_nicknames_are_short_and_shell_free() {
         validate_account("alpha.team-1_x").unwrap();
-        for invalid in ["", "has space", "semi;colon", "../up", &"a".repeat(65)] {
+        for invalid in [
+            "",
+            "has space",
+            "semi;colon",
+            "../up",
+            "-x",
+            "--format",
+            ".",
+            "..",
+            "_hidden",
+            &"a".repeat(65),
+        ] {
             assert_eq!(
                 validate_account(invalid).unwrap_err().code(),
                 "invalid-claude-account"
