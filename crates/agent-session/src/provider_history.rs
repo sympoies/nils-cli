@@ -22,6 +22,10 @@ use crate::provider_prompt::{
 const SCAN_MAX_ENTRIES: usize = 10_000;
 const SCAN_MAX_DURATION: Duration = Duration::from_secs(2);
 const MAX_LINE_BYTES: usize = 1024 * 1024;
+// A Codex image may make one JSONL record much larger than its usable text.
+// Read only this bounded window, discard image_url bytes before parsing, and
+// retain the ordinary 1 MiB cap for the compacted record.
+const MAX_IMAGE_RECORD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 64 * 1024;
 const MAX_STAR_BYTES: u64 = 4 * 1024;
 const STAR_SCHEMA_VERSION: &str = "agent-session.history-star.v1";
@@ -34,7 +38,7 @@ const CATALOG_TTL: Duration = Duration::from_secs(30);
 const LATEST_PREVIEW_PAGE_MAX_BYTES: usize = 16 * 1024 * 1024;
 const LATEST_PREVIEW_SESSION_MAX_BYTES: usize = 1024 * 1024;
 const LATEST_PREVIEW_CACHE_MAX_ENTRIES: usize = 1024;
-const REVERSE_MESSAGE_MAX_BYTES: u64 = 16 * 1024 * 1024;
+const REVERSE_MESSAGE_MAX_BYTES: u64 = MAX_IMAGE_RECORD_BYTES as u64 + 1;
 const REVERSE_MESSAGE_CHUNK_BYTES: usize = 64 * 1024;
 const INCREMENTAL_CONTINUITY_BYTES: u64 = 256;
 const INCREMENTAL_OVERLAP_SEARCH_BYTES: u64 = 4 * 1024 * 1024;
@@ -2038,6 +2042,28 @@ fn read_messages_incremental_from_reader<R: Read + Seek>(
         .rposition(|byte| *byte == b'\n')
         .map_or(0, |index| index + 1);
     if complete == 0 {
+        if !discarding_oversized_line && session.provider == "codex" && bytes.len() > MAX_LINE_BYTES
+        {
+            match read_compacted_image_line(reader, file_len, offset, &bytes)? {
+                ImageLineRead::Complete(line, next_offset) => {
+                    let mut messages = Vec::new();
+                    push_incremental_message(session, &line, &mut messages);
+                    return Ok(IncrementalReaderPage {
+                        messages,
+                        next_offset,
+                        discarding_oversized_line: false,
+                    });
+                }
+                ImageLineRead::Incomplete => {
+                    return Ok(IncrementalReaderPage {
+                        messages: Vec::new(),
+                        next_offset: offset,
+                        discarding_oversized_line: false,
+                    });
+                }
+                ImageLineRead::Unsupported => {}
+            }
+        }
         let oversized = discarding_oversized_line || bytes.len() > MAX_LINE_BYTES;
         return Ok(IncrementalReaderPage {
             messages: Vec::new(),
@@ -2060,40 +2086,98 @@ fn read_messages_incremental_from_reader<R: Read + Seek>(
         if line.is_empty() || line.len() > MAX_LINE_BYTES {
             continue;
         }
-        let Ok(value) = serde_json::from_slice::<Value>(line) else {
-            continue;
-        };
-        let Some((role, text, timestamp, human_prompt)) = normalize_message(
-            &session.provider,
-            &session.provider_session_id,
-            line,
-            &value,
-        ) else {
-            continue;
-        };
-        if text.trim().is_empty() {
-            continue;
-        }
-        messages.push(HistoryMessage {
-            id: incremental_message_id(
-                session,
-                &value,
-                &role,
-                text.trim(),
-                timestamp.as_deref(),
-                human_prompt,
-            ),
-            role,
-            text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
-            timestamp,
-            human_prompt,
-        });
+        push_incremental_message(session, line, &mut messages);
     }
     Ok(IncrementalReaderPage {
         messages,
         next_offset: offset.saturating_add(complete as u64),
         discarding_oversized_line: false,
     })
+}
+
+enum ImageLineRead {
+    Complete(Vec<u8>, u64),
+    Incomplete,
+    Unsupported,
+}
+
+fn read_compacted_image_line<R: Read + Seek>(
+    reader: &mut R,
+    file_len: u64,
+    offset: u64,
+    initial: &[u8],
+) -> Result<ImageLineRead, HistoryError> {
+    let mut raw = initial.to_vec();
+    let mut position = offset.saturating_add(initial.len() as u64);
+    reader
+        .seek(SeekFrom::Start(position))
+        .map_err(|_| HistoryError::Io)?;
+    loop {
+        let remaining = file_len
+            .saturating_sub(position)
+            .min((MAX_IMAGE_RECORD_BYTES + 1 - raw.len()) as u64);
+        if remaining == 0 {
+            return Ok(if raw.len() > MAX_IMAGE_RECORD_BYTES {
+                ImageLineRead::Unsupported
+            } else {
+                ImageLineRead::Incomplete
+            });
+        }
+        let mut chunk = vec![0; remaining.min(REVERSE_MESSAGE_CHUNK_BYTES as u64) as usize];
+        reader
+            .read_exact(&mut chunk)
+            .map_err(|_| HistoryError::Io)?;
+        position = position.saturating_add(chunk.len() as u64);
+        if let Some(end) = chunk.iter().position(|byte| *byte == b'\n') {
+            raw.extend_from_slice(&chunk[..end]);
+            if raw.len() > MAX_IMAGE_RECORD_BYTES {
+                return Ok(ImageLineRead::Unsupported);
+            }
+            let Some(line) = crate::provider_prompt::compact_prompt_line(&raw) else {
+                return Ok(ImageLineRead::Unsupported);
+            };
+            return Ok(ImageLineRead::Complete(
+                line,
+                position - chunk.len() as u64 + end as u64 + 1,
+            ));
+        }
+        raw.extend_from_slice(&chunk);
+    }
+}
+
+fn push_incremental_message(
+    session: &HistorySession,
+    line: &[u8],
+    messages: &mut Vec<HistoryMessage>,
+) {
+    let Ok(value) = serde_json::from_slice::<Value>(line) else {
+        return;
+    };
+    let Some((role, text, timestamp, human_prompt)) = normalize_message(
+        &session.provider,
+        &session.provider_session_id,
+        line,
+        &value,
+    ) else {
+        return;
+    };
+    if text.trim().is_empty() {
+        return;
+    }
+    messages.push(HistoryMessage {
+        id: incremental_message_id(
+            session,
+            &value,
+            &role,
+            text.trim(),
+            timestamp.as_deref(),
+            human_prompt,
+        ),
+        role,
+        text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
+        timestamp,
+        human_prompt,
+    });
 }
 
 fn incremental_source_id(session: &HistorySession) -> String {
@@ -2646,7 +2730,8 @@ fn read_messages_reverse_from_reader<R: Read + Seek>(
 
     let lower_bound = end.saturating_sub(REVERSE_MESSAGE_MAX_BYTES);
     let mut position = end;
-    let mut partial = Vec::new();
+    let mut partial: Vec<Vec<u8>> = Vec::new();
+    let mut partial_len = 0usize;
     let mut partial_oversized = false;
     let mut messages = Vec::new();
     let mut bound_reached = false;
@@ -2684,17 +2769,21 @@ fn read_messages_reverse_from_reader<R: Read + Seek>(
             earliest_boundary = Some(line_offset);
             scanned += 1;
 
-            if rightmost && (!partial.is_empty() || partial_oversized) {
+            if rightmost && (partial_len > 0 || partial_oversized) {
                 if !partial_oversized
-                    && chunk.len().saturating_sub(line_start) + partial.len() <= MAX_LINE_BYTES
+                    && chunk.len().saturating_sub(line_start) + partial_len
+                        <= MAX_IMAGE_RECORD_BYTES
                 {
                     let mut joined =
-                        Vec::with_capacity(chunk.len().saturating_sub(line_start) + partial.len());
+                        Vec::with_capacity(chunk.len().saturating_sub(line_start) + partial_len);
                     joined.extend_from_slice(&chunk[line_start..]);
-                    joined.extend_from_slice(&partial);
+                    for fragment in partial.iter().rev() {
+                        joined.extend_from_slice(fragment);
+                    }
                     push_reverse_message(session, &joined, line_offset, &mut messages);
                 }
                 partial.clear();
+                partial_len = 0;
                 partial_oversized = false;
             } else {
                 push_reverse_message(
@@ -2717,11 +2806,13 @@ fn read_messages_reverse_from_reader<R: Read + Seek>(
                 break;
             }
             earliest_boundary = Some(0);
-            if rightmost && (!partial.is_empty() || partial_oversized) {
-                if !partial_oversized && chunk.len() + partial.len() <= MAX_LINE_BYTES {
-                    let mut joined = Vec::with_capacity(chunk.len() + partial.len());
+            if rightmost && (partial_len > 0 || partial_oversized) {
+                if !partial_oversized && chunk.len() + partial_len <= MAX_IMAGE_RECORD_BYTES {
+                    let mut joined = Vec::with_capacity(chunk.len() + partial_len);
                     joined.extend_from_slice(&chunk);
-                    joined.extend_from_slice(&partial);
+                    for fragment in partial.iter().rev() {
+                        joined.extend_from_slice(fragment);
+                    }
                     push_reverse_message(session, &joined, 0, &mut messages);
                 }
             } else {
@@ -2732,21 +2823,22 @@ fn read_messages_reverse_from_reader<R: Read + Seek>(
 
         let fragment = &chunk[..right];
         if rightmost {
-            if partial_oversized || fragment.len() + partial.len() > MAX_LINE_BYTES {
+            if partial_oversized || fragment.len() + partial_len > MAX_IMAGE_RECORD_BYTES {
                 partial.clear();
+                partial_len = 0;
                 partial_oversized = true;
             } else {
-                let mut joined = Vec::with_capacity(fragment.len() + partial.len());
-                joined.extend_from_slice(fragment);
-                joined.extend_from_slice(&partial);
-                partial = joined;
+                partial.push(fragment.to_vec());
+                partial_len += fragment.len();
             }
-        } else if fragment.len() > MAX_LINE_BYTES {
+        } else if fragment.len() > MAX_IMAGE_RECORD_BYTES {
             partial.clear();
+            partial_len = 0;
             partial_oversized = true;
         } else {
             partial.clear();
-            partial.extend_from_slice(fragment);
+            partial.push(fragment.to_vec());
+            partial_len = fragment.len();
         }
     }
 
@@ -2784,10 +2876,22 @@ fn push_reverse_message(
     line_offset: u64,
     messages: &mut Vec<HistoryMessage>,
 ) {
-    let line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
-    if line.is_empty() || line.len() > MAX_LINE_BYTES {
+    let raw_line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
+    if raw_line.is_empty() || raw_line.len() > MAX_IMAGE_RECORD_BYTES {
         return;
     }
+    let compacted = if raw_line.len() > MAX_LINE_BYTES && session.provider == "codex" {
+        crate::provider_prompt::compact_prompt_line(raw_line)
+    } else {
+        None
+    };
+    let line = if raw_line.len() <= MAX_LINE_BYTES {
+        raw_line
+    } else if let Some(ref compacted) = compacted {
+        compacted.as_slice()
+    } else {
+        return;
+    };
     let Ok(value) = serde_json::from_slice::<Value>(line) else {
         return;
     };
@@ -2823,6 +2927,34 @@ fn normalize_message(
         .map(str::to_string);
     match provider {
         "codex" => {
+            if value.get("type").and_then(Value::as_str) == Some("event_msg") {
+                let payload = value.get("payload")?;
+                if payload.get("type").and_then(Value::as_str) != Some("thread_goal_updated")
+                    || payload.get("threadId").and_then(Value::as_str) != Some(provider_session_id)
+                {
+                    return None;
+                }
+                let goal = payload.get("goal")?;
+                if goal.get("threadId").and_then(Value::as_str) != Some(provider_session_id)
+                    || goal.get("status").and_then(Value::as_str) != Some("active")
+                {
+                    return None;
+                }
+                let created_at = goal.get("createdAt")?.as_u64()?;
+                let event_second = timestamp
+                    .as_deref()?
+                    .parse::<jiff::Timestamp>()
+                    .ok()
+                    .and_then(|stamp| u64::try_from(stamp.as_second()).ok())?;
+                if event_second != created_at {
+                    return None;
+                }
+                let objective = goal.get("objective")?.as_str()?.trim();
+                if objective.is_empty() || objective.len() > MAX_MESSAGE_CHARS {
+                    return None;
+                }
+                return Some(("goal".to_string(), objective.to_string(), timestamp, true));
+            }
             if value.get("type").and_then(Value::as_str) != Some("response_item") {
                 return None;
             }
@@ -2841,6 +2973,16 @@ fn normalize_message(
                     std::str::from_utf8(raw_line).ok()?,
                 )
                 .is_some();
+            // Older Codex transcripts have no content_item_kinds. Keep those
+            // rows visible, but do not promote them into retitle memory: an
+            // unclassified user frame could also be injected context.
+            let classified_non_human = payload
+                .pointer("/internal_chat_message_metadata_passthrough/content_item_kinds")
+                .and_then(Value::as_array)
+                .is_some_and(|kinds| !kinds.iter().any(|kind| kind.as_str() == Some("user.text")));
+            if role == "user" && !human_prompt && classified_non_human {
+                return None;
+            }
             let text = content_text(payload.get("content")?);
             Some((role.to_string(), text, timestamp, human_prompt))
         }
@@ -2864,6 +3006,9 @@ fn normalize_message(
                     std::str::from_utf8(raw_line).ok()?,
                 )
                 .is_some();
+            if role == "user" && !human_prompt {
+                return None;
+            }
             Some((role.to_string(), text, timestamp, human_prompt))
         }
         _ => None,
@@ -3718,6 +3863,350 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
     }
 
     #[test]
+    fn image_bearing_codex_prompt_keeps_text_without_image_bytes() {
+        let session = history_session("image-prompt", "2026-09-09T00:00:00Z");
+        let image = "A".repeat(MAX_LINE_BYTES + 128);
+        let row = serde_json::json!({
+            "timestamp": "2026-09-09T00:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "Diagnose retitle with screenshot" },
+                    { "type": "input_image", "image_url": format!("data:image/png;base64,{image}") }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "turn_id": "image-turn",
+                    "content_item_kinds": ["user.text", "user.image"]
+                }
+            }
+        });
+        let mut bytes = serde_json::to_vec(&row).unwrap();
+        bytes.push(b'\n');
+        assert!(bytes.len() > MAX_LINE_BYTES);
+        let file_len = bytes.len() as u64;
+        let mut reader = Cursor::new(bytes.clone());
+        let page = read_messages_incremental_from_reader(
+            &session,
+            &mut reader,
+            file_len,
+            0,
+            MAX_LINE_BYTES + 1,
+            false,
+        )
+        .unwrap();
+        assert_eq!(page.messages.len(), 1);
+        assert_eq!(page.messages[0].role, "user");
+        assert_eq!(page.messages[0].text, "Diagnose retitle with screenshot");
+        assert!(!page.messages[0].text.contains("data:image"));
+        assert_eq!(page.next_offset, file_len);
+
+        let mut reverse_reader = Cursor::new(bytes);
+        let reverse = read_messages_reverse_from_reader(
+            &session,
+            &mut reverse_reader,
+            file_len,
+            None,
+            20,
+            Instant::now() + MESSAGE_SCAN_MAX_DURATION,
+        )
+        .unwrap();
+        assert_eq!(reverse.messages.len(), 1);
+        assert_eq!(reverse.messages[0].text, "Diagnose retitle with screenshot");
+    }
+
+    #[test]
+    fn oversized_image_read_stops_at_its_newline() {
+        let session = history_session("image-io", "2026-09-09T00:00:00Z");
+        let image = "A".repeat(MAX_LINE_BYTES + 128);
+        let row = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "Keep only this text" },
+                    { "type": "input_image", "image_url": format!("data:image/png;base64,{image}") }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text", "user.image"]
+                }
+            }
+        });
+        let mut bytes = serde_json::to_vec(&row).unwrap();
+        bytes.push(b'\n');
+        let line_len = bytes.len();
+        bytes.extend(std::iter::repeat_n(b'x', MAX_IMAGE_RECORD_BYTES));
+        let mut reader = CountingReader {
+            inner: Cursor::new(bytes.clone()),
+            bytes_read: 0,
+        };
+        let page = read_messages_incremental_from_reader(
+            &session,
+            &mut reader,
+            bytes.len() as u64,
+            0,
+            MAX_LINE_BYTES + 1,
+            false,
+        )
+        .unwrap();
+        assert_eq!(page.messages[0].text, "Keep only this text");
+        assert_eq!(page.next_offset, line_len as u64);
+        assert!(reader.bytes_read <= line_len + REVERSE_MESSAGE_CHUNK_BYTES);
+    }
+
+    #[test]
+    fn incremental_image_prompt_waits_for_the_completed_record() {
+        let session = history_session("partial-image", "2026-09-09T00:00:00Z");
+        let image = "A".repeat(MAX_LINE_BYTES + 128);
+        let row = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "Prompt before image finishes" },
+                    { "type": "input_image", "image_url": format!("data:image/png;base64,{image}") }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text", "user.image"]
+                }
+            }
+        });
+        let mut bytes = serde_json::to_vec(&row).unwrap();
+        let partial_len = (MAX_LINE_BYTES + 1) as u64;
+        let mut reader = Cursor::new(bytes.clone());
+        let partial = read_messages_incremental_from_reader(
+            &session,
+            &mut reader,
+            partial_len,
+            0,
+            MAX_LINE_BYTES + 1,
+            false,
+        )
+        .unwrap();
+        assert!(partial.messages.is_empty());
+        assert_eq!(partial.next_offset, 0);
+        assert!(!partial.discarding_oversized_line);
+
+        bytes.push(b'\n');
+        let complete_len = bytes.len() as u64;
+        reader = Cursor::new(bytes);
+        let complete = read_messages_incremental_from_reader(
+            &session,
+            &mut reader,
+            complete_len,
+            partial.next_offset,
+            MAX_LINE_BYTES + 1,
+            partial.discarding_oversized_line,
+        )
+        .unwrap();
+        assert_eq!(complete.messages.len(), 1);
+        assert_eq!(complete.messages[0].text, "Prompt before image finishes");
+        assert_eq!(complete.next_offset, complete_len);
+    }
+
+    #[test]
+    fn reverse_image_page_handles_a_near_limit_record() {
+        let session = history_session("large-image", "2026-09-09T00:00:00Z");
+        let image = "A".repeat(MAX_IMAGE_RECORD_BYTES - 4096);
+        let row = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "Near limit text" },
+                    { "type": "input_image", "image_url": format!("data:image/png;base64,{image}") }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text", "user.image"]
+                }
+            }
+        });
+        let mut bytes = serde_json::to_vec(&row).unwrap();
+        bytes.push(b'\n');
+        assert!(bytes.len() <= MAX_IMAGE_RECORD_BYTES);
+        let mut reader = Cursor::new(bytes.clone());
+        let page = read_messages_reverse_from_reader(
+            &session,
+            &mut reader,
+            bytes.len() as u64,
+            None,
+            20,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(page.messages.len(), 1);
+        assert_eq!(page.messages[0].text, "Near limit text");
+    }
+
+    #[test]
+    fn reverse_image_page_handles_exact_limit_with_newline() {
+        let session = history_session("exact-image", "2026-09-09T00:00:00Z");
+        let row = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "Exact limit text" },
+                    { "type": "input_image", "image_url": "data:image/png;base64," }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text", "user.image"]
+                }
+            }
+        });
+        let base = serde_json::to_vec(&row).unwrap();
+        let image = "A".repeat(MAX_IMAGE_RECORD_BYTES - base.len());
+        let mut bytes = serde_json::to_vec(&serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "Exact limit text" },
+                    { "type": "input_image", "image_url": format!("data:image/png;base64,{image}") }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text", "user.image"]
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(bytes.len(), MAX_IMAGE_RECORD_BYTES);
+        bytes.push(b'\n');
+        let mut reader = Cursor::new(bytes.clone());
+        let page = read_messages_reverse_from_reader(
+            &session,
+            &mut reader,
+            bytes.len() as u64,
+            None,
+            20,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(page.messages.len(), 1);
+        assert_eq!(page.messages[0].text, "Exact limit text");
+    }
+
+    #[test]
+    fn codex_goal_is_distinct_from_internal_user_frames() {
+        let goal = serde_json::json!({
+            "timestamp": "2026-09-09T00:00:01Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "thread_goal_updated",
+                "threadId": "provider-goal",
+                "goal": {
+                    "threadId": "provider-goal",
+                    "createdAt": 1788912001_u64,
+                    "objective": "Repair session retitling",
+                    "status": "active"
+                }
+            }
+        });
+        let raw = serde_json::to_vec(&goal).unwrap();
+        let normalized = normalize_message("codex", "provider-goal", &raw, &goal).unwrap();
+        assert_eq!(normalized.0, "goal");
+        assert_eq!(normalized.1, "Repair session retitling");
+        assert!(normalized.3);
+
+        let mut status_update = goal.clone();
+        status_update["timestamp"] = serde_json::json!("2026-09-09T00:02:01Z");
+        let raw = serde_json::to_vec(&status_update).unwrap();
+        assert!(normalize_message("codex", "provider-goal", &raw, &status_update).is_none());
+
+        let internal = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "Injected instructions" }],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["agents_md.instructions"]
+                }
+            }
+        });
+        let raw = serde_json::to_vec(&internal).unwrap();
+        assert!(normalize_message("codex", "provider-goal", &raw, &internal).is_none());
+    }
+
+    #[test]
+    fn unclassified_codex_user_frame_stays_visible_without_becoming_a_retitle_prompt() {
+        let unclassified = serde_json::json!({
+            "timestamp": "2026-09-09T00:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "Older user prompt" }]
+            }
+        });
+        let raw = serde_json::to_vec(&unclassified).unwrap();
+        let normalized = normalize_message("codex", "older-session", &raw, &unclassified)
+            .expect("unclassified user messages remain visible");
+        assert_eq!(normalized.0, "user");
+        assert_eq!(normalized.1, "Older user prompt");
+        assert!(!normalized.3);
+    }
+
+    #[test]
+    fn latest_history_shows_goal_without_injected_user_frames() {
+        let session = history_session("goal-history", "2026-09-09T00:00:00Z");
+        let records = [
+            serde_json::json!({
+                "timestamp": "2026-09-09T00:00:01Z", "type": "event_msg",
+                "payload": {"type":"thread_goal_updated","threadId":"goal-history",
+                    "goal":{"threadId":"goal-history","createdAt":1788912001_u64,
+                        "objective":"Repair retitle","status":"active"}}
+            }),
+            serde_json::json!({
+                "timestamp":"2026-09-09T00:00:02Z","type":"response_item",
+                "payload":{"type":"message","role":"user",
+                    "content":[{"type":"input_text","text":"Private AGENTS instructions"}],
+                    "internal_chat_message_metadata_passthrough":{"content_item_kinds":["agents_md.instructions"]}}
+            }),
+            serde_json::json!({
+                "timestamp":"2026-09-09T00:00:03Z","type":"response_item",
+                "payload":{"type":"message","role":"user",
+                    "content":[{"type":"input_text","text":"Private goal continuation"}],
+                    "internal_chat_message_metadata_passthrough":{"content_item_kinds":["goal.internal_context"]}}
+            }),
+            serde_json::json!({
+                "timestamp":"2026-09-09T00:00:04Z","type":"response_item",
+                "payload":{"type":"message","role":"assistant",
+                    "content":[{"type":"output_text","text":"Working on it"}]}
+            }),
+        ];
+        let mut bytes = Vec::new();
+        for record in records {
+            serde_json::to_writer(&mut bytes, &record).unwrap();
+            bytes.push(b'\n');
+        }
+        let mut reader = Cursor::new(bytes.clone());
+        let page = read_messages_reverse_from_reader(
+            &session,
+            &mut reader,
+            bytes.len() as u64,
+            None,
+            20,
+            Instant::now() + MESSAGE_SCAN_MAX_DURATION,
+        )
+        .unwrap();
+        assert_eq!(page.messages.len(), 2);
+        assert_eq!(page.messages[0].role, "goal");
+        assert_eq!(page.messages[0].text, "Repair retitle");
+        assert_eq!(
+            page.messages[0].timestamp.as_deref(),
+            Some("2026-09-09T00:00:01Z")
+        );
+        assert_eq!(page.messages[1].role, "assistant");
+    }
+
+    #[test]
     fn incremental_identity_detects_rotation_and_compaction() {
         let mut session = history_session("identity", "2026-09-09T00:00:00Z");
         session.transcript_path = PathBuf::from("/history/segment-one.jsonl");
@@ -4465,7 +4954,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             root.join("rollout.jsonl"),
             concat!(
                 "{\"timestamp\":\"2026-08-31T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"abc\",\"cwd\":\"/work/example\",\"source\":\"cli\",\"timestamp\":\"2026-08-31T00:00:00Z\"}}\n",
-                "{\"timestamp\":\"2026-08-31T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"first\"}]}}\n",
+                "{\"timestamp\":\"2026-08-31T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"first\"}],\"internal_chat_message_metadata_passthrough\":{\"content_item_kinds\":[\"user.text\"]}}}\n",
                 "{\"timestamp\":\"2026-08-31T00:00:02Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"second\"}]}}\n"
             ),
         )
@@ -4922,7 +5411,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             profile_a_root.join("rollout.jsonl"),
             concat!(
                 "{\"timestamp\":\"2026-08-31T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"shared-id\",\"cwd\":\"/work/profile-a\",\"source\":\"cli\",\"timestamp\":\"2026-08-31T00:00:00Z\"}}\n",
-                "{\"timestamp\":\"2026-08-31T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"profile a transcript\"}]}}\n"
+                "{\"timestamp\":\"2026-08-31T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"profile a transcript\"}],\"internal_chat_message_metadata_passthrough\":{\"content_item_kinds\":[\"user.text\"]}}}\n"
             ),
         )
         .unwrap();
@@ -4930,7 +5419,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             profile_b_root.join("rollout.jsonl"),
             concat!(
                 "{\"timestamp\":\"2026-08-31T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"shared-id\",\"cwd\":\"/work/profile-b\",\"source\":\"cli\",\"timestamp\":\"2026-08-31T00:00:00Z\"}}\n",
-                "{\"timestamp\":\"2026-08-31T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"profile b transcript\"}]}}\n"
+                "{\"timestamp\":\"2026-08-31T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"profile b transcript\"}],\"internal_chat_message_metadata_passthrough\":{\"content_item_kinds\":[\"user.text\"]}}}\n"
             ),
         )
         .unwrap();

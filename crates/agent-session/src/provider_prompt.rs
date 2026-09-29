@@ -173,7 +173,7 @@ impl ImageUrlElision {
     }
 }
 
-fn compact_prompt_line(line: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn compact_prompt_line(line: &[u8]) -> Option<Vec<u8>> {
     let mut elision = ImageUrlElision::default();
     let mut partial = Vec::new();
     for &byte in line {

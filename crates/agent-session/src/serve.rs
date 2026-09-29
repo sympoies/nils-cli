@@ -2534,6 +2534,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "provider-session-already-running"
         | "agent-blocked" => StatusCode::CONFLICT,
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
+        "retitle-v3-objective-unavailable" => StatusCode::UNPROCESSABLE_ENTITY,
         "board-cursor-expired" => StatusCode::GONE,
         "board-relay-disabled" => StatusCode::CONFLICT,
         "board-relay-unavailable" | "board-relay-unauthorized" => StatusCode::BAD_GATEWAY,
@@ -20020,6 +20021,7 @@ esac
             history_root.join("rollout.jsonl"),
             concat!(
                 "{\"timestamp\":\"2026-09-01T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"resume-session-id\",\"cwd\":\"/work/example\",\"source\":\"cli\",\"timestamp\":\"2026-09-01T00:00:00Z\"}}\n",
+                "{\"timestamp\":\"2026-09-01T00:00:01Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_goal_updated\",\"threadId\":\"resume-session-id\",\"goal\":{\"threadId\":\"resume-session-id\",\"createdAt\":1788220801,\"objective\":\"Repair retitle\",\"status\":\"active\"}}}\n",
                 "{\"timestamp\":\"2026-09-01T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"bootstrap wrapper\"}]}}\n",
                 "{\"timestamp\":\"2026-09-01T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"first human prompt\"}}\n",
                 "{\"timestamp\":\"2026-09-01T00:00:03Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"message 1\"}]}}\n",
@@ -20065,6 +20067,19 @@ esac
         assert_eq!(session["first_user_prompt_preview"], "first human prompt");
         assert_eq!(session["last_user_prompt_preview"], "latest human prompt");
         let history_id = session["id"].as_str().unwrap();
+
+        let (status, forward) = call(
+            router(st.clone()),
+            get_auth(
+                &format!("/history/sessions/{history_id}/messages?direction=forward&limit=20"),
+                Some(TOKEN),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={forward}");
+        assert_eq!(forward["data"]["messages"][0]["role"], "goal");
+        assert_eq!(forward["data"]["messages"][0]["text"], "Repair retitle");
+        assert!(forward["data"]["messages"][0].get("payload").is_none());
 
         let (status, latest) = call(
             router(st.clone()),

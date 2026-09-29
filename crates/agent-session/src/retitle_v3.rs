@@ -26,7 +26,7 @@ pub(crate) const READINESS_SCHEMA: &str = "agent-session.session-retitle.readine
 pub(crate) const RECEIPTS_SCHEMA: &str = "agent-session.session-retitle.receipts.v3";
 const MARKER_KEY: &str = "session_retitle_v3";
 const MARKER_SCHEMA: &str = "agent-session.session-retitle-state.v3";
-const SEMANTIC_PROJECTION_VERSION: u8 = 4;
+const SEMANTIC_PROJECTION_VERSION: u8 = 5;
 const MAX_MARKER_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_PROVIDER_INPUT_BYTES: usize = 16 * 1024;
 const MAX_SEMANTIC_PROJECTION_BYTES: usize = 12 * 1024;
@@ -571,7 +571,10 @@ pub(crate) fn session_readiness(
         };
         (memory.readiness.clone(), reason)
     };
-    let (status, reason_code) = if !provider_available && usable {
+    let context_status = status.clone();
+    let (status, reason_code) = if status == MemoryReadiness::Ready && !usable {
+        (MemoryReadiness::Unavailable, "no_usable_objective")
+    } else if !provider_available && usable {
         (MemoryReadiness::Degraded, "degraded_cached")
     } else {
         (status, reason_code)
@@ -585,13 +588,14 @@ pub(crate) fn session_readiness(
         } else {
             "unavailable"
         },
-        context_status: status.clone(),
+        context_status,
         title_status: title_status(&record, &memory),
         reason_code,
         next_action: match reason_code {
             "ready" => "none",
             "history_catching_up" | "history_stale" | "memory_not_initialized" => "refresh_memory",
             "degraded_cached" | "history_read_degraded" => "use_cached_memory_or_retry",
+            "no_usable_objective" => "provide_objective",
             _ => "restore_provider_history",
         },
         memory_revision: memory.revision,
@@ -1117,7 +1121,13 @@ pub(crate) fn inference_context(
     // A caught-up manual retry may use a cached degraded title while a
     // previously failed provider recovers. The ready receipt proves that the
     // current request passed its bounded history refresh.
-    if !readiness_allows_inference || ready_receipt.is_none() || !usable_memory(&memory) {
+    if readiness_allows_inference && ready_receipt.is_some() && !usable_memory(&memory) {
+        return Err(v3_error(
+            "retitle-v3-objective-unavailable",
+            "no usable objective exists in the verified session history",
+        ));
+    }
+    if !readiness_allows_inference || ready_receipt.is_none() {
         return Err(v3_error(
             "retitle-v3-memory-not-ready",
             "semantic memory is not ready for provider evaluation",
@@ -2117,7 +2127,8 @@ fn reduce_messages_with(
         if memory.applied_message_ids.contains(&message.id) {
             continue;
         }
-        let human = message.human_prompt && message.role == "user";
+        let goal = message.human_prompt && message.role == "goal";
+        let human = message.human_prompt && (message.role == "user" || goal);
         let prompt = human.then(|| human_prompt_text(&message.text)).flatten();
         if human && (!prompts_set_objective || prompt.is_none()) {
             memory.last_turn_id = Some(message.id.clone());
@@ -2143,7 +2154,7 @@ fn reduce_messages_with(
         ) else {
             continue;
         };
-        if message.human_prompt && message.role == "user" {
+        if human {
             let projected = semantic_label("objective", &text, MAX_TEXT_CHARS);
             let references = extract_work_references(&strip_image_reference_markers(
                 &crate::retitle::filter_text(&source_text),
@@ -2159,7 +2170,8 @@ fn reduce_messages_with(
                 memory.objective_context = objective_context(&source_text);
                 memory.work_references = references;
                 memory.current_request = None;
-            } else if explicit_objective_pivot(&text)
+            } else if goal
+                || explicit_objective_pivot(&text)
                 || (greeting_origin_is_active(memory)
                     && !is_greeting_placeholder(&text)
                     && !is_routine_followup(&text))
@@ -3692,8 +3704,14 @@ fn v3_error(code: &str, message: &str) -> CliError {
         message,
         Some(error_details(
             retryable,
-            "retry_or_inspect_readiness",
-            if retryable {
+            if code == "retitle-v3-objective-unavailable" {
+                "provide_objective"
+            } else {
+                "retry_or_inspect_readiness"
+            },
+            if code == "retitle-v3-objective-unavailable" {
+                "provide_objective"
+            } else if retryable {
                 "same_request"
             } else {
                 "refresh_fences"
@@ -3943,6 +3961,202 @@ mod tests {
 
     fn is_terminal_receipt_state(state: &str) -> bool {
         matches!(state, "completed" | "degraded_cached" | "failed")
+    }
+
+    #[test]
+    fn goal_creation_supplies_retitle_objective_without_internal_context() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "goal-objective";
+        let goal = serde_json::to_string(&json!({
+            "timestamp": "2026-09-09T00:00:01Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "thread_goal_updated",
+                "threadId": format!("provider-{id}"),
+                "goal": {
+                    "threadId": format!("provider-{id}"),
+                    "createdAt": 1788912001_u64,
+                    "objective": "Repair session retitling",
+                    "status": "active"
+                }
+            }
+        }))
+        .unwrap();
+        let internal = serde_json::to_string(&json!({
+            "timestamp": "2026-09-09T00:00:02Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type":"input_text","text":"Internal continuation"}],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["goal.internal_context"]
+                }
+            }
+        }))
+        .unwrap();
+        let (context, catalog, _) = fixture(tmp.path(), id, None, &format!("{goal}\n{internal}\n"));
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert_eq!(
+            memory
+                .origin
+                .as_ref()
+                .and_then(|fact| fact.display.as_deref()),
+            Some("Repair session retitling")
+        );
+        assert_eq!(memory.active_objective, memory.origin);
+        assert!(
+            !render_provider_input(&memory)
+                .unwrap()
+                .contains("Internal continuation")
+        );
+        let completed = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.outcome.as_deref(), Some("committed"));
+    }
+
+    #[test]
+    fn image_prompt_supplies_text_only_to_retitle_provider() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "image-objective";
+        let image = "A".repeat(1024 * 1024 + 128);
+        let prompt = serde_json::to_string(&json!({
+            "timestamp": "2026-09-09T00:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type":"input_text","text":"Inspect the retitle error"},
+                    {"type":"input_image","image_url":format!("data:image/png;base64,{image}")}
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "turn_id": "image-turn",
+                    "content_item_kinds": ["user.text", "user.image"]
+                }
+            }
+        }))
+        .unwrap();
+        let (context, catalog, _) = fixture(tmp.path(), id, None, &format!("{prompt}\n"));
+        let mut accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        for _ in 0..3 {
+            if accepted.readiness == MemoryReadiness::Ready {
+                break;
+            }
+            accepted =
+                refresh_operation_once(&context, &catalog, id, &accepted.operation_hash).unwrap();
+        }
+        assert_eq!(accepted.readiness, MemoryReadiness::Ready);
+        let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert_eq!(
+            memory
+                .origin
+                .as_ref()
+                .and_then(|fact| fact.display.as_deref()),
+            Some("Inspect the retitle error")
+        );
+        let input = render_provider_input(&memory).unwrap();
+        assert!(input.contains("Inspect the retitle error"));
+        assert!(!input.contains("image/png"));
+        assert!(!input.contains("image_url"));
+        let completed = complete_manual_locally(&context, &catalog, id, &accepted.operation_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.outcome.as_deref(), Some("committed"));
+    }
+
+    #[test]
+    fn released_v4_cursor_replays_a_previously_skipped_image_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "v4-image-replay";
+        let image = "A".repeat(1024 * 1024 + 128);
+        let prompt = serde_json::to_string(&json!({
+            "timestamp":"2026-09-09T00:00:01Z","type":"response_item",
+            "payload":{"type":"message","role":"user",
+                "content":[
+                    {"type":"input_text","text":"Recover the original request"},
+                    {"type":"input_image","image_url":format!("data:image/png;base64,{image}")}
+                ],
+                "internal_chat_message_metadata_passthrough":{
+                    "content_item_kinds":["user.text","user.image"]
+                }}
+        }))
+        .unwrap();
+        let (context, catalog, _) = fixture(tmp.path(), id, None, &format!("{prompt}\n"));
+        let first = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let first = if first.readiness == MemoryReadiness::Ready {
+            first
+        } else {
+            refresh_operation_once(&context, &catalog, id, &first.operation_hash).unwrap()
+        };
+        assert_eq!(first.readiness, MemoryReadiness::Ready);
+        let mut prior = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert!(
+            prior
+                .cursor
+                .as_ref()
+                .is_some_and(|cursor| cursor.offset > 1024 * 1024)
+        );
+        prior.projection_version = 4;
+        prior.origin = None;
+        prior.active_objective = None;
+        prior.receipts.clear();
+        prior.readiness = MemoryReadiness::Ready;
+        let prior_revision = prior.revision;
+        store_fixture_memory(&context, id, &prior);
+
+        let upgrading =
+            refresh_once(&context, &catalog, id, &request(id, 0, prior_revision)).unwrap();
+        assert_eq!(upgrading.readiness, MemoryReadiness::CatchingUp);
+        let mut rebuilt = upgrading;
+        for _ in 0..3 {
+            if rebuilt.readiness == MemoryReadiness::Ready {
+                break;
+            }
+            rebuilt =
+                refresh_operation_once(&context, &catalog, id, &rebuilt.operation_hash).unwrap();
+        }
+        assert_eq!(rebuilt.readiness, MemoryReadiness::Ready);
+        let memory = memory_from_record(&load_session_record(&context, id).unwrap()).unwrap();
+        assert_eq!(memory.projection_version, 5);
+        assert_eq!(
+            memory
+                .origin
+                .as_ref()
+                .and_then(|fact| fact.display.as_deref()),
+            Some("Recover the original request")
+        );
+    }
+
+    #[test]
+    fn caught_up_history_without_objective_reports_a_distinct_recovery() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "missing-objective";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            None,
+            &codex_row(
+                "assistant",
+                "Started without an operator prompt",
+                "turn-one",
+            ),
+        );
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 0, 0)).unwrap();
+        let readiness = session_readiness(&context, &catalog, id, true).unwrap();
+        assert_eq!(readiness.status, MemoryReadiness::Unavailable);
+        assert_eq!(readiness.context_status, MemoryReadiness::Ready);
+        assert_eq!(readiness.reason_code, "no_usable_objective");
+        assert_eq!(readiness.next_action, "provide_objective");
+        assert!(!readiness.usable_memory);
+        assert_eq!(
+            inference_context(&context, id, &accepted.operation_hash)
+                .unwrap_err()
+                .code(),
+            "retitle-v3-objective-unavailable"
+        );
     }
 
     #[test]

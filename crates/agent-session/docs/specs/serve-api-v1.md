@@ -124,8 +124,9 @@ profile readiness or live DSH sessions. The daemon never exposes the adapter
 command, session root, native event records, or transcript paths.
 
 `GET /history/sessions/{history_id}/messages` resolves the opaque history id
-inside the daemon and returns normalized `user`/`assistant` text messages in
-bounded pages. The retained default `direction=forward` uses `next_cursor` as
+inside the daemon and returns normalized `user`/`assistant` text messages and
+Codex `goal` creation objectives in bounded pages. Injected AGENTS and Goal
+continuation context are excluded. The retained default `direction=forward` uses `next_cursor` as
 before. `direction=latest` accepts no cursor, reads one at-most-16-MiB window
 from the selected transcript tail, and returns the latest page in chronological
 order. `direction=older` requires the prior `older_cursor`, reads only bytes
