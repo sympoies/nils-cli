@@ -105,7 +105,7 @@ Presence derives only:
 - a private-keyed fingerprint of the canonical checkout root;
 - the canonical `owner/repository` origin when available;
 - the public managed session selector and mode; and
-- optional explicitly declared provider, plan, and path context.
+- optional explicitly declared provider and path context.
 
 Raw checkout paths, capabilities, host/user identity, prompts, transcripts,
 logs, terminal bytes, and mailbox bodies are never projected.
