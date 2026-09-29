@@ -385,7 +385,7 @@ fn pull_all(options: &PullOptions<'_>) -> i32 {
                 continue;
             };
             let name = match entry.remove("profile") {
-                Some(Value::String(name)) if store::validate_profile_name(&name).is_ok() => name,
+                Some(Value::String(name)) if store::is_account_dir_name(&name) => name,
                 _ => {
                     return Err(AuthError::data(
                         "remote-export-invalid-profile",

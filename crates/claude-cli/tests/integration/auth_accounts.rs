@@ -199,11 +199,12 @@ fn auth_remote_pull_all_projects_every_profile_into_its_own_config_dir() {
     fx.authority_profile("alpha", "access-alpha", "alpha");
     fx.authority_profile("max", "access-max", "beta");
     std::fs::write(fx.authority().join("current"), "max\n").expect("current");
-    // An existing account config keeps everything but its account.
+    // An existing owned account config keeps everything but its account.
     write_json(
         &fx.accounts().join("max").join(".claude.json"),
         &json!({ "theme": "dark", "oauthAccount": account_json("old") }),
     );
+    std::fs::write(fx.accounts().join("max").join(MARKER), "max\n").expect("marker");
 
     let output = fx.pull_all(&[], &fx.options());
 
@@ -431,6 +432,145 @@ fn auth_remote_pull_all_rejects_mixed_selectors() {
         assert_exit(&output, 64);
     }
     assert!(!fx.ssh_log().exists());
+}
+
+#[test]
+fn auth_remote_pull_all_does_not_adopt_an_unmarked_directory() {
+    let fx = Fixture::new();
+    fx.authority_profile("alpha", "access-alpha", "alpha");
+    fx.authority_profile("max", "access-max", "beta");
+    let foreign = fx.accounts().join("alpha");
+    std::fs::create_dir_all(&foreign).expect("alpha");
+    std::fs::write(foreign.join("notes.txt"), "mine").expect("file");
+
+    let output = fx.pull_all(&[], &fx.options());
+
+    assert_exit(&output, 1);
+    let result = &output.stdout_json()["result"];
+    assert_eq!(result["profiles"][0]["name"], "alpha");
+    assert_eq!(result["profiles"][0]["written"], false);
+    assert_eq!(
+        result["profiles"][0]["error"]["code"],
+        "account-dir-not-owned"
+    );
+    assert_eq!(result["profiles"][1]["written"], true);
+    assert!(!foreign.join(MARKER).exists());
+    assert!(!foreign.join(".credentials.json").exists());
+    assert!(
+        fx.accounts()
+            .join("max")
+            .join(".credentials.json")
+            .is_file()
+    );
+
+    // Once alpha is gone from the authority the unmarked directory stays.
+    std::fs::remove_file(fx.authority().join("alpha.json")).expect("remove alpha");
+    let output = fx.pull_all(&[], &fx.options());
+    assert_exit(&output, 0);
+    assert_eq!(output.stdout_json()["result"]["pruned"], json!([]));
+    assert_eq!(
+        std::fs::read_to_string(foreign.join("notes.txt")).expect("notes"),
+        "mine"
+    );
+}
+
+#[test]
+fn auth_remote_pull_all_rejects_a_dot_profile_name_and_writes_nothing() {
+    let fx = Fixture::new();
+    fx.script(
+        "ssh",
+        &format!(
+            "#!/bin/sh\nprintf '%s' '{}'\n",
+            json!({
+                "current": null,
+                "profiles": [
+                    {
+                        "profile": "max",
+                        "claudeAiOauth": oauth("access-max", "refresh-max", FUTURE_MS),
+                        "oauthAccount": account_json("beta")
+                    },
+                    {
+                        "profile": ".",
+                        "claudeAiOauth": oauth("access-dot", "refresh-dot", FUTURE_MS),
+                        "oauthAccount": account_json("dot")
+                    }
+                ]
+            })
+        ),
+    );
+
+    let output = fx.pull_all(&[], &fx.options());
+
+    assert_exit(&output, 65);
+    assert_eq!(
+        output.stdout_json()["error"]["code"],
+        "remote-export-invalid-profile"
+    );
+    assert!(!fx.accounts().exists());
+}
+
+#[test]
+fn auth_remote_pull_all_reports_a_partial_failure_without_pruning() {
+    let fx = Fixture::new();
+    fx.authority_profile("alpha", "access-alpha", "alpha");
+    fx.authority_profile("max", "access-max", "beta");
+    std::fs::create_dir_all(fx.accounts()).expect("accounts");
+    std::fs::write(fx.accounts().join("alpha"), "not a dir").expect("file");
+
+    let output = fx.pull_all(&[], &fx.options());
+
+    assert_exit(&output, 1);
+    let result = &output.stdout_json()["result"];
+    assert_eq!(result["profiles"][0]["name"], "alpha");
+    assert_eq!(result["profiles"][0]["written"], false);
+    assert_eq!(
+        result["profiles"][0]["error"]["code"],
+        "account-dir-invalid"
+    );
+    assert_eq!(result["profiles"][1]["name"], "max");
+    assert_eq!(result["profiles"][1]["written"], true);
+    assert_eq!(result["pruned"], json!([]));
+    assert_eq!(
+        std::fs::read_to_string(fx.accounts().join("alpha")).expect("file"),
+        "not a dir"
+    );
+}
+
+#[test]
+fn auth_refresh_reports_a_failed_projection_but_keeps_the_rotated_profile() {
+    let fx = Fixture::new();
+    write_profile(&fx, "max", SOON_MS);
+    fake_refresh_login(&fx);
+    std::fs::create_dir_all(fx.accounts()).expect("accounts");
+    std::fs::write(fx.accounts().join("max"), "not a dir").expect("file");
+    let accounts = path_str(&fx.accounts());
+
+    let output = run(
+        &[
+            "auth",
+            "refresh",
+            "max",
+            "--accounts-dir",
+            &accounts,
+            "--format",
+            "json",
+        ],
+        &fx.options(),
+    );
+
+    assert_exit(&output, 1);
+    let result = &output.stdout_json()["result"];
+    assert_eq!(result["refreshed"], json!(["max"]));
+    assert_eq!(result["projected"], json!([]));
+    assert_eq!(result["projection_failed"][0]["profile"], "max");
+    assert_eq!(
+        result["projection_failed"][0]["code"],
+        "account-dir-invalid"
+    );
+    assert_eq!(
+        read_json(&fx.secret_dir().join("max.json"))["claudeAiOauth"]["refreshToken"],
+        "refresh-new"
+    );
 }
 
 /// A fake `claude auth login` returning a rotated login for the beta account.

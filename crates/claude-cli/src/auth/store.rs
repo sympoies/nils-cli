@@ -501,6 +501,12 @@ pub fn absolute_accounts_dir(dir: &Path) -> AuthResult<PathBuf> {
     })
 }
 
+/// A profile name usable as an account config dir: a valid profile name that
+/// is not made only of dots, so it never resolves to the accounts dir or its parent.
+pub fn is_account_dir_name(name: &str) -> bool {
+    validate_profile_name(name).is_ok() && !name.chars().all(|ch| ch == '.')
+}
+
 /// Result of projecting a login into its account config dir.
 #[derive(Debug)]
 pub struct AccountWrite {
@@ -523,7 +529,12 @@ pub fn write_account_access_only(
     account: &Map<String, Value>,
     keychain_mode: keychain::Mode,
 ) -> AuthResult<AccountWrite> {
-    validate_profile_name(name)?;
+    if !is_account_dir_name(name) {
+        return Err(AuthError::data(
+            "account-dir-invalid",
+            format!("'{name}' cannot name an account directory"),
+        ));
+    }
     let config_dir = accounts_dir.join(name);
     create_private_dir(accounts_dir, "account-dir-write-failed")?;
     match std::fs::symlink_metadata(&config_dir) {
@@ -533,7 +544,23 @@ pub fn write_account_access_only(
                 format!("{} is not a directory", config_dir.display()),
             ));
         }
-        Ok(_) => {}
+        Ok(_) => {
+            // Adopt only a directory claude-cli created, or an empty one.
+            let owned = std::fs::symlink_metadata(config_dir.join(ACCOUNT_MARKER))
+                .is_ok_and(|meta| meta.is_file());
+            let empty = std::fs::read_dir(&config_dir)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(false);
+            if !owned && !empty {
+                return Err(AuthError::data(
+                    "account-dir-not-owned",
+                    format!(
+                        "{} exists without the claude-cli ownership marker",
+                        config_dir.display()
+                    ),
+                ));
+            }
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             create_private_dir(&config_dir, "account-dir-write-failed")?;
         }

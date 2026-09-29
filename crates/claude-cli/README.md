@@ -225,7 +225,9 @@ authority profile, so separate sessions can run as separate accounts with
   `CLAUDE_CONFIG_DIR`. The path is made absolute but not canonicalized, so set
   `CLAUDE_CONFIG_DIR` to the reported `config_dir` exactly.
 
-Directories of profiles that no longer exist on the authority are removed, but
+An existing non-empty directory without the marker is never adopted: that
+profile fails with `account-dir-not-owned`, and profile names made only of dots
+are refused. Directories of profiles that no longer exist on the authority are removed, but
 only real directories that hold the ownership marker; symlinks inside them are
 unlinked, never followed. An export with no profiles is refused, so nothing is
 pruned. Shared files such as `settings.json` or `projects/` are not managed
