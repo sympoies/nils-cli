@@ -27364,6 +27364,17 @@ esac
     async fn codex_accounts_route_is_authenticated_and_projects_no_credentials() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
+        // Readiness resolves the private runtime dir; never use the host's.
+        let runtime_dir = tempfile::Builder::new()
+            .prefix("cx-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        fs::set_permissions(runtime_dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let _runtime_dir = EnvGuard::set(
+            &lock,
+            "XDG_RUNTIME_DIR",
+            runtime_dir.path().to_str().unwrap(),
+        );
         let codex = tmp.path().join("codex");
         fs::write(
             &codex,

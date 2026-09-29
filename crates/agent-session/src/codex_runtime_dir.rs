@@ -35,8 +35,10 @@ const FALLBACK_REASONS: &[&str] = &[
     "codex-app-server-socket-path-too-long",
 ];
 
-/// Bytes a runtime root must leave for `/agent-session/cx-<16 hex>.sock`.
-const SOCKET_SUFFIX_BYTES: usize = "/agent-session/cx-0123456789abcdef.sock".len();
+/// Bytes a runtime root must leave for `/agent-session/cx-<hex>.sock`.
+const SOCKET_SUFFIX_BYTES: usize = "/agent-session/cx-".len()
+    + crate::codex_app_server::RUNTIME_NAMESPACE_BYTES * 2
+    + ".sock".len();
 const STATE_DIR_RUNTIME_ROOT: &str = "run";
 
 /// Resolve the private runtime root, creating the platform default if needed.
@@ -220,6 +222,26 @@ mod tests {
             fx.context.state_dir.join("run").as_os_str().len() + SOCKET_SUFFIX_BYTES
         );
         assert_eq!(fallback_for_view(&fx.record), None);
+    }
+
+    #[test]
+    fn an_absolute_xdg_runtime_dir_stays_authoritative_over_the_platform_default() {
+        let lock = GlobalStateLock::new();
+        let xdg = tempfile::Builder::new()
+            .prefix("cx-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        fs::set_permissions(xdg.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let _runtime_dir = EnvGuard::set(&lock, "XDG_RUNTIME_DIR", xdg.path().to_str().unwrap());
+        let _preference = EnvGuard::set(&lock, "AGENT_SESSION_CODEX_RUNTIME", "auto");
+        let mut fx = fixture(CAPABLE_CODEX);
+
+        codex_app_server::configure_runtime(&fx.context, &fx.agent, &mut fx.record, true).unwrap();
+
+        assert_eq!(fx.record.runtime.as_ref().unwrap().kind, RUNTIME_KIND);
+        let socket = PathBuf::from(codex_app_server::socket_path(&fx.record).unwrap());
+        assert_eq!(socket.parent().unwrap(), xdg.path().join("agent-session"));
+        assert!(!fx.context.state_dir.join("run").exists());
     }
 
     #[test]

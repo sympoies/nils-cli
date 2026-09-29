@@ -53,6 +53,8 @@ const ATTENTION_AUTHORITY_PROTOCOL: &str = "protocol";
 const ATTENTION_AUTHORITY_HOOK: &str = "hook";
 
 pub(crate) const UNIX_SOCKET_PATH_BUDGET: usize = 100;
+/// Digest bytes in a runtime socket name; rendered as twice as many hex digits.
+pub(crate) const RUNTIME_NAMESPACE_BYTES: usize = 8;
 const MAX_PROTOCOL_ID_BYTES: usize = 256;
 const MAX_REDUCER_PENDING_TURNS: usize = 64;
 const MAX_PENDING_ATTENTION_REQUESTS: usize = 64;
@@ -150,8 +152,8 @@ pub(crate) fn account_binding_readiness(
     let mut reason_code = probe.reason_code;
     // A capable CLI still needs a usable private socket directory.
     if supported
-        && let Err(err) =
-            private_runtime_dir(state_dir).and_then(|dir| socket_path_in(&dir, "0000000000000000"))
+        && let Err(err) = private_runtime_dir(state_dir)
+            .and_then(|dir| socket_path_in(&dir, &"0".repeat(RUNTIME_NAMESPACE_BYTES * 2)))
     {
         supported = false;
         reason_code = Some(crate::codex_runtime_dir::fallback_reason(err.code()));
@@ -453,7 +455,7 @@ fn runtime_namespace(context: &CliContext, record: &SessionRecord) -> Result<Str
     Ok(digest
         .finalize()
         .iter()
-        .take(8)
+        .take(RUNTIME_NAMESPACE_BYTES)
         .map(|byte| format!("{byte:02x}"))
         .collect())
 }
