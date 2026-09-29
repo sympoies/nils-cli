@@ -296,9 +296,9 @@ fn v2_readiness_keys_and_values_stay_inside_the_published_allowlist() {
     ];
 
     for case in cases {
-        let _server =
+        let server =
             ServeProcess::spawn(&fixture, case.config.as_deref(), case.api_key, case.broker);
-        let response = fixture.request("GET", "/retitle/readiness");
+        let response = server.request("GET", "/retitle/readiness");
         assert_eq!(
             response.status, 200,
             "case={} body={}",
@@ -376,8 +376,8 @@ fn v3_machine_readiness_emits_exactly_the_published_keys_and_rows() {
         ("provider available", Some(command), V3_MACHINE_ROWS[0]),
         ("provider not configured", None, V3_MACHINE_ROWS[1]),
     ] {
-        let _server = ServeProcess::spawn(&fixture, config.as_deref(), false, false);
-        let response = fixture.request("GET", "/retitle/v3/readiness");
+        let server = ServeProcess::spawn(&fixture, config.as_deref(), false, false);
+        let response = server.request("GET", "/retitle/v3/readiness");
         assert_eq!(response.status, 200, "case={name} body={}", response.body);
         assert_outer_envelope(&response.body);
         let readiness = &response.body["data"]["retitle"];
@@ -406,17 +406,17 @@ fn v3_session_readiness_emits_only_allowlisted_content_free_fields() {
     let fixture = Fixture::new();
     let config = json!({"provider": "command", "argv": [fixture.provider_bin], "timeout_ms": 1000})
         .to_string();
-    let _server = ServeProcess::spawn(&fixture, Some(&config), false, false);
+    let server = ServeProcess::spawn(&fixture, Some(&config), false, false);
     let session_path = format!("/sessions/{SESSION_ID}/retitle-v3/readiness");
 
-    let initial = fixture.request("GET", &session_path);
+    let initial = server.request("GET", &session_path);
     assert_session_readiness(&fixture, "uninitialized memory", &initial, false);
     assert_session_row(
         &initial.body,
         ("catching_up", "memory_not_initialized", "refresh_memory"),
     );
 
-    let providerless = fixture.request(
+    let providerless = server.request(
         "GET",
         &format!("/sessions/{PROVIDERLESS_SESSION_ID}/retitle-v3/readiness"),
     );
@@ -432,7 +432,7 @@ fn v3_session_readiness_emits_only_allowlisted_content_free_fields() {
 
     // A memory-first manual retitle folds the transcript, so the next
     // observation carries the optional opaque cursor fence.
-    let admitted = fixture.post(
+    let admitted = server.post(
         &format!("/sessions/{SESSION_ID}/retitle-v3"),
         &json!({
             "schema_version": "agent-session.session-retitle.request.v3",
@@ -454,9 +454,9 @@ fn v3_session_readiness_emits_only_allowlisted_content_free_fields() {
         .as_str()
         .expect("operation hash")
         .to_string();
-    fixture.poll_terminal(&operation_hash);
+    server.poll_terminal(&operation_hash);
 
-    let folded = fixture.request("GET", &session_path);
+    let folded = server.request("GET", &session_path);
     assert_session_readiness(&fixture, "folded memory", &folded, true);
     assert_session_row(&folded.body, ("ready", "ready", "none"));
     assert_eq!(folded.body["data"]["retitle"]["usable_memory"], true);
@@ -630,7 +630,6 @@ struct Fixture {
     provider_bin: PathBuf,
     missing_provider_bin: PathBuf,
     broker_bin: PathBuf,
-    address: SocketAddr,
 }
 
 impl Fixture {
@@ -671,9 +670,6 @@ impl Fixture {
         seed_session(&state_dir, SESSION_ID, true);
         seed_session(&state_dir, PROVIDERLESS_SESSION_ID, false);
         seed_codex_transcript(&codex_home);
-        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve loopback address");
-        let address = listener.local_addr().expect("loopback address");
-        drop(listener);
         Self {
             _tmp: tmp,
             root,
@@ -684,10 +680,17 @@ impl Fixture {
             provider_bin,
             missing_provider_bin,
             broker_bin,
-            address,
         }
     }
+}
 
+struct ServeProcess {
+    child: Child,
+    stderr_path: PathBuf,
+    address: SocketAddr,
+}
+
+impl ServeProcess {
     fn request(&self, method: &str, path: &str) -> HttpResponse {
         request_json(self.address, method, path, None)
     }
@@ -713,15 +716,15 @@ impl Fixture {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
-}
 
-struct ServeProcess {
-    child: Child,
-    stderr_path: PathBuf,
-}
-
-impl ServeProcess {
     fn spawn(fixture: &Fixture, config: Option<&str>, api_key: bool, broker: bool) -> Self {
+        // Every instance gets its own port. A killed predecessor's listening
+        // socket can outlive it briefly in a child process that has not yet
+        // exec'd, so a reused port can accept the readiness probe on that
+        // stale listener and then reset the request when it finally closes.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve loopback address");
+        let address = listener.local_addr().expect("loopback address");
+        drop(listener);
         let stderr_path = fixture.root.join("serve.stderr");
         let stderr = File::create(&stderr_path).expect("create serve stderr fixture");
         let mut command = Command::new(bin::resolve("agent-session"));
@@ -730,7 +733,7 @@ impl ServeProcess {
             .args([
                 "serve",
                 "--bind",
-                &fixture.address.to_string(),
+                &address.to_string(),
                 "--state-dir",
                 fixture.state_dir.to_str().expect("UTF-8 state dir"),
                 "--token",
@@ -762,9 +765,10 @@ impl ServeProcess {
         let mut server = Self {
             child: command.spawn().expect("spawn agent-session serve"),
             stderr_path,
+            address,
         };
         let deadline = Instant::now() + Duration::from_secs(15);
-        while TcpStream::connect(fixture.address).is_err() {
+        while TcpStream::connect(address).is_err() {
             if let Some(status) = server.child.try_wait().expect("poll serve child") {
                 panic!(
                     "agent-session serve exited before listening: status={status}; stderr={}",
