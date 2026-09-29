@@ -906,7 +906,7 @@ _main-agent__subcmd__worker_commands() {
 'request-changes:Return a submitted assignment to its exact worker for bounded revisions' \
 'resume:Return a post-claim blocked assignment to its exact worker as \`working\`; the worker then re-runs its bootstrap argv to re-acquire its exact assignment-derived claim' \
 'extend-scope:Grow a live assignment'\''s scopes and child-issue refs in place, updating its worker claim without a new session or worktree' \
-'reenter:Re-enter an exact idle Codex worker through its existing unread notification generation without resending assignment content' \
+'reenter:Re-enter an exact idle Codex or Claude worker through its existing unread notification generation without resending assignment content' \
 'accept:Accept a submitted worker result after Main Agent review' \
 'release:Mark an accepted assignment terminal before worker deletion' \
 'delete:Delete a released worker through guarded agent-session cleanup' \

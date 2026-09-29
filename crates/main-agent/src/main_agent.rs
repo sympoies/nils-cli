@@ -289,7 +289,7 @@ enum WorkerCommand {
     /// Grow a live assignment's scopes and child-issue refs in place, updating
     /// its worker claim without a new session or worktree.
     ExtendScope(WorkerExtendScopeArgs),
-    /// Re-enter an exact idle Codex worker through its existing unread
+    /// Re-enter an exact idle Codex or Claude worker through its existing unread
     /// notification generation without resending assignment content.
     Reenter(WorkerReenterArgs),
     /// Accept a submitted worker result after Main Agent review.
@@ -9377,6 +9377,7 @@ fn run_worker_diagnose(context: &CliContext, args: WorkerDiagnoseArgs) -> Result
 fn run_worker_supervise(context: &CliContext, args: WorkerDiagnoseArgs) -> Result<Value, CliError> {
     let diagnosis = diagnose_worker(context, &args.assignment_id)?;
     let schema_version = match diagnosis["schema_version"].as_str() {
+        Some("main-agent.worker-diagnose-result.v9") => "main-agent.worker-supervise-result.v9",
         Some("main-agent.worker-diagnose-result.v8") => "main-agent.worker-supervise-result.v8",
         Some("main-agent.worker-diagnose-result.v7") => "main-agent.worker-supervise-result.v7",
         Some("main-agent.worker-diagnose-result.v6") => "main-agent.worker-supervise-result.v6",
@@ -9440,6 +9441,35 @@ struct CoordinationDiagnosis {
     claim_expires_at_epoch: Option<i64>,
     active_operations: u64,
     uncertain_operations: u64,
+    operation: Option<agent_session::internal::coordination::OperationLeaseSummary>,
+    notification: Option<agent_session::internal::coordination::NotificationProjection>,
+}
+
+fn coordination_diagnosis(
+    mut guard: agent_session::internal::coordination::SessionQuiescenceGuard,
+    worker: &SessionRef,
+    primary_manager: &SessionRef,
+) -> CoordinationDiagnosis {
+    let notification = guard.notification_projection();
+    CoordinationDiagnosis {
+        guidance: guard.guidance_summary(
+            &worker.session_id,
+            &worker.session_incarnation,
+            &primary_manager.session_id,
+            &primary_manager.session_incarnation,
+        ),
+        broker_authoritative: guard.broker_authoritative,
+        broker_lost_since_epoch: guard.broker_lost_since_epoch,
+        claim_active: guard.active_claim,
+        claim_id: guard.claim_id.take(),
+        claim_revision: guard.claim_revision,
+        claim_expires_at: guard.claim_expires_at.take(),
+        claim_expires_at_epoch: guard.claim_expires_at_epoch,
+        active_operations: u64::from(guard.active_operation),
+        uncertain_operations: u64::from(guard.uncertain_operation),
+        operation: guard.operation.take(),
+        notification,
+    }
 }
 
 fn has_terminal_reconciled_recovery(assignment: &AssignmentRecord, run: &RunRecord) -> bool {
@@ -9547,23 +9577,11 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
                     if terminal_recovery_recorded
                         && (!guard.broker_present || guard.broker_identity_matched) =>
                 {
-                    DiagnosticEvidence::Present(CoordinationDiagnosis {
-                        guidance: guard.guidance_summary(
-                            &worker.session_id,
-                            &worker.session_incarnation,
-                            &assignment.primary_manager.session_id,
-                            &assignment.primary_manager.session_incarnation,
-                        ),
-                        broker_authoritative: guard.broker_authoritative,
-                        broker_lost_since_epoch: guard.broker_lost_since_epoch,
-                        claim_active: guard.active_claim,
-                        claim_id: guard.claim_id,
-                        claim_revision: guard.claim_revision,
-                        claim_expires_at: guard.claim_expires_at,
-                        claim_expires_at_epoch: guard.claim_expires_at_epoch,
-                        active_operations: u64::from(guard.active_operation),
-                        uncertain_operations: u64::from(guard.uncertain_operation),
-                    })
+                    DiagnosticEvidence::Present(coordination_diagnosis(
+                        guard,
+                        worker,
+                        &assignment.primary_manager,
+                    ))
                 }
                 Ok(guard) if !guard.broker_present => {
                     DiagnosticEvidence::Unavailable("coordination-broker-unavailable".to_string())
@@ -9571,23 +9589,11 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
                 Ok(guard) if !guard.broker_identity_matched => {
                     DiagnosticEvidence::IdentityMismatch("coordination-broker-incarnation-conflict")
                 }
-                Ok(guard) => DiagnosticEvidence::Present(CoordinationDiagnosis {
-                    guidance: guard.guidance_summary(
-                        &worker.session_id,
-                        &worker.session_incarnation,
-                        &assignment.primary_manager.session_id,
-                        &assignment.primary_manager.session_incarnation,
-                    ),
-                    broker_authoritative: guard.broker_authoritative,
-                    broker_lost_since_epoch: guard.broker_lost_since_epoch,
-                    claim_active: guard.active_claim,
-                    claim_id: guard.claim_id,
-                    claim_revision: guard.claim_revision,
-                    claim_expires_at: guard.claim_expires_at,
-                    claim_expires_at_epoch: guard.claim_expires_at_epoch,
-                    active_operations: u64::from(guard.active_operation),
-                    uncertain_operations: u64::from(guard.uncertain_operation),
-                }),
+                Ok(guard) => DiagnosticEvidence::Present(coordination_diagnosis(
+                    guard,
+                    worker,
+                    &assignment.primary_manager,
+                )),
                 Err(error) => DiagnosticEvidence::Unavailable(error.code().to_string()),
             }
         }
@@ -9985,6 +9991,64 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
         && uncertain_operations == 0;
     let orphan_guidance_quarantine_required =
         guidance.stale_incarnation_unread_count > 0 && assignment.previous_worker.is_none();
+    let operation_snapshot = coordination_evidence
+        .value()
+        .and_then(|value| value.operation.clone());
+    let operation_safety_ttl_expired = operation_snapshot.as_ref().is_some_and(|operation| {
+        operation.expires_at_epoch <= agent_session::internal::coordination::now_epoch()
+    });
+    // The exact generation `worker reenter` may re-queue: still undelivered,
+    // and in a state its notification retry accepts.
+    let reentry_notification_generation = coordination_evidence
+        .value()
+        .and_then(|value| value.notification.as_ref())
+        .filter(|notification| {
+            notification.generation > notification.notified_generation
+                && (notification.state == "queued"
+                    || (notification.state == "undeliverable"
+                        && notification.last_reason.as_deref() == Some("provider-unsupported")))
+        })
+        .map(|notification| notification.generation);
+    // A worker whose provider turn already ended never reads guidance queued
+    // after that boundary on its own. Only the typed re-entry of the exact
+    // request-changes or resume revision can wake it, so this mirrors every
+    // precondition `worker reenter` re-checks before it re-queues, including
+    // a detached session.
+    let idle_guidance_wake_required = assignment.state == "working"
+        && worker_status == "running"
+        && reentry_notification_generation.is_some()
+        && guidance.unread_count > 0
+        && guidance.stale_incarnation_unread_count == 0
+        && broker_authoritative
+        && !claim_active
+        && active_operations == 0
+        && uncertain_operations == 0
+        && !startup_dialog
+        && !account_handoff.required
+        && !account_handoff.capability_gap
+        && !submit_recovery_in_flight(&assignment)
+        && !account_handoff_in_flight
+        && !runtime_stop_in_flight
+        && !claim_revocation_in_flight
+        && assignment
+            .checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint.revision == assignment.revision)
+        && session_evidence.value().is_some_and(|record| {
+            record.coordination_mode != CoordinationMode::Off
+                && worker_provider_idle_for_guidance(context, record, activity)
+        })
+        && orchestration::request_changes_identity_matches(context, &registry, &assignment)
+            .unwrap_or(false)
+        // Evaluated last so tmux is queried only for an otherwise eligible
+        // worker. An attached human owns the pane, and an unobservable
+        // attachment state fails closed, so neither projects a wake argv.
+        && session_evidence.value().is_some_and(|record| {
+            matches!(
+                worker_session_attached(&resolve_tmux_bin(None), &record.tmux_session),
+                Ok(false)
+            )
+        });
 
     let facts = WorkerDiagnosisFacts {
         evidence_unavailable,
@@ -10007,6 +10071,7 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
             && assignment.worker.is_some()
             && !preclaim_blocker
             && !failed_preclaim,
+        idle_guidance_wake_required,
         claim_renewal_required: claim_renewal_required && !failed_preclaim,
         // Same condition the recovery action uses to choose rebootstrap over
         // renewal, so the summary and the action never disagree.
@@ -10052,6 +10117,11 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
         claimed_runtime_stop_replay.as_ref(),
         provider_stop_canary_authorized,
         provider_stop_canary_reservation.as_ref(),
+        &WorkerRecoveryEvidence {
+            operation: operation_snapshot.as_ref(),
+            operation_safety_ttl_expired,
+            notification_generation: reentry_notification_generation,
+        },
     );
 
     let activity_view = activity.map(|state| {
@@ -10063,7 +10133,9 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
             "attention_kind": attention_kind
         })
     });
-    let diagnosis_schema = if classification == "blocked_resume_required" {
+    let diagnosis_schema = if classification == "idle_guidance_wake_required" {
+        "main-agent.worker-diagnose-result.v9"
+    } else if classification == "blocked_resume_required" {
         "main-agent.worker-diagnose-result.v8"
     } else if matches!(
         classification,
@@ -10185,7 +10257,13 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
             }
         }
     });
-    if diagnosis_schema == "main-agent.worker-diagnose-result.v7" {
+    if diagnosis_schema == "main-agent.worker-diagnose-result.v9" {
+        diagnosis["notification"] = json!({
+            "generation": reentry_notification_generation,
+            "provider_idle": true,
+            "raw_terminal_input_authorized": false
+        });
+    } else if diagnosis_schema == "main-agent.worker-diagnose-result.v7" {
         diagnosis["attention"] = json!({
             "kind": if matches!(classification, "provider_capacity_recovery_pending" | "provider_capacity_attention_required") {
                 "provider_capacity"
@@ -10223,6 +10301,16 @@ fn diagnose_worker(context: &CliContext, assignment_id: &str) -> Result<Value, C
     Ok(diagnosis)
 }
 
+/// Coordination selectors a recovery action may name. They are public lease
+/// and notification selectors only, never a capability or execution token.
+#[derive(Clone, Copy, Debug, Default)]
+struct WorkerRecoveryEvidence<'a> {
+    operation: Option<&'a agent_session::internal::coordination::OperationLeaseSummary>,
+    operation_safety_ttl_expired: bool,
+    notification_generation: Option<u64>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn worker_recovery_action(
     classification: &str,
     assignment: &AssignmentRecord,
@@ -10231,6 +10319,7 @@ fn worker_recovery_action(
     claimed_runtime_stop_replay: Option<&ClaimedRuntimeStopReplay>,
     provider_stop_canary_authorized: bool,
     provider_stop_canary_reservation: Option<&ProviderStopCanaryReservationRecord>,
+    evidence: &WorkerRecoveryEvidence<'_>,
 ) -> Value {
     let main_owner = json!({
         "role": "main",
@@ -10676,7 +10765,125 @@ fn worker_recovery_action(
             action["kind"] = json!("preserve_until_explicit_lifecycle_boundary");
         }
         "uncertain_mutation" => {
-            action["kind"] = json!("operation_reconciliation");
+            // Only the worker holds the execution token that `work-context
+            // reconcile` requires, and its coordination guard runs that
+            // reconcile itself on the worker's next managed mutation. A worker
+            // that will not mutate again is covered by coordination
+            // maintenance, which reclaims the lease once its safety TTL has
+            // expired and controller evidence proves it inactive. Re-running
+            // supervision would never change the lease.
+            action["schema_version"] = json!("main-agent.worker-recovery-action.v9");
+            action["kind"] = json!("worker_guard_operation_reconcile");
+            action["owner"] = worker_owner.unwrap_or(Value::Null);
+            action["capability_delivery"] =
+                json!("worker-owned-capability-file-from-local-environment");
+            action["automatic_recovery"] = json!([
+                "worker-coordination-guard-next-managed-mutation",
+                "coordination-maintenance-after-safety-ttl"
+            ]);
+            action["argv"] = Value::Null;
+            action["executable"] = json!(false);
+            let session_id = assignment
+                .worker
+                .as_ref()
+                .map_or("<worker-session-id>", |worker| worker.session_id.as_str());
+            let (lease_id, lease_revision) = evidence.operation.map_or_else(
+                || ("<lease-id>".to_string(), "<lease-revision>".to_string()),
+                |operation| (operation.lease_id.clone(), operation.revision.to_string()),
+            );
+            action["argv_template"] = json!([
+                "agent-session",
+                "work-context",
+                "reconcile",
+                "--session",
+                session_id,
+                "--lease",
+                lease_id,
+                "--if-revision",
+                lease_revision,
+                "--proof-file",
+                "<operation-reconcile-proof>",
+                "--idempotency-key",
+                "<idempotency-key>",
+                "--format",
+                "json"
+            ]);
+            action["required_inputs"] = if evidence.operation.is_some() {
+                json!(["operation_reconcile_proof", "idempotency_key"])
+            } else {
+                json!([
+                    "lease_id",
+                    "lease_revision",
+                    "operation_reconcile_proof",
+                    "idempotency_key"
+                ])
+            };
+            action["operation"] = evidence.operation.map_or(Value::Null, |operation| {
+                json!({
+                    "lease_id": operation.lease_id,
+                    "revision": operation.revision,
+                    "state": operation.state,
+                    "safety_ttl_expires_at_epoch": operation.expires_at_epoch,
+                    "safety_ttl_expired": evidence.operation_safety_ttl_expired
+                })
+            });
+        }
+        "idle_guidance_wake_required" => {
+            action["schema_version"] = json!("main-agent.worker-recovery-action.v9");
+            action["kind"] = json!("exact_worker_notification_reentry");
+            let worker = assignment
+                .worker
+                .as_ref()
+                .expect("idle guidance wake classification requires a bound worker");
+            if let Some(generation) = evidence.notification_generation {
+                let key_material = agent_session::internal::coordination::request_digest(
+                    "worker-reenter-supervision-key",
+                    &json!({
+                        "assignment_id": assignment.assignment_id,
+                        "assignment_revision": assignment.revision,
+                        "worker_incarnation": worker.session_incarnation,
+                        "notification_generation": generation
+                    }),
+                );
+                let stable_key = format!("worker-reenter-{}", &key_material[..24]);
+                action["notification_generation"] = json!(generation);
+                action["argv"] = json!([
+                    "main-agent",
+                    "worker",
+                    "reenter",
+                    assignment.assignment_id,
+                    "--worker-incarnation",
+                    worker.session_incarnation,
+                    "--if-revision",
+                    assignment.revision.to_string(),
+                    "--if-notification-generation",
+                    generation.to_string(),
+                    "--idempotency-key",
+                    stable_key,
+                    "--format",
+                    "json"
+                ]);
+            } else {
+                action["argv"] = Value::Null;
+                action["argv_template"] = json!([
+                    "main-agent",
+                    "worker",
+                    "reenter",
+                    assignment.assignment_id,
+                    "--worker-incarnation",
+                    worker.session_incarnation,
+                    "--if-revision",
+                    assignment.revision.to_string(),
+                    "--if-notification-generation",
+                    "<notification-generation>",
+                    "--idempotency-key",
+                    "<idempotency-key>",
+                    "--format",
+                    "json"
+                ]);
+                action["executable"] = json!(false);
+                action["required_inputs"] = json!(["notification_generation", "idempotency_key"]);
+            }
         }
         "evidence_unavailable" | "worker_unreachable" => {
             action["kind"] = json!("identity_evidence_reconciliation");
@@ -10754,6 +10961,10 @@ struct WorkerDiagnosisFacts {
     /// assignment, so only the manager `worker resume` transition can restore
     /// the exact claim; asking the worker to renew would loop.
     blocked_resume_required: bool,
+    /// The exact live worker's provider turn already ended, so it will not
+    /// read the typed guidance queued for it, and every `worker reenter`
+    /// precondition holds for the undelivered notification generation.
+    idle_guidance_wake_required: bool,
     claim_renewal_required: bool,
     /// The worker has no claim record to renew (no active claim id and
     /// revision), so the exact worker must re-run its bootstrap instead.
@@ -10919,6 +11130,12 @@ fn classify_worker_diagnosis(facts: WorkerDiagnosisFacts) -> (&'static str, &'st
         (
             "blocked_resume_required",
             "the worker checkpointed a post-claim `blocked` and cannot re-acquire its exact assignment-derived claim until resumed: resolve the recorded blocker, then run `main-agent worker resume` with the current revision; the exact worker then re-runs its bootstrap argv to re-acquire its claim and checkout-shell grant. To abandon the lane instead, resume it and terminalize through the post-claim stop path; never cancel, reassign, or edit orchestration state by hand",
+            false,
+        )
+    } else if facts.idle_guidance_wake_required {
+        (
+            "idle_guidance_wake_required",
+            "the exact worker's provider turn ended before it read the queued guidance, so it will not consume it on its own: run the projected `main-agent worker reenter` action, which re-queues only that notification generation for the notification controller's one guarded prompt and Enter. Do not send raw terminal input, create another message, or resend the assignment prompt",
             false,
         )
     } else if facts.claim_renewal_required {
@@ -19926,7 +20143,8 @@ fn run_worker_reenter(context: &CliContext, args: WorkerReenterArgs) -> Result<V
             )
         })?;
     drop(registry);
-    verify_worker_reenter_runtime(context, &worker, &assignment.primary_manager)?;
+    let idle_composer_proof =
+        verify_worker_reenter_runtime(context, &worker, &assignment.primary_manager)?;
 
     let reservation = json!({
         "schema_version": "main-agent.worker-reenter-progress.v1",
@@ -19936,7 +20154,7 @@ fn run_worker_reenter(context: &CliContext, args: WorkerReenterArgs) -> Result<V
         "assignment_revision": assignment.revision,
         "worker": worker,
         "notification_generation": args.if_notification_generation,
-        "idle_composer_proof": "authoritative-turn-completed-and-detached",
+        "idle_composer_proof": idle_composer_proof,
         "message_generation_created": false,
         "assignment_prompt_resent": false
     });
@@ -20232,11 +20450,13 @@ fn persist_worker_reenter_receipt(
     locked.save()
 }
 
+/// Verify every live re-entry precondition and return the provider's idle
+/// composer proof label recorded in the reservation and receipt.
 fn verify_worker_reenter_runtime(
     context: &CliContext,
     worker: &SessionRef,
     primary_manager: &SessionRef,
-) -> Result<(), CliError> {
+) -> Result<&'static str, CliError> {
     // Keep the exact session record stable through every runtime observation.
     let _record_lock = acquire_session_record_lock(context, &worker.session_id)?;
     let worker_record = load_session_record(context, &worker.session_id)?;
@@ -20257,13 +20477,15 @@ fn verify_worker_reenter_runtime(
             )),
         ));
     }
-    if worker_record.agent != AgentKind::Codex.as_str()
-        || worker_record.coordination_mode == CoordinationMode::Off
+    if !matches!(
+        AgentKind::from_name(&worker_record.agent),
+        Some(AgentKind::Codex | AgentKind::Claude)
+    ) || worker_record.coordination_mode == CoordinationMode::Off
         || session_status(context, &resolve_tmux_bin(None), &worker_record) != "running"
     {
         return Err(CliError::data(
             "worker-reentry-runtime-not-ready",
-            "typed re-entry requires the exact live coordinated Codex worker",
+            "typed re-entry requires the exact live coordinated Codex or Claude worker",
             Some(worker_reentry_details(
                 true,
                 "diagnose-worker",
@@ -20274,17 +20496,10 @@ fn verify_worker_reenter_runtime(
     }
     let turn =
         agent_session::internal::activity::activity_status(context, &worker.session_id)?.turn_state;
-    if turn.phase != agent_session::internal::activity::TurnPhase::Waiting
-        || turn.source.confidence != agent_session::internal::activity::Confidence::Authoritative
-        || turn.current_turn.is_some()
-        || turn
-            .last_turn
-            .as_ref()
-            .is_none_or(|last_turn| last_turn.outcome != "completed")
-    {
+    if !worker_provider_idle_for_guidance(context, &worker_record, Some(&turn)) {
         return Err(CliError::data(
             "worker-reentry-composer-not-idle",
-            "typed re-entry requires authoritative completion at the idle composer",
+            "typed re-entry requires the worker's idle composer at its provider turn boundary",
             Some(worker_reentry_details(
                 true,
                 "wait-for-idle-turn",
@@ -20356,7 +20571,46 @@ fn verify_worker_reenter_runtime(
             )),
         ));
     }
-    Ok(())
+    Ok(worker_reentry_idle_composer_proof(&worker_record))
+}
+
+/// The receipt label for the evidence that proved the worker's composer idle.
+fn worker_reentry_idle_composer_proof(record: &SessionRecord) -> &'static str {
+    if AgentKind::from_name(&record.agent) == Some(AgentKind::Claude) {
+        "claude-debounced-stop-or-idle-prompt-and-detached"
+    } else {
+        "authoritative-turn-completed-and-detached"
+    }
+}
+
+/// Whether the exact worker's provider sits at an idle composer that the
+/// notification controller would deliver the fixed mailbox prompt to. Codex
+/// reports an authoritative completed turn. Claude never reports an
+/// authoritative idle state, so it uses the controller's own Claude predicate:
+/// a Stop or `idle_prompt` completion that is still the latest provider event.
+fn worker_provider_idle_for_guidance(
+    context: &CliContext,
+    record: &SessionRecord,
+    turn: Option<&agent_session::internal::activity::TurnState>,
+) -> bool {
+    match AgentKind::from_name(&record.agent) {
+        Some(AgentKind::Codex) => turn.is_some_and(|turn| {
+            turn.phase == agent_session::internal::activity::TurnPhase::Waiting
+                && turn.source.confidence
+                    == agent_session::internal::activity::Confidence::Authoritative
+                && turn.current_turn.is_none()
+                && turn
+                    .last_turn
+                    .as_ref()
+                    .is_some_and(|last_turn| last_turn.outcome == "completed")
+        }),
+        Some(AgentKind::Claude) => agent_session::internal::activity::claude_notification_waiting(
+            context,
+            record,
+            agent_session::internal::activity::CLAUDE_NOTIFICATION_STOP_DEBOUNCE,
+        ),
+        _ => false,
+    }
 }
 
 fn worker_reentry_details(
@@ -26420,6 +26674,7 @@ mod tests {
             coordination_broker_stale: false,
             edit_authority_stale: false,
             blocked_resume_required: false,
+            idle_guidance_wake_required: false,
             claim_renewal_required: false,
             claim_absent: false,
             orphan_guidance_quarantine_required: false,
@@ -27525,6 +27780,7 @@ mod tests {
             "coordination_broker_stale",
             "edit_authority_stale",
             "blocked_resume_required",
+            "idle_guidance_wake_required",
             "claim_renewal_required",
             "orphan_guidance_quarantine_required",
             "guidance_continuity_required",
@@ -27545,8 +27801,14 @@ mod tests {
                 None,
                 false,
                 None,
+                &WorkerRecoveryEvidence::default(),
             );
-            let expected_schema = if classification == "blocked_resume_required" {
+            let expected_schema = if matches!(
+                classification,
+                "uncertain_mutation" | "idle_guidance_wake_required"
+            ) {
+                "main-agent.worker-recovery-action.v9"
+            } else if classification == "blocked_resume_required" {
                 "main-agent.worker-recovery-action.v8"
             } else if matches!(
                 classification,
@@ -27599,6 +27861,7 @@ mod tests {
             None,
             false,
             None,
+            &WorkerRecoveryEvidence::default(),
         );
         assert_eq!(runtime_stop["kind"], "exact_worker_runtime_stop");
         assert_eq!(runtime_stop["owner"]["role"], "main");
@@ -27620,6 +27883,7 @@ mod tests {
             None,
             false,
             None,
+            &WorkerRecoveryEvidence::default(),
         );
         assert_eq!(claim_revocation["kind"], "exact_worker_claim_revocation");
         assert_eq!(claim_revocation["owner"]["role"], "main");
@@ -27642,6 +27906,7 @@ mod tests {
             None,
             false,
             None,
+            &WorkerRecoveryEvidence::default(),
         );
         assert_eq!(renewal["owner"]["session_id"], "worker-one");
         assert_eq!(renewal["claim_id"], "worker-claim-one");
@@ -27675,6 +27940,7 @@ mod tests {
             None,
             false,
             None,
+            &WorkerRecoveryEvidence::default(),
         );
         assert_eq!(rebootstrap["kind"], "worker_rebootstrap");
         assert_eq!(rebootstrap["owner"]["role"], "worker");
@@ -27699,6 +27965,7 @@ mod tests {
             None,
             false,
             None,
+            &WorkerRecoveryEvidence::default(),
         );
         assert_eq!(resume["kind"], "blocked_assignment_resume");
         assert_eq!(resume["owner"]["role"], "main");
@@ -27708,6 +27975,165 @@ mod tests {
         assert_eq!(
             resume["required_inputs"],
             json!(["resume_reason", "idempotency_key"])
+        );
+    }
+
+    /// sympoies/nils-cli#1886: a resumed worker holds no claim yet, so claim
+    /// renewal is also true. Its bootstrap instruction only arrives through
+    /// the queued guidance, which an idle provider never reads, so the wake
+    /// must outrank the rebootstrap advice and every healthy-looking outcome.
+    #[test]
+    fn idle_guidance_wake_outranks_claim_renewal_and_progress() {
+        let base = base_diagnosis_facts();
+        let wake = classify_worker_diagnosis(WorkerDiagnosisFacts {
+            idle_guidance_wake_required: true,
+            claim_renewal_required: true,
+            claim_absent: true,
+            unread_guidance: true,
+            ..base
+        });
+        assert_eq!(wake.0, "idle_guidance_wake_required");
+        assert!(wake.1.contains("worker reenter"));
+        assert!(!wake.2);
+        for dominant in [
+            (
+                "uncertain_mutation",
+                WorkerDiagnosisFacts {
+                    active_or_uncertain_operation: true,
+                    ..base
+                },
+            ),
+            (
+                "evidence_unavailable",
+                WorkerDiagnosisFacts {
+                    evidence_unavailable: true,
+                    ..base
+                },
+            ),
+            (
+                "blocked_resume_required",
+                WorkerDiagnosisFacts {
+                    blocked_resume_required: true,
+                    ..base
+                },
+            ),
+        ] {
+            assert_eq!(
+                classify_worker_diagnosis(WorkerDiagnosisFacts {
+                    idle_guidance_wake_required: true,
+                    ..dominant.1
+                })
+                .0,
+                dominant.0
+            );
+        }
+    }
+
+    #[test]
+    fn idle_guidance_wake_projects_the_exact_reentry_argv_once_per_generation() {
+        let mut assignment = dep_assignment("wake-action", "run-one", "working");
+        assignment.worker = Some(SessionRef {
+            machine: None,
+            session_id: "worker-one".to_string(),
+            session_incarnation: "worker-incarnation-one".to_string(),
+            session_created_at: "2030-01-01T00:00:00Z".to_string(),
+        });
+        let wake = |generation| {
+            worker_recovery_action(
+                "idle_guidance_wake_required",
+                &assignment,
+                None,
+                None,
+                None,
+                false,
+                None,
+                &WorkerRecoveryEvidence {
+                    notification_generation: Some(generation),
+                    ..WorkerRecoveryEvidence::default()
+                },
+            )
+        };
+        let first = wake(3);
+        assert_eq!(first["kind"], "exact_worker_notification_reentry");
+        assert_eq!(first["owner"]["role"], "main");
+        assert_eq!(first["executable"], true);
+        let argv = first["argv"].as_array().expect("wake argv");
+        assert_eq!(argv[2], "reenter");
+        assert_eq!(argv[5], "worker-incarnation-one");
+        assert_eq!(argv[7], assignment.revision.to_string());
+        assert_eq!(argv[9], "3");
+        assert!(argv.iter().all(|part| part != "<idempotency-key>"));
+        assert_eq!(first, wake(3), "the stable key makes a repeat a replay");
+        assert_ne!(
+            first["argv"][11],
+            wake(4)["argv"][11],
+            "a later generation is a distinct wake"
+        );
+    }
+
+    /// sympoies/nils-cli#1881: the recovery for an orphaned lease used to be
+    /// `worker supervise` itself.
+    #[test]
+    fn uncertain_mutation_routes_to_the_worker_owned_reconcile_never_supervise() {
+        let mut assignment = dep_assignment("uncertain-action", "run-one", "working");
+        assignment.worker = Some(SessionRef {
+            machine: None,
+            session_id: "worker-one".to_string(),
+            session_incarnation: "worker-incarnation-one".to_string(),
+            session_created_at: "2030-01-01T00:00:00Z".to_string(),
+        });
+        let operation = agent_session::internal::coordination::OperationLeaseSummary {
+            lease_id: "lease-one".to_string(),
+            revision: 2,
+            state: "completing".to_string(),
+            expires_at_epoch: 1,
+        };
+        for evidence in [
+            WorkerRecoveryEvidence {
+                operation: Some(&operation),
+                operation_safety_ttl_expired: true,
+                ..WorkerRecoveryEvidence::default()
+            },
+            WorkerRecoveryEvidence::default(),
+        ] {
+            let action = worker_recovery_action(
+                "uncertain_mutation",
+                &assignment,
+                None,
+                None,
+                None,
+                false,
+                None,
+                &evidence,
+            );
+            assert!(!action.to_string().contains("supervise"), "{action}");
+            assert_eq!(action["kind"], "worker_guard_operation_reconcile");
+            assert_eq!(action["owner"]["role"], "worker");
+            assert_eq!(action["owner"]["session_id"], "worker-one");
+            assert_eq!(action["executable"], false);
+            assert_eq!(action["argv"], Value::Null);
+            assert_eq!(action["argv_template"][2], "reconcile");
+        }
+        let exact = worker_recovery_action(
+            "uncertain_mutation",
+            &assignment,
+            None,
+            None,
+            None,
+            false,
+            None,
+            &WorkerRecoveryEvidence {
+                operation: Some(&operation),
+                operation_safety_ttl_expired: true,
+                ..WorkerRecoveryEvidence::default()
+            },
+        );
+        assert_eq!(exact["argv_template"][6], "lease-one");
+        assert_eq!(exact["argv_template"][8], "2");
+        assert_eq!(exact["operation"]["safety_ttl_expired"], true);
+        assert_eq!(
+            exact["required_inputs"],
+            json!(["operation_reconcile_proof", "idempotency_key"])
         );
     }
 

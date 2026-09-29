@@ -492,6 +492,50 @@ idempotency key, and requires only `idempotency_key`, instead of re-running
 supervision. Existing
 v2-v7 classifications retain their exact schema identifiers.
 
+`idle_guidance_wake_required` uses `main-agent.worker-diagnose-result.v9`,
+`main-agent.worker-supervise-result.v9`, and
+`main-agent.worker-recovery-action.v9`. It is reported when a `working`
+assignment's live, coordinated Codex or Claude worker sits at an idle provider
+boundary with unread guidance that belongs only to its incarnation, while its
+notification generation is still undelivered and every other `worker reenter`
+precondition holds: the typed request-changes or resume identity matches the
+current revision and checkpoint, the broker is authoritative, the worker
+holds no claim, operation, or in-flight recovery reservation, and its session is
+detached. An attached or unobservable session fails closed to the ordinary
+classification, because a human owns an attached pane. Codex is idle at
+an authoritative completed turn. Claude never reports an authoritative idle
+state, so it is idle when its latest provider event is a Stop or an
+`idle_prompt` completion older than the notification controller's debounce,
+the same predicate that controller applies before delivery. Such a worker
+never reads the guidance on its own. The classification ranks immediately
+above `claim_renewal_required`, because a resumed worker holds no claim and its
+bootstrap instruction arrives only through that guidance. Its Main-owned,
+executable action has kind `exact_worker_notification_reentry` and an `argv`
+for `worker reenter` with the current revision, worker incarnation, the
+undelivered `notification_generation`, and a stable idempotency key derived
+from those selectors, so repeating it is a receipt replay. The re-entry receipt
+records `idle_composer_proof` as `authoritative-turn-completed-and-detached` for
+Codex and `claude-debounced-stop-or-idle-prompt-and-detached` for Claude. The v9 diagnosis
+adds a `notification` projection with the `generation`, `provider_idle: true`,
+and an explicit false `raw_terminal_input_authorized`.
+
+`uncertain_mutation` keeps `main-agent.worker-diagnose-result.v2`, but its
+action is now `main-agent.worker-recovery-action.v9` with kind
+`worker_guard_operation_reconcile`. Only the worker's coordination guard holds
+the execution token that `agent-session work-context reconcile` requires, and
+the guard runs that reconcile on the worker's next managed mutation. A worker
+that will not mutate again, such as one whose turn ended, is covered by
+coordination maintenance, which reclaims the lease once its safety TTL has
+expired and controller evidence proves it inactive (see the operation lease
+state machine in `session-coordination-v1.md`). The action is worker-owned and
+non-executable, carries a null `argv`, an `argv_template` for
+`work-context reconcile` naming the exact `lease` and `if-revision`, an
+`automatic_recovery` list naming both paths, and an `operation` projection with
+the lease id, revision, state, `safety_ttl_expires_at_epoch`, and whether that
+TTL has expired; its `required_inputs` are `operation_reconcile_proof` and
+`idempotency_key`. It MUST NOT name `worker supervise`, which never changes a
+lease.
+
 `worker stop-runtime` MUST authenticate the exact current Main controller and
 its active, unexpired claim; revalidate run ownership, assignment revision,
 primary manager, worker binding, and the final readiness receipt; and hold the
@@ -770,10 +814,12 @@ re-bootstraps, then `worker stop-claimed-runtime` and `worker reconcile-stopped`
 apply unchanged. `worker cancel` remains pre-claim only.
 
 `worker reenter` is the manager-only, idempotent notification retry for an
-already completed Codex `request-changes` turn. It accepts only the exact
-`working` review revision, bound worker incarnation, and existing unread
-notification generation. The runtime must be live and detached; activity must
-show authoritative normal turn completion; the exact broker must be
+already ended Codex or Claude `request-changes` or resume turn. It accepts only
+the exact `working` review revision, bound worker incarnation, and existing
+unread notification generation. The runtime must be live and detached; a Codex
+worker's activity must show authoritative normal turn completion, and a Claude
+worker's latest provider event must be a Stop or `idle_prompt` completion past
+the notification controller's debounce; the exact broker must be
 authoritative with no worker claim or active/uncertain operation; and unread
 guidance must belong only to that incarnation. The typed request-changes
 companion identity must match the requested current revision. The action
@@ -1101,8 +1147,9 @@ The full supervision classification set additionally includes
 `account_handoff_capability_gap`, `account_handoff_required`, and
 `stale_provider_activity`. The additive v7 set also includes
 `pre_bootstrap_attention_required`, `provider_capacity_recovery_pending`, and
-`provider_capacity_attention_required`, and the additive v8 set includes
-`blocked_resume_required`. Broker-heartbeat/edit-authority staleness is not
+`provider_capacity_attention_required`, the additive v8 set includes
+`blocked_resume_required`, and the additive v9 set includes
+`idle_guidance_wake_required`. Broker-heartbeat/edit-authority staleness is not
 claim-expiry evidence: only `claim_renewal_required` directs the exact worker to
 renew its own claim. `coordination_broker_stale` routes to exact-incarnation
 broker-owner recovery; `edit_authority_stale` requests a bounded recheck while

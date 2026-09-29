@@ -200,7 +200,6 @@ pub(crate) fn schedule(
     projection(receipt, false)
 }
 
-#[allow(dead_code)]
 pub(crate) fn projection_for(
     registry: &mut Registry,
     target_session_id: &str,

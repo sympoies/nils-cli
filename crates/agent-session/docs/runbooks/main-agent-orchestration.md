@@ -466,7 +466,9 @@ envelopes. `idle_claim_revocation_required` and
 v6 envelopes. `pre_bootstrap_attention_required`,
 `provider_capacity_recovery_pending`, and
 `provider_capacity_attention_required` use v7 envelopes with a bounded
-`attention` projection. `blocked_resume_required` uses the v8 envelopes.
+`attention` projection. `blocked_resume_required` uses the v8 envelopes, and
+`idle_guidance_wake_required` uses the v9 envelopes with a `notification`
+projection. The `uncertain_mutation` action is a v9 recovery action.
 Branch on `classification`, never on prose:
 
 | Classification | Deterministic action |
@@ -486,10 +488,11 @@ Branch on `classification`, never on prose:
 | `claimed_runtime_stop_in_progress` | Replay only the returned v5 exact `worker stop-claimed-runtime` argv. It retains the original revision, exact incarnation, and idempotency key and cannot send provider input. |
 | `idle_claim_revocation_required` | Execute the returned Main-owned exact argv for `worker revoke-claim`. It fences only a durably running, authoritative-idle exact worker and sends no provider input. |
 | `idle_claim_revocation_in_progress` | Replay only the returned exact argv and original idempotency key. Its assignment reservation blocks every competing lifecycle mutation. |
-| `uncertain_mutation` | Preserve the exact worker and reconcile the operation. Do not cancel, retire, or reassign. |
+| `uncertain_mutation` | Preserve the exact worker. Do not cancel, retire, or reassign. The returned worker-owned `worker_guard_operation_reconcile` action names the exact lease: the worker's coordination guard reconciles it on the worker's next managed mutation, and once `operation.safety_ttl_expires_at_epoch` passes, coordination maintenance reclaims it even for an idle worker when controller evidence proves it inactive; queued guidance can then be delivered. The action is non-executable for the Main Agent; never re-run supervision as the recovery. |
 | `coordination_broker_stale` | Route to the exact worker's authenticated broker owner. Do not copy its capability or renew its claim as a substitute. |
 | `edit_authority_stale` | Preserve the exact worker and perform a bounded supervision recheck; route only durable broker-lost evidence to broker recovery. |
 | `blocked_resume_required` | A post-claim blocked worker cannot re-acquire its exact claim and cannot act in its checkout. Resolve its blocker, then fill the returned v8 `worker resume` template with a bounded reason and new key; the worker re-runs its bootstrap argv. |
+| `idle_guidance_wake_required` | The exact worker's provider turn ended before it read the queued guidance, so it will not consume it on its own. Execute the returned Main-owned exact argv for `worker reenter`. It re-queues only that notification generation for the notification controller's one guarded prompt and Enter; repeating it is a receipt replay. Never send raw terminal input or another message. |
 | `claim_renewal_required` | Ask the exact worker to renew its own current claim and revision using its own capability file. When no active claim record exists (null `claim_id`) the action is `worker_rebootstrap`: ask the worker to re-run `main-agent bootstrap` with a new key instead. |
 | `pre_bootstrap_attention_required` | Preserve the live starting worker and continue bounded bootstrap supervision. No claim exists to renew; do not send provider input or replace the worker. |
 | `provider_capacity_recovery_pending` | Preserve the exact worker and conversation while daemon-owned auto-resume applies its bounded capacity backoff and app-server continuation. Continue supervision; do not switch accounts, resend the prompt, or send raw terminal input. |
@@ -1280,8 +1283,9 @@ controller-scoped `worker-request-changes` receipt whose run, revision, worker,
 manager, guidance, and recomputed request digest all match. Missing, malformed,
 or ambiguous receipt evidence fails closed.
 
-If the exact Codex turn has already completed and its one private review
-message is still unread, inspect `worker diagnose` first for current activity,
+If the exact Codex or Claude turn has already ended and its one private review
+message is still unread, `worker supervise` reports `idle_guidance_wake_required`
+with the exact executable argv below. Otherwise inspect `worker diagnose` for current activity,
 claim/operation, and guidance evidence. Retain the exact
 `notification.generation` from the successful `worker message` result; that
 result is the machine-readable generation fence. If it was not retained, fail
@@ -1331,8 +1335,10 @@ next action. It fails with `assignment-state-conflict` for any other state and
 with `assignment-preclaim-blocked` for a `[pre-claim:<code>]` bootstrap failure,
 which stays on the cancel/reassign path. Tell the worker, through
 `worker message`, to re-run its bootstrap argv with a new idempotency key; if its
-Codex turn has already ended, retry that message's notification generation with
-`worker reenter`, which accepts a resumed revision like a review revision. The
+Codex or Claude turn has already ended, supervision reports
+`idle_guidance_wake_required` and returns the exact `worker reenter` argv for
+that message's notification generation, which accepts a resumed revision like a
+review revision. The
 re-run bootstrap re-acquires the exact assignment-derived claim, including the
 checkout-shell grant and, while the checkout is still on the declared
 `head_branch`, the pull-request head grant. Until it does, supervision returns a
