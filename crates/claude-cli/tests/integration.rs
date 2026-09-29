@@ -26,6 +26,8 @@ mod completion_contract;
 mod completion_flags_contract;
 #[path = "integration/config.rs"]
 mod config;
+#[path = "integration/diag_rate_limits.rs"]
+mod diag_rate_limits;
 #[path = "integration/fixtures.rs"]
 mod fixtures;
 #[path = "integration/main_entrypoint.rs"]

@@ -47,6 +47,11 @@ Workspace-level keep/delete ownership decisions are tracked in
 - `provider_runtime`: provider-runtime substrate (paths, profiles, auth persistence, exec invocation, JSON/JWT helpers, structured errors)
   shared by Codex/Gemini-style CLIs without provider-specific UX copy.
 - `provider_usage`: stable provider-neutral usage failure reasons plus HTTP/message classification; callers retain provider-specific UX copy.
+- `rate_limits`: shared `diag rate-limits` orchestration. `driver::run` owns flag validation, target selection, `--all`, `--async`,
+  `--watch`, `--jobs`, and the JSON collection envelopes; `schema` owns the `*.diag.rate-limits.v1` result shape; `table` renders the
+  all-accounts table; `values` owns the per-target cache entry format and one-line summary. Providers plug in their usage client, cache
+  location, and single-target mode through `RateLimitsProvider` and supply wall-clock time and local-time formatting, so the module stays
+  deterministic. Consumers: `codex-cli` and `claude-cli` `diag rate-limits`.
 - `rate_limits_ansi`: shared rate-limit table cell formatting (current-profile coloring and percent-band coloring) honoring `NO_COLOR`.
 - `usage_cache_policy`: deterministic usage-cache display eligibility with a fixed 600-second ceiling and bounded future-clock tolerance;
   provider adapters own timestamp conversion.

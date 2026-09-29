@@ -34,6 +34,8 @@ claude-cli auth remote pull --ssh <host> --all --into <accounts-dir> --access-on
                             [--keychain auto|required|off] [--format text|json]
 claude-cli config show
 claude-cli config set <key> <value>
+claude-cli diag rate-limits [<profile>] [--all] [--format text|json] [--one-line]
+                            [--cached] [--async [--watch] [--jobs <n>]]
 claude-cli prompt-segment [options]
 claude-cli prompt-segment check
 claude-cli prompt-segment status [--format text|json]
@@ -330,6 +332,38 @@ normalized windows, and an optional provider-neutral `reason_code`. Provider
 responses, terminal errors, and credentials are classified locally and never
 forwarded.
 
+## Diagnostics: rate limits
+
+`diag rate-limits` reports Claude OAuth rate limits in the shared
+`diag rate-limits` shape that `codex-cli diag rate-limits` also emits, so one
+collector reads both.
+
+- Targets: `--all` (and `--async`) reads every `<name>.json` profile in
+  `CLAUDE_SECRET_DIR`; `<profile>` reads one; no target reads the active login
+  (`$CLAUDE_CONFIG_DIR/.credentials.json`, then the macOS Keychain item that
+  Claude Code uses).
+- Each target sends its stored access token once to the OAuth usage endpoint.
+  `five_hour` becomes the `5h` window (300 minutes) and `seven_day` the
+  `Weekly` window (10080 minutes). Tokens are never refreshed, rewritten, or
+  printed. An expired token reports `auth_expired` without a request. HTTP
+  `401`, `403`, and `429` map to `auth_expired`, `permission_denied`, and
+  `rate_limited`; any other failure is `service_unavailable`.
+- `--format json` (or `--json`) emits `claude-cli.diag.rate-limits.v1`. `--all`
+  and `--async` emit one result per profile (`name`, `target_file`, `status`,
+  `ok`, `source`, `reason_code`, `summary`, `windows`, `error`) and exit `1`
+  when any result failed, which is a result without `windows`. A single target
+  exits `1` on failure.
+- Text output prints the shared accounts table for `--all` and `--async`, and
+  `--one-line` prints `5h:<n>% W:<n>% <reset>`. `--async` queries profiles
+  concurrently (`--jobs`, default 5) and falls back to the last cached values
+  on failure; `--watch` redraws every 60 seconds.
+- Each successful read caches its windows under the prompt-segment cache
+  directory in `diag-rate-limits/<name>.kv`. `--cached` reads only that cache,
+  within `CLAUDE_RATE_LIMITS_CACHE_TTL` (default 180 seconds) unless
+  `CLAUDE_RATE_LIMITS_CACHE_ALLOW_STALE=true`.
+
+`claude-cli usage` is unchanged and remains the prompt-segment usage reader.
+
 ## Completion
 
 `completion <bash|zsh>` exports clap-generated shell completion to stdout.
@@ -362,7 +396,10 @@ forwarded.
 - `CLAUDE_PROMPT_STALE_SUFFIX`,
   `CLAUDE_PROMPT_SEGMENT_STALE_SUFFIX`: stale suffix.
 - `CLAUDE_PROMPT_SEGMENT_CACHE_DIR`: cache-directory override.
-- `CLAUDE_PROMPT_SEGMENT_ENDPOINT`: usage-endpoint override.
+- `CLAUDE_PROMPT_SEGMENT_ENDPOINT`: usage-endpoint override, also used by
+  `diag rate-limits`.
+- `CLAUDE_RATE_LIMITS_CACHE_TTL`, `CLAUDE_RATE_LIMITS_CACHE_ALLOW_STALE`:
+  `diag rate-limits --cached` freshness.
 - `CLAUDE_PROMPT_SEGMENT_REFRESH_MIN_SECONDS`: detached refresh cooldown;
   default `60`.
 - `CLAUDE_PROMPT_SEGMENT_EXE`: detached self-refresh executable override.

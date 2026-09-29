@@ -1,10 +1,7 @@
 use anyhow::Result;
 use chrono::Utc;
-use serde::Serialize;
 use serde_json::Value;
-use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -18,6 +15,16 @@ use nils_common::provider_runtime::persistence::{
     SyncSecretsError, TimestampPolicy, sync_auth_to_matching_secrets,
 };
 use nils_common::provider_usage::ProviderUsageReason;
+use nils_common::rate_limits::driver::{self, collect_json_targets_from_dir, no_targets_error};
+use nils_common::rate_limits::schema as shared_schema;
+#[cfg(test)]
+use nils_common::rate_limits::values::parse_one_line_output;
+use nils_common::rate_limits::values::{self as shared_values, normalize_one_line};
+use nils_common::rate_limits::{
+    CacheFallbackPolicy, OneLineFetch, ProgressSink, ProviderSpec, RC_NO_RATE_LIMIT_WINDOW,
+    RateLimitResult, RateLimitSummary, RateLimitWindow, RateLimitsProvider, ResetCredits,
+    ResetEpochs, RunOptions, TargetDiscoveryError, TargetIdentity,
+};
 use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 
 pub use nils_common::rate_limits_ansi as ansi;
@@ -26,371 +33,197 @@ pub mod client;
 pub mod render;
 pub mod writeback;
 
-#[derive(Clone, Debug)]
-pub struct RateLimitsOptions {
-    pub clear_cache: bool,
-    pub debug: bool,
-    pub cached: bool,
-    pub no_refresh_auth: bool,
-    pub json: bool,
-    pub one_line: bool,
-    pub all: bool,
-    pub async_mode: bool,
-    pub watch: bool,
-    pub jobs: Option<String>,
-    pub secret: Option<String>,
-}
+pub type RateLimitsOptions = RunOptions;
+
+type RateLimitJsonResult = RateLimitResult;
+type AsyncFetchResult = OneLineFetch;
 
 const DIAG_SCHEMA_VERSION: &str = "codex-cli.diag.rate-limits.v1";
 const DIAG_COMMAND: &str = "diag rate-limits";
-const WATCH_INTERVAL_SECONDS: u64 = 60;
-const ANSI_CLEAR_SCREEN_AND_HOME: &str = "\x1b[2J\x1b[H";
+
+static CODEX_SPEC: ProviderSpec = ProviderSpec {
+    provider: "codex",
+    schema_version: DIAG_SCHEMA_VERSION,
+    command: DIAG_COMMAND,
+    tool: "codex-rate-limits",
+    table_title: "Codex rate limits for all accounts",
+    secret_dir_env: "CODEX_SECRET_DIR",
+    usage: "codex-rate-limits [-c] [-d] [--cached] [--no-refresh-auth] [--json] [--one-line] [--all] [secret.json]",
+    default_all_env: Some("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED"),
+    watch_max_rounds_env: "CODEX_RATE_LIMITS_WATCH_MAX_ROUNDS",
+    watch_interval_env: "CODEX_RATE_LIMITS_WATCH_INTERVAL_SECONDS",
+};
 
 fn refresh_on_401_enabled(no_refresh_auth: bool) -> bool {
     !no_refresh_auth && shared_env::env_truthy(CODEX_PROVIDER_PROFILE.env.auto_refresh_enabled)
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct RateLimitSummary {
-    non_weekly_label: Option<String>,
-    non_weekly_remaining: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    non_weekly_reset_epoch: Option<i64>,
-    weekly_remaining: Option<i64>,
-    weekly_reset_epoch: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    weekly_reset_local: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct RateLimitWindow {
-    label: String,
-    used_percent: i64,
-    remaining_percent: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reset_at_epoch: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ResetCredits {
-    available_count: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct RateLimitJsonResult {
-    provider: String,
-    name: String,
-    target_file: String,
-    status: String,
-    ok: bool,
-    source: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reason_code: Option<ProviderUsageReason>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    summary: Option<RateLimitSummary>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    windows: Option<Vec<RateLimitWindow>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reset_credits: Option<ResetCredits>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    raw_usage: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<diag_output::ErrorEnvelope>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct RateLimitSingleEnvelope {
-    schema_version: String,
-    command: String,
-    mode: String,
-    ok: bool,
-    result: RateLimitJsonResult,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct RateLimitCollectionEnvelope {
-    schema_version: String,
-    command: String,
-    mode: String,
-    ok: bool,
-    results: Vec<RateLimitJsonResult>,
-}
-
 pub fn run(args: &RateLimitsOptions) -> Result<i32> {
-    let cached_mode = args.cached;
-    let mut one_line = args.one_line;
-    let mut all_mode = args.all;
-    let output_json = args.json;
-
-    let mut debug_mode = args.debug;
-    if !debug_mode
-        && let Ok(raw) = std::env::var("ZSH_DEBUG")
-        && raw.parse::<i64>().unwrap_or(0) >= 2
-    {
-        debug_mode = true;
-    }
-
-    if args.async_mode {
-        if !args.cached {
-            maybe_sync_all_mode_auth_silent(debug_mode);
-        }
-        if args.json {
-            return run_async_json_mode(args, debug_mode);
-        }
-        if args.watch {
-            return run_async_watch_mode(args, debug_mode);
-        }
-        return run_async_mode(args, debug_mode);
-    }
-
-    if cached_mode {
-        one_line = true;
-        if output_json {
-            diag_output::emit_error(
-                DIAG_SCHEMA_VERSION,
-                DIAG_COMMAND,
-                "invalid-flag-combination",
-                "codex-rate-limits: --json is not supported with --cached",
-                Some(serde_json::json!({
-                    "flags": ["--json", "--cached"],
-                })),
-            )?;
-            return Ok(64);
-        }
-        if args.clear_cache {
-            eprintln!("codex-rate-limits: -c is not compatible with --cached");
-            return Ok(64);
-        }
-    }
-
-    if output_json && one_line {
-        diag_output::emit_error(
-            DIAG_SCHEMA_VERSION,
-            DIAG_COMMAND,
-            "invalid-flag-combination",
-            "codex-rate-limits: --one-line is not compatible with --json",
-            Some(serde_json::json!({
-                "flags": ["--one-line", "--json"],
-            })),
-        )?;
-        return Ok(64);
-    }
-
-    if args.clear_cache
-        && let Err(err) = cache::clear_prompt_segment_cache()
-    {
-        if output_json {
-            diag_output::emit_error(
-                DIAG_SCHEMA_VERSION,
-                DIAG_COMMAND,
-                "cache-clear-failed",
-                err.to_string(),
-                None,
-            )?;
-        } else {
-            eprintln!("{err}");
-        }
-        return Ok(1);
-    }
-
-    if !all_mode
-        && !output_json
-        && !cached_mode
-        && args.secret.is_none()
-        && shared_env::env_truthy("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED")
-    {
-        all_mode = true;
-    }
-
-    if all_mode {
-        if !cached_mode {
-            maybe_sync_all_mode_auth_silent(debug_mode);
-        }
-        if args.secret.is_some() {
-            eprintln!(
-                "codex-rate-limits: usage: codex-rate-limits [-c] [-d] [--cached] [--no-refresh-auth] [--json] [--one-line] [--all] [secret.json]"
-            );
-            return Ok(64);
-        }
-        if output_json {
-            return run_all_json_mode(args, cached_mode, debug_mode);
-        }
-        return run_all_mode(args, cached_mode, debug_mode);
-    }
-
-    run_single_mode(args, cached_mode, one_line, output_json)
-}
-
-fn run_async_json_mode(args: &RateLimitsOptions, _debug_mode: bool) -> Result<i32> {
-    if args.one_line {
-        let message = "codex-rate-limits: --async does not support --one-line";
-        diag_output::emit_error(
-            DIAG_SCHEMA_VERSION,
-            DIAG_COMMAND,
-            "invalid-flag-combination",
-            message,
-            Some(serde_json::json!({
-                "flag": "--one-line",
-                "mode": "async",
-            })),
-        )?;
-        return Ok(64);
-    }
-    if let Some(secret) = args.secret.as_deref() {
-        let message = format!(
-            "codex-rate-limits: --async does not accept positional args: {}",
-            secret
-        );
-        diag_output::emit_error(
-            DIAG_SCHEMA_VERSION,
-            DIAG_COMMAND,
-            "invalid-positional-arg",
-            message,
-            Some(serde_json::json!({
-                "secret": secret,
-                "mode": "async",
-            })),
-        )?;
-        return Ok(64);
-    }
-    if args.clear_cache && args.cached {
-        let message = "codex-rate-limits: --async: -c is not compatible with --cached";
-        diag_output::emit_error(
-            DIAG_SCHEMA_VERSION,
-            DIAG_COMMAND,
-            "invalid-flag-combination",
-            message,
-            Some(serde_json::json!({
-                "flags": ["--async", "--cached", "-c"],
-            })),
-        )?;
-        return Ok(64);
-    }
-    if args.clear_cache
-        && let Err(err) = cache::clear_prompt_segment_cache()
-    {
-        diag_output::emit_error(
-            DIAG_SCHEMA_VERSION,
-            DIAG_COMMAND,
-            "cache-clear-failed",
-            err.to_string(),
-            None,
-        )?;
-        return Ok(1);
-    }
-
-    let secret_files = match collect_secret_files() {
-        Ok(value) => value,
-        Err((code, message, details)) => {
-            diag_output::emit_error(
-                DIAG_SCHEMA_VERSION,
-                DIAG_COMMAND,
-                "secret-discovery-failed",
-                message,
-                details,
-            )?;
-            return Ok(code);
-        }
+    let provider = CodexRateLimits {
+        no_refresh_auth: args.no_refresh_auth,
     };
+    driver::run(&provider, args)
+}
 
-    let jobs = resolve_async_jobs(args.jobs.as_deref());
-    let cached_mode = args.cached;
-    let no_refresh_auth = args.no_refresh_auth;
-    let mut results_by_secret = collect_async_items(&secret_files, jobs, None, move |path, _| {
-        collect_json_result_for_secret(
-            &path,
-            cached_mode,
-            no_refresh_auth,
-            CacheFallbackPolicy::AnyFailure,
-        )
-    });
-    let mut results = Vec::new();
-    let mut rc = 0;
-    for secret_file in &secret_files {
-        let secret_name = secret_file
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("")
-            .to_string();
-        let result = results_by_secret.remove(&secret_name).unwrap_or_else(|| {
-            json_result_error(
-                secret_file,
-                "network",
-                "request-failed",
-                format!(
-                    "codex-rate-limits: async worker did not return a result for {}",
-                    secret_file.display()
-                ),
-                None,
-            )
-        });
-        if !args.cached && !result.ok {
-            rc = 1;
-        }
-        results.push(result);
+/// Codex's usage client, cache, and secret model for the shared driver.
+struct CodexRateLimits {
+    no_refresh_auth: bool,
+}
+
+struct CodexProgress(Progress);
+
+impl ProgressSink for CodexProgress {
+    fn set_message(&self, message: String) {
+        self.0.set_message(message);
     }
-    results.sort_by(|a, b| a.name.cmp(&b.name));
-    emit_collection_envelope("async", rc == 0, results)?;
-    Ok(rc)
-}
 
-fn run_all_json_mode(
-    args: &RateLimitsOptions,
-    cached_mode: bool,
-    _debug_mode: bool,
-) -> Result<i32> {
-    let secret_files = match collect_secret_files() {
-        Ok(value) => value,
-        Err((code, message, details)) => {
-            diag_output::emit_error(
-                DIAG_SCHEMA_VERSION,
-                DIAG_COMMAND,
-                "secret-discovery-failed",
-                message,
-                details,
-            )?;
-            return Ok(code);
-        }
-    };
-
-    let mut results = Vec::new();
-    let mut rc = 0;
-    for secret_file in &secret_files {
-        let result = collect_json_result_for_secret(
-            secret_file,
-            cached_mode,
-            args.no_refresh_auth,
-            CacheFallbackPolicy::NoWindow,
-        );
-        if !cached_mode && !result.ok {
-            rc = 1;
-        }
-        results.push(result);
+    fn inc(&self, delta: u64) {
+        self.0.inc(delta);
     }
-    results.sort_by(|a, b| a.name.cmp(&b.name));
-    emit_collection_envelope("all", rc == 0, results)?;
-    Ok(rc)
+
+    fn finish_and_clear(self: Box<Self>) {
+        self.0.finish_and_clear();
+    }
 }
 
-fn emit_collection_envelope(mode: &str, ok: bool, results: Vec<RateLimitJsonResult>) -> Result<()> {
-    diag_output::emit_json(&RateLimitCollectionEnvelope {
-        schema_version: DIAG_SCHEMA_VERSION.to_string(),
-        command: DIAG_COMMAND.to_string(),
-        mode: mode.to_string(),
-        ok,
-        results,
-    })
+impl RateLimitsProvider for CodexRateLimits {
+    fn spec(&self) -> &ProviderSpec {
+        &CODEX_SPEC
+    }
+
+    fn now_epoch(&self) -> i64 {
+        Utc::now().timestamp()
+    }
+
+    fn format_local(&self, epoch: i64, format: &str) -> Option<String> {
+        render::format_epoch_local(epoch, format)
+    }
+
+    fn progress(&self, total: usize, prefix: &str) -> Option<Box<dyn ProgressSink>> {
+        Some(Box::new(CodexProgress(Progress::new(
+            total as u64,
+            ProgressOptions::default()
+                .with_prefix(prefix)
+                .with_finish(ProgressFinish::Clear),
+        ))))
+    }
+
+    fn secret_dir(&self) -> PathBuf {
+        crate::paths::resolve_secret_dir().unwrap_or_default()
+    }
+
+    fn json_targets(&self) -> std::result::Result<Vec<PathBuf>, TargetDiscoveryError> {
+        collect_secret_files()
+    }
+
+    fn identity(&self, target: &Path) -> TargetIdentity {
+        codex_identity(target)
+    }
+
+    fn clear_cache(&self) -> std::result::Result<(), String> {
+        cache::clear_prompt_segment_cache().map_err(|err| err.to_string())
+    }
+
+    fn prepare_collection(&self, debug: bool) {
+        maybe_sync_all_mode_auth_silent(debug);
+    }
+
+    fn run_single(&self, args: &RunOptions, cached: bool, one_line: bool) -> Result<i32> {
+        run_single_mode(args, cached, one_line, args.json)
+    }
+
+    fn json_result(
+        &self,
+        target: &Path,
+        cached: bool,
+        fallback: CacheFallbackPolicy,
+    ) -> RateLimitResult {
+        collect_json_result_for_secret(target, cached, self.no_refresh_auth, fallback)
+    }
+
+    fn async_one_line(&self, target: &Path, cached: bool) -> OneLineFetch {
+        let secret_name = target_file_name(target);
+        async_fetch_one_line(target, cached, self.no_refresh_auth, &secret_name)
+    }
+
+    fn sequential_one_line(&self, target: &Path, cached: bool, debug: bool) -> OneLineFetch {
+        let result =
+            single_one_line(target, cached, self.no_refresh_auth, debug).unwrap_or_default();
+        OneLineFetch {
+            line: result.line,
+            no_window: result.no_window,
+            reset_credits_available: result.reset_credits_available,
+            ..Default::default()
+        }
+    }
+
+    fn row_reset_epochs(
+        &self,
+        target: &Path,
+        cached: bool,
+        fill_from_stale_cache: bool,
+    ) -> ResetEpochs {
+        row_reset_epochs(target, cached, fill_from_stale_cache)
+    }
+
+    fn current_name(&self, targets: &[PathBuf]) -> Option<String> {
+        current_secret_basename(targets)
+    }
 }
 
-fn collect_secret_files() -> std::result::Result<Vec<PathBuf>, (i32, String, Option<Value>)> {
+/// Reset epochs of a filled table row: the cache in `--cached` mode, else the
+/// usage the fetch wrote back into the secret file.
+fn row_reset_epochs(target: &Path, cached: bool, fill_from_stale_cache: bool) -> ResetEpochs {
+    let mut epochs = ResetEpochs::default();
+    if cached {
+        if let Ok(cache_entry) = cache::read_cache_entry_for_cached_mode(target) {
+            epochs.non_weekly = cache_entry.non_weekly_reset_epoch;
+            epochs.weekly = cache_entry.weekly_reset_epoch;
+        }
+        return epochs;
+    }
+    if let Ok(values) = crate::json::read_json(target) {
+        epochs.non_weekly =
+            crate::json::i64_at(&values, &["codex_rate_limits", "non_weekly_reset_at_epoch"]);
+        epochs.weekly =
+            crate::json::i64_at(&values, &["codex_rate_limits", "weekly_reset_at_epoch"]);
+    }
+    if fill_from_stale_cache
+        && (epochs.non_weekly.is_none() || epochs.weekly.is_none())
+        && let Ok(cache_read) = cache::read_cache_entry_allow_stale(target)
+    {
+        let cache_entry = cache_read.entry;
+        if epochs.non_weekly.is_none() {
+            epochs.non_weekly = cache_entry.non_weekly_reset_epoch;
+        }
+        if epochs.weekly.is_none() {
+            epochs.weekly = cache_entry.weekly_reset_epoch;
+        }
+    }
+    epochs
+}
+
+fn codex_identity(target_file: &Path) -> TargetIdentity {
+    TargetIdentity {
+        provider: "codex".to_string(),
+        name: secret_display_name(target_file),
+        target_file: target_file_name(target_file),
+    }
+}
+
+fn emit_single_envelope(ok: bool, result: RateLimitJsonResult) -> Result<()> {
+    shared_schema::emit_single_envelope(&CODEX_SPEC, ok, result)
+}
+
+fn collect_secret_files() -> std::result::Result<Vec<PathBuf>, TargetDiscoveryError> {
     if std::env::var_os(CODEX_PROVIDER_PROFILE.env.secret_dir).is_some() {
         let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
-        return collect_json_secret_files_from_dir(&secret_dir, true);
+        return collect_json_targets_from_dir(&CODEX_SPEC, &secret_dir, true);
     }
 
     let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
     if secret_dir.is_dir()
-        && let Ok(secret_files) = collect_json_secret_files_from_dir(&secret_dir, false)
+        && let Ok(secret_files) = collect_json_targets_from_dir(&CODEX_SPEC, &secret_dir, false)
         && !secret_files.is_empty()
     {
         return Ok(secret_files);
@@ -404,62 +237,7 @@ fn collect_secret_files() -> std::result::Result<Vec<PathBuf>, (i32, String, Opt
         return Ok(vec![auth_file]);
     }
 
-    no_secret_files_error(&secret_dir)
-}
-
-fn collect_json_secret_files_from_dir(
-    secret_dir: &Path,
-    strict: bool,
-) -> std::result::Result<Vec<PathBuf>, (i32, String, Option<Value>)> {
-    if !secret_dir.is_dir() {
-        return Err((
-            1,
-            format!(
-                "codex-rate-limits: CODEX_SECRET_DIR not found: {}",
-                secret_dir.display()
-            ),
-            Some(serde_json::json!({
-                "secret_dir": secret_dir.display().to_string(),
-            })),
-        ));
-    }
-
-    let mut secret_files: Vec<PathBuf> = std::fs::read_dir(secret_dir)
-        .map_err(|err| {
-            (
-                1,
-                format!("codex-rate-limits: failed to read CODEX_SECRET_DIR: {err}"),
-                Some(serde_json::json!({
-                    "secret_dir": secret_dir.display().to_string(),
-                })),
-            )
-        })?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
-        .collect();
-
-    if strict && secret_files.is_empty() {
-        return no_secret_files_error(secret_dir);
-    }
-
-    secret_files.sort();
-    Ok(secret_files)
-}
-
-fn no_secret_files_error(
-    secret_dir: &Path,
-) -> std::result::Result<Vec<PathBuf>, (i32, String, Option<Value>)> {
-    Err((
-        1,
-        format!(
-            "codex-rate-limits: no secrets found in {}",
-            secret_dir.display()
-        ),
-        Some(serde_json::json!({
-            "secret_dir": secret_dir.display().to_string(),
-        })),
-    ))
+    Err(no_targets_error(&CODEX_SPEC, &secret_dir))
 }
 
 fn existing_active_auth_file() -> Option<PathBuf> {
@@ -487,12 +265,6 @@ fn is_official_codex_auth_file(target_file: &Path) -> bool {
 
 fn should_writeback_usage(target_file: &Path) -> bool {
     !is_official_codex_auth_file(target_file)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CacheFallbackPolicy {
-    NoWindow,
-    AnyFailure,
 }
 
 fn collect_json_result_for_secret(
@@ -637,20 +409,12 @@ fn collect_json_from_cache(
     };
 
     match cache_entry {
-        Ok(entry) => RateLimitJsonResult {
-            provider: "codex".to_string(),
-            name: secret_display_name(target_file),
-            target_file: target_file_name(target_file),
-            status: "ok".to_string(),
-            ok: true,
-            source: source.to_string(),
-            reason_code: None,
-            summary: Some(summary_from_cache(&entry)),
-            windows: Some(windows_from_cache(&entry)),
-            reset_credits: None,
-            raw_usage: None,
-            error: None,
-        },
+        Ok(entry) => RateLimitJsonResult::from_cache(
+            codex_identity(target_file),
+            source,
+            &entry,
+            render::format_epoch_local_datetime_with_offset,
+        ),
         Err(err) => json_result_error(
             target_file,
             source,
@@ -679,24 +443,14 @@ fn json_result_error_with_reason(
     details: Option<Value>,
     reason_code: Option<ProviderUsageReason>,
 ) -> RateLimitJsonResult {
-    RateLimitJsonResult {
-        provider: "codex".to_string(),
-        name: secret_display_name(target_file),
-        target_file: target_file_name(target_file),
-        status: "error".to_string(),
-        ok: false,
-        source: source.to_string(),
+    RateLimitJsonResult::error(
+        codex_identity(target_file),
+        source,
+        code,
+        message,
+        details,
         reason_code,
-        summary: None,
-        windows: None,
-        reset_credits: None,
-        raw_usage: None,
-        error: Some(diag_output::ErrorEnvelope {
-            code: code.to_string(),
-            message,
-            details,
-        }),
-    }
+    )
 }
 
 /// Benign "no active rate-limit window" result for a `rate_limit: null` payload
@@ -705,20 +459,7 @@ fn json_result_no_window(
     target_file: &Path,
     reset_credits: Option<ResetCredits>,
 ) -> RateLimitJsonResult {
-    RateLimitJsonResult {
-        provider: "codex".to_string(),
-        name: secret_display_name(target_file),
-        target_file: target_file_name(target_file),
-        status: "ok".to_string(),
-        ok: true,
-        source: "network".to_string(),
-        reason_code: None,
-        summary: None,
-        windows: Some(Vec::new()),
-        reset_credits,
-        raw_usage: None,
-        error: None,
-    }
+    RateLimitJsonResult::no_window(codex_identity(target_file), reset_credits)
 }
 
 pub(crate) fn secret_display_name(target_file: &Path) -> String {
@@ -765,24 +506,10 @@ fn summary_and_windows_from_usage(
 }
 
 fn summary_from_weekly_values(weekly: &render::WeeklyValues) -> RateLimitSummary {
-    RateLimitSummary {
-        non_weekly_label: weekly
-            .non_weekly
-            .as_ref()
-            .map(|window| window.label.clone()),
-        non_weekly_remaining: weekly.non_weekly.as_ref().map(|window| window.remaining),
-        non_weekly_reset_epoch: weekly
-            .non_weekly
-            .as_ref()
-            .map(|window| window.reset_epoch)
-            .filter(|epoch| *epoch > 0),
-        weekly_remaining: weekly.weekly.as_ref().map(|window| window.remaining),
-        weekly_reset_epoch: weekly.weekly.as_ref().map(|window| window.reset_epoch),
-        weekly_reset_local: weekly
-            .weekly
-            .as_ref()
-            .and_then(|window| render::format_epoch_local_datetime_with_offset(window.reset_epoch)),
-    }
+    shared_schema::summary_from_weekly_values(
+        weekly,
+        render::format_epoch_local_datetime_with_offset,
+    )
 }
 
 fn windows_from_usage_values(
@@ -799,59 +526,13 @@ fn windows_from_usage_values(
         let rendered = rendered.as_ref()?;
         Some(RateLimitWindow {
             label: rendered.label.clone(),
-            used_percent: percent_i64(window.used_percent),
+            window_minutes: None,
+            used_percent: shared_schema::percent_i64(window.used_percent),
             remaining_percent: rendered.remaining,
             reset_at_epoch: Some(rendered.reset_epoch).filter(|epoch| *epoch > 0),
         })
     })
     .collect()
-}
-
-fn summary_from_cache(entry: &cache::CacheEntry) -> RateLimitSummary {
-    RateLimitSummary {
-        non_weekly_label: entry.non_weekly_label.clone(),
-        non_weekly_remaining: entry.non_weekly_remaining,
-        non_weekly_reset_epoch: entry.non_weekly_reset_epoch,
-        weekly_remaining: entry.weekly_remaining,
-        weekly_reset_epoch: entry.weekly_reset_epoch,
-        weekly_reset_local: entry
-            .weekly_reset_epoch
-            .and_then(render::format_epoch_local_datetime_with_offset),
-    }
-}
-
-fn windows_from_cache(entry: &cache::CacheEntry) -> Vec<RateLimitWindow> {
-    let mut windows = Vec::new();
-    if let (Some(label), Some(remaining)) = (&entry.non_weekly_label, entry.non_weekly_remaining) {
-        windows.push(RateLimitWindow {
-            label: label.clone(),
-            used_percent: remaining_to_used_percent(remaining),
-            remaining_percent: remaining,
-            reset_at_epoch: entry.non_weekly_reset_epoch,
-        });
-    }
-    if let (Some(remaining), Some(reset_epoch)) = (entry.weekly_remaining, entry.weekly_reset_epoch)
-    {
-        windows.push(RateLimitWindow {
-            label: "Weekly".to_string(),
-            used_percent: remaining_to_used_percent(remaining),
-            remaining_percent: remaining,
-            reset_at_epoch: Some(reset_epoch).filter(|epoch| *epoch > 0),
-        });
-    }
-    windows
-}
-
-fn percent_i64(percent: f64) -> i64 {
-    if percent.is_finite() {
-        (percent.round() as i64).clamp(0, 100)
-    } else {
-        0
-    }
-}
-
-fn remaining_to_used_percent(remaining: i64) -> i64 {
-    (100 - remaining).clamp(0, 100)
 }
 
 fn project_safe_usage_json(value: &Value) -> Value {
@@ -923,580 +604,10 @@ fn project_safe_window(value: &Value) -> Option<Value> {
     Some(Value::Object(projected))
 }
 
-#[derive(Default)]
-struct AsyncFetchResult {
-    line: Option<String>,
-    rc: i32,
-    err: String,
-    reset_credits_available: Option<i64>,
-    /// The line was served from cache past its freshness TTL.
-    stale: bool,
-    /// The live fetch succeeded but the backend reported no active rate-limit
-    /// window (`rate_limit: null`) and no cache was available. Benign.
-    no_window: bool,
-}
-
-/// Distinct rc for "live fetch ok, but backend reports no active window". Kept
-/// separate from the network-failure codes (1/2/3) so it is neither retried
-/// nor counted as an error.
-const RC_NO_RATE_LIMIT_WINDOW: i32 = 6;
-
-struct AsyncCollectedItem<T> {
-    secret_name: String,
-    value: T,
-}
-
-fn run_async_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
-    run_async_mode_impl(args, debug_mode, false)
-}
-
-fn run_async_watch_mode(args: &RateLimitsOptions, debug_mode: bool) -> Result<i32> {
-    run_async_mode_impl(args, debug_mode, true)
-}
-
-fn run_async_mode_impl(
-    args: &RateLimitsOptions,
-    debug_mode: bool,
-    watch_mode: bool,
-) -> Result<i32> {
-    if args.json {
-        eprintln!("codex-rate-limits: --async does not support --json");
-        return Ok(64);
-    }
-    if args.one_line {
-        eprintln!("codex-rate-limits: --async does not support --one-line");
-        return Ok(64);
-    }
-    if let Some(secret) = args.secret.as_deref() {
-        let _ = secret;
-        eprintln!("codex-rate-limits: --async does not accept positional args");
-        eprintln!(
-            "codex-rate-limits: hint: async always queries all secrets under CODEX_SECRET_DIR"
-        );
-        return Ok(64);
-    }
-    if args.clear_cache && args.cached {
-        eprintln!("codex-rate-limits: --async: -c is not compatible with --cached");
-        return Ok(64);
-    }
-
-    let jobs = resolve_async_jobs(args.jobs.as_deref());
-
-    if args.clear_cache
-        && let Err(err) = cache::clear_prompt_segment_cache()
-    {
-        eprintln!("{err}");
-        return Ok(1);
-    }
-
-    let secret_files = match collect_secret_files_for_async_text() {
-        Ok(value) => value,
-        Err(err) => {
-            eprintln!("{err}");
-            return Ok(1);
-        }
-    };
-
-    if !watch_mode {
-        if secret_files.is_empty() {
-            let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
-            eprintln!(
-                "codex-rate-limits-async: no secrets found in {}",
-                secret_dir.display()
-            );
-            return Ok(1);
-        }
-
-        let current_name = current_secret_basename(&secret_files);
-        let round = collect_async_round(&secret_files, args.cached, args.no_refresh_auth, jobs);
-        render_all_accounts_table(
-            round.rows,
-            &round.window_labels,
-            current_name.as_deref(),
-            None,
-        );
-        emit_async_debug(debug_mode, &secret_files, &round.stderr_map);
-        return Ok(round.rc);
-    }
-
-    let mut overall_rc = 0;
-    let mut rendered_rounds = 0u64;
-    let max_rounds = watch_max_rounds_for_test();
-    let watch_interval_seconds = watch_interval_seconds();
-    let is_terminal_stdout = std::io::stdout().is_terminal();
-
-    loop {
-        let secret_files = match collect_secret_files_for_async_text() {
-            Ok(value) => value,
-            Err(err) => {
-                overall_rc = 1;
-                if is_terminal_stdout {
-                    print!("{ANSI_CLEAR_SCREEN_AND_HOME}");
-                }
-                eprintln!("{err}");
-                let _ = std::io::stdout().flush();
-
-                rendered_rounds += 1;
-                if let Some(limit) = max_rounds
-                    && rendered_rounds >= limit
-                {
-                    break;
-                }
-
-                thread::sleep(Duration::from_secs(watch_interval_seconds));
-                continue;
-            }
-        };
-        let current_name = current_secret_basename(&secret_files);
-        let round = collect_async_round(&secret_files, args.cached, args.no_refresh_auth, jobs);
-        if round.rc != 0 {
-            overall_rc = 1;
-        }
-
-        if is_terminal_stdout {
-            print!("{ANSI_CLEAR_SCREEN_AND_HOME}");
-        }
-
-        let now_epoch = Utc::now().timestamp();
-        let update_time = format_watch_update_time(now_epoch);
-        render_all_accounts_table(
-            round.rows,
-            &round.window_labels,
-            current_name.as_deref(),
-            Some(update_time.as_str()),
-        );
-        emit_async_debug(debug_mode, &secret_files, &round.stderr_map);
-        let _ = std::io::stdout().flush();
-
-        rendered_rounds += 1;
-        if let Some(limit) = max_rounds
-            && rendered_rounds >= limit
-        {
-            break;
-        }
-
-        thread::sleep(Duration::from_secs(watch_interval_seconds));
-    }
-
-    Ok(overall_rc)
-}
-
+#[cfg(test)]
 fn collect_secret_files_for_async_text() -> std::result::Result<Vec<PathBuf>, String> {
     let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
-    if !secret_dir.is_dir() {
-        return Err(format!(
-            "codex-rate-limits-async: CODEX_SECRET_DIR not found: {}",
-            secret_dir.display()
-        ));
-    }
-
-    let mut secret_files: Vec<PathBuf> = std::fs::read_dir(&secret_dir)
-        .map_err(|err| format!("codex-rate-limits-async: failed to read CODEX_SECRET_DIR: {err}"))?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
-        .collect();
-
-    secret_files.sort();
-    Ok(secret_files)
-}
-
-struct AsyncRound {
-    rc: i32,
-    rows: Vec<Row>,
-    window_labels: std::collections::HashSet<String>,
-    stderr_map: std::collections::HashMap<String, String>,
-}
-
-fn resolve_async_jobs(jobs: Option<&str>) -> usize {
-    jobs.and_then(|raw| raw.parse::<i64>().ok())
-        .filter(|value| *value > 0)
-        .map(|value| value as usize)
-        .unwrap_or(5)
-}
-
-fn collect_async_items<T, F>(
-    secret_files: &[PathBuf],
-    jobs: usize,
-    progress_prefix: Option<&str>,
-    worker: F,
-) -> std::collections::HashMap<String, T>
-where
-    T: Send + 'static,
-    F: Fn(PathBuf, String) -> T + Send + Sync + 'static,
-{
-    let total = secret_files.len();
-    if total == 0 {
-        return std::collections::HashMap::new();
-    }
-
-    let progress = if total > 1 {
-        progress_prefix.map(|prefix| {
-            Progress::new(
-                total as u64,
-                ProgressOptions::default()
-                    .with_prefix(prefix)
-                    .with_finish(ProgressFinish::Clear),
-            )
-        })
-    } else {
-        None
-    };
-
-    let worker_count = jobs.clamp(1, total);
-    let worker = Arc::new(worker);
-    let (tx, rx) = mpsc::channel();
-    let mut handles = Vec::new();
-    let mut index = 0usize;
-
-    while index < total && handles.len() < worker_count {
-        let path = secret_files[index].clone();
-        index += 1;
-        let tx = tx.clone();
-        let worker = Arc::clone(&worker);
-        handles.push(thread::spawn(move || {
-            let secret_name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("")
-                .to_string();
-            let value = worker(path, secret_name.clone());
-            let _ = tx.send(AsyncCollectedItem { secret_name, value });
-        }));
-    }
-
-    let mut items = std::collections::HashMap::new();
-    while items.len() < total {
-        let item = match rx.recv() {
-            Ok(item) => item,
-            Err(_) => break,
-        };
-        if let Some(progress) = &progress {
-            progress.set_message(item.secret_name.clone());
-            progress.inc(1);
-        }
-        items.insert(item.secret_name.clone(), item.value);
-
-        if index < total {
-            let path = secret_files[index].clone();
-            index += 1;
-            let tx = tx.clone();
-            let worker = Arc::clone(&worker);
-            handles.push(thread::spawn(move || {
-                let secret_name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                let value = worker(path, secret_name.clone());
-                let _ = tx.send(AsyncCollectedItem { secret_name, value });
-            }));
-        }
-    }
-
-    if let Some(progress) = progress {
-        progress.finish_and_clear();
-    }
-
-    drop(tx);
-    for handle in handles {
-        let _ = handle.join();
-    }
-
-    items
-}
-
-fn collect_async_round(
-    secret_files: &[PathBuf],
-    cached_mode: bool,
-    no_refresh_auth: bool,
-    jobs: usize,
-) -> AsyncRound {
-    let mut events = collect_async_items(
-        secret_files,
-        jobs,
-        Some("codex-rate-limits "),
-        move |path, secret_name| {
-            async_fetch_one_line(&path, cached_mode, no_refresh_auth, &secret_name)
-        },
-    );
-
-    let mut rc = 0;
-    let mut rows: Vec<Row> = Vec::new();
-    let mut window_labels = std::collections::HashSet::new();
-    let mut stderr_map: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-
-    for secret_file in secret_files {
-        let secret_name = secret_file
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("")
-            .to_string();
-
-        let mut row = Row::empty(secret_name.trim_end_matches(".json").to_string());
-        let mut benign_no_window = false;
-        let event = events.remove(&secret_name);
-        if let Some(event) = event {
-            row.reset_credits_available = event.reset_credits_available;
-            if !event.err.is_empty() {
-                stderr_map.insert(secret_name.clone(), event.err.clone());
-            }
-            // A null window (no_window) is benign and must not fail the round;
-            // a stale cache fallback (rc == 0) likewise succeeded.
-            if !cached_mode && event.rc != 0 && !event.no_window {
-                rc = 1;
-            }
-            benign_no_window = event.no_window;
-
-            if let Some(line) = &event.line
-                && let Some(parsed) = parse_one_line_output(line)
-            {
-                row.window_label = parsed.window_label.clone().unwrap_or_default();
-                row.non_weekly_remaining = parsed.non_weekly_remaining.unwrap_or(-1);
-                row.weekly_remaining = parsed.weekly_remaining.unwrap_or(-1);
-                row.weekly_reset_iso = parsed.weekly_reset_iso.clone();
-
-                if cached_mode {
-                    if let Ok(cache_entry) = cache::read_cache_entry_for_cached_mode(secret_file) {
-                        row.non_weekly_reset_epoch = cache_entry.non_weekly_reset_epoch;
-                        row.weekly_reset_epoch = cache_entry.weekly_reset_epoch;
-                    }
-                } else {
-                    let values = crate::json::read_json(secret_file).ok();
-                    if let Some(values) = values {
-                        row.non_weekly_reset_epoch = crate::json::i64_at(
-                            &values,
-                            &["codex_rate_limits", "non_weekly_reset_at_epoch"],
-                        );
-                        row.weekly_reset_epoch = crate::json::i64_at(
-                            &values,
-                            &["codex_rate_limits", "weekly_reset_at_epoch"],
-                        );
-                    }
-                    if (row.non_weekly_reset_epoch.is_none() || row.weekly_reset_epoch.is_none())
-                        && let Ok(cache_read) = cache::read_cache_entry_allow_stale(secret_file)
-                    {
-                        let cache_entry = cache_read.entry;
-                        if row.non_weekly_reset_epoch.is_none() {
-                            row.non_weekly_reset_epoch = cache_entry.non_weekly_reset_epoch;
-                        }
-                        if row.weekly_reset_epoch.is_none() {
-                            row.weekly_reset_epoch = cache_entry.weekly_reset_epoch;
-                        }
-                    }
-                }
-
-                row.state = if event.stale {
-                    RowState::Stale
-                } else {
-                    RowState::Filled
-                };
-                if !row.window_label.is_empty() {
-                    window_labels.insert(row.window_label.clone());
-                }
-                rows.push(row);
-                continue;
-            }
-        }
-
-        if benign_no_window {
-            row.state = RowState::NoWindow;
-        } else if !cached_mode {
-            rc = 1;
-        }
-        rows.push(row);
-    }
-
-    AsyncRound {
-        rc,
-        rows,
-        window_labels,
-        stderr_map,
-    }
-}
-
-fn render_all_accounts_table(
-    mut rows: Vec<Row>,
-    window_labels: &std::collections::HashSet<String>,
-    current_name: Option<&str>,
-    update_time: Option<&str>,
-) {
-    println!("\n🚦 Codex rate limits for all accounts\n");
-
-    let mut non_weekly_header = "Non-weekly".to_string();
-    let multiple_labels = window_labels.len() != 1;
-    if !multiple_labels && let Some(label) = window_labels.iter().next() {
-        non_weekly_header = label.clone();
-    }
-
-    rows.sort_by_key(|row| row.sort_key());
-    let now_epoch = Utc::now().timestamp();
-    let display_rows: Vec<_> = rows
-        .into_iter()
-        .map(|row| {
-            // A null window reports "n/a"; a stale fallback keeps its values but is
-            // marked so the reader knows they are not live.
-            let no_window = row.state == RowState::NoWindow;
-
-            let display_non_weekly = if no_window {
-                "n/a".to_string()
-            } else if multiple_labels && !row.window_label.is_empty() {
-                if row.non_weekly_remaining >= 0 {
-                    format!("{}:{}%", row.window_label, row.non_weekly_remaining)
-                } else {
-                    "-".to_string()
-                }
-            } else if row.non_weekly_remaining >= 0 {
-                format!("{}%", row.non_weekly_remaining)
-            } else {
-                "-".to_string()
-            };
-
-            let non_weekly_left = row
-                .non_weekly_reset_epoch
-                .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
-                .unwrap_or_else(|| "-".to_string());
-            let weekly_left = row
-                .weekly_reset_epoch
-                .and_then(|epoch| render::format_until_epoch_compact(epoch, now_epoch))
-                .unwrap_or_else(|| "-".to_string());
-            let mut reset_display = if no_window {
-                "n/a".to_string()
-            } else {
-                row.weekly_reset_epoch
-                    .and_then(render::format_epoch_local_datetime_with_offset)
-                    .unwrap_or_else(|| "-".to_string())
-            };
-            if row.state == RowState::Stale {
-                reset_display.push_str(" (stale)");
-            }
-
-            let weekly_display = if no_window {
-                "n/a".to_string()
-            } else if row.weekly_remaining >= 0 {
-                format!("{}%", row.weekly_remaining)
-            } else {
-                "-".to_string()
-            };
-
-            TableDisplayRow {
-                is_current: current_name == Some(row.name.as_str()),
-                name: row.name,
-                non_weekly: display_non_weekly,
-                non_weekly_left,
-                weekly: weekly_display,
-                weekly_left,
-                reset: reset_display,
-                resets: row
-                    .reset_credits_available
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "-".to_string()),
-            }
-        })
-        .collect();
-
-    let mut name_width = 15usize;
-    let mut non_weekly_width = non_weekly_header.chars().count().max(8);
-    let mut non_weekly_left_width = 7usize;
-    let mut weekly_width = 8usize;
-    let mut weekly_left_width = 7usize;
-    let mut reset_width = 20usize;
-    let mut resets_width = 6usize;
-    for row in &display_rows {
-        name_width = name_width.max(row.name.chars().count());
-        non_weekly_width = non_weekly_width.max(row.non_weekly.chars().count());
-        non_weekly_left_width = non_weekly_left_width.max(row.non_weekly_left.chars().count());
-        weekly_width = weekly_width.max(row.weekly.chars().count());
-        weekly_left_width = weekly_left_width.max(row.weekly_left.chars().count());
-        reset_width = reset_width.max(row.reset.chars().count());
-        resets_width = resets_width.max(row.resets.chars().count());
-    }
-
-    let header = format!(
-        "{:<name_width$}  {:>non_weekly_width$}  {:>non_weekly_left_width$}  {:>weekly_width$}  {:>weekly_left_width$}  {:<reset_width$}  {:>resets_width$}",
-        "Name", non_weekly_header, "Left", "Weekly", "Left", "Reset", "Resets"
-    );
-    println!("{header}");
-    println!("{}", "-".repeat(header.chars().count()));
-
-    for row in display_rows {
-        let name = ansi::format_name_cell(&row.name, name_width, row.is_current, None);
-        let non_weekly = ansi::format_percent_cell(&row.non_weekly, non_weekly_width, None);
-        let weekly = ansi::format_percent_cell(&row.weekly, weekly_width, None);
-        println!(
-            "{}  {}  {:>non_weekly_left_width$}  {}  {:>weekly_left_width$}  {:<reset_width$}  {:>resets_width$}",
-            name, non_weekly, row.non_weekly_left, weekly, row.weekly_left, row.reset, row.resets,
-        );
-    }
-
-    if let Some(update_time) = update_time {
-        println!();
-        println!("Last update: {update_time}");
-    }
-}
-
-struct TableDisplayRow {
-    is_current: bool,
-    name: String,
-    non_weekly: String,
-    non_weekly_left: String,
-    weekly: String,
-    weekly_left: String,
-    reset: String,
-    resets: String,
-}
-
-fn emit_async_debug(
-    debug_mode: bool,
-    secret_files: &[PathBuf],
-    stderr_map: &std::collections::HashMap<String, String>,
-) {
-    if !debug_mode {
-        return;
-    }
-
-    let mut printed = false;
-    for secret_file in secret_files {
-        let secret_name = secret_file
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("")
-            .to_string();
-        if let Some(err) = stderr_map.get(&secret_name) {
-            if err.is_empty() {
-                continue;
-            }
-            if !printed {
-                printed = true;
-                eprintln!();
-                eprintln!("codex-rate-limits-async: per-account stderr (captured):");
-            }
-            let _ = secret_name;
-            eprintln!("---- account stderr ----");
-            eprintln!("{err}");
-        }
-    }
-}
-
-fn watch_max_rounds_for_test() -> Option<u64> {
-    std::env::var("CODEX_RATE_LIMITS_WATCH_MAX_ROUNDS")
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-}
-
-fn watch_interval_seconds() -> u64 {
-    std::env::var("CODEX_RATE_LIMITS_WATCH_INTERVAL_SECONDS")
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(WATCH_INTERVAL_SECONDS)
-}
-
-fn format_watch_update_time(now_epoch: i64) -> String {
-    render::format_epoch_local(now_epoch, "%Y-%m-%d %H:%M:%S %:z")
-        .unwrap_or_else(|| now_epoch.to_string())
+    driver::collect_async_text_targets(&CODEX_SPEC, &secret_dir)
 }
 
 fn async_fetch_one_line(
@@ -1782,23 +893,13 @@ fn format_one_line_output(
     weekly_remaining: Option<i64>,
     weekly_reset_epoch: Option<i64>,
 ) -> Option<String> {
-    let mut parts = Vec::new();
-    if let (Some(label), Some(remaining)) = (non_weekly_label, non_weekly_remaining) {
-        parts.push(format!("{label}:{remaining}%"));
-    }
-    if let Some(remaining) = weekly_remaining {
-        parts.push(format!("W:{remaining}%"));
-        if let Some(reset_epoch) = weekly_reset_epoch {
-            parts.push(
-                render::format_epoch_local_datetime(reset_epoch).unwrap_or_else(|| "?".to_string()),
-            );
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join(" "))
-}
-
-fn normalize_one_line(line: String) -> String {
-    line.replace(['\n', '\r', '\t'], " ")
+    shared_values::format_one_line_output(
+        non_weekly_label,
+        non_weekly_remaining,
+        weekly_remaining,
+        weekly_reset_epoch,
+        render::format_epoch_local_datetime,
+    )
 }
 
 fn sync_auth_silent() -> Result<(i32, Option<String>)> {
@@ -1844,127 +945,6 @@ fn maybe_sync_all_mode_auth_silent(debug_mode: bool) {
             }
         }
     }
-}
-
-fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -> Result<i32> {
-    let secret_dir = crate::paths::resolve_secret_dir().unwrap_or_default();
-    if !secret_dir.is_dir() {
-        eprintln!(
-            "codex-rate-limits: CODEX_SECRET_DIR not found: {}",
-            secret_dir.display()
-        );
-        return Ok(1);
-    }
-
-    let mut secret_files: Vec<PathBuf> = std::fs::read_dir(&secret_dir)?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
-        .collect();
-
-    if secret_files.is_empty() {
-        eprintln!(
-            "codex-rate-limits: no secrets found in {}",
-            secret_dir.display()
-        );
-        return Ok(1);
-    }
-
-    secret_files.sort();
-
-    let current_name = current_secret_basename(&secret_files);
-
-    let total = secret_files.len();
-    let progress = if total > 1 {
-        Some(Progress::new(
-            total as u64,
-            ProgressOptions::default()
-                .with_prefix("codex-rate-limits ")
-                .with_finish(ProgressFinish::Clear),
-        ))
-    } else {
-        None
-    };
-
-    let mut rc = 0;
-    let mut rows: Vec<Row> = Vec::new();
-    let mut window_labels = std::collections::HashSet::new();
-
-    for secret_file in secret_files {
-        let secret_name = secret_file
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("")
-            .to_string();
-        if let Some(progress) = &progress {
-            progress.set_message(secret_name.clone());
-        }
-
-        let mut row = Row::empty(secret_name.trim_end_matches(".json").to_string());
-        let one_line = single_one_line(&secret_file, cached_mode, args.no_refresh_auth, debug_mode)
-            .unwrap_or_default();
-        row.reset_credits_available = one_line.reset_credits_available;
-        let output = one_line.line.unwrap_or_default();
-
-        if output.is_empty() {
-            if !cached_mode && !one_line.no_window {
-                rc = 1;
-            }
-            if one_line.no_window {
-                row.state = RowState::NoWindow;
-            }
-            rows.push(row);
-            continue;
-        }
-
-        if let Some(parsed) = parse_one_line_output(&output) {
-            row.window_label = parsed.window_label.clone().unwrap_or_default();
-            row.non_weekly_remaining = parsed.non_weekly_remaining.unwrap_or(-1);
-            row.weekly_remaining = parsed.weekly_remaining.unwrap_or(-1);
-            row.weekly_reset_iso = parsed.weekly_reset_iso.clone();
-
-            if cached_mode {
-                if let Ok(cache_entry) = cache::read_cache_entry_for_cached_mode(&secret_file) {
-                    row.non_weekly_reset_epoch = cache_entry.non_weekly_reset_epoch;
-                    row.weekly_reset_epoch = cache_entry.weekly_reset_epoch;
-                }
-            } else {
-                let values = crate::json::read_json(&secret_file).ok();
-                if let Some(values) = values {
-                    row.non_weekly_reset_epoch = crate::json::i64_at(
-                        &values,
-                        &["codex_rate_limits", "non_weekly_reset_at_epoch"],
-                    );
-                    row.weekly_reset_epoch = crate::json::i64_at(
-                        &values,
-                        &["codex_rate_limits", "weekly_reset_at_epoch"],
-                    );
-                }
-            }
-
-            if !row.window_label.is_empty() {
-                window_labels.insert(row.window_label.clone());
-            }
-            rows.push(row);
-        } else {
-            if !cached_mode {
-                rc = 1;
-            }
-            rows.push(row);
-        }
-
-        if let Some(progress) = &progress {
-            progress.inc(1);
-        }
-    }
-
-    if let Some(progress) = progress {
-        progress.finish_and_clear();
-    }
-
-    render_all_accounts_table(rows, &window_labels, current_name.as_deref(), None);
-
-    Ok(rc)
 }
 
 pub(crate) fn current_secret_basename(secret_files: &[PathBuf]) -> Option<String> {
@@ -2207,13 +1187,7 @@ fn run_single_mode(
             raw_usage: Some(project_safe_usage_json(&usage.json)),
             error: None,
         };
-        diag_output::emit_json(&RateLimitSingleEnvelope {
-            schema_version: DIAG_SCHEMA_VERSION.to_string(),
-            command: DIAG_COMMAND.to_string(),
-            mode: "single".to_string(),
-            ok: true,
-            result,
-        })?;
+        emit_single_envelope(true, result)?;
         return Ok(0);
     }
 
@@ -2259,13 +1233,7 @@ fn emit_single_no_window(
             let mut result = collect_json_from_cache(target_file, "cache-fallback", false);
             result.reset_credits = reset_credits.clone();
             let ok = result.ok;
-            diag_output::emit_json(&RateLimitSingleEnvelope {
-                schema_version: DIAG_SCHEMA_VERSION.to_string(),
-                command: DIAG_COMMAND.to_string(),
-                mode: "single".to_string(),
-                ok,
-                result,
-            })?;
+            emit_single_envelope(ok, result)?;
             return Ok(0);
         }
 
@@ -2309,13 +1277,7 @@ fn emit_single_no_window(
 
     if output_json {
         let result = json_result_no_window(target_file, reset_credits);
-        diag_output::emit_json(&RateLimitSingleEnvelope {
-            schema_version: DIAG_SCHEMA_VERSION.to_string(),
-            command: DIAG_COMMAND.to_string(),
-            mode: "single".to_string(),
-            ok: true,
-            result,
-        })?;
+        emit_single_envelope(true, result)?;
         return Ok(0);
     }
 
@@ -2493,96 +1455,6 @@ fn env_timeout(key: &str, default: u64) -> u64 {
         .ok()
         .and_then(|raw| raw.parse::<u64>().ok())
         .unwrap_or(default)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RowState {
-    /// No value available (genuine fetch failure with no cache to fall back to).
-    Missing,
-    /// Fresh live (or within-TTL cache) values.
-    Filled,
-    /// Last-known values served from cache past the freshness TTL.
-    Stale,
-    /// Backend reported no active rate-limit window and no cache was available.
-    NoWindow,
-}
-
-struct Row {
-    name: String,
-    window_label: String,
-    non_weekly_remaining: i64,
-    non_weekly_reset_epoch: Option<i64>,
-    weekly_remaining: i64,
-    weekly_reset_epoch: Option<i64>,
-    weekly_reset_iso: String,
-    reset_credits_available: Option<i64>,
-    state: RowState,
-}
-
-impl Row {
-    fn empty(name: String) -> Self {
-        Self {
-            name,
-            window_label: String::new(),
-            non_weekly_remaining: -1,
-            non_weekly_reset_epoch: None,
-            weekly_remaining: -1,
-            weekly_reset_epoch: None,
-            weekly_reset_iso: String::new(),
-            reset_credits_available: None,
-            state: RowState::Missing,
-        }
-    }
-
-    fn sort_key(&self) -> (i32, i64, String) {
-        if let Some(epoch) = self.weekly_reset_epoch {
-            (0, epoch, self.name.clone())
-        } else {
-            (1, i64::MAX, self.name.clone())
-        }
-    }
-}
-
-struct ParsedOneLine {
-    window_label: Option<String>,
-    non_weekly_remaining: Option<i64>,
-    weekly_remaining: Option<i64>,
-    weekly_reset_iso: String,
-}
-
-fn parse_one_line_output(line: &str) -> Option<ParsedOneLine> {
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let weekly_index = parts.iter().position(|part| part.starts_with("W:"));
-    let weekly_remaining = weekly_index.and_then(|index| {
-        parts[index]
-            .trim_start_matches("W:")
-            .trim_end_matches('%')
-            .parse::<i64>()
-            .ok()
-    });
-    let non_weekly = parts.iter().enumerate().find_map(|(index, part)| {
-        if Some(index) == weekly_index || !part.ends_with('%') || !part.contains(':') {
-            return None;
-        }
-        let (label, remaining) = part.split_once(':')?;
-        let remaining = remaining.trim_end_matches('%').parse::<i64>().ok()?;
-        Some((label.trim_matches('"').to_string(), remaining))
-    });
-    let weekly_reset_iso = weekly_index
-        .map(|index| parts[index + 1..].join(" "))
-        .unwrap_or_default();
-    if weekly_remaining.is_none() && non_weekly.is_none() {
-        return None;
-    }
-    Some(ParsedOneLine {
-        window_label: non_weekly.as_ref().map(|(label, _)| label.clone()),
-        non_weekly_remaining: non_weekly.map(|(_, remaining)| remaining),
-        weekly_remaining,
-        weekly_reset_iso,
-    })
 }
 
 #[cfg(test)]

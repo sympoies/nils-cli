@@ -85,6 +85,8 @@ mod rate_limits_async;
 mod rate_limits_client;
 #[path = "integration/rate_limits_client_more.rs"]
 mod rate_limits_client_more;
+#[path = "integration/rate_limits_golden.rs"]
+mod rate_limits_golden;
 #[path = "integration/rate_limits_network.rs"]
 mod rate_limits_network;
 #[path = "integration/rate_limits_render.rs"]

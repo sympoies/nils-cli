@@ -1,6 +1,9 @@
 use chrono::{Local, TimeZone};
 use serde_json::Value;
 
+pub use nils_common::rate_limits::values::format_until_epoch_compact;
+pub use nils_common::rate_limits::{WeeklyValues, WindowValues};
+
 pub struct UsageData {
     pub primary: Option<Window>,
     pub secondary: Option<Window>,
@@ -12,21 +15,9 @@ pub struct Window {
     pub reset_at: i64,
 }
 
-#[derive(Clone, Debug)]
-pub struct WindowValues {
-    pub label: String,
-    pub remaining: i64,
-    pub reset_epoch: i64,
-}
-
 pub struct RenderValues {
     pub primary: Option<WindowValues>,
     pub secondary: Option<WindowValues>,
-}
-
-pub struct WeeklyValues {
-    pub weekly: Option<WindowValues>,
-    pub non_weekly: Option<WindowValues>,
 }
 
 pub fn parse_usage(json: &Value) -> Option<UsageData> {
@@ -147,26 +138,6 @@ pub fn format_epoch_local_datetime_with_offset(epoch: i64) -> Option<String> {
 pub fn format_epoch_local(epoch: i64, fmt: &str) -> Option<String> {
     let dt = Local.timestamp_opt(epoch, 0).single()?;
     Some(dt.format(fmt).to_string())
-}
-
-pub fn format_until_epoch_compact(target_epoch: i64, now_epoch: i64) -> Option<String> {
-    if target_epoch <= 0 || now_epoch <= 0 {
-        return None;
-    }
-    let remaining = target_epoch - now_epoch;
-    if remaining <= 0 {
-        return Some(format!("{:>2}h {:>2}m", 0, 0));
-    }
-
-    if remaining >= 86_400 {
-        let days = remaining / 86_400;
-        let hours = (remaining % 86_400) / 3_600;
-        return Some(format!("{:>2}d {:>2}h", days, hours));
-    }
-
-    let hours = remaining / 3_600;
-    let minutes = (remaining % 3_600) / 60;
-    Some(format!("{:>2}h {:>2}m", hours, minutes))
 }
 
 fn remaining_percent(used_percent: f64) -> i64 {
