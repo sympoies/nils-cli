@@ -38,7 +38,7 @@ const CATALOG_TTL: Duration = Duration::from_secs(30);
 const LATEST_PREVIEW_PAGE_MAX_BYTES: usize = 16 * 1024 * 1024;
 const LATEST_PREVIEW_SESSION_MAX_BYTES: usize = 1024 * 1024;
 const LATEST_PREVIEW_CACHE_MAX_ENTRIES: usize = 1024;
-const REVERSE_MESSAGE_MAX_BYTES: u64 = 16 * 1024 * 1024;
+const REVERSE_MESSAGE_MAX_BYTES: u64 = MAX_IMAGE_RECORD_BYTES as u64 + 1;
 const REVERSE_MESSAGE_CHUNK_BYTES: usize = 64 * 1024;
 const INCREMENTAL_CONTINUITY_BYTES: u64 = 256;
 const INCREMENTAL_OVERLAP_SEARCH_BYTES: u64 = 4 * 1024 * 1024;
@@ -2034,19 +2034,27 @@ fn read_messages_incremental_from_reader<R: Read + Seek>(
         .rposition(|byte| *byte == b'\n')
         .map_or(0, |index| index + 1);
     if complete == 0 {
-        if !discarding_oversized_line
-            && session.provider == "codex"
-            && bytes.len() > MAX_LINE_BYTES
-            && let Some((line, next_offset)) =
-                read_compacted_image_line(reader, file_len, offset, &bytes)?
+        if !discarding_oversized_line && session.provider == "codex" && bytes.len() > MAX_LINE_BYTES
         {
-            let mut messages = Vec::new();
-            push_incremental_message(session, &line, &mut messages);
-            return Ok(IncrementalReaderPage {
-                messages,
-                next_offset,
-                discarding_oversized_line: false,
-            });
+            match read_compacted_image_line(reader, file_len, offset, &bytes)? {
+                ImageLineRead::Complete(line, next_offset) => {
+                    let mut messages = Vec::new();
+                    push_incremental_message(session, &line, &mut messages);
+                    return Ok(IncrementalReaderPage {
+                        messages,
+                        next_offset,
+                        discarding_oversized_line: false,
+                    });
+                }
+                ImageLineRead::Incomplete => {
+                    return Ok(IncrementalReaderPage {
+                        messages: Vec::new(),
+                        next_offset: offset,
+                        discarding_oversized_line: false,
+                    });
+                }
+                ImageLineRead::Unsupported => {}
+            }
         }
         let oversized = discarding_oversized_line || bytes.len() > MAX_LINE_BYTES;
         return Ok(IncrementalReaderPage {
@@ -2079,12 +2087,18 @@ fn read_messages_incremental_from_reader<R: Read + Seek>(
     })
 }
 
+enum ImageLineRead {
+    Complete(Vec<u8>, u64),
+    Incomplete,
+    Unsupported,
+}
+
 fn read_compacted_image_line<R: Read + Seek>(
     reader: &mut R,
     file_len: u64,
     offset: u64,
     initial: &[u8],
-) -> Result<Option<(Vec<u8>, u64)>, HistoryError> {
+) -> Result<ImageLineRead, HistoryError> {
     let mut raw = initial.to_vec();
     let mut position = offset.saturating_add(initial.len() as u64);
     reader
@@ -2095,7 +2109,11 @@ fn read_compacted_image_line<R: Read + Seek>(
             .saturating_sub(position)
             .min((MAX_IMAGE_RECORD_BYTES + 1 - raw.len()) as u64);
         if remaining == 0 {
-            return Ok(None);
+            return Ok(if raw.len() > MAX_IMAGE_RECORD_BYTES {
+                ImageLineRead::Unsupported
+            } else {
+                ImageLineRead::Incomplete
+            });
         }
         let mut chunk = vec![0; remaining.min(REVERSE_MESSAGE_CHUNK_BYTES as u64) as usize];
         reader
@@ -2105,12 +2123,15 @@ fn read_compacted_image_line<R: Read + Seek>(
         if let Some(end) = chunk.iter().position(|byte| *byte == b'\n') {
             raw.extend_from_slice(&chunk[..end]);
             if raw.len() > MAX_IMAGE_RECORD_BYTES {
-                return Ok(None);
+                return Ok(ImageLineRead::Unsupported);
             }
             let Some(line) = crate::provider_prompt::compact_prompt_line(&raw) else {
-                return Ok(None);
+                return Ok(ImageLineRead::Unsupported);
             };
-            return Ok(Some((line, position - chunk.len() as u64 + end as u64 + 1)));
+            return Ok(ImageLineRead::Complete(
+                line,
+                position - chunk.len() as u64 + end as u64 + 1,
+            ));
         }
         raw.extend_from_slice(&chunk);
     }
@@ -3921,6 +3942,57 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
     }
 
     #[test]
+    fn incremental_image_prompt_waits_for_the_completed_record() {
+        let session = history_session("partial-image", "2026-09-09T00:00:00Z");
+        let image = "A".repeat(MAX_LINE_BYTES + 128);
+        let row = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "Prompt before image finishes" },
+                    { "type": "input_image", "image_url": format!("data:image/png;base64,{image}") }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text", "user.image"]
+                }
+            }
+        });
+        let mut bytes = serde_json::to_vec(&row).unwrap();
+        let partial_len = (MAX_LINE_BYTES + 1) as u64;
+        let mut reader = Cursor::new(bytes.clone());
+        let partial = read_messages_incremental_from_reader(
+            &session,
+            &mut reader,
+            partial_len,
+            0,
+            MAX_LINE_BYTES + 1,
+            false,
+        )
+        .unwrap();
+        assert!(partial.messages.is_empty());
+        assert_eq!(partial.next_offset, 0);
+        assert!(!partial.discarding_oversized_line);
+
+        bytes.push(b'\n');
+        let complete_len = bytes.len() as u64;
+        reader = Cursor::new(bytes);
+        let complete = read_messages_incremental_from_reader(
+            &session,
+            &mut reader,
+            complete_len,
+            partial.next_offset,
+            MAX_LINE_BYTES + 1,
+            partial.discarding_oversized_line,
+        )
+        .unwrap();
+        assert_eq!(complete.messages.len(), 1);
+        assert_eq!(complete.messages[0].text, "Prompt before image finishes");
+        assert_eq!(complete.next_offset, complete_len);
+    }
+
+    #[test]
     fn reverse_image_page_handles_a_near_limit_record() {
         let session = history_session("large-image", "2026-09-09T00:00:00Z");
         let image = "A".repeat(MAX_IMAGE_RECORD_BYTES - 4096);
@@ -3953,6 +4025,56 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         .unwrap();
         assert_eq!(page.messages.len(), 1);
         assert_eq!(page.messages[0].text, "Near limit text");
+    }
+
+    #[test]
+    fn reverse_image_page_handles_exact_limit_with_newline() {
+        let session = history_session("exact-image", "2026-09-09T00:00:00Z");
+        let row = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "Exact limit text" },
+                    { "type": "input_image", "image_url": "data:image/png;base64," }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text", "user.image"]
+                }
+            }
+        });
+        let base = serde_json::to_vec(&row).unwrap();
+        let image = "A".repeat(MAX_IMAGE_RECORD_BYTES - base.len());
+        let mut bytes = serde_json::to_vec(&serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "Exact limit text" },
+                    { "type": "input_image", "image_url": format!("data:image/png;base64,{image}") }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text", "user.image"]
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(bytes.len(), MAX_IMAGE_RECORD_BYTES);
+        bytes.push(b'\n');
+        let mut reader = Cursor::new(bytes.clone());
+        let page = read_messages_reverse_from_reader(
+            &session,
+            &mut reader,
+            bytes.len() as u64,
+            None,
+            20,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(page.messages.len(), 1);
+        assert_eq!(page.messages[0].text, "Exact limit text");
     }
 
     #[test]
