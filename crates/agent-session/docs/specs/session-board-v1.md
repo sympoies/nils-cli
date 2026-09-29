@@ -9,6 +9,9 @@
   retention, and the query route in [Aggregator query contract](#aggregator-query-contract).
 - Program key: `agent-console-board-2026-09`, item A0. Implementation items A1
   (local projection), A2 (closed ledger), and A5 (CLI) follow this contract.
+  A5 ships in two steps: A5a is the CLI with local mode only, and A5b adds the
+  daemon relay route and relay mode. Until A5b, every `agent-session board`
+  run is local mode and reports `data.mode: local`.
 - Code placement: board projection, ledger, relay, and CLI code lives in its
   own module (`crates/agent-session/src/board.rs` or a `board/` directory),
   not in `serve.rs` or `lib.rs`. Those files only register routes and the

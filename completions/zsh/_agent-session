@@ -93,6 +93,20 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(board)
+_arguments "${_arguments_options[@]}" : \
+'--state=[Only records in this state\: live, stopped, closed, or all]:STATE:_default' \
+'--since=[Only stopped rows updated, and closed rows closed, within this window (\`<n>\` with unit m, h, d, w, or mo). Defaults to, and is clamped to, the source'\''s retention]:DURATION:_default' \
+'--repo=[Only records whose repository name matches exactly]:NAME:_default' \
+'--machine=[Only records from this machine]:NAME:_default' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
 (command)
 _arguments "${_arguments_options[@]}" : \
 '--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
@@ -841,6 +855,7 @@ _agent-session_commands() {
 'start:Start an interactive tmux-backed agent session' \
 'run:Run a one-shot agent task in a tmux session and write output to a log file' \
 'list:List recorded agent sessions' \
+'board:Show which sessions exist, where they run, and what they are doing, including recently closed ones (session board v1)' \
 'command:Print the attach command for a session' \
 'attach:Attach to a tmux session from the current terminal' \
 'logs:Print captured tmux pane output or a one-shot run log' \
@@ -908,6 +923,11 @@ _agent-session__subcmd__activity__subcmd__status_commands() {
 _agent-session__subcmd__attach_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session attach commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__board_commands] )) ||
+_agent-session__subcmd__board_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session board commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__broker_commands] )) ||
 _agent-session__subcmd__broker_commands() {

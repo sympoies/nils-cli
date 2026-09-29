@@ -46,6 +46,7 @@ documented here.
 agent-session start --agent codex --cwd ~/Project/foo --prompt-file prompt.md
 agent-session start --agent hermes --cwd ~
 agent-session list
+agent-session board --state live --since 3d --format json   # who else is working (session board v1)
 agent-session glance <id> --tail 40
 agent-session send <id> --text yes --key enter
 agent-session send <id> --key c-c
