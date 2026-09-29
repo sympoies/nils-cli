@@ -16,6 +16,10 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /healthz` | Open | This specification |
 | `GET /board/v1` | Bearer; only with `serve --board` or `AGENT_SESSION_BOARD=1` | [Session board v1](session-board-v1.md#daemon-local-snapshot) |
 | `GET /board/closed/v1` | Bearer; only with `serve --board` or `AGENT_SESSION_BOARD=1` | [Session board v1](session-board-v1.md#closed-session-ledger) |
+| `GET /shells/{owner}` | Bearer | [Emergency shells](#emergency-shells) |
+| `POST /shells/{owner}` | Bearer | [Emergency shells](#emergency-shells) |
+| `DELETE /shells/{owner}` | Bearer + incarnation body | [Emergency shells](#emergency-shells) |
+| `GET /shells/{owner}/attach?incarnation=...` | Bearer + incarnation query | [Emergency shells](#emergency-shells) |
 | `GET /sessions` | Open | This specification |
 | `POST /sessions` | Bearer | This specification |
 | `GET /history/sessions` | Bearer | This specification |
@@ -1219,3 +1223,41 @@ nullable `reply_to`, nullable `expires_in`, nullable `reply_revision`.
 Federated routes never accept operator authority as a substitute for source
 session capability. Disabled federation rejects remote submission/discovery and
 receipt ingress; retained source delivery status remains queryable locally.
+
+## Emergency shells
+
+These authenticated routes are separate from provider sessions. The trusted edge
+supplies a stable principal `owner`, matching `[a-z0-9][a-z0-9._-]{0,63}`. The
+machine bearer grants operator authority to select an owner; clients must never
+choose one through an untrusted body or query. Principal separation is an edge
+routing contract, not an OS sandbox: principals sharing the daemon UID are
+mutually trusted and share filesystem, process and tmux permissions.
+
+GET reports status without starting a runtime. POST explicitly ensures one fixed
+`ac-shell-<owner>` tmux session running `zsh -il` in the daemon user's home. Dots
+and underscores in the owner are escaped as `_2e` and `_5f`. Concurrent opens are
+serialized by an owner file lock; existing sessions are reused. The initial
+session environment binds a unique incarnation atomically at creation, allowing
+recovery after an interrupted state write. Runtime state lives under
+`<state-dir>/emergency-shell`, outside provider session inventory/history.
+
+Successful responses use the usual envelope with `data.shell`:
+
+```json
+{"schema_version":"agent-session.shell.v1","owner":"alice","status":"running","incarnation":"<uuid>","tmux_name":"ac-shell-alice"}
+```
+
+Stopped status has `incarnation: null`. DELETE requires a JSON body containing
+`incarnation` and terminates only that current incarnation. A stale fence yields
+`shell-incarnation-conflict`. If already stopped, DELETE returns stopped status.
+A conflicting preexisting fixed tmux name fails closed rather than being adopted
+or killed. `exit` ends the shell; only a later POST recreates it.
+
+Attach requires the current incarnation and uses the existing binary PTY replay
+and live output protocol. Text, lowercase special `key`/`keys`, and bounded
+`resize` frames are supported. Every input and resize checks the owner/runtime;
+pipe setup, snapshot capture and pipe teardown also check the incarnation.
+Disconnect only releases terminal transport, preserving tmux, cwd and commands.
+Provider prompt subscriptions report unsupported. Shells do not participate in
+provider resume, retitle, accounts, voice or history. This interface requires
+working daemon and network access; it is not an independent recovery channel.

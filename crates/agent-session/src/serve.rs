@@ -77,6 +77,9 @@ use crate::{
     update_session_title_if_revision, write_session_record,
 };
 
+#[path = "serve_shell.rs"]
+mod shell;
+
 const ATTACH_LIVE_FIFO_NAME: &str = "attach-live.fifo";
 const ATTACH_BROADCAST_CAPACITY: usize = 128;
 const ATTACH_PIPE_STARTUP_GRACE: Duration = Duration::from_secs(2);
@@ -1204,6 +1207,11 @@ fn router(state: Arc<ServeState>) -> Router {
             "/sessions/{id}/messages/{message_id}/delivery/v1",
             get(remote_delivery_handler),
         )
+        .route(
+            "/shells/{owner}",
+            get(shell::status).post(shell::open).delete(shell::close),
+        )
+        .route("/shells/{owner}/attach", get(shell::attach))
         .route("/healthz", get(healthz))
         .route("/board/v1", get(board_snapshot_handler))
         .route("/board/closed/v1", get(board_closed_handler))
@@ -2510,6 +2518,10 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         "rate-limited" | "retitle-provider-rate-limited" => StatusCode::TOO_MANY_REQUESTS,
         "wait-timeout" | "retitle-provider-timeout" => StatusCode::REQUEST_TIMEOUT,
         "session-exists"
+        | "shell-incarnation-conflict"
+        | "shell-not-running"
+        | "shell-name-conflict"
+        | "shell-runtime-changed"
         | "title-revision-conflict"
         | "title-state-conflict"
         | "session-incarnation-conflict"
@@ -9886,6 +9898,7 @@ struct AttachBrokerGeneration {
 }
 
 struct AttachBroker {
+    shell_binding: Option<(CliContext, crate::SessionRecord)>,
     target: String,
     fifo_path: PathBuf,
     tmux: PathBuf,
@@ -10413,7 +10426,19 @@ impl AttachBrokerRegistry {
         let slot = {
             let mut entries = self.entries.lock().await;
             entries
-                .entry(record.id.clone())
+                .entry(if record.agent == "shell" {
+                    format!(
+                        "shell:{}",
+                        record
+                            .extra
+                            .get("emergency_shell")
+                            .and_then(|v| v.get("owner"))
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| io::Error::other("shell owner is missing"))?
+                    )
+                } else {
+                    record.id.clone()
+                })
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(AttachBrokerSlot::default())))
                 .clone()
         };
@@ -10426,7 +10451,7 @@ impl AttachBrokerRegistry {
         }
 
         let registry_fence = SessionRegistryFence::from_record(record);
-        let target = format!("{}:0.0", record.tmux_session);
+        let target = attach_pane_target(record);
         if let Some(active) = slot_state.active.as_mut()
             && active.broker.target == target
             && active.registry_fence == registry_fence
@@ -10533,14 +10558,39 @@ impl AttachBroker {
     where
         F: FnOnce(&Path) -> io::Result<tokio::io::unix::AsyncFd<std::fs::File>>,
     {
-        let target = format!("{}:0.0", record.tmux_session);
+        let target = attach_pane_target(record);
         let fifo_path = session_dir(context, &record.id).join(ATTACH_LIVE_FIFO_NAME);
         create_private_fifo(&fifo_path)?;
         let mut fifo_cleanup = AttachFifoCleanup::new(fifo_path.clone());
         let fifo = open_fifo(&fifo_path)?;
 
         let (sender, receiver) = tokio::sync::broadcast::channel(ATTACH_BROADCAST_CAPACITY);
-        enable_tmux_pipe(tmux, &target, &fifo_path).await?;
+        if record.agent == "shell" {
+            let context = context.clone();
+            let tmux = tmux.to_path_buf();
+            let record = record.clone();
+            let target = target.clone();
+            let fifo = fifo_path.clone();
+            tokio::task::spawn_blocking(move || {
+                shell::terminal_command(
+                    &context,
+                    &tmux,
+                    &record,
+                    &[
+                        "pipe-pane",
+                        "-t",
+                        &target,
+                        &format!("cat > {}", shell_words::quote(&fifo.to_string_lossy())),
+                    ],
+                )
+                .map(|_| ())
+                .map_err(|e| io::Error::other(e.message().to_string()))
+            })
+            .await
+            .map_err(io::Error::other)??;
+        } else {
+            enable_tmux_pipe(tmux, &target, &fifo_path).await?;
+        }
 
         let reader_sender = sender.clone();
         let closed = Arc::new(AtomicBool::new(false));
@@ -10552,6 +10602,7 @@ impl AttachBroker {
         fifo_cleanup.disarm();
         Ok((
             Self {
+                shell_binding: (record.agent == "shell").then(|| (context.clone(), record.clone())),
                 target,
                 fifo_path,
                 tmux: tmux.to_path_buf(),
@@ -10565,7 +10616,16 @@ impl AttachBroker {
     }
 
     async fn stop(self) {
-        let _ = close_tmux_pipe(&self.tmux, &self.target).await;
+        if let Some((context, record)) = self.shell_binding {
+            let tmux = self.tmux.clone();
+            let target = self.target.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                shell::terminal_command(&context, &tmux, &record, &["pipe-pane", "-t", &target])
+            })
+            .await;
+        } else {
+            let _ = close_tmux_pipe(&self.tmux, &self.target).await;
+        }
         let mut reader_task = self.reader_task;
         if tokio::time::timeout(ATTACH_READER_STOP_TIMEOUT, &mut reader_task)
             .await
@@ -10820,7 +10880,29 @@ async fn capture_attach_snapshot_with_timeout(
 ) -> io::Result<Option<String>> {
     let tmux = tmux.to_path_buf();
     let tmux_session = record.tmux_session.clone();
+    let shell_record = (record.agent == "shell").then(|| record.clone());
     tokio::task::spawn_blocking(move || {
+        if let Some(record) = shell_record {
+            let context = shell::terminal_context(&record)
+                .map_err(|e| io::Error::other(e.message().to_string()))?;
+            return shell::terminal_command(
+                &context,
+                &tmux,
+                &record,
+                &[
+                    "capture-pane",
+                    "-p",
+                    "-e",
+                    "-J",
+                    "-t",
+                    &tmux_session,
+                    "-S",
+                    "-200",
+                ],
+            )
+            .map(|out| Some(String::from_utf8_lossy(&out.stdout).to_string()))
+            .map_err(|e| io::Error::other(e.message().to_string()));
+        }
         let mut command = ProcessCommand::new(&tmux);
         // -J joins tmux-wrapped rows back into logical lines (preserving the
         // trailing spaces at each join), so the attaching client's terminal
@@ -11000,12 +11082,30 @@ where
     )
 }
 
-async fn attach_socket(
+fn attach_pane_target(record: &crate::SessionRecord) -> String {
+    if record.agent == "shell" {
+        record.tmux_session.clone()
+    } else {
+        format!("{}:0.0", record.tmux_session)
+    }
+}
+
+async fn attach_socket(socket: WebSocket, state: Arc<ServeState>, record: crate::SessionRecord) {
+    attach_socket_inner(socket, state, record, None).await;
+}
+
+async fn attach_socket_inner(
     socket: WebSocket,
     state: Arc<ServeState>,
     mut record: crate::SessionRecord,
+    shell_record: Option<shell::ShellRecord>,
 ) {
-    let target = format!("{}:0.0", record.tmux_session);
+    let context = if shell_record.is_some() {
+        shell::context(&state)
+    } else {
+        state.context.clone()
+    };
+    let target = attach_pane_target(&record);
     let (sender, mut receiver) = socket.split();
     let (terminal_tx, terminal_rx) = mpsc::channel(ATTACH_TERMINAL_QUEUE_CAPACITY);
     let (control_tx, control_rx) = mpsc::channel(ATTACH_CONTROL_QUEUE_CAPACITY);
@@ -11021,7 +11121,7 @@ async fn attach_socket(
     // bytes may overlap; preserving every byte is preferable to a gap.
     let mut subscription = match state
         .attach_brokers
-        .subscribe(&state.context, &state.tmux_bin, &record)
+        .subscribe(&context, &state.tmux_bin, &record)
         .await
     {
         Ok(subscription) => subscription,
@@ -11170,6 +11270,11 @@ async fn attach_socket(
                 match message {
                     Message::Text(text) => {
                         if provider_prompt_subscription_requested(text.as_str()) {
+                            if shell_record.is_some() {
+                                let capability = ProviderPromptCapabilityState { supported:false, provider:None };
+                                if control_tx.send(Message::Text(provider_prompt_capability_frame(capability).into())).await.is_err() { break; }
+                                continue;
+                            }
                             if let Some(mut task) = provider_prompt_task.take() {
                                 task.abort();
                             }
@@ -11188,6 +11293,10 @@ async fn attach_socket(
                                     }),
                                 ));
                             }
+                            continue;
+                        }
+                        if let Some(shell) = &shell_record {
+                            if shell::input(state.clone(), shell.clone(), text.to_string()).await.is_err() { break; }
                             continue;
                         }
                         if let Err(err) = handle_input(
@@ -16295,7 +16404,11 @@ mod tests {
         .expect("retitle v3 operation did not reach terminal state")
     }
 
-    fn state(state_dir: &Path, token: Option<&str>, tmux_bin: PathBuf) -> Arc<ServeState> {
+    pub(super) fn state(
+        state_dir: &Path,
+        token: Option<&str>,
+        tmux_bin: PathBuf,
+    ) -> Arc<ServeState> {
         state_with_activity_broker(
             state_dir,
             token,
@@ -35824,6 +35937,40 @@ esac
             state.coordination_wait_workers.available_permits(),
             COORDINATION_WAIT_WORKER_LIMIT
         );
+    }
+
+    #[tokio::test]
+    async fn emergency_shell_routes_require_authentication() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let app = router(state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path())));
+        let (status, _) = call(app, get("/shells/alice")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        for uri in [
+            "/shells/alice/attach",
+            "/shells/alice/attach?incarnation=old",
+            "/shells/alice/attach?incarnation[]=bad",
+        ] {
+            let response = router(state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path())))
+                .oneshot(get(uri))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+    }
+
+    #[tokio::test]
+    async fn emergency_shell_status_does_not_create_a_runtime() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tmux = executable(
+            &tmp.path().join("tmux-stopped"),
+            "#!/bin/sh\nprintf 'no server running\\n' >&2\nexit 1\n",
+        );
+        let app = router(state(tmp.path(), Some(TOKEN), tmux));
+        let (status, body) = call(app, get_auth("/shells/alice", Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["shell"]["status"], "stopped");
+        assert_eq!(body["data"]["shell"]["owner"], "alice");
+        assert!(!tmp.path().join("sessions").exists());
     }
 
     fn test_record(id: &str, tmux_session: &str) -> crate::SessionRecord {

@@ -85,7 +85,7 @@ in `crates/*/src`.
 | `cargo-nextest` | CI-style test execution | `cargo install cargo-nextest --locked` |
 | `cargo-llvm-cov` | Coverage workflows | `cargo install cargo-llvm-cov --locked` |
 | Node.js >=18 | Separate-root HTTP federation integration/installed-artifact fixture (builtins only) | `brew install node` |
-| `zsh` | Required for `tests/zsh/completion.test.zsh` | `brew install zsh` |
+| `zsh` | Required for emergency `agent-session serve` shells and `tests/zsh/completion.test.zsh` | `brew install zsh` |
 | `python3` | `scripts/crates-io-status.sh`, `scripts/publish-crates.sh` | `brew install python` |
 | `bash`, `awk`, `sed` | CI helper scripts in `scripts/ci/` | Typically preinstalled |
 | `rg` (ripgrep) | Required by docs/CI audit scripts (for example `scripts/ci/docs-hygiene-audit.sh`) | `brew install ripgrep` |

@@ -536,3 +536,14 @@ Disabling all three federation values preserves local messaging and remote state
 Rollback may restore an older daemon for local operations: registry schemas and
 existing sessions stay unchanged. Retain `coordination/federation-journal.json`;
 pending remote deliveries pause until a federation-capable daemon resumes.
+
+## Emergency shell prerequisites
+
+Install `zsh` and `tmux` on hosts that expose emergency shells. Shell routes
+require the machine bearer, including status reads. The edge owns principal and
+machine authorization. Each principal keeps one fixed tmux session under the
+existing host account; sharing that account means sharing host permissions.
+Leaving a client detaches; an explicit fenced DELETE or `exit` stops the shell.
+See [the Shell contract](../specs/serve-api-v1.md#emergency-shells) for the wire
+protocol and fixed-name collision behavior. Daemon restarts preserve tmux but
+host/tmux restarts require a new explicit Open.
