@@ -125,9 +125,10 @@ assert_contains "$coverage_job" "TEST_CONTAINMENT_RESULT: \${{ needs.test_contai
   "coverage reads the parallel containment canaries' result"
 assert_contains "$coverage_job" "[ \"\${TEST_CONTAINMENT_RESULT}\" != \"success\" ]; then" \
   "coverage fails closed unless the parallel containment canaries succeeded"
-# Main pushes and canonical release branches (the only pull request runs the
-# tag gate trusts) keep the instrumented run that enforces the coverage floor.
-full_coverage_lane="FULL_COVERAGE_LANE: \${{ github.event_name == 'push' || startsWith(github.head_ref, 'chore/release-') }}"
+# Main pushes, merge-queue runs, and canonical release branches (the only pull
+# request runs the tag gate trusts) keep the instrumented run that enforces the
+# coverage floor: every green check a tag could be released from enforced it.
+full_coverage_lane="FULL_COVERAGE_LANE: \${{ github.event_name == 'push' || github.event_name == 'merge_group' || startsWith(github.head_ref, 'chore/release-') }}"
 macos_job="$(mktemp "${TMPDIR:-/tmp}/ci-macos-job.XXXXXX")"
 trap 'rm -f "$coverage_job" "$macos_job"' EXIT
 awk '/^  test_macos:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \

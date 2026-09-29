@@ -45,7 +45,8 @@ If a crate is intentionally internal-only, keep this standard for UX/testing qua
 4. Add tests for both human-readable and JSON contracts.
 5. Verify publish-readiness metadata and release order.
 6. Run local changed-scope validation before delivery; rely on GitHub required
-   checks for full workspace and coverage gates before merge.
+   checks for the full workspace gate before merge; the coverage floor is
+   enforced on merge-queue runs, `main` pushes, and release PRs.
 
 ## Crate Scaffold Rules
 

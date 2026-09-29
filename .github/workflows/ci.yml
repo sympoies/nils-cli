@@ -369,11 +369,11 @@ jobs:
     needs: changes
     runs-on: macos-14
     env:
-      # Main pushes and canonical release branches (the only pull request runs
-      # the tag gate trusts) run the instrumented tests that enforce the
-      # coverage floor. Other pull requests and merge groups run plain tests;
-      # main still enforces the floor after merge.
-      FULL_COVERAGE_LANE: ${{ github.event_name == 'push' || startsWith(github.head_ref, 'chore/release-') }}
+      # Main pushes, merge-queue runs (their commit becomes main, and a tag gate
+      # fallback may read its checks), and canonical release branches (the only
+      # pull request runs the tag gate trusts) run the instrumented tests that
+      # enforce the coverage floor. Other pull requests run plain tests.
+      FULL_COVERAGE_LANE: ${{ github.event_name == 'push' || github.event_name == 'merge_group' || startsWith(github.head_ref, 'chore/release-') }}
     permissions:
       contents: read
       checks: write
@@ -523,7 +523,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Same lane as test_macos: only that lane produces LCOV.
-      FULL_COVERAGE_LANE: ${{ github.event_name == 'push' || startsWith(github.head_ref, 'chore/release-') }}
+      FULL_COVERAGE_LANE: ${{ github.event_name == 'push' || github.event_name == 'merge_group' || startsWith(github.head_ref, 'chore/release-') }}
     permissions:
       actions: read
       contents: read
