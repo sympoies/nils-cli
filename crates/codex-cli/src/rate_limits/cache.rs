@@ -279,7 +279,8 @@ fn ensure_cache_within_display_age(target_file: &Path, entry: &CacheEntry) -> Re
     )
 }
 
-fn cache_ttl_seconds() -> u64 {
+/// Freshness TTL for cached rate-limit entries (`CODEX_RATE_LIMITS_CACHE_TTL`).
+pub fn cache_ttl_seconds() -> u64 {
     if let Ok(raw) = std::env::var("CODEX_RATE_LIMITS_CACHE_TTL")
         && let Some(value) = shared_env::parse_duration_seconds(&raw)
     {

@@ -6,6 +6,7 @@ const ROOT_AFTER_HELP: &str = "\
 EXAMPLES:
   codex-cli agent prompt 'Summarize this diff'
   codex-cli account reset-rate-limits --yes --idempotency-key <uuid> team.json
+  codex-cli account select --strategy default-with-capacity --format json
   codex-cli auth status --format json
   codex-cli prompt-segment status
   codex-cli completion zsh
@@ -88,6 +89,41 @@ pub enum AccountCommand {
         #[arg(value_name = "secret.json")]
         secret: Option<String>,
     },
+    /// Select a Codex profile by strategy and report per-profile capacity
+    Select {
+        /// Selection strategy
+        #[arg(long = "strategy", value_enum, value_name = "strategy")]
+        strategy: SelectStrategy,
+        /// Rotation origin for next-with-capacity (default: the current default profile)
+        #[arg(long = "after", value_name = "nick")]
+        after: Option<String>,
+        /// Never select this profile (repeatable)
+        #[arg(long = "exclude", value_name = "nick")]
+        exclude: Vec<String>,
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
+}
+
+/// `account select` strategy. Underscore spellings match the account-broker protocol.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum SelectStrategy {
+    #[value(name = "current-default", alias = "current_default")]
+    CurrentDefault,
+    #[value(name = "next-with-capacity", alias = "next_with_capacity")]
+    NextWithCapacity,
+    #[value(name = "default-with-capacity", alias = "default_with_capacity")]
+    DefaultWithCapacity,
+}
+
+impl From<SelectStrategy> for codex_cli::account::select::Strategy {
+    fn from(value: SelectStrategy) -> Self {
+        match value {
+            SelectStrategy::CurrentDefault => Self::CurrentDefault,
+            SelectStrategy::NextWithCapacity => Self::NextWithCapacity,
+            SelectStrategy::DefaultWithCapacity => Self::DefaultWithCapacity,
+        }
+    }
 }
 
 #[derive(Args)]

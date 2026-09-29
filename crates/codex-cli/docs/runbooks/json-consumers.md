@@ -6,6 +6,7 @@ This runbook covers service consumption of `codex-cli` JSON output for:
 
 - `diag rate-limits` (single/all/async)
 - `account reset-rate-limits`
+- `account select`
 - `auth login|use|save|remove|refresh|auto-refresh|status|current|sync|remote pull`
 - `prompt-segment status`
 - `agent run`
@@ -18,12 +19,14 @@ Codex-specific contract source:
 
 - `crates/codex-cli/docs/specs/codex-cli-diag-rate-limits-and-auth-json-contract-v1.md`
 - `crates/codex-cli/docs/specs/codex-cli-account-reset-rate-limits-json-contract-v1.md`
+- `crates/codex-cli/docs/specs/codex-cli-account-select-json-contract-v1.md`
 
 ## Provider-specific schema routing
 
 - `diag rate-limits` => `schema_version=codex-cli.diag.rate-limits.v1`
 - `account reset-rate-limits` =>
   `schema_version=codex-cli.account.reset-rate-limits.v1`
+- `account select` => `schema_version=codex-cli.account.select.v1`
 - `auth *` => `schema_version=codex-cli.auth.v1`
 - `prompt-segment status` => `schema_version=codex-cli.prompt-segment.v1`
 - `agent run` success/post-preflight result =>
@@ -78,6 +81,10 @@ Codex-specific contract source:
   `--yes` and a canonical lowercase UUID as `--idempotency-key`, then retain
   that UUID for retries of the same logical action. Never generate a new key for
   a retry whose result is unknown.
+- `account select` is read-only on profile secrets. On failure,
+  `error.details.candidates` still carries the per-profile capacity summary. An
+  agent-session account broker should treat `no-account-with-capacity` as
+  "no failover target" rather than as a transport error.
 
 ## Consumer checklist
 
@@ -92,6 +99,7 @@ Example commands:
 codex-cli diag rate-limits --format json alpha.json
 codex-cli diag rate-limits --all --format json
 codex-cli account reset-rate-limits --yes --idempotency-key 8ae96ff3-3425-4f4c-8772-b6fd61502868 --format json alpha.json
+codex-cli account select --strategy next-with-capacity --after alpha --exclude beta --format json
 codex-cli auth login --format json
 codex-cli auth login --format json --device-code
 codex-cli auth login --format json --api-key

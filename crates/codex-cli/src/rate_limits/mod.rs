@@ -1967,7 +1967,7 @@ fn run_all_mode(args: &RateLimitsOptions, cached_mode: bool, debug_mode: bool) -
     Ok(rc)
 }
 
-fn current_secret_basename(secret_files: &[PathBuf]) -> Option<String> {
+pub(crate) fn current_secret_basename(secret_files: &[PathBuf]) -> Option<String> {
     let auth_file = crate::paths::resolve_auth_file()?;
     if !auth_file.is_file() {
         return None;
