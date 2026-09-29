@@ -27,7 +27,7 @@ updates. The clock produces deterministic timestamps starting at
 
 `forge-cli` owns `issues/<number>.json`. Each record contains `number`,
 `title`, `body`, `labels`, `state` (`open` or `closed`), `close_reason`
-(`null`, `completed`, or `not-planned`), and `comments`. A comment contains
+(currently `null` for Local issue closes), and `comments`. A comment contains
 `id`, `body`, `author`, `created_at`, and `url`. Comment URLs use
 `local://<slug>/issues/<number>#comment-<id>`.
 

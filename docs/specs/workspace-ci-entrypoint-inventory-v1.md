@@ -102,7 +102,6 @@ records the keep/delete decision plus the active caller evidence.
 | `scripts/ci/markdownlint-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` docs-only and full passes |
 | `scripts/ci/nils-cli-checks-entrypoint.sh` | keep | `.github/workflows/ci.yml` `test` and `test_macos` jobs + `docs/runbooks/workspace-maintenance-reference.md` local-fast and CI/full commands |
 | `scripts/ci/nils-cli-local-fast.sh` | keep | `scripts/ci/nils-cli-checks-entrypoint.sh --local-fast` delegates changed-scope planning/execution here |
-| `scripts/ci/plan-bundle-validate.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` docs-only/full checks list + `project-verify-required-checks.sh` docs-only and full passes |
 | `scripts/ci/publish-order-audit.sh` | keep | `docs/runbooks/workspace-maintenance-reference.md` full checks list + `project-verify-required-checks.sh` step + `scripts/ci/tests/publish-order-audit.test.sh` |
 | `scripts/ci/release-tarball-third-party-audit.sh` | keep | `.github/workflows/release.yml` `build` job |
 | `scripts/ci/release-only-checks.sh` | keep | exact-base reduced lane in `.github/workflows/ci.yml` `test` and `test_macos` jobs + `scripts/ci/tests/release-workflow-contract.test.sh` |

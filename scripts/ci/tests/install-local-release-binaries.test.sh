@@ -133,6 +133,8 @@ assert_explicit_bins_build_exact_selection() {
   echo "== explicit --bin values drive cargo build =="
   local tmp
   tmp="$(mktemp -d)"
+  mkdir -p "$tmp/install"
+  printf 'old\n' >"$tmp/install/plan-issue"
   local output
   output="$(run_with_fake_tools "$tmp" --prefix "$tmp/install" --bin git-cli --bin semantic-commit)"
 
@@ -141,6 +143,7 @@ assert_explicit_bins_build_exact_selection() {
   assert_contains "$FUNCNAME" "$output" "install -m 0755 $tmp/repo/target/release/semantic-commit $tmp/install/"
   [[ -x "$tmp/install/git-cli" ]]
   [[ -x "$tmp/install/semantic-commit" ]]
+  [[ -f "$tmp/install/plan-issue" ]]
   rm -rf "$tmp"
   echo "ok"
 }
@@ -149,6 +152,11 @@ assert_default_inventory_builds_release_default_bins() {
   echo "== default inventory drives cargo build =="
   local tmp
   tmp="$(mktemp -d)"
+  mkdir -p "$tmp/install"
+  for retired in plan-issue plan-issue-local plan-tooling plan-archive; do
+    printf 'old\n' >"$tmp/install/$retired"
+  done
+  printf 'keep\n' >"$tmp/install/unrelated-tool"
   local output
   output="$(run_with_fake_tools "$tmp" --prefix "$tmp/install")"
 
@@ -160,6 +168,13 @@ assert_default_inventory_builds_release_default_bins() {
     exit 1
   fi
   [[ -x "$tmp/install/alpha" ]]
+  for retired in plan-issue plan-issue-local plan-tooling plan-archive; do
+    if [[ -e "$tmp/install/$retired" ]]; then
+      echo "FAIL: $FUNCNAME left retired binary $retired"
+      exit 1
+    fi
+  done
+  [[ -f "$tmp/install/unrelated-tool" ]]
   rm -rf "$tmp"
   echo "ok"
 }
