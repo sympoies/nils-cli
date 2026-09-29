@@ -87,11 +87,10 @@ const RETITLE_KEYS: &[&str] = &[
 const RETITLE_ROOT_ONLY_KEYS: &[&str] = &["fallback", "max_concurrency", "queue_size", "context"];
 const RETITLE_CONTEXT_KEYS: &[&str] = &["max_chars", "per_message_chars", "recent_turns"];
 
-/// Key-name words that mark a value as a credential when a key ends in one.
-/// Such a key must instead name an environment variable (`*_env`) or a file
-/// (`*_file`).
+/// Key-name words that mark a value as a credential wherever they appear in a
+/// key. Such a key must instead name an environment variable (`*_env`) or a
+/// file (`*_file`).
 const SECRET_WORDS: &[&str] = &[
-    "token",
     "secret",
     "password",
     "passwd",
@@ -101,7 +100,17 @@ const SECRET_WORDS: &[&str] = &[
     "bearer",
     "authorization",
 ];
-const SECRET_PAIRS: &[(&str, &str)] = &[("api", "key"), ("private", "key"), ("access", "key")];
+/// Words that mark a credential only as a key's final word: `access_token` is
+/// one, while `stop_token_ids` and `max_output_tokens` are provider
+/// parameters that merely mention tokens.
+const FINAL_SECRET_WORDS: &[&str] = &["token"];
+/// Adjacent word pairs that mark a credential wherever they appear in a key.
+const SECRET_PAIRS: &[(&str, &str)] = &[
+    ("api", "key"),
+    ("private", "key"),
+    ("access", "key"),
+    ("secret", "key"),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -502,19 +511,21 @@ fn is_secret_key(key: &str, payload: bool) -> bool {
         .split(['_', '-', '.'])
         .filter(|word| !word.is_empty())
         .collect();
-    if payload {
+    if matches!(words.last(), Some(&"env") | Some(&"file")) {
+        if !payload {
+            return false;
+        }
         while matches!(words.last(), Some(&"env") | Some(&"file")) {
             words.pop();
         }
     }
-    // Only the final word names what a key holds: `client_secret` and
-    // `x-api-key` are credentials, while `stop_token_ids` is a provider
-    // parameter that merely mentions tokens.
-    match words.as_slice() {
-        [.., last] if SECRET_WORDS.contains(last) => true,
-        [.., first, last] => SECRET_PAIRS.contains(&(*first, *last)),
-        _ => false,
-    }
+    words.iter().any(|word| SECRET_WORDS.contains(word))
+        || words
+            .last()
+            .is_some_and(|word| FINAL_SECRET_WORDS.contains(word))
+        || words
+            .windows(2)
+            .any(|pair| SECRET_PAIRS.contains(&(pair[0], pair[1])))
 }
 
 /// Free-form tables whose keys are forwarded to a provider rather than
@@ -1021,7 +1032,16 @@ mod tests {
         }
         // Inside a forwarded payload a reference suffix is just part of the
         // key the provider receives, so it does not excuse a credential.
-        for key in ["api_key_env", "token_file", "client_secret_env"] {
+        for key in [
+            "api_key_env",
+            "token_file",
+            "client_secret_env",
+            "secret_key",
+            "private_key_pem",
+            "password_hash",
+            "api_key_value",
+            "client_secret_value",
+        ] {
             assert!(is_secret_key(key, true), "{key}");
         }
         for key in ["stop_token_ids", "max_output_tokens", "profile"] {

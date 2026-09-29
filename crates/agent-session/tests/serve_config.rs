@@ -356,6 +356,10 @@ fn inline_secrets_are_refused_without_echoing_the_value() {
             "[retitle]\nprovider = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\nmodel = \"m\"\n[retitle.extra_body]\napi_key_env = \"sk-inline-value\"\n",
             "retitle.extra_body.api_key_env",
         ),
+        (
+            "[retitle]\nprovider = \"openai_compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\nmodel = \"m\"\n[retitle.extra_body]\nsecret_key = \"sk-inline-value\"\n",
+            "retitle.extra_body.secret_key",
+        ),
     ] {
         let config = fixture.write(
             "serve.toml",
