@@ -100,6 +100,63 @@ fn config_set_model_prints_export() {
 }
 
 #[test]
+fn config_set_model_persist_writes_config_and_respects_environment_override() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_home = dir.path().to_string_lossy().to_string();
+    std::fs::create_dir_all(dir.path().join("codex-cli")).expect("config directory");
+    std::fs::write(
+        dir.path().join("codex-cli/config.toml"),
+        "[future]\nkeep = true\n",
+    )
+    .expect("existing config");
+    let options = CmdOptions::default()
+        .with_env("XDG_CONFIG_HOME", &config_home)
+        .with_env_remove("CODEX_CLI_MODEL");
+    let output = cmd::run_with(
+        &codex_cli_bin(),
+        &["config", "set", "model", "gpt-6-luna", "--persist"],
+        &options,
+    );
+    assert_exit(&output, 0);
+    let config = std::fs::read_to_string(dir.path().join("codex-cli/config.toml"))
+        .expect("persisted config");
+    assert!(config.contains("model = \"gpt-6-luna\""));
+    assert!(config.contains("keep = true"));
+
+    let shown = cmd::run_with(&codex_cli_bin(), &["config", "show"], &options);
+    assert_exit(&shown, 0);
+    assert!(stdout(&shown).contains("CODEX_CLI_MODEL=gpt-6-luna\n"));
+
+    let overridden = cmd::run_with(
+        &codex_cli_bin(),
+        &["config", "show"],
+        &options.with_env("CODEX_CLI_MODEL", "one-shot-model"),
+    );
+    assert_exit(&overridden, 0);
+    assert!(stdout(&overridden).contains("CODEX_CLI_MODEL=one-shot-model\n"));
+}
+
+#[test]
+fn config_show_warns_when_persisted_model_is_invalid() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_dir = dir.path().join("codex-cli");
+    std::fs::create_dir_all(&config_dir).expect("config dir");
+    std::fs::write(config_dir.join("config.toml"), "model = 123\n").expect("invalid model config");
+    let options = CmdOptions::default()
+        .with_env("XDG_CONFIG_HOME", &dir.path().to_string_lossy())
+        .with_env_remove("CODEX_CLI_MODEL");
+    let output = cmd::run_with(&codex_cli_bin(), &["config", "show"], &options);
+    assert_exit(&output, 0);
+    assert!(stdout(&output).contains("CODEX_CLI_MODEL=gpt-6-luna\n"));
+    assert!(stderr(&output).contains("model must be a string"));
+
+    std::fs::write(config_dir.join("config.toml"), "model = [\n").expect("malformed config");
+    let malformed = cmd::run_with(&codex_cli_bin(), &["config", "show"], &options);
+    assert_exit(&malformed, 0);
+    assert!(stderr(&malformed).contains("invalid"));
+}
+
+#[test]
 fn config_set_reasoning_prints_export() {
     let output = run(&["config", "set", "reasoning", "high"], &[]);
     assert_exit(&output, 0);

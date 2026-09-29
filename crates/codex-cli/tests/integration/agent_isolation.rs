@@ -53,12 +53,21 @@ fi
     let path = stub_dir.to_string_lossy().into_owned();
     let log_path = log.to_string_lossy().into_owned();
     let home = real_home.to_string_lossy().into_owned();
+    let config_dir = temp.path().join("codex-cli");
+    fs::create_dir_all(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.toml"),
+        "model = 'persisted-model'\n",
+    )
+    .expect("model config");
     let options = CmdOptions::default()
         .with_cwd(temp.path())
         .with_env("PATH", &path)
         .with_env("CODEX_HOME", &home)
         .with_env("CODEX_ISOLATION_LOG", &log_path)
         .with_env("AGENT_DOCS_HOME", "/must/not/inherit")
+        .with_env("XDG_CONFIG_HOME", &temp.path().to_string_lossy())
+        .with_env_remove("CODEX_CLI_MODEL")
         .with_env_remove("CODEX_ALLOW_DANGEROUS_ENABLED");
 
     let output = cmd::run_with(
@@ -88,6 +97,7 @@ fi
     assert!(log.contains("--ignore-rules"));
     assert!(log.contains("--ephemeral"));
     assert!(log.contains("project_doc_max_bytes=0"));
+    assert!(log.contains("persisted-model"));
     assert!(log.contains("ARG_"));
     assert!(!log.contains("--dangerously-bypass-approvals-and-sandbox"));
     let child_home = log
@@ -115,11 +125,20 @@ for arg in "$@"; do printf 'ARG=%s\n' "$arg" >> "$CODEX_ISOLATION_LOG"; done
     );
     let home = temp.path().join("real-home");
     fs::create_dir_all(&home).expect("home");
+    let config_dir = temp.path().join("codex-cli");
+    fs::create_dir_all(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.toml"),
+        "model = 'persisted-model'\n",
+    )
+    .expect("model config");
     let options = CmdOptions::default()
         .with_cwd(temp.path())
         .with_path_prepend(&stub_dir)
         .with_env("CODEX_HOME", &home.to_string_lossy())
         .with_env("CODEX_ISOLATION_LOG", &log.to_string_lossy())
+        .with_env("XDG_CONFIG_HOME", &temp.path().to_string_lossy())
+        .with_env_remove("CODEX_CLI_MODEL")
         .with_env("CODEX_ALLOW_DANGEROUS_ENABLED", "true");
     let output = cmd::run_with(
         &codex_cli_bin(),
@@ -130,6 +149,7 @@ for arg in "$@"; do printf 'ARG=%s\n' "$arg" >> "$CODEX_ISOLATION_LOG"; done
     let log = fs::read_to_string(log).expect("log");
     assert!(log.contains(&format!("CODEX_HOME={}", home.display())));
     assert!(log.contains("ARG=--dangerously-bypass-approvals-and-sandbox"));
+    assert!(log.contains("ARG=persisted-model"));
     assert!(!log.contains("ARG=--ignore-user-config"));
 }
 
@@ -331,4 +351,112 @@ done
     assert!(log.contains("commit --type fix --scope agent --subject isolate helper runtime"));
     assert!(log.contains("--body-bullet Keep model output message-only"));
     assert!(log.contains(&format!("--expect-head {old_head}")));
+}
+
+#[test]
+fn isolated_agent_commit_retries_unsupported_configured_model_with_luna() {
+    assert_isolated_agent_commit_model_fallback("gpt-5.4-mini", false);
+}
+
+#[test]
+fn isolated_agent_commit_uses_account_default_when_luna_is_unsupported() {
+    assert_isolated_agent_commit_model_fallback("gpt-6-luna", true);
+}
+
+#[test]
+fn isolated_agent_commit_uses_account_default_after_stale_model_and_luna_fail() {
+    assert_isolated_agent_commit_model_fallback("gpt-5.4-mini", true);
+}
+
+fn assert_isolated_agent_commit_model_fallback(configured_model: &str, reject_luna: bool) {
+    let _lock = GlobalStateLock::new();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).expect("repo");
+    test_git::git(&repo, &["init"]);
+    test_git::git(&repo, &["config", "user.name", "Test User"]);
+    test_git::git(&repo, &["config", "user.email", "test@example.com"]);
+    test_git::git(&repo, &["config", "commit.gpgsign", "false"]);
+    fs::write(repo.join("base.txt"), "base\n").expect("base");
+    test_git::git(&repo, &["add", "base.txt"]);
+    test_git::git(&repo, &["commit", "-m", "chore: base"]);
+    fs::write(repo.join("change.txt"), "change\n").expect("change");
+    test_git::git(&repo, &["add", "change.txt"]);
+
+    let stub_dir = temp.path().join("bin");
+    fs::create_dir_all(&stub_dir).expect("stub dir");
+    let model_log = temp.path().join("models.log");
+    test_fs::write_executable(
+        &stub_dir.join("codex"),
+        r#"#!/bin/sh
+set -eu
+if [ "${1:-}" = "exec" ] && [ "${2:-}" = "--help" ]; then
+  printf '%s\n' '--ignore-user-config --ignore-rules --ephemeral --skip-git-repo-check --disable'
+  exit 0
+fi
+if [ "${1:-}" = "features" ] && [ "${2:-}" = "list" ]; then
+  printf '%s\n' 'hooks plugins remote_plugin apps memories goals multi_agent workspace_dependencies shell_tool unified_exec'
+  exit 0
+fi
+last=''
+model=''
+output=''
+for arg in "$@"; do
+  if [ "$last" = '--model' ]; then model="$arg"; fi
+  if [ "$last" = '--output-last-message' ]; then output="$arg"; fi
+  last="$arg"
+done
+printf '%s\n' "$model" >> "$MODEL_LOG"
+if [ "$model" = 'gpt-5.4-mini' ]; then
+  printf '%s\n' "ERROR: The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account." >&2
+  exit 1
+fi
+if [ "$model" = 'gpt-6-luna' ] && [ "${REJECT_LUNA:-0}" = '1' ]; then
+  printf '%s\n' "ERROR: The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account." >&2
+  exit 1
+fi
+printf '%s\n' '{"type":"fix","scope":"agent","subject":"refresh commit model","body_bullets":[]}' > "$output"
+"#,
+    );
+    let real_git = nils_common::process::find_in_path("git").expect("git");
+    test_fs::write_executable(
+        &stub_dir.join("semantic-commit"),
+        r#"#!/bin/sh
+set -eu
+if [ "${1:-}" = 'staged-context' ]; then
+  printf '%s\n' 'STAGED BUNDLE'
+  exit 0
+fi
+repo=''
+last=''
+for arg in "$@"; do
+  if [ "$last" = '--repo' ]; then repo="$arg"; fi
+  last="$arg"
+done
+"$REAL_GIT" -C "$repo" commit -m 'fix(agent): refresh commit model' >/dev/null
+"#,
+    );
+    let output = cmd::run_with(
+        &codex_cli_bin(),
+        &["agent", "commit"],
+        &CmdOptions::default()
+            .with_cwd(&repo)
+            .with_path_prepend(&stub_dir)
+            .with_env("MODEL_LOG", &model_log.to_string_lossy())
+            .with_env("REAL_GIT", &real_git.to_string_lossy())
+            .with_env("CODEX_CLI_MODEL", configured_model)
+            .with_env("REJECT_LUNA", if reject_luna { "1" } else { "0" }),
+    );
+    assert_eq!(output.code, 0, "{}", output.stderr_text());
+    let expected_models = if configured_model == "gpt-5.4-mini" && reject_luna {
+        "gpt-5.4-mini\ngpt-6-luna\n\n"
+    } else if reject_luna {
+        "gpt-6-luna\n\n"
+    } else {
+        "gpt-5.4-mini\ngpt-6-luna\n"
+    };
+    assert_eq!(
+        fs::read_to_string(model_log).expect("model log"),
+        expected_models
+    );
 }

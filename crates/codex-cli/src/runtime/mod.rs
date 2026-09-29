@@ -25,7 +25,9 @@ pub use nils_common::provider_runtime::{
 };
 
 pub fn config_snapshot() -> provider_runtime::config::RuntimeConfig {
-    provider_runtime::config::snapshot(&CODEX_PROVIDER_PROFILE)
+    let mut snapshot = provider_runtime::config::snapshot(&CODEX_PROVIDER_PROFILE);
+    snapshot.model = crate::config::effective_model();
+    snapshot
 }
 
 pub fn resolve_secret_dir() -> Option<PathBuf> {
@@ -91,12 +93,13 @@ pub fn exec_dangerous_with_options(
         ephemeral: options.ephemeral || shared_env::env_truthy("CODEX_CLI_EPHEMERAL_ENABLED"),
     };
     refresh_remote_auth_before_exec();
-    provider_runtime::exec::exec_dangerous_with_options(
+    provider_runtime::exec::exec_dangerous_with_options_and_model(
         &CODEX_PROVIDER_PROFILE,
         prompt,
         caller,
         stderr,
         effective_options,
+        Some(&crate::config::effective_model()),
     )
 }
 
