@@ -4,15 +4,16 @@
 //! machine's state directory: the same records as `GET /board/v1`, the closed
 //! rows from the local ledger, and the query filters applied here.
 //!
-//! Relay mode (a managed session asking the aggregator through the daemon's
-//! `GET /sessions/{id}/board/v1`) is not implemented yet; `select_mode` is the
-//! seam where it plugs in. Until then every invocation is local mode and says
-//! so in `data.mode`.
+//! Relay mode is a managed session asking the aggregator through the
+//! daemon's `GET /sessions/{id}/board/v1` (`relay.rs`); `select_mode` decides
+//! between the two, and `data.mode` reports the choice.
 
 use std::cmp::Ordering;
 
+use nils_common::cli_contract::OutputFormat;
 use serde_json::{Value, json};
 
+use super::relay::{self, Caller};
 use crate::cli::BoardArgs;
 use crate::{CliContext, CliError};
 
@@ -62,7 +63,7 @@ struct Query {
     machine: Option<String>,
 }
 
-fn query_invalid(message: &str) -> CliError {
+pub(super) fn query_invalid(message: &str) -> CliError {
     CliError::usage("board-query-invalid", message, None)
 }
 
@@ -99,27 +100,50 @@ fn parse_query(args: &BoardArgs) -> Result<Query, CliError> {
     })
 }
 
-enum Mode {
-    Local,
-}
-
-/// Relay mode is not implemented yet, so every invocation is local mode.
-/// When it lands, a trusted managed session with a daemon endpoint tries the
-/// relay route here, falls back to local mode only on `board-disabled` or
-/// `board-relay-disabled`, and returns any other relay failure unchanged.
-fn select_mode(_context: &CliContext) -> Mode {
-    Mode::Local
+/// Relay mode when a trusted managed session reaches the daemon relay route;
+/// local mode without a trusted identity or daemon endpoint, or when the
+/// daemon answers `board-disabled` or `board-relay-disabled`. Any other relay
+/// failure is returned, never replaced by a local view.
+fn select_mode(
+    context: &CliContext,
+    args: &BoardArgs,
+    query: &Query,
+    caller: Option<&Caller>,
+) -> Result<Value, CliError> {
+    if let Some(caller) = caller {
+        let mut filters = vec![("state", args.state.as_str())];
+        for (key, value) in [
+            ("since", &args.since),
+            ("repo", &args.repo),
+            ("machine", &args.machine),
+        ] {
+            if let Some(value) = value {
+                filters.push((key, value.as_str()));
+            }
+        }
+        if let Some(board) = relay::fetch(context, caller, &filters)? {
+            return Ok(json!({ "mode": "relay", "board": board }));
+        }
+    }
+    local_view(context, query).map(|board| json!({ "mode": "local", "board": board }))
 }
 
 pub(crate) fn run(context: &CliContext, args: BoardArgs) -> i32 {
     let format = args.format;
-    let result = parse_query(&args).and_then(|query| match select_mode(context) {
-        Mode::Local => {
-            local_view(context, &query).map(|board| json!({ "mode": "local", "board": board }))
-        }
+    let result = parse_query(&args).and_then(|query| {
+        let caller = relay::caller(context);
+        select_mode(context, &args, &query, caller.as_ref()).map(|data| (data, caller))
     });
     match result {
-        Ok(data) => crate::render_single_success(COMMAND, format, &data, render_text),
+        Ok((data, caller)) => match format {
+            OutputFormat::Json => {
+                crate::render_single_success(COMMAND, format, &data, |_| String::new())
+            }
+            OutputFormat::Text => {
+                print!("{}", render_text(&data, caller.as_ref()));
+                0
+            }
+        },
         Err(err) => crate::render_error(COMMAND, format, err),
     }
 }
@@ -281,9 +305,19 @@ fn age(value: &Value, now: i64) -> String {
     }
 }
 
+/// Whether a record is the caller's own session: same id and incarnation.
+fn is_caller(record: &Value, caller: Option<&Caller>) -> bool {
+    caller.is_some_and(|caller| {
+        record["session_id"].as_str() == Some(caller.session_id.as_str())
+            && record["session_incarnation"].as_str() == Some(caller.incarnation.as_str())
+    })
+}
+
 /// Mode, then one line per unavailable machine, then one line per record.
-/// `summary` is never printed.
-fn render_text(data: &Value) -> String {
+/// The caller's own session is marked, and a peer that can currently receive
+/// a remote message carries its `message send` target. `summary` is never
+/// printed.
+fn render_text(data: &Value, caller: Option<&Caller>) -> String {
     let board = &data["board"];
     let now = timestamp_seconds(&board["generated_at"])
         .unwrap_or_else(|| jiff::Timestamp::now().as_second());
@@ -304,7 +338,7 @@ fn render_text(data: &Value) -> String {
             _ => &turn["phase_changed_at"],
         };
         out.push_str(&format!(
-            "{}  {}  {}  {}  {}  {}  {}\n",
+            "{}  {}  {}  {}  {}  {}  {}",
             field(&record["state"], REPO_WIDTH),
             field(&record["machine"], REPO_WIDTH),
             field(&record["session_id"], TITLE_WIDTH),
@@ -313,6 +347,18 @@ fn render_text(data: &Value) -> String {
             age(progress, now),
             field(&record["title"], TITLE_WIDTH),
         ));
+        if is_caller(record, caller) {
+            out.push_str("  (this session)");
+        } else if record["messaging_supported"] == true && record["session_incarnation"].is_string()
+        {
+            out.push_str(&format!(
+                "  send: --to-machine {} --to {} (incarnation {})",
+                field(&record["machine"], REPO_WIDTH),
+                field(&record["session_id"], TITLE_WIDTH),
+                field(&record["session_incarnation"], TITLE_WIDTH),
+            ));
+        }
+        out.push('\n');
     }
     out
 }
@@ -406,7 +452,7 @@ mod tests {
                 }]
             }
         });
-        let text = render_text(&data);
+        let text = render_text(&data, None);
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines[0], "mode: relay");
         assert_eq!(lines[1], "unavailable  host-b  last seen -");

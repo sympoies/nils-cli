@@ -2230,7 +2230,9 @@ pub(crate) fn authenticate_recovery_from_file(
     authenticate_recovery_token(context, session_id, &token)
 }
 
-fn capability_token_from_file(capability_file: Option<&Path>) -> Result<String, CliError> {
+pub(crate) fn capability_token_from_file(
+    capability_file: Option<&Path>,
+) -> Result<String, CliError> {
     let path = capability_file
         .map(PathBuf::from)
         .or_else(|| std::env::var_os(CAPABILITY_ENV).map(PathBuf::from))

@@ -53,6 +53,7 @@ and bind address. Give a development or test serve its own `--state-dir` or
 | Path-bearing reads, account inventory, activity stream, writes, and WebSocket attach | Bearer token. |
 | Public coordination and broker reads | Bearer token. |
 | Session board reads (`GET /board/v1`, `GET /board/closed/v1`) | Bearer token, and only when started with `--board` or `AGENT_SESSION_BOARD=1`; otherwise `board-disabled` (HTTP 404). Returns home-relative working directories and the machine identity. |
+| Session board relay (`GET /sessions/{id}/board/v1`) | The current session capability as `Authorization: Bearer`, and only with the board enabled. Forwards the query to the federation aggregator with the relay token; `board-relay-disabled` (HTTP 409) without federation. |
 | Session-owner coordination and mailbox mutations | Bearer token plus `X-Agent-Session-Capability`. |
 | `POST /activity/hook/v1` provider hook ingress | `X-Agent-Session-Capability` only, from a direct loopback peer. |
 

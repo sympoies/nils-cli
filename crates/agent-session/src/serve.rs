@@ -1204,6 +1204,7 @@ fn router(state: Arc<ServeState>) -> Router {
         .route("/healthz", get(healthz))
         .route("/board/v1", get(board_snapshot_handler))
         .route("/board/closed/v1", get(board_closed_handler))
+        .route("/sessions/{id}/board/v1", get(board_relay_handler))
         .route("/sessions", get(list_handler).post(create_handler))
         .route("/history/sessions", get(history_list_handler))
         .route(
@@ -2528,6 +2529,8 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "agent-blocked" => StatusCode::CONFLICT,
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
         "board-cursor-expired" => StatusCode::GONE,
+        "board-relay-disabled" => StatusCode::CONFLICT,
+        "board-relay-unavailable" | "board-relay-unauthorized" => StatusCode::BAD_GATEWAY,
         "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
             StatusCode::SERVICE_UNAVAILABLE
         }
@@ -5010,6 +5013,38 @@ async fn board_closed_handler(
     .await
     {
         Ok(Ok(closed)) => envelope_ok(json!({ "machine": state.machine, "board_closed": closed })),
+        Ok(Err(err)) => envelope_err(err),
+        Err(_) => join_err(),
+    }
+}
+
+/// `GET /sessions/{id}/board/v1`: a managed session's board query, forwarded
+/// to the aggregator by `board/relay.rs`.
+async fn board_relay_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    axum::extract::RawQuery(query): axum::extract::RawQuery,
+) -> Response {
+    if !state.board {
+        return status_json(
+            StatusCode::NOT_FOUND,
+            crate::board::DISABLED_CODE,
+            crate::board::DISABLED_MESSAGE,
+        );
+    }
+    let token = match remote_session_token(&headers) {
+        Ok(v) => v,
+        Err(e) => return envelope_err(e),
+    };
+    let context = state.context.clone();
+    let federation = state.federation.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::board::relay_route(&context, federation.as_ref(), &id, &token, query.as_deref())
+    })
+    .await
+    {
+        Ok(Ok(value)) => Json(value).into_response(),
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
     }
