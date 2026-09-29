@@ -1,3 +1,8 @@
+pub mod keychain;
+pub mod profile;
+pub mod remote;
+pub mod store;
+
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -9,7 +14,7 @@ use serde_json::Value;
 use crate::agent::oneshot::claude_binary;
 use crate::process::{ProcessOutputError, output_with_limits_retry_io};
 
-const AUTH_SCHEMA_VERSION: &str = "claude-cli.auth.v1";
+pub(crate) const AUTH_SCHEMA_VERSION: &str = "claude-cli.auth.v1";
 const MAX_STATUS_BYTES: usize = 64 * 1024;
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 

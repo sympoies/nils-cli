@@ -9,6 +9,8 @@ EXAMPLES:
   claude-cli agent commit 'Prefer the smallest accurate scope'
   claude-cli agent doctor --format json
   claude-cli auth status --format json
+  claude-cli auth current --format json
+  claude-cli auth remote pull --ssh authority --current --access-only --write-active
   claude-cli config show
   claude-cli prompt-segment
   claude-cli prompt-segment --refresh
@@ -19,6 +21,7 @@ EXAMPLES:
 
 ENVIRONMENT:
   CLAUDE_CLI_BIN, CLAUDE_CLI_MODEL, CLAUDE_CLI_EFFORT
+  CLAUDE_CONFIG_DIR, CLAUDE_SECRET_DIR, CLAUDE_AUTH_REFRESH_MARGIN_SECONDS, CLAUDE_AUTH_KEYCHAIN
   CLAUDE_CLI_AGENT_RUNTIME, CLAUDE_CLI_NO_SESSION_PERSISTENCE
   CLAUDE_PROMPT_TTL, CLAUDE_PROMPT_STALE_SUFFIX
   CLAUDE_PROMPT_SEGMENT_TTL, CLAUDE_PROMPT_SEGMENT_STALE_SUFFIX
@@ -193,6 +196,94 @@ pub enum AuthCommand {
     },
     /// Sign out through the upstream Claude Code authentication flow
     Logout,
+    /// Save the active refresh-capable login as a named authority profile
+    Save {
+        /// Profile name ([A-Za-z0-9._-])
+        #[arg(value_name = "name")]
+        name: String,
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
+    /// Make a profile the current default and project it as the active login
+    Use {
+        /// Profile name
+        #[arg(value_name = "name")]
+        name: String,
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
+    /// Show the current default profile without exposing secrets
+    Current {
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
+    /// Refresh the named profiles through Claude Code's refresh-token login
+    Refresh {
+        /// Profile names
+        #[arg(value_name = "name", required = true)]
+        names: Vec<String>,
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
+    /// Refresh every profile whose access token is close to expiry
+    AutoRefresh {
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
+    /// Move access-only logins between a token authority and replicas
+    Remote(AuthRemoteArgs),
+}
+
+#[derive(Args)]
+pub struct AuthRemoteArgs {
+    #[command(subcommand)]
+    pub command: Option<AuthRemoteCommand>,
+}
+
+#[derive(Subcommand)]
+pub enum AuthRemoteCommand {
+    /// Pull an access-only login over SSH and make it the active login
+    Pull {
+        /// SSH destination of the token authority
+        #[arg(long, value_name = "host")]
+        ssh: String,
+        /// Authority profile name
+        #[arg(long, value_name = "name", conflicts_with = "current")]
+        name: Option<String>,
+        /// Use the authority's current default profile
+        #[arg(long)]
+        current: bool,
+        /// Required: never transfer a refresh token
+        #[arg(long)]
+        access_only: bool,
+        /// Required: write the pulled login as the active login
+        #[arg(long)]
+        write_active: bool,
+        /// macOS Keychain handling for the active login
+        #[arg(long, value_enum, default_value_t = KeychainArg::Auto)]
+        keychain: KeychainArg,
+        #[command(flatten)]
+        output: OutputModeArgs,
+    },
+    /// Print a profile's access-only payload for SSH transport
+    Export {
+        /// Profile name
+        #[arg(long, value_name = "name", conflicts_with = "current")]
+        name: Option<String>,
+        /// Use the current default profile
+        #[arg(long)]
+        current: bool,
+        /// Required: never print a refresh token
+        #[arg(long)]
+        access_only: bool,
+    },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum KeychainArg {
+    Auto,
+    Required,
+    Off,
 }
 
 #[derive(Args)]

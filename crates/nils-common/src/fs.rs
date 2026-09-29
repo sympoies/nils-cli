@@ -226,11 +226,13 @@ pub fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<(), Atomi
     let mut attempt = 0u32;
     loop {
         let tmp_path = temp_path(path, attempt);
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)
-        {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        // Create the temp file with the target mode so secret bytes are never
+        // readable under a looser umask before the chmod below.
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
+        match options.open(&tmp_path) {
             Ok(mut file) => {
                 file.write_all(contents)
                     .map_err(|source| AtomicWriteError::WriteTempFile {

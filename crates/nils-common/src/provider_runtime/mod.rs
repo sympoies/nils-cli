@@ -7,6 +7,7 @@ pub mod jwt;
 pub mod paths;
 pub mod persistence;
 pub mod profile;
+pub mod remote;
 
 pub use error::{CoreError, CoreErrorCategory, ProviderCategoryHint};
 pub use exec::ExecOptions;
