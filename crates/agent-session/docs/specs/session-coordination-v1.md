@@ -281,10 +281,16 @@ other branch grants nothing), and the checkout's `origin` resolves to a claimed
 repository. Switching branches and bootstrapping again therefore cannot move
 the grant to another pull request. The grant is stored as `pull_request_head` in
 the private registry, omitted from every public work-context projection, and
-absent from older records. It covers a `pull-request-head` target only for that
-exact repository and head, which lets a worker create, update, and review the
-pull request for its own branch without covering any other branch or
-repository. Generic `work-context claim` and `set` cannot request it.
+absent from older records. Bootstrap also writes it to an owner-only
+`pull-request-head-grant.json` record in the worker session's coordination
+directory, bound to the exact session, incarnation, and claim id. A release that
+predates the field, such as a broker heartbeat sidecar left running across an
+upgrade, rewrites the shared registry without it; admission then falls back to
+that record, which only the same claim (same session, incarnation, and claim
+id) still carrying the checkout-shell grant and a claimed repository can use. It covers a `pull-request-head` target
+only for that exact repository and head, which lets a worker create, update,
+and review the pull request for its own branch without covering any other
+branch or repository. Generic `work-context claim` and `set` cannot request it.
 
 The runtime-issued checkpoint file follows the same threat boundary. The broker
 pre-creates one exact owner-only regular file for the current incarnation, and

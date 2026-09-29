@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use nils_common::fs::{SECRET_FILE_MODE, write_atomic};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -17,7 +18,7 @@ use crate::{CliContext, CliError};
 
 use super::context::{
     CheckoutBinding, ConflictClassification, ProviderRef, PullRequestHead, PullRequestTarget,
-    Scope, ScopeKind, WORK_CONTEXT_VERSION, WorkContextInput, WorkContextRecord,
+    Scope, ScopeKind, WORK_CONTEXT_VERSION, WorkContextInput, WorkContextRecord, canonical_branch,
     canonical_repository, canonicalize_provider_refs, canonicalize_pull_request_targets,
     canonicalize_targets, checkout_branch, checkout_root, evaluate, fingerprint_epoch,
     repository_for_checkout, scope_covers, validate_physical_targets,
@@ -604,6 +605,7 @@ fn claim_impl(
         outcome.clone(),
         now,
     )?;
+    persist_pull_request_head_grant(context, &claim)?;
     locked.save()?;
     Ok(ClaimTransactionResult {
         outcome,
@@ -612,6 +614,79 @@ fn claim_impl(
             revision: claim.revision,
         }),
     })
+}
+
+/// Private sidecar holding a claim's pull-request head grant beside the
+/// registry field. An agent-session release from before the field existed
+/// round-trips the shared registry through a claim record without it and drops
+/// the grant; a long-lived broker heartbeat sidecar keeps such a release
+/// running across an upgrade. Those writers never touch this file.
+const PULL_REQUEST_HEAD_GRANT_FILE: &str = "pull-request-head-grant.json";
+const PULL_REQUEST_HEAD_GRANT_SCHEMA: &str = "agent-session.pull-request-head-grant.v1";
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PullRequestHeadGrantRecord {
+    schema_version: String,
+    session_id: String,
+    session_incarnation: String,
+    claim_id: String,
+    repository: String,
+    head: String,
+}
+
+fn pull_request_head_grant_path(context: &CliContext, session_id: &str) -> PathBuf {
+    super::coordination_dir(context, session_id).join(PULL_REQUEST_HEAD_GRANT_FILE)
+}
+
+/// Record a newly minted grant before its claim is saved. A record left from
+/// an earlier claim binds that claim's id, so it never covers a later one.
+fn persist_pull_request_head_grant(
+    context: &CliContext,
+    claim: &WorkContextRecord,
+) -> Result<(), CliError> {
+    let Some(head) = &claim.pull_request_head else {
+        return Ok(());
+    };
+    let path = pull_request_head_grant_path(context, &claim.session_id);
+    let record = PullRequestHeadGrantRecord {
+        schema_version: PULL_REQUEST_HEAD_GRANT_SCHEMA.to_string(),
+        session_id: claim.session_id.clone(),
+        session_incarnation: claim.session_incarnation.clone(),
+        claim_id: claim.claim_id.clone(),
+        repository: head.repository.clone(),
+        head: head.head.clone(),
+    };
+    let bytes = serde_json::to_vec_pretty(&record).map_err(|_| super::store_corrupt())?;
+    write_atomic(&path, &bytes, SECRET_FILE_MODE).map_err(|_| super::store_unavailable())
+}
+
+/// The claim's pull-request head grant. The registry field wins; the sidecar
+/// restores a grant a pre-grant writer dropped, and only for the exact claim,
+/// incarnation, and repository it was minted with.
+fn claim_pull_request_head(
+    context: &CliContext,
+    claim: &WorkContextRecord,
+) -> Option<PullRequestHead> {
+    if let Some(head) = &claim.pull_request_head {
+        return Some(head.clone());
+    }
+    if !claim.checkout_shell_grant {
+        return None;
+    }
+    let path = pull_request_head_grant_path(context, &claim.session_id);
+    let bytes = super::read_private_file(&path, 4 * 1024).ok()?;
+    let record: PullRequestHeadGrantRecord = serde_json::from_slice(&bytes).ok()?;
+    let head = canonical_branch(&record.head).ok()?;
+    let repository = canonical_repository(record.repository.clone()).ok()?;
+    (record.schema_version == PULL_REQUEST_HEAD_GRANT_SCHEMA
+        && record.session_id == claim.session_id
+        && record.session_incarnation == claim.session_incarnation
+        && record.claim_id == claim.claim_id
+        && head == record.head
+        && repository == record.repository
+        && claim.repositories.contains(&repository))
+    .then_some(PullRequestHead { repository, head })
 }
 
 fn tracked_claim_replay_state(
@@ -1322,9 +1397,13 @@ pub(crate) fn admit(context: &CliContext, args: WorkContextAdmitArgs) -> Result<
             None,
         ));
     }
+    let pull_request_head = if pull_request_targets.is_empty() {
+        None
+    } else {
+        claim_pull_request_head(context, claim)
+    };
     if pull_request_targets.iter().any(|target| {
-        claim
-            .pull_request_head
+        pull_request_head
             .as_ref()
             .is_none_or(|head| head.repository != target.repository || head.head != target.head)
     }) {
