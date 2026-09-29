@@ -13,6 +13,7 @@ EXAMPLES:
   claude-cli auth remote pull --ssh authority --current --access-only --write-active
   claude-cli auth remote pull --ssh authority --all --into ~/.claude-accounts --access-only
   claude-cli config show
+  claude-cli diag rate-limits --all --format json
   claude-cli prompt-segment
   claude-cli prompt-segment --refresh
   claude-cli prompt-segment status --format json
@@ -24,6 +25,7 @@ ENVIRONMENT:
   CLAUDE_CLI_BIN, CLAUDE_CLI_MODEL, CLAUDE_CLI_EFFORT
   CLAUDE_CONFIG_DIR, CLAUDE_SECRET_DIR, CLAUDE_AUTH_REFRESH_MARGIN_SECONDS, CLAUDE_AUTH_KEYCHAIN
   CLAUDE_ACCOUNTS_DIR
+  CLAUDE_RATE_LIMITS_CACHE_TTL, CLAUDE_RATE_LIMITS_CACHE_ALLOW_STALE
   CLAUDE_CLI_AGENT_RUNTIME, CLAUDE_CLI_NO_SESSION_PERSISTENCE
   CLAUDE_PROMPT_TTL, CLAUDE_PROMPT_STALE_SUFFIX
   CLAUDE_PROMPT_SEGMENT_TTL, CLAUDE_PROMPT_SEGMENT_STALE_SUFFIX
@@ -64,6 +66,8 @@ pub enum Command {
     Auth(AuthArgs),
     /// Configuration command group
     Config(ConfigArgs),
+    /// Diagnostics command group
+    Diag(DiagArgs),
     /// Prompt-segment command group
     PromptSegment(PromptSegmentArgs),
     /// Read Claude usage from OAuth, Claude CLI, or cache
@@ -340,6 +344,45 @@ pub enum ConfigCommand {
     Show,
     /// Emit a validated export for the current shell
     Set { key: String, value: String },
+}
+
+#[derive(Args)]
+pub struct DiagArgs {
+    #[command(subcommand)]
+    pub command: Option<DiagCommand>,
+}
+
+#[derive(Subcommand)]
+pub enum DiagCommand {
+    /// Report Claude OAuth rate limits for a profile, every profile, or the active login
+    RateLimits(RateLimitsArgs),
+}
+
+#[derive(Args)]
+pub struct RateLimitsArgs {
+    #[command(flatten)]
+    pub output: OutputModeArgs,
+    /// Read the cache only (no network)
+    #[arg(long = "cached")]
+    pub cached: bool,
+    /// Output a one-line summary
+    #[arg(long = "one-line")]
+    pub one_line: bool,
+    /// Query every profile under CLAUDE_SECRET_DIR
+    #[arg(long = "all")]
+    pub all: bool,
+    /// Query every profile concurrently
+    #[arg(long = "async")]
+    pub async_mode: bool,
+    /// Refresh output every 60 seconds until interrupted (requires --async)
+    #[arg(long = "watch", requires = "async_mode")]
+    pub watch: bool,
+    /// Max concurrent jobs (async mode)
+    #[arg(long = "jobs", value_name = "jobs")]
+    pub jobs: Option<String>,
+    /// Profile name; defaults to the active login
+    #[arg(value_name = "profile")]
+    pub profile: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]

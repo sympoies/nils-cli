@@ -35,7 +35,30 @@ impl fmt::Display for UsageFetchError {
 
 impl std::error::Error for UsageFetchError {}
 
+/// Why a usage request produced no success body, before classification.
+#[derive(Debug)]
+pub(crate) enum RequestFailure {
+    /// The HTTP client could not be built.
+    Client,
+    /// The request never produced a response.
+    Transport { timeout: bool },
+    /// The endpoint answered with a non-2xx status.
+    Http { status: u16, body: String },
+}
+
 pub fn fetch_usage(access_token: &str) -> Result<String, UsageFetchError> {
+    request_usage(access_token).map_err(|failure| {
+        UsageFetchError::new(match failure {
+            RequestFailure::Client => ProviderUsageReason::Unknown,
+            RequestFailure::Transport { timeout: true } => ProviderUsageReason::Timeout,
+            RequestFailure::Transport { timeout: false } => ProviderUsageReason::ServiceUnavailable,
+            RequestFailure::Http { status, body } => classify_http_failure(status, &body),
+        })
+    })
+}
+
+/// Sends one `GET` to the OAuth usage endpoint with `access_token`.
+pub(crate) fn request_usage(access_token: &str) -> Result<String, RequestFailure> {
     let endpoint = resolve_endpoint(shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_ENDPOINT"));
     let max_time_seconds = env_u64("CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS", 5);
     let user_agent = shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_USER_AGENT")
@@ -46,7 +69,7 @@ pub fn fetch_usage(access_token: &str) -> Result<String, UsageFetchError> {
     let client = Client::builder()
         .timeout(Duration::from_secs(max_time_seconds))
         .build()
-        .map_err(|_| UsageFetchError::new(ProviderUsageReason::Unknown))?;
+        .map_err(|_| RequestFailure::Client)?;
 
     let resp = client
         .get(&endpoint)
@@ -55,18 +78,14 @@ pub fn fetch_usage(access_token: &str) -> Result<String, UsageFetchError> {
         .header("User-Agent", user_agent)
         .header("Accept", "application/json")
         .send()
-        .map_err(|error| {
-            UsageFetchError::new(if error.is_timeout() {
-                ProviderUsageReason::Timeout
-            } else {
-                ProviderUsageReason::ServiceUnavailable
-            })
+        .map_err(|error| RequestFailure::Transport {
+            timeout: error.is_timeout(),
         })?;
 
     let status = resp.status().as_u16();
     let body = resp.text().unwrap_or_default();
     if !(200..300).contains(&status) {
-        return Err(UsageFetchError::new(classify_http_failure(status, &body)));
+        return Err(RequestFailure::Http { status, body });
     }
 
     Ok(body)

@@ -28,6 +28,9 @@ _claude__cli() {
             claude__cli,config)
                 cmd="claude__cli__config"
                 ;;
+            claude__cli,diag)
+                cmd="claude__cli__diag"
+                ;;
             claude__cli,help)
                 cmd="claude__cli__help"
                 ;;
@@ -187,6 +190,18 @@ _claude__cli() {
             claude__cli__config__help,show)
                 cmd="claude__cli__config__help__show"
                 ;;
+            claude__cli__diag,help)
+                cmd="claude__cli__diag__help"
+                ;;
+            claude__cli__diag,rate-limits)
+                cmd="claude__cli__diag__rate__limits"
+                ;;
+            claude__cli__diag__help,help)
+                cmd="claude__cli__diag__help__help"
+                ;;
+            claude__cli__diag__help,rate-limits)
+                cmd="claude__cli__diag__help__rate__limits"
+                ;;
             claude__cli__help,agent)
                 cmd="claude__cli__help__agent"
                 ;;
@@ -198,6 +213,9 @@ _claude__cli() {
                 ;;
             claude__cli__help,config)
                 cmd="claude__cli__help__config"
+                ;;
+            claude__cli__help,diag)
+                cmd="claude__cli__help__diag"
                 ;;
             claude__cli__help,help)
                 cmd="claude__cli__help__help"
@@ -268,6 +286,9 @@ _claude__cli() {
             claude__cli__help__config,show)
                 cmd="claude__cli__help__config__show"
                 ;;
+            claude__cli__help__diag,rate-limits)
+                cmd="claude__cli__help__diag__rate__limits"
+                ;;
             claude__cli__help__prompt__segment,check)
                 cmd="claude__cli__help__prompt__segment__check"
                 ;;
@@ -299,7 +320,7 @@ _claude__cli() {
 
     case "${cmd}" in
         claude__cli)
-            opts="-h -V --help --version agent auth config prompt-segment usage completion help"
+            opts="-h -V --help --version agent auth config diag prompt-segment usage completion help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1196,8 +1217,86 @@ _claude__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        claude__cli__diag)
+            opts="-h --help rate-limits help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__diag__help)
+            opts="rate-limits help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__diag__help__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__diag__help__rate__limits)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__diag__rate__limits)
+            opts="-h --format --json --cached --one-line --all --async --watch --jobs --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --jobs)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         claude__cli__help)
-            opts="agent auth config prompt-segment usage completion help"
+            opts="agent auth config diag prompt-segment usage completion help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1533,6 +1632,34 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__help__config__show)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__diag)
+            opts="rate-limits"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__diag__rate__limits)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

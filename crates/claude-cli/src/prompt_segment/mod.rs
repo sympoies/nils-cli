@@ -5,10 +5,10 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 mod auth;
-mod cache;
-mod client;
+pub(crate) mod cache;
+pub(crate) mod client;
 mod refresh;
-mod render;
+pub(crate) mod render;
 pub mod usage;
 
 #[derive(Clone, Debug, Default)]

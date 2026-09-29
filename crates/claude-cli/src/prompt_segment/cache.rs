@@ -184,7 +184,7 @@ fn signed_age_seconds(now: SystemTime, modified: SystemTime) -> Option<i64> {
     }
 }
 
-fn cache_dir() -> Option<PathBuf> {
+pub(crate) fn cache_dir() -> Option<PathBuf> {
     if let Some(value) = shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_CACHE_DIR") {
         return Some(PathBuf::from(value));
     }

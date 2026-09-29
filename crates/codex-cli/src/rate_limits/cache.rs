@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use nils_common::fs as shared_fs;
+use nils_common::rate_limits::values as rate_limits_values;
 use nils_common::usage_cache_policy;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,15 +10,7 @@ use crate::paths;
 use crate::rate_limits::render;
 use nils_common::env as shared_env;
 
-#[derive(Debug)]
-pub struct CacheEntry {
-    pub fetched_at_epoch: Option<i64>,
-    pub non_weekly_label: Option<String>,
-    pub non_weekly_remaining: Option<i64>,
-    pub non_weekly_reset_epoch: Option<i64>,
-    pub weekly_remaining: Option<i64>,
-    pub weekly_reset_epoch: Option<i64>,
-}
+pub use nils_common::rate_limits::CacheEntry;
 
 const DEFAULT_CACHE_TTL_SECONDS: u64 = 180;
 const CACHE_MISS_HINT: &str =
@@ -93,48 +86,15 @@ pub fn read_cache_entry(target_file: &Path) -> Result<CacheEntry> {
 
     let content = fs::read_to_string(&cache_file)
         .with_context(|| format!("failed to read cache: {}", cache_file.display()))?;
-    let mut fetched_at_epoch: Option<i64> = None;
-    let mut non_weekly_label: Option<String> = None;
-    let mut non_weekly_remaining: Option<i64> = None;
-    let mut non_weekly_reset_epoch: Option<i64> = None;
-    let mut weekly_remaining: Option<i64> = None;
-    let mut weekly_reset_epoch: Option<i64> = None;
-
-    for line in content.lines() {
-        if let Some(value) = line.strip_prefix("fetched_at=") {
-            fetched_at_epoch = value.parse::<i64>().ok();
-        } else if let Some(value) = line.strip_prefix("non_weekly_label=") {
-            non_weekly_label = Some(value.to_string());
-        } else if let Some(value) = line.strip_prefix("non_weekly_remaining=") {
-            non_weekly_remaining = value.parse::<i64>().ok();
-        } else if let Some(value) = line.strip_prefix("non_weekly_reset_epoch=") {
-            non_weekly_reset_epoch = value.parse::<i64>().ok();
-        } else if let Some(value) = line.strip_prefix("weekly_remaining=") {
-            weekly_remaining = value.parse::<i64>().ok();
-        } else if let Some(value) = line.strip_prefix("weekly_reset_epoch=") {
-            weekly_reset_epoch = value.parse::<i64>().ok();
-        }
-    }
-
-    if non_weekly_label.as_deref().is_some_and(str::is_empty)
-        || non_weekly_label.is_some() != non_weekly_remaining.is_some()
-        || weekly_remaining.is_some() != weekly_reset_epoch.is_some()
-        || (non_weekly_remaining.is_none() && weekly_remaining.is_none())
-    {
+    let entry = rate_limits_values::parse_cache_entry(&content);
+    if !entry.is_complete() {
         anyhow::bail!(
             "codex-rate-limits: invalid cache (incomplete window data): {}",
             cache_file.display()
         );
     }
 
-    Ok(CacheEntry {
-        fetched_at_epoch,
-        non_weekly_label,
-        non_weekly_remaining,
-        non_weekly_reset_epoch,
-        weekly_remaining,
-        weekly_reset_epoch,
-    })
+    Ok(entry)
 }
 
 pub fn read_cache_entry_for_cached_mode(target_file: &Path) -> Result<CacheEntry> {
@@ -172,23 +132,11 @@ pub fn cache_fetched_at_within_display_age(fetched_at_epoch: Option<i64>) -> boo
 }
 
 fn cache_fetched_at_within_display_age_at(fetched_at_epoch: Option<i64>, now_epoch: i64) -> bool {
-    let age_seconds = fetched_at_epoch
-        .filter(|value| *value > 0 && now_epoch > 0)
-        .map(|value| now_epoch.saturating_sub(value));
-    usage_cache_policy::classify_display_age_seconds(age_seconds).is_display_eligible()
+    rate_limits_values::fetched_at_within_display_age(fetched_at_epoch, now_epoch)
 }
 
 fn cache_entry_is_stale(entry: &CacheEntry) -> bool {
-    let fetched_at = match entry.fetched_at_epoch {
-        Some(value) if value > 0 => value,
-        _ => return true,
-    };
-    let now_epoch = chrono::Utc::now().timestamp();
-    if now_epoch <= 0 {
-        return false;
-    }
-    let ttl_i64 = i64::try_from(cache_ttl_seconds()).unwrap_or(i64::MAX);
-    now_epoch.saturating_sub(fetched_at) > ttl_i64
+    entry.is_stale(chrono::Utc::now().timestamp(), cache_ttl_seconds())
 }
 
 pub fn write_prompt_segment_cache(
@@ -196,29 +144,14 @@ pub fn write_prompt_segment_cache(
     fetched_at_epoch: i64,
     values: &render::WeeklyValues,
 ) -> Result<()> {
-    if values.weekly.is_none() && values.non_weekly.is_none() {
+    let Some(data) = rate_limits_values::render_cache_entry(fetched_at_epoch, values) else {
         anyhow::bail!("codex-rate-limits: refusing to write empty window cache");
-    }
+    };
     let cache_file = cache_file_for_target(target_file)?;
     if let Some(parent) = cache_file.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    let mut lines = Vec::new();
-    lines.push(format!("fetched_at={fetched_at_epoch}"));
-    if let Some(non_weekly) = &values.non_weekly {
-        lines.push(format!("non_weekly_label={}", non_weekly.label));
-        lines.push(format!("non_weekly_remaining={}", non_weekly.remaining));
-        if non_weekly.reset_epoch > 0 {
-            lines.push(format!("non_weekly_reset_epoch={}", non_weekly.reset_epoch));
-        }
-    }
-    if let Some(weekly) = &values.weekly {
-        lines.push(format!("weekly_remaining={}", weekly.remaining));
-        lines.push(format!("weekly_reset_epoch={}", weekly.reset_epoch));
-    }
-
-    let data = lines.join("\n");
     shared_fs::write_atomic(&cache_file, data.as_bytes(), shared_fs::SECRET_FILE_MODE)?;
     Ok(())
 }

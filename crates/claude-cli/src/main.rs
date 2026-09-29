@@ -36,6 +36,7 @@ fn run() -> i32 {
         Some(cli::Command::Agent(args)) => handle_agent(&args),
         Some(cli::Command::Auth(args)) => handle_auth(&args),
         Some(cli::Command::Config(args)) => handle_config(&args),
+        Some(cli::Command::Diag(args)) => handle_diag(&args),
         Some(cli::Command::PromptSegment(args)) => handle_prompt_segment(&args),
         Some(cli::Command::Usage(args)) => handle_usage(&args),
         Some(cli::Command::Completion(args)) => completion::run(args.shell),
@@ -218,6 +219,25 @@ fn handle_config(args: &cli::ConfigArgs) -> i32 {
         Some(cli::ConfigCommand::Show) => claude_cli::config::show(),
         Some(cli::ConfigCommand::Set { key, value }) => claude_cli::config::set(key, value),
         None => print_subcommand_help("config"),
+    }
+}
+
+fn handle_diag(args: &cli::DiagArgs) -> i32 {
+    match &args.command {
+        Some(cli::DiagCommand::RateLimits(rate_args)) => {
+            claude_cli::rate_limits::run(&claude_cli::rate_limits::RateLimitsOptions {
+                json: rate_args.output.is_json(),
+                cached: rate_args.cached,
+                one_line: rate_args.one_line,
+                all: rate_args.all,
+                async_mode: rate_args.async_mode,
+                watch: rate_args.watch,
+                jobs: rate_args.jobs.clone(),
+                secret: rate_args.profile.clone(),
+                ..Default::default()
+            })
+        }
+        None => print_subcommand_help("diag"),
     }
 }
 
