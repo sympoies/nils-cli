@@ -307,7 +307,11 @@ execution follow the bounded taxonomy below.
 The first automatic title MUST be provider-authored. The provider receives a
 bounded, sanitized human objective (at most 1,200 characters) as task context
 and is asked for a topic of at most 72 characters, without repeating a voice
-transcription preamble. The daemon MUST NOT expose
+transcription preamble. Both provider prompts ask for the topic and activity
+in the same language and writing system the user writes in, without
+translating them or converting between script variants; no language is
+hard-coded. A v3 provider rewrites an existing automatic topic that uses a
+different language or writing system from the user. The daemon MUST NOT expose
 its private deterministic `objective:` projection as the session title. Image
 transport scaffolding and image-reference markers are excluded from the
 semantic projection supplied to that provider. A first automatic result MUST
