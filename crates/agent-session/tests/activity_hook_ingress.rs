@@ -169,6 +169,56 @@ fn http_hook_rejects_requests_outside_the_hook_event_schema() {
     assert_eq!(response.status, 422, "{}", response.body);
     assert_eq!(response.body["error"]["code"], "provider-hook-too-large");
     assert_eq!(fixture.turn_state(BETA)["phase"], "starting");
+
+    // The silent `--via http` client relies on the daemon recording the
+    // ingestion failure exactly as the file path would.
+    let diagnostic_path = fixture
+        .state_dir
+        .join("sessions")
+        .join(BETA)
+        .join("activity.diagnostic.json");
+    let diagnostic: Value =
+        serde_json::from_slice(&fs::read(&diagnostic_path).expect("activity diagnostic"))
+            .expect("activity diagnostic JSON");
+    assert_eq!(diagnostic["code"], "provider-hook-too-large");
+    assert_eq!(diagnostic["runtime_id"], incarnation(BETA));
+    let accepted = server.post_hook(Some(BETA_CAPABILITY), &valid);
+    assert_eq!(accepted.status, 200, "{}", accepted.body);
+    assert!(
+        !diagnostic_path.exists(),
+        "a successful ingest clears the diagnostic"
+    );
+}
+
+#[test]
+fn http_hook_admits_a_burst_of_concurrent_hooks_from_one_session() {
+    let fixture = Fixture::new();
+    let server = ServeProcess::spawn(&fixture);
+    let body = json!({
+        "schema_version": "agent-session.activity-hook.v1",
+        "session_id": BETA,
+        "session_incarnation": incarnation(BETA),
+        "agent": "claude",
+        "payload": user_prompt_submit(),
+    });
+    // Parallel tool calls fire overlapping hooks; each must be ingested, as the
+    // file path would after waiting on the session lock, rather than dropped.
+    let statuses = std::thread::scope(|scope| {
+        let handles = (0..12)
+            .map(|_| scope.spawn(|| server.post_hook(Some(BETA_CAPABILITY), &body)))
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| {
+                let response = handle.join().expect("concurrent hook");
+                (response.status, response.body.to_string())
+            })
+            .collect::<Vec<_>>()
+    });
+    for (status, body) in &statuses {
+        assert_eq!(*status, 200, "{body}");
+    }
+    assert_eq!(fixture.turn_state(BETA)["phase"], "working");
 }
 
 /// Drop timestamps, which necessarily differ between two ingestions.

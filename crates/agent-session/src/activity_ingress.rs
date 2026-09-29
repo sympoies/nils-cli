@@ -41,10 +41,18 @@ const FORWARDING_HEADERS: [&str; 3] = ["forwarded", "x-forwarded-for", "x-real-i
 /// The payload travels as a JSON string, whose escaping can expand one byte
 /// into six; the provider payload limit itself is enforced after decoding.
 const MAX_REQUEST_BYTES: usize = 6 * (MAX_EVENT_BYTES as usize + 1) + 4096;
-const MAX_IN_FLIGHT: usize = 8;
+/// Concurrent capability authentications across all callers.
+const MAX_AUTHENTICATING: usize = 8;
 const SESSION_BURST: f64 = 64.0;
 const SESSION_REFILL_PER_SECOND: f64 = 20.0;
-const MAX_SESSION_IN_FLIGHT: usize = 2;
+/// Concurrent ingests per session. Ingests of one session serialize on its
+/// record lock anyway; the cap only stops a session whose lock is held
+/// elsewhere from tying up an unbounded number of blocking threads.
+const MAX_SESSION_IN_FLIGHT: usize = 4;
+/// How long a request may wait for an authentication or ingest slot. The file
+/// path waits on the same locks rather than dropping the event, so admission
+/// waits too, inside the client's two-second budget.
+const ADMISSION_WAIT: Duration = Duration::from_millis(1500);
 const MAX_TRACKED_SESSIONS: usize = 1024;
 const MAX_SELECTOR_CHARS: usize = 256;
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -72,7 +80,7 @@ struct HookRequest {
 struct IngressState {
     context: CliContext,
     machine: String,
-    in_flight: Arc<Semaphore>,
+    authenticating: Arc<Semaphore>,
     limiter: Arc<SessionRateLimiter>,
 }
 
@@ -86,7 +94,7 @@ where
         .with_state(Arc::new(IngressState {
             context,
             machine,
-            in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
+            authenticating: Arc::new(Semaphore::new(MAX_AUTHENTICATING)),
             limiter: Arc::new(SessionRateLimiter::default()),
         }))
 }
@@ -125,30 +133,60 @@ async fn hook_handler(State(state): State<Arc<IngressState>>, request: Request) 
         Ok(parsed) => parsed,
         Err(error) => return envelope_err(error),
     };
-    // Taken only once the body is in hand, so a slow sender cannot hold a
-    // permit; the permits bound the blocking authentication and ingest work.
-    let Ok(permit) = state.in_flight.clone().try_acquire_owned() else {
-        return envelope_err(rate_limited());
-    };
-    let context = state.context.clone();
-    let limiter = state.limiter.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        ingest(&context, &limiter, &capability, agent, &request)
-    })
-    .await;
-    match result {
-        Ok(Ok(ingested)) => envelope_ok(json!({
+    match admit_and_ingest(&state, capability, agent, request).await {
+        Ok(ingested) => envelope_ok(json!({
             "machine": state.machine,
             "ingested": ingested,
         })),
-        Ok(Err(error)) => envelope_err(error),
-        Err(_) => envelope_err(CliError::runtime(
-            "serve-task-failed",
-            "internal task failed",
-            None,
-        )),
+        Err(error) => envelope_err(error),
     }
+}
+
+/// Authenticate, then ingest under the session's admission. Slots are taken
+/// only once the body is in hand, so a slow sender cannot hold one, and each
+/// wait is bounded by one shared deadline.
+async fn admit_and_ingest(
+    state: &IngressState,
+    capability: String,
+    agent: AgentKind,
+    request: HookRequest,
+) -> Result<bool, CliError> {
+    let deadline = tokio::time::Instant::now() + ADMISSION_WAIT;
+    let auth_permit =
+        tokio::time::timeout_at(deadline, state.authenticating.clone().acquire_owned())
+            .await
+            .map_err(|_| rate_limited())?
+            .map_err(|_| rate_limited())?;
+    let context = state.context.clone();
+    let request = Arc::new(request);
+    let incarnation = {
+        let request = request.clone();
+        tokio::task::spawn_blocking(move || {
+            let _auth_permit = auth_permit;
+            authenticate(&context, &capability, &request)
+        })
+        .await
+        .map_err(|_| task_failed())??
+    };
+    let session_slots = state
+        .limiter
+        .admit(&request.session_id, Instant::now())
+        .ok_or_else(rate_limited)?;
+    let ingest_permit = tokio::time::timeout_at(deadline, session_slots.acquire_owned())
+        .await
+        .map_err(|_| rate_limited())?
+        .map_err(|_| rate_limited())?;
+    let context = state.context.clone();
+    tokio::task::spawn_blocking(move || {
+        let _ingest_permit = ingest_permit;
+        ingest(&context, agent, &request, &incarnation)
+    })
+    .await
+    .map_err(|_| task_failed())?
+}
+
+fn task_failed() -> CliError {
+    CliError::runtime("serve-task-failed", "internal task failed", None)
 }
 
 fn from_loopback_peer(parts: &Parts) -> bool {
@@ -213,13 +251,11 @@ fn parse_request(headers: &HeaderMap, bytes: &[u8]) -> Result<(AgentKind, HookRe
     Ok((agent, request))
 }
 
-fn ingest(
+fn authenticate(
     context: &CliContext,
-    limiter: &SessionRateLimiter,
     capability: &str,
-    agent: AgentKind,
     request: &HookRequest,
-) -> Result<bool, CliError> {
+) -> Result<String, CliError> {
     let (_record, incarnation) =
         coordination::authenticate_token(context, &request.session_id, capability)?;
     // The capability already binds one incarnation; a request naming another
@@ -227,16 +263,22 @@ fn ingest(
     if incarnation != request.session_incarnation {
         return Err(coordination::unauthorized());
     }
-    let Some(_session_permit) = limiter.admit(&request.session_id, Instant::now()) else {
-        return Err(rate_limited());
-    };
+    Ok(incarnation)
+}
+
+fn ingest(
+    context: &CliContext,
+    agent: AgentKind,
+    request: &HookRequest,
+    incarnation: &str,
+) -> Result<bool, CliError> {
     let result = activity::ingest_provider_hook_input(
         context,
         agent,
         request.event.as_deref(),
         ProviderHookInput {
             id: &request.session_id,
-            runtime_id: &incarnation,
+            runtime_id: incarnation,
             payload: request.payload.as_bytes(),
             attention_authority: request.attention_authority.as_deref(),
         },
@@ -247,7 +289,7 @@ fn ingest(
                 context,
                 agent,
                 &request.session_id,
-                Some(&incarnation),
+                Some(incarnation),
             );
         }
         Ok(false) => {}
@@ -255,7 +297,7 @@ fn ingest(
             context,
             agent,
             &request.session_id,
-            Some(&incarnation),
+            Some(incarnation),
             error.code(),
         ),
     }
@@ -271,10 +313,10 @@ fn rate_limited() -> CliError {
 }
 
 /// Per-session admission: a token bucket bounds the request rate and a small
-/// in-flight cap keeps one session whose record lock is held elsewhere from
-/// occupying every shared permit. Only authenticated requests are admitted
-/// here, so a caller without the capability cannot drain another session's
-/// budget; unauthenticated load is bounded by the shared semaphore instead.
+/// semaphore bounds concurrent ingests. Only authenticated requests are
+/// admitted here, so a caller without the capability cannot drain another
+/// session's budget; unauthenticated load is bounded by the shared
+/// authentication semaphore instead.
 #[derive(Default)]
 struct SessionRateLimiter {
     buckets: Mutex<HashMap<String, Bucket>>,
@@ -283,7 +325,7 @@ struct SessionRateLimiter {
 struct Bucket {
     tokens: f64,
     refilled_at: Instant,
-    in_flight: usize,
+    ingest_slots: Arc<Semaphore>,
 }
 
 impl Bucket {
@@ -298,31 +340,15 @@ impl Bucket {
     /// A full, idle bucket carries no state a fresh one would not.
     fn reclaimable(&mut self, now: Instant) -> bool {
         self.refill(now);
-        self.in_flight == 0 && self.tokens >= SESSION_BURST
-    }
-}
-
-/// Releases one session in-flight slot when the ingest finishes.
-struct SessionPermit<'a> {
-    limiter: &'a SessionRateLimiter,
-    session_id: String,
-}
-
-impl Drop for SessionPermit<'_> {
-    fn drop(&mut self) {
-        let mut buckets = self
-            .limiter
-            .buckets
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if let Some(bucket) = buckets.get_mut(&self.session_id) {
-            bucket.in_flight = bucket.in_flight.saturating_sub(1);
-        }
+        self.tokens >= SESSION_BURST
+            && self.ingest_slots.available_permits() == MAX_SESSION_IN_FLIGHT
     }
 }
 
 impl SessionRateLimiter {
-    fn admit(&self, session_id: &str, now: Instant) -> Option<SessionPermit<'_>> {
+    /// Draw one token and return the session's ingest slots, or `None` when
+    /// the session's rate is exhausted or no session can be tracked.
+    fn admit(&self, session_id: &str, now: Instant) -> Option<Arc<Semaphore>> {
         let mut buckets = self.buckets.lock().unwrap_or_else(PoisonError::into_inner);
         if !buckets.contains_key(session_id) && buckets.len() >= MAX_TRACKED_SESSIONS {
             buckets.retain(|_, bucket| !bucket.reclaimable(now));
@@ -335,18 +361,14 @@ impl SessionRateLimiter {
             .or_insert_with(|| Bucket {
                 tokens: SESSION_BURST,
                 refilled_at: now,
-                in_flight: 0,
+                ingest_slots: Arc::new(Semaphore::new(MAX_SESSION_IN_FLIGHT)),
             });
         bucket.refill(now);
-        if bucket.tokens < 1.0 || bucket.in_flight >= MAX_SESSION_IN_FLIGHT {
+        if bucket.tokens < 1.0 {
             return None;
         }
         bucket.tokens -= 1.0;
-        bucket.in_flight += 1;
-        Some(SessionPermit {
-            limiter: self,
-            session_id: session_id.to_string(),
-        })
+        Some(bucket.ingest_slots.clone())
     }
 }
 
@@ -469,17 +491,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn one_session_cannot_hold_more_than_its_in_flight_share() {
+    #[tokio::test]
+    async fn a_busy_session_waits_for_an_ingest_slot_instead_of_dropping_the_event() {
         let limiter = SessionRateLimiter::default();
         let start = Instant::now();
+        let slots = limiter.admit("busy", start).expect("admitted");
         let held = (0..MAX_SESSION_IN_FLIGHT)
-            .map(|_| limiter.admit("stuck", start).expect("in-flight slot"))
+            .map(|_| slots.clone().try_acquire_owned().expect("ingest slot"))
             .collect::<Vec<_>>();
-        assert!(limiter.admit("stuck", start).is_none());
-        assert!(limiter.admit("other", start).is_some());
+        let waiting = limiter.admit("busy", start).expect("rate budget remains");
+        assert!(waiting.clone().try_acquire_owned().is_err());
+        assert!(
+            limiter
+                .admit("other", start)
+                .expect("admitted")
+                .try_acquire_owned()
+                .is_ok(),
+            "one session's held slots never block another session"
+        );
+        let waiter = tokio::spawn(async move {
+            tokio::time::timeout(ADMISSION_WAIT, waiting.acquire_owned())
+                .await
+                .is_ok()
+        });
         drop(held);
-        assert!(limiter.admit("stuck", start).is_some());
+        assert!(
+            waiter.await.expect("waiter"),
+            "a released slot admits the waiter"
+        );
     }
 
     #[test]

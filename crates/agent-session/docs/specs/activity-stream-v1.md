@@ -254,20 +254,31 @@ Admission is fail-closed, in order:
    bound with `--allow-non-loopback`; it is not authentication, and a
    same-host TCP forwarder remains indistinguishable from a local caller.
 2. A missing capability returns 401 `coordination-unauthorized`.
-3. A malformed body, content type, schema version, or provider returns 400.
-4. At most eight requests authenticate and ingest concurrently; further
-   requests return 429 `rate-limited`.
-5. The capability must authenticate the named session's ready, heartbeat-fresh
-   broker, and `session_incarnation` must equal the incarnation it binds. A
-   capability for another session, a replaced or stale incarnation, or an
-   unknown capability returns 401 `coordination-unauthorized` without
-   mutating state.
-6. Each authenticated session draws from its own token bucket (burst 64,
-   refilled at 20 requests per second) and may ingest at most two requests at
-   once, so a session whose record lock is held elsewhere cannot occupy every
-   shared slot. An exhausted bucket or a full session share returns 429
-   `rate-limited`. Unauthenticated requests never draw from a session's
-   bucket, so they cannot starve it.
+3. A body over the bound returns 413 `activity-hook-request-too-large`, and a
+   body not received within five seconds returns 408
+   `activity-hook-request-timeout`.
+4. A malformed body, content type, schema version, or provider returns 400.
+5. At most eight requests authenticate at once. A request waits for a slot, and
+   every admission wait in steps 5 and 7 shares one 1.5-second deadline that
+   fits inside the client's two-second budget; a request still waiting at the
+   deadline returns 429 `rate-limited`. Waiting rather than rejecting matches
+   the file path, which waits on the same locks instead of dropping the event.
+6. The capability must authenticate the named session's ready broker, and
+   `session_incarnation` must equal the incarnation it binds. A capability for
+   another session, a replaced or stale incarnation, or an unknown capability
+   returns 401 `coordination-unauthorized` without mutating state. A matching
+   capability whose broker heartbeat is stale returns 500
+   `coordination-broker-lost`, as on the other capability routes.
+7. Each authenticated session draws from its own token bucket (burst 64,
+   refilled at 20 requests per second); an exhausted bucket returns 429
+   `rate-limited` at once. At most four requests of one session ingest at
+   once, so a session whose record lock is held elsewhere cannot tie up
+   unbounded work; further requests of that session wait under the shared
+   deadline. Unauthenticated requests never draw from a session's bucket or
+   ingest slots. They compete only for the shared authentication slots, which
+   are served in arrival order, so a local flood of invalid capabilities can
+   delay other sessions' hooks up to the deadline but cannot hold a slot
+   indefinitely.
 
 Success returns the ordinary serve envelope with
 `data.ingested`, which is `false` when the payload normalizes to no activity
