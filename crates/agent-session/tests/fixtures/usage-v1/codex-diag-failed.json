@@ -1,0 +1,10 @@
+{
+  "schema_version": "codex-cli.diag.rate-limits.v1",
+  "command": "diag rate-limits",
+  "ok": false,
+  "error": {
+    "code": "request-failed",
+    "message": "provider rejected the token stored at /srv/SECRET-MARKER/auth.json",
+    "details": { "reason_code": "auth_expired" }
+  }
+}

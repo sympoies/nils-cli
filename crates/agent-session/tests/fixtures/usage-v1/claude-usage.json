@@ -1,0 +1,33 @@
+{
+  "schema_version": "claude-cli.usage.v1",
+  "command": "usage",
+  "ok": true,
+  "result": {
+    "provider": "claude",
+    "source": "oauth",
+    "stale": false,
+    "cache_file": "/srv/SECRET-MARKER/claude/usage.json",
+    "updated_at": 0,
+    "windows": [
+      {
+        "key": "5h",
+        "label": "5h",
+        "window_minutes": 300,
+        "used_percent": 25.0,
+        "remaining_percent": 75.0,
+        "resets_at": "2100-01-01T05:00:00Z",
+        "resets_at_epoch": 4102462800
+      },
+      {
+        "key": "weekly",
+        "label": "Weekly",
+        "window_minutes": 10080,
+        "used_percent": 40.0,
+        "remaining_percent": 60.0,
+        "resets_at": "2100-01-07T00:00:00Z"
+      }
+    ],
+    "plan": "max",
+    "note": "free-form helper text from /srv/SECRET-MARKER"
+  }
+}

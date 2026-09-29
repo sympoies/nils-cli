@@ -32,6 +32,7 @@ mod retitle;
 mod retitle_v3;
 mod serve;
 mod serve_config;
+mod usage;
 
 /// Unstable engine surface for the `nils-main-agent` workspace crate.
 ///

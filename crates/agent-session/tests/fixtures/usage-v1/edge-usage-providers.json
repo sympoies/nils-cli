@@ -1,0 +1,62 @@
+[
+  {
+    "provider": "codex",
+    "account": "alpha",
+    "label": "Codex",
+    "ok": true,
+    "stale": false,
+    "plan": "team",
+    "windows": [
+      { "key": "5h", "label": "5h", "used_percent": 6, "window_minutes": 300, "resets_at": 4102400000 },
+      { "key": "weekly", "label": "Weekly", "used_percent": 12.5, "window_minutes": 10080, "resets_at": 4102444800 }
+    ],
+    "note": null,
+    "error": null,
+    "reason_code": null,
+    "reset_credits": { "available_count": 2 }
+  },
+  {
+    "provider": "codex",
+    "account": "bravo",
+    "label": "Codex",
+    "ok": false,
+    "stale": false,
+    "plan": null,
+    "windows": [],
+    "note": null,
+    "error": "Your Codex sign-in has expired. Sign in again.",
+    "reason_code": "auth_expired",
+    "reset_credits": null
+  },
+  {
+    "provider": "codex",
+    "account": "charlie",
+    "label": "Codex",
+    "ok": true,
+    "stale": false,
+    "plan": null,
+    "windows": [
+      { "key": "5h", "label": "5h", "used_percent": 60, "window_minutes": 300, "resets_at": 4102401000 }
+    ],
+    "note": null,
+    "error": null,
+    "reason_code": null,
+    "reset_credits": null
+  },
+  {
+    "provider": "claude",
+    "account": null,
+    "label": "Claude",
+    "ok": true,
+    "stale": false,
+    "plan": "max",
+    "windows": [
+      { "key": "5h", "label": "5h", "used_percent": 25.0, "window_minutes": 300, "resets_at": 4102462800 },
+      { "key": "weekly", "label": "Weekly", "used_percent": 40.0, "window_minutes": 10080, "resets_at": 4102963200 }
+    ],
+    "note": null,
+    "error": null,
+    "reason_code": null,
+    "reset_credits": null
+  }
+]

@@ -27,6 +27,8 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /activity/events` | Bearer | [Activity stream v1](activity-stream-v1.md) |
 | `POST /activity/hook/v1` | Session capability only; direct loopback peers only | [Activity stream v1](activity-stream-v1.md#provider-hook-ingress) |
 | `GET /usage` | Open | This specification |
+| `GET /usage/v1` | Bearer | [Provider usage and Codex reset](#provider-usage-and-codex-reset) |
+| `POST /codex/reset/v1` | Bearer; account allowlist and idempotency key | [Provider usage and Codex reset](#provider-usage-and-codex-reset) |
 | `GET /workdirs` | Bearer | This specification |
 | `GET /repos/remote-url` | Bearer | This specification |
 | `GET /sessions/{id}/glance` | Open | This specification |
@@ -379,7 +381,9 @@ recorded in `sympoies/nils-cli#1409`.
   contract (`auth_required`, `auth_expired`, `billing_past_due`,
   `subscription_inactive`, `organization_disabled`, `permission_denied`,
   `rate_limited`, `service_unavailable`, `timeout`, or `unknown`) copied only
-  from the helpers' allowlisted structured field.
+  from the helpers' allowlisted structured field. The authenticated, cached,
+  per-account successor is `GET /usage/v1`, specified under
+  [Provider usage and Codex reset](#provider-usage-and-codex-reset).
 - `GET /repos/remote-url?cwd=...` — authenticated repository lookup. `cwd` is
   required. The ordinary serve envelope returns `data.url` as a normalized
   credential-free HTTPS URL for any parseable Git origin host, or `null` when
@@ -859,6 +863,122 @@ recorded in `sympoies/nils-cli#1409`.
   preference, while advisory prompt events may be dropped on saturation and must not delay terminal bytes. Consumers should
   retain their documented local fallback when capability is absent/false or an event does not arrive within its bounded
   fallback interval.
+
+### Provider usage and Codex reset
+
+`GET /usage/v1` and `POST /codex/reset/v1` serve provider usage and the earned
+Codex rate-limit reset from the `codex-cli` and `claude-cli` provider CLIs on
+`PATH`, so a console edge needs no separate host helper. Both require the
+server bearer, like every other authenticated route. Their response shapes
+match what a console edge already parses from the helpers they replace; the
+synthetic fixtures under `tests/fixtures/usage-v1/` pin that projection.
+
+**Usage.** `GET /usage/v1` returns the ordinary serve envelope with
+`data.machine` and `data.usage`:
+
+```json
+{
+  "schema_version": "agent-session.provider-usage.v1",
+  "providers": [
+    {
+      "provider": "codex",
+      "account": "alpha",
+      "label": "Codex",
+      "ok": true,
+      "stale": false,
+      "plan": "team",
+      "windows": [
+        { "key": "5h", "label": "5h", "used_percent": 6, "window_minutes": 300, "resets_at": 1790003600 }
+      ],
+      "updated_at": 1790000000,
+      "note": null,
+      "error": null,
+      "reason_code": null,
+      "reset_credits": { "available_count": 2 }
+    }
+  ]
+}
+```
+
+- Codex contributes one entry per account from
+  `codex-cli diag rate-limits --all --format json --no-refresh-auth`, in the
+  helper's order. `account` is the profile nickname, `plan` only a known
+  ChatGPT plan tier, and `reset_credits` only a non-negative integer count;
+  absence means unknown, not zero. Window labels must be `Weekly` or a
+  provider duration such as `5h`, from which `key` and `window_minutes` are
+  derived. An account the helper reports as failed is `ok: false` with a
+  fixed `error` text and its `reason_code`. That run also refreshes the
+  shared rate-limit cache that `codex-cli account select` reads, so an account
+  selection within the cache TTL does no provider fetch.
+- Claude contributes one entry (`account: null`) from
+  `claude-cli usage --format json --source auto`. A result without windows,
+  such as a signed-out account, stays `ok: true` with `stale: true`, a fixed
+  `note`, and its `reason_code`.
+- When a helper cannot run, times out after 30 seconds, or returns an
+  unusable document, a provider with no earlier success is reported as one
+  entry with `account: null`, `stale: true`, and `reason_code`
+  `service_unavailable` or `timeout`, or the helper's own classified reason.
+  Codex marks that entry `ok: false`.
+- `reason_code` is always `null` or one of `auth_required`, `auth_expired`,
+  `billing_past_due`, `subscription_inactive`, `organization_disabled`,
+  `permission_denied`, `rate_limited`, `service_unavailable`, `timeout`, or
+  `unknown`. `note` and `error` are fixed daemon-owned strings; helper
+  messages never pass through. Output never carries credentials, provider
+  account ids, emails, file paths, or raw provider responses.
+
+**Caching.** Each provider has a stale-while-refresh cache. A completed
+snapshot is fresh for 60 seconds (`AGENT_SESSION_USAGE_V1_REFRESH_SECONDS`,
+1 to 300). The first read after that starts one background refresh and
+immediately gets the last completed snapshot, with every `ok` entry marked
+`stale: true` and a refreshing note. At most one refresh per provider runs at
+a time. A failed refresh keeps serving that snapshot with a backoff note and
+retries after one more interval. Windows are hidden (and the entry marked
+stale) once their `updated_at` is 600 seconds old or more than 5 seconds in
+the future, so a persistent outage never pins old numbers. `?refresh=1`
+starts a refresh at once and waits up to 7 seconds for it; a cold daemon
+waits the same bound for its first result. Any other query is
+`400 invalid-query`.
+
+**Codex reset.** `POST /codex/reset/v1` takes exactly
+`{"account": "<nickname>", "idempotency_key": "<uuid>"}` and consumes at most
+one earned reset through
+`codex-cli account reset-rate-limits --yes --idempotency-key <uuid> --format json <nickname>.json`.
+
+- `AGENT_SESSION_CODEX_RESET_ACCOUNTS` is the allowlist of nicknames,
+  separated by spaces or commas. Unset or empty disables the route with
+  `503 codex-reset-not-configured`; an unlisted account is
+  `403 codex-reset-account-not-allowed`.
+- The idempotency key must be a canonical lowercase UUID. The provider
+  receives it as the redemption id, so a repeated key never consumes a second
+  credit. The daemon serializes resets and replays a recorded outcome for the
+  same key and account for 24 hours (`replayed: true`, no second CLI run); the
+  same key for another account is `409 idempotency-key-reused`. A failed run
+  is not recorded, so the caller retries with the same key.
+- A malformed body is `422 invalid-request`. CLI failures are
+  `502 codex-reset-failed`, `502 codex-reset-invalid-response`,
+  `502 codex-reset-unavailable`, or `504 codex-reset-timeout` (30 seconds, an
+  unknown result to retry with the same key). Errors use the ordinary serve
+  error envelope and carry no helper output.
+
+Success is not wrapped in the serve envelope. Like the federated mailbox
+routes, it returns a raw versioned document whose `schema_version` is the one
+the console reset client checks:
+
+```json
+{
+  "schema_version": "agent-console.codex-rate-limit-reset.v1",
+  "outcome": "reset",
+  "windows_reset": 2,
+  "replayed": false,
+  "machine": "workstation",
+  "usage": { "schema_version": "agent-session.provider-usage.v1", "providers": [] }
+}
+```
+
+`outcome` is `reset`, `nothing_to_reset`, `no_credit`, or `already_redeemed`,
+and `windows_reset` is present only when the CLI reports it. `usage` is the
+`GET /usage/v1` snapshot after a forced Codex refresh; a replay returns the
+cached snapshot instead.
 
 ## Response and authentication
 
