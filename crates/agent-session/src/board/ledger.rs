@@ -133,7 +133,7 @@ fn unavailable() -> CliError {
     )
 }
 
-fn cursor_invalid() -> CliError {
+pub(crate) fn cursor_invalid() -> CliError {
     CliError::usage(
         "board-cursor-invalid",
         "the closed-session cursor is malformed",

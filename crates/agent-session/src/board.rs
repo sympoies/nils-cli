@@ -18,7 +18,7 @@ use crate::{CliContext, CliError, SessionRecord, SessionView};
 
 mod ledger;
 
-pub(crate) use ledger::CloseReason;
+pub(crate) use ledger::{CloseReason, cursor_invalid};
 
 pub(crate) const BOARD_SCHEMA: &str = "agent-session.board.v1";
 pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";

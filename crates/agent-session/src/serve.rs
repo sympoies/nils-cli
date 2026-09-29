@@ -4918,11 +4918,7 @@ async fn board_closed_handler(
         return response;
     }
     let Ok(Query(query)) = query else {
-        return envelope_err(CliError::usage(
-            "board-cursor-invalid",
-            "the closed-session cursor is malformed",
-            None,
-        ));
+        return envelope_err(crate::board::cursor_invalid());
     };
     let context = state.context.clone();
     let machine = state.machine.clone();
