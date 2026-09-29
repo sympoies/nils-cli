@@ -8,6 +8,8 @@ Crate-local documentation for the `forge-cli` binary.
   parity matrix, lock-down rules, exit-code map.
 - [`specs/forge-cli-ops-v1.yaml`](specs/forge-cli-ops-v1.yaml) —
   machine-readable op catalog.
+- [`specs/local-provider-contract-v1.md`](specs/local-provider-contract-v1.md) —
+  file-backed issue and seeded PR store contract.
 
 ## Runbooks
 
