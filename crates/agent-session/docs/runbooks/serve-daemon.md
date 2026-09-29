@@ -302,8 +302,40 @@ fail-closed.
   readiness.
 - `AGENT_SESSION_CODEX_RUNTIME=raw|app-server`: force the Codex runtime choice.
   The default probes the installed CLI and degrades to raw TUI when the audited
-  app-server capability is unavailable.
+  app-server capability or a private runtime directory is unavailable. See
+  [Codex runtime directory](#codex-runtime-directory).
 - `AGENT_SESSION_USAGE_TIMEOUT_MS`: bounds provider usage collection.
+
+## Codex runtime directory
+
+The Codex app-server runtime listens on a private Unix socket. Serve places it
+below an absolute `XDG_RUNTIME_DIR` when one is set. A launchd job on macOS, or
+a system service, has no such variable, so serve derives a per-user root
+instead:
+
+1. `<state-dir>/run`, when the socket path fits the Unix socket budget. This
+   is persistent and outside system temp-file cleanup.
+2. Otherwise `/tmp/agent-session-<uid>`, a short fallback for a long state
+   directory. System temp cleanup may prune idle regular files there, so a
+   deployment with long-lived sessions should shorten the state directory or
+   set a short private `XDG_RUNTIME_DIR` instead.
+
+The derived root is created mode `0700` and must be owned by the serving user,
+not a symlink, and not group- or world-accessible, which is the same check
+applied to `XDG_RUNTIME_DIR`. A deployment no longer needs to create the
+directory or export `AGENT_SESSION_CODEX_RUNTIME=app-server` by hand.
+
+A downgrade to the raw tmux runtime in automatic mode is never silent:
+
+- `GET /codex/accounts` readiness reports `supported: false` with a stable
+  `reason_code`, such as `codex-app-server-runtime-dir-unsafe`.
+- Each affected session's `startup.runtime_fallback` carries the allowlisted
+  reason, as listed in [Serve API v1](../specs/serve-api-v1.md).
+
+To recover, fix the reported directory's owner or mode (`chmod 700`), or point
+`XDG_RUNTIME_DIR` at a short private directory, then recreate the affected
+sessions. Each new session resolves the directory again, so serve itself does
+not need a restart unless its environment changed.
 
 ## Operational checks
 

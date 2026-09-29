@@ -8,6 +8,7 @@ pub mod cli;
 pub mod codex_account;
 #[doc(hidden)]
 pub mod codex_app_server;
+mod codex_runtime_dir;
 pub mod completion;
 #[doc(hidden)]
 pub mod coordination;
@@ -1082,6 +1083,9 @@ struct StartupProjection {
     occurred_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     retry_safe: Option<bool>,
+    /// View-only: why automatic Codex selection kept the raw tmux runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    runtime_fallback: Option<String>,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
     extra: BTreeMap<String, Value>,
 }
@@ -1220,6 +1224,7 @@ fn startup_projection(record: &SessionRecord) -> Option<StartupProjection> {
 
 fn store_startup_projection(record: &mut SessionRecord, startup: &StartupProjection) {
     let mut durable = startup.clone();
+    durable.runtime_fallback = None;
     if let Some(current) = startup_projection(record) {
         for (key, value) in current.extra {
             durable.extra.entry(key).or_insert(value);
@@ -1234,6 +1239,7 @@ fn store_startup_projection(record: &mut SessionRecord, startup: &StartupProject
 fn startup_projection_for_view(record: &SessionRecord) -> Option<StartupProjection> {
     let mut startup = startup_projection(record)?;
     startup.extra.clear();
+    startup.runtime_fallback = codex_runtime_dir::fallback_for_view(record).map(ToOwned::to_owned);
     Some(startup)
 }
 
@@ -1278,6 +1284,7 @@ fn starting_projection(started_at: &str, stage: &str) -> StartupProjection {
         message: None,
         occurred_at: None,
         retry_safe: None,
+        runtime_fallback: None,
         extra: BTreeMap::new(),
     }
 }
@@ -1319,6 +1326,7 @@ fn failed_projection(
                 .unwrap_or_else(|| Zoned::now().timestamp().to_string()),
         ),
         retry_safe: Some(retry_safe),
+        runtime_fallback: None,
         extra: BTreeMap::new(),
     }
 }

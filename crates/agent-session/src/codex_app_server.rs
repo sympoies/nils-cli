@@ -52,7 +52,9 @@ pub(crate) const ATTENTION_AUTHORITY_ENV: &str = "AGENT_SESSION_ATTENTION_AUTHOR
 const ATTENTION_AUTHORITY_PROTOCOL: &str = "protocol";
 const ATTENTION_AUTHORITY_HOOK: &str = "hook";
 
-const UNIX_SOCKET_PATH_BUDGET: usize = 100;
+pub(crate) const UNIX_SOCKET_PATH_BUDGET: usize = 100;
+/// Digest bytes in a runtime socket name; rendered as twice as many hex digits.
+pub(crate) const RUNTIME_NAMESPACE_BYTES: usize = 8;
 const MAX_PROTOCOL_ID_BYTES: usize = 256;
 const MAX_REDUCER_PENDING_TURNS: usize = 64;
 const MAX_PENDING_ATTENTION_REQUESTS: usize = 64;
@@ -141,13 +143,26 @@ impl AppServerProbe {
     }
 }
 
-pub(crate) fn account_binding_readiness(agent_bin: &Path) -> CodexAccountReadiness {
+pub(crate) fn account_binding_readiness(
+    agent_bin: &Path,
+    state_dir: &Path,
+) -> CodexAccountReadiness {
     let probe = app_server_probe(agent_bin);
+    let mut supported = probe.capabilities.transport;
+    let mut reason_code = probe.reason_code;
+    // A capable CLI still needs a usable private socket directory.
+    if supported
+        && let Err(err) = private_runtime_dir(state_dir)
+            .and_then(|dir| socket_path_in(&dir, &"0".repeat(RUNTIME_NAMESPACE_BYTES * 2)))
+    {
+        supported = false;
+        reason_code = Some(crate::codex_runtime_dir::fallback_reason(err.code()));
+    }
     CodexAccountReadiness {
         schema_version: CODEX_ACCOUNT_READINESS_SCHEMA_VERSION,
-        supported: probe.capabilities.transport,
+        supported,
         provider_version: probe.provider_version,
-        reason_code: probe.reason_code,
+        reason_code,
     }
 }
 
@@ -183,7 +198,13 @@ pub(crate) fn configure_runtime(
                 })),
             ));
         }
-        return Ok(());
+        crate::codex_runtime_dir::record_fallback(
+            record,
+            probe
+                .reason_code
+                .unwrap_or("codex-app-server-transport-unavailable"),
+        );
+        return write_session_record(context, record);
     }
     configure_runtime_with_capabilities(context, record, forced, managed, capabilities)
 }
@@ -197,9 +218,13 @@ fn configure_runtime_with_capabilities(
 ) -> Result<(), CliError> {
     let socket = match allocate_socket_path(context, record) {
         Ok(socket) => socket,
-        Err(_) if !forced => return Ok(()),
+        Err(err) if !forced => {
+            crate::codex_runtime_dir::record_fallback(record, err.code());
+            return write_session_record(context, record);
+        }
         Err(err) => return Err(err),
     };
+    crate::codex_runtime_dir::clear_fallback(record);
     let runtime = record.runtime.as_mut().ok_or_else(|| {
         CliError::data(
             "runtime-id-missing",
@@ -430,7 +455,7 @@ fn runtime_namespace(context: &CliContext, record: &SessionRecord) -> Result<Str
     Ok(digest
         .finalize()
         .iter()
-        .take(8)
+        .take(RUNTIME_NAMESPACE_BYTES)
         .map(|byte| format!("{byte:02x}"))
         .collect())
 }
@@ -457,17 +482,8 @@ fn validate_private_runtime_dir(path: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
-fn private_runtime_dir() -> Result<PathBuf, CliError> {
-    let runtime_root = env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .ok_or_else(|| {
-            CliError::runtime(
-                "codex-app-server-runtime-dir-unavailable",
-                "Codex app-server requires a private XDG_RUNTIME_DIR",
-                None,
-            )
-        })?;
+fn private_runtime_dir(state_dir: &Path) -> Result<PathBuf, CliError> {
+    let runtime_root = crate::codex_runtime_dir::runtime_root(state_dir)?;
     validate_private_runtime_dir(&runtime_root)?;
     let dir = runtime_root.join("agent-session");
     match fs::create_dir(&dir) {
@@ -492,13 +508,17 @@ fn private_runtime_dir() -> Result<PathBuf, CliError> {
 }
 
 fn allocate_socket_path(context: &CliContext, record: &SessionRecord) -> Result<PathBuf, CliError> {
-    let dir = private_runtime_dir()?;
+    let dir = private_runtime_dir(&context.state_dir)?;
     let suffix = runtime_namespace(context, record)?;
+    socket_path_in(&dir, &suffix)
+}
+
+fn socket_path_in(dir: &Path, suffix: &str) -> Result<PathBuf, CliError> {
     let path = dir.join(format!("cx-{suffix}.sock"));
     if path.as_os_str().as_encoded_bytes().len() > UNIX_SOCKET_PATH_BUDGET {
         return Err(CliError::runtime(
             "codex-app-server-socket-path-too-long",
-            "XDG_RUNTIME_DIR is too long for a private Unix socket",
+            "the Codex runtime directory is too long for a private Unix socket",
             None,
         ));
     }
@@ -5746,7 +5766,7 @@ mod tests {
         fs::write(&old, "#!/bin/sh\nprintf '%s\\n' 'codex-cli 0.143.9'\n").unwrap();
         fs::set_permissions(&old, fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(
-            account_binding_readiness(&old),
+            account_binding_readiness(&old, tmp.path()),
             CodexAccountReadiness {
                 schema_version: CODEX_ACCOUNT_READINESS_SCHEMA_VERSION,
                 supported: false,
@@ -5757,7 +5777,7 @@ mod tests {
 
         let missing = tmp.path().join("missing");
         assert_eq!(
-            account_binding_readiness(&missing),
+            account_binding_readiness(&missing, tmp.path()),
             CodexAccountReadiness {
                 schema_version: CODEX_ACCOUNT_READINESS_SCHEMA_VERSION,
                 supported: false,
