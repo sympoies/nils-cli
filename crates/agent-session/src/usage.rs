@@ -805,14 +805,7 @@ impl Slot {
             let may_retry = state.retry_after.is_none_or(|after| now >= after);
             let mut target = state.completions;
             if force {
-                state.fresh_until = None;
-                if state.refreshing {
-                    // The running refresh predates this request; wait for the next.
-                    state.rerun = true;
-                    target += 1;
-                } else {
-                    self.start_refresh(&mut state);
-                }
+                target = self.invalidate_locked(&mut state);
             } else if !fresh && !state.refreshing && may_retry {
                 self.start_refresh(&mut state);
             }
@@ -821,6 +814,32 @@ impl Slot {
         if should_wait {
             let _ = tokio::time::timeout(wait, completed.wait_for(|count| *count > target)).await;
         }
+        self.project()
+    }
+
+    /// Stop serving the current snapshot as fresh and make sure a refresh
+    /// starts after now. Returns the completion count that refresh exceeds.
+    fn invalidate(self: &Arc<Self>) -> u64 {
+        let mut state = self.lock();
+        self.invalidate_locked(&mut state)
+    }
+
+    fn invalidate_locked(self: &Arc<Self>, state: &mut SlotState) -> u64 {
+        state.fresh_until = None;
+        if state.refreshing {
+            // The running refresh predates this request; wait for the next.
+            state.rerun = true;
+            state.completions + 1
+        } else {
+            self.start_refresh(state);
+            state.completions
+        }
+    }
+
+    /// Wait up to `wait` for completion `target` to pass, then serve the cache.
+    async fn read_after(&self, target: u64, wait: Duration) -> Vec<Entry> {
+        let mut completed = self.completed.subscribe();
+        let _ = tokio::time::timeout(wait, completed.wait_for(|count| *count > target)).await;
         self.project()
     }
 
@@ -978,12 +997,7 @@ impl UsageService {
             self.codex.read(force_codex, wait),
             self.claude.read(force_claude, wait)
         );
-        let providers: Vec<Value> = codex
-            .iter()
-            .chain(claude.iter())
-            .map(Entry::to_json)
-            .collect();
-        json!({ "schema_version": USAGE_SCHEMA_VERSION, "providers": providers })
+        usage_json(&codex, &claude)
     }
 
     /// `POST /codex/reset/v1`: consume one earned reset for an allowlisted
@@ -1013,6 +1027,7 @@ impl UsageService {
         // the lock, so a disconnected caller cannot release it mid-run or lose
         // the outcome a same-key retry must replay.
         let resets = Arc::clone(&self.resets);
+        let codex = Arc::clone(&self.codex);
         let task = tokio::spawn(async move {
             let mut resets = resets.lock_owned().await;
             resets.retain(|recorded| recorded.at.elapsed() < RESET_REPLAY_TTL);
@@ -1022,7 +1037,7 @@ impl UsageService {
                     "idempotency-key-reused",
                     "the idempotency key was already used for another account",
                 )),
-                Some(recorded) => Ok((recorded.outcome, recorded.windows_reset, true)),
+                Some(recorded) => Ok((recorded.outcome, recorded.windows_reset, None)),
                 None => {
                     let (run_account, run_key) = (account.clone(), key.clone());
                     let (outcome, windows_reset) = tokio::task::spawn_blocking(move || {
@@ -1040,15 +1055,27 @@ impl UsageService {
                         windows_reset,
                         at: Instant::now(),
                     });
-                    Ok((outcome, windows_reset, false))
+                    // Invalidate before releasing the lock, so even a replay
+                    // after a disconnect never sees pre-reset numbers as fresh.
+                    Ok((outcome, windows_reset, Some(codex.invalidate())))
                 }
             }
         });
-        let (outcome, windows_reset, replayed) = task.await.map_err(|_| task_failed())??;
+        let (outcome, windows_reset, refresh) = task.await.map_err(|_| task_failed())??;
+        let replayed = refresh.is_none();
         let wait = RESET_RESPONSE_BUDGET
             .saturating_sub(started.elapsed())
             .min(REFRESH_WAIT);
-        let usage = self.snapshot_with(!replayed, false, wait).await;
+        let usage = match refresh {
+            Some(target) => {
+                let (codex, claude) = tokio::join!(
+                    self.codex.read_after(target, wait),
+                    self.claude.read(false, wait)
+                );
+                usage_json(&codex, &claude)
+            }
+            None => self.snapshot_with(false, false, wait).await,
+        };
         let mut result = Map::new();
         result.insert("schema_version".into(), json!(RESET_SCHEMA_VERSION));
         result.insert("outcome".into(), json!(outcome));
@@ -1060,6 +1087,11 @@ impl UsageService {
         result.insert("usage".into(), usage);
         Ok(Value::Object(result))
     }
+}
+
+fn usage_json(codex: &[Entry], claude: &[Entry]) -> Value {
+    let providers: Vec<Value> = codex.iter().chain(claude).map(Entry::to_json).collect();
+    json!({ "schema_version": USAGE_SCHEMA_VERSION, "providers": providers })
 }
 
 fn task_failed() -> UsageApiError {

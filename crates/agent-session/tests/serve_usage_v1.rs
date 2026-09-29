@@ -666,6 +666,7 @@ fn a_disconnected_reset_still_finishes_and_is_replayed() {
     let serve = reset_serve(&tmp, &stubs);
     serve.usage("/usage/v1");
     fs::write(stubs.dir.join("codex-reset.delay"), "2").expect("delay");
+    stubs.answer("codex-diag", &diag_with_alpha_credits(1), 0);
     let request = json!({ "account": "alpha", "idempotency_key": RESET_KEY });
 
     let impatient = reqwest::blocking::Client::builder()
@@ -684,6 +685,13 @@ fn a_disconnected_reset_still_finishes_and_is_replayed() {
     let body: Value = serde_json::from_str(&text).expect("reset json");
     assert_eq!(body["replayed"], true);
     assert_eq!(stubs.calls("codex-cli", "account").len(), 1);
+    // The recorded reset invalidated the cache, so the replay never serves the
+    // pre-reset numbers as fresh.
+    let alpha = &body["usage"]["providers"][0];
+    assert!(
+        alpha["stale"] == true || alpha["reset_credits"]["available_count"] == 1,
+        "{alpha}"
+    );
 }
 
 #[test]

@@ -957,7 +957,9 @@ one earned reset through
   same key and account for 24 hours (`replayed: true`, no second CLI run); the
   same key for another account is `409 idempotency-key-reused`. A reset keeps
   running and is recorded even when its caller disconnects, so a retry with
-  the same key replays it. A failed run is not recorded, so the caller retries
+  the same key replays it. Recording a reset also marks the Codex snapshot
+  stale and starts a refresh, so neither a replay nor a later read serves
+  pre-reset numbers as fresh. A failed run is not recorded, so the caller retries
   with the same key.
 - A malformed body is `422 invalid-request`. CLI failures are
   `502 codex-reset-failed`, `502 codex-reset-invalid-response`,
