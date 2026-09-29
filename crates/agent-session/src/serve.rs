@@ -817,6 +817,113 @@ fn acquire_serve_ownership(
     Ok(ServeOwnership { _lock: lock })
 }
 
+/// `EX_TEMPFAIL`: the running binary was replaced or removed on disk, so the
+/// supervisor should restart serve on the installed one (sympoies/nils-cli#1817).
+const SERVE_BINARY_REPLACED_EXIT: i32 = 75;
+const SERVE_BINARY_WATCH_ENV: &str = "AGENT_SESSION_SERVE_EXIT_ON_BINARY_CHANGE";
+const SERVE_BINARY_WATCH_INTERVAL: Duration = Duration::from_secs(1);
+const SERVE_BINARY_REPLACED_DRAIN: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServeStop {
+    Interrupted,
+    BinaryReplaced,
+}
+
+/// The installed file this serve was started from, by device and inode.
+struct ServeBinaryIdentity {
+    path: PathBuf,
+    dev: u64,
+    ino: u64,
+}
+
+impl ServeBinaryIdentity {
+    fn capture() -> io::Result<Self> {
+        use std::os::unix::fs::MetadataExt;
+
+        // macOS reports the invocation path, which is a link for a Homebrew
+        // `bin/` install; watch the linked release file itself.
+        let path = fs::canonicalize(std::env::current_exe()?)?;
+        let metadata = fs::metadata(&path)?;
+        Ok(Self {
+            path,
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+        })
+    }
+
+    fn changed(&self) -> bool {
+        use std::os::unix::fs::MetadataExt;
+
+        match fs::metadata(&self.path) {
+            Ok(metadata) => metadata.dev() != self.dev || metadata.ino() != self.ino,
+            Err(error) => error.kind() == io::ErrorKind::NotFound,
+        }
+    }
+}
+
+fn serve_binary_identity() -> Option<ServeBinaryIdentity> {
+    if non_empty_env(SERVE_BINARY_WATCH_ENV).is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        )
+    }) {
+        return None;
+    }
+    match ServeBinaryIdentity::capture() {
+        Ok(identity) => Some(identity),
+        Err(error) => {
+            eprintln!("warning: serve-binary-watch-unavailable: {error}");
+            None
+        }
+    }
+}
+
+async fn serve_binary_replaced(identity: Option<ServeBinaryIdentity>) {
+    let Some(identity) = identity else {
+        return std::future::pending().await;
+    };
+    let mut interval = tokio::time::interval(SERVE_BINARY_WATCH_INTERVAL);
+    loop {
+        interval.tick().await;
+        if identity.changed() {
+            eprintln!(
+                "warning: serve-binary-replaced: {} changed on disk; draining for up to {}s, \
+                 then exiting {SERVE_BINARY_REPLACED_EXIT} for a supervisor restart",
+                identity.path.display(),
+                SERVE_BINARY_REPLACED_DRAIN.as_secs()
+            );
+            return;
+        }
+    }
+}
+
+async fn serve_stop_signal(
+    identity: Option<ServeBinaryIdentity>,
+    stop: watch::Sender<Option<ServeStop>>,
+) {
+    let reason = tokio::select! {
+        _ = tokio::signal::ctrl_c() => ServeStop::Interrupted,
+        () = serve_binary_replaced(identity) => ServeStop::BinaryReplaced,
+    };
+    let _ = stop.send(Some(reason));
+}
+
+/// Bounds the drain after a binary replacement: long-lived attach and activity
+/// streams would otherwise hold graceful shutdown open indefinitely.
+async fn serve_binary_replaced_drain_deadline(mut stop: watch::Receiver<Option<ServeStop>>) {
+    if stop
+        .wait_for(|reason| *reason == Some(ServeStop::BinaryReplaced))
+        .await
+        .is_err()
+    {
+        return std::future::pending().await;
+    }
+    tokio::time::sleep(SERVE_BINARY_REPLACED_DRAIN).await;
+    eprintln!("warning: serve-binary-replaced: drain deadline elapsed; closing open connections");
+}
+
 pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
     let bind: SocketAddr = match args.bind.parse() {
         Ok(addr) => addr,
@@ -915,6 +1022,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         }
     };
 
+    let binary_identity = serve_binary_identity();
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1010,9 +1118,14 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             tokio::spawn(recover_retitle_v3_operations_once(state.clone()));
         let coordination_notification_task =
             tokio::spawn(coordination_notification_loop(state.clone()));
-        let result = axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await;
+        let (stop_tx, stop_rx) = watch::channel(None);
+        let serve = axum::serve(listener, app)
+            .with_graceful_shutdown(serve_stop_signal(binary_identity, stop_tx));
+        let result = tokio::select! {
+            result = serve.into_future() => result,
+            () = serve_binary_replaced_drain_deadline(stop_rx.clone()) => Ok(()),
+        };
+        let binary_replaced = *stop_rx.borrow() == Some(ServeStop::BinaryReplaced);
         federation_task.abort();
         let _ = federation_task.await;
         auto_resume_task.abort();
@@ -1027,6 +1140,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         let _ = codex_control_task.await;
         state.attach_brokers.shutdown_all().await;
         match result {
+            Ok(()) if binary_replaced => SERVE_BINARY_REPLACED_EXIT,
             Ok(()) => exit::SUCCESS,
             Err(err) => {
                 eprintln!("error: serve failed: {err}");
@@ -1214,10 +1328,6 @@ fn router(state: Arc<ServeState>) -> Router {
             patch(update_session_handler).delete(delete_handler),
         )
         .with_state(state)
-}
-
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
 }
 
 #[derive(Debug)]

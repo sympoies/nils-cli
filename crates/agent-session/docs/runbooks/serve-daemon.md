@@ -252,6 +252,29 @@ When a user systemd manager or `systemd-run` is unavailable, the daemon falls
 back to direct tmux launch. Pair the isolated scope with `KillMode=process` on
 the serve service for defense in depth.
 
+### Restart after a binary upgrade
+
+A package-manager upgrade replaces or removes the installed `agent-session`
+while serve is still running, which would leave new session launches unable to
+exec their helper. Serve records the device and inode of its own executable at
+startup, resolving a linked invocation path such as a Homebrew `bin/` link to
+the release file, and checks it once per second. When that file is replaced or
+removed, serve logs `serve-binary-replaced` to stderr, stops accepting
+connections, drains in-flight requests for up to 10 seconds, and exits `75`
+(`EX_TEMPFAIL`). It kills no tmux session; existing panes survive exactly as
+they do across a manual restart.
+
+The supervisor must restart on that non-zero exit:
+
+- systemd: `Restart=on-failure` (or `Restart=always`), together with
+  `KillMode=process` and `AGENT_SESSION_TMUX_SCOPE=1` as above.
+- launchd: `KeepAlive` set to `true`, or a `KeepAlive` dictionary with
+  `SuccessfulExit` set to `false`.
+
+A deployment that restarts serve itself can opt out with
+`AGENT_SESSION_SERVE_EXIT_ON_BINARY_CHANGE=0`; serve then keeps running on the
+replaced binary.
+
 At startup, historical session records may remain even when tmux has no server
 or live sessions. A recognized tmux missing-server diagnostic is an
 authoritative empty live-session snapshot, so the Codex account reconnect fence
