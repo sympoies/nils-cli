@@ -400,7 +400,7 @@ fn resolve(
     document: &Value,
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<ResolvedServeConfig, CliError> {
-    reject_inline_secrets(document, "", false)?;
+    reject_inline_sensitive_keys(document, "", false)?;
     let root = document.as_object().ok_or_else(|| {
         keyed_error(
             "serve-config-unsupported-version",
@@ -532,7 +532,11 @@ fn is_secret_key(key: &str, payload: bool) -> bool {
 /// interpreted by serve.
 const PAYLOAD_KEYS: &[&str] = &["extra_body"];
 
-fn reject_inline_secrets(value: &Value, prefix: &str, payload: bool) -> Result<(), CliError> {
+fn reject_inline_sensitive_keys(
+    value: &Value,
+    prefix: &str,
+    payload: bool,
+) -> Result<(), CliError> {
     match value {
         Value::Object(object) => {
             for (key, child) in object {
@@ -546,12 +550,12 @@ fn reject_inline_secrets(value: &Value, prefix: &str, payload: bool) -> Result<(
                     ));
                 }
                 let child_payload = payload || PAYLOAD_KEYS.contains(&key.as_str());
-                reject_inline_secrets(child, &path, child_payload)?;
+                reject_inline_sensitive_keys(child, &path, child_payload)?;
             }
         }
         Value::Array(items) => {
             for (index, child) in items.iter().enumerate() {
-                reject_inline_secrets(child, &format!("{prefix}[{index}]"), payload)?;
+                reject_inline_sensitive_keys(child, &format!("{prefix}[{index}]"), payload)?;
             }
         }
         _ => {}
