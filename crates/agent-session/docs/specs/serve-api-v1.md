@@ -23,6 +23,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `POST /history/sessions/{history_id}/star` | Bearer | This specification |
 | `POST /history/sessions/{history_id}/resume` | Bearer | This specification |
 | `GET /codex/accounts` | Bearer | This specification |
+| `GET /claude/accounts` | Bearer | [Claude account broker](#claude-account-broker) |
 | `POST /clipboard/unwrap/v1` | Bearer | This specification |
 | `GET /activity/events` | Bearer | [Activity stream v1](activity-stream-v1.md) |
 | `POST /activity/hook/v1` | Session capability only; direct loopback peers only | [Activity stream v1](activity-stream-v1.md#provider-hook-ingress) |
@@ -252,6 +253,9 @@ recorded in `sympoies/nils-cli#1409`.
   tmux sessions and all Claude sessions omit that session capability. Consumers
   must require both the global protocol advertisement and the per-session
   capability before presenting managed handoff controls.
+  `data.capabilities.claude_account_switch` is `true` only while
+  `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER` is configured; see the
+  [Claude account broker](#claude-account-broker).
   Sessions report
   `running`, `stopped`, `unknown`, or `missing` live status plus a boolean `resumable` field and best-effort `repo_name` derived from
   the recorded `cwd`. `missing` is reported only for an external-runtime record
@@ -520,6 +524,11 @@ recorded in `sympoies/nils-cli#1409`.
   attention remains limited to explicitly audited versions and otherwise falls
   back to hook authority. The response never contains access tokens, ChatGPT
   account ids, auth paths, or broker diagnostics.
+- `GET /claude/accounts` — authenticated nickname-only Claude account
+  inventory from the configured Claude account broker:
+  `{ "machine", "accounts": [{ "account", "label"?, "plan"? }],
+  "selection_strategies" }`. It never contains credentials or account
+  directory paths.
 - `GET /activity/events` — authenticated metadata-only SSE for activity snapshots and heartbeats. Events carry a daemon-boot
   `stream_id` and increasing `sequence`; `Last-Event-ID` enables count-and-byte-bounded replay, while stale/foreign cursors
   and lagged consumers receive a reset. Concurrent subscribers are daemon-capped and saturation returns a stable
@@ -646,7 +655,12 @@ recorded in `sympoies/nils-cli#1409`.
   fresh Codex create may additionally provide
   `codex_account`; when a prompt is also present, the daemon completes account
   binding before submitting that prompt. `codex_account` is rejected for other
-  providers and for provider-import mode. When `provider_resume_id` is present (alias: `resume_id`), the daemon imports an existing Codex or
+  providers and for provider-import mode. A fresh, profile-free Claude create
+  may provide `claude_account`; see the
+  [Claude account broker](#claude-account-broker). It is rejected for other
+  providers (`claude-account-agent-conflict`), with an `agent_profile`
+  (`claude-account-profile-conflict`), and in provider-import mode
+  (`claude-account-provider-resume-conflict`). When `provider_resume_id` is present (alias: `resume_id`), the daemon imports an existing Codex or
   Claude provider conversation instead: it resolves the original cwd from the selected local provider history, persists exact
   `provider_resume` metadata, and starts tmux with the canonical resume command. A capable Codex import uses the daemon-managed
   app-server transport so account and auto-resume controls remain available; unsupported or explicitly raw Codex runtimes retain
@@ -1034,6 +1048,64 @@ Broker execution is process-group and time bounded with
 bounded output. Credential values remain in memory only and are never added to
 session documents or HTTP projections. Invalid configuration, malformed output,
 duplicate or unsafe nicknames, timeout, and non-zero exit all fail closed.
+
+## Claude account broker
+
+Claude account binding is enabled by `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER`, a
+JSON argv array with the same bounds and process-group, timeout, and output
+limits as the Codex broker. It speaks the provider-neutral
+`agent-session.account-broker.v2` contract; the Codex broker keeps
+`agent-session.codex-auth-broker.v1` unchanged. The daemon appends a
+subcommand, `--provider claude`, its arguments, and `--format json`:
+
+| Invocation | Response (`schema_version` and `"provider": "claude"` are required) |
+| --- | --- |
+| `list --provider claude --format json` | `accounts: [{account, label?, plan?}]`, `selection_strategies: ["current_default"]` |
+| `select --provider claude --strategy current_default --format json` | `account` |
+| `materialize --provider claude --account <nickname> --format json` | `account` (must echo the request), `config_dir` |
+
+No token ever crosses this broker. `materialize` prepares a per-account Claude
+configuration directory and returns only its path. Before any Claude process
+runs in it, the daemon requires `config_dir` to be absolute and normalized, a
+real directory (not a symlink) owned by the daemon user and not world-writable,
+holding a regular, non-symlink `.credentials.json` owned by the same user.
+Otherwise it fails with `claude-account-dir-unsafe` and a safe `reason`.
+Malformed output, a wrong schema or provider, a mismatched nickname, timeout,
+and non-zero exit fail closed with `claude-account-broker-*` codes.
+
+- Create: an explicit `claude_account` wins; otherwise, when `list` advertises
+  `current_default`, the daemon records that account as `default_at_launch`.
+  Without a configured broker, a Claude session keeps the host login exactly as
+  before, and an explicit `claude_account` fails with
+  `claude-account-unsupported`.
+- Launch: the account is materialized before tmux starts and the provider runs
+  with `CLAUDE_CONFIG_DIR=<config_dir>`. The session record keeps a durable
+  `agent-session.claude-account-binding.v1` binding (nickname, selection
+  source, revision, the runtime it was applied to, and the directory).
+- Resume: every resume re-materializes the bound nickname. A bound session
+  whose broker is no longer configured fails closed with
+  `claude-account-unsupported` rather than falling back to the host login.
+- Projection: Claude sessions carry an additive `claude_account` object
+  (`agent-session.claude-account.v1`: `supported`, `state`
+  `bound`/`unbound`/`failed`/`unsupported`, `selected_account`,
+  `selection_source`, `revision`, `applied_runtime_id`, optional
+  `next: {account, revision, state: "queued"}`). It is omitted for other
+  providers and for Claude sessions without binding state on a daemon without
+  a Claude broker. It never contains the directory path.
+- Switch: `PUT /sessions/{id}/account` with
+  `{ "account", "expected_session_incarnation" }` on a Claude session durably
+  queues `agent-session.claude-account-next.v1`; requesting the bound account
+  cancels a queued intent. Claude Code has no live credential swap, so the
+  switch is applied only by a relaunch: when the session is running and its
+  turn is `waiting`, the daemon stops the runtime through the verified stop
+  path and resumes the same conversation (`--resume <session-id>`) in the new
+  account directory, then returns the new `session_incarnation`. While a turn
+  is busy, or while the session is stopped, the intent stays queued and the
+  next resume applies it. If the verified stop is refused, nothing relaunches
+  and the intent stays queued. There is no automatic failover for Claude.
+- History: catalog scans attribute each physical transcript once, by its
+  canonical path, so an account directory whose `projects/` links to the
+  shared `~/.claude/projects` is not counted twice.
 
 ## Launch profiles
 

@@ -6,11 +6,11 @@
 
 use std::collections::BTreeSet;
 use std::env;
-use std::io::Read;
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
+#[cfg(test)]
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -32,9 +32,7 @@ const BROKER_TIMEOUT: Duration = Duration::from_secs(10);
 // Codex 0.144.1 waits ten seconds for external-auth refresh. Leave transport
 // margin so a late helper result is never persisted after Codex gives up.
 const BROKER_REFRESH_TIMEOUT: Duration = Duration::from_secs(8);
-const BROKER_OUTPUT_LIMIT: u64 = 1024 * 1024;
-const MAX_BROKER_ARGV: usize = 16;
-const MAX_BROKER_ARG_BYTES: usize = 4096;
+const BROKER_OUTPUT_LIMIT: u64 = crate::account_broker::BROKER_OUTPUT_LIMIT;
 const MAX_ACCOUNT_BYTES: usize = 64;
 const MAX_ACCOUNT_ID_BYTES: usize = 512;
 const MAX_PLAN_BYTES: usize = 128;
@@ -1798,156 +1796,63 @@ fn ensure_schema(schema: &str) -> Result<(), CliError> {
 
 /// Bounds shared by the broker environment variable and `serve --config`.
 pub(crate) fn valid_broker_argv(argv: &[String]) -> bool {
-    !argv.is_empty()
-        && argv.len() <= MAX_BROKER_ARGV
-        && argv
-            .iter()
-            .all(|arg| !arg.is_empty() && arg.len() <= MAX_BROKER_ARG_BYTES && !arg.contains('\0'))
+    crate::account_broker::valid_argv(argv)
 }
 
 fn broker_argv() -> Result<Option<Vec<String>>, CliError> {
-    let Some(raw) = env::var(BROKER_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return Ok(None);
-    };
-    let argv: Vec<String> = serde_json::from_str(&raw).map_err(|_| {
-        broker_error(
+    crate::account_broker::parse_argv(env::var(BROKER_ENV).ok()).map_err(|error| match error {
+        crate::account_broker::BrokerArgvError::NotJsonArgv => broker_error(
             "codex-account-broker-invalid-config",
             "Codex account broker configuration must be a JSON argv array",
-        )
-    })?;
-    if !valid_broker_argv(&argv) {
-        return Err(broker_error(
+        ),
+        crate::account_broker::BrokerArgvError::Invalid => broker_error(
             "codex-account-broker-invalid-config",
             "Codex account broker configuration is invalid",
-        ));
-    }
-    Ok(Some(argv))
+        ),
+    })
 }
 
 fn run_broker(args: &[&str], timeout: Duration) -> Result<Value, CliError> {
+    use crate::account_broker::BrokerProcessError;
     let argv = broker_argv()?.ok_or_else(|| {
         broker_error(
             "codex-account-unsupported",
             "Codex account switching is not configured for this daemon",
         )
     })?;
-    let mut child = Command::new(&argv[0])
-        .args(&argv[1..])
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()
-        .map_err(|_| {
-            broker_error(
-                "codex-account-broker-unavailable",
-                "Codex account broker could not be started",
-            )
-        })?;
-    let mut stdout_pipe = child.stdout.take().ok_or_else(|| {
-        broker_error(
+    crate::account_broker::run(&argv, args, timeout).map_err(|error| match error {
+        BrokerProcessError::SpawnFailed => broker_error(
+            "codex-account-broker-unavailable",
+            "Codex account broker could not be started",
+        ),
+        BrokerProcessError::StdoutUnavailable => broker_error(
             "codex-account-broker-unavailable",
             "Codex account broker output was unavailable",
-        )
-    })?;
-    let mut stderr_pipe = child.stderr.take().ok_or_else(|| {
-        broker_error(
+        ),
+        BrokerProcessError::StderrUnavailable => broker_error(
             "codex-account-broker-unavailable",
             "Codex account broker error output was unavailable",
-        )
-    })?;
-    let (output_tx, output_rx) = std::sync::mpsc::channel();
-    let stdout_tx = output_tx.clone();
-    thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stdout_pipe
-            .by_ref()
-            .take(BROKER_OUTPUT_LIMIT + 1)
-            .read_to_end(&mut bytes);
-        let _ = stdout_tx.send((true, bytes));
-    });
-    thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr_pipe
-            .by_ref()
-            .take(BROKER_OUTPUT_LIMIT + 1)
-            .read_to_end(&mut bytes);
-        let _ = output_tx.send((false, bytes));
-    });
-
-    let deadline = Instant::now() + timeout;
-    let mut status = None;
-    let mut stdout = None;
-    let mut stderr_drained = false;
-    loop {
-        if status.is_none() {
-            match child.try_wait() {
-                Ok(Some(exit)) => status = Some(exit),
-                Ok(None) => {}
-                Err(_) => {
-                    terminate_broker(&mut child);
-                    return Err(broker_error(
-                        "codex-account-broker-failed",
-                        "Codex account broker failed",
-                    ));
-                }
-            }
+        ),
+        BrokerProcessError::WaitFailed => {
+            broker_error("codex-account-broker-failed", "Codex account broker failed")
         }
-        while let Ok((is_stdout, bytes)) = output_rx.try_recv() {
-            if is_stdout {
-                stdout = Some(bytes);
-            } else {
-                stderr_drained = true;
-            }
-        }
-        if let (Some(status), Some(stdout)) = (status.as_ref(), stdout.as_ref())
-            && stderr_drained
-        {
-            if !status.success() {
-                terminate_broker(&mut child);
-                return Err(broker_error(
-                    "codex-account-broker-rejected",
-                    "Codex account broker rejected the request",
-                ));
-            }
-            if stdout.len() as u64 > BROKER_OUTPUT_LIMIT {
-                return Err(broker_error(
-                    "codex-account-broker-invalid-response",
-                    "Codex account broker output exceeded the size limit",
-                ));
-            }
-            let decoded = serde_json::from_slice(stdout).map_err(|_| {
-                broker_error(
-                    "codex-account-broker-invalid-response",
-                    "Codex account broker returned malformed JSON",
-                )
-            });
-            terminate_broker(&mut child);
-            return decoded;
-        }
-        if Instant::now() >= deadline {
-            terminate_broker(&mut child);
-            return Err(broker_error(
-                "codex-account-broker-timeout",
-                "Codex account broker timed out",
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-fn terminate_broker(child: &mut std::process::Child) {
-    let pid = child.id();
-    // SAFETY: the broker is launched as the leader of a fresh process group.
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
-    }
-    let _ = child.kill();
-    let _ = child.wait();
+        BrokerProcessError::Rejected => broker_error(
+            "codex-account-broker-rejected",
+            "Codex account broker rejected the request",
+        ),
+        BrokerProcessError::OutputTooLarge => broker_error(
+            "codex-account-broker-invalid-response",
+            "Codex account broker output exceeded the size limit",
+        ),
+        BrokerProcessError::MalformedJson => broker_error(
+            "codex-account-broker-invalid-response",
+            "Codex account broker returned malformed JSON",
+        ),
+        BrokerProcessError::Timeout => broker_error(
+            "codex-account-broker-timeout",
+            "Codex account broker timed out",
+        ),
+    })
 }
 
 fn broker_error(code: &'static str, message: &'static str) -> CliError {

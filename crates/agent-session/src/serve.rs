@@ -74,7 +74,7 @@ use crate::{
     profile_unavailable, repo_remote_url_from_cwd, resolve_tmux_bin, resume_session_by_id,
     search_workdirs, send_auto_resume_input, send_input_serialized, session_clipboard_buffer,
     session_dir, session_status, start_dsh_history_resume_session, start_provider_resume_session,
-    start_session, update_session_title_if_revision,
+    update_session_title_if_revision, write_session_record,
 };
 
 const ATTACH_LIVE_FIFO_NAME: &str = "attach-live.fifo";
@@ -1220,6 +1220,7 @@ fn router(state: Arc<ServeState>) -> Router {
             post(history_resume_handler),
         )
         .route("/codex/accounts", get(codex_accounts_handler))
+        .route("/claude/accounts", get(claude_accounts_handler))
         .route("/retitle/readiness", get(retitle_readiness_handler))
         .route("/clipboard/unwrap/v1", post(clipboard_unwrap_handler))
         .route("/sessions/{id}/retitle", post(session_retitle_handler))
@@ -3370,6 +3371,8 @@ struct CreateBody {
     agent_args: Vec<String>,
     #[serde(default)]
     codex_account: Option<String>,
+    #[serde(default)]
+    claude_account: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -5175,6 +5178,7 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
                     "group_archive": true,
                     "history_star": true,
                     "managed_account_handoff": crate::codex_app_server::MANAGED_ACCOUNT_HANDOFF_CAPABILITY,
+                    "claude_account_switch": crate::claude_account::broker_is_configured(),
                     "session_retitle_v2": true,
                     "session_retitle_v3": true,
                     "session_retitle_v3_receipts": true,
@@ -5712,6 +5716,24 @@ async fn codex_accounts_handler(
             "machine": state.machine,
             "accounts": accounts,
             "readiness": readiness,
+        })),
+        Ok(Err(err)) => envelope_err(err),
+        Err(_) => join_err(),
+    }
+}
+
+async fn claude_accounts_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    match tokio::task::spawn_blocking(crate::claude_account::list_accounts).await {
+        Ok(Ok(inventory)) => envelope_ok(json!({
+            "machine": state.machine,
+            "accounts": inventory.accounts,
+            "selection_strategies": inventory.selection_strategies,
         })),
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
@@ -6439,11 +6461,28 @@ async fn create_handler(
             None,
         ));
     }
+    if body.claude_account.is_some() && agent != AgentKind::Claude {
+        return envelope_err(crate::claude_account::agent_conflict_error());
+    }
+    if body.claude_account.is_some() && launch_profile.is_some() {
+        return envelope_err(CliError::usage(
+            "claude-account-profile-conflict",
+            "claude_account cannot be combined with an agent_profile",
+            None,
+        ));
+    }
     if let Some(provider_resume_id) = body.provider_resume_id {
         if body.codex_account.is_some() {
             return envelope_err(CliError::usage(
                 "codex-account-provider-resume-conflict",
                 "create the resumable Codex session first, then bind its account",
+                None,
+            ));
+        }
+        if body.claude_account.is_some() {
+            return envelope_err(CliError::usage(
+                "claude-account-provider-resume-conflict",
+                "provider_resume_id imports run on the host Claude login; omit claude_account",
                 None,
             ));
         }
@@ -6523,6 +6562,27 @@ async fn create_handler(
         Ok(Err(error)) => return envelope_err(error),
         Err(_) => return join_err(),
     };
+    // A launch profile owns its provider root, so only a profile-free Claude
+    // create binds an account (explicitly or from the broker's default).
+    let claude_account = if agent == AgentKind::Claude && launch_profile.is_none() {
+        let explicit_claude_account = body.claude_account;
+        match tokio::task::spawn_blocking(move || {
+            crate::claude_account::resolve_initial_account(explicit_claude_account)
+        })
+        .await
+        {
+            Ok(Ok(selection)) => {
+                selection.map(|(account, selection_source)| crate::InitialClaudeAccount {
+                    account,
+                    selection_source,
+                })
+            }
+            Ok(Err(error)) => return envelope_err(error),
+            Err(_) => return join_err(),
+        }
+    } else {
+        None
+    };
     let prompt = body.prompt;
     let deferred_prompt = if selected_account.is_some() {
         prompt.clone()
@@ -6579,11 +6639,12 @@ async fn create_handler(
         format: nils_common::cli_contract::OutputFormat::Json,
     };
     match tokio::task::spawn_blocking(move || {
-        start_session(
+        crate::start_session_with_claude_account(
             &context,
             args,
             StartFailureDisposition::ReturnSession,
             crate::PromptDelivery::ResilientBeforeSubmit,
+            claude_account,
         )
     })
     .await
@@ -7010,6 +7071,16 @@ async fn codex_account_handler(
             Ok(Err(err)) => return envelope_err(err),
             Err(_) => return join_err(),
         };
+    if record.agent == AgentKind::Claude.as_str() {
+        let expected_session_incarnation = expected_session_incarnation.to_string();
+        return claude_account_switch_handler(
+            &state,
+            canonical_id,
+            body.account,
+            expected_session_incarnation,
+        )
+        .await;
+    }
     if !crate::codex_account::view_for_record(&record).supported {
         return status_json(
             StatusCode::CONFLICT,
@@ -7127,6 +7198,87 @@ async fn codex_account_handler(
             )
         }
     }
+}
+
+/// Claude has no live credential swap, so a switch is a durable next-account
+/// intent applied by a restart plus `--resume` in the new account directory.
+/// The restart happens now only when the running session is idle; otherwise
+/// (busy, stopped, or unknown) the intent stays queued for the next resume.
+async fn claude_account_switch_handler(
+    state: &ServeState,
+    id: String,
+    account: String,
+    expected_session_incarnation: String,
+) -> Response {
+    let context = state.context.clone();
+    let tmux_bin = state.tmux_bin.clone();
+    match tokio::task::spawn_blocking(move || {
+        claude_account_switch_locked(
+            &context,
+            &id,
+            &account,
+            &expected_session_incarnation,
+            &tmux_bin,
+        )
+    })
+    .await
+    {
+        Ok(Ok((session_incarnation, view))) => envelope_ok(json!({
+            "machine": state.machine,
+            "session_incarnation": session_incarnation,
+            "claude_account": view,
+        })),
+        Ok(Err(err)) => envelope_err(err),
+        Err(_) => join_err(),
+    }
+}
+
+fn claude_account_switch_locked(
+    context: &CliContext,
+    id: &str,
+    account: &str,
+    expected_session_incarnation: &str,
+    tmux_bin: &Path,
+) -> Result<
+    (
+        Option<String>,
+        Option<crate::claude_account::ClaudeAccountView>,
+    ),
+    CliError,
+> {
+    let _record_lock = crate::acquire_session_record_lock(context, id)?;
+    let mut record = load_session_record(context, id)?;
+    let launch_id = record
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.launch_id.clone());
+    if launch_id.as_deref() != Some(expected_session_incarnation) {
+        return Err(CliError::data(
+            "claude-account-session-incarnation-conflict",
+            "session was replaced before its Claude account switch was applied",
+            Some(json!({ "id": id })),
+        ));
+    }
+    crate::claude_account::queue_next(&mut record, account)?;
+    let now = jiff::Timestamp::now().to_string();
+    record.updated_at = now.clone();
+    write_session_record(context, &record)?;
+    let idle = crate::claude_account::has_queued_next(&record)
+        && crate::session_status(context, tmux_bin, &record) == "running"
+        && crate::activity::state_for_view(context, &record)
+            .is_some_and(|activity| activity.phase == crate::activity::TurnPhase::Waiting);
+    if !idle {
+        return Ok((launch_id, crate::claude_account::view_for_record(&record)));
+    }
+    crate::auto_resume::cancel_for_account_switch_locked(context, id, &now)?;
+    crate::stop_session_runtime_locked(context, &mut record, tmux_bin)?;
+    let stopped = load_session_record(context, id)?;
+    let outcome = crate::resume_session_locked(context, stopped, tmux_bin)?;
+    let resumed = load_session_record(context, id)?;
+    Ok((
+        outcome.session_incarnation,
+        crate::claude_account::view_for_record(&resumed),
+    ))
 }
 
 async fn send_handler(
@@ -27719,6 +27871,592 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts"
         let encoded = body.to_string();
         assert!(!encoded.contains("access_token"));
         assert!(!encoded.contains("chatgpt_account_id"));
+    }
+
+    struct ClaudeBrokerFixture {
+        _broker: EnvGuard,
+        log: PathBuf,
+        accounts_root: PathBuf,
+    }
+
+    impl ClaudeBrokerFixture {
+        fn calls(&self) -> String {
+            fs::read_to_string(&self.log).unwrap_or_default()
+        }
+
+        fn config_dir(&self, account: &str) -> PathBuf {
+            self.accounts_root.join(account)
+        }
+    }
+
+    fn claude_account_dir(root: &Path, account: &str) -> PathBuf {
+        let dir = root.join(account);
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let credentials = dir.join(".credentials.json");
+        fs::write(&credentials, "{}").unwrap();
+        fs::set_permissions(&credentials, fs::Permissions::from_mode(0o600)).unwrap();
+        dir
+    }
+
+    /// A fake Claude account broker speaking `agent-session.account-broker.v2`.
+    /// It never touches a real Claude login: `materialize` returns a fixture
+    /// directory holding a placeholder `.credentials.json`.
+    fn claude_broker_fixture(lock: &GlobalStateLock, root: &Path) -> ClaudeBrokerFixture {
+        let accounts_root = root.join("claude-accounts");
+        for account in ["alpha", "beta"] {
+            claude_account_dir(&accounts_root, account);
+        }
+        let log = root.join("claude-broker.log");
+        let broker = executable(
+            &root.join("claude-broker"),
+            &format!(
+                r#"#!/usr/bin/env sh
+printf '%s\n' "$*" >> {log}
+[ "$2" = --provider ] && [ "$3" = claude ] || exit 64
+case "$1" in
+  list) printf '%s\n' '{{"schema_version":"agent-session.account-broker.v2","provider":"claude","accounts":[{{"account":"alpha","label":"Alpha","plan":"max"}},{{"account":"beta"}}],"selection_strategies":["current_default"]}}' ;;
+  select) printf '%s\n' '{{"schema_version":"agent-session.account-broker.v2","provider":"claude","account":"alpha"}}' ;;
+  materialize) printf '{{"schema_version":"agent-session.account-broker.v2","provider":"claude","account":"%s","config_dir":"%s/%s"}}\n' "$5" {root} "$5" ;;
+  *) exit 1 ;;
+esac
+"#,
+                log = shell_words::quote(&log.to_string_lossy()),
+                root = shell_words::quote(&accounts_root.to_string_lossy()),
+            ),
+        );
+        let argv = serde_json::to_string(&vec![broker.to_string_lossy().into_owned()]).unwrap();
+        ClaudeBrokerFixture {
+            _broker: EnvGuard::set(lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER", &argv),
+            log,
+            accounts_root,
+        }
+    }
+
+    fn seed_bound_claude_session(state_dir: &Path, id: &str, cwd: &Path, account: &str) {
+        seed_resumable_session(
+            state_dir,
+            id,
+            "claude",
+            &format!("hs-claude-{id}"),
+            cwd,
+            &["--resume", "resume-session-id"],
+        );
+        let record_path = state_dir.join("sessions").join(id).join("session.json");
+        let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+        record["claude_account_binding"] = json!({
+            "schema_version": "agent-session.claude-account-binding.v1",
+            "selected_account": account,
+            "selection_source": "explicit",
+            "revision": 1,
+            "state": "bound",
+            "applied_runtime_id": "never-launched-fixture",
+            "updated_at": "2000-01-01T00:00:00Z",
+        });
+        fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    }
+
+    fn session_record_json(state_dir: &Path, id: &str) -> Value {
+        serde_json::from_slice(
+            &fs::read(state_dir.join("sessions").join(id).join("session.json")).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_claude_session_binds_the_explicit_account_and_pins_its_config_dir() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let broker = claude_broker_fixture(&lock, tmp.path());
+        let log = tmp.path().join("tmux.log");
+        let st = state(tmp.path(), Some(TOKEN), logging_tmux(tmp.path(), &log));
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({"agent":"claude","id":"claude-bound","cwd":cwd,"claude_account":"beta"}),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let account = &body["data"]["session"]["claude_account"];
+        assert_eq!(account["schema_version"], "agent-session.claude-account.v1");
+        assert_eq!(account["supported"], true);
+        assert_eq!(account["state"], "bound");
+        assert_eq!(account["selected_account"], "beta");
+        assert_eq!(account["selection_source"], "explicit");
+        assert_eq!(account["revision"], 1);
+        assert!(
+            !body
+                .to_string()
+                .contains(broker.accounts_root.to_string_lossy().as_ref()),
+            "the account directory path must never enter HTTP projections: {body}"
+        );
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(
+            calls.contains(&format!(
+                "CLAUDE_CONFIG_DIR={}",
+                broker.config_dir("beta").display()
+            )),
+            "the Claude process must run in the bound account directory: {calls:?}"
+        );
+        assert!(
+            broker
+                .calls()
+                .contains("materialize --provider claude --account beta --format json"),
+            "broker calls: {}",
+            broker.calls()
+        );
+        let record = session_record_json(tmp.path(), "claude-bound");
+        let binding = &record["claude_account_binding"];
+        assert_eq!(
+            binding["schema_version"],
+            "agent-session.claude-account-binding.v1"
+        );
+        assert_eq!(binding["selected_account"], "beta");
+        assert_eq!(binding["state"], "bound");
+        assert_eq!(
+            binding["applied_runtime_id"],
+            record["runtime"]["launch_id"]
+        );
+    }
+
+    #[tokio::test]
+    async fn create_claude_session_binds_the_current_default_at_launch() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let broker = claude_broker_fixture(&lock, tmp.path());
+        let log = tmp.path().join("tmux.log");
+        let st = state(tmp.path(), Some(TOKEN), logging_tmux(tmp.path(), &log));
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({"agent":"claude","id":"claude-default","cwd":cwd}),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let account = &body["data"]["session"]["claude_account"];
+        assert_eq!(account["selected_account"], "alpha");
+        assert_eq!(account["selection_source"], "default_at_launch");
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(
+            calls.contains(&format!(
+                "CLAUDE_CONFIG_DIR={}",
+                broker.config_dir("alpha").display()
+            )),
+            "{calls:?}"
+        );
+        assert!(
+            broker
+                .calls()
+                .contains("select --provider claude --strategy current_default")
+        );
+    }
+
+    #[tokio::test]
+    async fn create_claude_session_without_a_broker_keeps_the_host_login() {
+        let _lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let log = tmp.path().join("tmux.log");
+        let st = state(tmp.path(), Some(TOKEN), logging_tmux(tmp.path(), &log));
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({"agent":"claude","id":"claude-host","cwd":cwd}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert!(
+            body["data"]["session"].get("claude_account").is_none(),
+            "{body}"
+        );
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(!calls.contains("CLAUDE_CONFIG_DIR="), "{calls:?}");
+        let record = session_record_json(tmp.path(), "claude-host");
+        assert!(record.get("claude_account_binding").is_none());
+
+        let (status, body) = call(
+            router(st),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({"agent":"claude","cwd":cwd,"claude_account":"beta"}),
+            ),
+        )
+        .await;
+        assert_ne!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["error"]["code"], "claude-account-unsupported");
+    }
+
+    #[tokio::test]
+    async fn create_rejects_claude_account_for_other_agents_and_unsafe_account_dirs() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let broker = claude_broker_fixture(&lock, tmp.path());
+        let log = tmp.path().join("tmux.log");
+        let st = state(tmp.path(), Some(TOKEN), logging_tmux(tmp.path(), &log));
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({"agent":"codex","cwd":cwd,"claude_account":"beta"}),
+            ),
+        )
+        .await;
+        assert_ne!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["error"]["code"], "claude-account-agent-conflict");
+
+        // A symlinked credentials file is refused: Claude Code opens it with
+        // O_NOFOLLOW, and a link could redirect it to another login.
+        let beta = broker.config_dir("beta");
+        fs::remove_file(beta.join(".credentials.json")).unwrap();
+        let elsewhere = tmp.path().join("elsewhere.json");
+        fs::write(&elsewhere, "{}").unwrap();
+        symlink(&elsewhere, beta.join(".credentials.json")).unwrap();
+        let (status, body) = call(
+            router(st),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({"agent":"claude","id":"claude-unsafe","cwd":cwd,"claude_account":"beta"}),
+            ),
+        )
+        .await;
+        assert_ne!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["error"]["code"], "claude-account-dir-unsafe");
+        assert!(
+            !log.exists() || !fs::read_to_string(&log).unwrap().contains("new-session"),
+            "an unsafe account directory must never launch"
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_rematerializes_the_bound_claude_account() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let broker = claude_broker_fixture(&lock, tmp.path());
+        seed_bound_claude_session(tmp.path(), "claude-resume", &cwd, "beta");
+        let log = tmp.path().join("tmux.log");
+        let st = state(tmp.path(), Some(TOKEN), resume_tmux(tmp.path(), &log));
+
+        let (status, body) = call(
+            router(st),
+            post_json("/sessions/claude-resume/resume", Some(TOKEN), json!({})),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(
+            body["data"]["session"]["claude_account"]["selected_account"],
+            "beta"
+        );
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(
+            calls.contains(&format!(
+                "CLAUDE_CONFIG_DIR={}",
+                broker.config_dir("beta").display()
+            )),
+            "resume must keep the bound account: {calls:?}"
+        );
+        assert!(calls.contains("--resume resume-session-id"), "{calls:?}");
+        assert!(
+            broker
+                .calls()
+                .contains("materialize --provider claude --account beta")
+        );
+        let record = session_record_json(tmp.path(), "claude-resume");
+        assert_eq!(
+            record["claude_account_binding"]["applied_runtime_id"],
+            record["runtime"]["launch_id"]
+        );
+        assert_eq!(record["claude_account_binding"]["revision"], 1);
+    }
+
+    #[tokio::test]
+    async fn resume_of_a_bound_claude_session_fails_closed_without_a_broker() {
+        let _lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        seed_bound_claude_session(tmp.path(), "claude-orphan", &cwd, "beta");
+        let log = tmp.path().join("tmux.log");
+        let st = state(tmp.path(), Some(TOKEN), resume_tmux(tmp.path(), &log));
+
+        let (status, body) = call(
+            router(st),
+            post_json("/sessions/claude-orphan/resume", Some(TOKEN), json!({})),
+        )
+        .await;
+
+        assert_ne!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["error"]["code"], "claude-account-unsupported");
+        assert!(
+            !fs::read_to_string(&log)
+                .unwrap_or_default()
+                .contains("new-session"),
+            "a bound session must never fall back to the host login"
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_accounts_route_is_authenticated_and_projects_no_paths() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let broker = claude_broker_fixture(&lock, tmp.path());
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+
+        let (status, body) = call(router(st.clone()), get_auth("/claude/accounts", None)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"]["code"], "unauthorized");
+
+        let (status, body) = call(router(st), get_auth("/claude/accounts", Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["machine"], MACHINE);
+        assert_eq!(
+            body["data"]["accounts"],
+            json!([
+                {"account":"alpha","label":"Alpha","plan":"max"},
+                {"account":"beta"}
+            ])
+        );
+        assert_eq!(
+            body["data"]["selection_strategies"],
+            json!(["current_default"])
+        );
+        let encoded = body.to_string();
+        assert!(!encoded.contains("config_dir"));
+        assert!(!encoded.contains(broker.accounts_root.to_string_lossy().as_ref()));
+    }
+
+    #[tokio::test]
+    async fn sessions_capabilities_advertise_claude_account_switch_only_with_a_broker() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let (status, body) = call(router(st.clone()), get("/sessions")).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["capabilities"]["claude_account_switch"], false);
+
+        let _broker = claude_broker_fixture(&lock, tmp.path());
+        let (status, body) = call(router(st), get("/sessions")).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["capabilities"]["claude_account_switch"], true);
+    }
+
+    #[tokio::test]
+    async fn claude_account_switch_on_a_stopped_session_applies_at_the_next_resume() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let broker = claude_broker_fixture(&lock, tmp.path());
+        seed_bound_claude_session(tmp.path(), "claude-switch", &cwd, "alpha");
+        let log = tmp.path().join("tmux.log");
+        let st = state(tmp.path(), Some(TOKEN), resume_tmux(tmp.path(), &log));
+
+        let (status, body) = call(
+            router(st.clone()),
+            put_json(
+                "/sessions/claude-switch/account",
+                Some(TOKEN),
+                json!({"account":"beta","expected_session_incarnation":"never-launched-fixture"}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let account = &body["data"]["claude_account"];
+        assert_eq!(account["selected_account"], "alpha");
+        assert_eq!(account["next"]["account"], "beta");
+        assert_eq!(account["next"]["state"], "queued");
+        assert!(
+            !fs::read_to_string(&log)
+                .unwrap_or_default()
+                .contains("new-session"),
+            "queueing on a stopped session must not launch it"
+        );
+
+        let (status, body) = call(
+            router(st),
+            post_json("/sessions/claude-switch/resume", Some(TOKEN), json!({})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let account = &body["data"]["session"]["claude_account"];
+        assert_eq!(account["selected_account"], "beta");
+        assert_eq!(account["selection_source"], "explicit");
+        assert_eq!(account["revision"], 2);
+        assert!(account.get("next").is_none(), "{account}");
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(
+            calls.contains(&format!(
+                "CLAUDE_CONFIG_DIR={}",
+                broker.config_dir("beta").display()
+            )),
+            "{calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_account_switch_queues_while_busy_and_restarts_only_at_idle() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let broker = claude_broker_fixture(&lock, tmp.path());
+        let log = tmp.path().join("tmux.log");
+        let running = tmp.path().join("running");
+        let pane_pid = tmp.path().join("pane.pid");
+        let tmux = executable(
+            &tmp.path().join("tmux"),
+            &format!(
+                r#"#!/usr/bin/env sh
+printf '%s\n' "$*" >> {log}
+case "$1" in
+  has-session)
+    test -f {running} && exit 0
+    printf '%s\n' "can't find session" >&2
+    exit 1
+    ;;
+  new-session)
+    : > {running}
+    heartbeat=''
+    slot=0
+    for arg in "$@"; do
+      if [ "$slot" = 2 ]; then incarnation="$arg"; break
+      elif [ "$slot" = 1 ]; then slot=2
+      else case "$arg" in */coordination/heartbeat) heartbeat="$arg"; slot=1 ;; esac
+      fi
+    done
+    if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then
+      mkdir -p "$(dirname "$heartbeat")"
+      printf '%s:%s\n' "$incarnation" "$(date +%s)" > "$heartbeat"
+      chmod 600 "$heartbeat"
+    fi
+    printf '%s\t%s\t%s\n' '$77' '%77' "$(cat {pane_pid})"
+    ;;
+  display-message)
+    printf '%s\t%s\t%s\n' '$77' '%77' "$(cat {pane_pid})"
+    ;;
+  if-shell|kill-session)
+    kill -KILL "$(cat {pane_pid})" 2>/dev/null || true
+    rm -f {running}
+    ;;
+  *) exit 0 ;;
+esac
+"#,
+                log = shell_words::quote(&log.to_string_lossy()),
+                running = shell_words::quote(&running.to_string_lossy()),
+                pane_pid = shell_words::quote(&pane_pid.to_string_lossy()),
+            ),
+        );
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        let first_pane = TestProcessGroup::spawn();
+        fs::write(&pane_pid, first_pane.pid().to_string()).unwrap();
+        let _first_pane = first_pane.into_background_reaper();
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({"agent":"claude","id":"claude-live","cwd":cwd,"claude_account":"alpha"}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let record = load_session_record(&st.context, "claude-live").unwrap();
+        let first_launch = record.runtime.as_ref().unwrap().launch_id.clone();
+        let provider_session_id = record.provider_resume.as_ref().unwrap().session_id.clone();
+
+        // A busy turn keeps the switch queued without restarting the session.
+        let turn = |event_id: &str, kind: &str| {
+            serde_json::from_value(json!({
+                "schema_version": crate::activity::TURN_EVENT_VERSION,
+                "event_id": event_id,
+                "runtime_id": first_launch,
+                "provider": "claude",
+                "provider_session_id": provider_session_id,
+                "provider_turn_id": "turn-claude-switch",
+                "kind": kind,
+                "confidence": "authoritative"
+            }))
+            .unwrap()
+        };
+        crate::activity::ingest_event(&st.context, &record.id, turn("turn-start", "turn_started"))
+            .unwrap();
+        let (status, body) = call(
+            router(st.clone()),
+            put_json(
+                "/sessions/claude-live/account",
+                Some(TOKEN),
+                json!({"account":"beta","expected_session_incarnation":first_launch}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["session_incarnation"], first_launch.as_str());
+        assert_eq!(body["data"]["claude_account"]["selected_account"], "alpha");
+        assert_eq!(body["data"]["claude_account"]["next"]["account"], "beta");
+        let launches = |log: &Path| {
+            fs::read_to_string(log)
+                .unwrap()
+                .lines()
+                .filter(|line| line.starts_with("new-session"))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(launches(&log).len(), 1, "a busy turn must not restart");
+
+        // At the idle boundary the switch restarts the runtime. This fixture
+        // pane has no dedicated control group, so the verified stop refuses
+        // and the switch fails safe: nothing relaunches, the applied account
+        // is unchanged, and the intent stays queued for the next resume.
+        crate::activity::ingest_event(&st.context, &record.id, turn("turn-done", "turn_completed"))
+            .unwrap();
+        let (status, body) = call(
+            router(st.clone()),
+            put_json(
+                "/sessions/claude-live/account",
+                Some(TOKEN),
+                json!({"account":"beta","expected_session_incarnation":first_launch}),
+            ),
+        )
+        .await;
+        assert_ne!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["error"]["code"], "session-termination-failed");
+        assert_eq!(launches(&log).len(), 1, "a refused stop must not relaunch");
+        let persisted = load_session_record(&st.context, "claude-live").unwrap();
+        let account = crate::claude_account::view_for_record(&persisted).unwrap();
+        assert_eq!(account.selected_account.as_deref(), Some("alpha"));
+        assert!(crate::claude_account::has_queued_next(&persisted));
+        assert!(
+            !broker.calls().contains("--account beta"),
+            "the next account materializes only when a relaunch is admitted"
+        );
     }
 
     #[tokio::test]

@@ -461,6 +461,12 @@ should use the normative [Serve API v1](docs/specs/serve-api-v1.md), plus the
 [activity stream](docs/specs/activity-stream-v1.md) and
 [coordination](docs/specs/session-coordination-v1.md) contracts.
 
+With `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER` configured, each daemon-created
+Claude session binds to a chosen account: the broker materializes a
+per-account `CLAUDE_CONFIG_DIR`, the binding survives resume, and a switch
+relaunches the session with `--resume` in the new account directory. See the
+[Claude account broker](docs/specs/serve-api-v1.md#claude-account-broker).
+
 ## Output contract
 
 Human-readable text is the default. JSON is opt-in with `--format json` on command subcommands.

@@ -137,7 +137,8 @@ the mutating coordination paths.
 
 The required field is `agent`. Fresh creation may also use `cwd`, `title`,
 `title_state`, `id`, `prompt`, `coordination_mode`, `agent_args`, an advertised
-`agent_profile`, and—for supported fresh Codex sessions—`codex_account`.
+`agent_profile`, and—for supported fresh Codex sessions—`codex_account`, or—for
+profile-free fresh Claude sessions—`claude_account`.
 `coordination_mode` accepts `advisory`, `enforce`, or `off` and defaults to
 `advisory`.
 
@@ -145,7 +146,7 @@ Provider import uses `provider_resume_id` (compatibility alias: `resume_id`).
 When `agent_profile` is omitted, discovery uses the daemon's default provider
 history. When a profile is selected, it must advertise import support and
 discovery is confined to that profile's provider root. In either import mode,
-omit `cwd`, `prompt`, `agent_args`, and `codex_account`; the daemon resolves the
+omit `cwd`, `prompt`, `agent_args`, `codex_account`, and `claude_account`; the daemon resolves the
 original working directory and exact provider metadata from the selected
 history source. A capable Codex import uses the same daemon-managed app-server
 runtime as a fresh Codex session, preserving account and auto-resume controls;
@@ -315,6 +316,11 @@ fail-closed.
 - `AGENT_SESSION_CODEX_ACCOUNT_BROKER`: JSON argv array for a bounded host
   credential broker. Credentials remain in memory and are not projected into
   session documents or HTTP responses.
+- `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER`: JSON argv array for a bounded host
+  Claude account broker (`agent-session.account-broker.v2`). It materializes a
+  per-account `CLAUDE_CONFIG_DIR` and returns only the directory path; no token
+  crosses it. Bound sessions resume only while it stays configured. See the
+  [Claude account broker](../specs/serve-api-v1.md#claude-account-broker).
 - `AGENT_SESSION_LAUNCH_PROFILES`: JSON array of server-owned launch profiles.
   Only profiles whose executable, optional provider root, and readiness probe
   pass are advertised. A Hermes-backed DSH profile may add an absolute
