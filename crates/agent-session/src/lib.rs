@@ -3606,7 +3606,7 @@ pub(crate) fn resolve_provider_transcript_path_from_roots(
     matches.into_iter().next().map(|candidate| candidate.path)
 }
 
-/// Resolve the `systemd-run` binary used to launch the tmux server inside a
+/// Resolve the `systemd-run` scope used to launch the tmux server inside a
 /// transient systemd `--user` scope, or `None` to launch tmux directly.
 ///
 /// `agent-session serve` starts each session as a child `tmux new-session -d`,
@@ -3622,7 +3622,7 @@ pub(crate) fn resolve_provider_transcript_path_from_roots(
 /// only engages when a systemd `--user` manager is actually reachable, so an
 /// opt-in on an unsupported host (no user manager, missing `systemd-run`,
 /// non-Linux) degrades to a direct launch instead of failing session creation.
-fn tmux_scope_runner() -> Option<PathBuf> {
+fn tmux_scope_runner() -> Option<TmuxScope> {
     if !env_truthy("AGENT_SESSION_TMUX_SCOPE") {
         return None;
     }
@@ -3639,26 +3639,88 @@ fn tmux_scope_runner() -> Option<PathBuf> {
     {
         return None;
     }
-    binary_on_path("systemd-run")
+    binary_on_path("systemd-run").map(tmux_scope)
+}
+
+/// A `systemd-run` binary that can host the tmux server in a transient user
+/// scope.
+struct TmuxScope {
+    runner: PathBuf,
+    /// Whether this `systemd-run` accepts `--expand-environment=no`.
+    literal_arguments: bool,
+}
+
+/// First systemd release whose `systemd-run` accepts `--expand-environment=`.
+const SYSTEMD_RUN_EXPAND_ENVIRONMENT_MIN_VERSION: u32 = 254;
+const SYSTEMD_RUN_VERSION_TIMEOUT: Duration = Duration::from_secs(2);
+const SYSTEMD_RUN_VERSION_MAX_OUTPUT_BYTES: usize = 4 * 1024;
+
+/// Bind `runner` to what its systemd version supports. An unreadable version
+/// keeps the historical argument list, which every systemd accepts.
+fn tmux_scope(runner: PathBuf) -> TmuxScope {
+    let literal_arguments = systemd_run_version(&runner)
+        .is_some_and(|version| version >= SYSTEMD_RUN_EXPAND_ENVIRONMENT_MIN_VERSION);
+    TmuxScope {
+        runner,
+        literal_arguments,
+    }
+}
+
+fn systemd_run_version(runner: &Path) -> Option<u32> {
+    let mut command = ProcessCommand::new(runner);
+    command.arg("--version");
+    let output = run_output_with_timeout_and_cap(
+        command,
+        SYSTEMD_RUN_VERSION_TIMEOUT,
+        SYSTEMD_RUN_VERSION_MAX_OUTPUT_BYTES,
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_systemd_version(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Parse the major version from `systemd 259 (259.5-0ubuntu3.4)`; a
+/// pre-release such as `257~rc1` reads as its major version.
+fn parse_systemd_version(output: &str) -> Option<u32> {
+    let mut words = output.lines().next()?.split_whitespace();
+    if words.next()? != "systemd" {
+        return None;
+    }
+    let digits: String = words
+        .next()?
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
 }
 
 /// Build the base command for a `tmux new-session` that may start the tmux
-/// server. With `scope_runner` set the server is launched inside a transient
+/// server. With `scope` set the server is launched inside a transient
 /// systemd user scope (see [`tmux_scope_runner`]); otherwise tmux runs directly.
 /// Callers append the `new-session ...` arguments to the returned command; both
 /// forms accept the same trailing arguments because `systemd-run`'s `--`
 /// hands everything after the tmux binary straight to tmux.
-fn new_session_command(tmux_bin: &Path, scope_runner: Option<&Path>) -> ProcessCommand {
-    match scope_runner {
-        Some(runner) => {
-            let mut command = ProcessCommand::new(runner);
+///
+/// systemd 259 expands `${VAR}` and `$$` in scope command arguments by default,
+/// which rewrote the held-launch script and any `$` in a prompt before tmux saw
+/// them. `--expand-environment=no` keeps the arguments verbatim; it is passed
+/// only where supported because older `systemd-run` rejects the option and
+/// never expanded scope arguments.
+fn new_session_command(tmux_bin: &Path, scope: Option<&TmuxScope>) -> ProcessCommand {
+    match scope {
+        Some(scope) => {
+            let mut command = ProcessCommand::new(&scope.runner);
             command
                 .arg("--user")
                 .arg("--scope")
                 .arg("--quiet")
-                .arg("--collect")
-                .arg("--")
-                .arg(tmux_bin);
+                .arg("--collect");
+            if scope.literal_arguments {
+                command.arg("--expand-environment=no");
+            }
+            command.arg("--").arg(tmux_bin);
             command
         }
         None => ProcessCommand::new(tmux_bin),
@@ -8320,7 +8382,7 @@ fn start_interactive_tmux(
     provider_launch_args: &[String],
     agent_args: &[String],
 ) -> Result<TmuxRuntimeIdentity, CliError> {
-    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_deref());
+    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
     command
         .arg("new-session")
         .arg("-d")
@@ -8493,7 +8555,7 @@ fn start_run_tmux(
         shell_words::quote(log_file)
     );
 
-    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_deref());
+    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
     command
         .arg("new-session")
         .arg("-d")
@@ -10515,7 +10577,7 @@ fn start_resume_tmux(
     record: &SessionRecord,
     resume_args: &[String],
 ) -> Result<TmuxRuntimeIdentity, CliError> {
-    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_deref());
+    let mut command = new_session_command(tmux_bin, tmux_scope_runner().as_ref());
     command
         .arg("new-session")
         .arg("-d")
@@ -22118,6 +22180,39 @@ exit 0
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn linux_systemd_scope_passes_tmux_arguments_through_literally() {
+        let required = env::var("AGENT_SESSION_TEST_REQUIRE_CGROUP").as_deref() == Ok("1");
+        let capability = linux_scoped_process_test_capability(
+            env::var_os("XDG_RUNTIME_DIR").as_deref(),
+            super::binary_on_path("systemd-run"),
+            probe_systemd_user_scope,
+        );
+        let Some(systemd_run) = linux_cgroup_test_capability_or_skip(
+            capability,
+            required,
+            "Linux systemd scope argument pass-through",
+        ) else {
+            return;
+        };
+        let printf = super::binary_on_path("printf").expect("printf on PATH");
+        let scope = super::tmux_scope(systemd_run);
+        // Stand in for tmux with printf: newer systemd expands `${VAR}` and
+        // `$$` in scope command arguments unless told not to, which rewrote
+        // the held-launch script before tmux ever saw it.
+        let mut command = super::new_session_command(&printf, Some(&scope));
+        command.args(["%s|", "a${AGENT_SESSION_TEST_UNSET}b", "pid$$end"]);
+        let output =
+            super::run_output_with_timeout_and_cap(command, Duration::from_secs(5), 4 * 1024)
+                .expect("scoped printf");
+        assert!(output.status.success(), "scoped printf failed: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "a${AGENT_SESSION_TEST_UNSET}b|pid$$end|"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn linux_systemd_scope_probe_kills_and_reaps_a_hung_helper() {
         let tmp = tempfile::TempDir::new().unwrap();
         let helper = tmp.path().join("systemd-run");
@@ -25214,10 +25309,11 @@ exit 42
         use std::ffi::OsStr;
         use std::path::Path;
 
-        let command = new_session_command(
-            Path::new("/usr/bin/tmux"),
-            Some(Path::new("/usr/bin/systemd-run")),
-        );
+        let scope = super::TmuxScope {
+            runner: "/usr/bin/systemd-run".into(),
+            literal_arguments: false,
+        };
+        let command = new_session_command(Path::new("/usr/bin/tmux"), Some(&scope));
         assert_eq!(command.get_program(), OsStr::new("/usr/bin/systemd-run"));
         let args: Vec<_> = command.get_args().collect();
         assert_eq!(
@@ -25231,6 +25327,94 @@ exit 42
                 OsStr::new("/usr/bin/tmux"),
             ]
         );
+    }
+
+    #[test]
+    fn new_session_command_keeps_scope_arguments_literal_when_supported() {
+        use super::new_session_command;
+        use std::ffi::OsStr;
+        use std::path::Path;
+
+        let scope = super::TmuxScope {
+            runner: "/usr/bin/systemd-run".into(),
+            literal_arguments: true,
+        };
+        let command = new_session_command(Path::new("/usr/bin/tmux"), Some(&scope));
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(
+            args,
+            vec![
+                OsStr::new("--user"),
+                OsStr::new("--scope"),
+                OsStr::new("--quiet"),
+                OsStr::new("--collect"),
+                OsStr::new("--expand-environment=no"),
+                OsStr::new("--"),
+                OsStr::new("/usr/bin/tmux"),
+            ]
+        );
+    }
+
+    #[test]
+    fn tmux_scope_enables_literal_arguments_only_from_systemd_254() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cases = [
+            ("printf 'systemd 253 (253.5)\\n'", false),
+            ("printf 'systemd 254 (254.1)\\n'", true),
+            (
+                "printf 'systemd 259 (259.5-0ubuntu3.4)\\n+PAM +AUDIT\\n'",
+                true,
+            ),
+            ("printf 'systemd 259 (259.5)\\n'; exit 1", false),
+            ("printf 'tmux 3.4\\n'", false),
+        ];
+        for (index, (body, expected)) in cases.into_iter().enumerate() {
+            let runner = tmp.path().join(format!("systemd-run-{index}"));
+            std::fs::write(&runner, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
+            // A sibling test's fork can briefly hold this stub's write
+            // descriptor, which makes exec fail with ETXTBSY. Run it once with a
+            // retry so the probe below cannot read that as an unreadable version.
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                match std::process::Command::new(&runner)
+                    .arg("--version")
+                    .output()
+                {
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    result => {
+                        result.expect("fake systemd-run stub runs");
+                        break;
+                    }
+                }
+            }
+            assert_eq!(
+                super::tmux_scope(runner).literal_arguments,
+                expected,
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn systemd_version_parsing_reads_the_major_release() {
+        use super::parse_systemd_version;
+
+        assert_eq!(
+            parse_systemd_version("systemd 259 (259.5-0ubuntu3.4)\n+PAM +AUDIT\n"),
+            Some(259)
+        );
+        assert_eq!(parse_systemd_version("systemd 257~rc1\n"), Some(257));
+        assert_eq!(parse_systemd_version("systemd\n"), None);
+        assert_eq!(parse_systemd_version("tmux 3.4\n"), None);
+        assert_eq!(parse_systemd_version(""), None);
     }
 
     #[cfg(target_os = "linux")]
