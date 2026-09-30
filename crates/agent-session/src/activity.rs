@@ -1849,7 +1849,16 @@ fn replay_matches_document(dir: &Path, document: &ActivityDocument) -> bool {
     if document.seen_event_count == 0 && !replay_path.is_file() {
         return true;
     }
-    let tables = if document.seen_event_count > MAX_DEDUPE_EVENTS {
+    // Table 1 is first reset for this generation by the exact event at index
+    // MAX_DEDUPE_EVENTS. While that event is still pending (a crash between the
+    // snapshot write and the reset), table 1 may be absent or carry an earlier
+    // generation's header; the repair redoes the reset, so it is not required yet.
+    let opening_table_one_pending = document.seen_event_count == MAX_DEDUPE_EVENTS + 1
+        && document
+            .pending_journal
+            .as_ref()
+            .is_some_and(|entry| event_uses_exact_replay_horizon(&entry.event));
+    let tables = if document.seen_event_count > MAX_DEDUPE_EVENTS && !opening_table_one_pending {
         2
     } else {
         1
@@ -8451,6 +8460,79 @@ mod tests {
                 .expect("next event")
                 .duplicate
         );
+    }
+
+    #[test]
+    fn a_stale_or_missing_table_one_before_its_boundary_reset_keeps_the_view_valid() {
+        for stale in [true, false] {
+            let tmp = tempfile::TempDir::new().expect("tempdir");
+            let (context, created) = test_session(&tmp);
+            let runtime = created.record.runtime.as_ref().expect("runtime");
+            let runtime_id = runtime.launch_id.clone();
+            let generation = runtime.generation;
+            let dir = session_dir(&context, &created.record.id);
+            let path = dir.join(ACTIVITY_FILE);
+            let journal_path = dir.join(ACTIVITY_JOURNAL_FILE);
+            let table_one = dir.join(ACTIVITY_REPLAY_TABLE_ONE_FILE);
+            let exact = |index: usize| {
+                let mut current = event(TurnEventKind::Progress, &format!("stale-{index}"));
+                current.runtime_id.clone_from(&runtime_id);
+                current.provider_turn_id = Some(format!("turn-{index}"));
+                current
+            };
+            let mut snapshot = read_document(&path).expect("activity snapshot");
+            snapshot.seen_event_count = MAX_DEDUPE_EVENTS - 1;
+            write_document(&path, &mut snapshot).expect("boundary snapshot");
+            ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS - 1))
+                .expect("last event of the first window");
+            if stale {
+                // Left behind by an earlier runtime generation.
+                let mut old = vec![0_u8; REPLAY_FILE_BYTES];
+                old[..REPLAY_HEADER_BYTES]
+                    .copy_from_slice(&replay_header("earlier-runtime", generation));
+                fs::write(&table_one, &old).expect("stale table one");
+            }
+
+            // Stop right after the pending snapshot write for index 4096.
+            fs::remove_file(&journal_path).expect("clear journal");
+            fs::create_dir(&journal_path).expect("block journal target");
+            let mut snapshot = read_document(&path).expect("activity snapshot");
+            snapshot.seen_event_count = MAX_DEDUPE_EVENTS + 1;
+            snapshot.pending_journal = Some(JournalEntry {
+                received_at: "2026-07-10T00:00:00Z".to_string(),
+                event: exact(MAX_DEDUPE_EVENTS),
+            });
+            write_document(&path, &mut snapshot).expect("pending boundary snapshot");
+            assert_ne!(
+                state_for_view(&context, &created.record)
+                    .expect("view state")
+                    .phase,
+                TurnPhase::Unknown,
+                "stale={stale}: the view stays valid before the boundary reset"
+            );
+
+            fs::remove_dir(&journal_path).expect("restore journal target");
+            let repaired = ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS))
+                .expect("repair converges");
+            assert!(repaired.duplicate);
+            assert_eq!(
+                &fs::read(&table_one).expect("reset table one")[..REPLAY_HEADER_BYTES],
+                &replay_header(&runtime_id, generation)
+            );
+            assert_ne!(
+                state_for_view(&context, &created.record)
+                    .expect("view state")
+                    .phase,
+                TurnPhase::Unknown
+            );
+
+            // Snapshot and restore carry table one's bytes.
+            let captured = capture_snapshot(&context, &created.record.id).expect("capture");
+            let before = fs::read(&table_one).expect("table one bytes");
+            fs::write(&table_one, vec![0_u8; REPLAY_FILE_BYTES]).expect("mutate table one");
+            restore_snapshot(&context, &created.record.id, &captured).expect("restore");
+            assert_eq!(fs::read(&table_one).expect("restored table one"), before);
+        }
     }
 
     #[test]

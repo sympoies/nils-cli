@@ -395,7 +395,9 @@ once the count has passed the first window. Exact dedupe therefore covers at
 least the last 4096 and at most 8192 exact events, ingest never stops for
 capacity, and recovery never needs a restart, resume, or new session id
 (sympoies/nils-cli#1962). A crashed boundary insert is redone from the pending
-journal entry and converges on the same table.
+journal entry and converges on the same table. While the event that first opens
+table 1 is still pending, views do not require table 1, which may be absent or
+left over from an earlier runtime generation until the redo resets it.
 
 Mixed versions: hook binaries and serve runtimes upgrade independently, so
 table 0 keeps the exact pre-window file name, format, and header, and there is
