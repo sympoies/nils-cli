@@ -31,7 +31,11 @@ updates. The clock produces deterministic timestamps starting at
 `id`, `body`, `author`, `created_at`, and `url`. Comment URLs use
 `local://<slug>/issues/<number>#comment-<id>`.
 
-Issue create, view, list, edit, comment, and close operate on these records.
+Issue create, view, list, edit, comment, and close operate on these records,
+and so do `issue tracker lint`, `graph`, and `tick`, which read and write
+through the same view, edit, and comment calls. Because one root holds one
+repository, `issue tracker lint --check-state` reports a row that references
+another repository (`owner/repo#N`) as `unreadable-ref`.
 List applies all requested labels to open issues; numbering and timestamps are
 monotonic within the store.
 

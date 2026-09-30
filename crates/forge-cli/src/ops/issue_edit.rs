@@ -75,9 +75,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         None
     };
     if let Some(ref b) = body {
-        no_local_path(b, "body")?;
-        no_agent_attribution(b, "body")?;
-        no_escaped_control_markdown(b)?;
+        guard_body(b)?;
     }
     let call = build_edit_call(&ctx, &args, body.as_deref());
 
@@ -108,6 +106,34 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         format,
         render_text,
     ))
+}
+
+/// Payload guards every written issue body passes.
+fn guard_body(body: &str) -> Result<(), ForgeError> {
+    no_local_path(body, "body")?;
+    no_agent_attribution(body, "body")?;
+    no_escaped_control_markdown(body)
+}
+
+/// The `issue edit` call that replaces only the body, behind the same guards
+/// as `issue edit --body`. Used by the `issue tracker` atoms so their writes
+/// take the one body-write path.
+pub(crate) fn build_body_edit_call(
+    ctx: &ProviderContext,
+    id: u64,
+    body: &str,
+) -> Result<BackendCall, ForgeError> {
+    guard_body(body)?;
+    let args = IssueEditArgs {
+        id,
+        title: None,
+        body: None,
+        body_file: None,
+        add_label: Vec::new(),
+        remove_label: Vec::new(),
+        add_assignee: Vec::new(),
+    };
+    Ok(build_edit_call(ctx, &args, Some(body)))
 }
 
 fn build_edit_call(ctx: &ProviderContext, args: &IssueEditArgs, body: Option<&str>) -> BackendCall {
@@ -262,6 +288,31 @@ mod tests {
         assert_eq!(plan[t + 1], "new title");
         let b = plan.iter().position(|s| s == "--body").unwrap();
         assert_eq!(plan[b + 1], "new body");
+    }
+
+    #[test]
+    fn build_body_edit_call_replaces_only_the_body_on_both_providers() {
+        let call = build_body_edit_call(&ctx(Provider::GitHub), 7, "new body").unwrap();
+        assert_eq!(
+            call.plan_argv()[1..],
+            ["issue", "edit", "7", "--body", "new body"]
+        );
+        let call = build_body_edit_call(&ctx(Provider::GitLab), 7, "new body").unwrap();
+        assert_eq!(
+            call.plan_argv()[1..],
+            ["issue", "update", "7", "--description", "new body"]
+        );
+    }
+
+    #[test]
+    fn build_body_edit_call_applies_the_body_guards() {
+        let err = build_body_edit_call(
+            &ctx(Provider::GitHub),
+            7,
+            "logs are under /Users/dev/Project/secret",
+        )
+        .expect_err("local path");
+        assert_eq!(err.kind(), "local_path_present");
     }
 
     #[test]

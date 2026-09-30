@@ -1,0 +1,23 @@
+{
+  "rows": [
+    {
+      "id": "A",
+      "title": "First item",
+      "ref": {"owner": null, "repo": null, "number": 1},
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": null
+    },
+    {
+      "id": "B",
+      "title": "Second item",
+      "ref": {"owner": null, "repo": null, "number": 2},
+      "notes": null,
+      "after": ["A"],
+      "done": false,
+      "phase": null
+    }
+  ],
+  "graph": "graph LR\n  A\n  B\n  A --> B"
+}

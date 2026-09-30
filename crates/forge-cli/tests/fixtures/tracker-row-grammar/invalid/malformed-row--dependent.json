@@ -1,0 +1,6 @@
+{
+  "findings": [
+    {"code": "malformed-row", "line": 4, "ids": []},
+    {"code": "unknown-dependency", "line": 5, "ids": ["A3", "A2"]}
+  ]
+}

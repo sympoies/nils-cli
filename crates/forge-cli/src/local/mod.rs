@@ -73,6 +73,7 @@ pub fn command_supported(command: &Option<crate::cli::Command>) -> bool {
                     | IssueCommand::Edit(_)
                     | IssueCommand::Comment(_)
                     | IssueCommand::Close(_)
+                    | IssueCommand::Tracker(_)
             )
         ),
         Some(Command::Pr(args)) => matches!(
@@ -104,7 +105,7 @@ pub fn unsupported_command() -> ForgeError {
     ForgeError::provider_unsupported(
         schema_version_for(BINARY, "error", 1),
         "provider 'local' supports only the issue lifecycle \
-         (create/view/list/edit/comment/close) and pr read (view/comments/checks)",
+         (create/view/list/edit/comment/close/tracker) and pr read (view/comments/checks)",
         None,
     )
 }

@@ -7,8 +7,9 @@ use nils_common::execution_effect::{
 
 use crate::cli::{
     ActivityArgs, AuthArgs, AuthCommand, Cli, Command, InboxArgs, InboxCommand, IssueArgs,
-    IssueCommand, LabelArgs, LabelCommand, PrArgs, PrCommand, PrPendingReviewCommand,
-    PrReviewCommand, PrReviewLoopCommand, RepoArgs, RepoCommand, ReviewThreadsCommand, SearchArgs,
+    IssueCommand, IssueTrackerCommand, LabelArgs, LabelCommand, PrArgs, PrCommand,
+    PrPendingReviewCommand, PrReviewCommand, PrReviewLoopCommand, RepoArgs, RepoCommand,
+    ReviewThreadsCommand, SearchArgs,
 };
 
 pub fn run(argv: Vec<OsString>, format: OutputFormat) -> i32 {
@@ -143,6 +144,34 @@ fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<&'static st
         })) => match command {
             IssueCommand::View(_) => ("issue.view", read, network, vec!["provider"]),
             IssueCommand::List(_) => ("issue.list", read, network, vec!["provider"]),
+            // `lint` and a `graph` without `--write` only read. A `--body-file`
+            // draft never reaches a provider, and `graph --write` on a draft
+            // rewrites that local file.
+            IssueCommand::Tracker(args) => match &args.command {
+                IssueTrackerCommand::Lint(lint) => {
+                    tracker_read("issue.tracker.lint", read, lint.body_file.is_some())
+                }
+                IssueTrackerCommand::Graph(graph) if graph.body_file.is_some() => tracker_read(
+                    "issue.tracker.graph",
+                    if graph.write { mutation } else { read },
+                    true,
+                ),
+                IssueTrackerCommand::Graph(graph) if !graph.write => {
+                    tracker_read("issue.tracker.graph", read, false)
+                }
+                IssueTrackerCommand::Graph(_) => (
+                    "issue.tracker.graph",
+                    mutation,
+                    ProviderEffect::NetworkWrite,
+                    Vec::new(),
+                ),
+                IssueTrackerCommand::Tick(_) => (
+                    "issue.tracker.tick",
+                    mutation,
+                    ProviderEffect::NetworkWrite,
+                    Vec::new(),
+                ),
+            },
             _ => (
                 "issue.mutation",
                 mutation,
@@ -195,6 +224,30 @@ fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<&'static st
             ProviderEffect::NetworkWrite,
             Vec::new(),
         ),
+    }
+}
+
+/// A tracker command that contacts no provider for writing: a draft is local
+/// input, an issue is a provider read.
+fn tracker_read(
+    operation: &'static str,
+    effect: Effect,
+    draft: bool,
+) -> (&'static str, Effect, ProviderEffect, Vec<&'static str>) {
+    if draft {
+        (
+            operation,
+            effect,
+            ProviderEffect::LocalRead,
+            vec!["local_inputs"],
+        )
+    } else {
+        (
+            operation,
+            effect,
+            ProviderEffect::NetworkRead,
+            vec!["provider"],
+        )
     }
 }
 
@@ -279,6 +332,77 @@ mod tests {
             ),
             (vec!["pr", "merge", "7"], "pr.mutation"),
             (vec!["issue", "close", "7"], "issue.mutation"),
+        ] {
+            let (name, effect, provider, reads) = classify_argv(&argv);
+            assert_eq!(name, operation, "{argv:?}");
+            assert_eq!(effect, Effect::Mutation, "{argv:?}");
+            assert_eq!(provider, ProviderEffect::NetworkWrite, "{argv:?}");
+            assert!(reads.is_empty(), "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn tracker_commands_declare_only_the_effect_they_have() {
+        // Reading a tracker issue is a network read, with or without the
+        // per-row state reads.
+        assert_network_read(
+            &["issue", "tracker", "lint", "7"],
+            "issue.tracker.lint",
+            &["provider"],
+        );
+        assert_network_read(
+            &["issue", "tracker", "lint", "7", "--check-state"],
+            "issue.tracker.lint",
+            &["provider"],
+        );
+        assert_network_read(
+            &["issue", "tracker", "graph", "7"],
+            "issue.tracker.graph",
+            &["provider"],
+        );
+
+        // A draft body never reaches a provider.
+        for (argv, operation) in [
+            (
+                vec!["issue", "tracker", "lint", "--body-file", "tracker.md"],
+                "issue.tracker.lint",
+            ),
+            (
+                vec!["issue", "tracker", "graph", "--body-file", "tracker.md"],
+                "issue.tracker.graph",
+            ),
+        ] {
+            let (name, effect, provider, reads) = classify_argv(&argv);
+            assert_eq!(name, operation, "{argv:?}");
+            assert_eq!(effect, Effect::ReadOnly, "{argv:?}");
+            assert_eq!(provider, ProviderEffect::LocalRead, "{argv:?}");
+            assert_eq!(reads, vec!["local_inputs"], "{argv:?}");
+        }
+
+        // Rewriting the draft file is a local mutation, still without a provider.
+        let (name, effect, provider, reads) = classify_argv(&[
+            "issue",
+            "tracker",
+            "graph",
+            "--body-file",
+            "tracker.md",
+            "--write",
+        ]);
+        assert_eq!(name, "issue.tracker.graph");
+        assert_eq!(effect, Effect::Mutation);
+        assert_eq!(provider, ProviderEffect::LocalRead);
+        assert_eq!(reads, vec!["local_inputs"]);
+
+        // Writing the issue body is a provider write.
+        for (argv, operation) in [
+            (
+                vec!["issue", "tracker", "graph", "7", "--write"],
+                "issue.tracker.graph",
+            ),
+            (
+                vec!["issue", "tracker", "tick", "7", "--item", "A1"],
+                "issue.tracker.tick",
+            ),
         ] {
             let (name, effect, provider, reads) = classify_argv(&argv);
             assert_eq!(name, operation, "{argv:?}");

@@ -1,0 +1,6 @@
+{
+  "findings": [
+    {"code": "cycle", "line": 3, "ids": ["A1", "A2", "A3"]},
+    {"code": "cycle", "line": 8, "ids": ["B2", "B3"]}
+  ]
+}
