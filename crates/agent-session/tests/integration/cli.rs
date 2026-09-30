@@ -106,9 +106,12 @@ start_time = stat[stat.rfind(") ") + 2:].split()[19]"#
         &r#"#!/usr/bin/env sh
 : "${AGENT_SESSION_FAKE_TMUX_LOG:?}"
 # Serialize the diagnostic record only; fake tmux operations remain concurrent.
+# The lock is a noclobber create, which the shell itself performs with O_EXCL.
+# `mkdir` is not a safe lock everywhere: uutils mkdir 0.10 can report success
+# to more than one concurrent caller.
 record_lock="$AGENT_SESSION_FAKE_TMUX_LOG.call-lock"
 record_attempts=0
-while ! mkdir "$record_lock" 2>/dev/null; do
+while ! ( set -C; : > "$record_lock" ) 2>/dev/null; do
   record_attempts=$((record_attempts + 1))
   if [ "$record_attempts" -ge 1000 ]; then
     printf '%s\n' 'fake tmux call log lock timed out' >&2
@@ -116,13 +119,13 @@ while ! mkdir "$record_lock" 2>/dev/null; do
   fi
   sleep 0.01
 done
-trap 'rmdir "$record_lock" 2>/dev/null || :' 0
+trap 'rm -f "$record_lock"' 0
 trap 'exit 1' 1 2 3 15
 for arg in "$@"; do
   printf '%s\000' "$arg" >> "$AGENT_SESSION_FAKE_TMUX_LOG" || exit 1
 done
 printf '\036' >> "$AGENT_SESSION_FAKE_TMUX_LOG" || exit 1
-rmdir "$record_lock" || exit 1
+rm "$record_lock" || exit 1
 trap - 0 1 2 3 15
 
 NILS_TEST_PANE_PARENT=__NILS_TEST_PANE_PARENT__
@@ -451,7 +454,7 @@ if [ "$1" = "new-session" ]; then
     previous="$arg"
   done
   identity_number=77
-  while ! mkdir "$AGENT_SESSION_FAKE_TMUX_LOG.identity-$identity_number" 2>/dev/null; do
+  while ! ( set -C; : > "$AGENT_SESSION_FAKE_TMUX_LOG.identity-$identity_number" ) 2>/dev/null; do
     identity_number=$((identity_number + 1))
   done
   session_identity="${AGENT_SESSION_FAKE_TMUX_SESSION_ID:-}"
