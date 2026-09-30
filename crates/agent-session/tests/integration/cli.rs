@@ -1954,8 +1954,7 @@ fn activity_events_are_runtime_bound_private_and_deterministic() {
     );
     assert_eq!(
         fs::metadata(replay_path).expect("replay size").len(),
-        // Header plus two rotating tables of 2 x 4096 slots of 32 bytes.
-        64 + 2 * 4096 * 2 * 32
+        64 + 4096 * 2 * 32
     );
 }
 

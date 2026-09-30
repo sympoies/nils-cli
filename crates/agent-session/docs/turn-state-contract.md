@@ -373,9 +373,10 @@ Each session owns:
 - `activity.json`: atomic mode-0600 snapshot;
 - `activity.journal.jsonl`: atomic mode-0600 metadata journal, bounded to 256
   events and 64 KiB;
-- `activity.replay.bin`: fixed-size mode-0600 replay index of two
-  open-addressed tables that each hold 4096 runtime-scoped event-id digests,
-  with a versioned (`agent-session-r2`) launch-id/generation header;
+- `activity.replay.bin` and `activity.replay.1.bin`: the two tables of the
+  replay window, each a fixed-size mode-0600 open-addressed index for 4096
+  runtime-scoped event-id digests in the unchanged `agent-session-r1` format,
+  with a versioned launch-id/generation header;
 - `.activity.lock`: mode-0600 cross-process advisory lock.
 
 Activity files are separate from `session.json`, so title/resume writes and hook
@@ -386,13 +387,23 @@ event requires exact replay protection, appends the bounded journal
 idempotently, and clears the pending marker. A later event or runtime transition
 repairs an interrupted split write before reduction. The replay index is
 separate from the shorter journal retention, gives expected O(1) duplicate
-checks without growing the JSON snapshot, and is a sliding window: the event
-with zero-based index `i` in a runtime generation goes to table
-`(i / 4096) % 2`, and the first event of each window zeroes its table first.
-Exact dedupe therefore covers at least the last 4096 and at most 8192 exact
-events, ingest never stops for capacity, and recovery never needs a restart,
-resume, or new session id (sympoies/nils-cli#1962). A single-table `r1` index
-for the same runtime tuple migrates in place as table 0. Uncorrelated Claude provider-hook `progress` has idempotent reducer
+checks without growing the JSON snapshot, and is a sliding window: the exact
+event with zero-based index `i` in a runtime generation (the snapshot's
+`seen_event_count` before it) goes to table `(i / 4096) % 2`, and the first
+event of each window resets that table's file first. Table 1 is consulted only
+once the count has passed the first window. Exact dedupe therefore covers at
+least the last 4096 and at most 8192 exact events, ingest never stops for
+capacity, and recovery never needs a restart, resume, or new session id
+(sympoies/nils-cli#1962). A crashed boundary insert is redone from the pending
+journal entry and converges on the same table.
+
+Mixed versions: hook binaries and serve runtimes upgrade independently, so
+table 0 keeps the exact pre-window file name, format, and header, and there is
+no migration. A binary that predates the window still validates and reads table
+0, so its views stay valid; past 4096 exact events its own ingest still refuses
+with `activity-dedupe-capacity-reached` until it is upgraded, and it ignores
+table 1. An upgraded binary continues from a full table 0 by starting table 1.
+Uncorrelated Claude provider-hook `progress` has idempotent reducer
 semantics and no stable provider event id, so it keeps bounded journal and
 split-write repair coverage but relies on the short semantic replay guard rather
 than consuming exact replay slots. The replay file header must match the
