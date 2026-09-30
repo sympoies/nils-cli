@@ -259,8 +259,8 @@ fn claude_prompt_id_is_correlated_as_the_provider_turn_id() {
         subagent_json["provider_turn_id"], stop_json["provider_turn_id"],
         "a subagent request must bind to the parent's turn: {subagent_event}"
     );
-    for secret in ["agent-secret", "command-secret", "general-purpose"] {
-        assert!(!subagent_event.contains(secret), "leaked {secret}");
+    for field in ["agent-secret", "command-secret", "general-purpose"] {
+        assert!(!subagent_event.contains(field), "leaked {field}");
     }
 }
 
