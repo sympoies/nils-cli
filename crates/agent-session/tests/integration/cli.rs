@@ -105,10 +105,25 @@ start_time = stat[stat.rfind(") ") + 2:].split()[19]"#
         &bin,
         &r#"#!/usr/bin/env sh
 : "${AGENT_SESSION_FAKE_TMUX_LOG:?}"
-for arg in "$@"; do
-  printf '%s\000' "$arg" >> "$AGENT_SESSION_FAKE_TMUX_LOG"
+# Serialize the diagnostic record only; fake tmux operations remain concurrent.
+record_lock="$AGENT_SESSION_FAKE_TMUX_LOG.call-lock"
+record_attempts=0
+while ! mkdir "$record_lock" 2>/dev/null; do
+  record_attempts=$((record_attempts + 1))
+  if [ "$record_attempts" -ge 1000 ]; then
+    printf '%s\n' 'fake tmux call log lock timed out' >&2
+    exit 1
+  fi
+  sleep 0.01
 done
-printf '\036' >> "$AGENT_SESSION_FAKE_TMUX_LOG"
+trap 'rmdir "$record_lock" 2>/dev/null || :' 0
+trap 'exit 1' 1 2 3 15
+for arg in "$@"; do
+  printf '%s\000' "$arg" >> "$AGENT_SESSION_FAKE_TMUX_LOG" || exit 1
+done
+printf '\036' >> "$AGENT_SESSION_FAKE_TMUX_LOG" || exit 1
+rmdir "$record_lock" || exit 1
+trap - 0 1 2 3 15
 
 NILS_TEST_PANE_PARENT=__NILS_TEST_PANE_PARENT__
 start_live_pane() {
@@ -522,6 +537,52 @@ exit 0
         .replace("__NILS_TEST_PANE_START_TIME__", pane_start_time),
     );
     (bin, log)
+}
+
+#[test]
+fn fake_tmux_logs_complete_concurrent_call_records() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (tmux, log) = fake_tmux(tmp.path());
+    let expected = (0..48)
+        .map(|index| {
+            let mut args = vec!["fixture-log-only".to_owned(), format!("call-{index}")];
+            args.extend(
+                (0..32).map(|arg| format!("argument-{arg} with spaces and UTF-8 \u{03bb}")),
+            );
+            args
+        })
+        .collect::<Vec<_>>();
+    let barrier = Arc::new(std::sync::Barrier::new(expected.len()));
+    let children = expected
+        .iter()
+        .map(|args| {
+            let args = args.clone();
+            let tmux = tmux.clone();
+            let log = log.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                let output = Command::new(tmux)
+                    .env("AGENT_SESSION_FAKE_TMUX_LOG", log)
+                    .args(args)
+                    .output()
+                    .expect("concurrent fake tmux call");
+                assert!(output.status.success(), "{:?}", output);
+            })
+        })
+        .collect::<Vec<_>>();
+    for child in children {
+        child.join().expect("concurrent fixture writer");
+    }
+    let mut observed = tmux_calls(&log);
+    let mut expected = expected;
+    observed.sort();
+    expected.sort();
+    assert_eq!(observed.len(), expected.len());
+    assert!(
+        observed == expected,
+        "concurrent fake tmux calls must retain every argument in its own record"
+    );
 }
 
 #[test]
