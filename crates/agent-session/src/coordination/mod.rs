@@ -397,6 +397,16 @@ impl SessionQuiescenceGuard {
             return Ok(false);
         }
         let attempted_at = jiff::Timestamp::now();
+        // The recipient may have drained its inbox on its own since the
+        // generation was queued; a reminder then only prompts a stale check.
+        if !notification::has_live_unread(
+            &self._locked.registry,
+            &self.session_id,
+            &self.incarnation,
+            attempted_at.as_second(),
+        ) {
+            return Ok(false);
+        }
         let Some(_) = notification::transition_attempt_at(
             &mut self._locked.registry,
             candidate,
@@ -2152,8 +2162,8 @@ pub(crate) fn reconcile_notification_absent(
     notification::reconcile_absent(context, candidate)
 }
 
-pub(crate) fn notification_prompt(message_id: &str, session_id: &str) -> String {
-    notification::fixed_prompt(message_id, session_id)
+pub(crate) fn notification_prompt(candidate: &NotificationCandidate) -> String {
+    notification::fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch)
 }
 
 pub fn retry_notification(
