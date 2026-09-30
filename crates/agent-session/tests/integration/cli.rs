@@ -11255,6 +11255,80 @@ fn resume_refuses_non_resumable_or_invalid_identity_without_starting_tmux() {
 }
 
 #[test]
+fn resume_refuses_a_retained_hermes_dsh_profile_record_without_side_effects() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let cwd = tmp.path().join("repo");
+    let history_root = tmp.path().join("dsh-sessions");
+    fs::create_dir_all(&cwd).expect("repo dir");
+    fs::create_dir_all(&history_root).expect("history root");
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let launcher = fake_agent(tmp.path(), "run-agent-console-dsh");
+    let session = write_resumable_session_record_with_agent_bin(
+        &state_dir,
+        "retained-dsh-tui",
+        "hermes",
+        "hs-hermes-retained-dsh-tui",
+        &cwd,
+        &["--resume", "dsh-one"],
+        Some(&launcher),
+    );
+    let record_path = session.join("session.json");
+    let mut record: Value =
+        serde_json::from_str(&fs::read_to_string(&record_path).unwrap()).unwrap();
+    record["provider_resume"]["provider"] = json!("dsh");
+    record["provider_resume"]["session_id"] = json!("dsh-one");
+    record["provider_resume"]["capture_method"] = json!("dsh-history-exact-id");
+    record["provider_resume"]["dsh_history_root"] = json!(history_root);
+    record["runtime"]["agent_profile"] = json!("dsh-tui");
+    fs::write(&record_path, serde_json::to_string_pretty(&record).unwrap())
+        .expect("retained hermes fixture");
+    let before = fs::read(&record_path).expect("record before resume");
+
+    let state_arg = state_dir.to_string_lossy().to_string();
+    let tmux_arg = tmux_bin.to_string_lossy().to_string();
+    let tmux_log_arg = tmux_log.to_string_lossy().to_string();
+    let resumed = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "resume",
+            "retained-dsh-tui",
+            "--tmux-bin",
+            &tmux_arg,
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+            ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
+        ],
+    );
+    // The retained profile context is refused before the retired agent name is
+    // even resolved, so no generation, activity, or lease is touched.
+    assert_eq!(resumed.code, 1, "stdout={}", resumed.stdout_text());
+    let refusal = resumed.stdout_json();
+    assert_eq!(refusal["ok"], false);
+    assert_eq!(
+        refusal["error"]["code"],
+        "agent-profile-metadata-unavailable"
+    );
+    assert_eq!(
+        fs::read(&record_path).expect("record after resume"),
+        before,
+        "a refused retained record must stay byte-identical"
+    );
+    let calls = tmux_calls(&tmux_log);
+    assert!(
+        calls
+            .iter()
+            .all(|call| call.first().is_none_or(|arg| arg != "new-session")),
+        "a refused retained record must not start tmux: {calls:?}"
+    );
+}
+
+#[test]
 fn resume_refuses_provider_resume_args_that_do_not_match_session_id() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");

@@ -363,7 +363,10 @@ fail-closed.
   `agent_bin` in tmux with no implicit subcommand, waits 5 s before pasting an
   initial prompt, and may add an absolute `dsh_history.command`, absolute `dsh_history.root`, and `zstd` or `none`
   compression. Adapter availability affects history reads only, never profile
-  readiness.
+  readiness. Base agent `hermes` is retired: serve refuses to start with such a
+  profile, so switch host launchers to `dsh` and close hermes-kind panes before
+  upgrading; retained hermes panes stop receiving activity and coordination
+  notifications, and resume refuses them.
 - `AGENT_SESSION_CODEX_RUNTIME=raw|app-server`: force the Codex runtime choice.
   The default probes the installed CLI and degrades to raw TUI when the audited
   app-server capability or a private runtime directory is unavailable. See

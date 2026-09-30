@@ -884,7 +884,7 @@ fn forward_activity_setup_to_agent_hook(args: &cli::ActivitySetupArgs) -> Result
     if args.agent == AgentKind::Dsh {
         return Err(CliError::usage(
             "unsupported-activity-agent",
-            "dsh lifecycle state is owned by the external dsh-runtime-kit runtime; there is no provider activity configuration to manage",
+            "dsh activity comes from the dsh-runtime-kit bridge hook installed by the launch profile, or from the external runtime's liveness sidecar; there is no provider activity configuration to manage",
             Some(json!({ "agent": args.agent.as_str() })),
         ));
     }

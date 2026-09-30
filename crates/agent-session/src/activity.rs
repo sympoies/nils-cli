@@ -3712,10 +3712,10 @@ pub(crate) fn doctor(
                 ),
                 AgentKind::Dsh => (
                     "unverified",
-                    "dsh lifecycle state is owned by the external dsh-runtime-kit runtime; no provider hook completion signal exists",
-                    "no provider attention correlation exists; the external runtime's liveness sidecar is the only runtime evidence",
-                    "the external dsh-runtime-kit bundle owns Cordis registration; no files are managed here",
-                    "Use main-agent capabilities --provider dsh for the external-runtime readiness contract",
+                    "profile-launched dsh panes report pre_llm_call as observed start and post_llm_call as authoritative completion through the DSH bridge hook (activity hook --agent dsh); external dsh workers take turn evidence only from their plugin-owned liveness sidecar",
+                    "no provider attention correlation exists for dsh panes or external workers",
+                    "the dsh-runtime-kit bundle owns the DSH bridge hook and Cordis registration; no files are managed here",
+                    "The launch profile's own launcher installs the bridge hook for dsh panes; use main-agent capabilities --provider dsh for the external-runtime readiness contract",
                 ),
             };
         let audited = version
@@ -3753,7 +3753,7 @@ pub(crate) fn doctor(
                 },
                 "hook",
             ),
-            AgentKind::Dsh => ("unverified", "external-runtime"),
+            AgentKind::Dsh => ("unverified", "bridge hook or external runtime"),
         };
         let mut guidance = if matches!(classification, "unavailable" | "unverified") {
             format!(
@@ -4065,7 +4065,7 @@ fn provider_config_path(agent: AgentKind) -> Result<std::path::PathBuf, CliError
         AgentKind::Dsh => {
             return Err(CliError::usage(
                 "unsupported-activity-agent",
-                "dsh lifecycle state is owned by the external dsh-runtime-kit runtime; there is no provider activity configuration to manage",
+                "dsh activity comes from the dsh-runtime-kit bridge hook installed by the launch profile, or from the external runtime's liveness sidecar; there is no provider activity configuration to manage",
                 Some(json!({ "agent": agent.as_str() })),
             ));
         }
@@ -4187,8 +4187,9 @@ fn provider_specs(agent: AgentKind) -> Vec<ProviderSpec> {
                 matcher: Some("agent_needs_input"),
             },
         ],
-        // No provider activity hooks exist for dsh; lifecycle evidence is
-        // owned by the external dsh-runtime-kit runtime.
+        // agent-session installs no dsh hooks: profile panes receive the
+        // dsh-runtime-kit bridge hook from their launcher, and external workers
+        // report through their liveness sidecar.
         AgentKind::Dsh => Vec::new(),
     }
 }

@@ -8061,6 +8061,13 @@ async fn reconcile_coordination_notifications(state: Arc<ServeState>) {
     }
 }
 
+/// A recipient with no delivery path: a retained record whose agent this build
+/// no longer knows (a retired `hermes` pane). Deferring would retry it until
+/// the pane is replaced. DSH recipients are hook-delivered before this check.
+fn coordination_notification_provider_unsupported(record: &crate::SessionRecord) -> bool {
+    AgentKind::from_name(&record.agent).is_none()
+}
+
 async fn dispatch_coordination_notification(
     state: Arc<ServeState>,
     candidate: crate::coordination::NotificationCandidate,
@@ -8106,8 +8113,7 @@ async fn dispatch_coordination_notification(
         .await;
         return;
     }
-    // Retained records of the retired `hermes` kind have no prompt route.
-    if record.agent == "hermes" {
+    if coordination_notification_provider_unsupported(&record) {
         update_notification_undeliverable(&state, &candidate, "provider-unsupported").await;
         return;
     }
@@ -24683,6 +24689,40 @@ esac
             commands.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         ));
+    }
+
+    #[test]
+    fn coordination_notifications_refuse_providers_without_a_delivery_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        for (id, agent, runtime_kind, unsupported) in [
+            ("retained-hermes", "hermes", "tmux", true),
+            ("dsh-pane", "dsh", "tmux", false),
+            (
+                "dsh-external",
+                "dsh",
+                crate::dsh_external::DSH_RUNTIME_KIND,
+                false,
+            ),
+            ("codex-pane", "codex", "tmux", false),
+            ("claude-pane", "claude", "tmux", false),
+        ] {
+            seed_session_with_runtime(tmp.path(), id, agent, &format!("hs-{id}"));
+            let record_path = tmp.path().join("sessions").join(id).join("session.json");
+            let mut record: Value =
+                serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
+            record["runtime"]["kind"] = json!(runtime_kind);
+            std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+            let record = load_session_record(&context, id).unwrap();
+            assert_eq!(
+                coordination_notification_provider_unsupported(&record),
+                unsupported,
+                "agent={agent} runtime={runtime_kind}"
+            );
+        }
     }
 
     #[tokio::test]

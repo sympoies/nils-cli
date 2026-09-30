@@ -1,8 +1,10 @@
 //! External-runtime support for `dsh` worker sessions.
 //!
-//! DSH workers are never tmux-launched: the dsh-runtime-kit bundle owns the
-//! worker agent's lifecycle and maintains a liveness sidecar under the session
-//! state directory. This module owns the sidecar contract and the dsh arms of
+//! An external DSH worker (`runtime.kind = "dsh_external"`, created only by
+//! `main-agent worker start`) is never tmux-launched: the dsh-runtime-kit
+//! bundle owns its lifecycle and maintains a liveness sidecar under the session
+//! state directory. A dsh pane launched through a serve launch profile is an
+//! ordinary tmux runtime and is not handled here. This module owns the sidecar contract and the dsh arms of
 //! `session_status` / `coordination_runtime_evidence`.
 //!
 //! Contract: `docs/specs/main-agent-dsh-external-runtime-v1.md`.
@@ -109,7 +111,7 @@ pub(crate) struct DshRuntimeLiveness {
 /// Create the durable session record for an external dsh worker. No process
 /// is spawned and no prompt is delivered: the dsh-runtime-kit plugin owns the
 /// worker agent's lifecycle. The record carries `runtime.kind = "dsh_external"`
-/// (derived from the agent kind at creation) and the absolute liveness sidecar
+/// (derived from this external creation path) and the absolute liveness sidecar
 /// path, so later status and evidence probes need no CLI context.
 #[allow(clippy::too_many_arguments)]
 pub fn create_external_worker_record(
