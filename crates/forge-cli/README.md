@@ -34,6 +34,9 @@ cargo run -p nils-forge-cli -- pr pending-review resume-submit 123 --review PRR_
 cargo run -p nils-forge-cli -- pr pending-review delete 123 --review PRR_pending --expected-head <sha> --expected-commit <sha> --expected-body-file review.md --confirm-abandoned --dry-run --format json
 cargo run -p nils-forge-cli -- pr merge 123 --expected-head <reviewed-sha> --review-convergence --format json
 cargo run -p nils-forge-cli -- repo freeze status --format json
+cargo run -p nils-forge-cli -- issue tracker lint 123 --check-state --format json
+cargo run -p nils-forge-cli -- issue tracker graph 123 --write --format json
+cargo run -p nils-forge-cli -- issue tracker tick 123 --item S2 --pr owner/repo#45 --comment-file note.md --format json
 cargo run -p nils-forge-cli -- repo push-default --expected-base <sha> --reason-file reason.md --dry-run --format json
 cargo run -p nils-forge-cli -- repo push-default --default-branch-receipt receipt.json --expected-base <sha> --reason-file reason.md --dry-run --format json
 ```
@@ -373,6 +376,65 @@ from `--repo owner/name` or the detected remote. `search issues` / `search prs`
 emit `cli.forge-cli.search.issues.v1` / `...search.prs.v1`; `search refs-to`
 emits `cli.forge-cli.search.refs-to.v1`. Every hit is the shared `SearchItem`
 (`kind`, `number`, `url`, `title`, `state`, `repo`, `matched_field`).
+
+## Program tracker maintenance
+
+`forge-cli issue tracker` keeps a program tracker issue consistent without
+rewriting its whole body. A tracker body holds a `## Phase table` of checkbox
+rows and a `## Dependency graph` section whose `mermaid` block is derived from
+those rows. The row grammar is owned by the `agent-runtime-kit` repository;
+`forge-cli` implements it and replays its conformance corpus.
+
+```sh
+# Report findings; any finding exits 65 and is listed under data.findings[]
+forge-cli issue tracker lint 123 --format json
+forge-cli issue tracker lint 123 --check-state --format json
+
+# Print the generated Mermaid block, or write it into the issue body
+forge-cli issue tracker graph 123
+forge-cli issue tracker graph 123 --write --format json
+
+# Tick one row, record the delivering PR, and post one comment
+forge-cli issue tracker tick 123 --item S2 --pr owner/repo#45 \
+  --comment-file note.md --format json
+
+# Work on a local draft: no provider call
+forge-cli issue tracker lint --body-file tracker.md --format json
+forge-cli issue tracker graph --body-file tracker.md --write
+```
+
+- `lint` reports the grammar findings (`malformed-row`, `duplicate-id`,
+  `unknown-dependency`, `self-dependency`, `cycle`, `stale-graph`) and
+  `missing-tracking-label` when the issue lacks `workflow::tracking`.
+  `--check-state` reads each referenced issue and adds `state-mismatch` for a
+  row whose checkbox disagrees with its issue, and `unreadable-ref` for a
+  target that does not exist or is not accessible. A throttled or
+  unauthenticated provider is the command's error (exit 69), not a finding.
+- The work a tracker body can ask for is bounded. A phase table with more than
+  500 rows is not analysed: `lint` reports only `too-many-rows`, `graph`
+  refuses with it, and `tick` refuses with `tracker_too_many_rows`.
+  `--check-state` reads at most 200 distinct issues; above that it reads none
+  and reports `too-many-refs`.
+- `graph` refuses when the phase table has row findings, because such a table
+  has no generated graph. `--write` changes only the block in the
+  `## Dependency graph` section, inserts the block or the section when it is
+  missing, and writes nothing when the block is already current. A body without
+  a `## Phase table` section is not a tracker, so `--write` refuses it with
+  `tracker_no_phase_table` instead of adding a graph to an unrelated issue.
+- `tick` changes only the one row line. It refuses an unknown, duplicated, or
+  malformed item, and a row that is already ticked with nothing new to record
+  is a no-op that posts no comment. When the comment call fails after the row
+  was written, the error is `tracker_comment_not_posted`; post the comment with
+  `issue comment`.
+- Every write reads the issue immediately before writing and transforms that
+  fresh body, so two sessions updating different rows of one tracker do not
+  overwrite each other the way a whole-body `issue edit --body-file` can. The
+  providers offer no compare-and-swap, so a write that lands between the read
+  and the write can still be lost.
+- `--dry-run` reports the planned change without writing.
+
+See the contract for the payload fields, error codes, and the exact write
+rules.
 
 ## GitHub checks compatibility
 

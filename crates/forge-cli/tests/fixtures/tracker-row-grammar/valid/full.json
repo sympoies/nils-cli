@@ -1,0 +1,77 @@
+{
+  "rows": [
+    {
+      "id": "P0",
+      "title": "Agree the plan",
+      "ref": {"owner": null, "repo": null, "number": 10},
+      "notes": null,
+      "after": [],
+      "done": true,
+      "phase": null
+    },
+    {
+      "id": "A0",
+      "title": "Schema: draft (v2) and `parse()` entry point",
+      "ref": {"owner": "example", "repo": "alpha", "number": 12},
+      "notes": "PR example/alpha#15",
+      "after": [],
+      "done": true,
+      "phase": "Phase 1: Foundations"
+    },
+    {
+      "id": "A1",
+      "title": "Local projection, step 1",
+      "ref": {"owner": "example", "repo": "alpha", "number": 14},
+      "notes": "PR example/alpha#16",
+      "after": ["A0"],
+      "done": true,
+      "phase": "Phase 1: Foundations"
+    },
+    {
+      "id": "A2",
+      "title": "Local projection, step 2",
+      "ref": {"owner": "example", "repo": "alpha", "number": 14},
+      "notes": null,
+      "after": ["A1"],
+      "done": false,
+      "phase": "Phase 1: Foundations"
+    },
+    {
+      "id": "B1",
+      "title": "Board shows `open | done` counts",
+      "ref": {"owner": null, "repo": null, "number": 21},
+      "notes": null,
+      "after": ["A1", "P0"],
+      "done": false,
+      "phase": "Phase 2: Rollout"
+    },
+    {
+      "id": "REL",
+      "title": "Release containing A2",
+      "ref": null,
+      "notes": "tag v1.2.0",
+      "after": ["A2"],
+      "done": false,
+      "phase": "Phase 2: Rollout"
+    },
+    {
+      "id": "C1",
+      "title": "Adopt the release",
+      "ref": {"owner": "example", "repo": "beta", "number": 7},
+      "notes": "blocked until REL",
+      "after": ["REL", "B1"],
+      "done": false,
+      "phase": "Phase 2: Rollout"
+    },
+    {
+      "id": "D1",
+      "title": "Decide whether to retire the old view",
+      "ref": null,
+      "notes": null,
+      "after": ["C1"],
+      "done": false,
+      "phase": "Phase 2: Rollout"
+    }
+  ],
+  "graph": "graph LR\n  P0\n  A0\n  A1\n  A2\n  B1\n  REL{{REL}}\n  C1\n  D1{{D1}}\n  A0 --> A1\n  A1 --> A2\n  A1 --> B1\n  P0 --> B1\n  A2 --> REL\n  REL --> C1\n  B1 --> C1\n  C1 --> D1"
+}

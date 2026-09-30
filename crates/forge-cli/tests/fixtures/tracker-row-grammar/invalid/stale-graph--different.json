@@ -1,0 +1,5 @@
+{
+  "findings": [
+    {"code": "stale-graph", "line": null, "ids": []}
+  ]
+}

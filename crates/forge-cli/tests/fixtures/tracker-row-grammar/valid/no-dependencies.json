@@ -1,0 +1,41 @@
+{
+  "rows": [
+    {
+      "id": "C1",
+      "title": "Remove the legacy exporter",
+      "ref": {"owner": "example", "repo": "alpha", "number": 30},
+      "notes": "PR example/alpha#33",
+      "after": [],
+      "done": true,
+      "phase": "Phase 1: Cleanup"
+    },
+    {
+      "id": "C2",
+      "title": "Remove the legacy importer",
+      "ref": {"owner": "example", "repo": "alpha", "number": 31},
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Phase 1: Cleanup"
+    },
+    {
+      "id": "C3",
+      "title": "Update the operator guide",
+      "ref": {"owner": "example", "repo": "docs", "number": 4},
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Phase 1: Cleanup"
+    },
+    {
+      "id": "ANN",
+      "title": "Announce the removal",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Phase 1: Cleanup"
+    }
+  ],
+  "graph": "graph LR\n  C1\n  C2\n  C3\n  ANN{{ANN}}"
+}

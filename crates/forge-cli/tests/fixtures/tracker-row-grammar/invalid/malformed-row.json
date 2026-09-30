@@ -1,0 +1,19 @@
+{
+  "findings": [
+    {"code": "malformed-row", "line": 4, "ids": []},
+    {"code": "malformed-row", "line": 5, "ids": []},
+    {"code": "malformed-row", "line": 6, "ids": []},
+    {"code": "malformed-row", "line": 7, "ids": []},
+    {"code": "malformed-row", "line": 8, "ids": []},
+    {"code": "malformed-row", "line": 9, "ids": []},
+    {"code": "malformed-row", "line": 10, "ids": []},
+    {"code": "malformed-row", "line": 11, "ids": []},
+    {"code": "malformed-row", "line": 12, "ids": []},
+    {"code": "malformed-row", "line": 13, "ids": []},
+    {"code": "malformed-row", "line": 14, "ids": []},
+    {"code": "malformed-row", "line": 15, "ids": []},
+    {"code": "malformed-row", "line": 16, "ids": []},
+    {"code": "malformed-row", "line": 17, "ids": []},
+    {"code": "malformed-row", "line": 18, "ids": []}
+  ]
+}

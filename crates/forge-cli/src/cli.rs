@@ -1700,6 +1700,118 @@ pub enum IssueCommand {
         /// Numeric id.
         id: u64,
     },
+    /// Check and maintain a program tracker issue's phase table.
+    Tracker(IssueTrackerArgs),
+}
+
+/// `issue tracker` arguments. A clean subcommand group, like
+/// `pr review-threads`: a subcommand is required and there is no bare
+/// positional.
+#[derive(Args, Debug, Clone)]
+pub struct IssueTrackerArgs {
+    #[command(subcommand)]
+    pub command: IssueTrackerCommand,
+}
+
+/// `issue tracker` subtree.
+#[derive(Subcommand, Debug, Clone)]
+pub enum IssueTrackerCommand {
+    /// Report phase-table, dependency-graph, and tracking-label findings.
+    Lint(IssueTrackerLintArgs),
+    /// Print the dependency graph the phase table derives, or write it back.
+    Graph(IssueTrackerGraphArgs),
+    /// Tick one phase-table row and optionally record its delivering PR.
+    Tick(IssueTrackerTickArgs),
+}
+
+/// `issue tracker lint` arguments.
+#[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+      FINDINGS\n  \
+      Row grammar: malformed-row, duplicate-id, unknown-dependency, \
+      self-dependency, cycle. Graph: stale-graph, reported only when the table \
+      has no row finding. Provider: missing-tracking-label when the issue lacks \
+      the `workflow::tracking` label, and with --check-state, state-mismatch and \
+      unreadable-ref.\n\n\
+      LIMITS\n  \
+      too-many-rows: a phase table with more than 500 rows is not analysed and \
+      this is its only table finding. too-many-refs: --check-state reads at \
+      most 200 distinct issues; above that it reads none and reports this one \
+      finding. A throttled, unauthenticated, or uninterpretable provider read \
+      is an error (exit 69 or 70), not a finding.\n\n\
+      EXIT STATUS\n  \
+      0 when there is no finding. Any finding exits 65 with `ok: false`, \
+      `error.code` `tracker_findings`, and the findings under `data.findings[]`.")]
+pub struct IssueTrackerLintArgs {
+    /// Numeric id of the tracker issue. Omit with `--body-file`.
+    #[arg(required_unless_present = "body_file", conflicts_with = "body_file")]
+    pub id: Option<u64>,
+    /// Lint a local draft body instead of a provider issue. Use `-` for stdin.
+    /// No provider call is made and provider findings are skipped.
+    #[arg(long = "body-file", value_name = "PATH")]
+    pub body_file: Option<String>,
+    /// Also read every issue the rows reference and report each row whose
+    /// checkbox disagrees with its issue's state.
+    #[arg(long = "check-state", action = ArgAction::SetTrue, conflicts_with = "body_file")]
+    pub check_state: bool,
+}
+
+/// `issue tracker graph` arguments.
+#[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+      Refuses with the row findings (exit 65, `tracker_findings`) when the phase \
+      table has any, because such a table has no generated graph. That includes \
+      too-many-rows for a table with more than 500 rows.\n\n\
+      WRITE\n  \
+      --write changes only the `mermaid` block of the `## Dependency graph` \
+      section. A section without a block gets the block right after its \
+      heading; a body without the section gets the section right after the \
+      phase table. Nothing is written when the block is already current. The \
+      issue is read immediately before the write, and --dry-run reports the \
+      planned change without writing. A body without a `## Phase table` section \
+      is not a tracker: --write refuses it with `tracker_no_phase_table` (exit \
+      65), so a mistyped id cannot add a graph to an unrelated issue.")]
+pub struct IssueTrackerGraphArgs {
+    /// Numeric id of the tracker issue. Omit with `--body-file`.
+    #[arg(required_unless_present = "body_file", conflicts_with = "body_file")]
+    pub id: Option<u64>,
+    /// Work on a local draft body instead of a provider issue. Use `-` for
+    /// stdin (read-only). No provider call is made.
+    #[arg(long = "body-file", value_name = "PATH")]
+    pub body_file: Option<String>,
+    /// Write the generated block into the issue body, or into the
+    /// `--body-file` draft.
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub write: bool,
+}
+
+/// `issue tracker tick` arguments.
+#[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+      Only the one row line changes. The issue is read immediately before the \
+      write; --dry-run reports the planned row without writing. Ticking a row \
+      that is already ticked, with no new PR to record, changes nothing and \
+      posts no comment.\n\n\
+      REFUSALS (exit 65)\n  \
+      tracker_item_unknown, tracker_item_duplicated, tracker_item_malformed, \
+      tracker_pr_invalid, tracker_too_many_rows (more than 500 rows).\n\n\
+      PARTIAL FAILURE (exit 1)\n  \
+      tracker_comment_not_posted: the row was ticked but the comment call \
+      failed. Post the comment with `issue comment`; ticking again posts nothing.")]
+pub struct IssueTrackerTickArgs {
+    /// Numeric id of the tracker issue.
+    pub id: u64,
+    /// Id of the phase-table row to tick.
+    #[arg(long, value_name = "ITEM_ID")]
+    pub item: String,
+    /// Delivering PR / MR reference to record in the row's notes as
+    /// `PR <REF>`, for example `#12` or `owner/repo#12`.
+    #[arg(long, value_name = "REF")]
+    pub pr: Option<String>,
+    /// Post this file as one issue comment after the body write succeeds. Use
+    /// `-` for stdin.
+    #[arg(long = "comment-file", value_name = "PATH")]
+    pub comment_file: Option<String>,
 }
 
 /// `issue close` arguments.
@@ -2356,6 +2468,19 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
         Some(Command::Issue(IssueArgs {
             command: Some(IssueCommand::Reopen { id }),
         })) => ops::issue_reopen::run(&global, id, format),
+        Some(Command::Issue(IssueArgs {
+            command: Some(IssueCommand::Tracker(args)),
+        })) => match args.command {
+            IssueTrackerCommand::Lint(lint_args) => {
+                ops::issue_tracker_lint::run(&global, lint_args, format)
+            }
+            IssueTrackerCommand::Graph(graph_args) => {
+                ops::issue_tracker_graph::run(&global, graph_args, format)
+            }
+            IssueTrackerCommand::Tick(tick_args) => {
+                ops::issue_tracker_tick::run(&global, tick_args, format)
+            }
+        },
         Some(Command::Activity(ActivityArgs {
             command: Some(command),
         })) => ops::activity::run(&global, command, format),

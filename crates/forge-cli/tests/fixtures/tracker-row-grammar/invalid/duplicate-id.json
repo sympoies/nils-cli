@@ -1,0 +1,6 @@
+{
+  "findings": [
+    {"code": "duplicate-id", "line": 5, "ids": ["A1"]},
+    {"code": "duplicate-id", "line": 6, "ids": ["A1"]}
+  ]
+}
