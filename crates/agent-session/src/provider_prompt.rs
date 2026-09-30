@@ -24,6 +24,17 @@ const CLAUDE_FALLBACK_DELAY: Duration = Duration::from_millis(750);
 /// Later polls consume only appended bytes through `ProviderPromptTail`.
 pub(crate) const MAX_LAST_PROMPT_RECOVERY_BYTES: usize = 64 * 1024 * 1024;
 const MAX_LAST_PROMPT_INCREMENTAL_POLLS: usize = 16;
+/// Leading markup of Claude queued commands that a task, peer, hook, or local
+/// command produced rather than the user.
+const CLAUDE_MACHINE_PROMPT_PREFIXES: &[&str] = &[
+    "<task-notification",
+    "<cross-session-message",
+    "<agent-message",
+    "<system-reminder",
+    "<bash-",
+    "<local-command-",
+    "<command-",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderKind {
@@ -771,7 +782,7 @@ pub(crate) fn parse_history_user_prompt(
 ) -> Option<LastPrompt> {
     let parsed = match provider {
         "codex" => parse_codex_prompt(line),
-        "claude" => parse_claude_user_prompt(line, session_id),
+        "claude" => parse_claude_history_prompt(line, session_id),
         _ => None,
     }?;
     Some(LastPrompt {
@@ -779,6 +790,55 @@ pub(crate) fn parse_history_user_prompt(
         submitted_at: parsed.submitted_at,
         truncated: parsed.truncated,
     })
+}
+
+/// History shows what the user wrote: a prompt typed at the input box, or one
+/// queued while a turn was running. It hides the mailbox reminder this crate
+/// injects as typed input.
+fn parse_claude_history_prompt(line: &str, session_id: &str) -> Option<ParsedPrompt> {
+    let value = serde_json::from_str::<Value>(line).ok()?;
+    let prompt = parse_claude_user_prompt_value(&value, session_id).or_else(|| {
+        let text = claude_queued_prompt_text(&value)?;
+        if !claude_session_matches(&value, session_id) {
+            return None;
+        }
+        let mut prompt = bounded_prompt(text)?;
+        prompt.submitted_at = provider_timestamp(&value);
+        Some(prompt)
+    })?;
+    (!crate::coordination::is_mailbox_reminder_prompt(&prompt.prompt)).then_some(prompt)
+}
+
+/// Text of a prompt the user sent while a Claude turn was running. Claude Code
+/// records it as a `queued_command` attachment instead of a `user` record.
+/// Task notifications, peer messages, auto-continuations, and meta injections
+/// share that shape and are rejected.
+pub(crate) fn claude_queued_prompt_text(value: &Value) -> Option<&str> {
+    if value.get("type").and_then(Value::as_str) != Some("attachment")
+        || value.get("isSidechain").and_then(Value::as_bool) == Some(true)
+    {
+        return None;
+    }
+    let attachment = value.get("attachment")?;
+    if attachment.get("type").and_then(Value::as_str) != Some("queued_command")
+        || !matches!(
+            attachment.get("commandMode").and_then(Value::as_str),
+            None | Some("prompt")
+        )
+        || attachment.get("isMeta").and_then(Value::as_bool) == Some(true)
+        || !matches!(
+            attachment.pointer("/origin/kind").and_then(Value::as_str),
+            None | Some("human")
+        )
+    {
+        return None;
+    }
+    let prompt = attachment.get("prompt")?.as_str()?;
+    let head = prompt.trim_start();
+    (!CLAUDE_MACHINE_PROMPT_PREFIXES
+        .iter()
+        .any(|prefix| head.starts_with(prefix)))
+    .then_some(prompt)
 }
 
 fn provider_timestamp(value: &Value) -> Option<String> {

@@ -9,6 +9,7 @@ pub(crate) mod remote;
 pub(crate) mod server;
 
 pub(crate) use notification::NotificationCandidate;
+pub(crate) use notification::is_mailbox_reminder_prompt;
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};

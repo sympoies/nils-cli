@@ -130,7 +130,10 @@ command, session root, native event records, or transcript paths.
 `GET /history/sessions/{history_id}/messages` resolves the opaque history id
 inside the daemon and returns normalized `user`/`assistant` text messages and
 Codex `goal` creation objectives in bounded pages. Injected AGENTS and Goal
-continuation context are excluded. The retained default `direction=forward` uses `next_cursor` as
+continuation context are excluded. Claude user messages include prompts the
+user sent while a turn was running (`queued_command` attachments); queued task
+notifications, peer messages, auto-continuations, meta or machine-markup
+prompts, and agent-session mailbox reminders are excluded. The retained default `direction=forward` uses `next_cursor` as
 before. `direction=latest` accepts no cursor, reads one at-most-16-MiB window
 from the selected transcript tail, and returns the latest page in chronological
 order. `direction=older` requires the prior `older_cursor`, reads only bytes
