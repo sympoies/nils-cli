@@ -52,7 +52,7 @@ fn lifecycle_activity_uses_the_typed_cli_with_metadata_only_json() {
     assert_eq!(codex.code, 0, "stderr={}", codex.stderr_text());
     assert_eq!(
         fs::read_to_string(&args_path).expect("captured args"),
-        "activity\nevent\n--stdin\nmanaged-session\n"
+        "activity\nevent\n--format\njson\n--stdin\nmanaged-session\n"
     );
     let codex_event = fs::read_to_string(&input_path).expect("captured event");
     let codex_json: serde_json::Value = serde_json::from_str(&codex_event).expect("event JSON");
@@ -81,7 +81,7 @@ fn lifecycle_activity_uses_the_typed_cli_with_metadata_only_json() {
     let claude = fixture.run_with_env(
         &["dispatch", "--product", "claude", "--format", "json"],
         Some(
-            r#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_use_id":"question-secret","session_id":"claude-session-secret","tool_input":{"questions":[{"question":"private-question"}]}}"#,
+            r#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_use_id":"question-secret","session_id":"claude-session-secret","prompt_id":"claude-prompt-secret","tool_input":{"questions":[{"question":"private-question"}]}}"#,
         ),
         &envs,
     );
@@ -96,8 +96,17 @@ fn lifecycle_activity_uses_the_typed_cli_with_metadata_only_json() {
             .as_str()
             .is_some_and(|value| value.starts_with("local:v1:"))
     );
+    // The clarification names its turn by the projected prompt_id, which
+    // agent-session uses to supersede a stale open Claude turn (#1962).
+    assert!(
+        claude_json["provider_turn_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("local:v1:")),
+        "AskUserQuestion prompt_id was not correlated: {claude_event}"
+    );
     for secret in [
         "question-secret",
+        "claude-prompt-secret",
         "claude-session-secret",
         "private-question",
         "questions",
@@ -262,32 +271,26 @@ fn failed_stop_activity_is_terminally_degraded_without_weakening_pre_tool_admiss
             "activity-stop-reconciliation-required"
         );
 
-        let provider = fixture.run_with_env(
-            &["dispatch", "--product", product, "--format", "provider"],
-            Some(r#"{"hook_event_name":"Stop"}"#),
-            &envs,
-        );
-        assert_eq!(
-            provider.code,
-            0,
-            "{product} provider rendering must preserve terminal admission: stdout={} stderr={}",
-            provider.stdout_text(),
-            provider.stderr_text()
-        );
-        if product == "codex" {
+        // Consecutive failing Stops never hand the model context: Claude
+        // would turn it into a new turn on every stop (sympoies/nils-cli#1962),
+        // and Codex Stop cannot carry it.
+        for attempt in 0..2 {
+            let provider = fixture.run_with_env(
+                &["dispatch", "--product", product, "--format", "provider"],
+                Some(r#"{"hook_event_name":"Stop"}"#),
+                &envs,
+            );
+            assert_eq!(
+                provider.code,
+                0,
+                "{product} provider rendering must preserve terminal admission: stdout={} stderr={}",
+                provider.stdout_text(),
+                provider.stderr_text()
+            );
             assert_eq!(
                 provider.stdout_json(),
                 serde_json::json!({}),
-                "Codex Stop does not support additionalContext"
-            );
-        } else {
-            assert_eq!(
-                provider.stdout_json()["hookSpecificOutput"]["hookEventName"],
-                "Stop"
-            );
-            assert_eq!(
-                provider.stdout_json()["hookSpecificOutput"]["additionalContext"],
-                "activity-stop-reconciliation-required"
+                "{product} Stop attempt {attempt} renders no model-visible context"
             );
         }
     }

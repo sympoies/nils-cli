@@ -35,6 +35,7 @@ const ACTIVITY_DOCUMENT_VERSION: &str = "agent-session.activity.v1";
 const ACTIVITY_FILE: &str = "activity.json";
 const ACTIVITY_JOURNAL_FILE: &str = "activity.journal.jsonl";
 const ACTIVITY_REPLAY_FILE: &str = "activity.replay.bin";
+const ACTIVITY_REPLAY_TABLE_ONE_FILE: &str = "activity.replay.1.bin";
 const ACTIVITY_DIAGNOSTIC_FILE: &str = "activity.diagnostic.json";
 const ACTIVITY_LOCK_FILE: &str = ".activity.lock";
 const ACTIVITY_HEALTH_LOCK_FILE: &str = ".activity-health.lock";
@@ -42,10 +43,18 @@ const ACTIVITY_UNHEALTHY_FILE: &str = "activity.unhealthy.json";
 pub(crate) const MAX_EVENT_BYTES: u64 = 64 * 1024;
 const MAX_JOURNAL_EVENTS: usize = 256;
 const MAX_JOURNAL_BYTES: usize = 64 * 1024;
+// Exact replay dedupe is a sliding window of two open-addressing tables, each
+// holding MAX_DEDUPE_EVENTS keys at half load and stored as its own r1-format
+// file. The table for the exact event with zero-based index `i` in a runtime
+// generation is `(i / MAX_DEDUPE_EVENTS) % 2`; starting a table's next window
+// resets it, so the other table still holds the preceding window. Dedupe
+// therefore covers at least the last MAX_DEDUPE_EVENTS events and ingest never
+// stops for capacity.
 const MAX_DEDUPE_EVENTS: usize = 4096;
 const REPLAY_SLOT_COUNT: usize = MAX_DEDUPE_EVENTS * 2;
 const REPLAY_SLOT_BYTES: usize = 32;
 const REPLAY_HEADER_BYTES: usize = 64;
+const REPLAY_FILE_BYTES: usize = REPLAY_HEADER_BYTES + REPLAY_SLOT_COUNT * REPLAY_SLOT_BYTES;
 const REPLAY_MAGIC: &[u8; 16] = b"agent-session-r1";
 const MAX_PENDING_ATTENTION: usize = 64;
 const MAX_ID_CHARS: usize = 256;
@@ -307,6 +316,10 @@ struct ActivityDocument {
     pending_attention: Vec<PendingAttention>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     overflow_attention: Option<OverflowAttention>,
+    /// Exact-horizon events accepted in this runtime generation. It is also the
+    /// zero-based window index of the next such event, which selects its replay
+    /// table; events exempt from the exact horizon (uncorrelated Claude
+    /// progress) never advance it.
     #[serde(default)]
     seen_event_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -736,6 +749,7 @@ struct VersionProbe {
 pub(crate) struct ActivitySnapshot {
     document: Option<Vec<u8>>,
     replay: Option<Vec<u8>>,
+    replay_table_one: Option<Vec<u8>>,
     unhealthy: Option<Vec<u8>>,
 }
 
@@ -1465,8 +1479,7 @@ pub(crate) fn activate_new_runtime_with(
         Map::new(),
     )?;
 
-    let expected_len = REPLAY_HEADER_BYTES + REPLAY_SLOT_COUNT * REPLAY_SLOT_BYTES;
-    let mut replay = vec![0_u8; expected_len];
+    let mut replay = vec![0_u8; REPLAY_FILE_BYTES];
     replay[..REPLAY_HEADER_BYTES]
         .copy_from_slice(&replay_header(&runtime.launch_id, runtime.generation));
     write(ACTIVITY_REPLAY_FILE, &replay)?;
@@ -1836,6 +1849,8 @@ fn replay_matches_document(dir: &Path, document: &ActivityDocument) -> bool {
     if document.seen_event_count == 0 && !replay_path.is_file() {
         return true;
     }
+    // Only table 0 must match: a missing, stale, or unreadable table 1 self-heals
+    // on the next exact event, losing at most that window's dedupe.
     open_replay_index(
         &replay_path,
         &document.runtime_id,
@@ -2468,6 +2483,7 @@ pub(crate) fn capture_snapshot(
     Ok(ActivitySnapshot {
         document: read_optional_activity_file(&dir.join(ACTIVITY_FILE))?,
         replay: read_optional_activity_file(&dir.join(ACTIVITY_REPLAY_FILE))?,
+        replay_table_one: read_optional_activity_file(&dir.join(ACTIVITY_REPLAY_TABLE_ONE_FILE))?,
         unhealthy: read_optional_activity_file(&dir.join(ACTIVITY_UNHEALTHY_FILE))?,
     })
 }
@@ -2489,6 +2505,10 @@ pub(crate) fn restore_snapshot(
     let _lock = acquire_lock(&dir)?;
     restore_activity_file(&dir.join(ACTIVITY_FILE), snapshot.document.as_deref())?;
     restore_activity_file(&dir.join(ACTIVITY_REPLAY_FILE), snapshot.replay.as_deref())?;
+    restore_activity_file(
+        &dir.join(ACTIVITY_REPLAY_TABLE_ONE_FILE),
+        snapshot.replay_table_one.as_deref(),
+    )?;
     restore_activity_file(
         &dir.join(ACTIVITY_UNHEALTHY_FILE),
         snapshot.unhealthy.as_deref(),
@@ -2783,6 +2803,7 @@ fn ingest_event_with_lock(
         });
     }
     if event.kind == TurnEventKind::AttentionRequested
+        && !claude_attention_supersedes_open_turn(event.provider.as_str())
         && let (Some(expected), Some(observed)) = (
             document
                 .state
@@ -2798,6 +2819,19 @@ fn ingest_event_with_lock(
             "attention request does not belong to the active provider turn",
             Some(json!({ "id": record.id })),
         ));
+    }
+    if late_claude_attention_for_closed_turn(&document, &event) {
+        // A request from the Claude turn that was just superseded arrived late:
+        // it must not interrupt the current turn, so it is duplicate metadata.
+        let state = document.state.clone();
+        drop(_health_fence);
+        drop(_lock);
+        drop(record_lock);
+        return Ok(ActivityResult {
+            id: record.id,
+            turn_state: state,
+            duplicate: true,
+        });
     }
     if let (Some(bound), Some(observed)) = (
         document.provider_session_id.as_ref(),
@@ -2824,7 +2858,7 @@ fn ingest_event_with_lock(
             &replay_path,
             &document.runtime_id,
             document.runtime_generation,
-            document.seen_event_count == 0,
+            document.seen_event_count,
             &dedupe_key,
         )?
     {
@@ -2854,14 +2888,6 @@ fn ingest_event_with_lock(
             duplicate: true,
         });
     }
-    if uses_exact_replay_horizon && document.seen_event_count >= MAX_DEDUPE_EVENTS {
-        return Err(CliError::data(
-            "activity-dedupe-capacity-reached",
-            "activity event replay horizon is full for this runtime; resume the session to start a new runtime generation",
-            Some(json!({ "id": record.id, "max_events": MAX_DEDUPE_EVENTS })),
-        ));
-    }
-
     reduce(&mut document, &event, &received_at);
     document.last_event_at = Some(received_at.clone());
     if matches!(event.source_kind, SourceKind::ProviderHook) {
@@ -2887,6 +2913,19 @@ fn ingest_event_with_lock(
     if document.provider_session_id.is_none() {
         document.provider_session_id = event.provider_session_id.clone();
     }
+    if uses_exact_replay_horizon
+        && document.seen_event_count > 0
+        && document.seen_event_count.is_multiple_of(MAX_DEDUPE_EVENTS)
+    {
+        // Reset the new window's table before the count that selects it is
+        // durable, so a crash here leaves the count unchanged; the reset inside
+        // `replay_insert` stays as an idempotent fallback for the repair.
+        reset_replay_table(
+            &replay_table_path(&replay_path, replay_table(document.seen_event_count)),
+            &document.runtime_id,
+            document.runtime_generation,
+        )?;
+    }
     if uses_exact_replay_horizon {
         document.seen_event_count = document.seen_event_count.saturating_add(1);
     }
@@ -2902,6 +2941,7 @@ fn ingest_event_with_lock(
             &document.runtime_id,
             document.runtime_generation,
             false,
+            document.seen_event_count - 1,
             &dedupe_key,
         )?;
     }
@@ -7440,6 +7480,76 @@ mod tests {
     }
 
     #[test]
+    fn claude_ask_user_question_in_an_unannounced_turn_is_ingested() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+        let runtime_id = created
+            .record
+            .runtime
+            .as_ref()
+            .expect("runtime")
+            .launch_id
+            .clone();
+        // Shaped as agent-hook sends Claude hooks: the turn id is the projected
+        // `prompt_id`, and AskUserQuestion carries its projected `tool_use_id`.
+        let claude = |kind: TurnEventKind, id: &str, prompt: &str| {
+            let mut current = event(kind, id);
+            current.runtime_id.clone_from(&runtime_id);
+            current.provider = AgentKind::Claude.as_str().to_string();
+            current.provider_turn_id = Some(format!("local:v1:{}", "a".repeat(63) + prompt));
+            current
+        };
+        // Claude can run a turn whose hooks carry a new prompt_id without a
+        // UserPromptSubmit (a turn woken by a background task notification)
+        // while the previously announced turn is still open.
+        for current in [
+            claude(TurnEventKind::TurnStarted, "prompt-1-start", "1"),
+            claude(TurnEventKind::Progress, "prompt-1-tool", "1"),
+            claude(TurnEventKind::Progress, "prompt-2-tool", "2"),
+        ] {
+            ingest_event(&context, &created.record.id, current).expect("turn setup");
+        }
+        let attention_id = format!("local:v1:{}", "b".repeat(64));
+        let mut asked = claude(TurnEventKind::AttentionRequested, "prompt-2-ask", "2");
+        asked.attention_kind = Some("clarification".to_string());
+        asked.attention_id = Some(attention_id.clone());
+        asked.attention_correlation_exact = true;
+        let requested = ingest_event(&context, &created.record.id, asked)
+            .expect("a clarification request in an unannounced turn is ingested");
+        assert_eq!(requested.turn_state.phase, TurnPhase::NeedsInput);
+        let turn_id = |prompt: &str| format!("local:v1:{}", "a".repeat(63) + prompt);
+        assert_eq!(
+            requested
+                .turn_state
+                .current_turn
+                .as_ref()
+                .and_then(|turn| turn.provider_turn_id.clone()),
+            Some(turn_id("2")),
+            "the requesting turn is now current"
+        );
+        let superseded = requested.turn_state.last_turn.as_ref().expect("last turn");
+        assert_eq!(superseded.provider_turn_id, Some(turn_id("1")));
+        assert_eq!(superseded.outcome, "interrupted");
+
+        // A late request from the superseded turn must not reopen it.
+        let mut late = claude(TurnEventKind::AttentionRequested, "prompt-1-late-ask", "1");
+        late.attention_kind = Some("clarification".to_string());
+        late.attention_id = Some(format!("local:v1:{}", "c".repeat(64)));
+        late.attention_correlation_exact = true;
+        let ignored = ingest_event(&context, &created.record.id, late)
+            .expect("a late request from the closed turn is accepted as metadata");
+        assert!(ignored.duplicate);
+        assert_eq!(ignored.turn_state, requested.turn_state);
+
+        let mut cleared = claude(TurnEventKind::AttentionCleared, "prompt-2-answer", "2");
+        cleared.attention_id = Some(attention_id);
+        cleared.attention_correlation_exact = true;
+        let answered = ingest_event(&context, &created.record.id, cleared)
+            .expect("the answered clarification clears");
+        assert_ne!(answered.turn_state.phase, TurnPhase::NeedsInput);
+    }
+
+    #[test]
     fn claude_ask_user_question_uses_exact_runtime_scoped_correlation() {
         let request = normalize_provider_hook(
             AgentKind::Claude,
@@ -8005,7 +8115,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_progress_preserves_exact_replay_capacity_for_lifecycle_events() {
+    fn claude_uncorrelated_progress_does_not_advance_the_exact_replay_window() {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
         let runtime_id = created
@@ -8019,7 +8129,7 @@ mod tests {
         let path = dir.join(ACTIVITY_FILE);
         let mut snapshot = read_document(&path).expect("activity snapshot");
         snapshot.seen_event_count = MAX_DEDUPE_EVENTS - 1;
-        write_document(&path, &mut snapshot).expect("near-capacity snapshot");
+        write_document(&path, &mut snapshot).expect("window-boundary snapshot");
 
         let progress = normalize_provider_hook(
             AgentKind::Claude,
@@ -8035,14 +8145,14 @@ mod tests {
         .expect("progress normalization")
         .expect("recognized progress");
         let working = ingest_event(&context, &created.record.id, progress)
-            .expect("Claude progress remains ingestible near replay capacity");
+            .expect("uncorrelated Claude progress is ingested at a window boundary");
         assert_eq!(working.turn_state.phase, TurnPhase::Working);
         assert_eq!(
             read_document(&path)
                 .expect("progress snapshot")
                 .seen_event_count,
             MAX_DEDUPE_EVENTS - 1,
-            "uncorrelated Claude progress must not consume exact replay capacity"
+            "uncorrelated Claude progress must not advance the exact replay window index"
         );
 
         let completed = normalize_provider_hook(
@@ -8058,7 +8168,7 @@ mod tests {
         .expect("completion normalization")
         .expect("recognized completion");
         let waiting = ingest_event(&context, &created.record.id, completed)
-            .expect("lifecycle event retains the final exact replay slot");
+            .expect("a lifecycle event takes the next exact window index");
         assert_eq!(waiting.turn_state.phase, TurnPhase::Waiting);
         assert_eq!(
             read_document(&path)
@@ -8113,6 +8223,502 @@ mod tests {
         assert_eq!(repaired_snapshot.seen_event_count, 0);
         let journal = fs::read_to_string(journal_path).expect("repaired journal");
         assert_eq!(journal.matches("\"kind\":\"progress\"").count(), 1);
+    }
+
+    #[test]
+    fn exact_replay_horizon_rotates_instead_of_refusing_at_capacity() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session(&tmp);
+        let runtime_id = created
+            .record
+            .runtime
+            .as_ref()
+            .expect("runtime")
+            .launch_id
+            .clone();
+        let dir = session_dir(&context, &created.record.id);
+        let path = dir.join(ACTIVITY_FILE);
+        let exact = |index: usize| {
+            let mut current = event(TurnEventKind::Progress, &format!("rotating-{index}"));
+            current.runtime_id.clone_from(&runtime_id);
+            current.provider_turn_id = Some(format!("turn-{index}"));
+            current
+        };
+        let is_duplicate = |index: usize| {
+            ingest_event(&context, &created.record.id, exact(index))
+                .expect("replay probe")
+                .duplicate
+        };
+        // Cross three table boundaries; each ingests the last event of one
+        // window and the first two of the next.
+        let boundaries = [
+            MAX_DEDUPE_EVENTS,
+            2 * MAX_DEDUPE_EVENTS,
+            3 * MAX_DEDUPE_EVENTS,
+        ];
+        for (position, boundary) in boundaries.into_iter().enumerate() {
+            let mut snapshot = read_document(&path).expect("activity snapshot");
+            snapshot.seen_event_count = boundary - 1;
+            write_document(&path, &mut snapshot).expect("boundary snapshot");
+            for index in boundary - 1..boundary + 2 {
+                let result = ingest_event(&context, &created.record.id, exact(index))
+                    .expect("an exact-horizon event past capacity is still accepted");
+                assert!(!result.duplicate, "event {index} is new");
+            }
+            assert_eq!(
+                read_document(&path).expect("snapshot").seen_event_count,
+                boundary + 2
+            );
+            assert!(is_duplicate(boundary + 1), "the new window deduplicates");
+            assert!(
+                is_duplicate(boundary - 1),
+                "the previous window survives rotation at {boundary}"
+            );
+            if position > 0 {
+                // The table this boundary reset held the window two back.
+                let two_windows_back = boundaries[position - 1] - 1;
+                assert!(
+                    !is_duplicate(two_windows_back),
+                    "event {two_windows_back} left the replay window at {boundary}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn three_windows_of_exact_events_stay_ingestible_and_recent_replays_deduplicate() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session(&tmp);
+        let runtime_id = created
+            .record
+            .runtime
+            .as_ref()
+            .expect("runtime")
+            .launch_id
+            .clone();
+        let exact = |index: usize| {
+            let mut current = event(TurnEventKind::Progress, &format!("window-{index}"));
+            current.runtime_id.clone_from(&runtime_id);
+            current.provider_turn_id = Some(format!("turn-{index}"));
+            current
+        };
+        // Past the third boundary, so the last window spans both tables.
+        let total = 3 * MAX_DEDUPE_EVENTS + MAX_DEDUPE_EVENTS / 2;
+        for index in 0..total {
+            let result = ingest_event(&context, &created.record.id, exact(index))
+                .expect("every exact-horizon event in one runtime is accepted");
+            assert!(!result.duplicate, "event {index} is new");
+        }
+        let dir = session_dir(&context, &created.record.id);
+        assert_eq!(
+            read_document(&dir.join(ACTIVITY_FILE))
+                .expect("snapshot")
+                .seen_event_count,
+            total
+        );
+        for index in total - MAX_DEDUPE_EVENTS..total {
+            let replay =
+                ingest_event(&context, &created.record.id, exact(index)).expect("recent replay");
+            assert!(
+                replay.duplicate,
+                "event {index} is inside the replay window"
+            );
+        }
+        let two_windows_back = MAX_DEDUPE_EVENTS + 1;
+        assert!(
+            !ingest_event(&context, &created.record.id, exact(two_windows_back))
+                .expect("old replay")
+                .duplicate,
+            "event {two_windows_back} left the replay window"
+        );
+    }
+
+    #[test]
+    fn a_full_table_zero_index_from_before_the_window_keeps_ingesting() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session(&tmp);
+        let runtime = created.record.runtime.as_ref().expect("runtime");
+        let runtime_id = runtime.launch_id.clone();
+        let generation = runtime.generation;
+        let dir = session_dir(&context, &created.record.id);
+        let old = |index: usize| {
+            let mut current = event(TurnEventKind::Progress, &format!("old-{index}"));
+            current.runtime_id.clone_from(&runtime_id);
+            current.provider_turn_id = Some(format!("turn-{index}"));
+            current
+        };
+
+        // What a binary without the window left behind at its capacity refusal:
+        // a full table-0 file in the unchanged format and no table-1 file.
+        let mut table_zero = vec![0_u8; REPLAY_FILE_BYTES];
+        table_zero[..REPLAY_HEADER_BYTES].copy_from_slice(&replay_header(&runtime_id, generation));
+        for index in 0..MAX_DEDUPE_EVENTS {
+            let key = event_dedupe_key(&runtime_id, &old(index).event_id);
+            let offset = (0..REPLAY_SLOT_COUNT)
+                .map(|probe| replay_slot(&key, probe) as usize)
+                .find(|&offset| {
+                    table_zero[offset..offset + REPLAY_SLOT_BYTES]
+                        .iter()
+                        .all(|b| *b == 0)
+                })
+                .expect("free slot at half load");
+            table_zero[offset..offset + REPLAY_SLOT_BYTES].copy_from_slice(&key);
+        }
+        let replay_path = dir.join(ACTIVITY_REPLAY_FILE);
+        fs::write(&replay_path, &table_zero).expect("full table-0 index");
+        let path = dir.join(ACTIVITY_FILE);
+        let mut snapshot = read_document(&path).expect("activity snapshot");
+        snapshot.seen_event_count = MAX_DEDUPE_EVENTS;
+        write_document(&path, &mut snapshot).expect("full snapshot");
+
+        let mut next = old(MAX_DEDUPE_EVENTS);
+        next.event_id = "after-upgrade".to_string();
+        assert!(
+            !ingest_event(&context, &created.record.id, next)
+                .expect("the next exact event is accepted past the old capacity")
+                .duplicate
+        );
+        for index in [0, MAX_DEDUPE_EVENTS - 1] {
+            assert!(
+                ingest_event(&context, &created.record.id, old(index))
+                    .expect("old replay")
+                    .duplicate,
+                "old event {index} still replays as a duplicate after the first rotation"
+            );
+        }
+        let kept = fs::read(&replay_path).expect("table-0 index");
+        assert_eq!(kept.len(), REPLAY_FILE_BYTES, "table 0 keeps its format");
+        assert_eq!(
+            &kept[..REPLAY_HEADER_BYTES],
+            &replay_header(&runtime_id, generation)
+        );
+        assert_eq!(
+            fs::metadata(dir.join(ACTIVITY_REPLAY_TABLE_ONE_FILE))
+                .expect("table-1 index")
+                .len(),
+            REPLAY_FILE_BYTES as u64
+        );
+    }
+
+    #[test]
+    fn a_pending_boundary_insert_converges_on_repair() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session(&tmp);
+        let runtime_id = created
+            .record
+            .runtime
+            .as_ref()
+            .expect("runtime")
+            .launch_id
+            .clone();
+        let dir = session_dir(&context, &created.record.id);
+        let path = dir.join(ACTIVITY_FILE);
+        let journal_path = dir.join(ACTIVITY_JOURNAL_FILE);
+        let exact = |index: usize| {
+            let mut current = event(TurnEventKind::Progress, &format!("redo-{index}"));
+            current.runtime_id.clone_from(&runtime_id);
+            current.provider_turn_id = Some(format!("turn-{index}"));
+            current
+        };
+        let mut snapshot = read_document(&path).expect("activity snapshot");
+        snapshot.seen_event_count = MAX_DEDUPE_EVENTS - 1;
+        write_document(&path, &mut snapshot).expect("boundary snapshot");
+        ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS - 1))
+            .expect("last event of the first window");
+
+        // Interrupt the first event of the next window after its table reset
+        // and insert, before the journal append.
+        fs::remove_file(&journal_path).expect("clear journal");
+        fs::create_dir(&journal_path).expect("block journal target");
+        assert!(
+            ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS)).is_err(),
+            "blocked journal target interrupts the boundary write"
+        );
+        let pending = read_document(&path).expect("pending snapshot");
+        assert!(pending.pending_journal.is_some());
+        assert_eq!(pending.seen_event_count, MAX_DEDUPE_EVENTS + 1);
+
+        fs::remove_dir(&journal_path).expect("restore journal target");
+        let repaired = ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS))
+            .expect("repair redoes the boundary insert");
+        assert!(
+            repaired.duplicate,
+            "the redone boundary key is in the new window"
+        );
+        let snapshot = read_document(&path).expect("repaired snapshot");
+        assert!(snapshot.pending_journal.is_none());
+        assert_eq!(snapshot.seen_event_count, MAX_DEDUPE_EVENTS + 1);
+        assert!(
+            ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS - 1))
+                .expect("previous window replay")
+                .duplicate,
+            "the redo reset only the new window's table"
+        );
+        assert!(
+            !ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS + 1))
+                .expect("next event")
+                .duplicate
+        );
+    }
+
+    #[test]
+    fn a_stale_or_missing_table_one_before_its_boundary_reset_keeps_the_view_valid() {
+        for stale in [true, false] {
+            let tmp = tempfile::TempDir::new().expect("tempdir");
+            let (context, created) = test_session(&tmp);
+            let runtime = created.record.runtime.as_ref().expect("runtime");
+            let runtime_id = runtime.launch_id.clone();
+            let generation = runtime.generation;
+            let dir = session_dir(&context, &created.record.id);
+            let path = dir.join(ACTIVITY_FILE);
+            let journal_path = dir.join(ACTIVITY_JOURNAL_FILE);
+            let table_one = dir.join(ACTIVITY_REPLAY_TABLE_ONE_FILE);
+            let exact = |index: usize| {
+                let mut current = event(TurnEventKind::Progress, &format!("stale-{index}"));
+                current.runtime_id.clone_from(&runtime_id);
+                current.provider_turn_id = Some(format!("turn-{index}"));
+                current
+            };
+            let mut snapshot = read_document(&path).expect("activity snapshot");
+            snapshot.seen_event_count = MAX_DEDUPE_EVENTS - 1;
+            write_document(&path, &mut snapshot).expect("boundary snapshot");
+            ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS - 1))
+                .expect("last event of the first window");
+            if stale {
+                // Left behind by an earlier runtime generation.
+                let mut old = vec![0_u8; REPLAY_FILE_BYTES];
+                old[..REPLAY_HEADER_BYTES]
+                    .copy_from_slice(&replay_header("earlier-runtime", generation));
+                fs::write(&table_one, &old).expect("stale table one");
+            }
+
+            // Stop right after the pending snapshot write for index 4096.
+            fs::remove_file(&journal_path).expect("clear journal");
+            fs::create_dir(&journal_path).expect("block journal target");
+            let mut snapshot = read_document(&path).expect("activity snapshot");
+            snapshot.seen_event_count = MAX_DEDUPE_EVENTS + 1;
+            snapshot.pending_journal = Some(JournalEntry {
+                received_at: "2026-07-10T00:00:00Z".to_string(),
+                event: exact(MAX_DEDUPE_EVENTS),
+            });
+            write_document(&path, &mut snapshot).expect("pending boundary snapshot");
+            assert_ne!(
+                state_for_view(&context, &created.record)
+                    .expect("view state")
+                    .phase,
+                TurnPhase::Unknown,
+                "stale={stale}: the view stays valid before the boundary reset"
+            );
+
+            fs::remove_dir(&journal_path).expect("restore journal target");
+            let repaired = ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS))
+                .expect("repair converges");
+            assert!(repaired.duplicate);
+            assert_eq!(
+                &fs::read(&table_one).expect("reset table one")[..REPLAY_HEADER_BYTES],
+                &replay_header(&runtime_id, generation)
+            );
+            assert_ne!(
+                state_for_view(&context, &created.record)
+                    .expect("view state")
+                    .phase,
+                TurnPhase::Unknown
+            );
+
+            // Snapshot and restore carry table one's bytes.
+            let captured = capture_snapshot(&context, &created.record.id).expect("capture");
+            let before = fs::read(&table_one).expect("table one bytes");
+            fs::write(&table_one, vec![0_u8; REPLAY_FILE_BYTES]).expect("mutate table one");
+            restore_snapshot(&context, &created.record.id, &captured).expect("restore");
+            assert_eq!(fs::read(&table_one).expect("restored table one"), before);
+        }
+    }
+
+    /// A table file in the unchanged format holding `keys` at their probe slots.
+    fn replay_table_with_keys(
+        runtime_id: &str,
+        generation: u64,
+        keys: impl IntoIterator<Item = [u8; REPLAY_SLOT_BYTES]>,
+    ) -> Vec<u8> {
+        let mut table = vec![0_u8; REPLAY_FILE_BYTES];
+        table[..REPLAY_HEADER_BYTES].copy_from_slice(&replay_header(runtime_id, generation));
+        for key in keys {
+            let offset = (0..REPLAY_SLOT_COUNT)
+                .map(|probe| replay_slot(&key, probe) as usize)
+                .find(|&offset| {
+                    table[offset..offset + REPLAY_SLOT_BYTES]
+                        .iter()
+                        .all(|byte| *byte == 0)
+                })
+                .expect("free slot");
+            table[offset..offset + REPLAY_SLOT_BYTES].copy_from_slice(&key);
+        }
+        table
+    }
+
+    #[test]
+    fn a_missing_or_stale_table_one_after_an_old_repair_self_heals() {
+        for stale in [false, true] {
+            let tmp = tempfile::TempDir::new().expect("tempdir");
+            let (context, created) = test_session(&tmp);
+            let runtime = created.record.runtime.as_ref().expect("runtime");
+            let runtime_id = runtime.launch_id.clone();
+            let generation = runtime.generation;
+            let dir = session_dir(&context, &created.record.id);
+            let exact = |index: usize| {
+                let mut current = event(TurnEventKind::Progress, &format!("heal-{index}"));
+                current.runtime_id.clone_from(&runtime_id);
+                current.provider_turn_id = Some(format!("turn-{index}"));
+                current
+            };
+            // What a binary without the window leaves after repairing the
+            // boundary event: every key in table 0, the count past the first
+            // window, no pending entry, and no table 1 of this runtime.
+            let keys = (0..=MAX_DEDUPE_EVENTS)
+                .map(|index| event_dedupe_key(&runtime_id, &exact(index).event_id));
+            fs::write(
+                dir.join(ACTIVITY_REPLAY_FILE),
+                replay_table_with_keys(&runtime_id, generation, keys),
+            )
+            .expect("table zero");
+            let table_one = dir.join(ACTIVITY_REPLAY_TABLE_ONE_FILE);
+            if stale {
+                fs::write(
+                    &table_one,
+                    replay_table_with_keys("earlier-runtime", generation, []),
+                )
+                .expect("stale table one");
+            }
+            let path = dir.join(ACTIVITY_FILE);
+            let mut snapshot = read_document(&path).expect("activity snapshot");
+            snapshot.seen_event_count = MAX_DEDUPE_EVENTS + 1;
+            write_document(&path, &mut snapshot).expect("repaired snapshot");
+
+            assert_ne!(
+                state_for_view(&context, &created.record)
+                    .expect("view state")
+                    .phase,
+                TurnPhase::Unknown,
+                "stale={stale}: the view accepts a self-healable table one"
+            );
+            let next = ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS + 1))
+                .expect("the next exact event is ingested");
+            assert!(!next.duplicate);
+            assert!(
+                ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS + 1))
+                    .expect("replay")
+                    .duplicate
+            );
+            assert_eq!(
+                &fs::read(&table_one).expect("healed table one")[..REPLAY_HEADER_BYTES],
+                &replay_header(&runtime_id, generation)
+            );
+            assert_ne!(
+                state_for_view(&context, &created.record)
+                    .expect("view state")
+                    .phase,
+                TurnPhase::Unknown
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_boundary_reset_leaves_the_count_unchanged() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session(&tmp);
+        let runtime_id = created
+            .record
+            .runtime
+            .as_ref()
+            .expect("runtime")
+            .launch_id
+            .clone();
+        let dir = session_dir(&context, &created.record.id);
+        let path = dir.join(ACTIVITY_FILE);
+        let exact = |index: usize| {
+            let mut current = event(TurnEventKind::Progress, &format!("reset-{index}"));
+            current.runtime_id.clone_from(&runtime_id);
+            current.provider_turn_id = Some(format!("turn-{index}"));
+            current
+        };
+        let mut snapshot = read_document(&path).expect("activity snapshot");
+        snapshot.seen_event_count = MAX_DEDUPE_EVENTS - 1;
+        write_document(&path, &mut snapshot).expect("boundary snapshot");
+        ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS - 1))
+            .expect("last event of the first window");
+
+        // Table one cannot be created: the boundary reset fails.
+        let table_one = dir.join(ACTIVITY_REPLAY_TABLE_ONE_FILE);
+        fs::create_dir(&table_one).expect("block table one");
+        assert!(ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS)).is_err());
+        let unchanged = read_document(&path).expect("snapshot after failed reset");
+        assert_eq!(
+            unchanged.seen_event_count, MAX_DEDUPE_EVENTS,
+            "the count that selects the new window is not durable before its reset"
+        );
+        assert!(unchanged.pending_journal.is_none());
+
+        fs::remove_dir(&table_one).expect("unblock table one");
+        assert!(
+            !ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS))
+                .expect("the boundary event converges")
+                .duplicate
+        );
+        assert!(
+            ingest_event(&context, &created.record.id, exact(MAX_DEDUPE_EVENTS - 1))
+                .expect("previous window replay")
+                .duplicate
+        );
+    }
+
+    #[test]
+    fn a_table_left_uncleared_into_the_next_window_self_heals() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session(&tmp);
+        let runtime = created.record.runtime.as_ref().expect("runtime");
+        let runtime_id = runtime.launch_id.clone();
+        let generation = runtime.generation;
+        let dir = session_dir(&context, &created.record.id);
+        let exact = |index: usize| {
+            let mut current = event(TurnEventKind::Progress, &format!("full-{index}"));
+            current.runtime_id.clone_from(&runtime_id);
+            current.provider_turn_id = Some(format!("turn-{index}"));
+            current
+        };
+        // Table 0 missed its clear at the start of window 2 and filled up.
+        let keys = (0..REPLAY_SLOT_COUNT)
+            .map(|index| event_dedupe_key(&runtime_id, &format!("uncleared-{index}")));
+        fs::write(
+            dir.join(ACTIVITY_REPLAY_FILE),
+            replay_table_with_keys(&runtime_id, generation, keys),
+        )
+        .expect("full table zero");
+        fs::write(
+            dir.join(ACTIVITY_REPLAY_TABLE_ONE_FILE),
+            replay_table_with_keys(&runtime_id, generation, []),
+        )
+        .expect("table one");
+        let path = dir.join(ACTIVITY_FILE);
+        let mut snapshot = read_document(&path).expect("activity snapshot");
+        snapshot.seen_event_count = 2 * MAX_DEDUPE_EVENTS + 1;
+        write_document(&path, &mut snapshot).expect("window-two snapshot");
+
+        let next = ingest_event(
+            &context,
+            &created.record.id,
+            exact(2 * MAX_DEDUPE_EVENTS + 1),
+        )
+        .expect("a full table self-heals instead of refusing");
+        assert!(!next.duplicate);
+        assert!(
+            ingest_event(
+                &context,
+                &created.record.id,
+                exact(2 * MAX_DEDUPE_EVENTS + 1)
+            )
+            .expect("replay")
+            .duplicate
+        );
     }
 
     #[test]
@@ -9063,33 +9669,81 @@ fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Result<(), Cl
     Ok(())
 }
 
+/// Claude runs one turn at a time and names it with `prompt_id`, but a turn it
+/// starts without `UserPromptSubmit` (for example one woken by a background
+/// task notification) is never announced. An attention request from another
+/// turn therefore proves the open turn is stale rather than that the request
+/// is foreign, so it supersedes that turn instead of being refused
+/// (sympoies/nils-cli#1962). Other providers keep the exact turn binding.
+fn claude_attention_supersedes_open_turn(provider: &str) -> bool {
+    provider == AgentKind::Claude.as_str()
+}
+
+/// A Claude attention request for the most recently closed turn, while a
+/// different turn is open. Superseding on it would reopen an older turn.
+fn late_claude_attention_for_closed_turn(document: &ActivityDocument, event: &TurnEvent) -> bool {
+    let Some(event_turn) = event.provider_turn_id.as_ref() else {
+        return false;
+    };
+    event.kind == TurnEventKind::AttentionRequested
+        && claude_attention_supersedes_open_turn(event.provider.as_str())
+        && document
+            .state
+            .last_turn
+            .as_ref()
+            .and_then(|turn| turn.provider_turn_id.as_ref())
+            == Some(event_turn)
+        && document
+            .state
+            .current_turn
+            .as_ref()
+            .and_then(|turn| turn.provider_turn_id.as_ref())
+            != Some(event_turn)
+}
+
+/// Close any open turn as interrupted and open `provider_turn_id` in its place.
+fn open_provider_turn(document: &mut ActivityDocument, provider_turn_id: Option<String>, at: &str) {
+    if let Some(current) = document.state.current_turn.take() {
+        document.state.last_turn = Some(LastTurn {
+            provider_turn_id: current.provider_turn_id,
+            started_at: Some(current.started_at),
+            completed_at: at.to_string(),
+            outcome: "interrupted".to_string(),
+            extra: current.extra,
+        });
+    }
+    document.pending_attention.clear();
+    document.overflow_attention = None;
+    document.state.current_turn = Some(CurrentTurn {
+        provider_turn_id,
+        started_at: at.to_string(),
+        last_progress_at: None,
+        attention: None,
+        extra: Map::new(),
+    });
+}
+
 fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
     let previous_phase = document.state.phase.clone();
     let mut source = provider_source(event);
     source.extra = document.state.source.extra.clone();
     match event.kind {
         TurnEventKind::TurnStarted => {
-            if let Some(current) = document.state.current_turn.take() {
-                document.state.last_turn = Some(LastTurn {
-                    provider_turn_id: current.provider_turn_id,
-                    started_at: Some(current.started_at),
-                    completed_at: at.to_string(),
-                    outcome: "interrupted".to_string(),
-                    extra: current.extra,
-                });
-            }
-            document.pending_attention.clear();
-            document.overflow_attention = None;
-            document.state.current_turn = Some(CurrentTurn {
-                provider_turn_id: event.provider_turn_id.clone(),
-                started_at: at.to_string(),
-                last_progress_at: None,
-                attention: None,
-                extra: Map::new(),
-            });
+            open_provider_turn(document, event.provider_turn_id.clone(), at);
             document.state.phase = TurnPhase::Working;
         }
         TurnEventKind::AttentionRequested => {
+            let open_turn_is_stale = claude_attention_supersedes_open_turn(event.provider.as_str())
+                && event.provider_turn_id.is_some()
+                && document
+                    .state
+                    .current_turn
+                    .as_ref()
+                    .and_then(|turn| turn.provider_turn_id.as_ref())
+                    .is_some_and(|open| Some(open) != event.provider_turn_id.as_ref());
+            if open_turn_is_stale {
+                open_provider_turn(document, event.provider_turn_id.clone(), at);
+            }
             if document.state.current_turn.is_none() {
                 document.state.current_turn = Some(CurrentTurn {
                     provider_turn_id: event.provider_turn_id.clone(),
@@ -9505,11 +10159,14 @@ fn repair_pending_transaction(
     };
     if event_uses_exact_replay_horizon(&entry.event) {
         let key = event_dedupe_key(&entry.event.runtime_id, &entry.event.event_id);
+        // The pending entry is the newest counted event, so its index is the
+        // count minus one; redoing a rotation for it is idempotent.
         replay_insert(
             replay_path,
             &document.runtime_id,
             document.runtime_generation,
             false,
+            document.seen_event_count.saturating_sub(1),
             &key,
         )?;
     }
@@ -9576,7 +10233,7 @@ fn open_replay_index(
         .map_err(|err| activity_io_error("activity-replay-open-failed", path, err))?;
     fs::set_permissions(path, fs::Permissions::from_mode(SECRET_FILE_MODE))
         .map_err(|err| activity_io_error("activity-replay-permission-failed", path, err))?;
-    let expected_len = (REPLAY_HEADER_BYTES + REPLAY_SLOT_COUNT * REPLAY_SLOT_BYTES) as u64;
+    let expected_len = REPLAY_FILE_BYTES as u64;
     let actual_len = file
         .metadata()
         .map_err(|err| activity_io_error("activity-replay-metadata-failed", path, err))?
@@ -9622,7 +10279,71 @@ fn replay_slot(key: &[u8; REPLAY_SLOT_BYTES], probe: usize) -> u64 {
     (REPLAY_HEADER_BYTES + (start as usize + probe) % REPLAY_SLOT_COUNT * REPLAY_SLOT_BYTES) as u64
 }
 
+/// Table `table` of the rotating replay window. Each table is its own
+/// file in the unchanged r1 format with the same runtime header: table 0 stays
+/// `activity.replay.bin`, so a binary that predates the window still reads it,
+/// and table 1 is the sibling `activity.replay.1.bin`.
+fn replay_table_path(table_zero: &Path, table: usize) -> PathBuf {
+    if table == 0 {
+        table_zero.to_path_buf()
+    } else {
+        table_zero.with_file_name(ACTIVITY_REPLAY_TABLE_ONE_FILE)
+    }
+}
+
+/// The table that holds the exact event with zero-based index `event_index`.
+fn replay_table(event_index: usize) -> usize {
+    event_index / MAX_DEDUPE_EVENTS % 2
+}
+
+/// Whether `key` is inside the replay window. With `seen_event_count` exact
+/// events counted, table 1 holds keys of this runtime generation only once the
+/// count has passed the first window; before that it may be absent or stale.
 fn replay_contains(
+    path: &Path,
+    runtime_id: &str,
+    runtime_generation: u64,
+    seen_event_count: usize,
+    key: &[u8; REPLAY_SLOT_BYTES],
+) -> Result<bool, CliError> {
+    if replay_table_contains(
+        path,
+        runtime_id,
+        runtime_generation,
+        seen_event_count == 0,
+        key,
+    )? {
+        return Ok(true);
+    }
+    if seen_event_count <= MAX_DEDUPE_EVENTS {
+        return Ok(false);
+    }
+    match replay_table_contains(
+        &replay_table_path(path, 1),
+        runtime_id,
+        runtime_generation,
+        false,
+        key,
+    ) {
+        // A table 1 this runtime cannot use holds none of its keys; the next
+        // insert into it re-initializes it.
+        Err(err) if replay_table_one_self_heals(&err) => Ok(false),
+        result => result,
+    }
+}
+
+/// Table 1 states a re-initialization repairs: absent, from another runtime
+/// generation, or the wrong size. Table 0 keeps failing closed on these.
+fn replay_table_one_self_heals(err: &CliError) -> bool {
+    matches!(
+        err.code(),
+        "activity-replay-missing"
+            | "activity-replay-runtime-mismatch"
+            | "activity-replay-size-invalid"
+    )
+}
+
+fn replay_table_contains(
     path: &Path,
     runtime_id: &str,
     runtime_generation: u64,
@@ -9646,14 +10367,59 @@ fn replay_contains(
     Ok(false)
 }
 
+/// Record `key` as the exact event with zero-based index `event_index`. The
+/// first event of each window resets its table, which drops keys two windows
+/// old; redoing that for the same pending event converges on the same table.
 fn replay_insert(
     path: &Path,
     runtime_id: &str,
     runtime_generation: u64,
     allow_create: bool,
+    event_index: usize,
     key: &[u8; REPLAY_SLOT_BYTES],
 ) -> Result<(), CliError> {
-    let mut file = open_replay_index(path, runtime_id, runtime_generation, allow_create)?;
+    let table = replay_table(event_index);
+    let table_path = replay_table_path(path, table);
+    let path = table_path.as_path();
+    if event_index > 0 && event_index.is_multiple_of(MAX_DEDUPE_EVENTS) {
+        reset_replay_table(path, runtime_id, runtime_generation)?;
+    }
+    let mut file = match open_replay_index(
+        path,
+        runtime_id,
+        runtime_generation,
+        allow_create && table == 0,
+    ) {
+        Err(err) if table == 1 && replay_table_one_self_heals(&err) => {
+            reset_replay_table(path, runtime_id, runtime_generation)?;
+            open_replay_index(path, runtime_id, runtime_generation, false)?
+        }
+        result => result?,
+    };
+    if insert_into_replay_table(&mut file, path, key)? {
+        return Ok(());
+    }
+    // Full only when a window's clear was skipped (for example a boundary
+    // repaired by a binary without the window): start this window over,
+    // losing at most its dedupe, instead of refusing every later event.
+    reset_replay_table(path, runtime_id, runtime_generation)?;
+    let mut file = open_replay_index(path, runtime_id, runtime_generation, false)?;
+    if insert_into_replay_table(&mut file, path, key)? {
+        return Ok(());
+    }
+    Err(CliError::data(
+        "activity-replay-index-full",
+        "activity replay index is full for this runtime generation",
+        Some(json!({ "path": display_path(path) })),
+    ))
+}
+
+/// Insert `key` at its first free probe slot; `false` when every slot is taken.
+fn insert_into_replay_table(
+    file: &mut fs::File,
+    path: &Path,
+    key: &[u8; REPLAY_SLOT_BYTES],
+) -> Result<bool, CliError> {
     let mut slot = [0_u8; REPLAY_SLOT_BYTES];
     for probe in 0..REPLAY_SLOT_COUNT {
         let offset = replay_slot(key, probe);
@@ -9662,7 +10428,7 @@ fn replay_insert(
         file.read_exact(&mut slot)
             .map_err(|err| activity_io_error("activity-replay-read-failed", path, err))?;
         if &slot == key {
-            return Ok(());
+            return Ok(true);
         }
         if slot.iter().all(|byte| *byte == 0) {
             file.seek(SeekFrom::Start(offset))
@@ -9671,12 +10437,39 @@ fn replay_insert(
                 .map_err(|err| activity_io_error("activity-replay-write-failed", path, err))?;
             file.sync_data()
                 .map_err(|err| activity_io_error("activity-replay-sync-failed", path, err))?;
-            return Ok(());
+            return Ok(true);
         }
     }
-    Err(CliError::data(
-        "activity-replay-index-full",
-        "activity replay index is full for this runtime generation",
-        Some(json!({ "path": display_path(path) })),
-    ))
+    Ok(false)
+}
+
+/// Start a new window in one table file: write the runtime header and zero
+/// every slot in place, creating the file on first use. The file keeps its r1
+/// size throughout, so a concurrent reader never sees it shrink.
+fn reset_replay_table(
+    path: &Path,
+    runtime_id: &str,
+    runtime_generation: u64,
+) -> Result<(), CliError> {
+    let existed = path.is_file();
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .mode(SECRET_FILE_MODE)
+        .open(path)
+        .map_err(|err| activity_io_error("activity-replay-open-failed", path, err))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(SECRET_FILE_MODE))
+        .map_err(|err| activity_io_error("activity-replay-permission-failed", path, err))?;
+    file.set_len(REPLAY_FILE_BYTES as u64)
+        .and_then(|()| file.seek(SeekFrom::Start(0)))
+        .and_then(|_| file.write_all(&replay_header(runtime_id, runtime_generation)))
+        .and_then(|()| file.write_all(&vec![0_u8; REPLAY_FILE_BYTES - REPLAY_HEADER_BYTES]))
+        .and_then(|()| file.sync_data())
+        .map_err(|err| activity_io_error("activity-replay-rotate-failed", path, err))?;
+    if !existed {
+        sync_parent_directory(path)?;
+    }
+    Ok(())
 }

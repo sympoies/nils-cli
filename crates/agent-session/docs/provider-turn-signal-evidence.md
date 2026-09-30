@@ -181,8 +181,9 @@ pending attention.
 
 General Claude progress receives no stable provider event id and has idempotent
 reducer semantics. It remains in the bounded journal and split-write repair path,
-but uses the short semantic replay guard instead of consuming the 4096-entry
-exact replay horizon needed by lifecycle, failure, and attention evidence.
+but uses the short semantic replay guard instead of the exact replay window
+(at least the last 4096 entries) kept for lifecycle, failure, and attention
+evidence.
 
 `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` expose the same
 `tool_use_id` for `AskUserQuestion`. The adapter projects that raw id through a

@@ -704,7 +704,7 @@ fn activity_degradation_outcome(
             code: error.code.clone(),
             context: Some(format!(
                 "agent-hook activity metadata is unavailable ({}). {availability} Next: {}.",
-                error.code,
+                activity_failure_label(error),
                 crate::observe::RECOVERY_HOOK_DOCTOR
             )),
             replacement: None,
@@ -1707,18 +1707,58 @@ fn run_session_activity(
     };
     let mut command = Command::new(resolve_activity_helper()?);
     command
-        .args(["activity", "event", "--stdin", &session_id])
+        .args([
+            "activity",
+            "event",
+            "--format",
+            "json",
+            "--stdin",
+            &session_id,
+        ])
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let output = run_with_budget(command, &event, execution_budget)?;
     if output.status.success() {
         Ok(())
     } else {
-        Err(HookError::runtime(
+        let mut error = HookError::runtime(
             "session-activity-failed",
             "agent-session activity capability failed",
-        ))
+        );
+        // The stable code keeps its degradation classification; the helper's
+        // typed cause rides along so an operator can see why ingest failed.
+        if let Some(cause) = activity_helper_error_code(&output.stdout) {
+            error.details = Some(Box::new(serde_json::json!({ "cause": cause })));
+        }
+        Err(error)
+    }
+}
+
+/// The helper's typed error code from its `--format json` envelope, restricted
+/// to the `activity-*` / `provider-*` families so no free-form helper text can
+/// reach provider-visible output.
+fn activity_helper_error_code(stdout: &[u8]) -> Option<String> {
+    let envelope: Value = serde_json::from_slice(stdout).ok()?;
+    let code = envelope.get("error")?.get("code")?.as_str()?;
+    let allowed = (code.starts_with("activity-") || code.starts_with("provider-"))
+        && code.len() <= 64
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    allowed.then(|| code.to_string())
+}
+
+/// `session-activity-failed: <cause>` when the helper named a typed cause.
+fn activity_failure_label(error: &HookError) -> String {
+    match error
+        .details
+        .as_deref()
+        .and_then(|details| details.get("cause"))
+        .and_then(Value::as_str)
+    {
+        Some(cause) => format!("{}: {cause}", error.code),
+        None => error.code.clone(),
     }
 }
 

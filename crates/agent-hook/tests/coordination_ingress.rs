@@ -300,6 +300,74 @@ fn exact_recovery_reaches_coordination_when_the_activity_helper_is_unresolvable(
 }
 
 #[test]
+fn activity_failure_reason_names_the_helper_typed_code() {
+    for (helper_code, surfaced) in [
+        ("activity-replay-index-full", true),
+        ("provider-turn-id-mismatch", true),
+        ("Not A Code; rm -rf", false),
+    ] {
+        let fixture = Fixture::new(&activity_recovery_policy(true));
+        let activity = fixture.root.join("agent-session-typed-activity");
+        let envelope = json!({
+            "schema_version": "cli.agent-session.activity-event.v1",
+            "ok": false,
+            "error": {"code": helper_code, "message": "helper message"}
+        })
+        .to_string();
+        fs::write(
+            &activity,
+            format!(
+                "#!/bin/sh\ncase \" $* \" in *' --format json '*) ;; *) exit 99 ;; esac\ncat >/dev/null\nprintf '%s\\n' '{envelope}'\nexit 65\n"
+            ),
+        )
+        .expect("typed activity helper");
+        fs::set_permissions(&activity, fs::Permissions::from_mode(0o700))
+            .expect("activity helper mode");
+        install_coordination_handler(&fixture);
+        let capture = fixture.root.join("typed-activity-coordination.json");
+        let payload = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": "read-only-typed-activity-fault",
+            "cwd": fixture.root,
+            "tool_input": {"command": "pwd"}
+        })
+        .to_string();
+        let admitted = fixture.run_with_env(
+            &["dispatch", "--product", "codex", "--format", "json"],
+            Some(&payload),
+            &[
+                (
+                    "AGENT_SESSION_BIN",
+                    activity.to_str().expect("activity path"),
+                ),
+                ("AGENT_SESSION_ID", "trusted"),
+                ("AGENT_SESSION_RUNTIME_ID", "typed-incarnation"),
+                ("AGENT_SESSION_COORDINATION_MODE", "enforce"),
+                (
+                    "COORDINATION_CAPTURE",
+                    capture.to_str().expect("capture path"),
+                ),
+            ],
+        );
+        assert_eq!(admitted.code, 0, "stdout={}", admitted.stdout_text());
+        let reason = &admitted.stdout_json()["data"]["reasons"][0];
+        assert_eq!(reason["code"], "session-activity-failed");
+        let text = admitted.stdout_text();
+        let expected = format!("session-activity-failed: {helper_code}");
+        assert_eq!(
+            text.contains(&expected),
+            surfaced,
+            "helper code {helper_code:?} surfaced={surfaced}: {text}"
+        );
+        assert!(
+            !text.contains("rm -rf"),
+            "unallowlisted helper text never leaks: {text}"
+        );
+    }
+}
+
+#[test]
 fn activity_recovery_degradation_requires_exact_shape_and_coordination() {
     let fixture = Fixture::new(&activity_recovery_policy(true));
     let activity = fixture.root.join("agent-session-stale-activity");

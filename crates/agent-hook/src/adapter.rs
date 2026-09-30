@@ -542,7 +542,15 @@ pub fn render_provider(decision: &NormalizedDecision) -> Result<String, HookErro
             &decision.event,
             decision.replacement.as_ref(),
         ),
-        DecisionAction::Warn if decision.product == Product::Codex && decision.event == "Stop" => {
+        // A stop warning must never reach the model: Claude turns Stop context
+        // into a new turn, so a persisting warning re-prompts it on every stop
+        // (sympoies/nils-cli#1962), and Codex Stop cannot carry context.
+        DecisionAction::Warn
+            if matches!(
+                (decision.product, decision.event.as_str()),
+                (Product::Codex, "Stop") | (Product::Claude, "Stop" | "SubagentStop")
+            ) =>
+        {
             json!({})
         }
         DecisionAction::Context | DecisionAction::Warn
@@ -1724,28 +1732,29 @@ mod tests {
             );
         }
 
-        // The documented Claude Stop warning keeps naming its warn codes, and
-        // Codex Stop stays neutral because it cannot carry context.
-        for (product, expected) in [
-            (
-                Product::Claude,
-                json!({
-                    "hookSpecificOutput": {
-                        "hookEventName": "Stop",
-                        "additionalContext": "activity-stop-reconciliation-required",
-                    }
-                }),
-            ),
-            (Product::Codex, json!({})),
+        // A stop warning is never model-visible: Claude feeds Stop context back
+        // to the model as a new turn, so a persisting warning would re-prompt
+        // it on every stop (sympoies/nils-cli#1962). Codex Stop cannot carry
+        // context at all. Both render neutral, even with rule-supplied text.
+        for (product, event) in [
+            (Product::Claude, "Stop"),
+            (Product::Claude, "SubagentStop"),
+            (Product::Codex, "Stop"),
         ] {
-            let mut stop = textless_decision(product, "Stop", DecisionAction::Warn, None);
-            stop.reasons = vec![reason(
-                "coord.activity",
-                "activity-stop-reconciliation-required",
-                "warn",
-                false,
-            )];
-            assert_eq!(rendered(&stop), expected, "{product:?} Stop");
+            for context in [None, Some("activity metadata is unavailable")] {
+                let mut stop = textless_decision(product, event, DecisionAction::Warn, context);
+                stop.reasons = vec![reason(
+                    "coord.activity",
+                    "activity-stop-reconciliation-required",
+                    "warn",
+                    false,
+                )];
+                assert_eq!(
+                    rendered(&stop),
+                    json!({}),
+                    "{product:?} {event} context={context:?}"
+                );
+            }
         }
     }
 
