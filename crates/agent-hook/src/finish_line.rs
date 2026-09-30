@@ -2531,20 +2531,20 @@ fn execute_validation_command_platform(
     })?;
     let process_group = child.id();
     if let Err(error) = control.wait_ready(Instant::now() + Duration::from_secs(2)) {
-        let _ = stop_contained_unit(unit);
+        let _ = quiesce_contained_unit(unit);
         terminate_validation_process_group(&mut child);
         let _ = child.wait();
         return Err(error);
     }
     drop(contained);
     if let Err(error) = make_process_nondumpable() {
-        let _ = stop_contained_unit(unit);
+        let _ = quiesce_contained_unit(unit);
         terminate_validation_process_group(&mut child);
         let _ = child.wait();
         return Err(error);
     }
     if let Err(error) = control.acknowledge() {
-        let _ = stop_contained_unit(unit);
+        let _ = quiesce_contained_unit(unit);
         terminate_validation_process_group(&mut child);
         let _ = child.wait();
         return Err(error);
@@ -2601,7 +2601,7 @@ fn execute_validation_command_platform(
                 thread::sleep(Duration::from_millis(10));
             }
             Err(_) => {
-                let _ = stop_contained_unit(unit);
+                let _ = quiesce_contained_unit(unit);
                 terminate_validation_process_group(&mut child);
                 let _ = child.wait();
                 return Err(finish_line_unavailable(
@@ -2616,7 +2616,7 @@ fn execute_validation_command_platform(
     let (stdout, stdout_truncated) = join_validation_stream(stdout)?;
     let (stderr, stderr_truncated) = join_validation_stream(stderr)?;
     let unit_status = contained_unit_status(unit).inspect_err(|_| {
-        let _ = stop_contained_unit(unit);
+        let _ = quiesce_contained_unit(unit);
     })?;
     let _ = reset_contained_unit(unit);
     let reported = control.receive()?;
