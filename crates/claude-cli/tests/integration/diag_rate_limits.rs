@@ -73,6 +73,7 @@ impl Fixture {
         base_options(&self.root)
             .with_env("CLAUDE_SECRET_DIR", &path_str(&self.secret_dir()))
             .with_env("CLAUDE_AUTH_KEYCHAIN", "off")
+            .with_env_remove("CLAUDE_RATE_LIMITS_DEFAULT_ALL_ENABLED")
             .with_env(
                 "CLAUDE_PROMPT_SEGMENT_ENDPOINT",
                 &format!("{}/api/oauth/usage", self.server.url()),
@@ -393,6 +394,45 @@ alpha                 75%   0h  0m       60%   0h  0m  11-20 17:06 +00:00       
 beta                    -        -         -        -  -                          -\n"
         );
     }
+}
+
+#[test]
+fn diag_rate_limits_default_all_env_reads_every_profile_when_no_target_is_given() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    fx.write_profile("beta", "access-beta", FUTURE_MS);
+    fx.write_active_login("access-alpha", FUTURE_MS);
+    let default_all = fx
+        .options()
+        .with_env("CLAUDE_RATE_LIMITS_DEFAULT_ALL_ENABLED", "true");
+
+    let output = run(&["diag", "rate-limits"], &default_all);
+    assert_exit(&output, 1);
+    assert_eq!(
+        stdout(&output),
+        "\n🚦 Claude rate limits for all accounts\n\n\
+Name                   5h     Left    Weekly     Left  Reset                 Resets\n\
+-----------------------------------------------------------------------------------\n\
+alpha                 75%   0h  0m       60%   0h  0m  11-20 17:06 +00:00         -\n\
+beta                    -        -         -        -  -                          -\n"
+    );
+
+    // JSON and named targets keep their single-target meaning.
+    let output = run(&["diag", "rate-limits", "--format", "json"], &default_all);
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["result"]["target_file"], ".credentials.json");
+    let output = run(
+        &["diag", "rate-limits", "--one-line", "alpha"],
+        &default_all,
+    );
+    assert_exit(&output, 0);
+    assert_eq!(stdout(&output), "5h:75% W:60% 11-20 17:06\n");
+
+    // Without the env, no target still reads only the active login.
+    let output = fx.run(&["diag", "rate-limits", "--one-line"]);
+    assert_exit(&output, 0);
+    assert_eq!(stdout(&output), "5h:75% W:60% 11-20 17:06\n");
 }
 
 #[test]

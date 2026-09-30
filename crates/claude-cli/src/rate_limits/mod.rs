@@ -16,10 +16,12 @@ use nils_common::rate_limits::driver::{self, CacheFallbackPolicy};
 use nils_common::rate_limits::schema::{self, LOCAL_DATETIME, LOCAL_DATETIME_WITH_OFFSET};
 use nils_common::rate_limits::values::{self as shared_values, normalize_one_line};
 use nils_common::rate_limits::{
-    OneLineFetch, ProviderSpec, RC_NO_RATE_LIMIT_WINDOW, RateLimitResult, RateLimitWindow,
-    RateLimitsProvider, ResetEpochs, RunOptions, TargetIdentity, WeeklyValues, WindowValues,
+    OneLineFetch, ProgressSink, ProviderSpec, RC_NO_RATE_LIMIT_WINDOW, RateLimitResult,
+    RateLimitWindow, RateLimitsProvider, ResetEpochs, RunOptions, TargetIdentity, WeeklyValues,
+    WindowValues,
 };
 use nils_common::usage_time::reset_epoch_seconds_from_str;
+use nils_term::progress::{Progress, ProgressFinish, ProgressOptions};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
@@ -47,7 +49,7 @@ static CLAUDE_SPEC: ProviderSpec = ProviderSpec {
     table_title: "Claude rate limits for all accounts",
     secret_dir_env: store::SECRET_DIR_ENV,
     usage: "claude-cli diag rate-limits [--cached] [--format text|json] [--one-line] [--all] [--async [--watch] [--jobs N]] [profile]",
-    default_all_env: None,
+    default_all_env: Some("CLAUDE_RATE_LIMITS_DEFAULT_ALL_ENABLED"),
     watch_max_rounds_env: "CLAUDE_RATE_LIMITS_WATCH_MAX_ROUNDS",
     watch_interval_env: "CLAUDE_RATE_LIMITS_WATCH_INTERVAL_SECONDS",
 };
@@ -57,6 +59,22 @@ pub fn run(options: &RateLimitsOptions) -> i32 {
 }
 
 struct ClaudeRateLimits;
+
+struct ClaudeProgress(Progress);
+
+impl ProgressSink for ClaudeProgress {
+    fn set_message(&self, message: String) {
+        self.0.set_message(message);
+    }
+
+    fn inc(&self, delta: u64) {
+        self.0.inc(delta);
+    }
+
+    fn finish_and_clear(self: Box<Self>) {
+        self.0.finish_and_clear();
+    }
+}
 
 /// A target's stored OAuth access token.
 struct Login {
@@ -89,6 +107,15 @@ impl RateLimitsProvider for ClaudeRateLimits {
 
     fn format_local(&self, epoch: i64, format: &str) -> Option<String> {
         format_local(epoch, format)
+    }
+
+    fn progress(&self, total: usize, prefix: &str) -> Option<Box<dyn ProgressSink>> {
+        Some(Box::new(ClaudeProgress(Progress::new(
+            total as u64,
+            ProgressOptions::default()
+                .with_prefix(prefix)
+                .with_finish(ProgressFinish::Clear),
+        ))))
     }
 
     fn secret_dir(&self) -> PathBuf {
@@ -710,6 +737,16 @@ mod tests {
                 ProviderUsageReason::ServiceUnavailable
             );
         }
+    }
+
+    #[test]
+    fn multi_profile_collection_gets_a_progress_bar() {
+        let progress = ClaudeRateLimits
+            .progress(2, "claude-rate-limits ")
+            .expect("progress sink");
+        progress.set_message("alpha".to_string());
+        progress.inc(1);
+        progress.finish_and_clear();
     }
 
     #[test]
