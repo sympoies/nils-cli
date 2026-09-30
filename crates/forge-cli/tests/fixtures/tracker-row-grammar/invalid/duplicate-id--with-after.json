@@ -1,0 +1,9 @@
+{
+  "findings": [
+    {"code": "cycle", "line": 3, "ids": ["A1", "A2"]},
+    {"code": "duplicate-id", "line": 5, "ids": ["A1"]},
+    {"code": "duplicate-id", "line": 6, "ids": ["A2"]},
+    {"code": "self-dependency", "line": 6, "ids": ["A2"]},
+    {"code": "unknown-dependency", "line": 6, "ids": ["A2", "A9"]}
+  ]
+}

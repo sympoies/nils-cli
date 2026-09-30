@@ -1,0 +1,257 @@
+{
+  "rows": [
+    {
+      "id": "Ab",
+      "title": "Upper-case X is done",
+      "ref": {"owner": null, "repo": null, "number": 1},
+      "notes": null,
+      "after": [],
+      "done": true,
+      "phase": null
+    },
+    {
+      "id": "AB",
+      "title": "Ids are case-sensitive",
+      "ref": {"owner": null, "repo": null, "number": 2},
+      "notes": null,
+      "after": ["Ab"],
+      "done": false,
+      "phase": null
+    },
+    {
+      "id": "F1",
+      "title": "A row inside a code fence is still a row",
+      "ref": {"owner": null, "repo": null, "number": 3},
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": null
+    },
+    {
+      "id": "D1",
+      "title": "The last marker wins · after hours",
+      "ref": null,
+      "notes": null,
+      "after": ["Ab"],
+      "done": false,
+      "phase": "Dependencies"
+    },
+    {
+      "id": "D2",
+      "title": "Clean up · afterwards",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Dependencies"
+    },
+    {
+      "id": "D3",
+      "title": "Two spaces after the marker",
+      "ref": null,
+      "notes": null,
+      "after": ["Ab"],
+      "done": false,
+      "phase": "Dependencies"
+    },
+    {
+      "id": "D4",
+      "title": "A comma may have spaces and a tab around it",
+      "ref": null,
+      "notes": null,
+      "after": ["D1", "D2", "Ab"],
+      "done": false,
+      "phase": "Dependencies"
+    },
+    {
+      "id": "D5",
+      "title": "A bullet dot is not the marker • after Ab",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Dependencies"
+    },
+    {
+      "id": "N1",
+      "title": "Parentheses before the ref stay in the title (kept)",
+      "ref": {"owner": null, "repo": null, "number": 4},
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "N2",
+      "title": "Nested notes",
+      "ref": {"owner": null, "repo": null, "number": 5},
+      "notes": "see (a) and (b)",
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "N3",
+      "title": "Only the last group is notes (title)",
+      "ref": null,
+      "notes": "notes",
+      "after": ["N2"],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "N4",
+      "title": "Notes are trimmed",
+      "ref": {"owner": null, "repo": null, "number": 6},
+      "notes": "padded",
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "N5",
+      "title": "An unbalanced parenthesis stays in the title :)",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "N6",
+      "title": "Run `deploy()` then verify()",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "N7",
+      "title": "Call render(x)",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "N8",
+      "title": "(draft)",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "N9",
+      "title": "An empty group is not notes ()",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "N10",
+      "title": "A blank group is not notes (  )",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "R1",
+      "title": "Extra spaces around the title are trimmed",
+      "ref": {"owner": "example", "repo": "alpha", "number": 7},
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "R2",
+      "title": "A ref needs a colon and one space:#8",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "R3",
+      "title": "Two spaces after the colon:  #9",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "R4",
+      "title": "A number alone is a title: 12",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "R5",
+      "title": "Names may use dots, underscores and hyphens",
+      "ref": {"owner": "example-org", "repo": "alpha_beta.rs", "number": 10},
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "R6",
+      "title": "A number has no leading zero: #007",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "R7",
+      "title": "Fifteen digits is the longest number",
+      "ref": {"owner": null, "repo": null, "number": 123456789012345},
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "R8",
+      "title": "Sixteen digits is not a ref: #1234567890123456",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "Notes and refs"
+    },
+    {
+      "id": "W1",
+      "title": "A no-break space before the colon is title text\u00a0",
+      "ref": {"owner": null, "repo": null, "number": 11},
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "No-break spaces"
+    },
+    {
+      "id": "W2",
+      "title": "A trailing no-break space is title text: #12\u00a0",
+      "ref": null,
+      "notes": null,
+      "after": [],
+      "done": false,
+      "phase": "No-break spaces"
+    }
+  ],
+  "graph": "graph LR\n  Ab\n  AB\n  F1\n  D1{{D1}}\n  D2{{D2}}\n  D3{{D3}}\n  D4{{D4}}\n  D5{{D5}}\n  N1\n  N2\n  N3{{N3}}\n  N4\n  N5{{N5}}\n  N6{{N6}}\n  N7{{N7}}\n  N8{{N8}}\n  N9{{N9}}\n  N10{{N10}}\n  R1\n  R2{{R2}}\n  R3{{R3}}\n  R4{{R4}}\n  R5\n  R6{{R6}}\n  R7\n  R8{{R8}}\n  W1\n  W2{{W2}}\n  Ab --> AB\n  Ab --> D1\n  Ab --> D3\n  D1 --> D4\n  D2 --> D4\n  Ab --> D4\n  N2 --> N3"
+}

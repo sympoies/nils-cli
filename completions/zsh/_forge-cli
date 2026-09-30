@@ -1282,6 +1282,116 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id -- Numeric id:_default' \
 && ret=0
 ;;
+(tracker)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_forge-cli__subcmd__issue__subcmd__tracker_commands" \
+"*::: :->tracker" \
+&& ret=0
+
+    case $state in
+    (tracker)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-issue-tracker-command-$line[1]:"
+        case $line[1] in
+            (lint)
+_arguments "${_arguments_options[@]}" : \
+'--body-file=[Lint a local draft body instead of a provider issue. Use \`-\` for stdin. No provider call is made and provider findings are skipped]:PATH:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'(--body-file)--check-state[Also read every issue the rows reference and report each row whose checkbox disagrees with its issue'\''s state]' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'::id -- Numeric id of the tracker issue. Omit with `--body-file`:_default' \
+&& ret=0
+;;
+(graph)
+_arguments "${_arguments_options[@]}" : \
+'--body-file=[Work on a local draft body instead of a provider issue. Use \`-\` for stdin (read-only). No provider call is made]:PATH:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--write[Write the generated block into the issue body, or into the \`--body-file\` draft]' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'::id -- Numeric id of the tracker issue. Omit with `--body-file`:_default' \
+&& ret=0
+;;
+(tick)
+_arguments "${_arguments_options[@]}" : \
+'--item=[Id of the phase-table row to tick]:ITEM_ID:_default' \
+'--pr=[Delivering PR / MR reference to record in the row'\''s notes as \`PR <REF>\`, for example \`#12\` or \`owner/repo#12\`]:REF:_default' \
+'--comment-file=[Post this file as one issue comment after the body write succeeds. Use \`-\` for stdin]:PATH:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Numeric id of the tracker issue:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-issue-tracker-help-command-$line[1]:"
+        case $line[1] in
+            (lint)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(graph)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(tick)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 ":: :_forge-cli__subcmd__issue__subcmd__help_commands" \
@@ -1321,6 +1431,34 @@ _arguments "${_arguments_options[@]}" : \
 (reopen)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
+;;
+(tracker)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__issue__subcmd__help__subcmd__tracker_commands" \
+"*::: :->tracker" \
+&& ret=0
+
+    case $state in
+    (tracker)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-issue-help-tracker-command-$line[1]:"
+        case $line[1] in
+            (lint)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(graph)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(tick)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
 ;;
 (help)
 _arguments "${_arguments_options[@]}" : \
@@ -2433,6 +2571,34 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(tracker)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__help__subcmd__issue__subcmd__tracker_commands" \
+"*::: :->tracker" \
+&& ret=0
+
+    case $state in
+    (tracker)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-help-issue-tracker-command-$line[1]:"
+        case $line[1] in
+            (lint)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(graph)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(tick)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
         esac
     ;;
 esac
@@ -2875,6 +3041,7 @@ _forge-cli__subcmd__help__subcmd__issue_commands() {
 'comment:Append a comment to an issue' \
 'close:Close an issue' \
 'reopen:Reopen a closed issue' \
+'tracker:Check and maintain a program tracker issue'\''s phase table' \
     )
     _describe -t commands 'forge-cli help issue commands' commands "$@"
 }
@@ -2907,6 +3074,30 @@ _forge-cli__subcmd__help__subcmd__issue__subcmd__list_commands() {
 _forge-cli__subcmd__help__subcmd__issue__subcmd__reopen_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help issue reopen commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__issue__subcmd__tracker_commands] )) ||
+_forge-cli__subcmd__help__subcmd__issue__subcmd__tracker_commands() {
+    local commands; commands=(
+'lint:Report phase-table, dependency-graph, and tracking-label findings' \
+'graph:Print the dependency graph the phase table derives, or write it back' \
+'tick:Tick one phase-table row and optionally record its delivering PR' \
+    )
+    _describe -t commands 'forge-cli help issue tracker commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__issue__subcmd__tracker__subcmd__graph_commands] )) ||
+_forge-cli__subcmd__help__subcmd__issue__subcmd__tracker__subcmd__graph_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help issue tracker graph commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__issue__subcmd__tracker__subcmd__lint_commands] )) ||
+_forge-cli__subcmd__help__subcmd__issue__subcmd__tracker__subcmd__lint_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help issue tracker lint commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__issue__subcmd__tracker__subcmd__tick_commands] )) ||
+_forge-cli__subcmd__help__subcmd__issue__subcmd__tracker__subcmd__tick_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help issue tracker tick commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__issue__subcmd__view_commands] )) ||
 _forge-cli__subcmd__help__subcmd__issue__subcmd__view_commands() {
@@ -3300,6 +3491,7 @@ _forge-cli__subcmd__issue_commands() {
 'comment:Append a comment to an issue' \
 'close:Close an issue' \
 'reopen:Reopen a closed issue' \
+'tracker:Check and maintain a program tracker issue'\''s phase table' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli issue commands' commands "$@"
@@ -3334,6 +3526,7 @@ _forge-cli__subcmd__issue__subcmd__help_commands() {
 'comment:Append a comment to an issue' \
 'close:Close an issue' \
 'reopen:Reopen a closed issue' \
+'tracker:Check and maintain a program tracker issue'\''s phase table' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli issue help commands' commands "$@"
@@ -3373,6 +3566,30 @@ _forge-cli__subcmd__issue__subcmd__help__subcmd__reopen_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli issue help reopen commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__issue__subcmd__help__subcmd__tracker_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__help__subcmd__tracker_commands() {
+    local commands; commands=(
+'lint:Report phase-table, dependency-graph, and tracking-label findings' \
+'graph:Print the dependency graph the phase table derives, or write it back' \
+'tick:Tick one phase-table row and optionally record its delivering PR' \
+    )
+    _describe -t commands 'forge-cli issue help tracker commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__help__subcmd__tracker__subcmd__graph_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__help__subcmd__tracker__subcmd__graph_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue help tracker graph commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__help__subcmd__tracker__subcmd__lint_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__help__subcmd__tracker__subcmd__lint_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue help tracker lint commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__help__subcmd__tracker__subcmd__tick_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__help__subcmd__tracker__subcmd__tick_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue help tracker tick commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__issue__subcmd__help__subcmd__view_commands] )) ||
 _forge-cli__subcmd__issue__subcmd__help__subcmd__view_commands() {
     local commands; commands=()
@@ -3387,6 +3604,61 @@ _forge-cli__subcmd__issue__subcmd__list_commands() {
 _forge-cli__subcmd__issue__subcmd__reopen_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli issue reopen commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__tracker_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__tracker_commands() {
+    local commands; commands=(
+'lint:Report phase-table, dependency-graph, and tracking-label findings' \
+'graph:Print the dependency graph the phase table derives, or write it back' \
+'tick:Tick one phase-table row and optionally record its delivering PR' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli issue tracker commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__tracker__subcmd__graph_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__tracker__subcmd__graph_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue tracker graph commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help_commands() {
+    local commands; commands=(
+'lint:Report phase-table, dependency-graph, and tracking-label findings' \
+'graph:Print the dependency graph the phase table derives, or write it back' \
+'tick:Tick one phase-table row and optionally record its delivering PR' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli issue tracker help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help__subcmd__graph_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help__subcmd__graph_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue tracker help graph commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help__subcmd__help_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue tracker help help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help__subcmd__lint_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help__subcmd__lint_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue tracker help lint commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help__subcmd__tick_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__tracker__subcmd__help__subcmd__tick_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue tracker help tick commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__tracker__subcmd__lint_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__tracker__subcmd__lint_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue tracker lint commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__issue__subcmd__tracker__subcmd__tick_commands] )) ||
+_forge-cli__subcmd__issue__subcmd__tracker__subcmd__tick_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli issue tracker tick commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__issue__subcmd__view_commands] )) ||
 _forge-cli__subcmd__issue__subcmd__view_commands() {

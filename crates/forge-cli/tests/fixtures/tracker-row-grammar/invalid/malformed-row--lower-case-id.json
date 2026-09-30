@@ -1,0 +1,7 @@
+{
+  "findings": [
+    {"code": "malformed-row", "line": 4, "ids": []},
+    {"code": "malformed-row", "line": 5, "ids": []},
+    {"code": "malformed-row", "line": 6, "ids": []}
+  ]
+}

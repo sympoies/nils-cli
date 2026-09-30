@@ -16,6 +16,18 @@ Token-shaped strings MUST NOT appear anywhere under this tree. `scripts/ci/forge
 
 Replace every occurrence with `<redacted-token>` (or `<redacted-jwt>` for bearer-style headers). When you need a token-shaped placeholder to exercise downstream parsing without tripping the lint, use shorter shapes (under 16 characters) — they're below the lint's threshold and stay obviously synthetic.
 
+## Vendored tracker row grammar corpus
+
+`tracker-row-grammar/` is the conformance corpus for the program tracker
+phase-table grammar. It is copied unchanged from the `agent-runtime-kit`
+repository (`tests/fixtures/tracker-row-grammar/`), which owns the grammar and
+the corpus; its own `README.md` describes the layout. Do not edit it here. To
+update it, replace the whole directory with a byte-for-byte copy (`cp -a`):
+some bodies depend on exact bytes (a no-break space, a tab, a missing final
+line feed), so never re-save them through an editor or a formatter.
+`tests/integration/tracker_grammar.rs` replays every pair against
+`src/tracker/`.
+
 ## Adding a new fixture
 
 1. Drop the file under `crates/forge-cli/tests/fixtures/<provider>/<op>/<name>.<ext>`.

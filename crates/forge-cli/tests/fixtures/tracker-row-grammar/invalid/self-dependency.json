@@ -1,0 +1,5 @@
+{
+  "findings": [
+    {"code": "self-dependency", "line": 4, "ids": ["A2"]}
+  ]
+}

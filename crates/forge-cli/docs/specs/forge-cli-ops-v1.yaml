@@ -1097,6 +1097,108 @@ operations:
       github: { program: gh,   argv: [issue, reopen, "{id}"] }
       gitlab: { program: glab, argv: [issue, reopen, "{id}"] }
 
+  - id: issue.tracker.lint
+    schema_version: cli.forge-cli.issue.tracker.lint.v1
+    summary: Report grammar and provider findings for a program tracker issue.
+    inputs:
+      - { name: <id>,          type: integer, required: "unless --body-file" }
+      - { name: --body-file,   type: path,    required: false } # local draft, "-" = stdin; no provider call
+      - { name: --check-state, type: bool,    default: false }  # conflicts with --body-file
+    validations: []
+    dry_run:
+      plan: "issue.view argv; no backend call"
+    backends:
+      github: { derives_from: issue.view } # plus one issue.view per referenced issue with --check-state
+      gitlab: { derives_from: issue.view }
+    findings:
+      grammar: [malformed-row, duplicate-id, unknown-dependency, self-dependency, cycle, stale-graph]
+      provider: [missing-tracking-label, state-mismatch, unreadable-ref]
+      tracking_label: "workflow::tracking"
+      failure: { error_kind: tracker_findings, exit: DATA, carries_data: true }
+    output:
+      data:
+        source: enum<issue|body-file>
+        provider: "enum<github|gitlab|local> | null"
+        number: "integer | null"
+        url: "string | null"
+        row_count: integer
+        state_checked: bool
+        findings: list<{ code, line, ids, message }>
+
+  - id: issue.tracker.graph
+    schema_version: cli.forge-cli.issue.tracker.graph.v1
+    summary: Print the dependency graph the phase table derives, or write its block back.
+    inputs:
+      - { name: <id>,        type: integer, required: "unless --body-file" }
+      - { name: --body-file, type: path,    required: false } # local draft, "-" = stdin (read-only)
+      - { name: --write,     type: bool,    default: false }
+    validations:
+      - no_local_path # written body, through issue.edit
+      - no_agent_attribution # written body, through issue.edit
+    dry_run:
+      read_only: "issue.view argv under data.plan; no backend call"
+      write: "runs the read; written=false and data.actions[] = { kind: edit-body, plan }"
+    write_rule: "read the issue immediately before writing and write a transformation of that body; change only the mermaid block of the Dependency graph section; no write when the block is current"
+    errors:
+      - { error_kind: tracker_findings,           exit: DATA, when: "the phase table has row findings (data.findings[], graph=null)" }
+      - { error_kind: tracker_stdin_not_writable, exit: DATA, when: "--write with --body-file -" }
+    backends:
+      github: { derives_from: [issue.view, issue.edit] }
+      gitlab: { derives_from: [issue.view, issue.edit] }
+    output:
+      data:
+        source: enum<issue|body-file>
+        provider: "enum<github|gitlab|local> | null"
+        number: "integer | null"
+        url: "string | null"
+        graph: "string | null"
+        current: bool
+        change: enum<none|replaced-block|inserted-block|inserted-section>
+        changed: bool
+        written: bool
+        dry_run: bool
+        findings: list<{ code, line, ids, message }>
+        actions: "list<{ kind, plan }>, present under --dry-run when a call is planned"
+
+  - id: issue.tracker.tick
+    schema_version: cli.forge-cli.issue.tracker.tick.v1
+    summary: Tick one phase-table row and optionally record its delivering PR.
+    inputs:
+      - { name: <id>,           type: integer, required: true }
+      - { name: --item,         type: string,  required: true }
+      - { name: --pr,           type: string,  required: false }
+      - { name: --comment-file, type: path,    required: false } # "-" = stdin
+    validations:
+      - no_local_path # written body and comment
+      - no_agent_attribution # written body and comment
+    dry_run:
+      write: "runs the read; written=false and data.actions[] = { kind: edit-body | comment, plan }"
+    write_rule: "read the issue immediately before writing and write a transformation of that body; change only the one row line; a ticked row with nothing to record writes nothing and posts no comment"
+    errors:
+      - { error_kind: tracker_item_unknown,       exit: DATA }
+      - { error_kind: tracker_item_duplicated,    exit: DATA }
+      - { error_kind: tracker_item_malformed,     exit: DATA }
+      - { error_kind: tracker_pr_invalid,         exit: DATA }
+      - { error_kind: tracker_comment_not_posted, exit: RUNTIME, when: "the body write landed and the comment call failed" }
+    backends:
+      github: { derives_from: [issue.view, issue.edit, issue.comment] }
+      gitlab: { derives_from: [issue.view, issue.edit, issue.comment] }
+    output:
+      data:
+        provider: enum<github|gitlab|local>
+        number: integer
+        url: string
+        item: string
+        line: integer
+        row_before: string
+        row_after: string
+        changed: bool
+        written: bool
+        dry_run: bool
+        comment_posted: bool
+        comment_url: "string | null"
+        actions: "list<{ kind, plan }>, present under --dry-run when a call is planned"
+
   - id: label.list
     schema_version: cli.forge-cli.label.list.v1
     summary: List repository labels from the selected provider.

@@ -14,6 +14,7 @@ mod integration {
     mod forgejo_http;
     mod inbox;
     mod issue_atoms;
+    mod issue_tracker;
     mod label_ops;
     mod ledger_blank_comment_probe;
     mod local_ops;
@@ -41,5 +42,6 @@ mod integration {
     mod required_check_gate;
     mod search;
     mod support;
+    mod tracker_grammar;
     mod validations;
 }

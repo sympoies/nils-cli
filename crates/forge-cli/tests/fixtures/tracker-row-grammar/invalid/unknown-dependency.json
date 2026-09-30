@@ -1,0 +1,6 @@
+{
+  "findings": [
+    {"code": "unknown-dependency", "line": 6, "ids": ["A2", "A9"]},
+    {"code": "unknown-dependency", "line": 7, "ids": ["REL", "Rel"]}
+  ]
+}

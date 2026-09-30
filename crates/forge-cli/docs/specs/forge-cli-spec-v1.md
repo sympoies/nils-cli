@@ -58,6 +58,9 @@ In scope (v1):
   (blocking poll until terminal).
 - Issue lifecycle: `issue create`, `view`, `edit`, `comment`, `close`,
   `reopen`.
+- Program tracker maintenance: `issue tracker lint`, `graph`, and `tick`
+  check a tracker issue's phase table, regenerate its dependency graph block,
+  and tick one row without rewriting the whole body.
 - Repository label lifecycle: `label list`, `label audit`, and
   `label ensure`.
 - Repository helpers: read-only `repo view`, the explicitly governed
@@ -137,6 +140,9 @@ Parity matrix (v1):
 | `issue comment <id>`                        | `gh issue comment <id> --body …`                                                                                                             | `glab issue note <id> --message …`                                     | exact                                                                                                                    |
 | `issue close <id>`                          | `gh issue close <id>`                                                                                                                        | `glab issue close <id>`                                                | exact                                                                                                                    |
 | `issue reopen <id>`                         | `gh issue reopen <id>`                                                                                                                       | `glab issue reopen <id>`                                               | exact                                                                                                                    |
+| `issue tracker lint <id>`                   | `issue view`, plus one `issue view` per referenced issue with `--check-state`                                                                | same                                                                   | exact (grammar is provider-neutral)                                                                                      |
+| `issue tracker graph <id>`                  | `issue view`; with `--write`, `issue edit --body`                                                                                            | `issue view`; with `--write`, `issue update --description`             | exact                                                                                                                    |
+| `issue tracker tick <id>`                   | `issue view` + `issue edit --body`; with `--comment-file`, the `issue comment` call                                                          | `issue view` + `issue update --description`; `issue note`              | exact                                                                                                                    |
 | `label list`                                | `gh label list --json …`                                                                                                                     | paged `glab label list --output json --per-page … --page …`            | exact                                                                                                                    |
 | `label audit`                               | read labels, compare with caller catalog                                                                                                     | same                                                                   | exact                                                                                                                    |
 | `label ensure`                              | `gh label create/edit`                                                                                                                       | `glab label create/edit`                                               | exact (no delete/rename by default)                                                                                      |
@@ -161,7 +167,8 @@ GitLab capability status:
 
 - Supported with stable JSON/API: PR/MR create, view, list, edit, comment,
   ready, close, checks, wait-checks, merge, deliver; issue create/view/edit,
-  comment, close, reopen; label list/audit/ensure; auth status; repo view and
+  comment, close, reopen, tracker lint/graph/tick; label list/audit/ensure;
+  auth status; repo view and
   governed repo push-default;
   inbox list/status/next; activity feed.
 - Intentionally unsupported in v1: GitLab `activity commits`,
@@ -215,7 +222,11 @@ forge-cli
 │   ├── edit
 │   ├── comment
 │   ├── close
-│   └── reopen
+│   ├── reopen
+│   └── tracker
+│       ├── lint
+│       ├── graph
+│       └── tick
 ├── activity
 │   ├── commits
 │   ├── events
@@ -1263,6 +1274,91 @@ distinctions that cannot be proven offline.
 - Non-goals: deletion, rename-by-default, and moving catalog ownership into
   `nils-cli`.
 
+### `issue tracker lint` / `graph` / `tick`
+
+These atoms maintain a program tracker issue: an issue whose body holds a
+`## Phase table` of checkbox rows and a `## Dependency graph` section with one
+derived `mermaid` block. The row grammar, the graph derivation, and the finding
+codes are owned by the `agent-runtime-kit` repository
+(`tracker-row-grammar.md`). `src/tracker/` implements that grammar as a pure
+module, and its conformance corpus is vendored unchanged under
+`tests/fixtures/tracker-row-grammar/`.
+
+- A finding is `{ code, line, ids, message }`. `line` is the 1-based line in the
+  tracker body, or `null` for a finding about the whole tracker. Grammar codes:
+  `malformed-row`, `duplicate-id`, `unknown-dependency`, `self-dependency`,
+  `cycle`, and `stale-graph`, which is reported only when the table has no
+  other grammar finding. Provider codes: `missing-tracking-label`,
+  `state-mismatch`, and `unreadable-ref`.
+- `issue tracker lint <id>` emits `cli.forge-cli.issue.tracker.lint.v1` with
+  `data = { source, provider, number, url, row_count, state_checked, findings }`.
+  It reports the grammar findings, plus `missing-tracking-label` when the issue
+  does not carry `workflow::tracking`.
+- `--check-state` also reads each issue the rows reference, once, through the
+  `issue view` call: `#N` in the tracker's repository and `owner/repo#N` in
+  that repository. It reports `state-mismatch` once per row whose checkbox
+  disagrees with its issue: the row is ticked but the issue is open, or the row
+  is open but the issue is closed or merged. An issue named by several rows is
+  delivered in steps and judged as a whole, so an open issue disagrees with its
+  rows only when all of them are ticked. A target that cannot be read is an
+  `unreadable-ref` finding, not an error. A local store holds one repository,
+  so `owner/repo#N` for any other repository is unreadable there.
+- Any finding exits `DATA 65` with `ok = false` and `error.code =
+  tracker_findings`, and the envelope still carries `data`, so consumers read
+  `data.findings[]` on both outcomes.
+- `issue tracker graph <id>` emits `cli.forge-cli.issue.tracker.graph.v1` with
+  `data = { source, provider, number, url, graph, current, change, changed,
+  written, dry_run, findings, actions? }`. `graph` is the generated Mermaid
+  source without its fence, and text mode prints the fenced block. A table with
+  row findings has no generated graph: the command refuses with those findings
+  in the same `tracker_findings` failure envelope and `graph = null`.
+- `graph --write` changes only the block inside the `## Dependency graph`
+  section. A section without a block gets the block right after its heading; a
+  body without the section gets the section right after the phase table
+  section, or at the end of a body that has no phase table. No other byte of
+  the body changes, inserted lines follow the line ending in use where they
+  land, and nothing is written when the block is already current
+  (`changed = false`). `change` is `none`, `replaced-block`, `inserted-block`,
+  or `inserted-section`.
+- `issue tracker tick <id> --item <item-id>` emits
+  `cli.forge-cli.issue.tracker.tick.v1` with `data = { provider, number, url,
+  item, line, row_before, row_after, changed, written, dry_run, comment_posted,
+  comment_url, actions? }`. It sets that row's checkbox to `[x]` and changes
+  only that row line; the graph block carries no done state and is left alone.
+- `tick --pr <ref>` records the delivering PR in the row's notes: a row without
+  notes gets a `(PR <ref>)` group after its ref or title and before any
+  `· after` clause, and a row with notes gets `, PR <ref>` appended inside the
+  group. A PR the notes already name is not added again. `<ref>` must be one token without
+  whitespace, parentheses, commas, or a middle dot (`tracker_pr_invalid`).
+- `tick --comment-file <path>` posts that file as one issue comment after the
+  body write succeeds. The comment is validated before anything is written. If
+  the comment call still fails after the write, the error is
+  `tracker_comment_not_posted` (`RUNTIME 1`): the row is ticked, and the caller
+  posts the comment with `issue comment`, because ticking again is a no-op.
+- `tick` refuses with `tracker_item_unknown`, `tracker_item_duplicated`, or
+  `tracker_item_malformed` (`DATA 65`) when no row, more than one row, or a
+  malformed row line carries the item id. Ticking a row that is already ticked,
+  with no new PR to record, is a no-op: `changed = false`, nothing is written,
+  and no comment is posted.
+- **Write rule.** Every provider write reads the issue immediately before
+  writing, applies the block or row transformation to that freshly read body,
+  and writes the result through the `issue edit` body path with its payload
+  guards (rules 11 and 17 and the escaped-control guard). A body from an
+  earlier read is never written, so a change another session made since the
+  caller last looked is kept. The provider offers no compare-and-swap, so a
+  write landing between this read and this write can still be lost.
+- `--body-file <path>` on `lint` and `graph` works on a local draft: no
+  provider is resolved or called, the provider findings are skipped, and
+  `source = body-file` with `provider`, `number`, and `url` set to `null`.
+  `--body-file -` reads stdin. `graph --write` rewrites the draft file, and
+  refuses stdin with `tracker_stdin_not_writable`. `--check-state` and an issue
+  id cannot be combined with `--body-file`.
+- `--dry-run` on a read-only invocation (`lint`, or `graph` without `--write`)
+  emits the planned `issue view` argv under `data.plan`. On `graph --write` and
+  `tick` it runs the read, reports the planned change with `written = false`,
+  and lists each backend call a real run would make under
+  `data.actions[] = { kind, plan }`, where `kind` is `edit-body` or `comment`.
+
 (See `forge-cli-ops-v1.yaml` for the remaining ops.)
 
 ## Macro: `pr deliver`
@@ -1435,7 +1531,9 @@ backend implementations cannot diverge.
     `no_local_path` entry in `forge-cli-ops-v1.yaml` for the exact list; set
     `FORGE_CLI_ALLOW_LOCAL_PATH=1` to bypass a verified false positive. Enforced
     by `pr create`, `pr edit`, `issue create`, `issue edit`, `pr comment`,
-    `pr review`, and `issue comment`.
+    `pr review`, and `issue comment`; `issue tracker graph --write` and
+    `issue tracker tick` write through the `issue edit` and `issue comment`
+    paths and inherit it.
 12. **Opt-in native-review convergence.** `pr merge` and the merge step of
     `pr deliver` resolve `--review-convergence[=true|false]` over repo and
     global config. The default is off. In v1, configured bots use `observed`:
@@ -1526,7 +1624,8 @@ backend implementations cannot diverge.
     `FORGE_CLI_ALLOW_AGENT_ATTRIBUTION=1` to bypass a verified false positive.
     Enforced by `pr create`, `pr edit`, `issue create`, `issue edit`,
     `pr comment`, `issue comment`, `pr review`, `pr review-threads reply`, and
-    `pr review-threads resolve`.
+    `pr review-threads resolve`; the `issue tracker` writes inherit it from
+    `issue edit` and `issue comment`.
 18. **Merge freeze and merge queue (GitHub).** Right after the repository
     read, `pr merge` issues one GraphQL policy read (`ForgeMergePolicy`): the
     open issues labelled `merge-freeze`, the base branch's `mergeQueue`, and the
@@ -2084,6 +2183,7 @@ through `forge-cli` before agent-runtime-kit can adopt the new CLI:
 | `example:close-*-mr` / `deliver-*-mr`          | same as github counterparts                             |
 | `issue-lifecycle`                              | `forge-cli issue create|view|edit|comment|close|reopen` |
 | `issue-follow-up`                              | `forge-cli issue create` (+ subsequent comments)        |
+| program tracker upkeep                         | `forge-cli issue tracker lint|graph|tick`               |
 
 Skills keep their bash shells. The shells:
 

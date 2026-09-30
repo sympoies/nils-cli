@@ -58,18 +58,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         remote_url_lookup,
     )?;
     let body = read_body(args.body.as_deref(), args.body_file.as_deref())?;
-    if body.trim().is_empty() {
-        return Err(ForgeError::validation(
-            schema_err(),
-            "body_missing_summary",
-            "comment body is empty (supply --body or --body-file)",
-            None,
-        ));
-    }
-    no_local_path(&body, "comment")?;
-    no_agent_attribution(&body, "comment")?;
-    no_escaped_control_markdown(&body)?;
-    let call = build_comment_call(&ctx, args.id, &body);
+    let call = build_guarded_comment_call(&ctx, args.id, &body)?;
 
     if global.dry_run {
         let payload = DryRunPayload::new(ctx.provider, &call);
@@ -99,7 +88,29 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     ))
 }
 
-fn first_url(stdout: &str) -> Option<String> {
+/// The `issue comment` call for `body`, behind the comment guards: a
+/// non-empty body that passes the payload rules. Shared with
+/// `issue tracker tick --comment-file`.
+pub(crate) fn build_guarded_comment_call(
+    ctx: &ProviderContext,
+    id: u64,
+    body: &str,
+) -> Result<BackendCall, ForgeError> {
+    if body.trim().is_empty() {
+        return Err(ForgeError::validation(
+            schema_err(),
+            "body_missing_summary",
+            "comment body is empty (supply --body or --body-file)",
+            None,
+        ));
+    }
+    no_local_path(body, "comment")?;
+    no_agent_attribution(body, "comment")?;
+    no_escaped_control_markdown(body)?;
+    Ok(build_comment_call(ctx, id, body))
+}
+
+pub(crate) fn first_url(stdout: &str) -> Option<String> {
     stdout.split_whitespace().find_map(|token| {
         let url = token.trim_matches(|ch: char| {
             matches!(
@@ -169,7 +180,7 @@ fn build_comment_call(ctx: &ProviderContext, id: u64, body: &str) -> BackendCall
     BackendCall::new(program, argv)
 }
 
-fn read_body(inline: Option<&str>, file: Option<&str>) -> Result<String, ForgeError> {
+pub(crate) fn read_body(inline: Option<&str>, file: Option<&str>) -> Result<String, ForgeError> {
     if let Some(s) = inline {
         return Ok(s.to_string());
     }

@@ -21,6 +21,7 @@ pub mod ops;
 pub mod provider;
 pub mod provider_registry;
 pub mod rate_limit;
+pub mod tracker;
 pub mod validations;
 
 use std::ffi::OsString;
