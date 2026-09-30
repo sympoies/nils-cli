@@ -6503,7 +6503,7 @@ fn delete_operational_tmux_probe_error_retains_codex_and_claude_state() {
     let state_arg = state_dir.to_string_lossy().to_string();
     write_executable(
         &tmux_bin,
-        "#!/usr/bin/env sh\necho 'error connecting to /tmp/tmux-test/default (No such file or directory)' >&2\nexit 1\n",
+        "#!/usr/bin/env sh\necho 'error connecting to /tmp/tmux-test/default (Permission denied)' >&2\nexit 1\n",
     );
 
     for agent in ["codex", "claude"] {
@@ -10496,6 +10496,118 @@ fn standalone_profile_resume_fails_closed_without_complete_durable_context() {
                 .all(|call| call.first().is_none_or(|arg| arg != "new-session")),
             "{case} must fail before creating a tmux runtime"
         );
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_prior_boot_cli_delete_and_resume_preserve_exact_provider_identity() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let state = tmp.path().join("state");
+    let cwd = tmp.path().join("repo");
+    fs::create_dir(&cwd).unwrap();
+    let (tmux, log) = fake_tmux(tmp.path());
+    let agent = fake_agent(tmp.path(), "codex");
+    let current = Command::new("/usr/sbin/sysctl")
+        .args(["-n", "kern.bootsessionuuid"])
+        .output()
+        .unwrap();
+    assert!(current.status.success());
+    let current = String::from_utf8(current.stdout)
+        .unwrap()
+        .trim()
+        .to_lowercase();
+    let old = uuid::Uuid::new_v4().to_string();
+    assert_ne!(old, current);
+    let state_arg = state.to_str().unwrap();
+    let tmux_arg = tmux.to_str().unwrap();
+    let log_arg = log.to_str().unwrap();
+    for (id, operation) in [("prior-delete", "delete"), ("prior-resume", "resume")] {
+        let session = write_resumable_session_record_with_agent_bin(
+            &state,
+            id,
+            "codex",
+            &format!("hs-codex-{id}"),
+            &cwd,
+            &[
+                "resume",
+                "resume-session-id",
+                "--cd",
+                cwd.to_str().unwrap(),
+                "--no-alt-screen",
+            ],
+            Some(&agent),
+        );
+        let path = session.join("session.json");
+        let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        record
+            .as_object_mut()
+            .unwrap()
+            .remove("tmux_runtime_never_launched");
+        record["delete_tmux_identity"] = json!({
+            "macos_boot_id": old,
+            "launch_id": record["runtime"]["launch_id"],
+            "session_id": "$91", "pane_id": "%91",
+            "pane_pid": unsafe { libc::getpid() },
+            "process_group_id": unsafe { libc::getpgrp() }
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        fs::write(&log, b"").unwrap();
+        let output = run(
+            tmp.path(),
+            &[
+                "--state-dir",
+                state_arg,
+                operation,
+                id,
+                "--tmux-bin",
+                tmux_arg,
+                "--format",
+                "json",
+            ],
+            &[("AGENT_SESSION_FAKE_TMUX_LOG", log_arg)],
+        );
+        assert_eq!(output.code, 0, "{operation}: {}", output.stdout_text());
+        let calls = tmux_calls(&log);
+        if operation == "delete" {
+            assert!(!session.exists());
+            assert!(
+                calls.is_empty(),
+                "prior-boot delete must not touch reused selectors: {calls:?}"
+            );
+        } else {
+            let first_launch = calls
+                .iter()
+                .position(|call| call.first().is_some_and(|arg| arg == "new-session"))
+                .expect("resume launches provider continuation");
+            assert_eq!(
+                first_launch, 0,
+                "old selector must never be probed: {calls:?}"
+            );
+            let launch = &calls[first_launch];
+            assert!(
+                launch
+                    .windows(2)
+                    .any(|args| args == ["resume", "resume-session-id"])
+            );
+            assert!(
+                !calls
+                    .iter()
+                    .any(|call| call.first().is_some_and(|arg| matches!(
+                        arg.as_str(),
+                        "kill-session" | "if-shell" | "send-keys"
+                    )))
+            );
+            let resumed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(resumed["runtime"]["generation"], 2);
+            assert_ne!(
+                resumed["runtime"]["launch_id"],
+                record["runtime"]["launch_id"]
+            );
+            assert_eq!(resumed["provider_resume"], record["provider_resume"]);
+            assert_eq!(resumed["cwd"], record["cwd"]);
+            assert_eq!(resumed["delete_tmux_identity"]["macos_boot_id"], current);
+        }
     }
 }
 

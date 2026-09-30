@@ -17114,7 +17114,7 @@ esac
         executable(
             &dir.join("tmux"),
             &format!(
-                "#!/usr/bin/env sh\n{pane_stub}\nprintf '%s\\n' \"$*\" >> {}\ncase \"$1\" in\n  has-session) exit 1 ;;\n  new-session) heartbeat=''; slot=0; for arg in \"$@\"; do if [ \"$slot\" = 2 ]; then incarnation=\"$arg\"; break; elif [ \"$slot\" = 1 ]; then slot=2; else case \"$arg\" in */coordination/heartbeat) heartbeat=\"$arg\"; slot=1 ;; esac; fi; done; if [ -n \"$heartbeat\" ] && [ -n \"$incarnation\" ]; then mkdir -p \"$(dirname \"$heartbeat\")\"; printf '%s:%s\\n' \"$incarnation\" \"$(date +%s)\" > \"$heartbeat\"; chmod 600 \"$heartbeat\"; fi; start_live_pane || exit 1; printf '%s\\t%s\\t%s\\n' '$77' '%77' \"$NILS_TEST_PANE_PID\"; exit 0 ;;\n  display-message) set -- $(cat \"$NILS_TEST_PANE_PARENT/.pane-identity\"); printf '%s\\t%s\\t%s\\n' '$77' '%77' \"$1\"; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+                "#!/usr/bin/env sh\n{pane_stub}\nprintf '%s\\n' \"$*\" >> {}\ncase \"$1\" in\n  has-session) printf '%s\\n' \"can't find session: fixture\" >&2; exit 1 ;;\n  new-session) heartbeat=''; slot=0; for arg in \"$@\"; do if [ \"$slot\" = 2 ]; then incarnation=\"$arg\"; break; elif [ \"$slot\" = 1 ]; then slot=2; else case \"$arg\" in */coordination/heartbeat) heartbeat=\"$arg\"; slot=1 ;; esac; fi; done; if [ -n \"$heartbeat\" ] && [ -n \"$incarnation\" ]; then mkdir -p \"$(dirname \"$heartbeat\")\"; printf '%s:%s\\n' \"$incarnation\" \"$(date +%s)\" > \"$heartbeat\"; chmod 600 \"$heartbeat\"; fi; start_live_pane || exit 1; printf '%s\\t%s\\t%s\\n' '$77' '%77' \"$NILS_TEST_PANE_PID\"; exit 0 ;;\n  display-message) set -- $(cat \"$NILS_TEST_PANE_PARENT/.pane-identity\"); printf '%s\\t%s\\t%s\\n' '$77' '%77' \"$1\"; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
                 shell_words::quote(&log.to_string_lossy())
             ),
         )
@@ -18027,7 +18027,11 @@ esac
         fs::create_dir_all(session_dir(&context, &managed.id)).unwrap();
         crate::write_session_record(&context, &managed).unwrap();
         let tmux = tmp.path().join("stopped-tmux");
-        fs::write(&tmux, "#!/usr/bin/env sh\nexit 1\n").unwrap();
+        fs::write(
+            &tmux,
+            "#!/usr/bin/env sh\nprintf '%s\\n' \"no server running on fixture\" >&2\nexit 1\n",
+        )
+        .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o755)).unwrap();
 
         let (status, body) = call(
@@ -21246,7 +21250,7 @@ esac
             .to_string();
         let stopped_tmux = executable(
             &tmp.path().join("tmux-stopped"),
-            "#!/usr/bin/env sh\n[ \"$1\" = has-session ] && exit 1\nexit 0\n",
+            "#!/usr/bin/env sh\n[ \"$1\" = has-session ] && { printf '%s\\n' \"can't find session: fixture\" >&2; exit 1; }\nexit 0\n",
         );
         let st = state(tmp.path(), Some(TOKEN), stopped_tmux);
 
@@ -21305,7 +21309,7 @@ esac
 
         let stopped_tmux = executable(
             &tmp.path().join("tmux-stopped-after-ready"),
-            "#!/usr/bin/env sh\n[ \"$1\" = has-session ] && exit 1\nexit 0\n",
+            "#!/usr/bin/env sh\n[ \"$1\" = has-session ] && { printf '%s\\n' \"can't find session: fixture\" >&2; exit 1; }\nexit 0\n",
         );
         let stopped = state(tmp.path(), Some(TOKEN), stopped_tmux);
         let (glance_status, glance_body) =
@@ -21334,7 +21338,7 @@ esac
         std::fs::write(session_dir.join(".startup-stage"), "initial_connection\n").unwrap();
         let stopped_tmux = executable(
             &tmp.path().join("tmux-stopped-after-connect"),
-            "#!/usr/bin/env sh\n[ \"$1\" = has-session ] && exit 1\nexit 0\n",
+            "#!/usr/bin/env sh\n[ \"$1\" = has-session ] && { printf '%s\\n' \"can't find session: fixture\" >&2; exit 1; }\nexit 0\n",
         );
         let st = state(tmp.path(), Some(TOKEN), stopped_tmux);
 
@@ -25623,7 +25627,7 @@ esac
         let tmux = executable(
             &tmp.path().join("stopped-inspect-tmux"),
             &format!(
-                "#!/usr/bin/env sh\nprintf '%s\\n' \"$*\" >> {}\nexit 1\n",
+                "#!/usr/bin/env sh\nprintf '%s\\n' \"$*\" >> {}\nprintf '%s\\n' \"no server running on fixture\" >&2\nexit 1\n",
                 shell_words::quote(&crate::display_path(&calls)),
             ),
         );
@@ -27004,7 +27008,7 @@ esac
         let tmux = executable(
             &tmp.path().join("tmux-resume-lock"),
             &format!(
-                "#!/usr/bin/env sh\n{pane_stub}\ncase \"$1\" in\n  has-session) [ -f {running} ] ;;\n  new-session) : > {started}; while [ ! -f {release} ]; do sleep 0.01; done; : > {running}; heartbeat=''; slot=0; for arg in \"$@\"; do if [ \"$slot\" = 2 ]; then incarnation=\"$arg\"; break; elif [ \"$slot\" = 1 ]; then slot=2; else case \"$arg\" in */coordination/heartbeat) heartbeat=\"$arg\"; slot=1 ;; esac; fi; done; if [ -n \"$heartbeat\" ] && [ -n \"$incarnation\" ]; then mkdir -p \"$(dirname \"$heartbeat\")\"; printf '%s:%s\\n' \"$incarnation\" \"$(date +%s)\" > \"$heartbeat\"; chmod 600 \"$heartbeat\"; fi; start_live_pane || exit 1; printf '%s\\t%s\\t%s\\n' '$77' '%77' \"$NILS_TEST_PANE_PID\"; exit 0 ;;\n  display-message) set -- $(cat \"$NILS_TEST_PANE_PARENT/.pane-identity\"); printf '%s\\t%s\\t%s\\n' '$77' '%77' \"$1\"; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+                "#!/usr/bin/env sh\n{pane_stub}\ncase \"$1\" in\n  has-session) [ -f {running} ] && exit 0; printf '%s\\n' \"can't find session: fixture\" >&2; exit 1 ;;\n  new-session) : > {started}; while [ ! -f {release} ]; do sleep 0.01; done; : > {running}; heartbeat=''; slot=0; for arg in \"$@\"; do if [ \"$slot\" = 2 ]; then incarnation=\"$arg\"; break; elif [ \"$slot\" = 1 ]; then slot=2; else case \"$arg\" in */coordination/heartbeat) heartbeat=\"$arg\"; slot=1 ;; esac; fi; done; if [ -n \"$heartbeat\" ] && [ -n \"$incarnation\" ]; then mkdir -p \"$(dirname \"$heartbeat\")\"; printf '%s:%s\\n' \"$incarnation\" \"$(date +%s)\" > \"$heartbeat\"; chmod 600 \"$heartbeat\"; fi; start_live_pane || exit 1; printf '%s\\t%s\\t%s\\n' '$77' '%77' \"$NILS_TEST_PANE_PID\"; exit 0 ;;\n  display-message) set -- $(cat \"$NILS_TEST_PANE_PARENT/.pane-identity\"); printf '%s\\t%s\\t%s\\n' '$77' '%77' \"$1\"; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
                 started = shell_words::quote(&started.to_string_lossy()),
                 release = shell_words::quote(&release.to_string_lossy()),
                 running = shell_words::quote(&running.to_string_lossy()),
@@ -28474,7 +28478,7 @@ printf '%s\n' "$*" >> {log}
 case "$1" in
   has-session)
     test -f {running} && exit 0
-    printf '%s\n' "can't find session" >&2
+    printf '%s\n' "can't find session: fixture" >&2
     exit 1
     ;;
   new-session)
@@ -29564,7 +29568,7 @@ esac
         let tmux = tmp.path().join("operational-error-tmux");
         std::fs::write(
             &tmux,
-            "#!/usr/bin/env sh\nprintf '%s\\n' 'error connecting to /tmp/tmux-test/default (No such file or directory)' >&2\nexit 1\n",
+            "#!/usr/bin/env sh\nprintf '%s\\n' 'error connecting to /tmp/tmux-test/default (Permission denied)' >&2\nexit 1\n",
         )
         .unwrap();
         let mut permissions = std::fs::metadata(&tmux).unwrap().permissions();
@@ -32716,7 +32720,7 @@ exit 0
         std::fs::write(
             &bin,
             format!(
-                "#!/usr/bin/env sh\nprintf '%s\\n' \"$*\" >> {}\ncase \"$1\" in\n  has-session) exit {} ;;\n  load-buffer) cat \"$4\" >> {}; exit 0 ;;\n  capture-pane) printf 'pane\\n'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+                "#!/usr/bin/env sh\nprintf '%s\\n' \"$*\" >> {}\ncase \"$1\" in\n  has-session) result={}; [ \"$result\" = 0 ] || printf '%s\\n' \"can't find session: fixture\" >&2; exit \"$result\" ;;\n  load-buffer) cat \"$4\" >> {}; exit 0 ;;\n  capture-pane) printf 'pane\\n'; exit 0 ;;\n  *) exit 0 ;;\nesac\n",
                 shell_words::quote(&calls.to_string_lossy()),
                 has_session_exit,
                 shell_words::quote(&pasted.to_string_lossy()),
