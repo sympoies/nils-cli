@@ -1,7 +1,10 @@
 //! Session board v1 relay mode (`docs/specs/session-board-v1.md`, "Relay
 //! route" and "Mode selection"): a managed session's `agent-session board`
 //! asks the aggregator through the daemon's `GET /sessions/{id}/board/v1`,
-//! here against a fake aggregator.
+//! here against a fake aggregator. The same harness covers owned child
+//! sessions (`docs/specs/session-coordination-v1.md`, "Owned child
+//! sessions"): `agent-session start --via-console` through the daemon's
+//! `POST /sessions/{id}/console-start/v1`.
 
 use std::collections::VecDeque;
 use std::fs;
@@ -65,6 +68,7 @@ fn private_file(path: &Path, bytes: &[u8]) {
 struct Seen {
     target: String,
     authorization: Option<String>,
+    body: Option<Value>,
 }
 
 impl Seen {
@@ -117,16 +121,28 @@ impl Aggregator {
                     .and_then(|line| line.split(' ').nth(1))
                     .unwrap_or_default()
                     .to_string();
-                let authorization = head.lines().find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("authorization")
-                        .then(|| value.trim().to_string())
-                });
+                let header = |wanted: &str| {
+                    head.lines().find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case(wanted)
+                            .then(|| value.trim().to_string())
+                    })
+                };
+                let authorization = header("authorization");
+                let length = header("content-length")
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(0);
+                let mut body = vec![0_u8; length];
+                let body = stream
+                    .read_exact(&mut body)
+                    .ok()
+                    .and_then(|()| serde_json::from_slice::<Value>(&body).ok());
                 let reply = {
                     let mut state = shared.lock().expect("aggregator state");
                     state.seen.push(Seen {
                         target,
                         authorization,
+                        body,
                     });
                     state.replies.pop_front()
                 };
@@ -272,24 +288,39 @@ impl Fixture {
 
     /// `agent-session board` as the managed session.
     fn board(&self, args: &[&str]) -> CmdOutput {
+        self.run("board", args, true)
+    }
+
+    /// `agent-session start --via-console`, as the managed session or, with
+    /// `managed` false, from an unmanaged shell.
+    fn start_via_console(&self, args: &[&str], managed: bool) -> CmdOutput {
+        let mut argv = vec!["--via-console"];
+        argv.extend_from_slice(args);
+        self.run("start", &argv, managed)
+    }
+
+    fn run(&self, command: &str, args: &[&str], managed: bool) -> CmdOutput {
         self.heartbeat();
         let state = self.state_dir.to_string_lossy().to_string();
         let tmux = self.fake_tmux().to_string_lossy().to_string();
         let home = self.home.to_string_lossy().to_string();
         let capability = self.capability_file.to_string_lossy().to_string();
-        let mut argv = vec!["--state-dir", state.as_str(), "board"];
+        let mut argv = vec!["--state-dir", state.as_str(), command];
         argv.extend_from_slice(args);
+        let mut envs = vec![
+            ("HOME", home.as_str()),
+            ("AGENT_SESSION_TMUX_BIN", tmux.as_str()),
+            ("AGENT_SESSION_MACHINE", MACHINE),
+        ];
+        if managed {
+            envs.push(("AGENT_SESSION_ID", SESSION));
+            envs.push(("AGENT_SESSION_CAPABILITY_FILE", capability.as_str()));
+        }
         let options = CmdOptions::new()
             .with_cwd(&self.root)
             .without_ambient_managed_session_env()
             .with_env_remove_many(&ISOLATED_ENV)
-            .with_envs(&[
-                ("HOME", home.as_str()),
-                ("AGENT_SESSION_TMUX_BIN", tmux.as_str()),
-                ("AGENT_SESSION_MACHINE", MACHINE),
-                ("AGENT_SESSION_ID", SESSION),
-                ("AGENT_SESSION_CAPABILITY_FILE", capability.as_str()),
-            ]);
+            .with_envs(&envs);
         run_resolved("agent-session", &argv, &options)
     }
 
@@ -839,4 +870,266 @@ fn an_unreachable_daemon_is_an_error_not_a_local_view() {
     let output = fixture.board(&["--format", "json"]);
     assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
     assert_eq!(output.stdout_json()["data"]["mode"], "local");
+}
+
+#[test]
+fn console_start_creates_the_child_through_the_aggregator_as_the_calling_session() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let _serve = fixture.serve(&[], Some(&aggregator));
+    let child = json!({
+        "id": "0b6f4d7e-1c11-4a4f-9c1e-3f4d8f0c2a55",
+        "agent": "claude",
+        "cwd": "/work/repo",
+        "session_incarnation": "child-incarnation",
+        "status": "running",
+    });
+    aggregator.reply_json(201, &json!({"ok": true, "data": {"session": child}}));
+
+    let output = fixture.start_via_console(
+        &[
+            "--agent",
+            "claude",
+            "--cwd",
+            "/work/repo",
+            "--title",
+            "Child task",
+            "--prompt",
+            "do the thing",
+            "--agent-arg=--verbose",
+            "--machine",
+            "host-b",
+            "--format",
+            "json",
+        ],
+        true,
+    );
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let body = output.stdout_json();
+    assert_eq!(body["schema_version"], "cli.agent-session.console-start.v1");
+    assert_eq!(
+        body["data"],
+        json!({"schema_version": "agent-session.console-start.v1", "machine": "host-b", "session": child})
+    );
+
+    let seen = aggregator.seen();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert_eq!(seen[0].path(), "/api/coordination/sessions/v1");
+    assert_eq!(
+        seen[0].authorization.as_deref(),
+        Some(format!("Bearer {RELAY_TOKEN}").as_str())
+    );
+    // The daemon adds the caller's exact identity; nothing names an owner.
+    assert_eq!(
+        seen[0].body,
+        Some(json!({
+            "source_session_id": SESSION,
+            "source_incarnation": INCARNATION,
+            "machine": "host-b",
+            "session": {
+                "agent": "claude", "cwd": "/work/repo", "title": "Child task",
+                "prompt": "do the thing", "agent_args": ["--verbose"]
+            }
+        }))
+    );
+
+    // Without --machine the child starts on the daemon's own machine.
+    aggregator.reply_json(201, &json!({"ok": true, "data": {"session": child}}));
+    let output = fixture.start_via_console(&["--agent", "claude", "--cwd", "/work/repo"], true);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    assert_eq!(
+        output.stdout_text(),
+        format!(
+            "started claude session {} on {MACHINE} through Agent Console\n",
+            child["id"].as_str().unwrap()
+        )
+    );
+    let seen = aggregator.seen();
+    assert_eq!(
+        seen[1]
+            .body
+            .as_ref()
+            .map(|body| body.get("machine").is_none()),
+        Some(true)
+    );
+}
+
+#[test]
+fn console_start_forwards_ownership_refusals_with_fixed_classes() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let _serve = fixture.serve(&[], Some(&aggregator));
+    for (status, code) in [
+        (403, "ownership-unknown"),
+        (403, "machine-forbidden"),
+        (409, "session-incarnation-conflict"),
+    ] {
+        aggregator.reply_json(
+            status,
+            &json!({"ok": false, "error": {"code": code, "message": "refused by the console"}}),
+        );
+        let output = fixture.start_via_console(&["--agent", "codex", "--format", "json"], true);
+        assert_eq!(output.code, 65, "{code}: stdout={}", output.stdout_text());
+        let error = error_of(&output);
+        assert_eq!(error["code"], code);
+        assert_eq!(error["message"], "refused by the console");
+    }
+    // An aggregator that rejects the relay credential is unavailable, not an
+    // ownership answer.
+    aggregator.reply_json(
+        401,
+        &json!({"ok": false, "error": {"code": "unauthorized", "message": "x"}}),
+    );
+    let output = fixture.start_via_console(&["--agent", "codex", "--format", "json"], true);
+    assert_eq!(error_of(&output)["code"], "console-start-unavailable");
+}
+
+#[test]
+fn console_start_needs_federation_and_a_managed_session() {
+    let fixture = Fixture::new();
+    let _serve = fixture.serve(&[], None);
+    let output = fixture.start_via_console(&["--agent", "claude", "--format", "json"], true);
+    assert_eq!(output.code, 1, "stdout={}", output.stdout_text());
+    assert_eq!(error_of(&output)["code"], "console-start-disabled");
+
+    let output = fixture.start_via_console(&["--agent", "claude", "--format", "json"], false);
+    assert_eq!(output.code, 64, "stdout={}", output.stdout_text());
+    assert_eq!(error_of(&output)["code"], "console-start-unmanaged");
+
+    // --machine only means something through the console, and a console
+    // start cannot pick the session id or the local launch.
+    for args in [
+        vec!["start", "--agent", "claude", "--machine", "host-b"],
+        vec![
+            "start",
+            "--via-console",
+            "--agent",
+            "claude",
+            "--id",
+            "chosen",
+        ],
+        vec![
+            "start",
+            "--via-console",
+            "--agent",
+            "claude",
+            "--agent-bin",
+            "/bin/true",
+        ],
+    ] {
+        let output = fixture.run(args[0], &args[1..], true);
+        assert_eq!(output.code, 64, "{args:?}: stdout={}", output.stdout_text());
+    }
+}
+
+#[test]
+fn console_start_route_requires_the_current_session_capability_and_a_known_body() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let serve = fixture.serve(&[], Some(&aggregator));
+    let post = |bearer: &str, body: Value| {
+        let response = reqwest::blocking::Client::new()
+            .post(format!(
+                "http://{}/sessions/{SESSION}/console-start/v1",
+                serve.addr
+            ))
+            .bearer_auth(bearer)
+            .json(&body)
+            .send()
+            .expect("serve request");
+        let status = response.status().as_u16();
+        (status, response.json::<Value>().expect("json body"))
+    };
+    fixture.heartbeat();
+    let (status, body) = post(OPERATOR, json!({"session": {"agent": "claude"}}));
+    assert_eq!(
+        (status, &body["error"]["code"]),
+        (401, &json!("coordination-unauthorized"))
+    );
+    for invalid in [
+        json!({"session": {"agent": "claude"}, "principal": "someone-else"}),
+        json!({"machine": "host-b"}),
+    ] {
+        let (status, body) = post(CAPABILITY, invalid);
+        assert_eq!(
+            (status, &body["error"]["code"]),
+            (400, &json!("console-start-invalid"))
+        );
+    }
+    assert!(aggregator.seen().is_empty(), "{:?}", aggregator.seen());
+}
+
+#[test]
+fn console_start_selects_the_account_for_its_agent_and_the_launch_profile() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let _serve = fixture.serve(&[], Some(&aggregator));
+    let created = json!({"ok": true, "data": {"session": {"id": "child", "agent": "codex"}}});
+    for (agent, field) in [("codex", "codex_account"), ("claude", "claude_account")] {
+        aggregator.reply_json(201, &created);
+        let output = fixture.start_via_console(
+            &[
+                "--agent",
+                agent,
+                "--cwd",
+                "/w",
+                "--account",
+                "spare",
+                "--format",
+                "json",
+            ],
+            true,
+        );
+        assert_eq!(output.code, 0, "{agent}: stdout={}", output.stdout_text());
+        let seen = aggregator.seen();
+        let session = &seen
+            .last()
+            .and_then(|seen| seen.body.clone())
+            .expect("body")["session"];
+        assert_eq!(
+            session,
+            &json!({"agent": agent, "cwd": "/w", field: "spare"})
+        );
+    }
+    aggregator.reply_json(201, &created);
+    let output = fixture.start_via_console(
+        &[
+            "--agent",
+            "claude",
+            "--cwd",
+            "/w",
+            "--agent-profile",
+            "claude-opus",
+            "--format",
+            "json",
+        ],
+        true,
+    );
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let seen = aggregator.seen();
+    assert_eq!(
+        seen.last()
+            .and_then(|seen| seen.body.clone())
+            .expect("body")["session"]["agent_profile"],
+        "claude-opus"
+    );
+
+    let requests = aggregator.seen().len();
+    let output = fixture.start_via_console(
+        &[
+            "--agent",
+            "hermes",
+            "--account",
+            "spare",
+            "--format",
+            "json",
+        ],
+        true,
+    );
+    assert_eq!(output.code, 64, "stdout={}", output.stdout_text());
+    assert_eq!(
+        error_of(&output)["code"],
+        "console-start-account-unsupported"
+    );
+    assert_eq!(aggregator.seen().len(), requests);
 }

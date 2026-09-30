@@ -243,6 +243,32 @@ pub struct StartArgs {
     #[arg(long = "paste-delay-ms", default_value_t = DEFAULT_PASTE_DELAY_MS)]
     pub paste_delay_ms: u64,
 
+    /// Start the session through Agent Console, owned by the Console owner of
+    /// the managed session this command runs in. Requires AGENT_SESSION_ID, its
+    /// capability, and a daemon with federation configured.
+    #[arg(
+        long = "via-console",
+        conflicts_with_all = ["id", "tmux_bin", "agent_bin", "paste_delay_ms"]
+    )]
+    pub via_console: bool,
+
+    /// Target machine for --via-console, as Agent Console names it. Defaults
+    /// to this daemon's machine.
+    #[arg(long, value_name = "MACHINE", requires = "via_console")]
+    pub machine: Option<String>,
+
+    /// Account for --via-console, as the target daemon's account broker names
+    /// it: a Codex account for --agent codex or a Claude account for --agent
+    /// claude.
+    #[arg(long, value_name = "NAME", requires = "via_console")]
+    pub account: Option<String>,
+
+    /// Launch profile for --via-console, as the target daemon advertises it.
+    /// A profile owns its launch command, so Agent Console ignores --agent-arg
+    /// with it.
+    #[arg(long = "agent-profile", value_name = "ID", requires = "via_console")]
+    pub agent_profile: Option<String>,
+
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,

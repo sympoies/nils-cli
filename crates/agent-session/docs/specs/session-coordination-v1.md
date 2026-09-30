@@ -1260,3 +1260,57 @@ continue to operate unchanged registry schemas; pending remote deliveries pause
 until a federation-capable daemon resumes. Existing sessions and pinned broker
 and hook helpers do not require recreation. Never delete the journal to roll back
 or reinterpret an opaque remote sender as a local session.
+
+## Owned child sessions v1
+
+`agent-session start --via-console [--machine MACHINE]` starts a session
+through Agent Console instead of launching tmux locally. Agent Console owns the
+new session for the same principal that owns the calling managed session, so
+the child appears in that owner's console list and board and can be attached.
+The command runs only inside a managed session: it needs `AGENT_SESSION_ID` and
+that session's capability, and fails with `console-start-unmanaged` otherwise.
+It sends `agent`, the absolute `cwd` (default: the current directory), and the
+optional `title`, prompt (`--prompt`, `--prompt-file`, or `--prompt-stdin`),
+`--agent-arg` values (for example a model), `--agent-profile` as
+`agent_profile`, and `--account` as `codex_account` for `--agent codex` or
+`claude_account` for `--agent claude`; `--account` with another agent fails
+with `console-start-account-unsupported`. `--id`, `--tmux-bin`, `--agent-bin`, and
+`--paste-delay-ms` conflict with `--via-console`, because Agent Console assigns
+the session id and the target daemon owns the launch.
+
+As with federated messaging, the CLI reads the private
+`coordination/daemon-endpoint.json` and calls its own daemon at
+`POST /sessions/{id}/console-start/v1` with the current session capability. It
+never reads relay secrets. The daemon authenticates the exact current
+incarnation, then calls `POST {AGENT_SESSION_RELAY_URL}/api/coordination/sessions/v1`
+with the relay token as bearer and this body:
+
+```json
+{
+  "source_session_id": "caller",
+  "source_incarnation": "caller launch UUID",
+  "machine": "optional target machine",
+  "session": {"agent": "claude", "cwd": "/abs/path", "title": "...", "prompt": "..."}
+}
+```
+
+The daemon route accepts only `machine` (a nonempty string, optional) and a
+`session` object; anything else fails with `console-start-invalid` (HTTP 400)
+before any network call. Neither the route nor the aggregator request has a
+field that names an owner: the aggregator takes the owner from the caller's
+exact Console grant. With federation unconfigured the route fails with
+`console-start-disabled` (HTTP 409).
+
+On success the daemon answers HTTP 201 with
+`{"schema_version": "agent-session.console-start.v1", "machine", "session"}`,
+where `machine` is the requested machine or the daemon's own and `session` is
+the aggregator's public projection of the created session, including its `id`.
+The CLI wraps it as `cli.agent-session.console-start.v1`. An aggregator
+failure keeps its code and a bounded single-line message when both have a
+safe shape: `ownership-unknown`, `machine-forbidden`, and
+`session-incarnation-conflict` use the data exit class, and `invalid-request`
+the usage class. An aggregator 401, a network failure, an unreadable body, or
+an unsafe code fails with `console-start-unavailable` (HTTP 502). The request
+timeout is 120 seconds, because a create that pastes a prompt or selects an
+account can take the target daemon over a minute. No lock is held across the
+network call.
