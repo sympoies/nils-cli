@@ -178,18 +178,14 @@ fn handle_auth(args: &cli::AuthArgs) -> i32 {
         Some(cli::AuthCommand::Use { output, target }) => {
             auth::use_secret::run_with_json(target, output.is_json()).unwrap_or(1)
         }
-        Some(cli::AuthCommand::Save {
-            output,
-            yes,
-            secret,
-        }) => auth::save::run_with_json(secret, *yes, output.is_json()).unwrap_or(1),
-        Some(cli::AuthCommand::Remove {
-            output,
-            yes,
-            secret,
-        }) => auth::remove::run_with_json(secret, *yes, output.is_json()).unwrap_or(1),
-        Some(cli::AuthCommand::Refresh { output, secret }) => {
-            auth::refresh::run_with_json(secret.as_slice(), output.is_json()).unwrap_or(1)
+        Some(cli::AuthCommand::Save { output, yes, name }) => {
+            auth::save::run_with_json(name, *yes, output.is_json()).unwrap_or(1)
+        }
+        Some(cli::AuthCommand::Remove { output, yes, name }) => {
+            auth::remove::run_with_json(name, *yes, output.is_json()).unwrap_or(1)
+        }
+        Some(cli::AuthCommand::Refresh { output, name }) => {
+            auth::refresh::run_with_json(name.as_slice(), output.is_json()).unwrap_or(1)
         }
         Some(cli::AuthCommand::AutoRefresh { output }) => {
             auth::auto_refresh::run_with_json(output.is_json()).unwrap_or(1)

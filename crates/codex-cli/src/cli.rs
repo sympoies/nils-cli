@@ -296,8 +296,8 @@ pub enum AuthCommand {
         #[arg(short = 'y', long = "yes")]
         yes: bool,
         /// Secret name or secret.json
-        #[arg(value_name = "secret", value_parser = clap::builder::NonEmptyStringValueParser::new())]
-        secret: String,
+        #[arg(id = "secret", value_name = "secret", value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        name: String,
     },
     /// Remove SECRET_JSON from CODEX_SECRET_DIR (auto-appends .json when missing)
     Remove {
@@ -307,16 +307,16 @@ pub enum AuthCommand {
         #[arg(short = 'y', long = "yes")]
         yes: bool,
         /// Secret name or secret.json
-        #[arg(value_name = "secret", value_parser = clap::builder::NonEmptyStringValueParser::new())]
-        secret: String,
+        #[arg(id = "secret", value_name = "secret", value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        name: String,
     },
     /// Refresh OAuth tokens
     Refresh {
         #[command(flatten)]
         output: OutputModeArgs,
         /// Secret name or secret.json; defaults to the active auth file
-        #[arg(value_name = "secret")]
-        secret: Option<String>,
+        #[arg(id = "secret", value_name = "secret")]
+        name: Option<String>,
     },
     /// Refresh stale tokens across auth + secrets
     AutoRefresh {
