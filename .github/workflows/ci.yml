@@ -176,6 +176,14 @@ jobs:
   test:
     needs: changes
     runs-on: ubuntu-24.04
+    # Backstop for a hang outside a test, such as a stuck build, install, or
+    # audit step. A hung test is ended first by the `ci` nextest profile's
+    # `slow-timeout`, which names it. The slowest of 186 successful full-lane
+    # runs on 2026-09-28..30 took 21 minutes (19 with a cold cache). Keep the
+    # test job limits below the merge queue's 90 minute check timeout and the
+    # release PR's 60 minute check wait, so a waiter sees the job fail instead
+    # of reaching its own timeout.
+    timeout-minutes: 50
     permissions:
       contents: read
       checks: write
@@ -286,6 +294,11 @@ jobs:
   test_containment:
     needs: changes
     runs-on: ubuntu-24.04
+    # These steps run `cargo test`, so no nextest `slow-timeout` covers them and
+    # this limit is their only guard against a hang. The slowest of 176
+    # successful full-lane runs on 2026-09-28..30 took 8 minutes (7 with a cold
+    # cache).
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -370,6 +383,11 @@ jobs:
   test_macos:
     needs: changes
     runs-on: macos-14
+    # Backstop like the `test` job's, under the same two waits. The slowest of
+    # 186 successful full-lane runs on 2026-09-28..30 took 25 minutes, and a
+    # cold-cache run 31. A hung test adds up to 20 minutes before nextest ends
+    # it, which fits except on a cold-cache run.
+    timeout-minutes: 50
     permissions:
       contents: read
       checks: write

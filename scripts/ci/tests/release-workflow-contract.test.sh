@@ -121,7 +121,8 @@ assert_contains .github/workflows/ci.yml "needs: [changes, test_macos, test_cont
 coverage_job="$(mktemp "${TMPDIR:-/tmp}/ci-coverage-job.XXXXXX")"
 linux_test_job="$(mktemp "${TMPDIR:-/tmp}/ci-test-job.XXXXXX")"
 macos_job="$(mktemp "${TMPDIR:-/tmp}/ci-macos-job.XXXXXX")"
-trap 'rm -f "$coverage_job" "$linux_test_job" "$macos_job"' EXIT
+containment_job="$(mktemp "${TMPDIR:-/tmp}/ci-containment-job.XXXXXX")"
+trap 'rm -f "$coverage_job" "$linux_test_job" "$macos_job" "$containment_job"' EXIT
 awk '/^  coverage:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
   .github/workflows/ci.yml >"$coverage_job"
 assert_contains "$coverage_job" "if: \${{ !cancelled() }}" \
@@ -142,6 +143,21 @@ assert_contains "$linux_test_job" "NILS_CLI_TEST_RUNNER: nextest" \
   "the Linux test job block was extracted"
 assert_not_contains "$linux_test_job" "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS" \
   "the Linux test lane runs the OS-independent audits"
+# A hung test must not hold a job until GitHub's 6 hour limit. nextest ends the
+# test and names it; the job limit covers a hang nextest cannot see, and is the
+# only guard for test_containment, which runs `cargo test`.
+assert_contains .config/nextest.toml "slow-timeout = { period = " \
+  "the ci nextest profile sets a slow-timeout"
+assert_contains .config/nextest.toml "terminate-after = " \
+  "the ci nextest profile terminates a hung test instead of only reporting it slow"
+awk '/^  test_containment:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
+  .github/workflows/ci.yml >"$containment_job"
+assert_contains "$linux_test_job" "    timeout-minutes: " \
+  "the Linux test job has a time limit"
+assert_contains "$macos_job" "    timeout-minutes: " \
+  "the macOS test job has a time limit"
+assert_contains "$containment_job" "    timeout-minutes: " \
+  "the containment canary job has a time limit"
 assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
   "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS" \
   "the required-checks runner honours the OS-independent audit skip"
