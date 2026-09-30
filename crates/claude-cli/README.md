@@ -341,7 +341,9 @@ collector reads both.
 - Targets: `--all` (and `--async`) reads every `<name>.json` profile in
   `CLAUDE_SECRET_DIR`; `<profile>` reads one; no target reads the active login
   (`$CLAUDE_CONFIG_DIR/.credentials.json`, then the macOS Keychain item that
-  Claude Code uses).
+  Claude Code uses). With `CLAUDE_RATE_LIMITS_DEFAULT_ALL_ENABLED=true`, a
+  text run with no target and no `--cached` reads every profile as `--all`
+  does; JSON output and named profiles are unchanged.
 - Each target sends its stored access token once to the OAuth usage endpoint.
   `five_hour` becomes the `5h` window (300 minutes) and `seven_day` the
   `Weekly` window (10080 minutes). Tokens are never refreshed, rewritten, or
@@ -356,7 +358,8 @@ collector reads both.
 - Text output prints the shared accounts table for `--all` and `--async`, and
   `--one-line` prints `5h:<n>% W:<n>% <reset>`. `--async` queries profiles
   concurrently (`--jobs`, default 5) and falls back to the last cached values
-  on failure; `--watch` redraws every 60 seconds.
+  on failure; `--watch` redraws every 60 seconds. Reading more than one
+  profile shows a progress bar on an interactive stderr.
 - Each successful read caches its windows under the prompt-segment cache
   directory in `diag-rate-limits/<name>.kv`. `--cached` reads only that cache,
   within `CLAUDE_RATE_LIMITS_CACHE_TTL` (default 180 seconds) unless
@@ -400,6 +403,8 @@ collector reads both.
   `diag rate-limits`.
 - `CLAUDE_RATE_LIMITS_CACHE_TTL`, `CLAUDE_RATE_LIMITS_CACHE_ALLOW_STALE`:
   `diag rate-limits --cached` freshness.
+- `CLAUDE_RATE_LIMITS_DEFAULT_ALL_ENABLED`: default `diag rate-limits` to
+  `--all` when no target is provided (default: `false`).
 - `CLAUDE_PROMPT_SEGMENT_REFRESH_MIN_SECONDS`: detached refresh cooldown;
   default `60`.
 - `CLAUDE_PROMPT_SEGMENT_EXE`: detached self-refresh executable override.

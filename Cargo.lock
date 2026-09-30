@@ -2395,6 +2395,7 @@ dependencies = [
  "nils-common",
  "nils-provider-resume",
  "nils-scrub",
+ "nils-term",
  "nils-test-support",
  "pretty_assertions",
  "reqwest",
