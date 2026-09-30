@@ -394,10 +394,15 @@ event of each window resets that table's file first. Table 1 is consulted only
 once the count has passed the first window. Exact dedupe therefore covers at
 least the last 4096 and at most 8192 exact events, ingest never stops for
 capacity, and recovery never needs a restart, resume, or new session id
-(sympoies/nils-cli#1962). A crashed boundary insert is redone from the pending
-journal entry and converges on the same table. While the event that first opens
-table 1 is still pending, views do not require table 1, which may be absent or
-left over from an earlier runtime generation until the redo resets it.
+(sympoies/nils-cli#1962). A window's table is reset before the count that
+selects it becomes durable, so a crash there leaves the count unchanged; the
+reset is redone idempotently when a pending boundary insert is repaired. The
+state never needs a new runtime generation to recover. Only table 0 must match
+for views; a missing, stale, or wrongly sized table 1 is re-initialized for the
+current runtime on the next exact event, and a table found full because a
+window's clear was skipped (for example a boundary repaired by a binary without
+the window) is reset for the current window. Either self-heal loses at most one
+window of dedupe.
 
 Mixed versions: hook binaries and serve runtimes upgrade independently, so
 table 0 keeps the exact pre-window file name, format, and header, and there is
