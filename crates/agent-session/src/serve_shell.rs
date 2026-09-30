@@ -131,7 +131,8 @@ fn probe(tmux: &Path, name: &str) -> Result<Option<(String, String, String)>, Cl
             "-p",
             "-t",
             &target,
-            "#{session_id}\t#{pane_id}\t#{AC_SHELL_INCARNATION}\t#{pane_dead}",
+            // tmux can sanitize control characters under a non-UTF-8 locale.
+            "#{session_id}|#{pane_id}|#{AC_SHELL_INCARNATION}|#{pane_dead}",
         ],
     )?;
     if !output.status.success() {
@@ -148,7 +149,7 @@ fn probe(tmux: &Path, name: &str) -> Result<Option<(String, String, String)>, Cl
         ));
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<_> = text.trim_end_matches('\n').split('\t').collect();
+    let parts: Vec<_> = text.trim_end_matches('\n').split('|').collect();
     if parts.iter().all(|part| part.is_empty()) {
         return Ok(None);
     }
@@ -678,6 +679,21 @@ mod tests {
         for owner in ["../bad", "Bad", "a:b", "", "-bad"] {
             assert!(owner_name(owner).is_err());
         }
+    }
+
+    #[test]
+    fn emergency_shell_identity_probe_uses_printable_delimiters() {
+        let f = Fixture::new();
+        // tmux 3.7b under the C locale replaces tab separators with underscores.
+        fs::write(
+            &f.tmux,
+            "#!/bin/sh\nif [ \"$5\" = '#{session_id}|#{pane_id}|#{AC_SHELL_INCARNATION}|#{pane_dead}' ]; then\n  printf '$1|%%2|incarnation|0\\n'\nelse\n  printf '$1_%%2_incarnation_0\\n'\nfi\n",
+        )
+        .unwrap();
+        assert_eq!(
+            probe(&f.tmux, "ac-shell-alice").unwrap(),
+            Some(("$1".into(), "%2".into(), "incarnation".into()))
+        );
     }
 
     #[test]
