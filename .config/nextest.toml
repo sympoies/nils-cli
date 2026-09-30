@@ -43,6 +43,27 @@
 # passing run.
 retries = 1
 
+# Terminate a test that is still running after 10 minutes. By default nextest
+# only reports such a test as SLOW and waits, so a test that can never return
+# holds its job until GitHub's 6 hour limit: two merge-queue runs sat on
+# `serve::tests::timed_out_resize_releases_the_shared_lock` that way, run
+# 36692666010 for the full 6 hours. A terminated test is reported as TIMEOUT
+# and fails like any other, so the job log and the JUnit summary name it.
+#
+# The bound is measured, not guessed. Over the JUnit reports of 40 successful
+# full-lane runs on 2026-09-30, the slowest attempt took 229 s on macOS and
+# 132 s on Linux, both
+# `activity::tests::three_windows_of_exact_events_stay_ingestible_and_recent_replays_deduplicate`;
+# every other test finished within 89 s. 600 s is 2.6 times the slowest. A test
+# that legitimately needs longer gets its own `slow-timeout` override below,
+# not a higher bound for every test; that same test is the one override so far.
+#
+# `retries = 1` also retries a terminated test, so one hung test costs up to 20
+# minutes. The `timeout-minutes` of the `test` and `test_macos` jobs in
+# `.github/workflows/ci.yml` leave room for that on a warm-cache run, so this
+# guard reports first; the job limit is the backstop for everything else.
+slow-timeout = { period = "60s", terminate-after = 10 }
+
 # Every `threads-required = "num-test-threads"` fixture below also carries
 # `priority = 100`. nextest starts such a test only once every running test
 # has finished, so one queued behind a 74-87 s coordination test left the
@@ -96,6 +117,18 @@ priority = 100
 [[profile.ci.overrides]]
 filter = 'package(nils-agent-session) & test(/(main_agent_worker_start_finalizer_takeover_resumes_the_same_recovery_attempt|main_agent_submit_recovery_rechecks_authority_inside_the_serialized_send_boundary|main_agent_submit_recovery_fences_concurrent_manager_mutations_until_resolved|two_root_http_federation_acceptance|claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped|generated_200_mib_history_converges_through_catalog_refresh_reload_reducer_and_title)/)'
 priority = 50
+
+# This test makes about 18,000 durable ingests one after another, so storage
+# sync latency sets its time, not CPU. It takes 111-229 s on the CI runners, but
+# one run took 25 minutes on a development host with slow sync where other
+# checkouts ran it at the same time. The local-fast gate runs this profile too,
+# so the 10 minute bound would fail that gate there. Every other test in a
+# local run on that host finished within 90 s. The test is a plain loop with
+# nothing to wait on, and in CI the job limit still ends it, so an hour here
+# only keeps a slow host from failing it.
+[[profile.ci.overrides]]
+filter = 'package(nils-agent-session) & test(=activity::tests::three_windows_of_exact_events_stay_ingestible_and_recent_replays_deduplicate)'
+slow-timeout = { period = "60s", terminate-after = 60 }
 
 [profile.ci.junit]
 path = "junit.xml"

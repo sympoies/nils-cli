@@ -29960,9 +29960,22 @@ esac
 
     #[tokio::test]
     async fn timed_out_resize_releases_the_shared_lock() {
+        // The fake command blocks for much longer than the second resize may
+        // wait for the lock, so the lock arrives in time only if the timed-out
+        // resize released it while its command would still be running.
+        const COMMAND_BLOCKS_FOR_SECS: u64 = 10;
+        const LOCK_BOUND: Duration = Duration::from_secs(2);
+        const FIRST_RESIZE_TIMEOUT: Duration = Duration::from_millis(20);
+        // Bounds that only turn a stuck host into a failure. They are not part
+        // of what the test proves, so they are generous.
+        const BLOCKED_COMMAND_DEADLINE: Duration = Duration::from_secs(30);
+        const SECOND_RESIZE_TIMEOUT: Duration = Duration::from_secs(30);
+
         let tmp = tempfile::TempDir::new().unwrap();
         let log = tmp.path().join("calls.log");
         let first_started = tmp.path().join("first-started");
+        // `exec` makes the sleep the process the timeout kills, so no orphan
+        // outlives the test holding its output.
         let tmux = executable(
             &tmp.path().join("tmux"),
             &format!(
@@ -29970,7 +29983,7 @@ esac
 printf '%s\n' "$*" >> {}
 if [ "$1" = "resize-window" ] && [ ! -e {} ]; then
   : > {}
-  sleep 1
+  exec sleep {COMMAND_BLOCKS_FOR_SECS}
 fi
 exit 0
 "#,
@@ -29981,47 +29994,76 @@ exit 0
         );
         let resize_lock = tokio::sync::Mutex::new(());
 
+        // The first client owns the lock before the second one asks for it.
+        let first_guard = resize_lock.lock().await;
         let first = async {
-            let _guard = resize_lock.lock().await;
-            resize_pane_with_timeout(
-                &tmux,
-                "hs-codex-look:0.0",
-                80,
-                24,
-                false,
-                Duration::from_millis(20),
-            )
-            .await;
-        };
-        let second = async {
-            while !first_started.exists() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            tokio::time::timeout(Duration::from_millis(250), async {
-                let _guard = resize_lock.lock().await;
+            let _guard = first_guard;
+            // The resize ignores its command's result, and on a loaded host the
+            // timeout can kill the command before it writes its marker, or the
+            // spawn can fail. Retry under the held lock until one attempt has
+            // really started the blocking command; that attempt is the last.
+            let deadline = Instant::now() + BLOCKED_COMMAND_DEADLINE;
+            loop {
+                let attempt_started = Instant::now();
                 resize_pane_with_timeout(
                     &tmux,
                     "hs-codex-look:0.0",
-                    100,
-                    40,
+                    80,
+                    24,
                     false,
-                    Duration::from_millis(20),
+                    FIRST_RESIZE_TIMEOUT,
                 )
                 .await;
-            })
-            .await
-            .expect("a timed-out resize kept the shared lock");
+                if first_started.exists() {
+                    break attempt_started;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "no resize attempt reached the blocking command within \
+                     {BLOCKED_COMMAND_DEADLINE:?}"
+                );
+            }
         };
-        tokio::join!(first, second);
+        let second = async {
+            let _guard = resize_lock.lock().await;
+            let lock_acquired = Instant::now();
+            resize_pane_with_timeout(
+                &tmux,
+                "hs-codex-look:0.0",
+                100,
+                40,
+                false,
+                SECOND_RESIZE_TIMEOUT,
+            )
+            .await;
+            lock_acquired
+        };
+        let (blocking_attempt_started, lock_acquired) = tokio::join!(first, second);
 
+        // The blocking command started no earlier than its attempt did, so a
+        // lock acquired within `LOCK_BOUND` of that attempt was acquired while
+        // the command would still be running.
+        let lock_wait = lock_acquired.duration_since(blocking_attempt_started);
+        assert!(
+            lock_wait < LOCK_BOUND,
+            "a timed-out resize kept the shared lock: the second resize got it \
+             {lock_wait:?} after a command that blocks for {COMMAND_BLOCKS_FOR_SECS} s started"
+        );
         let calls = std::fs::read_to_string(&log).unwrap();
-        assert_eq!(
-            calls
-                .lines()
-                .filter(|line| line.contains("resize-window"))
-                .count(),
-            2,
-            "the second resize must run after the first command times out: {calls:?}"
+        let resizes: Vec<&str> = calls
+            .lines()
+            .filter(|line| line.contains("resize-window"))
+            .collect();
+        let second_resizes = resizes
+            .iter()
+            .filter(|line| line.ends_with("-x 100 -y 40"))
+            .count();
+        assert!(
+            second_resizes == 1
+                && resizes
+                    .last()
+                    .is_some_and(|line| line.ends_with("-x 100 -y 40")),
+            "the second resize must run once, after the first command times out: {calls:?}"
         );
     }
 

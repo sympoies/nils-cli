@@ -219,6 +219,11 @@ NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh
 Notes:
 
 - `nextest` mode runs `cargo nextest run --profile ci --workspace`.
+- The `ci` profile terminates a test that is still running after 10 minutes
+  (`slow-timeout` in `.config/nextest.toml`) and reports it as `TIMEOUT`, so a
+  hung test fails the run instead of holding it. The same bound applies to the
+  `llvm-cov` runner and to the local fast gate when it runs nextest. Give a
+  test that legitimately needs longer its own override there.
 - Because doctests are not included in nextest, the entrypoint also runs
   `cargo test --workspace --doc` when `NILS_CLI_TEST_RUNNER=nextest`.
 - `NILS_CLI_SKIP_DOCTESTS=1` skips that doc run in both the `nextest` and
