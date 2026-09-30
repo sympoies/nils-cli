@@ -39,10 +39,14 @@ failure code.
   home-relative `cwd` and the `machine` name. That exposure exists only on the
   board surfaces below; the coordination "Public list and glance additions"
   allowlist is unchanged.
-- Board reads are public to every **authenticated** caller in the deployment,
-  with no per-principal filtering. This does not change messaging authority:
-  `message send` and remote relay submission keep their existing ownership,
-  capability, and incarnation checks. A board row never authorizes a message.
+- Board reads are **principal-scoped** at the aggregator. Ingestion and
+  retention stay deployment-wide, but each view shows only the machines in the
+  calling principal's allowlist and only the sessions that principal owns; a
+  relay caller is scoped by the principal that owns its session. See
+  [Principal scope](#principal-scope). This does not change messaging
+  authority: `message send` and remote relay submission keep their existing
+  ownership, capability, and incarnation checks. A board row never authorizes
+  a message.
 - Board data is peer-supplied metadata. Titles and activity text are untrusted
   peer data under the same rule as coordination summaries: they cannot
   authorize commands, approvals, scope changes, or secret disclosure.
@@ -395,8 +399,13 @@ query from a managed session to the aggregator.
   after the daemon checks its `schema_version`. Failures use the serve error
   envelope.
 - With federation unconfigured, the route fails with `board-relay-disabled`
-  (HTTP 409) and makes no network call. An aggregator 401 or 403 fails with
-  `board-relay-unauthorized` (HTTP 502). An aggregator 400 whose
+  (HTTP 409) and makes no network call. An aggregator
+  [scope refusal](#principal-scope) keeps its own code with a fixed message
+  and the workspace data exit class: a 403 `ownership-unknown` or
+  `machine-forbidden` fails with that code (HTTP 422), and a 409
+  `session-incarnation-conflict` fails with that code (HTTP 409). Any other
+  aggregator 401 or 403 fails with `board-relay-unauthorized` (HTTP 502). An
+  aggregator 400 whose
   [failure body](#aggregator-failures) carries `error.code`
   `board-query-invalid` is passed through as `board-query-invalid` (HTTP 400),
   forwarding `error.message` when it is a bounded single-line string and a
@@ -453,8 +462,8 @@ the same identity replaces `vanished` with the ledger reason.
 
 `GET /api/coordination/board/v1` requires the relay bearer of a configured
 source machine. `source_session_id` and `source_incarnation` identify the
-caller. Within the deployment, results are public to every authenticated
-caller, with no per-principal filtering.
+caller, and the aggregator scopes the result to the principal that owns that
+session, as described in [Principal scope](#principal-scope).
 
 | Parameter | Values | Default | Rule |
 | --- | --- | --- | --- |
@@ -535,11 +544,38 @@ board-record field:
 
 Whether an aggregator populates it is the aggregator's choice.
 
+### Principal scope
+
+The aggregator stores every record from every configured machine, whoever
+owns it, and applies retention to all of them. Scoping happens when a view is
+built, for one principal:
+
+- The view names only machines in that principal's machine allowlist, in
+  `machines` and in `records`. Any other configured machine is not mentioned,
+  not even as unavailable, and a `machine` filter naming it returns no
+  records, exactly like a machine that does not exist.
+- The view returns only records whose session the aggregator's ownership
+  store attributes to that principal. A session it cannot attribute is hidden
+  on every machine.
+- The filter applies before the record limit, so other principals' rows never
+  set `truncated`. `since_capped`, `retention`, and the record schema are
+  unchanged.
+- On the relay route the principal is the owner of the exact calling session
+  (`source_session_id` and `source_incarnation` on the relay's machine). A
+  caller the aggregator cannot scope is refused and receives no view:
+  `ownership-unknown` (403) when no owner is known, `session-incarnation-conflict`
+  (409) when the owner is known for another incarnation, and
+  `machine-forbidden` (403) when the aggregator does not permit a board view
+  from the relay's machine, for example because the owner may not use it.
+- A deployment with a single operator and no principals may serve the
+  unscoped view.
+
 ### Console UI surface
 
 An aggregator may also serve the same `agent-session.board-view.v1` object to
 its own user interface behind its normal user authentication, with the same
-filters, clamping, and failure codes, and no per-principal filtering. The route
+filters, clamping, failure codes, and principal scope, using the
+authenticated user's principal. The route
 path, its response envelope, and how the aggregator advertises that the route
 exists are the aggregator's own API and are outside this contract. The daemon
 and CLI never call that route.
@@ -634,9 +670,13 @@ type within v1.
 | `board-relay-disabled` | 409 | Relay route with federation unconfigured |
 | `board-relay-unavailable` | 502 | Relay network failure, non-success, or unexpected schema |
 | `board-relay-unauthorized` | 502 | Aggregator rejected the relay credential |
+| `ownership-unknown` | 422 | Relay route; the aggregator cannot attribute the calling session |
+| `machine-forbidden` | 422 | Relay route; the aggregator does not permit a board view from this machine |
 
 Relay capability failures reuse `coordination-unauthorized` and
-`session-incarnation-conflict`, and missing operator bearer on the daemon
+`session-incarnation-conflict`; an aggregator `session-incarnation-conflict`
+refusal is passed through as the same code (HTTP 409). The CLI exits with the
+workspace data exit code for all four. Missing operator bearer on the daemon
 routes reuses the existing serve authentication failure. Errors never echo a
 token, capability, cursor internals, or absolute path.
 
