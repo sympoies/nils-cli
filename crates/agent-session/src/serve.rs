@@ -26431,9 +26431,49 @@ esac
     #[tokio::test]
     async fn maintenance_reused_numeric_tmux_offers_fenced_no_signal_record_removal() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let (st, calls) = reused_numeric_tmux_fixture(tmp.path());
-        let provider_history = tmp.path().join("provider-history.jsonl");
-        std::fs::write(&provider_history, b"retained provider history\n").unwrap();
+        let (mut st, calls) = reused_numeric_tmux_fixture(tmp.path());
+        let provider_root = tmp.path().join("provider/sessions");
+        std::fs::create_dir_all(&provider_root).unwrap();
+        let provider_history = provider_root.join("rollout.jsonl");
+        let transcript = format!(
+            "{}\n{}\n",
+            json!({"timestamp":"2026-09-01T00:00:00Z","type":"session_meta","payload":{
+                "id":"resume-session-id","cwd":tmp.path(),"source":"cli","timestamp":"2026-09-01T00:00:00Z"
+            }}),
+            json!({"timestamp":"2026-09-01T00:00:01Z","type":"response_item","payload":{
+                "type":"message","role":"assistant","content":[{
+                    "type":"output_text","text":"retained provider history"
+                }]
+            }}),
+        );
+        std::fs::write(&provider_history, &transcript).unwrap();
+        Arc::get_mut(&mut st).unwrap().history_catalog = Arc::new(HistoryCatalog::new(
+            vec![HistorySource {
+                provider: "codex".to_string(),
+                agent_profile: None,
+                root: provider_root,
+            }],
+            provider_history::archive_root(tmp.path()),
+            provider_history::star_root(tmp.path()),
+        ));
+        let history_route = "/history/sessions?provider=codex";
+        let (status, history_before) =
+            call(router(st.clone()), get_auth(history_route, Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "{history_before}");
+        let histories = history_before["data"]["sessions"].as_array().unwrap();
+        assert_eq!(histories.len(), 1, "{history_before}");
+        let history_id = histories[0]["id"].as_str().unwrap();
+        assert_eq!(histories[0]["provider_session_id"], "resume-session-id");
+        assert_eq!(histories[0]["resumable"], true);
+        let messages_route =
+            format!("/history/sessions/{history_id}/messages?direction=forward&limit=20");
+        let (status, messages_before) =
+            call(router(st.clone()), get_auth(&messages_route, Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "{messages_before}");
+        assert_eq!(
+            messages_before["data"]["messages"][0]["text"],
+            "retained provider history"
+        );
         let route = "/sessions/reused-numeric-tmux/maintenance";
         let (status, body) = call(
             router(st.clone()),
@@ -26496,16 +26536,36 @@ esac
                 .exists()
         );
         std::fs::remove_file(managed_present).unwrap();
-        let (status, body) = call(router(st), post_json(action_route, Some(TOKEN), request)).await;
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(action_route, Some(TOKEN), request),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(
             body["data"]["maintenance_result"]["outcome"],
             "record_removed"
         );
         assert!(!tmp.path().join("sessions/reused-numeric-tmux").exists());
+        st.history_catalog.invalidate();
+        let (status, history_after) =
+            call(router(st.clone()), get_auth(history_route, Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "{history_after}");
+        let histories = history_after["data"]["sessions"].as_array().unwrap();
+        assert_eq!(histories.len(), 1, "{history_after}");
+        assert_eq!(histories[0]["id"], history_id);
+        assert_eq!(histories[0]["provider_session_id"], "resume-session-id");
+        assert_eq!(histories[0]["resumable"], true);
+        let (status, messages_after) =
+            call(router(st), get_auth(&messages_route, Some(TOKEN))).await;
+        assert_eq!(status, StatusCode::OK, "{messages_after}");
         assert_eq!(
-            std::fs::read(provider_history).unwrap(),
-            b"retained provider history\n"
+            messages_after["data"]["messages"],
+            messages_before["data"]["messages"]
+        );
+        assert_eq!(
+            std::fs::read_to_string(provider_history).unwrap(),
+            transcript
         );
         let calls = std::fs::read_to_string(calls).unwrap();
         for forbidden in ["if-shell", "kill-session", "send-keys", "new-session"] {
