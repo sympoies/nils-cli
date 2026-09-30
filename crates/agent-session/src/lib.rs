@@ -214,6 +214,7 @@ const SESSION_LOCKS_DIR: &str = "session-locks";
 const SESSION_DELETE_TOMBSTONES_DIR: &str = "session-delete-tombstones";
 const BINARY: &str = "agent-session";
 const START_COMMAND: &str = "start";
+const CONSOLE_START_COMMAND: &str = "console-start";
 const RUN_COMMAND: &str = "run";
 const LIST_COMMAND: &str = "list";
 const COMMAND_COMMAND: &str = "command";
@@ -557,6 +558,17 @@ pub fn render_clap_message(err: &clap::Error) -> String {
 
 fn run_start(context: &CliContext, args: cli::StartArgs) -> i32 {
     let format = args.format;
+    if args.via_console {
+        return match start_via_console(context, args) {
+            Ok(result) => render_single_success(
+                CONSOLE_START_COMMAND,
+                format,
+                &result,
+                render_console_started_text,
+            ),
+            Err(err) => render_error(CONSOLE_START_COMMAND, format, err),
+        };
+    }
     match start_session(
         context,
         args,
@@ -571,6 +583,55 @@ fn run_start(context: &CliContext, args: cli::StartArgs) -> i32 {
         ),
         Err(err) => render_error(START_COMMAND, format, err),
     }
+}
+
+/// `start --via-console`: the create body Agent Console accepts, sent through
+/// the local daemon. The session id is assigned by Agent Console.
+fn start_via_console(context: &CliContext, args: cli::StartArgs) -> Result<Value, CliError> {
+    let cwd = absolute_path(args.cwd.as_deref().unwrap_or(Path::new(".")))?;
+    let mut session = json!({ "agent": args.agent.as_str(), "cwd": cwd.to_string_lossy() });
+    if let Some(title) = &args.title {
+        session["title"] = json!(title);
+    }
+    if let Some(prompt) = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?
+    {
+        session["prompt"] = json!(prompt);
+    }
+    if !args.agent_args.is_empty() {
+        session["agent_args"] = json!(args.agent_args);
+    }
+    if let Some(profile) = &args.agent_profile {
+        session["agent_profile"] = json!(profile);
+    }
+    if let Some(account) = &args.account {
+        let field = match args.agent {
+            cli::AgentKind::Codex => "codex_account",
+            cli::AgentKind::Claude => "claude_account",
+            _ => {
+                return Err(CliError::usage(
+                    "console-start-account-unsupported",
+                    "--account selects a Codex or Claude account and needs --agent codex or --agent claude",
+                    None,
+                ));
+            }
+        };
+        session[field] = json!(account);
+    }
+    coordination::console_start::cli_start(context, None, args.machine.as_deref(), session)
+}
+
+fn render_console_started_text(result: &Value) -> String {
+    let session = &result["session"];
+    let id = session["id"].as_str().unwrap_or_default();
+    let mut text = format!(
+        "started {} session {id} on {} through Agent Console\n",
+        session["agent"].as_str().unwrap_or_default(),
+        result["machine"].as_str().unwrap_or_default(),
+    );
+    if let Some(command) = session["attach_command"].as_str() {
+        text.push_str(&format!("attach: {command}\n"));
+    }
+    text
 }
 
 fn run_one_shot(context: &CliContext, args: cli::RunArgs) -> i32 {

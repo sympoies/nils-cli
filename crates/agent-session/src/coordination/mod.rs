@@ -1,6 +1,7 @@
 pub(crate) mod advisory;
 pub(crate) mod broker;
 pub mod claims;
+pub(crate) mod console_start;
 pub mod context;
 pub mod mailbox;
 mod notification;

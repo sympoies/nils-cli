@@ -1220,6 +1220,7 @@ usual serve error envelope:
 | `GET /sessions/{id}/messages/peers/v1` | Current local session capability | Ownership-filtered peer metadata |
 | `GET /sessions/{id}/messages/{message_id}/delivery/v1` | Current local sender capability | Source delivery projection; no body |
 | `POST /coordination/messages/receive/v1` | Operator bearer plus dedicated ingress header | Destination persistence receipt |
+| `POST /sessions/{id}/console-start/v1` | Current local session capability | `agent-session.console-start.v1`, HTTP 201; see [owned child sessions](session-coordination-v1.md#owned-child-sessions-v1) |
 
 The source submit JSON has `to_machine`, `to_session`, `body`, `idempotency_key`,
 nullable `reply_to`, nullable `expires_in`, nullable `reply_revision`.

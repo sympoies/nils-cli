@@ -1216,6 +1216,10 @@ fn router(state: Arc<ServeState>) -> Router {
         .route("/board/v1", get(board_snapshot_handler))
         .route("/board/closed/v1", get(board_closed_handler))
         .route("/sessions/{id}/board/v1", get(board_relay_handler))
+        .route(
+            "/sessions/{id}/console-start/v1",
+            post(console_start_handler),
+        )
         .route("/sessions", get(list_handler).post(create_handler))
         .route("/history/sessions", get(history_list_handler))
         .route(
@@ -2548,8 +2552,10 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
         "retitle-v3-objective-unavailable" => StatusCode::UNPROCESSABLE_ENTITY,
         "board-cursor-expired" => StatusCode::GONE,
-        "board-relay-disabled" => StatusCode::CONFLICT,
-        "board-relay-unavailable" | "board-relay-unauthorized" => StatusCode::BAD_GATEWAY,
+        "board-relay-disabled" | "console-start-disabled" => StatusCode::CONFLICT,
+        "board-relay-unavailable" | "board-relay-unauthorized" | "console-start-unavailable" => {
+            StatusCode::BAD_GATEWAY
+        }
         "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
             StatusCode::SERVICE_UNAVAILABLE
         }
@@ -5120,6 +5126,44 @@ async fn board_relay_handler(
     }
 }
 
+/// `POST /sessions/{id}/console-start/v1`: a managed session's owned child
+/// session, created by the aggregator through `coordination/console_start.rs`.
+async fn console_start_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Response {
+    let token = match remote_session_token(&headers) {
+        Ok(v) => v,
+        Err(e) => return envelope_err(e),
+    };
+    let Ok(Json(body)) = body else {
+        return status_json(
+            StatusCode::BAD_REQUEST,
+            "console-start-invalid",
+            "the console start body must be a JSON object",
+        );
+    };
+    let context = state.context.clone();
+    let federation = state.federation.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::coordination::console_start::relay_route(
+            &context,
+            federation.as_ref(),
+            &id,
+            &token,
+            &body,
+        )
+    })
+    .await
+    {
+        Ok(Ok(value)) => (StatusCode::CREATED, Json(value)).into_response(),
+        Ok(Err(err)) => envelope_err(err),
+        Err(_) => join_err(),
+    }
+}
+
 async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
     let context = state.context.clone();
     let tmux = state.tmux_bin.clone();
@@ -6649,6 +6693,10 @@ async fn create_handler(
         paste_delay_ms: initial_prompt_paste_delay_ms(
             launch_profile.as_ref().map(|profile| profile.id.as_str()),
         ),
+        via_console: false,
+        machine: None,
+        account: None,
+        agent_profile: None,
         format: nils_common::cli_contract::OutputFormat::Json,
     };
     match tokio::task::spawn_blocking(move || {

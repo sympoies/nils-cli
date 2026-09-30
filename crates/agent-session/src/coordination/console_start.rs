@@ -1,0 +1,285 @@
+//! Owned child sessions (`session-coordination-v1`, "Owned child sessions").
+//!
+//! The daemon half answers `POST /sessions/{id}/console-start/v1` for a
+//! managed session by asking the aggregator's
+//! `POST /api/coordination/sessions/v1`, with the federation relay token and
+//! the caller's exact identity, to create a session owned by the caller's
+//! Console owner. The CLI half is `agent-session start --via-console`: it
+//! reaches that route only through the private daemon endpoint and never
+//! reads relay secrets.
+
+use std::io::Read;
+use std::path::Path;
+use std::time::Duration;
+
+use serde_json::{Map, Value, json};
+
+use super::remote::{self, Config};
+use crate::{CliContext, CliError};
+
+pub(crate) const RESULT_SCHEMA: &str = "agent-session.console-start.v1";
+pub(crate) const DISABLED_CODE: &str = "console-start-disabled";
+pub(crate) const UNAVAILABLE_CODE: &str = "console-start-unavailable";
+const INVALID_CODE: &str = "console-start-invalid";
+const MAX_BODY_BYTES: u64 = 1024 * 1024;
+const MAX_MESSAGE_BYTES: usize = 256;
+const MAX_CODE_BYTES: usize = 64;
+/// A create that carries a prompt or selects an account can take the
+/// aggregator and the target daemon more than a minute.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+fn disabled() -> CliError {
+    CliError::runtime(
+        DISABLED_CODE,
+        "federation is not configured on this daemon",
+        None,
+    )
+}
+
+fn unavailable(message: &str) -> CliError {
+    CliError::runtime(UNAVAILABLE_CODE, message, None)
+}
+
+fn invalid() -> CliError {
+    CliError::usage(
+        INVALID_CODE,
+        "a console start takes only `machine` and a `session` object",
+        None,
+    )
+}
+
+fn client() -> Result<reqwest::blocking::Client, CliError> {
+    reqwest::blocking::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| unavailable("the console start client is unavailable"))
+}
+
+/// A bounded, single-line, non-empty diagnostic string, or `None`.
+fn bounded_line(value: &Value) -> Option<&str> {
+    let text = value.as_str()?.trim();
+    (!text.is_empty() && text.len() <= MAX_MESSAGE_BYTES && !text.chars().any(char::is_control))
+        .then_some(text)
+}
+
+/// A stable failure code shape: lowercase ASCII words joined by `-`.
+fn is_code(code: &str) -> bool {
+    !code.is_empty()
+        && code.len() <= MAX_CODE_BYTES
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && !code.starts_with('-')
+}
+
+/// The JSON body of a response, read to at most `MAX_BODY_BYTES`.
+fn read_json(response: reqwest::blocking::Response) -> Option<Value> {
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_BODY_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_BODY_BYTES {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// A failure with its own code and message when both have a safe shape,
+/// classified by the coordination v1 exit codes.
+fn forwarded(code: Option<&str>, message: &Value) -> CliError {
+    let code = code
+        .filter(|code| is_code(code))
+        .unwrap_or(UNAVAILABLE_CODE);
+    let message = bounded_line(message).unwrap_or("the console start request failed");
+    match code {
+        INVALID_CODE | "invalid-request" => CliError::usage(code, message, None),
+        "coordination-unauthorized"
+        | "session-incarnation-conflict"
+        | "ownership-unknown"
+        | "machine-forbidden" => CliError::data(code, message, None),
+        _ => CliError::runtime(code, message, None),
+    }
+}
+
+/// The request body: at most `machine` and a required `session` object.
+fn checked_request(body: &Value) -> Option<(Option<&str>, &Map<String, Value>)> {
+    let request = body.as_object()?;
+    if request
+        .keys()
+        .any(|key| key != "machine" && key != "session")
+    {
+        return None;
+    }
+    let machine = match request.get("machine") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(value.as_str().filter(|machine| !machine.is_empty())?),
+    };
+    Some((machine, request.get("session")?.as_object()?))
+}
+
+/// `POST /sessions/{id}/console-start/v1`: authenticate the exact current
+/// session incarnation, then ask the aggregator to create the child session.
+/// The aggregator decides the owner from the caller's grant; this route has no
+/// way to name one. No lock is held across the network call.
+pub(crate) fn relay_route(
+    context: &CliContext,
+    federation: Option<&Config>,
+    session: &str,
+    token: &str,
+    body: &Value,
+) -> Result<Value, CliError> {
+    let (_, incarnation) = super::authenticate_token(context, session, token)?;
+    let Some(config) = federation else {
+        return Err(disabled());
+    };
+    let (machine, child) = checked_request(body).ok_or_else(invalid)?;
+    let mut request = json!({
+        "source_session_id": session,
+        "source_incarnation": incarnation,
+        "session": child,
+    });
+    if let Some(machine) = machine {
+        request["machine"] = json!(machine);
+    }
+    let aggregator_unavailable = || unavailable("the console aggregator is unavailable");
+    let response = client()?
+        .post(format!("{}/api/coordination/sessions/v1", config.url))
+        .bearer_auth(&config.token)
+        .json(&request)
+        .send()
+        .map_err(|_| aggregator_unavailable())?;
+    let status = response.status();
+    let body = read_json(response).ok_or_else(aggregator_unavailable)?;
+    if status.is_success() {
+        let created = body.pointer("/data/session").filter(|_| body["ok"] == true);
+        return match created {
+            Some(created) if created["id"].is_string() => Ok(json!({
+                "schema_version": RESULT_SCHEMA,
+                "machine": machine.unwrap_or(&config.machine),
+                "session": created,
+            })),
+            _ => Err(aggregator_unavailable()),
+        };
+    }
+    if status.as_u16() == 401 {
+        return Err(unavailable(
+            "the console aggregator rejected this daemon's relay credential",
+        ));
+    }
+    let error = &body["error"];
+    Err(forwarded(error["code"].as_str(), &error["message"]))
+}
+
+/// `agent-session start --via-console`: the child session through the local
+/// daemon, as the managed session this CLI runs in.
+pub(crate) fn cli_start(
+    context: &CliContext,
+    capability_file: Option<&Path>,
+    machine: Option<&str>,
+    session: Value,
+) -> Result<Value, CliError> {
+    let caller = crate::non_empty_env("AGENT_SESSION_ID").ok_or_else(|| {
+        CliError::usage(
+            "console-start-unmanaged",
+            "--via-console runs only inside a managed session (AGENT_SESSION_ID is unset)",
+            None,
+        )
+    })?;
+    let token = super::capability_token_from_file(capability_file)?;
+    super::authenticate_token(context, &caller, &token)?;
+    let unreachable = || unavailable("the local agent-session daemon is unreachable");
+    let mut url = remote::daemon_url(context).map_err(|_| unreachable())?;
+    url.path_segments_mut()
+        .map_err(|_| unreachable())?
+        .pop_if_empty()
+        .extend(["sessions", caller.as_str(), "console-start", "v1"]);
+    let mut request = json!({ "session": session });
+    if let Some(machine) = machine {
+        request["machine"] = json!(machine);
+    }
+    let response = client()?
+        .post(url)
+        .bearer_auth(&token)
+        .json(&request)
+        .send()
+        .map_err(|_| unreachable())?;
+    let status = response.status();
+    let body = read_json(response)
+        .ok_or_else(|| unavailable("the local daemon's console start answer is unreadable"))?;
+    if status.is_success() {
+        return (body["schema_version"] == RESULT_SCHEMA && body["session"]["id"].is_string())
+            .then_some(body)
+            .ok_or_else(|| unavailable("the console start answered with an unsupported result"));
+    }
+    let error = &body["error"];
+    Err(forwarded(error["code"].as_str(), &error["message"]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn requests_admit_only_machine_and_a_session_object() {
+        let session = json!({"agent": "claude"});
+        let with_machine = json!({"machine": "c8", "session": session});
+        let (machine, child) = checked_request(&with_machine).expect("with machine");
+        assert_eq!((machine, child), (Some("c8"), session.as_object().unwrap()));
+        let default = json!({"session": session});
+        let (machine, _) = checked_request(&default).expect("default");
+        assert_eq!(machine, None);
+        for body in [
+            json!({"session": session, "principal": "other"}),
+            json!({"machine": 7, "session": session}),
+            json!({"machine": "", "session": session}),
+            json!({"machine": "c8"}),
+            json!({"session": "claude"}),
+            json!([]),
+        ] {
+            assert!(checked_request(&body).is_none(), "{body}");
+        }
+    }
+
+    #[test]
+    fn forwarded_failures_keep_only_safe_shapes() {
+        for code in [
+            "ownership-unknown",
+            "machine-forbidden",
+            "session-incarnation-conflict",
+        ] {
+            let error = forwarded(Some(code), &json!("refused")).into_inner();
+            assert_eq!(
+                (error.code.as_str(), error.message.as_str(), error.exit_code),
+                (code, "refused", 65),
+                "{code}"
+            );
+        }
+        let error = forwarded(Some("invalid-request"), &json!(null)).into_inner();
+        assert_eq!(
+            (error.code.as_str(), error.message.as_str(), error.exit_code),
+            ("invalid-request", "the console start request failed", 64)
+        );
+        let error = forwarded(Some("agent-profile-unavailable"), &json!("no profile")).into_inner();
+        assert_eq!(
+            (error.code.as_str(), error.exit_code),
+            ("agent-profile-unavailable", 1)
+        );
+        for code in [
+            None,
+            Some(""),
+            Some("Bad"),
+            Some("-lead"),
+            Some("has space"),
+        ] {
+            let error = forwarded(code, &json!("line\u{1b}[2J")).into_inner();
+            assert_eq!(
+                (error.code.as_str(), error.message.as_str()),
+                (UNAVAILABLE_CODE, "the console start request failed"),
+                "{code:?}"
+            );
+        }
+    }
+}
