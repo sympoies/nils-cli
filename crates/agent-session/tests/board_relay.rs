@@ -999,6 +999,14 @@ fn console_start_needs_federation_and_a_managed_session() {
     // --machine only means something through the console, and a console
     // start cannot pick the session id or the local launch.
     for args in [
+        vec![
+            "start",
+            "--via-console",
+            "--agent",
+            "claude",
+            "--coordination-mode",
+            "enforce",
+        ],
         vec!["start", "--agent", "claude", "--machine", "host-b"],
         vec![
             "start",
@@ -1020,6 +1028,12 @@ fn console_start_needs_federation_and_a_managed_session() {
         let output = fixture.run(args[0], &args[1..], true);
         assert_eq!(output.code, 64, "{args:?}: stdout={}", output.stdout_text());
     }
+
+    // A managed id whose capability is gone is an authentication failure.
+    fs::remove_file(&fixture.capability_file).expect("remove capability");
+    let output = fixture.start_via_console(&["--agent", "claude", "--format", "json"], true);
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(error_of(&output)["code"], "coordination-unauthorized");
 }
 
 #[test]

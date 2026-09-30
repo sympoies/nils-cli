@@ -1267,16 +1267,18 @@ or reinterpret an opaque remote sender as a local session.
 through Agent Console instead of launching tmux locally. Agent Console owns the
 new session for the same principal that owns the calling managed session, so
 the child appears in that owner's console list and board and can be attached.
-The command runs only inside a managed session: it needs `AGENT_SESSION_ID` and
-that session's capability, and fails with `console-start-unmanaged` otherwise.
+The command runs only inside a managed session: without `AGENT_SESSION_ID` it
+fails with `console-start-unmanaged`, and a missing or invalid capability for
+that session fails with `coordination-unauthorized`.
 It sends `agent`, the absolute `cwd` (default: the current directory), and the
 optional `title`, prompt (`--prompt`, `--prompt-file`, or `--prompt-stdin`),
 `--agent-arg` values (for example a model), `--agent-profile` as
 `agent_profile`, and `--account` as `codex_account` for `--agent codex` or
 `claude_account` for `--agent claude`; `--account` with another agent fails
-with `console-start-account-unsupported`. `--id`, `--tmux-bin`, `--agent-bin`, and
-`--paste-delay-ms` conflict with `--via-console`, because Agent Console assigns
-the session id and the target daemon owns the launch.
+with `console-start-account-unsupported`. `--id`, `--tmux-bin`, `--agent-bin`,
+`--paste-delay-ms`, and `--coordination-mode` conflict with `--via-console`,
+because Agent Console assigns the session id and the target daemon owns the
+launch.
 
 As with federated messaging, the CLI reads the private
 `coordination/daemon-endpoint.json` and calls its own daemon at

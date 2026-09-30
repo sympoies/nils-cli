@@ -56,7 +56,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '--prompt-stdin[Read prompt from stdin]' \
-'(--id --tmux-bin --agent-bin --paste-delay-ms)--via-console[Start the session through Agent Console, owned by the Console owner of the managed session this command runs in. Requires AGENT_SESSION_ID, its capability, and a daemon with federation configured]' \
+'(--id --tmux-bin --agent-bin --paste-delay-ms --coordination-mode)--via-console[Start the session through Agent Console, owned by the Console owner of the managed session this command runs in. Requires AGENT_SESSION_ID, its capability, and a daemon with federation configured]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0

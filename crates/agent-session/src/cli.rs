@@ -248,7 +248,7 @@ pub struct StartArgs {
     /// capability, and a daemon with federation configured.
     #[arg(
         long = "via-console",
-        conflicts_with_all = ["id", "tmux_bin", "agent_bin", "paste_delay_ms"]
+        conflicts_with_all = ["id", "tmux_bin", "agent_bin", "paste_delay_ms", "coordination_mode"]
     )]
     pub via_console: bool,
 
