@@ -7499,9 +7499,8 @@ mod tests {
             current.provider_turn_id = Some(format!("local:v1:{}", "a".repeat(63) + prompt));
             current
         };
-        // Claude can run a turn whose hooks carry a new prompt_id without a
-        // UserPromptSubmit (a turn woken by a background task notification)
-        // while the previously announced turn is still open.
+        // Hooks can carry a new prompt_id whose UserPromptSubmit was never
+        // recorded while the previously announced turn is still open.
         for current in [
             claude(TurnEventKind::TurnStarted, "prompt-1-start", "1"),
             claude(TurnEventKind::Progress, "prompt-1-tool", "1"),
@@ -7590,9 +7589,18 @@ mod tests {
                 .current_turn
                 .as_ref()
                 .and_then(|turn| turn.provider_turn_id.clone()),
-            Some(turn_id),
+            Some(turn_id.clone()),
             "the completed prompt is reopened by its own request"
         );
+
+        let closed = ingest_event(
+            &context,
+            &created.record.id,
+            claude(TurnEventKind::TurnCompleted, "prompt-idle-again"),
+        )
+        .expect("the reopened turn completes again");
+        assert!(!closed.duplicate);
+        assert_eq!(closed.turn_state.phase, TurnPhase::Waiting);
     }
 
     #[test]
@@ -9715,11 +9723,11 @@ fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Result<(), Cl
     Ok(())
 }
 
-/// Claude runs one turn at a time and names it with `prompt_id`, but a turn it
-/// starts without `UserPromptSubmit` (for example one woken by a background
-/// task notification) is never announced. An attention request from another
-/// turn therefore proves the open turn is stale rather than that the request
-/// is foreign, so it supersedes that turn instead of being refused
+/// Claude runs one turn at a time and names it with `prompt_id`, but a turn
+/// whose `UserPromptSubmit` was never recorded (a lost or refused hook
+/// delivery) is never announced. An attention request from another turn
+/// therefore proves the open turn is stale rather than that the request is
+/// foreign, so it supersedes that turn instead of being refused
 /// (sympoies/nils-cli#1962). Other providers keep the exact turn binding.
 fn claude_attention_supersedes_open_turn(provider: &str) -> bool {
     provider == AgentKind::Claude.as_str()
@@ -9727,9 +9735,9 @@ fn claude_attention_supersedes_open_turn(provider: &str) -> bool {
 
 /// A Claude attention request for the most recently closed turn, while a
 /// different identified turn is open. Superseding on it would reopen an older
-/// turn. With no other turn open the request is live instead: Claude keeps
-/// stamping hooks with a prompt that `idle_prompt` already closed while a
-/// background subagent is still working under it.
+/// turn. In every other case the request is live and is reduced normally:
+/// Claude keeps stamping hooks with a prompt that `idle_prompt` already closed
+/// while a background subagent is still working under it.
 fn late_claude_attention_for_closed_turn(document: &ActivityDocument, event: &TurnEvent) -> bool {
     let Some(event_turn) = event.provider_turn_id.as_ref() else {
         return false;

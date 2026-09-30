@@ -175,7 +175,8 @@ only after a no-reactivation debounce, exact runtime recheck, and
 General `PreToolUse` fires before every tool call, so the managed adapter installs
 it as observed progress. It can re-establish Working after an observed
 `idle_prompt`, closing the false-Waiting window before a long tool. `SubagentStop`
-fires only after a subagent finishes and carries no parent-turn correlation; it
+fires only after a subagent finishes and carries only the session's current
+`prompt_id`, which does not identify the work the subagent ran under; it
 is deliberately not admitted because a late background callback could resurrect
 a genuinely waiting parent. Progress remains uncorrelated and cannot clear
 pending attention.
@@ -233,7 +234,7 @@ hint, including the `bypassPermissions` root/home deletion circuit breaker.
 `prompt_id` names the session's current prompt, not the agent that emitted the
 hook. A sanitized Claude Code 2.1.285 canary ran in manual permission mode and
 retained only event names, tool name, notification type, agent type, id
-presence, and one-way comparison digests. Across four runs it observed:
+presence, and one-way comparison digests. Across five runs it observed:
 
 - A subagent's `PreToolUse`, `PermissionRequest`, and `SubagentStop` carry
   `agent_id` and the same `prompt_id` digest as the parent's events. After the
@@ -243,12 +244,16 @@ presence, and one-way comparison digests. Across four runs it observed:
   the adapter keeps one turn projection for parent and subagent hooks.
 - The parent's raw `Stop` fires while a background subagent is still working,
   and `idle_prompt` for that prompt can follow while it still is. The
-  subagent's next `PreToolUse` and `PermissionRequest` then arrive under the
-  prompt that was just completed. This is why an attention request for the
-  last closed turn, with no other turn open, is live rather than late.
-- A background subagent finishing wakes the parent with `UserPromptSubmit`
-  under a new `prompt_id`, and that wake's `Stop` and `idle_prompt` carry the
-  new value.
+  subagent's later hooks then arrive under the prompt that was just completed,
+  so that prompt stays in use after its turn closed. The `PreToolUse` that
+  precedes a `PermissionRequest` reopens the turn as progress; a request that
+  is the first admitted event under the completed prompt meets no open turn,
+  and it is live rather than late.
+- A background subagent or a background shell task finishing wakes the parent
+  with `UserPromptSubmit` under a new `prompt_id`, and that wake's `Stop` and
+  `idle_prompt` carry the new value. A wake is therefore announced; the
+  unannounced turn that an attention request supersedes is one whose
+  `UserPromptSubmit` event was never recorded.
 
 `StopFailure` exposes a documented finite `error` enum. The adapter treats that
 enum as authoritative failure classification, maps it to the metadata-only
