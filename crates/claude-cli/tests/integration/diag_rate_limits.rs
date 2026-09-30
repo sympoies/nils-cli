@@ -429,6 +429,11 @@ beta                    -        -         -        -  -                        
     assert_exit(&output, 0);
     assert_eq!(stdout(&output), "5h:75% W:60% 11-20 17:06\n");
 
+    // `--cached` stays a single cached read; the JSON run above cached it.
+    let output = run(&["diag", "rate-limits", "--cached"], &default_all);
+    assert_exit(&output, 0);
+    assert_eq!(stdout(&output), "5h:75% W:60% 11-20 17:06\n");
+
     // Without the env, no target still reads only the active login.
     let output = fx.run(&["diag", "rate-limits", "--one-line"]);
     assert_exit(&output, 0);
