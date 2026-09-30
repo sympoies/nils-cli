@@ -122,7 +122,8 @@ coverage_job="$(mktemp "${TMPDIR:-/tmp}/ci-coverage-job.XXXXXX")"
 linux_test_job="$(mktemp "${TMPDIR:-/tmp}/ci-test-job.XXXXXX")"
 macos_job="$(mktemp "${TMPDIR:-/tmp}/ci-macos-job.XXXXXX")"
 containment_job="$(mktemp "${TMPDIR:-/tmp}/ci-containment-job.XXXXXX")"
-trap 'rm -f "$coverage_job" "$linux_test_job" "$macos_job" "$containment_job"' EXIT
+nextest_ci_profile="$(mktemp "${TMPDIR:-/tmp}/nextest-ci-profile.XXXXXX")"
+trap 'rm -f "$coverage_job" "$linux_test_job" "$macos_job" "$containment_job" "$nextest_ci_profile"' EXIT
 awk '/^  coverage:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
   .github/workflows/ci.yml >"$coverage_job"
 assert_contains "$coverage_job" "if: \${{ !cancelled() }}" \
@@ -146,9 +147,13 @@ assert_not_contains "$linux_test_job" "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS" \
 # A hung test must not hold a job until GitHub's 6 hour limit. nextest ends the
 # test and names it; the job limit covers a hang nextest cannot see, and is the
 # only guard for test_containment, which runs `cargo test`.
-assert_contains .config/nextest.toml "slow-timeout = { period = " \
+# Read only the profile-wide settings: a per-test override also carries a
+# slow-timeout and must not satisfy these checks on its own.
+awk '/^\[profile\.ci\]$/ {in_profile = 1; next} in_profile && /^\[/ {exit} in_profile {print}' \
+  .config/nextest.toml >"$nextest_ci_profile"
+assert_contains "$nextest_ci_profile" "slow-timeout = { period = " \
   "the ci nextest profile sets a slow-timeout"
-assert_contains .config/nextest.toml "terminate-after = " \
+assert_contains "$nextest_ci_profile" "terminate-after = " \
   "the ci nextest profile terminates a hung test instead of only reporting it slow"
 awk '/^  test_containment:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
   .github/workflows/ci.yml >"$containment_job"
