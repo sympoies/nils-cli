@@ -236,8 +236,13 @@ later mismatches fail closed. Claude is the exception: it runs one turn at a
 time and names it by `prompt_id`, but a turn it starts without
 `UserPromptSubmit` (for example one woken by a background task notification) is
 never announced, so a Claude attention request for another turn interrupts the
-stale open turn and opens the requesting one instead of being refused. Nullable
-MCP elicitation remains admitted without inventing a turn id.
+stale open turn and opens the requesting one instead of being refused. A
+request for the most recently closed turn is duplicate metadata only while a
+different identified turn is open; with no other turn open it is live, because
+Claude keeps stamping hooks with a prompt `idle_prompt` already closed while a
+background subagent still works under it, and it reopens that turn as
+`needs_input`. Nullable MCP elicitation remains admitted without inventing a
+turn id.
 
 For Claude Code, `AskUserQuestion` remains exact through `tool_use_id`.
 `Elicitation` and `ElicitationResult` are also exact when both carry the same

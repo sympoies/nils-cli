@@ -9,9 +9,10 @@ on 2026-07-11 against Codex CLI 0.144.1, Claude Code 2.1.206, Hermes Agent
 attention addendum was audited on 2026-07-15 against Codex CLI 0.144.3 and
 Claude Code 2.1.210. The Claude active-turn coverage addendum was audited on
 2026-07-18 against the current hook reference and the live observations in
-[issue #1278](https://github.com/sympoies/nils-cli/issues/1278). The support
-floors are deliberately the oldest versions directly covered by this audit,
-not guesses about earlier releases.
+[issue #1278](https://github.com/sympoies/nils-cli/issues/1278). The Claude
+prompt-identity addendum was audited on 2026-09-30 against Claude Code 2.1.285.
+The support floors are deliberately the oldest versions directly covered by
+this audit, not guesses about earlier releases.
 
 The fixtures under `tests/fixtures/activity/` contain lifecycle identifiers and
 event names. The dedicated Hermes approval fixtures additionally freeze the
@@ -228,6 +229,26 @@ conservatively.
 PreToolUse/PostToolUse correlation already owns that interaction. Other
 permission requests remain authoritative over the payload's `permission_mode`
 hint, including the `bypassPermissions` root/home deletion circuit breaker.
+
+`prompt_id` names the session's current prompt, not the agent that emitted the
+hook. A sanitized Claude Code 2.1.285 canary ran in manual permission mode and
+retained only event names, tool name, notification type, agent type, id
+presence, and one-way comparison digests. Across four runs it observed:
+
+- A subagent's `PreToolUse`, `PermissionRequest`, and `SubagentStop` carry
+  `agent_id` and the same `prompt_id` digest as the parent's events. After the
+  user submitted a newer prompt while a background subagent was still running,
+  that subagent's later hooks carried the newer prompt's digest. A subagent
+  request therefore binds to the turn that is open and cannot supersede it, so
+  the adapter keeps one turn projection for parent and subagent hooks.
+- The parent's raw `Stop` fires while a background subagent is still working,
+  and `idle_prompt` for that prompt can follow while it still is. The
+  subagent's next `PreToolUse` and `PermissionRequest` then arrive under the
+  prompt that was just completed. This is why an attention request for the
+  last closed turn, with no other turn open, is live rather than late.
+- A background subagent finishing wakes the parent with `UserPromptSubmit`
+  under a new `prompt_id`, and that wake's `Stop` and `idle_prompt` carry the
+  new value.
 
 `StopFailure` exposes a documented finite `error` enum. The adapter treats that
 enum as authoritative failure classification, maps it to the metadata-only

@@ -7550,6 +7550,52 @@ mod tests {
     }
 
     #[test]
+    fn claude_attention_after_a_completed_same_prompt_turn_needs_input() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+        let runtime_id = created
+            .record
+            .runtime
+            .as_ref()
+            .expect("runtime")
+            .launch_id
+            .clone();
+        let turn_id = format!("local:v1:{}", "a".repeat(64));
+        let claude = |kind: TurnEventKind, id: &str| {
+            let mut current = event(kind, id);
+            current.runtime_id.clone_from(&runtime_id);
+            current.provider = AgentKind::Claude.as_str().to_string();
+            current.provider_turn_id = Some(turn_id.clone());
+            current
+        };
+        // Claude keeps stamping hooks with a prompt that `idle_prompt` already
+        // closed while a background subagent is still working under it, so a
+        // request for that prompt with no other turn open is live, not late.
+        for current in [
+            claude(TurnEventKind::TurnStarted, "prompt-start"),
+            claude(TurnEventKind::TurnCompleted, "prompt-idle"),
+        ] {
+            ingest_event(&context, &created.record.id, current).expect("turn setup");
+        }
+        let mut asked = claude(TurnEventKind::AttentionRequested, "prompt-approval");
+        asked.attention_kind = Some("approval".to_string());
+        asked.attention_id = Some(format!("local:v1:{}", "b".repeat(64)));
+        let requested = ingest_event(&context, &created.record.id, asked)
+            .expect("a request under the completed prompt is ingested");
+        assert!(!requested.duplicate, "the request must not be dropped");
+        assert_eq!(requested.turn_state.phase, TurnPhase::NeedsInput);
+        assert_eq!(
+            requested
+                .turn_state
+                .current_turn
+                .as_ref()
+                .and_then(|turn| turn.provider_turn_id.clone()),
+            Some(turn_id),
+            "the completed prompt is reopened by its own request"
+        );
+    }
+
+    #[test]
     fn claude_ask_user_question_uses_exact_runtime_scoped_correlation() {
         let request = normalize_provider_hook(
             AgentKind::Claude,
@@ -9680,7 +9726,10 @@ fn claude_attention_supersedes_open_turn(provider: &str) -> bool {
 }
 
 /// A Claude attention request for the most recently closed turn, while a
-/// different turn is open. Superseding on it would reopen an older turn.
+/// different identified turn is open. Superseding on it would reopen an older
+/// turn. With no other turn open the request is live instead: Claude keeps
+/// stamping hooks with a prompt that `idle_prompt` already closed while a
+/// background subagent is still working under it.
 fn late_claude_attention_for_closed_turn(document: &ActivityDocument, event: &TurnEvent) -> bool {
     let Some(event_turn) = event.provider_turn_id.as_ref() else {
         return false;
@@ -9698,7 +9747,7 @@ fn late_claude_attention_for_closed_turn(document: &ActivityDocument, event: &Tu
             .current_turn
             .as_ref()
             .and_then(|turn| turn.provider_turn_id.as_ref())
-            != Some(event_turn)
+            .is_some_and(|open| open != event_turn)
 }
 
 /// Close any open turn as interrupted and open `provider_turn_id` in its place.
