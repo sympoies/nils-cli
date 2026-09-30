@@ -259,6 +259,31 @@ High-level self-targeting CLI operations such as `work-context set` do not have
 HTTP convenience routes; the daemon exposes the raw v1 operations documented
 in the [coordination route matrix](../specs/session-coordination-v1.md#http-coverage).
 
+## Recover sessions after a host reboot
+
+A host reboot ends tmux runtimes but retains session and provider History.
+Recognized missing-server/socket diagnostics are stopped evidence in inventory,
+maintenance and exact-target verification; permission failures, timeouts and
+unrecognized output remain unknown.
+
+New macOS runtimes persist the kernel boot UUID with their private identity.
+A verified prior boot allows deletion or exact provider resume without probing
+or signaling numeric tmux/PID IDs reused in the current boot. Resume rotates
+incarnation and generation while preserving provider identity, cwd and managed
+account selection. This evidence does not grant authority over a current-boot
+runtime or bypass assignment, quarantine or maintenance fences.
+
+Older records without boot evidence may still fail coordination recovery.
+When the exact managed tmux target is absent and no safe runtime boundary can
+be established, maintenance v2 advertises **Remove from Console only**. That
+confirmed action stops nothing; provider History remains available for a new
+managed resume. Do not manually rewrite boot evidence or kill a global tmux
+server to clear a card.
+
+Acceptance must exercise disposable sessions through deletion and resume, then
+verify a successful provider continuation and retained history/account. A
+visible TUI/input prompt or healthy daemon alone does not prove writability.
+
 ## Keep sessions alive across daemon restarts
 
 By default, a child tmux server shares the caller's cgroup. Under systemd this

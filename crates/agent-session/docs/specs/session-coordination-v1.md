@@ -818,6 +818,14 @@ that evidence includes a valid persisted PID-namespace identity whose
 boot ID differs from the current boot: processes from that namespace cannot
 survive the reboot. A missing namespace identity or a same-boot namespace
 mismatch remains unverified and fails closed.
+On macOS, newly launched and exactly captured tmux runtime identities persist
+the canonical kernel `kern.bootsessionuuid`. The additive UUID is retained in
+broker runtime evidence but excluded from the existing identity digest so a
+rollback preserves broker and lease comparisons. A valid different boot UUID is
+positive stopped-runtime evidence even if numeric PID or tmux IDs have been
+reused. Same-boot or missing boot evidence does not upgrade process-group
+absence into coordination authority. Older records retain their conservative
+behavior; no migration invents a boot identity for an absent runtime.
 Natural target exit immediately removes its
 incarnation-specific capability; a replacement uses a different path, so a
 stale runtime can never read the new credential. Delete also releases terminal

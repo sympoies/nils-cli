@@ -8646,6 +8646,7 @@ fn run_tmux_new_session(
         },
     )?;
     Ok(TmuxRuntimeIdentity {
+        macos_boot_id: capture_macos_boot_id(),
         launch_id,
         session_id: session_id.to_string(),
         pane_id: pane_id.to_string(),
@@ -10260,6 +10261,9 @@ fn resume_session_locked(
     }
     let (provider_resume, agent) = validate_resume_metadata(&record)?;
     let resume_args = provider_resume.resume_args.clone();
+    if recorded_runtime_is_from_prior_macos_boot(&record) {
+        record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
+    }
     let prior_identities = persisted_prior_tmux_runtime_identities(&record).map_err(|reason| {
         session_termination_error(&record, reason, SessionTerminationOperation::Resume)
     })?;
@@ -12693,6 +12697,9 @@ fn session_list_runtime_snapshot(
     if dsh_external::is_external_record(record) {
         return (dsh_external::external_session_status(context, record), None);
     }
+    if recorded_runtime_is_from_prior_macos_boot(record) {
+        return ("stopped".to_string(), None);
+    }
     match tmux_snapshots {
         Some(snapshots) => match snapshots.sessions.get(&record.tmux_session) {
             Some(snapshot) => (
@@ -12716,7 +12723,7 @@ fn tmux_session_snapshots(tmux_bin: &Path) -> Option<TmuxSessionSnapshots> {
         .output()
         .ok()?;
     if !output.status.success() {
-        if tmux_snapshot_output_reports_empty(&output) {
+        if tmux_output_reports_absent(&output) {
             return Some(TmuxSessionSnapshots {
                 started_at,
                 sessions: BTreeMap::new(),
@@ -13773,6 +13780,10 @@ fn terminate_tmux_session_with_timeouts(
     verify_timeout: Duration,
     terminate_process_group: bool,
 ) -> Result<(), SessionTerminationFailure> {
+    if recorded_runtime_is_from_prior_macos_boot(record) {
+        record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
+        return Ok(());
+    }
     recover_interrupted_tmux_termination_locked(context, record)?;
     let mut identity_changes = 0;
     let mut initial_identity = initial_identity;
@@ -13911,6 +13922,9 @@ fn gracefully_shutdown_profiled_tmux_session(
     tmux_bin: &Path,
     verify_timeout: Duration,
 ) -> Result<(), SessionTerminationFailure> {
+    if recorded_runtime_is_from_prior_macos_boot(record) {
+        return Ok(());
+    }
     let Some(mode) = session_profile_graceful_shutdown(record)? else {
         return Ok(());
     };
@@ -14028,6 +14042,8 @@ fn gracefully_shutdown_profiled_tmux_session(
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 struct TmuxRuntimeIdentity {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    macos_boot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     launch_id: Option<String>,
     session_id: String,
     pane_id: String,
@@ -14108,7 +14124,10 @@ impl TmuxRuntimeIdentity {
     }
 
     fn has_valid_persisted_structure(&self, require_process_group: bool) -> bool {
-        valid_tmux_session_id(&self.session_id)
+        self.macos_boot_id
+            .as_deref()
+            .is_none_or(valid_linux_boot_id)
+            && valid_tmux_session_id(&self.session_id)
             && valid_tmux_pane_id(&self.pane_id)
             && self.pane_pid > 1
             && self.resolved_pane_start_time().is_ok()
@@ -14169,7 +14188,10 @@ impl TmuxRuntimeIdentity {
     }
 
     fn same_process_identity(&self, other: &Self) -> bool {
-        self.pane_pid == other.pane_pid
+        (self.macos_boot_id == other.macos_boot_id
+            || self.macos_boot_id.is_none()
+            || other.macos_boot_id.is_none())
+            && self.pane_pid == other.pane_pid
             && match (
                 self.resolved_pane_start_time(),
                 other.resolved_pane_start_time(),
@@ -14355,6 +14377,7 @@ fn capture_tmux_runtime_identity(
     #[cfg(target_os = "linux")]
     verify_pinned_linux_process_incarnation(pane_pid, pane_start_time_ticks, &pane_pidfd)?;
     Ok(TmuxRuntimeProbe::Running(Box::new(TmuxRuntimeIdentity {
+        macos_boot_id: capture_macos_boot_id(),
         launch_id,
         session_id: session_id.to_string(),
         pane_id: pane_id.to_string(),
@@ -15015,7 +15038,13 @@ pub fn coordination_runtime_evidence(
                 None,
             )
         })?;
-    let bytes = serde_json::to_vec(&identity).map_err(|_| {
+    // Boot evidence extends the durable identity, but the broker/lease digest
+    // must keep the released representation so a daemon rollback can recover
+    // sessions created by this version. Keep the UUID in the stored evidence
+    // used for status; never infer it from this compatibility digest.
+    let mut digest_identity = identity.clone();
+    digest_identity.macos_boot_id = None;
+    let bytes = serde_json::to_vec(&digest_identity).map_err(|_| {
         CliError::runtime(
             "coordination-runtime-unverified",
             "persisted runtime identity could not be canonicalized",
@@ -15102,6 +15131,9 @@ fn coordination_process_runtime_status(identity: &TmuxRuntimeIdentity) -> Proces
 
 #[cfg(not(target_os = "linux"))]
 fn coordination_process_runtime_status(identity: &TmuxRuntimeIdentity) -> ProcessGroupStatus {
+    if runtime_is_from_prior_macos_boot(identity) {
+        return ProcessGroupStatus::Stopped;
+    }
     identity
         .process_group_id
         .map(process_group_status)
@@ -15163,7 +15195,78 @@ fn linux_runtime_pid_namespace_relation(
     }
 }
 
+#[cfg(target_os = "macos")]
+fn capture_macos_boot_id() -> Option<String> {
+    let mut value = [0u8; 64];
+    let mut size = value.len();
+    // SAFETY: the kernel writes at most `size` bytes into our live array;
+    // the sysctl name is a static NUL-terminated string and no value is set.
+    let result = unsafe {
+        libc::sysctlbyname(
+            c"kern.bootsessionuuid".as_ptr(),
+            value.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result != 0 || size == 0 || size > value.len() {
+        return None;
+    }
+    let raw = std::str::from_utf8(&value[..size])
+        .ok()?
+        .trim_end_matches('\0');
+    let parsed = uuid::Uuid::parse_str(raw).ok()?;
+    Some(parsed.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn capture_macos_boot_id() -> Option<String> {
+    None
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_prior_boot_proven(recorded: Option<&str>, current: Option<&str>) -> bool {
+    match (recorded, current) {
+        (Some(recorded), Some(current)) => {
+            valid_linux_boot_id(recorded) && valid_linux_boot_id(current) && recorded != current
+        }
+        _ => false,
+    }
+}
+
+fn runtime_is_from_prior_macos_boot(identity: &TmuxRuntimeIdentity) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos_prior_boot_proven(
+            identity.macos_boot_id.as_deref(),
+            capture_macos_boot_id().as_deref(),
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = identity;
+        false
+    }
+}
+
+fn recorded_runtime_is_from_prior_macos_boot(record: &SessionRecord) -> bool {
+    let Ok(Some(identity)) = persisted_tmux_runtime_identity(record) else {
+        return false;
+    };
+    let Ok(prior) = persisted_prior_tmux_runtime_identities(record) else {
+        return false;
+    };
+    runtime_is_from_prior_macos_boot(&identity)
+        && prior
+            .iter()
+            .all(|old| old.same_runtime_target(&identity) && runtime_is_from_prior_macos_boot(old))
+}
+
 fn process_runtime_status(identity: &TmuxRuntimeIdentity) -> ProcessGroupStatus {
+    if runtime_is_from_prior_macos_boot(identity) {
+        return ProcessGroupStatus::Stopped;
+    }
     #[cfg(target_os = "linux")]
     if let Some(control_group) = identity.control_group.as_ref() {
         return linux_control_group_runtime_status(identity, control_group);
@@ -16840,6 +16943,9 @@ fn verify_stopped_tmux_runtime(
     identity: &TmuxRuntimeIdentity,
     verify_timeout: Duration,
 ) -> Result<(), SessionTerminationFailure> {
+    if runtime_is_from_prior_macos_boot(identity) {
+        return Ok(());
+    }
     let started_at = Instant::now();
     let mut observed_tmux_running = false;
     let mut observed_tmux_stopped = false;
@@ -16941,18 +17047,10 @@ fn tmux_output_reports_absent(output: &std::process::Output) -> bool {
         return false;
     }
     let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
-    stderr.contains("can't find session:") || stderr.contains("no server running on")
-}
-
-fn tmux_snapshot_output_reports_empty(output: &std::process::Output) -> bool {
-    if tmux_output_reports_absent(output) {
-        return true;
-    }
-    if output.status.code() != Some(1) {
-        return false;
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
-    (stderr.contains("error connecting to ") && stderr.contains("(no such file or directory)"))
+    stderr.contains("can't find session:")
+        || stderr.contains("no server running on")
+        || (stderr.contains("error connecting to ")
+            && stderr.contains("(no such file or directory)"))
         || stderr.contains("failed to connect to server: no such file or directory")
 }
 
@@ -17066,6 +17164,9 @@ fn managed_tmux_pane_target(tmux_session: &str) -> String {
 pub fn session_status(context: &CliContext, tmux_bin: &Path, record: &SessionRecord) -> String {
     if dsh_external::is_external_record(record) {
         return dsh_external::external_session_status(context, record);
+    }
+    if recorded_runtime_is_from_prior_macos_boot(record) {
+        return "stopped".to_string();
     }
     live_status(tmux_bin, &record.tmux_session)
 }
@@ -17296,17 +17397,7 @@ fn live_status(tmux_bin: &Path, tmux_session: &str) -> String {
 }
 
 fn live_status_with_timeout(tmux_bin: &Path, tmux_session: &str, timeout: Duration) -> String {
-    let mut command = ProcessCommand::new(tmux_bin);
-    command
-        .arg("has-session")
-        .arg("-t")
-        .arg(exact_tmux_target(tmux_session));
-    match run_exit_status_with_timeout(command, timeout) {
-        Ok(status) if status.success() => "running".to_string(),
-        Ok(status) if status.code() == Some(1) => "stopped".to_string(),
-        Ok(_) => "unknown".to_string(),
-        Err(_) => "unknown".to_string(),
-    }
+    verified_tmux_status_with_timeout(tmux_bin, &exact_tmux_target(tmux_session), timeout)
 }
 
 fn run_status(mut command: ProcessCommand, label: &str) -> Result<(), CliError> {
@@ -18853,6 +18944,7 @@ mod tests {
             .expect("current process identity")
             .expect("live current process");
         let stale = super::TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("controller-incarnation".to_string()),
             session_id: "controller-tmux".to_string(),
             pane_id: "%1".to_string(),
@@ -19102,6 +19194,7 @@ mod tests {
             .expect("current process identity")
             .expect("live current process");
         let identity = super::TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some(record.runtime.as_ref().expect("runtime").launch_id.clone()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),
@@ -19179,6 +19272,7 @@ mod tests {
             .expect("current process identity")
             .expect("live current process");
         let identity = super::TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some(record.runtime.as_ref().expect("runtime").launch_id.clone()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),
@@ -20802,6 +20896,7 @@ exit 97
         );
 
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("late-session-descendant".to_string()),
             session_id: "$late".to_string(),
             pane_id: "%late".to_string(),
@@ -20846,6 +20941,7 @@ exit 1
         let tmux_bin = stub.path().join("tmux");
 
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("exhausted-window".to_string()),
             session_id: "$gone".to_string(),
             pane_id: "%gone".to_string(),
@@ -20885,6 +20981,7 @@ exit 0
         let tmux_bin = stub.path().join("tmux");
 
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("exhausted-window-live".to_string()),
             session_id: "$live".to_string(),
             pane_id: "%live".to_string(),
@@ -20988,6 +21085,7 @@ exit 0
             std::thread::sleep(Duration::from_millis(5));
         };
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("zombie-only-runtime".to_string()),
             session_id: "$zombie".to_string(),
             pane_id: "%zombie".to_string(),
@@ -21124,6 +21222,7 @@ exit 0
     #[test]
     fn stopped_absence_requires_persisted_pid_namespace_provenance() {
         let mut identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("namespace-fenced-stopped-runtime".to_string()),
             session_id: "$1".to_string(),
             pane_id: "%1".to_string(),
@@ -21282,6 +21381,7 @@ exit 0
         fs::write(full_path.join("cgroup.events"), "populated 0\n").expect("cgroup events");
         let metadata = fs::metadata(&full_path).expect("cgroup metadata");
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some(record.runtime.as_ref().expect("runtime").launch_id.clone()),
             session_id: "$1".to_string(),
             pane_id: "%1".to_string(),
@@ -21682,6 +21782,7 @@ exit 0
             boot_id: Some(super::linux_boot_id().expect("boot id")),
         };
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("mount-provenance".to_string()),
             session_id: "$1".to_string(),
             pane_id: "%1".to_string(),
@@ -22500,6 +22601,7 @@ exit 0
             boot_id: Some(super::linux_boot_id().unwrap()),
         };
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("launch-cgroup-fixture".to_string()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),
@@ -22779,6 +22881,7 @@ exit 0
         let metadata = fs::metadata(&full_path).unwrap();
         let mut record = load_session_record(&context, &id).unwrap();
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some(record.runtime.as_ref().unwrap().launch_id.clone()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),
@@ -22894,6 +22997,7 @@ exit 0
         persist_tmux_runtime_identity(
             &mut record,
             &TmuxRuntimeIdentity {
+                macos_boot_id: None,
                 launch_id: Some(launch_id),
                 session_id: "$91".to_string(),
                 pane_id: "%91".to_string(),
@@ -22998,6 +23102,7 @@ exit 0
             persist_tmux_runtime_identity(
                 &mut record,
                 &TmuxRuntimeIdentity {
+                    macos_boot_id: None,
                     launch_id: Some(launch_id),
                     session_id: "$91".to_string(),
                     pane_id: "%91".to_string(),
@@ -23096,6 +23201,7 @@ exit 0
         };
         let mut record = load_session_record(&context, &id).unwrap();
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some(record.runtime.as_ref().unwrap().launch_id.clone()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),
@@ -23184,6 +23290,7 @@ exit 0
         assert_ne!(super::linux_boot_id().unwrap(), other_boot_id);
         let mut record = load_session_record(&context, &id).unwrap();
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some(record.runtime.as_ref().unwrap().launch_id.clone()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),
@@ -23251,6 +23358,7 @@ exit 0
         persist_tmux_runtime_identity(
             &mut record,
             &TmuxRuntimeIdentity {
+                macos_boot_id: None,
                 launch_id: Some(launch_id),
                 session_id: "$91".to_string(),
                 pane_id: "%91".to_string(),
@@ -23371,6 +23479,7 @@ exit 0
     #[test]
     fn same_runtime_retry_merges_durable_control_group_members() {
         let mut current = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("launch-member-merge".to_string()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),
@@ -23434,6 +23543,7 @@ exit 0
     #[test]
     fn same_runtime_retry_does_not_merge_conflicting_older_pane_incarnation() {
         let current = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("launch-pane-incarnation".to_string()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),
@@ -23475,6 +23585,7 @@ exit 0
             .unwrap()
             .expect("live session leader");
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some("launch-uncaptured-member".to_string()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),
@@ -23989,6 +24100,218 @@ fi
         assert_eq!(
             views[0].last_terminal_activity_at.as_deref(),
             Some("1970-01-01T00:01:40Z")
+        );
+    }
+
+    #[test]
+    fn coordination_digest_keeps_the_pre_boot_identity_representation() {
+        // This is the released reader's shape for this fixture. It ignores the
+        // additive UUID and serializes fields in the released declaration order.
+        #[derive(serde::Deserialize, serde::Serialize)]
+        struct ReleasedIdentity {
+            launch_id: String,
+            session_id: String,
+            pane_id: String,
+            pane_pid: libc::pid_t,
+            process_group_id: libc::pid_t,
+        }
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        let id = create_test_record_id(&context, AgentKind::Codex, None, None);
+        let mut record = load_session_record(&context, &id).unwrap();
+        let raw = serde_json::json!({
+            "macos_boot_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "launch_id": record.runtime.as_ref().unwrap().launch_id,
+            "session_id": "$91", "pane_id": "%91",
+            "pane_pid": 20000, "process_group_id": 20000
+        });
+        let identity = serde_json::from_value(raw.clone()).unwrap();
+        super::persist_tmux_runtime_identity(&mut record, &identity).unwrap();
+        let evidence = super::coordination_runtime_evidence(&context, &record).unwrap();
+        let released: ReleasedIdentity = serde_json::from_value(raw).unwrap();
+        let released_digest =
+            crate::coordination::digest_bytes(&serde_json::to_vec(&released).unwrap());
+        assert_eq!(evidence.identity_digest, released_digest);
+        assert_eq!(
+            evidence.identity["macos_boot_id"],
+            identity.macos_boot_id.unwrap()
+        );
+        // Removing boot evidence on rollback must preserve the broker/lease
+        // fence; changing an existing process identity must still change it.
+        record
+            .extra
+            .get_mut(super::DELETE_TMUX_IDENTITY_KEY)
+            .unwrap()["process_group_id"] = serde_json::json!(20001);
+        assert_ne!(
+            super::coordination_runtime_evidence(&context, &record)
+                .unwrap()
+                .identity_digest,
+            released_digest
+        );
+    }
+
+    #[test]
+    fn macos_boot_proof_requires_two_valid_distinct_uuids() {
+        let old = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let current = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        assert!(super::macos_prior_boot_proven(Some(old), Some(current)));
+        assert!(!super::macos_prior_boot_proven(Some(old), Some(old)));
+        for missing in [
+            None,
+            Some(""),
+            Some("not-a-uuid"),
+            Some("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"),
+        ] {
+            assert!(!super::macos_prior_boot_proven(missing, Some(current)));
+            assert!(!super::macos_prior_boot_proven(Some(old), missing));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_live_runtime_capture_records_the_kernel_boot_uuid() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        let id = create_test_record_id(&context, AgentKind::Codex, None, None);
+        let record = load_session_record(&context, &id).unwrap();
+        let pane = TestProcessGroup::spawn();
+        let tmux = tmp.path().join("tmux");
+        fs::write(&tmux, format!(
+            "#!/bin/sh\nif [ \"$1\" = display-message ]; then printf '$91 %%91 {}\\n'; exit 0; fi\nif [ \"$1\" = show-environment ]; then\ncase \"$4\" in\nAGENT_SESSION_ID) printf '%s\\n' {} ;;\nAGENT_SESSION_STATE_DIR) printf '%s\\n' {} ;;\nAGENT_SESSION_RUNTIME_ID) printf '%s\\n' {} ;;\nesac\nexit 0\nfi\nexit 42\n",
+            pane.pid(), shell_words::quote(&format!("AGENT_SESSION_ID={}", record.id)),
+            shell_words::quote(&format!("AGENT_SESSION_STATE_DIR={}", context.state_dir.display())),
+            shell_words::quote(&format!("AGENT_SESSION_RUNTIME_ID={}", record.runtime.as_ref().unwrap().launch_id)),
+        )).unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let super::TmuxRuntimeProbe::Running(identity) =
+            super::capture_tmux_runtime_identity(&context, &record, &tmux, Duration::from_secs(1))
+                .unwrap()
+        else {
+            panic!("live fixture must capture an identity")
+        };
+        assert_eq!(identity.macos_boot_id, super::capture_macos_boot_id());
+        assert!(identity.macos_boot_id.is_some());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_prior_boot_runtime_never_probes_or_signals_reused_ids() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        let tmux = tmp.path().join("tmux");
+        let touched = tmp.path().join("touched");
+        fs::write(
+            &tmux,
+            format!("#!/bin/sh\ntouch '{}'\nexit 0\n", touched.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let current = super::capture_macos_boot_id().expect("macOS kernel boot UUID");
+        let old = uuid::Uuid::new_v4().to_string();
+        assert_ne!(old, current);
+        let id = create_test_record_id(&context, AgentKind::Codex, None, Some("prior-boot"));
+        let mut record = load_session_record(&context, &id).unwrap();
+        let identity: super::TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
+            "macos_boot_id": old, "session_id": "$0", "pane_id": "%0",
+            "launch_id": record.runtime.as_ref().unwrap().launch_id,
+            "pane_pid": unsafe { libc::getpid() }, "process_group_id": unsafe { libc::getpgrp() }
+        }))
+        .unwrap();
+        super::persist_tmux_runtime_identity(&mut record, &identity).unwrap();
+        assert_eq!(super::session_status(&context, &tmux, &record), "stopped");
+        assert_eq!(
+            super::process_runtime_status(&identity),
+            super::ProcessGroupStatus::Stopped
+        );
+        assert_eq!(
+            super::coordination_process_runtime_status(&identity),
+            super::ProcessGroupStatus::Stopped
+        );
+        assert!(super::verify_stopped_tmux_runtime(&tmux, &identity, Duration::ZERO).is_ok());
+        assert!(
+            super::gracefully_shutdown_profiled_tmux_session(
+                &context,
+                &mut record,
+                &tmux,
+                Duration::ZERO
+            )
+            .is_ok()
+        );
+        assert!(
+            super::terminate_tmux_session_with_timeouts(
+                &context,
+                &mut record,
+                &tmux,
+                None,
+                Duration::ZERO,
+                Duration::ZERO,
+                true
+            )
+            .is_ok()
+        );
+        assert!(
+            !touched.exists(),
+            "a prior boot must never touch a reused tmux selector"
+        );
+        let mut same_boot = identity.clone();
+        same_boot.macos_boot_id = Some(current);
+        assert_eq!(
+            super::coordination_process_runtime_status(&same_boot),
+            super::ProcessGroupStatus::Running
+        );
+        same_boot.process_group_id = Some(libc::pid_t::MAX);
+        assert_eq!(
+            super::coordination_process_runtime_status(&same_boot),
+            super::ProcessGroupStatus::Unknown
+        );
+        same_boot.macos_boot_id = None;
+        assert_eq!(
+            super::coordination_process_runtime_status(&same_boot),
+            super::ProcessGroupStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn tmux_reboot_absence_agrees_between_inventory_and_target_probes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tmux = tmp.path().join("tmux");
+        for diagnostic in [
+            "no server running on /tmp/tmux-1000/default",
+            "error connecting to /tmp/tmux-1000/default (No such file or directory)",
+            "failed to connect to server: No such file or directory",
+        ] {
+            fs::write(
+                &tmux,
+                format!("#!/bin/sh\nprintf '%s\\n' '{diagnostic}' >&2\nexit 1\n"),
+            )
+            .unwrap();
+            fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(
+                super::tmux_session_snapshots(&tmux).is_some(),
+                "{diagnostic}"
+            );
+            assert_eq!(
+                super::verified_tmux_status_with_timeout(&tmux, "$4", Duration::from_secs(1)),
+                "stopped",
+                "{diagnostic}"
+            );
+            assert_eq!(
+                super::live_status_with_timeout(&tmux, "old-session", Duration::from_secs(1)),
+                "stopped",
+                "{diagnostic}"
+            );
+        }
+    }
+
+    #[test]
+    fn tmux_permission_failure_stays_unknown_in_maintenance_status() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tmux = tmp.path().join("tmux");
+        fs::write(&tmux, "#!/bin/sh\nprintf '%s\\n' 'error connecting to /tmp/tmux-1000/default (Permission denied)' >&2\nexit 1\n").unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            super::live_status_with_timeout(&tmux, "old-session", Duration::from_secs(1)),
+            "unknown"
         );
     }
 
@@ -24620,6 +24943,7 @@ exit 42
         let mut record = load_session_record(&context, &id).unwrap();
         let mut pane = TestProcessGroup::spawn();
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some(record.runtime.as_ref().unwrap().launch_id.clone()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),
@@ -24681,6 +25005,7 @@ exit 42
         let mut record = load_session_record(&context, &id).unwrap();
         let mut pane = TestProcessGroup::spawn();
         let identity = TmuxRuntimeIdentity {
+            macos_boot_id: None,
             launch_id: Some(record.runtime.as_ref().unwrap().launch_id.clone()),
             session_id: "$91".to_string(),
             pane_id: "%91".to_string(),

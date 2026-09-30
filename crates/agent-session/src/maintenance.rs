@@ -365,13 +365,16 @@ fn assess(
     tmux_bin: &Path,
     operation: MaintenanceOperation,
 ) -> Result<PreviewAssessment, CliError> {
-    match live_status_with_timeout(
-        tmux_bin,
-        &record.tmux_session,
-        MAINTENANCE_TMUX_STATUS_TIMEOUT,
-    )
-    .as_str()
-    {
+    let status = if recorded_runtime_is_from_prior_macos_boot(record) {
+        "stopped".to_string()
+    } else {
+        live_status_with_timeout(
+            tmux_bin,
+            &record.tmux_session,
+            MAINTENANCE_TMUX_STATUS_TIMEOUT,
+        )
+    };
+    match status.as_str() {
         "running" => {
             return Ok(PreviewAssessment {
                 state: "healthy",
@@ -1027,10 +1030,15 @@ fn maintenance_failure_error(
         SessionTerminationFailure::RuntimeIdentityUnavailable => "runtime_identity_unavailable",
         SessionTerminationFailure::KillFailed
         | SessionTerminationFailure::KillTimeout
-        | SessionTerminationFailure::KillError
-        | SessionTerminationFailure::VerificationFailed => "unknown",
+        | SessionTerminationFailure::KillError => "unknown",
+        SessionTerminationFailure::VerificationFailed => "runtime_identity_unavailable",
     };
-    safe_maintenance_failure(&record.id, operation, kind, reason.retryable())
+    safe_maintenance_failure(
+        &record.id,
+        operation,
+        kind,
+        !matches!(reason, SessionTerminationFailure::VerificationFailed) && reason.retryable(),
+    )
 }
 
 fn safe_maintenance_failure(
@@ -1079,6 +1087,9 @@ fn sanitize_maintenance_error(
             Some(json!({ "id": id })),
         );
     }
+    if code == "coordination-runtime-unverified" {
+        return safe_maintenance_failure(id, operation, "runtime_identity_unavailable", false);
+    }
     if code == "session-termination-failed" {
         let reason = error
             .0
@@ -1092,7 +1103,9 @@ fn sanitize_maintenance_error(
             Some("runtime-identity-changed" | "runtime-identity-mismatch") => {
                 ("runtime_identity_changed", false)
             }
-            Some("runtime-identity-unavailable") => ("runtime_identity_unavailable", false),
+            Some("runtime-identity-unavailable" | "verification-failed") => {
+                ("runtime_identity_unavailable", false)
+            }
             _ => ("unknown", false),
         };
         return safe_maintenance_failure(id, operation, kind, retryable);
@@ -1148,6 +1161,78 @@ fn terminate_orphaned_runtime_locked(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn unavailable_runtime_errors_keep_the_safe_maintenance_contract() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let record = create_record(RecordRequest {
+            context: &context,
+            agent: AgentKind::Codex,
+            mode: "interactive",
+            coordination_mode: crate::cli::CoordinationMode::Advisory,
+            title: None,
+            title_state: None,
+            explicit_id: Some("maintenance-errors"),
+            cwd: Path::new("/repo"),
+            prompt: None,
+            log_file_name: None,
+            provider_resume: None,
+            agent_args: Vec::new(),
+            agent_bin: None,
+        })
+        .unwrap()
+        .record;
+        let operation = MaintenanceOperation::Resume;
+        let errors = [
+            maintenance_failure_error(
+                &record,
+                SessionTerminationFailure::VerificationFailed,
+                operation,
+            ),
+            sanitize_maintenance_error(
+                &record.id,
+                operation,
+                CliError::runtime(
+                    "session-termination-failed",
+                    "private diagnostic",
+                    Some(
+                        json!({ "reason": "verification-failed", "stderr": "private diagnostic" }),
+                    ),
+                ),
+            ),
+            sanitize_maintenance_error(
+                &record.id,
+                operation,
+                CliError::runtime(
+                    "coordination-runtime-unverified",
+                    "private diagnostic",
+                    None,
+                ),
+            ),
+        ];
+        for error in errors {
+            let inner = error.into_inner();
+            let wire = crate::EnvelopeError::new(inner.code, inner.message)
+                .with_details(inner.details.unwrap());
+            let serialized = serde_json::to_value(wire).unwrap();
+            assert_eq!(serialized["code"], "session-maintenance-failed");
+            assert_eq!(
+                serialized["details"],
+                json!({
+                    "id": record.id, "operation": "resume", "kind": "runtime_identity_unavailable",
+                    "retryable": false, "session_metadata_retained": true,
+                })
+            );
+            assert!(!serialized.to_string().contains("private diagnostic"));
+        }
+        let kill =
+            maintenance_failure_error(&record, SessionTerminationFailure::KillFailed, operation);
+        assert_eq!(kill.0.details.unwrap()["kind"], "unknown");
+    }
 
     #[test]
     fn repairable_preview_fixture_matches_the_producer_projection() {
