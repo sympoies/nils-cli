@@ -7856,10 +7856,7 @@ async fn reconcile_coordination_notifications(state: Arc<ServeState>) {
             let source = ProviderPromptTail::resolve_source(&record)?;
             prompt_observed_after(
                 &source,
-                &crate::coordination::notification_prompt(
-                    "",
-                    &observed_candidate.target_session_id,
-                ),
+                &crate::coordination::notification_prompt(&observed_candidate),
                 &attempted_at,
             )
         })
@@ -7961,7 +7958,7 @@ async fn dispatch_coordination_notification(
         return;
     }
 
-    let prompt = crate::coordination::notification_prompt("", &candidate.target_session_id);
+    let prompt = crate::coordination::notification_prompt(&candidate);
     let response = submit_structured_prompt_handler_with_fence(
         state.clone(),
         candidate.target_session_id.clone(),
@@ -8026,7 +8023,7 @@ async fn dispatch_codex_in_turn_coordination_checkpoint(
             return;
         }
     };
-    let prompt = crate::coordination::notification_prompt("", &candidate.target_session_id);
+    let prompt = crate::coordination::notification_prompt(&candidate);
     let lock_context = state.context.clone();
     let lock_id = record.id.clone();
     let lock_launch_id = launch_id.clone();
@@ -8156,7 +8153,7 @@ async fn dispatch_terminal_coordination_notification(
         .await;
         return;
     };
-    let prompt = crate::coordination::notification_prompt("", &candidate.target_session_id);
+    let prompt = crate::coordination::notification_prompt(&candidate);
     let context = state.context.clone();
     let tmux = state.tmux_bin.clone();
     let start_candidate = candidate.clone();
@@ -23969,6 +23966,7 @@ esac
                         target_session_id: "notification-final-fence".to_string(),
                         target_incarnation: launch_id.clone(),
                         generation: 1,
+                        queued_at_epoch: 0,
                         attempted_at_epoch: 0,
                         attempted_at: None,
                     },
@@ -34549,6 +34547,7 @@ exit 0
             crate::maintenance::MaintenanceContract::V1,
         )
         .expect("attach preview before notification submission");
+        let expected_prompt = fixture_notification_prompt(tmp.path());
         let responder = tokio::spawn(async move {
             let command = tokio::time::timeout(Duration::from_secs(2), commands.recv())
                 .await
@@ -34563,10 +34562,7 @@ exit 0
                 panic!("working Codex notification must use turn/steer");
             };
             assert_eq!(expected_turn_id, projected_turn_id);
-            assert_eq!(
-                message,
-                crate::coordination::notification_prompt("", "beta")
-            );
+            assert_eq!(message, expected_prompt);
             assert!(!message.contains(canary));
             let lock_probe = tokio::task::spawn_blocking(move || {
                 let _record_lock = crate::acquire_session_record_lock(&lock_probe_context, "beta")
@@ -34777,7 +34773,7 @@ exit 0
             provider_id,
             &[(
                 "9999-01-01T00:00:00Z",
-                crate::coordination::notification_prompt("", "beta"),
+                fixture_notification_prompt(tmp.path()),
             )],
         );
         reconcile_coordination_notifications(state.clone()).await;
@@ -34954,16 +34950,14 @@ exit 0
         )
         .expect("clear uncertain operation");
 
+        let expected_prompt = fixture_notification_prompt(tmp.path());
         let responder = tokio::spawn(async move {
             let Some(codex_app_server::ControlCommand::Prompt { message, response }) =
                 commands.recv().await
             else {
                 panic!("notification did not reach the Codex control plane");
             };
-            assert_eq!(
-                message,
-                crate::coordination::notification_prompt("", "beta")
-            );
+            assert_eq!(message, expected_prompt);
             assert!(!message.contains(canary));
             response
                 .send(Ok("turn-notification-catchup".to_string()))
@@ -34996,6 +34990,108 @@ exit 0
         assert_eq!(notification["notified_generation"], 1);
         assert_eq!(registry["messages"][0]["state"], "unread");
         assert!(!notification.to_string().contains(canary));
+    }
+
+    #[tokio::test]
+    async fn coordination_notification_skips_a_mailbox_the_recipient_already_drained() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
+        let launch_id = seed_codex_app_server_session(tmp.path(), "beta");
+        let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let alpha = load_session_record(&state.context, "alpha").expect("alpha");
+        let beta = load_session_record(&state.context, "beta").expect("beta");
+        let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
+        provision_ready_coordination_fixture(&state.context, &beta);
+        crate::activity::activate_runtime(&state.context, &beta).expect("activate beta");
+        for (event_id, kind) in [
+            ("drained-turn-start", "turn_started"),
+            ("drained-turn-complete", "turn_completed"),
+        ] {
+            let event = serde_json::from_value(json!({
+                "schema_version": crate::activity::TURN_EVENT_VERSION,
+                "event_id": event_id,
+                "runtime_id": launch_id,
+                "provider": "codex",
+                "provider_turn_id": "drained-idle-turn",
+                "kind": kind,
+                "confidence": "authoritative"
+            }))
+            .expect("activity event");
+            crate::activity::ingest_event(&state.context, &beta.id, event).expect("ingest");
+        }
+        let (handle, mut commands) = codex_app_server::control_channel();
+        state.codex_controls.lock().unwrap().insert(
+            beta.id.clone(),
+            CodexControlEntry {
+                launch_id: launch_id.clone(),
+                handle,
+            },
+        );
+        let registry_path = tmp.path().join("coordination/registry.json");
+        let drain_recipient_inbox = || {
+            let mut registry: Value =
+                serde_json::from_slice(&fs::read(&registry_path).expect("registry"))
+                    .expect("registry json");
+            for message in registry["messages"].as_array_mut().expect("messages") {
+                message["state"] = json!("acknowledged");
+            }
+            fs::write(
+                &registry_path,
+                serde_json::to_vec_pretty(&registry).expect("registry json"),
+            )
+            .expect("drain recipient inbox");
+        };
+
+        send_notification_fixture(&state, &alpha_capability, "drained-mailbox-0001").await;
+        let raced = crate::coordination::pending_notifications(&state.context)
+            .expect("pending notification")
+            .pop()
+            .expect("notification candidate");
+        // The recipient reads its mail at its own safe boundary before the
+        // reminder is submitted.
+        drain_recipient_inbox();
+        assert!(
+            crate::coordination::pending_notifications(&state.context)
+                .expect("pending notifications")
+                .is_empty(),
+            "a drained mailbox must not be offered for delivery"
+        );
+        assert!(
+            !crate::coordination::lock_session_quiescence(&state.context, "beta", &launch_id)
+                .expect("quiescence")
+                .begin_notification_attempt(&raced)
+                .expect("attempt"),
+            "the locked attempt must recheck unread mail discovered earlier"
+        );
+        drain_coordination_notifications(state.clone()).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), commands.recv())
+                .await
+                .is_err(),
+            "no stale reminder may reach the recipient"
+        );
+        assert_eq!(notification_fixture(tmp.path())["state"], "queued");
+        assert_eq!(notification_fixture(tmp.path())["notified_generation"], 0);
+
+        send_notification_fixture(&state, &alpha_capability, "drained-mailbox-0002").await;
+        let expected_prompt = fixture_notification_prompt(tmp.path());
+        assert!(expected_prompt.contains("(newest queued "));
+        let responder = tokio::spawn(async move {
+            let Some(codex_app_server::ControlCommand::Prompt { message, response }) =
+                commands.recv().await
+            else {
+                panic!("new mail must be announced");
+            };
+            assert_eq!(message, expected_prompt);
+            response
+                .send(Ok("turn-drained-mailbox".to_string()))
+                .expect("acknowledge prompt");
+        });
+        drain_coordination_notifications(state.clone()).await;
+        responder.await.expect("responder");
+        let notification = notification_fixture(tmp.path());
+        assert_eq!(notification["state"], "prompt_submitted");
+        assert_eq!(notification["notified_generation"], 2);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -35107,7 +35203,7 @@ esac
             .pop()
             .expect("notification candidate");
         fs::write(&runtime_race, b"stop after attempt\n").expect("runtime race");
-        let prompt = crate::coordination::notification_prompt("", "beta");
+        let prompt = crate::coordination::notification_prompt(&candidate);
         let guarded_tail = ProviderPromptTail::open_path(
             ProviderKind::Codex,
             provider_id,
@@ -35329,6 +35425,25 @@ esac
             .filter(|line| line.starts_with("send-keys "))
             .count();
         assert_eq!(enter_count_after_unknown, 2);
+        // Generation one's delivered line cannot prove generation two, so an
+        // undated exact match of the new prompt makes the outcome ambiguous;
+        // the attempt must stay parked instead of pressing Enter again.
+        let second_prompt = fixture_notification_prompt(tmp.path());
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .expect("open transcript")
+            .write_all(
+                format!(
+                    "{}\n",
+                    json!({
+                        "type": "event_msg",
+                        "payload": {"type": "user_message", "message": second_prompt}
+                    })
+                )
+                .as_bytes(),
+            )
+            .expect("append ambiguous prompt");
         drain_coordination_notifications(state.clone()).await;
         assert_eq!(
             fs::read_to_string(&command_log)
@@ -35339,6 +35454,7 @@ esac
             enter_count_after_unknown,
             "an unresolved terminal submission must not send another Enter"
         );
+        assert_eq!(notification_fixture(tmp.path())["state"], "attempt_unknown");
     }
 
     #[tokio::test]
@@ -35350,14 +35466,7 @@ esac
         fs::create_dir_all(transcript.parent().expect("transcript parent"))
             .expect("transcript dir");
         let provider_id = "notification-reconcile-stale";
-        write_codex_notification_transcript(
-            &transcript,
-            provider_id,
-            &[(
-                "2030-01-01T00:01:40.200000000Z",
-                crate::coordination::notification_prompt("", "beta"),
-            )],
-        );
+        write_codex_notification_transcript(&transcript, provider_id, &[]);
         let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", codex_home.to_str().unwrap());
 
         seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
@@ -35406,6 +35515,14 @@ esac
             )
             .expect("fail generation two")
         );
+        write_codex_notification_transcript(
+            &transcript,
+            provider_id,
+            &[(
+                "2030-01-01T00:01:40.200000000Z",
+                crate::coordination::notification_prompt(&generation_two),
+            )],
+        );
         set_notification_attempted_at(tmp.path(), "2030-01-01T00:01:40.700000000Z");
 
         reconcile_coordination_notifications(state.clone()).await;
@@ -35431,20 +35548,7 @@ esac
         fs::create_dir_all(transcript.parent().expect("transcript parent"))
             .expect("transcript dir");
         let provider_id = "notification-reconcile-delivered";
-        write_codex_notification_transcript(
-            &transcript,
-            provider_id,
-            &[
-                (
-                    "2030-01-01T00:01:40.800000000Z",
-                    crate::coordination::notification_prompt("", "beta"),
-                ),
-                (
-                    "2030-01-01T00:01:41.100000000Z",
-                    "later unrelated recipient prompt".to_string(),
-                ),
-            ],
-        );
+        write_codex_notification_transcript(&transcript, provider_id, &[]);
         let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", codex_home.to_str().unwrap());
 
         seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
@@ -35478,6 +35582,20 @@ esac
                 "submission-outcome-unknown",
             )
             .expect("unknown notification")
+        );
+        write_codex_notification_transcript(
+            &transcript,
+            provider_id,
+            &[
+                (
+                    "2030-01-01T00:01:40.800000000Z",
+                    crate::coordination::notification_prompt(&candidate),
+                ),
+                (
+                    "2030-01-01T00:01:41.100000000Z",
+                    "later unrelated recipient prompt".to_string(),
+                ),
+            ],
         );
         set_notification_attempted_at(tmp.path(), "2030-01-01T00:01:40.700000000Z");
 
@@ -35598,7 +35716,7 @@ esac
             Duration::ZERO,
         )
         .expect("tail");
-        let prompt = crate::coordination::notification_prompt("", "beta");
+        let prompt = crate::coordination::notification_prompt(&candidate);
         assert!(matches!(
             start_terminal_coordination_notification(
                 &state.context,
@@ -35755,7 +35873,7 @@ esac
             Duration::ZERO,
         )
         .expect("tail");
-        let prompt = crate::coordination::notification_prompt("", "beta");
+        let prompt = crate::coordination::notification_prompt(&candidate);
 
         assert!(matches!(
             start_terminal_coordination_notification(
@@ -35860,6 +35978,25 @@ esac
             serde_json::to_vec_pretty(&registry).expect("registry json"),
         )
         .expect("registry");
+    }
+
+    /// The dated prompt the fixture's current notification generation carries.
+    fn fixture_notification_prompt(state_dir: &Path) -> String {
+        let notification = notification_fixture(state_dir);
+        crate::coordination::notification_prompt(&crate::coordination::NotificationCandidate {
+            target_session_id: notification["target_session_id"]
+                .as_str()
+                .expect("target session")
+                .to_string(),
+            target_incarnation: notification["target_incarnation"]
+                .as_str()
+                .expect("target incarnation")
+                .to_string(),
+            generation: notification["generation"].as_u64().expect("generation"),
+            queued_at_epoch: notification["queued_at_epoch"].as_i64().expect("queued at"),
+            attempted_at_epoch: 0,
+            attempted_at: None,
+        })
     }
 
     fn notification_fixture(state_dir: &Path) -> Value {
