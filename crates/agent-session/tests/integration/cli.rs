@@ -4521,6 +4521,80 @@ fn claude_ask_user_question_clears_exactly_and_keeps_generic_attention() {
 }
 
 #[test]
+fn start_accepts_hyphen_leading_agent_arg_values() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let cwd = tmp.path().join("repo");
+    fs::create_dir_all(&cwd).expect("repo dir");
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let codex_bin = fake_agent(tmp.path(), "codex");
+
+    let state_arg = state_dir.to_string_lossy().to_string();
+    let cwd_arg = cwd.to_string_lossy().to_string();
+    let tmux_arg = tmux_bin.to_string_lossy().to_string();
+    let codex_arg = codex_bin.to_string_lossy().to_string();
+    let output = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "--host",
+            "sympoies",
+            "start",
+            "--agent",
+            "codex",
+            "--cwd",
+            &cwd_arg,
+            "--title",
+            "Hyphen args",
+            "--prompt",
+            "hello",
+            "--tmux-bin",
+            &tmux_arg,
+            "--agent-bin",
+            &codex_arg,
+            "--agent-arg",
+            "-m",
+            "--agent-arg",
+            "fixture-model",
+            "--agent-arg=-c",
+            "--paste-delay-ms",
+            "0",
+            "--format",
+            "json",
+        ],
+        &[(
+            "AGENT_SESSION_FAKE_TMUX_LOG",
+            tmux_log.to_string_lossy().as_ref(),
+        )],
+    );
+
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let value = output.stdout_json();
+    let id = data(&value)["id"].as_str().expect("id").to_string();
+    let record: Value = serde_json::from_str(
+        &fs::read_to_string(state_dir.join("sessions").join(id).join("session.json"))
+            .expect("session record"),
+    )
+    .expect("session json");
+    assert_eq!(record["agent_args"], json!(["-m", "fixture-model", "-c"]));
+
+    let calls = tmux_calls(&tmux_log);
+    let new_session = calls
+        .iter()
+        .find(|call| call.first().is_some_and(|arg| arg == "new-session"))
+        .expect("new-session call");
+    let tail: Vec<&str> = new_session
+        .iter()
+        .rev()
+        .take(4)
+        .rev()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(tail, ["--no-alt-screen", "-m", "fixture-model", "-c"]);
+}
+
+#[test]
 fn start_creates_session_state_without_printing_prompt() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
