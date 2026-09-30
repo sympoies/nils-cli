@@ -101,6 +101,15 @@ an unverifiable process boundary, ordinary deletion and `retry_delete` both fail
 closed forever, because no retry can manufacture the missing proof that the
 remaining boundary still belongs to the recorded runtime.
 
+An older record without boot evidence can also have a stopped process boundary
+while its persisted numeric tmux selector has been reused by an unrelated
+session. Preview applies the same bounded stopped verification as ordinary
+deletion before reporting that record healthy. If the numeric selector cannot
+verify stopped, it reports unavailable runtime evidence; confirmed record-only
+removal remains available only when the independent exact managed-name probe
+proves absence. The replacement numeric target is never signaled, and no boot
+or runtime-completion proof is fabricated.
+
 If either condition stops holding between preview and action, the request
 returns `maintenance-preview-stale` and nothing moves.
 

@@ -26393,6 +26393,157 @@ esac
         }
     }
 
+    fn reused_numeric_tmux_fixture(root: &Path) -> (Arc<ServeState>, PathBuf) {
+        let id = "reused-numeric-tmux";
+        seed_resumable_session(
+            root,
+            id,
+            "codex",
+            "hs-codex-reused-numeric-tmux",
+            root,
+            &["resume", "resume-session-id"],
+        );
+        let path = root.join("sessions").join(id).join("session.json");
+        let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        record.as_object_mut().unwrap().remove("startup");
+        record
+            .as_object_mut()
+            .unwrap()
+            .remove("tmux_runtime_never_launched");
+        record["runtime"]["launch_id"] = json!("pre-boot-launch");
+        record["delete_tmux_identity"] = json!({
+            "launch_id": "pre-boot-launch", "session_id": "$91", "pane_id": "%91",
+            "pane_pid": 99999999, "process_group_id": 99999999,
+        });
+        std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        let calls = root.join("tmux-calls");
+        let tmux = executable(
+            &root.join("reused-tmux"),
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = has-session ]; then\n  if [ \"$3\" = '$91' ]; then exit 0; fi\n  if [ \"$3\" = '=hs-codex-reused-numeric-tmux' ] && [ -f '{}' ]; then exit 0; fi\nfi\nprintf '%s\\n' \"can't find session: managed\" >&2\nexit 1\n",
+                calls.display(),
+                root.join("managed-name-present").display(),
+            ),
+        );
+        (state(root, Some(TOKEN), tmux), calls)
+    }
+
+    #[tokio::test]
+    async fn maintenance_reused_numeric_tmux_offers_fenced_no_signal_record_removal() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (st, calls) = reused_numeric_tmux_fixture(tmp.path());
+        let provider_history = tmp.path().join("provider-history.jsonl");
+        std::fs::write(&provider_history, b"retained provider history\n").unwrap();
+        let route = "/sessions/reused-numeric-tmux/maintenance";
+        let (status, body) = call(
+            router(st.clone()),
+            get_auth(
+                &format!(
+                    "{route}?operation=delete&schema_version=agent-session.session-maintenance.v2"
+                ),
+                Some(TOKEN),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let preview = &body["data"]["maintenance"];
+        assert_eq!(preview["state"], "blocked", "{preview}");
+        assert_eq!(preview["issue"]["kind"], "runtime_identity_unavailable");
+        assert_eq!(preview["boundary"]["safe_process_count"], 0);
+        assert!(
+            preview["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a["id"] == "remove_console_record")
+        );
+        let action_route = "/sessions/reused-numeric-tmux/maintenance/actions";
+        let mut request = json!({
+            "schema_version": "agent-session.session-maintenance.v2", "operation": "delete",
+            "action": "remove_console_record", "expected_session_incarnation": preview["session_incarnation"],
+            "expected_session_generation": preview["session_generation"], "expected_preview_digest": preview["preview_digest"],
+            "confirmed": false,
+        });
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(action_route, Some(TOKEN), request.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "maintenance-confirmation-required");
+        request["confirmed"] = json!(true);
+        request["expected_session_generation"] = json!(2);
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(action_route, Some(TOKEN), request.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "maintenance-preview-stale");
+        request["expected_session_generation"] = preview["session_generation"].clone();
+        let managed_present = tmp.path().join("managed-name-present");
+        std::fs::write(&managed_present, b"replacement exists").unwrap();
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(action_route, Some(TOKEN), request.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "maintenance-preview-stale");
+        assert!(
+            tmp.path()
+                .join("sessions/reused-numeric-tmux/session.json")
+                .exists()
+        );
+        std::fs::remove_file(managed_present).unwrap();
+        let (status, body) = call(router(st), post_json(action_route, Some(TOKEN), request)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["data"]["maintenance_result"]["outcome"],
+            "record_removed"
+        );
+        assert!(!tmp.path().join("sessions/reused-numeric-tmux").exists());
+        assert_eq!(
+            std::fs::read(provider_history).unwrap(),
+            b"retained provider history\n"
+        );
+        let calls = std::fs::read_to_string(calls).unwrap();
+        for forbidden in ["if-shell", "kill-session", "send-keys", "new-session"] {
+            assert!(!calls.contains(forbidden), "unexpected mutation: {calls}");
+        }
+    }
+
+    #[tokio::test]
+    async fn maintenance_reused_numeric_tmux_keeps_record_removal_v2_delete_only() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (st, _) = reused_numeric_tmux_fixture(tmp.path());
+        for (operation, schema) in [
+            ("delete", "agent-session.session-maintenance.v1"),
+            ("resume", "agent-session.session-maintenance.v2"),
+            ("attach", "agent-session.session-maintenance.v2"),
+            ("inspect", "agent-session.session-maintenance.v2"),
+        ] {
+            let (status, body) = call(router(st.clone()), get_auth(
+                &format!("/sessions/reused-numeric-tmux/maintenance?operation={operation}&schema_version={schema}"), Some(TOKEN),
+            )).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let preview = &body["data"]["maintenance"];
+            assert_eq!(preview["state"], "blocked", "{preview}");
+            assert!(
+                !preview["actions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|a| a["id"] == "remove_console_record")
+            );
+        }
+        assert!(
+            tmp.path()
+                .join("sessions/reused-numeric-tmux/session.json")
+                .exists()
+        );
+    }
+
     #[tokio::test]
     async fn resume_api_reports_retry_resume_for_a_surviving_runtime() {
         let tmp = tempfile::TempDir::new().unwrap();
