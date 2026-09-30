@@ -5456,10 +5456,17 @@ fn history_resume_identity(
         .archived_session_id
         .clone()
         .filter(|id| crate::validate_id(id).is_ok() && !crate::session_dir(context, id).exists());
-    Ok(RestoredHistoryIdentity {
-        id,
-        title_state: history.archived_title_state.clone(),
-    })
+    // A title edited after its structured state was captured no longer renders
+    // from that state; restore the title alone rather than fail the resume.
+    let title_state = history.archived_title_state.clone().filter(|state| {
+        crate::canonicalize_structured_title_pair(
+            history.title.clone(),
+            history.title.is_some(),
+            state.clone(),
+        )
+        .is_ok()
+    });
+    Ok(RestoredHistoryIdentity { id, title_state })
 }
 
 fn live_managed_session_for_history(context: &CliContext, history_id: &str) -> Option<String> {
@@ -19784,7 +19791,16 @@ esac
             &["resume", "resume-session-id"],
         );
         let mut record = load_session_record(&context, "archived-owner").unwrap();
-        record.title = Some("Saved title".to_string());
+        record.title = Some("Saved topic - Saved activity".to_string());
+        record.title_state = Some(
+            serde_json::from_value(json!({
+                "topic": "Saved topic",
+                "topic_source": "auto",
+                "references": [],
+                "activity": "Saved activity"
+            }))
+            .unwrap(),
+        );
         crate::write_session_record(&context, &record).unwrap();
         let tmux = executable(
             &tmp.path().join("archive-tmux"),
@@ -19799,6 +19815,7 @@ esac
         .unwrap();
         assert_eq!(archived.session_id.as_deref(), Some("archived-owner"));
         assert_eq!(archived.title.as_deref(), record.title.as_deref());
+        assert_eq!(archived.title_state, record.title_state);
         let catalog = HistoryCatalog::new(
             vec![provider_history::HistorySource {
                 provider: "codex".to_string(),
@@ -19809,10 +19826,24 @@ esac
             provider_history::star_root(tmp.path()),
         );
         let history = catalog.resolve_fresh(&archived.history_id).unwrap();
-        assert_eq!(history.title.as_deref(), Some("Saved title"));
+        assert_eq!(
+            history.title.as_deref(),
+            Some("Saved topic - Saved activity")
+        );
 
         let restored = history_resume_identity(&context, &history).unwrap();
         assert_eq!(restored.id.as_deref(), Some("archived-owner"));
+        assert_eq!(restored.title_state, record.title_state);
+
+        // A title that no longer renders from its state keeps the title alone.
+        let mut edited = history.clone();
+        edited.title = Some("Edited by hand".to_string());
+        assert_eq!(
+            history_resume_identity(&context, &edited)
+                .unwrap()
+                .title_state,
+            None
+        );
 
         // Another session took the id meanwhile: resume falls back to a new id.
         fs::create_dir_all(tmp.path().join("sessions/archived-owner")).unwrap();
@@ -19983,6 +20014,35 @@ esac
         assert_eq!(body["error"]["code"], "history-session-not-found");
         assert!(!log.exists(), "missing history resume must not launch");
 
+        // The conversation was archived from a managed session: resume restores
+        // its session id, title, and structured title state.
+        let title_state: crate::SessionTitleState = serde_json::from_value(json!({
+            "topic": "Kept topic",
+            "topic_source": "auto",
+            "references": [],
+            "activity": "Kept activity"
+        }))
+        .unwrap();
+        provider_history::write_archive(
+            &provider_history::archive_root(tmp.path()),
+            &provider_history::ArchivedSession {
+                schema_version: "agent-session.history-archive.v1".to_string(),
+                history_id: id.clone(),
+                provider: "dsh".to_string(),
+                provider_session_id: "dsh-one".to_string(),
+                agent_profile: Some("dsh-tui".to_string()),
+                session_id: Some("kept-dsh".to_string()),
+                title: Some("Kept topic - Kept activity".to_string()),
+                title_state: Some(title_state),
+                cwd: cwd.display().to_string(),
+                created_at: "2026-09-12T01:00:00.000Z".to_string(),
+                updated_at: "2026-09-12T02:00:00.000Z".to_string(),
+                archived_at: "2026-09-12T03:00:00.000Z".to_string(),
+            },
+        )
+        .unwrap()
+        .commit();
+
         let (status, body) = call(
             router(st),
             post_json(
@@ -19995,6 +20055,15 @@ esac
 
         assert_eq!(status, StatusCode::OK, "body={body}");
         let managed_id = body["data"]["session"]["id"].as_str().unwrap();
+        assert_eq!(managed_id, "kept-dsh");
+        assert_eq!(
+            body["data"]["session"]["title"],
+            "Kept topic - Kept activity"
+        );
+        assert_eq!(
+            body["data"]["session"]["title_state"]["topic"],
+            "Kept topic"
+        );
         assert_eq!(body["data"]["session"]["agent"], "hermes");
         assert_eq!(body["data"]["session"]["agent_profile"], "dsh-tui");
         let record: Value = serde_json::from_slice(
