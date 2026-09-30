@@ -50,16 +50,25 @@ fn assert_exit(output: &CmdOutput, code: i32) {
 
 #[test]
 fn auth_use_missing_arg() {
-    let output = run(&["auth", "use"], &[]);
+    // The target is a required clap argument, as in claude-cli.
+    let output = run(&["auth", "use", "--format", "json"], &[]);
     assert_exit(&output, 64);
-    assert!(stderr(&output).contains("codex-use: usage: codex-use <name|name.json|email>"));
+    assert!(stderr(&output).contains("required arguments were not provided"));
+    assert!(stderr(&output).contains("<target>"));
 }
 
 #[test]
 fn auth_use_extra_args() {
     let output = run(&["auth", "use", "one", "two"], &[]);
     assert_exit(&output, 64);
-    assert!(stderr(&output).contains("codex-use: usage: codex-use <name|name.json|email>"));
+    assert!(stderr(&output).contains("unexpected argument 'two'"));
+}
+
+#[test]
+fn auth_use_empty_arg() {
+    let output = run(&["auth", "use", ""], &[]);
+    assert_exit(&output, 64);
+    assert!(stderr(&output).contains("<target>"));
 }
 
 #[test]

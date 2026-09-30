@@ -12,16 +12,16 @@
 //! re-materializes the same nickname, and a requested switch is queued as a
 //! durable next-account intent that applies on the next launch.
 
-use std::env;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 
-use crate::account_broker::{self, BrokerArgvError, BrokerProcessError};
+use crate::account_broker::{
+    AccountInventory, AccountSummary, BROKER_TIMEOUT, BrokerClient, BrokerProtocol,
+};
 use crate::{CliError, SessionRecord};
 
 pub(crate) const BROKER_SCHEMA_VERSION: &str = "agent-session.account-broker.v2";
@@ -32,11 +32,18 @@ const PROVIDER: &str = "claude";
 const BINDING_KEY: &str = "claude_account_binding";
 const NEXT_KEY: &str = "claude_account_next";
 const BROKER_ENV: &str = "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER";
-const BROKER_TIMEOUT: Duration = Duration::from_secs(10);
 const CREDENTIALS_FILE: &str = ".credentials.json";
-const MAX_ACCOUNT_BYTES: usize = 64;
-const MAX_PLAN_BYTES: usize = 128;
 const MAX_CONFIG_DIR_BYTES: usize = 4096;
+
+/// Claude speaks the provider-neutral v2 broker protocol.
+pub(crate) const BROKER: BrokerClient = BrokerClient {
+    provider: PROVIDER,
+    display: "Claude",
+    env: BROKER_ENV,
+    schema: BROKER_SCHEMA_VERSION,
+    protocol: BrokerProtocol::ProviderV2,
+    unsupported: unsupported_error,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 struct DurableBinding {
@@ -96,29 +103,7 @@ struct ClaudeNextAccountView {
     state: &'static str,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct ClaudeAccountSummary {
-    pub(crate) account: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) plan: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(crate) struct ClaudeAccountInventory {
-    pub(crate) accounts: Vec<ClaudeAccountSummary>,
-    pub(crate) selection_strategies: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct BrokerListResponse {
-    schema_version: String,
-    provider: String,
-    accounts: Vec<ClaudeAccountSummary>,
-    #[serde(default)]
-    selection_strategies: Vec<String>,
-}
+pub(crate) type ClaudeAccountInventory = AccountInventory;
 
 #[derive(Deserialize)]
 struct BrokerSelectResponse {
@@ -136,7 +121,7 @@ struct BrokerMaterializeResponse {
 }
 
 pub(crate) fn broker_is_configured() -> bool {
-    matches!(broker_argv(), Ok(Some(_)))
+    BROKER.is_configured()
 }
 
 /// Public, path-free account projection. `None` keeps every non-Claude
@@ -410,54 +395,30 @@ pub(crate) fn preflight_next(record: &SessionRecord) -> Result<(), CliError> {
 }
 
 pub(crate) fn list_accounts() -> Result<ClaudeAccountInventory, CliError> {
-    let value = run_broker(&["list", "--provider", PROVIDER, "--format", "json"])?;
-    let response: BrokerListResponse =
-        serde_json::from_value(value).map_err(|_| invalid_response("an invalid account list"))?;
-    ensure_envelope(&response.schema_version, &response.provider)?;
-    let mut accounts = Vec::with_capacity(response.accounts.len());
-    for mut account in response.accounts {
-        validate_account(&account.account)
-            .map_err(|_| invalid_response("an unsafe account nickname"))?;
-        validate_public_string(&account.label, MAX_ACCOUNT_BYTES)?;
-        validate_public_string(&account.plan, MAX_PLAN_BYTES)?;
-        if accounts
-            .iter()
-            .any(|seen: &ClaudeAccountSummary| seen.account == account.account)
-        {
-            return Err(invalid_response("duplicate account nicknames"));
-        }
-        account.label = account.label.filter(|value| !value.trim().is_empty());
-        account.plan = account.plan.filter(|value| !value.trim().is_empty());
-        accounts.push(account);
-    }
-    let selection_strategies = response
+    let mut inventory = BROKER.list::<AccountSummary>(BROKER_TIMEOUT)?;
+    inventory
         .selection_strategies
-        .into_iter()
-        .filter(|strategy| strategy == "current_default")
-        .collect();
-    Ok(ClaudeAccountInventory {
-        accounts,
-        selection_strategies,
-    })
+        .retain(|strategy| strategy == "current_default");
+    Ok(inventory)
 }
 
 fn select_current_default() -> Result<String, CliError> {
-    let value = run_broker(&[
-        "select",
-        "--provider",
-        PROVIDER,
-        "--strategy",
-        "current_default",
-        "--format",
-        "json",
-    ])?;
-    let response: BrokerSelectResponse = serde_json::from_value(value)
-        .map_err(|_| invalid_response("an invalid account selection"))?;
-    ensure_envelope(&response.schema_version, &response.provider)?;
+    const INVALID_SELECTION: &str = "an invalid account selection";
+    let value = BROKER.call("select", &["--strategy", "current_default"], BROKER_TIMEOUT)?;
+    let response: BrokerSelectResponse = BROKER.decode(
+        value,
+        INVALID_SELECTION,
+        |response: &BrokerSelectResponse| {
+            (
+                response.schema_version.as_str(),
+                Some(response.provider.as_str()),
+            )
+        },
+    )?;
     let account = response
         .account
-        .ok_or_else(|| invalid_response("an invalid account selection"))?;
-    validate_account(&account).map_err(|_| invalid_response("an invalid account selection"))?;
+        .ok_or_else(|| BROKER.invalid_response(INVALID_SELECTION))?;
+    BROKER.ensure_broker_nickname(&account, INVALID_SELECTION)?;
     Ok(account)
 }
 
@@ -465,26 +426,25 @@ fn select_current_default() -> Result<String, CliError> {
 /// directory before any Claude process may run in it.
 pub(crate) fn materialize(account: &str) -> Result<PathBuf, CliError> {
     validate_account(account)?;
-    let value = run_broker(&[
-        "materialize",
-        "--provider",
-        PROVIDER,
-        "--account",
-        account,
-        "--format",
-        "json",
-    ])?;
-    let response: BrokerMaterializeResponse = serde_json::from_value(value)
-        .map_err(|_| invalid_response("an invalid account directory"))?;
-    ensure_envelope(&response.schema_version, &response.provider)?;
+    let value = BROKER.call("materialize", &["--account", account], BROKER_TIMEOUT)?;
+    let response: BrokerMaterializeResponse = BROKER.decode(
+        value,
+        "an invalid account directory",
+        |response: &BrokerMaterializeResponse| {
+            (
+                response.schema_version.as_str(),
+                Some(response.provider.as_str()),
+            )
+        },
+    )?;
     if response.account != account {
-        return Err(invalid_response("a mismatched account directory"));
+        return Err(BROKER.invalid_response("a mismatched account directory"));
     }
     if response.config_dir.is_empty()
         || response.config_dir.len() > MAX_CONFIG_DIR_BYTES
         || response.config_dir.contains(['\0', '\n', '\r'])
     {
-        return Err(invalid_response("an invalid account directory"));
+        return Err(BROKER.invalid_response("an invalid account directory"));
     }
     let config_dir = PathBuf::from(response.config_dir);
     validate_config_dir(&config_dir, current_euid())?;
@@ -524,13 +484,7 @@ pub(crate) fn validate_config_dir(path: &Path, uid: u32) -> Result<(), CliError>
 }
 
 pub(crate) fn validate_account(account: &str) -> Result<(), CliError> {
-    if account.is_empty()
-        || account.len() > MAX_ACCOUNT_BYTES
-        || !account.as_bytes()[0].is_ascii_alphanumeric()
-        || !account
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
+    if !nils_common::provider_runtime::accounts::is_valid_account_nickname(account) {
         return Err(CliError::usage(
             "invalid-claude-account",
             "Claude account must be a short configured nickname",
@@ -549,16 +503,6 @@ fn validate_selection_source(source: Option<&str>) -> Result<(), CliError> {
         "Claude account selection source is invalid",
         None,
     ))
-}
-
-fn validate_public_string(value: &Option<String>, max: usize) -> Result<(), CliError> {
-    if value
-        .as_ref()
-        .is_some_and(|value| value.len() > max || value.contains(['\n', '\r', '\0']))
-    {
-        return Err(invalid_response("invalid public metadata"));
-    }
-    Ok(())
 }
 
 fn decode_binding(record: &SessionRecord) -> Decoded<DurableBinding> {
@@ -623,60 +567,7 @@ fn current_euid() -> u32 {
 }
 
 fn broker_argv() -> Result<Option<Vec<String>>, CliError> {
-    account_broker::parse_argv(env::var(BROKER_ENV).ok()).map_err(|error| match error {
-        BrokerArgvError::NotJsonArgv => broker_error(
-            "claude-account-broker-invalid-config",
-            "Claude account broker configuration must be a JSON argv array",
-        ),
-        BrokerArgvError::Invalid => broker_error(
-            "claude-account-broker-invalid-config",
-            "Claude account broker configuration is invalid",
-        ),
-    })
-}
-
-fn run_broker(args: &[&str]) -> Result<Value, CliError> {
-    let argv = broker_argv()?.ok_or_else(unsupported_error)?;
-    account_broker::run(&argv, args, BROKER_TIMEOUT).map_err(|error| match error {
-        BrokerProcessError::SpawnFailed
-        | BrokerProcessError::StdoutUnavailable
-        | BrokerProcessError::StderrUnavailable => broker_error(
-            "claude-account-broker-unavailable",
-            "Claude account broker could not be started",
-        ),
-        BrokerProcessError::WaitFailed => broker_error(
-            "claude-account-broker-failed",
-            "Claude account broker failed",
-        ),
-        BrokerProcessError::Rejected => broker_error(
-            "claude-account-broker-rejected",
-            "Claude account broker rejected the request",
-        ),
-        BrokerProcessError::OutputTooLarge | BrokerProcessError::MalformedJson => broker_error(
-            "claude-account-broker-invalid-response",
-            "Claude account broker returned malformed output",
-        ),
-        BrokerProcessError::Timeout => broker_error(
-            "claude-account-broker-timeout",
-            "Claude account broker timed out",
-        ),
-    })
-}
-
-fn ensure_envelope(schema: &str, provider: &str) -> Result<(), CliError> {
-    if schema == BROKER_SCHEMA_VERSION && provider == PROVIDER {
-        Ok(())
-    } else {
-        Err(invalid_response("an unsupported schema or provider"))
-    }
-}
-
-fn invalid_response(what: &str) -> CliError {
-    CliError::runtime(
-        "claude-account-broker-invalid-response",
-        format!("Claude account broker returned {what}"),
-        None,
-    )
+    BROKER.argv()
 }
 
 fn unsafe_dir_error(reason: &'static str) -> CliError {
@@ -695,7 +586,7 @@ fn unsupported_error() -> CliError {
     )
 }
 
-pub(crate) fn agent_conflict_error() -> CliError {
+fn agent_conflict_error() -> CliError {
     CliError::usage(
         "claude-account-agent-conflict",
         "claude_account is supported only for Claude sessions",
@@ -717,10 +608,6 @@ fn encode_error(record: &SessionRecord) -> CliError {
         "failed to encode Claude account binding state",
         Some(json!({ "id": record.id })),
     )
-}
-
-fn broker_error(code: &'static str, message: &'static str) -> CliError {
-    CliError::runtime(code, message, None)
 }
 
 #[cfg(test)]

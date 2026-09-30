@@ -219,6 +219,14 @@ fn auth_remote_pull_all_projects_every_profile_into_its_own_config_dir() {
     );
     let result = &output.stdout_json()["result"];
     assert_eq!(result["current"], "max");
+    // The reported current default is also recorded where the host account
+    // broker reads it: `<into>/.current`, one nickname line, owner-only.
+    let current_file = fx.accounts().join(".current");
+    assert_eq!(
+        std::fs::read_to_string(&current_file).expect(".current"),
+        "max\n"
+    );
+    assert_eq!(mode(&current_file), 0o600);
     assert_eq!(result["into"], path_str(&fx.accounts()));
     assert_eq!(result["pruned"], json!([]));
     assert_eq!(
@@ -298,10 +306,14 @@ fn auth_remote_pull_all_prunes_only_marked_directories_of_removed_profiles() {
     std::fs::create_dir_all(&outside).expect("outside");
     std::fs::write(outside.join(MARKER), "outside\n").expect("marker");
     std::os::unix::fs::symlink(&outside, accounts.join("linked")).expect("symlink");
+    // A stale recorded default is dropped when the authority reports none.
+    std::fs::write(accounts.join(".current"), "gone\n").expect(".current");
 
     let output = fx.pull_all(&[], &fx.options());
 
     assert_exit(&output, 0);
+    assert_eq!(output.stdout_json()["result"]["current"], Value::Null);
+    assert!(!accounts.join(".current").exists());
     assert_eq!(output.stdout_json()["result"]["pruned"], json!(["gone"]));
     assert!(!gone.exists());
     assert!(shared.join("keep.jsonl").is_file());

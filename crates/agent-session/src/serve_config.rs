@@ -5,8 +5,9 @@
 //! reads, so the daemon behaves exactly as if a launcher had exported them.
 //! Non-empty environment variables keep working and take precedence:
 //!
-//! - `retitle` and `codex_account_broker` are replaced wholesale by
-//!   `AGENT_SESSION_RETITLE_CONFIG` / `AGENT_SESSION_CODEX_ACCOUNT_BROKER`.
+//! - `retitle`, `codex_account_broker`, and `claude_account_broker` are
+//!   replaced wholesale by `AGENT_SESSION_RETITLE_CONFIG` /
+//!   `AGENT_SESSION_CODEX_ACCOUNT_BROKER` / `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER`.
 //! - `launch_profiles` merge with `AGENT_SESSION_LAUNCH_PROFILES`: environment
 //!   entries first, then file entries in order; the first entry for an id wins
 //!   and a later duplicate is dropped with a warning.
@@ -40,12 +41,14 @@ const MAX_PATH_ENTRY_BYTES: usize = 4096;
 const LAUNCH_PROFILES_ENV: &str = "AGENT_SESSION_LAUNCH_PROFILES";
 const RETITLE_ENV: &str = "AGENT_SESSION_RETITLE_CONFIG";
 const BROKER_ENV: &str = "AGENT_SESSION_CODEX_ACCOUNT_BROKER";
+const CLAUDE_BROKER_ENV: &str = "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER";
 
 const ROOT_KEYS: &[&str] = &[
     "schema_version",
     "launch_profiles",
     "retitle",
     "codex_account_broker",
+    "claude_account_broker",
     "path",
 ];
 const PATH_KEYS: &[&str] = &["append"];
@@ -152,6 +155,7 @@ struct CheckSummary {
     launch_profiles: LaunchProfilesSummary,
     retitle: SourceSummary,
     codex_account_broker: SourceSummary,
+    claude_account_broker: SourceSummary,
     path: PathSummary,
 }
 
@@ -441,21 +445,25 @@ fn resolve(
         assignments.push(("PATH", joined));
     }
 
-    let broker = resolve_broker(root.get("codex_account_broker"))?;
-    let broker_source = match (broker, env_value(BROKER_ENV)) {
-        (None, None) => Source::None,
-        (None, Some(_)) => Source::Environment,
-        (Some(_), Some(_)) => {
-            warnings.push(format!(
-                "{BROKER_ENV} overrides the config file's codex_account_broker table"
-            ));
-            Source::Environment
-        }
-        (Some(argv), None) => {
-            assignments.push((BROKER_ENV, OsString::from(argv)));
-            Source::File
-        }
+    let mut broker_source = |table: &str, env_key: &'static str| {
+        let broker = resolve_broker(root.get(table), table)?;
+        Ok::<_, CliError>(match (broker, env_value(env_key)) {
+            (None, None) => Source::None,
+            (None, Some(_)) => Source::Environment,
+            (Some(_), Some(_)) => {
+                warnings.push(format!(
+                    "{env_key} overrides the config file's {table} table"
+                ));
+                Source::Environment
+            }
+            (Some(argv), None) => {
+                assignments.push((env_key, OsString::from(argv)));
+                Source::File
+            }
+        })
     };
+    let codex_broker_source = broker_source("codex_account_broker", BROKER_ENV)?;
+    let claude_broker_source = broker_source("claude_account_broker", CLAUDE_BROKER_ENV)?;
 
     let retitle = resolve_retitle(root.get("retitle"))?;
     let retitle_source = match (retitle, env_value(RETITLE_ENV)) {
@@ -490,7 +498,10 @@ fn resolve(
                 source: retitle_source,
             },
             codex_account_broker: SourceSummary {
-                source: broker_source,
+                source: codex_broker_source,
+            },
+            claude_account_broker: SourceSummary {
+                source: claude_broker_source,
             },
             path: PathSummary {
                 append: path_entries.len(),
@@ -618,15 +629,18 @@ fn resolve_path_append(value: Option<&Value>) -> Result<Vec<PathBuf>, CliError> 
     Ok(entries)
 }
 
-fn resolve_broker(value: Option<&Value>) -> Result<Option<String>, CliError> {
+/// A provider account-broker table (`codex_account_broker` or
+/// `claude_account_broker`): one bounded argv array, never a shell command.
+fn resolve_broker(value: Option<&Value>, name: &str) -> Result<Option<String>, CliError> {
     let Some(value) = value else {
         return Ok(None);
     };
-    let table = section(value, "codex_account_broker")?;
-    reject_unknown_keys(table, BROKER_KEYS, "codex_account_broker")?;
+    let table = section(value, name)?;
+    reject_unknown_keys(table, BROKER_KEYS, name)?;
+    let argv_key = format!("{name}.argv");
     let Some(argv) = table.get("argv") else {
         return Err(invalid_value(
-            "codex_account_broker.argv",
+            &argv_key,
             "the broker table requires an argv array",
         ));
     };
@@ -637,11 +651,11 @@ fn resolve_broker(value: Option<&Value>) -> Result<Option<String>, CliError> {
             .collect()
     });
     match argv {
-        Some(argv) if crate::codex_account::valid_broker_argv(&argv) => {
+        Some(argv) if crate::account_broker::valid_argv(&argv) => {
             Ok(Some(Value::from(argv).to_string()))
         }
         _ => Err(invalid_value(
-            "codex_account_broker.argv",
+            &argv_key,
             "must be 1-16 non-empty strings of at most 4096 bytes",
         )),
     }
@@ -848,6 +862,10 @@ fn render_check(format: OutputFormat, resolved: &ResolvedServeConfig) -> i32 {
                 "codex_account_broker: {}",
                 source(summary.codex_account_broker.source)
             );
+            println!(
+                "claude_account_broker: {}",
+                source(summary.claude_account_broker.source)
+            );
             println!("path.append: {}", summary.path.append);
             for warning in &resolved.warnings {
                 let _ = writeln!(io::stderr(), "warning: {warning}");
@@ -968,6 +986,66 @@ mod tests {
         .expect("profiles json");
         assert_eq!(profiles[0]["id"], "a");
         assert_eq!(assignment(&resolved, "PATH"), None);
+    }
+
+    #[test]
+    fn claude_account_broker_table_materializes_like_the_codex_table() {
+        let resolved = resolve(
+            DocumentFormat::Toml,
+            &document(
+                "[codex_account_broker]\nargv = [\"/opt/codex-broker\"]\n\
+                 [claude_account_broker]\nargv = [\"/opt/claude-broker\", \"--quiet\"]\n",
+            ),
+            &lookup_from(&[]),
+        )
+        .expect("resolve");
+        assert_eq!(
+            assignment(&resolved, BROKER_ENV),
+            Some(&OsString::from(r#"["/opt/codex-broker"]"#))
+        );
+        assert_eq!(
+            assignment(&resolved, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER"),
+            Some(&OsString::from(r#"["/opt/claude-broker","--quiet"]"#))
+        );
+
+        let overridden = resolve(
+            DocumentFormat::Toml,
+            &document("[claude_account_broker]\nargv = [\"/opt/claude-broker\"]\n"),
+            &lookup_from(&[(
+                "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
+                r#"["/opt/env-claude-broker"]"#,
+            )]),
+        )
+        .expect("resolve");
+        assert_eq!(
+            assignment(&overridden, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER"),
+            None
+        );
+        assert!(
+            overridden
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("claude_account_broker"))
+        );
+
+        for (raw, key) in [
+            (
+                "[claude_account_broker]\nargv = []\n",
+                "claude_account_broker.argv",
+            ),
+            (
+                "[claude_account_broker]\ncommand = \"/opt/broker\"\n",
+                "claude_account_broker.command",
+            ),
+        ] {
+            let error = resolve(DocumentFormat::Toml, &document(raw), &lookup_from(&[]))
+                .expect_err("invalid claude broker table");
+            assert_eq!(
+                error.details().and_then(|details| details["key"].as_str()),
+                Some(key),
+                "{raw}"
+            );
+        }
     }
 
     #[test]

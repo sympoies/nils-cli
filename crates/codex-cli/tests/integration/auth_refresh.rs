@@ -82,6 +82,13 @@ fn auth_refresh_missing_token() {
 }
 
 #[test]
+fn auth_refresh_accepts_at_most_one_secret() {
+    let output = run(&["auth", "refresh", "one.json", "two.json"], &[]);
+    assert_exit(&output, 64);
+    assert!(stderr(&output).contains("unexpected argument 'two.json'"));
+}
+
+#[test]
 fn auth_refresh_invalid_name() {
     let output = run(&["auth", "refresh", "../bad.json"], &[]);
     assert_exit(&output, 64);

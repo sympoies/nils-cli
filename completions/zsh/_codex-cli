@@ -274,7 +274,7 @@ _arguments "${_arguments_options[@]}" : \
 '(--format)--json[Hidden alias for \`--format json\` (kept for backwards compatibility)]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'*::target:_default' \
+':target -- Secret name, name.json, email address, or email local part:_default' \
 && ret=0
 ;;
 (save)
@@ -285,7 +285,7 @@ _arguments "${_arguments_options[@]}" : \
 '--yes[Overwrite target file if it already exists (non-interactive)]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'*::secret:_default' \
+':secret -- Secret name or secret.json:_default' \
 && ret=0
 ;;
 (remove)
@@ -296,7 +296,7 @@ _arguments "${_arguments_options[@]}" : \
 '--yes[Remove target file without prompt (non-interactive)]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'*::secret:_default' \
+':secret -- Secret name or secret.json:_default' \
 && ret=0
 ;;
 (refresh)
@@ -305,7 +305,7 @@ _arguments "${_arguments_options[@]}" : \
 '(--format)--json[Hidden alias for \`--format json\` (kept for backwards compatibility)]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'*::secret:_default' \
+'::secret -- Secret name or secret.json; defaults to the active auth file:_default' \
 && ret=0
 ;;
 (auto-refresh)

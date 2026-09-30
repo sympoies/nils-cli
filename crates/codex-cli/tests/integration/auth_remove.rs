@@ -33,7 +33,12 @@ fn stderr(output: &CmdOutput) -> String {
 fn auth_remove_requires_file_name() {
     let output = run_with(&["auth", "remove"], &[], &[]);
     assert_eq!(output.code, 64);
-    assert!(stderr(&output).contains("usage"));
+    assert!(stderr(&output).contains("required arguments were not provided"));
+    assert!(stderr(&output).contains("<secret>"));
+
+    let extra = run_with(&["auth", "remove", "one", "two"], &[], &[]);
+    assert_eq!(extra.code, 64);
+    assert!(stderr(&extra).contains("unexpected argument 'two'"));
 }
 
 #[test]

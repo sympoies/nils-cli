@@ -66,8 +66,8 @@ fn completion_contract_is_context_aware_across_command_families() {
             "':key:_default' \\",
             "':value:_default' \\",
             "'--time-format=[Reset time format (local time)]:TIME_FORMAT:_default' \\",
-            "'*::target:_default' \\",
-            "'*::secret:_default' \\",
+            "':target -- Secret name, name.json, email address, or email local part:_default' \\",
+            "':secret -- Secret name or secret.json:_default' \\",
         ],
     );
 }

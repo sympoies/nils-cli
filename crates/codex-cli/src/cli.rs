@@ -29,6 +29,7 @@ ENVIRONMENT:
 EXIT CODES:
   0   success
   1   runtime error
+  2   ambiguous or unmatched account target, or missing credential state
   64  command-line usage error
   65  invalid input data";
 
@@ -283,8 +284,9 @@ pub enum AuthCommand {
     Use {
         #[command(flatten)]
         output: OutputModeArgs,
-        #[arg(id = "target", value_name = "target", num_args = 0..)]
-        args: Vec<String>,
+        /// Secret name, name.json, email address, or email local part
+        #[arg(value_name = "target", value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        target: String,
     },
     /// Save active CODEX_AUTH_FILE into CODEX_SECRET_DIR as SECRET_JSON (auto-appends .json when missing)
     Save {
@@ -293,8 +295,9 @@ pub enum AuthCommand {
         /// Overwrite target file if it already exists (non-interactive)
         #[arg(short = 'y', long = "yes")]
         yes: bool,
-        #[arg(id = "secret", value_name = "secret", num_args = 0..)]
-        args: Vec<String>,
+        /// Secret name or secret.json
+        #[arg(id = "secret", value_name = "secret", value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        name: String,
     },
     /// Remove SECRET_JSON from CODEX_SECRET_DIR (auto-appends .json when missing)
     Remove {
@@ -303,15 +306,17 @@ pub enum AuthCommand {
         /// Remove target file without prompt (non-interactive)
         #[arg(short = 'y', long = "yes")]
         yes: bool,
-        #[arg(id = "secret", value_name = "secret", num_args = 0..)]
-        args: Vec<String>,
+        /// Secret name or secret.json
+        #[arg(id = "secret", value_name = "secret", value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        name: String,
     },
     /// Refresh OAuth tokens
     Refresh {
         #[command(flatten)]
         output: OutputModeArgs,
-        #[arg(id = "secret", value_name = "secret", num_args = 0..)]
-        args: Vec<String>,
+        /// Secret name or secret.json; defaults to the active auth file
+        #[arg(id = "secret", value_name = "secret")]
+        name: Option<String>,
     },
     /// Refresh stale tokens across auth + secrets
     AutoRefresh {

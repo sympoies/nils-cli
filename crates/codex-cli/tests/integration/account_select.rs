@@ -871,6 +871,28 @@ fn account_select_rejects_invalid_arguments_as_usage_errors() {
     assert_eq!(bad_nickname.code, 64);
     assert_eq!(json(&bad_nickname)["error"]["code"], "invalid-nickname");
 
+    // Nicknames follow the shared account rule: an alphanumeric first byte.
+    for invalid in ["--exclude=-x", "--exclude=.hidden", "--exclude=_hidden"] {
+        let leading = fixture.run(
+            &server,
+            &[
+                "account",
+                "select",
+                "--strategy",
+                "next-with-capacity",
+                invalid,
+                "--format",
+                "json",
+            ],
+        );
+        assert_eq!(leading.code, 64, "{invalid}");
+        assert_eq!(
+            json(&leading)["error"]["code"],
+            "invalid-nickname",
+            "{invalid}"
+        );
+    }
+
     let unknown_origin = fixture.run(
         &server,
         &[

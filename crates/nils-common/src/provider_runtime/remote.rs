@@ -10,6 +10,8 @@
 use serde_json::Value;
 use std::process::{Command, Output};
 
+use super::accounts;
+
 /// Provider-specific knowledge the shared remote transport needs.
 pub trait AccessOnlyAdapter {
     /// Message prefix, for example `codex-remote-pull`.
@@ -185,14 +187,11 @@ pub fn is_valid_ssh_host(host: &str) -> bool {
             .any(|ch| ch.is_whitespace() || matches!(ch, '\'' | '"' | '`' | '$' | ';' | '&' | '|'))
 }
 
-/// A stored secret name: a single path segment of `[A-Za-z0-9._-]`.
+/// A stored secret name, `<nickname>` or `<nickname>.json`, where the
+/// nickname follows [`accounts::is_valid_account_nickname`] and no `..`
+/// appears anywhere.
 pub fn is_valid_secret_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.starts_with('-')
-        && !name.contains("..")
-        && name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    !name.contains("..") && accounts::is_valid_account_nickname(accounts::account_name(name))
 }
 
 #[cfg(test)]
@@ -358,5 +357,9 @@ mod tests {
         assert!(!is_valid_secret_name("a/b"));
         assert!(!is_valid_secret_name("-bad"));
         assert!(!is_valid_secret_name("a$bad"));
+        assert!(is_valid_secret_name("team"));
+        assert!(!is_valid_secret_name(".json"));
+        assert!(!is_valid_secret_name("_hidden.json"));
+        assert!(!is_valid_secret_name(".hidden"));
     }
 }

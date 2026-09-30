@@ -24,6 +24,26 @@ pub const EXIT_USAGE: i32 = 64;
 
 const ACCOUNT_FILE_SUFFIX: &str = ".json";
 
+/// Longest account nickname, in bytes.
+pub const MAX_ACCOUNT_NICKNAME_BYTES: usize = 64;
+
+/// Whether `nickname` is a safe account nickname:
+/// `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`.
+///
+/// Nicknames name stored secrets and travel as broker and CLI arguments, so
+/// the leading alphanumeric byte keeps them from reading as an option
+/// (`--format`), a hidden file, or a dot path segment (`.`, `..`).
+pub fn is_valid_account_nickname(nickname: &str) -> bool {
+    nickname.len() <= MAX_ACCOUNT_NICKNAME_BYTES
+        && nickname
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && nickname
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 /// Whether `target` could name a path outside the secret directory.
 pub fn is_invalid_account_target(target: &str) -> bool {
     target.contains('/') || target.contains('\\') || target.contains("..")
@@ -273,6 +293,30 @@ mod tests {
         assert_eq!(account_file_name("alpha.json"), "alpha.json");
         assert_eq!(account_name("alpha.json"), "alpha");
         assert_eq!(account_name("alpha"), "alpha");
+    }
+
+    #[test]
+    fn account_nicknames_follow_one_shared_rule() {
+        for valid in ["a", "alpha.team-1_x", "Team2", &"a".repeat(64)] {
+            assert!(is_valid_account_nickname(valid), "{valid}");
+        }
+        for invalid in [
+            "",
+            "-x",
+            "--format",
+            ".",
+            "..",
+            ".hidden",
+            "_hidden",
+            "../up",
+            "a/b",
+            "has space",
+            "semi;colon",
+            "person@example.com",
+            &"a".repeat(65),
+        ] {
+            assert!(!is_valid_account_nickname(invalid), "{invalid}");
+        }
     }
 
     #[test]
