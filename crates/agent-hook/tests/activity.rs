@@ -116,14 +116,14 @@ fn lifecycle_activity_uses_the_typed_cli_with_metadata_only_json() {
     }
 }
 
-const STOP_POLICY: &str = r#"schema_version = "agent-hook.policy.v1"
+const PROMPT_ID_POLICY: &str = r#"schema_version = "agent-hook.policy.v1"
 bundle_id = "runtime-kit"
 version = "2026.07.20.1"
 
 [[rules]]
-id = "session.activity.stop"
+id = "session.activity"
 products = ["claude"]
-events = ["Stop"]
+events = ["Stop", "PermissionRequest"]
 priority = 10
 mode = "enforce"
 failure_posture = "closed"
@@ -173,7 +173,7 @@ capability = { id = "agent-session.coordination.v1", reason_code = "coordination
 
 #[test]
 fn claude_prompt_id_is_correlated_as_the_provider_turn_id() {
-    let fixture = Fixture::new(STOP_POLICY);
+    let fixture = Fixture::new(PROMPT_ID_POLICY);
     let fake = fixture.root.join("agent-session-fake");
     let args_path = fixture.root.join("activity.args");
     let input_path = fixture.root.join("activity.json");
@@ -238,6 +238,30 @@ fn claude_prompt_id_is_correlated_as_the_provider_turn_id() {
         explicit_json["provider_turn_id"], stop_json["provider_turn_id"],
         "turn_id must not be shadowed by prompt_id"
     );
+
+    // Claude stamps a subagent's hooks with the session's current `prompt_id`
+    // (Claude Code 2.1.285 canary), so a subagent approval request binds to the
+    // same turn as the parent's events and cannot supersede it.
+    let subagent = fixture.run_with_env(
+        &["dispatch", "--product", "claude", "--format", "json"],
+        Some(
+            r#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","session_id":"claude-session-secret","prompt_id":"claude-prompt-secret","agent_id":"agent-secret","agent_type":"general-purpose","tool_input":{"command":"command-secret"}}"#,
+        ),
+        &envs,
+    );
+    assert_eq!(subagent.code, 0, "stderr={}", subagent.stderr_text());
+    let subagent_event = fs::read_to_string(&input_path).expect("captured event");
+    let subagent_json: serde_json::Value =
+        serde_json::from_str(&subagent_event).expect("event JSON");
+    assert_eq!(subagent_json["kind"], "attention_requested");
+    assert_eq!(subagent_json["attention_kind"], "approval");
+    assert_eq!(
+        subagent_json["provider_turn_id"], stop_json["provider_turn_id"],
+        "a subagent request must bind to the parent's turn: {subagent_event}"
+    );
+    for field in ["agent-secret", "command-secret", "general-purpose"] {
+        assert!(!subagent_event.contains(field), "leaked {field}");
+    }
 }
 
 #[test]

@@ -7499,9 +7499,8 @@ mod tests {
             current.provider_turn_id = Some(format!("local:v1:{}", "a".repeat(63) + prompt));
             current
         };
-        // Claude can run a turn whose hooks carry a new prompt_id without a
-        // UserPromptSubmit (a turn woken by a background task notification)
-        // while the previously announced turn is still open.
+        // Hooks can carry a new prompt_id whose UserPromptSubmit was never
+        // recorded while the previously announced turn is still open.
         for current in [
             claude(TurnEventKind::TurnStarted, "prompt-1-start", "1"),
             claude(TurnEventKind::Progress, "prompt-1-tool", "1"),
@@ -7547,6 +7546,61 @@ mod tests {
         let answered = ingest_event(&context, &created.record.id, cleared)
             .expect("the answered clarification clears");
         assert_ne!(answered.turn_state.phase, TurnPhase::NeedsInput);
+    }
+
+    #[test]
+    fn claude_attention_after_a_completed_same_prompt_turn_needs_input() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+        let runtime_id = created
+            .record
+            .runtime
+            .as_ref()
+            .expect("runtime")
+            .launch_id
+            .clone();
+        let turn_id = format!("local:v1:{}", "a".repeat(64));
+        let claude = |kind: TurnEventKind, id: &str| {
+            let mut current = event(kind, id);
+            current.runtime_id.clone_from(&runtime_id);
+            current.provider = AgentKind::Claude.as_str().to_string();
+            current.provider_turn_id = Some(turn_id.clone());
+            current
+        };
+        // Claude keeps stamping hooks with a prompt that `idle_prompt` already
+        // closed while a background subagent is still working under it, so a
+        // request for that prompt with no other turn open is live, not late.
+        for current in [
+            claude(TurnEventKind::TurnStarted, "prompt-start"),
+            claude(TurnEventKind::TurnCompleted, "prompt-idle"),
+        ] {
+            ingest_event(&context, &created.record.id, current).expect("turn setup");
+        }
+        let mut asked = claude(TurnEventKind::AttentionRequested, "prompt-approval");
+        asked.attention_kind = Some("approval".to_string());
+        asked.attention_id = Some(format!("local:v1:{}", "b".repeat(64)));
+        let requested = ingest_event(&context, &created.record.id, asked)
+            .expect("a request under the completed prompt is ingested");
+        assert!(!requested.duplicate, "the request must not be dropped");
+        assert_eq!(requested.turn_state.phase, TurnPhase::NeedsInput);
+        assert_eq!(
+            requested
+                .turn_state
+                .current_turn
+                .as_ref()
+                .and_then(|turn| turn.provider_turn_id.clone()),
+            Some(turn_id.clone()),
+            "the completed prompt is reopened by its own request"
+        );
+
+        let closed = ingest_event(
+            &context,
+            &created.record.id,
+            claude(TurnEventKind::TurnCompleted, "prompt-idle-again"),
+        )
+        .expect("the reopened turn completes again");
+        assert!(!closed.duplicate);
+        assert_eq!(closed.turn_state.phase, TurnPhase::Waiting);
     }
 
     #[test]
@@ -9669,18 +9723,21 @@ fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Result<(), Cl
     Ok(())
 }
 
-/// Claude runs one turn at a time and names it with `prompt_id`, but a turn it
-/// starts without `UserPromptSubmit` (for example one woken by a background
-/// task notification) is never announced. An attention request from another
-/// turn therefore proves the open turn is stale rather than that the request
-/// is foreign, so it supersedes that turn instead of being refused
+/// Claude runs one turn at a time and names it with `prompt_id`, but a turn
+/// whose `UserPromptSubmit` was never recorded (a lost or refused hook
+/// delivery) is never announced. An attention request from another turn
+/// therefore proves the open turn is stale rather than that the request is
+/// foreign, so it supersedes that turn instead of being refused
 /// (sympoies/nils-cli#1962). Other providers keep the exact turn binding.
 fn claude_attention_supersedes_open_turn(provider: &str) -> bool {
     provider == AgentKind::Claude.as_str()
 }
 
 /// A Claude attention request for the most recently closed turn, while a
-/// different turn is open. Superseding on it would reopen an older turn.
+/// different identified turn is open. Superseding on it would reopen an older
+/// turn. In every other case the request is live and is reduced normally:
+/// Claude keeps stamping hooks with a prompt that `idle_prompt` already closed
+/// while a background subagent is still working under it.
 fn late_claude_attention_for_closed_turn(document: &ActivityDocument, event: &TurnEvent) -> bool {
     let Some(event_turn) = event.provider_turn_id.as_ref() else {
         return false;
@@ -9698,7 +9755,7 @@ fn late_claude_attention_for_closed_turn(document: &ActivityDocument, event: &Tu
             .current_turn
             .as_ref()
             .and_then(|turn| turn.provider_turn_id.as_ref())
-            != Some(event_turn)
+            .is_some_and(|open| open != event_turn)
 }
 
 /// Close any open turn as interrupted and open `provider_turn_id` in its place.
