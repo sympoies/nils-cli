@@ -1322,8 +1322,9 @@ module, and its conformance corpus is vendored unchanged under
   holds one repository. Every other read failure is returned as the command's
   error with its own exit code, not as a finding: a throttled or
   unauthenticated provider is `UNAVAILABLE 69`, and a reply that cannot be
-  interpreted is `SOFTWARE 70`. The findings envelope never blames the tracker
-  for a provider outage.
+  interpreted is `SOFTWARE 70`. A failure the backend cannot classify, such as
+  a network error in the middle of a run, is also a plain `backend_error` and
+  is reported as `unreadable-ref`; the finding's message carries that kind.
 - Any finding exits `DATA 65` with `ok = false` and `error.code =
   tracker_findings`, and the envelope still carries `data`, so consumers read
   `data.findings[]` on both outcomes.

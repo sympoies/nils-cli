@@ -12,7 +12,7 @@
 //! explicit character set, because those also remove characters the grammar
 //! keeps as text (a no-break space, for one).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub mod edit;
 
@@ -316,9 +316,10 @@ fn parse_row(line: &str) -> Option<(Row, RowSpans)> {
         });
     let mut after: Vec<String> = Vec::new();
     if let Some(at) = clause {
+        let mut seen: HashSet<&str> = HashSet::new();
         for entry in trim(&tail[at + AFTER_MARK.len()..]).split(',') {
             let entry = trim(entry);
-            if !is_id(entry) || after.iter().any(|seen| seen == entry) {
+            if !is_id(entry) || !seen.insert(entry) {
                 return None;
             }
             after.push(entry.to_string());
@@ -689,6 +690,26 @@ mod tests {
                 .iter()
                 .all(|f| f.code == FindingCode::MalformedRow)
         );
+    }
+
+    #[test]
+    fn one_row_with_a_very_long_after_list_parses_in_linear_time() {
+        // A body is author-controlled text: one row may carry tens of thousands
+        // of `after` entries, and the repeat check must not be quadratic in them.
+        let entries: Vec<String> = (0..60_000).map(|n| format!("B{n}")).collect();
+        let body = format!(
+            "## Phase table\n- [ ] **A1** Wide: #1 · after {}\n",
+            entries.join(", ")
+        );
+        let started = std::time::Instant::now();
+        let report = lint(&body);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "parsing took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(ids(&report), ["A1"]);
+        assert_eq!(report.rows[0].after.len(), 60_000);
     }
 
     fn table_of(rows: usize) -> String {
