@@ -702,7 +702,7 @@ fn dsh_agent_activity_emits_only_metadata_and_partial_identity_fails_closed() {
     assert_eq!(output.code, 0, "envelope={}", output.stdout_text());
     assert_eq!(
         fs::read_to_string(&argv_log).expect("activity argv"),
-        "activity event --stdin managed-session\n"
+        "activity event --format json --stdin managed-session\n"
     );
     let event: Value =
         serde_json::from_slice(&fs::read(&event_log).expect("activity event")).expect("event JSON");

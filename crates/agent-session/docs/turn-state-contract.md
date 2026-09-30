@@ -232,8 +232,12 @@ The public v1 state becomes `unknown`, auto-resume becomes unavailable, and
 later same-runtime events are rejected; only a new runtime generation can
 remove the marker, select authority, and recover. If an open turn has no
 provider turn id, its first non-null exact attention request binds the turn;
-later mismatches fail closed. Nullable MCP elicitation remains admitted without
-inventing a turn id.
+later mismatches fail closed. Claude is the exception: it runs one turn at a
+time and names it by `prompt_id`, but a turn it starts without
+`UserPromptSubmit` (for example one woken by a background task notification) is
+never announced, so a Claude attention request for another turn interrupts the
+stale open turn and opens the requesting one instead of being refused. Nullable
+MCP elicitation remains admitted without inventing a turn id.
 
 For Claude Code, `AskUserQuestion` remains exact through `tool_use_id`.
 `Elicitation` and `ElicitationResult` are also exact when both carry the same
@@ -268,7 +272,7 @@ event cancels that notification-only waiting signal.
 | --- | --- |
 | new runtime | interrupt an open turn, preserve it as last turn, clear attention, enter authoritative `starting` |
 | `turn_started` | interrupt an older open turn, clear old attention, enter `working` |
-| `attention_requested` | keep current start time, add one opaque pending request, enter `needs_input` |
+| `attention_requested` | keep current start time, add one opaque pending request, enter `needs_input`; a Claude request for another turn first interrupts the stale open turn |
 | correlated `attention_cleared` | remove only that request, advance monotonic `last_progress_at`, and remain `needs_input` while any remain |
 | uncorrelated `progress` | advance monotonic `last_progress_at`; may establish/retain `working`, but never clears attention |
 | `stop_observed` | increment evidence revision and journal it; never changes to Waiting |
@@ -276,7 +280,7 @@ event cancels that notification-only waiting signal.
 | matching `turn_completed` | close current turn, clear attention, enter `waiting`; authoritative Codex notifications require the exact open turn id |
 | matching `turn_failed` | close current turn with failed outcome, clear attention, enter `waiting` |
 | late completion for older turn | retain the newer current phase |
-| duplicate exact-replay `event_id` | no state or revision change within the 4096-event active-runtime replay horizon; uncorrelated Claude progress instead uses the short semantic guard |
+| duplicate exact-replay `event_id` | no state or revision change within the sliding active-runtime replay window (at least the last 4096 exact events); uncorrelated Claude progress instead uses the short semantic guard |
 | missing/prior runtime id | reject before host timestamp or reducer |
 | corrupt snapshot | expose safe `unknown`; list/serve/delete remain available |
 | unhealthy authority/projection | expose `unknown`, accept no later event in the same runtime, recover only on a new runtime generation |
@@ -369,9 +373,9 @@ Each session owns:
 - `activity.json`: atomic mode-0600 snapshot;
 - `activity.journal.jsonl`: atomic mode-0600 metadata journal, bounded to 256
   events and 64 KiB;
-- `activity.replay.bin`: fixed-size mode-0600 open-addressed replay index for
-  4096 runtime-scoped event-id digests, with a versioned launch-id/generation
-  header;
+- `activity.replay.bin`: fixed-size mode-0600 replay index of two
+  open-addressed tables that each hold 4096 runtime-scoped event-id digests,
+  with a versioned (`agent-session-r2`) launch-id/generation header;
 - `.activity.lock`: mode-0600 cross-process advisory lock.
 
 Activity files are separate from `session.json`, so title/resume writes and hook
@@ -382,9 +386,13 @@ event requires exact replay protection, appends the bounded journal
 idempotently, and clears the pending marker. A later event or runtime transition
 repairs an interrupted split write before reduction. The replay index is
 separate from the shorter journal retention, gives expected O(1) duplicate
-checks without growing the JSON snapshot, and rejects further exact-replay
-events at its 4096-event capacity with resume guidance instead of forgetting old
-ids. Uncorrelated Claude provider-hook `progress` has idempotent reducer
+checks without growing the JSON snapshot, and is a sliding window: the event
+with zero-based index `i` in a runtime generation goes to table
+`(i / 4096) % 2`, and the first event of each window zeroes its table first.
+Exact dedupe therefore covers at least the last 4096 and at most 8192 exact
+events, ingest never stops for capacity, and recovery never needs a restart,
+resume, or new session id (sympoies/nils-cli#1962). A single-table `r1` index
+for the same runtime tuple migrates in place as table 0. Uncorrelated Claude provider-hook `progress` has idempotent reducer
 semantics and no stable provider event id, so it keeps bounded journal and
 split-write repair coverage but relies on the short semantic replay guard rather
 than consuming exact replay slots. The replay file header must match the

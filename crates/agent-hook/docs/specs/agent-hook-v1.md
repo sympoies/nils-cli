@@ -1118,10 +1118,21 @@ non-terminal request retains the configured failure posture. No activity
 warning releases or alters
 claims, leases, operations, brokers, worktrees, or session state. Any retained
 activity uncertainty therefore remains visible for typed external
-reconciliation after the provider runner exits. Codex `Stop` renders this
-normalized warning as the provider-native neutral `{}` response because that
-event does not support additional context; Claude `Stop` retains its supported
-warning context.
+reconciliation after the provider runner exits. Every `Stop` warning renders
+the provider-native neutral `{}` response and is never model-visible: Codex
+`Stop` does not support additional context, and Claude turns `Stop` or
+`SubagentStop` context into a new model turn, so a persisting warning would
+re-prompt the model on every stop — the very loop this warning exists to
+prevent (sympoies/nils-cli#1962). Because the provider never receives it, the
+warning never reaches the model, which is stricter than once per runtime generation;
+the warning decision and its observability record remain for operators.
+
+When the activity helper fails, the reason keeps the stable
+`session-activity-failed` code and appends the helper's typed cause from its
+`--format json` envelope, for example
+`session-activity-failed: provider-turn-id-mismatch`. Only
+`activity-*` and `provider-*` codes are surfaced; any other helper output is
+dropped.
 
 ## Interaction lanes and degradation
 
