@@ -3606,7 +3606,7 @@ pub(crate) fn resolve_provider_transcript_path_from_roots(
     matches.into_iter().next().map(|candidate| candidate.path)
 }
 
-/// Resolve the `systemd-run` binary used to launch the tmux server inside a
+/// Resolve the `systemd-run` scope used to launch the tmux server inside a
 /// transient systemd `--user` scope, or `None` to launch tmux directly.
 ///
 /// `agent-session serve` starts each session as a child `tmux new-session -d`,
@@ -3697,7 +3697,7 @@ fn parse_systemd_version(output: &str) -> Option<u32> {
 }
 
 /// Build the base command for a `tmux new-session` that may start the tmux
-/// server. With `scope_runner` set the server is launched inside a transient
+/// server. With `scope` set the server is launched inside a transient
 /// systemd user scope (see [`tmux_scope_runner`]); otherwise tmux runs directly.
 /// Callers append the `new-session ...` arguments to the returned command; both
 /// forms accept the same trailing arguments because `systemd-run`'s `--`
@@ -25353,6 +25353,54 @@ exit 42
                 OsStr::new("/usr/bin/tmux"),
             ]
         );
+    }
+
+    #[test]
+    fn tmux_scope_enables_literal_arguments_only_from_systemd_254() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cases = [
+            ("printf 'systemd 253 (253.5)\\n'", false),
+            ("printf 'systemd 254 (254.1)\\n'", true),
+            (
+                "printf 'systemd 259 (259.5-0ubuntu3.4)\\n+PAM +AUDIT\\n'",
+                true,
+            ),
+            ("printf 'systemd 259 (259.5)\\n'; exit 1", false),
+            ("printf 'tmux 3.4\\n'", false),
+        ];
+        for (index, (body, expected)) in cases.into_iter().enumerate() {
+            let runner = tmp.path().join(format!("systemd-run-{index}"));
+            std::fs::write(&runner, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
+            // A sibling test's fork can briefly hold this stub's write
+            // descriptor, which makes exec fail with ETXTBSY. Run it once with a
+            // retry so the probe below cannot read that as an unreadable version.
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                match std::process::Command::new(&runner)
+                    .arg("--version")
+                    .output()
+                {
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    result => {
+                        result.expect("fake systemd-run stub runs");
+                        break;
+                    }
+                }
+            }
+            assert_eq!(
+                super::tmux_scope(runner).literal_arguments,
+                expected,
+                "{body}"
+            );
+        }
     }
 
     #[test]
