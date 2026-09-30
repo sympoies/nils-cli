@@ -28,7 +28,7 @@ Required fields:
 | `schema_version` | exactly `agent-session.turn-event.v1` |
 | `event_id` | opaque id used for idempotency |
 | `runtime_id` | exact active `AGENT_SESSION_RUNTIME_ID` |
-| `provider` | `codex`, `claude`, or `hermes` must match the session; `dsh` is reserved for the bounded Agent Console transport alias below |
+| `provider` | `codex`, `claude`, or `dsh` must match the session; `dsh` is admitted only for the profile-backed pane rule below |
 | `kind` | `turn_started`, `attention_requested`, `attention_cleared`, `progress`, `stop_observed`, `turn_completed`, or `turn_failed` |
 | `confidence` | `authoritative`, `observed`, or `inferred` |
 
@@ -65,24 +65,19 @@ identity is known it must match; when it is not known, the first non-empty
 projected provider session id binds the runtime; later changes or identity-less
 events are rejected.
 
-An Agent Console launch profile may use Hermes as its terminal transport while
-the provider lifecycle is owned by DSH. A `dsh` event is admitted for that
-alias only when the persisted session has `agent: hermes`, the server-owned
-runtime profile is exactly `dsh-tui`, and the persisted agent binary is an
-absolute path whose filename is exactly `run-agent-console-dsh`. Missing,
-relative, or differently named launchers and every other cross-provider pair
-remain provider mismatches. The matched alias accepts only DSH lifecycle
-events; Hermes remains its terminal transport identity and cannot also mutate
-the activity document. Provider identifiers use the admitted event provider's
-runtime-scoped projection domain. Native external DSH records continue to take
+A `dsh` event is admitted for a tmux pane only when the persisted session has
+`agent: dsh`, a server-owned runtime launch profile, and an absolute persisted
+agent binary. Profile-less, relative-launcher, and every cross-provider pair
+remain provider mismatches. Provider identifiers use the admitted event
+provider's runtime-scoped projection domain. Native external DSH records continue to take
 turn evidence only from their plugin-owned liveness sidecar. A DSH provider-hook
 event for the exact active runtime generation succeeds only when that sidecar
 already proves a live turn; the result projects the sidecar state and does not
 mutate the activity document. Stale generations, missing or invalid sidecars,
 and every other provider remain fail-closed.
-For the matched alias, `activity hook --agent dsh` maps the DSH bridge's
+For a profile-backed pane, `activity hook --agent dsh` maps the DSH bridge's
 `pre_llm_call` and `post_llm_call` callbacks to observed start and authoritative
-completion without enabling Hermes approval callbacks for DSH.
+completion; DSH has no approval callbacks.
 
 The host receive time is canonical. Provider time is accepted only as inert
 metadata in v1 and never advances state ahead of host observation. Runtime id
@@ -299,24 +294,6 @@ approvals have no correlated clear event, they keep the conservative latch
 above until completion, a new turn, or a runtime boundary. User-owned or
 previously configured `permission_prompt` notification reporters normalize the
 same way, but the managed setup does not install that duplicate source.
-
-Hermes 0.18.2 shell hooks put approval kwargs under the allowlisted `extra`
-object and may leave top-level `session_id` empty. Agent-session falls back to
-`extra.session_key`, projects non-empty `extra.tool_call_id` as the exact
-runtime-scoped pre/post correlation, and treats replayed exact callbacks
-idempotently. The event kind and projected tool-call id derive a stable
-runtime-scoped event id retained by the bounded replay index, so interleaving,
-elapsed wall time, response clearing, process restart, and bounded journal
-eviction cannot reopen a delivered callback. This lets identical command tuples
-with different tool-call ids clear independently and out of order. Missing,
-null, or empty tool-call ids use
-the compatibility tuple fallback: `command`, `description`, `pattern_key`,
-sorted/deduplicated `pattern_keys`, `session_key`, and `surface` are
-canonicalized only in memory and their SHA-256 is projected. Identical fallback
-tuples remain indistinguishable, so each observed pre callback increases
-conservative pending multiplicity and an ambiguous remainder clears only at
-completion, a new turn, or a runtime boundary. Raw approval kwargs never enter
-activity storage; only documented response choices emit observed clear events.
 
 Revision is monotonic for each accepted non-duplicate event and runtime
 boundary. Phase timestamps change only when the phase changes. Durations are

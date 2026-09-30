@@ -2146,13 +2146,13 @@ fn activity_events_are_runtime_bound_private_and_deterministic() {
 }
 
 #[test]
-fn agent_console_dsh_profile_admits_dsh_activity_for_hermes_transport_only() {
+fn dsh_launch_profile_admits_dsh_activity_for_profile_backed_panes_only() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).expect("repo dir");
     let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
-    let dsh_launcher = fake_agent(tmp.path(), "run-agent-console-dsh");
+    let dsh_launcher = fake_agent(tmp.path(), "dsh-workbench-launcher");
 
     let state_arg = state_dir.to_string_lossy().to_string();
     let cwd_arg = cwd.to_string_lossy().to_string();
@@ -2166,7 +2166,7 @@ fn agent_console_dsh_profile_admits_dsh_activity_for_hermes_transport_only() {
             &state_arg,
             "start",
             "--agent",
-            "hermes",
+            "codex",
             "--cwd",
             &cwd_arg,
             "--tmux-bin",
@@ -2191,7 +2191,14 @@ fn agent_console_dsh_profile_admits_dsh_activity_for_hermes_transport_only() {
         .as_str()
         .expect("runtime id")
         .to_string();
-    record["runtime"]["agent_profile"] = json!("dsh-tui");
+    // A dsh pane is only started through a server-owned launch profile, which
+    // the CLI cannot select; project the record serve would have written.
+    record["agent"] = json!("dsh");
+    record["runtime"]["agent_profile"] = json!("dsh-workbench");
+    record["runtime"]
+        .as_object_mut()
+        .expect("runtime object")
+        .remove("codex_attention_authority");
     fs::write(
         &record_path,
         serde_json::to_vec_pretty(&record).expect("serialize session record"),
@@ -2322,7 +2329,7 @@ fn agent_console_dsh_profile_admits_dsh_activity_for_hermes_transport_only() {
     );
     assert_ne!(
         activity["provider_session_id"],
-        projected_provider_identifier(&runtime_id, "hermes", "session", "provider-session")
+        projected_provider_identifier(&runtime_id, "codex", "session", "provider-session")
     );
     let pre_dispatch_revision = activity["state"]["revision"]
         .as_u64()
@@ -2440,13 +2447,13 @@ capability = { id = "dsh.policy.v1", group = "agent-activity" }
         );
     }
 
-    let hermes_transport = submit("hermes", "evt-hermes-transport", "progress");
+    let retired_provider = submit("hermes", "evt-retired-provider", "progress");
     assert_eq!(
-        hermes_transport.stdout_json()["error"]["code"],
-        "activity-provider-mismatch"
+        retired_provider.stdout_json()["error"]["code"],
+        "activity-provider-unsupported"
     );
 
-    record["agent_bin"] = json!("run-agent-console-dsh");
+    record["agent_bin"] = json!("dsh-workbench-launcher");
     fs::write(
         &record_path,
         serde_json::to_vec_pretty(&record).expect("serialize relative launcher record"),
@@ -2458,30 +2465,18 @@ capability = { id = "dsh.policy.v1", group = "agent-activity" }
         "activity-provider-mismatch"
     );
 
+    record["agent"] = json!("codex");
     record["agent_bin"] = json!(dsh_launcher_arg);
-    record["runtime"]["agent_profile"] = json!("other-profile");
     fs::write(
         &record_path,
-        serde_json::to_vec_pretty(&record).expect("serialize other profile record"),
+        serde_json::to_vec_pretty(&record).expect("serialize codex profile record"),
     )
-    .expect("write other profile record");
-    let other_profile = submit("dsh", "evt-other-profile", "progress");
+    .expect("write codex profile record");
+    let other_agent = submit("dsh", "evt-other-agent", "progress");
     assert_eq!(
-        other_profile.stdout_json()["error"]["code"],
-        "activity-provider-mismatch"
-    );
-
-    record["runtime"]["agent_profile"] = json!("dsh-tui");
-    record["agent_bin"] = json!(fake_agent(tmp.path(), "hermes"));
-    fs::write(
-        &record_path,
-        serde_json::to_vec_pretty(&record).expect("serialize Hermes launcher record"),
-    )
-    .expect("write Hermes launcher record");
-    let hermes_launcher = submit("dsh", "evt-hermes-launcher", "progress");
-    assert_eq!(
-        hermes_launcher.stdout_json()["error"]["code"],
-        "activity-provider-mismatch"
+        other_agent.stdout_json()["error"]["code"],
+        "activity-provider-mismatch",
+        "a non-dsh profile cannot claim the DSH provider transport"
     );
 
     record["agent"] = json!("dsh");
@@ -2492,560 +2487,15 @@ capability = { id = "dsh.policy.v1", group = "agent-activity" }
         .remove("agent_profile");
     fs::write(
         &record_path,
-        serde_json::to_vec_pretty(&record).expect("serialize external DSH record"),
+        serde_json::to_vec_pretty(&record).expect("serialize profile-less DSH record"),
     )
-    .expect("write external DSH record");
-    let external_dsh = submit("dsh", "evt-external-dsh", "progress");
+    .expect("write profile-less DSH record");
+    let profileless_dsh = submit("dsh", "evt-profileless-dsh", "progress");
     assert_eq!(
-        external_dsh.stdout_json()["error"]["code"],
+        profileless_dsh.stdout_json()["error"]["code"],
         "activity-provider-mismatch",
-        "changing the provider field cannot turn an ordinary session into an external DSH lane"
+        "changing the agent field cannot turn an ordinary session into a DSH pane"
     );
-}
-
-#[test]
-fn hermes_identical_approval_hooks_preserve_persisted_multiplicity_until_completion() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let state_dir = tmp.path().join("state");
-    let cwd = tmp.path().join("repo");
-    fs::create_dir_all(&cwd).expect("repo dir");
-    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
-    let hermes_bin = fake_agent(tmp.path(), "hermes");
-    let state_arg = state_dir.to_string_lossy().to_string();
-    let cwd_arg = cwd.to_string_lossy().to_string();
-    let tmux_arg = tmux_bin.to_string_lossy().to_string();
-    let hermes_arg = hermes_bin.to_string_lossy().to_string();
-    let tmux_log_arg = tmux_log.to_string_lossy().to_string();
-    let start = run(
-        tmp.path(),
-        &[
-            "--state-dir",
-            &state_arg,
-            "start",
-            "--agent",
-            "hermes",
-            "--cwd",
-            &cwd_arg,
-            "--tmux-bin",
-            &tmux_arg,
-            "--agent-bin",
-            &hermes_arg,
-            "--format",
-            "json",
-        ],
-        &[("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str())],
-    );
-    assert_eq!(start.code, 0, "stderr={}", start.stderr_text());
-    let id = data(&start.stdout_json())["id"]
-        .as_str()
-        .expect("session id")
-        .to_string();
-    let session_dir = state_dir.join("sessions").join(&id);
-    let record: Value = serde_json::from_str(
-        &fs::read_to_string(session_dir.join("session.json")).expect("session record"),
-    )
-    .expect("session json");
-    let runtime_id = record["runtime"]["launch_id"]
-        .as_str()
-        .expect("runtime id")
-        .to_string();
-    let hook_env = [
-        ("AGENT_SESSION_ID", id.as_str()),
-        ("AGENT_SESSION_RUNTIME_ID", runtime_id.as_str()),
-        ("AGENT_SESSION_STATE_DIR", state_arg.as_str()),
-    ];
-    let hook = |payload: &Value| {
-        run_with_stdin(
-            tmp.path(),
-            &["activity", "hook", "--agent", "hermes"],
-            &hook_env,
-            &payload.to_string(),
-        )
-    };
-    let status = || {
-        run(
-            tmp.path(),
-            &[
-                "--state-dir",
-                &state_arg,
-                "activity",
-                "status",
-                &id,
-                "--format",
-                "json",
-            ],
-            &[],
-        )
-    };
-
-    let malformed = run_with_stdin(
-        tmp.path(),
-        &["activity", "hook", "--agent", "hermes"],
-        &hook_env,
-        "{invalid-hook",
-    );
-    assert_eq!(malformed.code, 0, "hook telemetry is fail-open");
-    let diagnostic_path = session_dir.join("activity.diagnostic.json");
-    let diagnostic = fs::read_to_string(&diagnostic_path).expect("hook diagnostic");
-    assert!(diagnostic.contains("provider-hook-invalid"));
-
-    let raw_values = [
-        "raw-command-never-persist",
-        "raw-description-never-persist",
-        "raw-pattern-never-persist",
-        "raw-secondary-pattern-never-persist",
-        "raw-session-never-persist",
-        "raw-surface-never-persist",
-    ];
-    let request = json!({
-        "event": "pre_approval_request",
-        "command": raw_values[0],
-        "description": raw_values[1],
-        "pattern_key": raw_values[2],
-        "pattern_keys": [raw_values[3], raw_values[2]],
-        "session_key": raw_values[4],
-        "surface": raw_values[5]
-    });
-    let first = hook(&request);
-    assert_eq!(first.code, 0, "stderr={}", first.stderr_text());
-    assert!(first.stdout_text().is_empty());
-    assert!(first.stderr_text().is_empty());
-    assert!(
-        !diagnostic_path.exists(),
-        "successful ingestion clears diagnostic"
-    );
-    let first_status = status();
-    assert_eq!(
-        first_status.code,
-        0,
-        "stderr={}",
-        first_status.stderr_text()
-    );
-    let first_status_json = first_status.stdout_json();
-    let first_state = &data(&first_status_json)["turn_state"];
-    assert_eq!(first_state["phase"], "needs_input");
-    assert_eq!(first_state["current_turn"]["attention"]["pending_count"], 1);
-    let first_revision = first_state["revision"].as_u64().expect("first revision");
-
-    let second = hook(&request);
-    assert_eq!(second.code, 0, "stderr={}", second.stderr_text());
-    let second_status = status();
-    let second_status_json = second_status.stdout_json();
-    let second_state = &data(&second_status_json)["turn_state"];
-    assert_eq!(second_state["phase"], "needs_input");
-    assert_eq!(
-        second_state["current_turn"]["attention"]["pending_count"],
-        2
-    );
-    let second_revision = second_state["revision"].as_u64().expect("second revision");
-    assert!(second_revision > first_revision);
-
-    let mut response = request.clone();
-    response["event"] = json!("post_approval_response");
-    response["choice"] = json!("once");
-    let post = hook(&response);
-    assert_eq!(post.code, 0, "stderr={}", post.stderr_text());
-    let post_status = status();
-    let post_status_json = post_status.stdout_json();
-    let post_state = &data(&post_status_json)["turn_state"];
-    assert_eq!(post_state["phase"], "needs_input");
-    assert_eq!(post_state["current_turn"]["attention"]["pending_count"], 1);
-    let post_revision = post_state["revision"].as_u64().expect("post revision");
-    assert!(post_revision > second_revision);
-
-    let completion = hook(&json!({
-        "event": "post_llm_call",
-        "session_id": raw_values[4],
-        "platform": raw_values[5]
-    }));
-    assert_eq!(completion.code, 0, "stderr={}", completion.stderr_text());
-    let completed_status = status();
-    let completed_status_json = completed_status.stdout_json();
-    let completed_state = &data(&completed_status_json)["turn_state"];
-    assert_eq!(completed_state["phase"], "waiting");
-    assert!(completed_state["current_turn"].is_null());
-    assert_eq!(completed_state["last_turn"]["outcome"], "completed");
-    assert!(
-        completed_state["revision"]
-            .as_u64()
-            .expect("completion revision")
-            > post_revision
-    );
-
-    let journal =
-        fs::read_to_string(session_dir.join("activity.journal.jsonl")).expect("activity journal");
-    assert_eq!(journal.matches("attention_requested").count(), 2);
-    assert_eq!(journal.matches("attention_cleared").count(), 1);
-    assert_eq!(journal.matches("turn_completed").count(), 1);
-    let snapshot =
-        fs::read_to_string(session_dir.join("activity.json")).expect("activity snapshot");
-    for persisted in [snapshot.as_str(), journal.as_str()] {
-        for field in [
-            "\"command\"",
-            "\"description\"",
-            "\"pattern_key\"",
-            "\"pattern_keys\"",
-            "\"session_key\"",
-            "\"surface\"",
-        ] {
-            assert!(
-                !persisted.contains(field),
-                "raw tuple field persisted: {field}"
-            );
-        }
-        for raw in raw_values {
-            assert!(!persisted.contains(raw), "raw tuple value persisted: {raw}");
-        }
-    }
-    assert!(!diagnostic_path.exists());
-    assert!(session_dir.join("activity.replay.bin").is_file());
-}
-
-#[test]
-fn hermes_shell_wire_approvals_use_exact_ids_and_compatibility_fallback() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let state_dir = tmp.path().join("state");
-    let cwd = tmp.path().join("repo");
-    fs::create_dir_all(&cwd).expect("repo dir");
-    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
-    let hermes_bin = fake_agent(tmp.path(), "hermes");
-    let state_arg = state_dir.to_string_lossy().to_string();
-    let cwd_arg = cwd.to_string_lossy().to_string();
-    let tmux_arg = tmux_bin.to_string_lossy().to_string();
-    let hermes_arg = hermes_bin.to_string_lossy().to_string();
-    let tmux_log_arg = tmux_log.to_string_lossy().to_string();
-    let start = run(
-        tmp.path(),
-        &[
-            "--state-dir",
-            &state_arg,
-            "start",
-            "--agent",
-            "hermes",
-            "--cwd",
-            &cwd_arg,
-            "--tmux-bin",
-            &tmux_arg,
-            "--agent-bin",
-            &hermes_arg,
-            "--format",
-            "json",
-        ],
-        &[("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str())],
-    );
-    assert_eq!(start.code, 0, "stderr={}", start.stderr_text());
-    let id = data(&start.stdout_json())["id"]
-        .as_str()
-        .expect("session id")
-        .to_string();
-    let session_dir = state_dir.join("sessions").join(&id);
-    let record: Value = serde_json::from_str(
-        &fs::read_to_string(session_dir.join("session.json")).expect("session record"),
-    )
-    .expect("session json");
-    let runtime_id = record["runtime"]["launch_id"]
-        .as_str()
-        .expect("runtime id")
-        .to_string();
-    let hook_env = [
-        ("AGENT_SESSION_ID", id.as_str()),
-        ("AGENT_SESSION_RUNTIME_ID", runtime_id.as_str()),
-        ("AGENT_SESSION_STATE_DIR", state_arg.as_str()),
-    ];
-    let hook = |payload: &Value| {
-        run_with_stdin(
-            tmp.path(),
-            &["activity", "hook", "--agent", "hermes"],
-            &hook_env,
-            &payload.to_string(),
-        )
-    };
-    let state = || {
-        let status = run(
-            tmp.path(),
-            &[
-                "--state-dir",
-                &state_arg,
-                "activity",
-                "status",
-                &id,
-                "--format",
-                "json",
-            ],
-            &[],
-        );
-        assert_eq!(status.code, 0, "stderr={}", status.stderr_text());
-        data(&status.stdout_json())["turn_state"].clone()
-    };
-    let fixture = include_str!("../fixtures/activity/hermes-shell-approval-events.jsonl")
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("Hermes shell-wire fixture"))
-        .collect::<Vec<_>>();
-    assert_eq!(fixture.len(), 7);
-
-    let malformed = run_with_stdin(
-        tmp.path(),
-        &["activity", "hook", "--agent", "hermes"],
-        &hook_env,
-        "{invalid-hook",
-    );
-    assert_eq!(malformed.code, 0, "hook telemetry is fail-open");
-    let diagnostic_path = session_dir.join("activity.diagnostic.json");
-    let diagnostic = fs::read_to_string(&diagnostic_path).expect("hook diagnostic");
-    assert!(diagnostic.contains("provider-hook-invalid"));
-
-    let first = hook(&fixture[0]);
-    assert_eq!(first.code, 0, "stderr={}", first.stderr_text());
-    assert!(first.stdout_text().is_empty());
-    assert!(first.stderr_text().is_empty());
-    assert!(!diagnostic_path.exists());
-    let first_state = state();
-    assert_eq!(first_state["phase"], "needs_input");
-    assert_eq!(first_state["current_turn"]["attention"]["pending_count"], 1);
-    let first_revision = first_state["revision"].as_u64().expect("first revision");
-
-    let first_replay = hook(&fixture[0]);
-    assert_eq!(first_replay.code, 0);
-    let replay_state = state();
-    assert_eq!(replay_state["revision"], first_revision);
-    assert_eq!(
-        replay_state["current_turn"]["attention"]["pending_count"],
-        1
-    );
-
-    let second = hook(&fixture[1]);
-    assert_eq!(second.code, 0, "stderr={}", second.stderr_text());
-    let second_state = state();
-    assert_eq!(second_state["phase"], "needs_input");
-    assert_eq!(
-        second_state["current_turn"]["attention"]["pending_count"],
-        2
-    );
-    let second_revision = second_state["revision"].as_u64().expect("second revision");
-    assert!(second_revision > first_revision);
-
-    let journal_path = session_dir.join("activity.journal.jsonl");
-    let before_interleaved_replay =
-        fs::read_to_string(&journal_path).expect("journal before interleaved replay");
-    let interleaved_replay = hook(&fixture[0]);
-    assert_eq!(interleaved_replay.code, 0);
-    let interleaved_replay_state = state();
-    assert_eq!(interleaved_replay_state["revision"], second_revision);
-    assert_eq!(
-        interleaved_replay_state["current_turn"]["attention"]["pending_count"],
-        2
-    );
-    assert_eq!(
-        fs::read_to_string(&journal_path).expect("journal after interleaved replay"),
-        before_interleaved_replay
-    );
-
-    thread::sleep(Duration::from_millis(1_100));
-    let delayed_replay = hook(&fixture[0]);
-    assert_eq!(delayed_replay.code, 0);
-    let delayed_replay_state = state();
-    assert_eq!(delayed_replay_state["revision"], second_revision);
-    assert_eq!(
-        delayed_replay_state["current_turn"]["attention"]["pending_count"],
-        2
-    );
-    assert_eq!(
-        fs::read_to_string(&journal_path).expect("journal after delayed replay"),
-        before_interleaved_replay
-    );
-
-    let post_b = hook(&fixture[2]);
-    assert_eq!(post_b.code, 0, "stderr={}", post_b.stderr_text());
-    let post_b_state = state();
-    assert_eq!(post_b_state["phase"], "needs_input");
-    assert_eq!(
-        post_b_state["current_turn"]["attention"]["pending_count"],
-        1
-    );
-    let post_b_revision = post_b_state["revision"].as_u64().expect("post B revision");
-    assert!(post_b_revision > second_revision);
-
-    let post_b_replay = hook(&fixture[2]);
-    assert_eq!(post_b_replay.code, 0);
-    let post_b_replay_state = state();
-    assert_eq!(post_b_replay_state["revision"], post_b_revision);
-    assert_eq!(
-        post_b_replay_state["current_turn"]["attention"]["pending_count"],
-        1
-    );
-
-    let fallback_pre = hook(&fixture[4]);
-    assert_eq!(
-        fallback_pre.code,
-        0,
-        "stderr={}",
-        fallback_pre.stderr_text()
-    );
-    let fallback_pre_state = state();
-    assert_eq!(fallback_pre_state["phase"], "needs_input");
-    assert_eq!(
-        fallback_pre_state["current_turn"]["attention"]["pending_count"],
-        2
-    );
-
-    let fallback_post = hook(&fixture[5]);
-    assert_eq!(
-        fallback_post.code,
-        0,
-        "stderr={}",
-        fallback_post.stderr_text()
-    );
-    let fallback_post_state = state();
-    assert_eq!(fallback_post_state["phase"], "needs_input");
-    assert_eq!(
-        fallback_post_state["current_turn"]["attention"]["pending_count"],
-        1
-    );
-
-    let post_a = hook(&fixture[3]);
-    assert_eq!(post_a.code, 0, "stderr={}", post_a.stderr_text());
-    let post_a_state = state();
-    assert_eq!(post_a_state["phase"], "working");
-    assert!(post_a_state["current_turn"]["attention"].is_null());
-    let cleared_revision = post_a_state["revision"].as_u64().expect("cleared revision");
-
-    let before_cleared_pre_replay =
-        fs::read_to_string(&journal_path).expect("journal before cleared pre replay");
-    let cleared_pre_replay = hook(&fixture[0]);
-    assert_eq!(cleared_pre_replay.code, 0);
-    let cleared_pre_replay_state = state();
-    assert_eq!(cleared_pre_replay_state["phase"], "working");
-    assert!(cleared_pre_replay_state["current_turn"]["attention"].is_null());
-    assert_eq!(cleared_pre_replay_state["revision"], cleared_revision);
-    assert_eq!(
-        fs::read_to_string(&journal_path).expect("journal after cleared pre replay"),
-        before_cleared_pre_replay
-    );
-
-    let fallback_pending = hook(&fixture[4]);
-    assert_eq!(fallback_pending.code, 0);
-    let pending_state = state();
-    assert_eq!(pending_state["phase"], "needs_input");
-    assert_eq!(
-        pending_state["current_turn"]["attention"]["pending_count"],
-        1
-    );
-    let pending_revision = pending_state["revision"]
-        .as_u64()
-        .expect("pending revision");
-    assert!(pending_revision > cleared_revision);
-
-    let stale_env = [
-        ("AGENT_SESSION_ID", id.as_str()),
-        ("AGENT_SESSION_RUNTIME_ID", "prior-runtime"),
-        ("AGENT_SESSION_STATE_DIR", state_arg.as_str()),
-    ];
-    let stale = run_with_stdin(
-        tmp.path(),
-        &["activity", "hook", "--agent", "hermes"],
-        &stale_env,
-        &fixture[1].to_string(),
-    );
-    assert_eq!(stale.code, 0, "stale hook telemetry is fail-open");
-    let after_stale_state = state();
-    assert_eq!(after_stale_state["revision"], pending_revision);
-    assert_eq!(
-        after_stale_state["current_turn"]["attention"]["pending_count"],
-        1
-    );
-
-    let mut invalid_tool_call = fixture[0].clone();
-    invalid_tool_call["extra"]["tool_call_id"] = json!({"raw": "must-not-persist"});
-    let invalid = hook(&invalid_tool_call);
-    assert_eq!(invalid.code, 0, "invalid hook telemetry is fail-open");
-    let diagnostic = fs::read_to_string(&diagnostic_path).expect("invalid-id diagnostic");
-    assert!(diagnostic.contains("provider-hook-correlation-invalid"));
-    for forbidden in [
-        "must-not-persist",
-        "tool_call_id",
-        "raw-command-never-persist",
-    ] {
-        assert!(!diagnostic.contains(forbidden));
-    }
-    assert_eq!(state()["revision"], pending_revision);
-
-    let completion = hook(&fixture[6]);
-    assert_eq!(completion.code, 0, "stderr={}", completion.stderr_text());
-    assert!(!diagnostic_path.exists());
-    let completed_state = state();
-    assert_eq!(completed_state["phase"], "waiting");
-    assert!(completed_state["current_turn"].is_null());
-    assert_eq!(completed_state["last_turn"]["outcome"], "completed");
-    assert!(
-        completed_state["revision"]
-            .as_u64()
-            .expect("completion revision")
-            > pending_revision
-    );
-
-    let journal =
-        fs::read_to_string(session_dir.join("activity.journal.jsonl")).expect("activity journal");
-    assert_eq!(journal.matches("attention_requested").count(), 4);
-    assert_eq!(journal.matches("attention_cleared").count(), 3);
-    assert_eq!(journal.matches("turn_completed").count(), 1);
-    let journal_entries = journal
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("journal entry"))
-        .collect::<Vec<_>>();
-    let requested_ids = journal_entries
-        .iter()
-        .filter(|entry| entry["event"]["kind"] == "attention_requested")
-        .map(|entry| {
-            entry["event"]["attention_id"]
-                .as_str()
-                .expect("attention id")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(requested_ids.len(), 4);
-    assert_ne!(requested_ids[0], requested_ids[1]);
-    assert_ne!(requested_ids[0], requested_ids[2]);
-    assert_eq!(requested_ids[2], requested_ids[3]);
-
-    let snapshot =
-        fs::read_to_string(session_dir.join("activity.json")).expect("activity snapshot");
-    let raw_values = [
-        "raw-command-never-persist",
-        "raw-description-never-persist",
-        "raw-pattern-never-persist",
-        "raw-secondary-pattern-never-persist",
-        "raw-session-never-persist",
-        "raw-surface-never-persist",
-        "raw-turn-never-persist",
-        "raw-tool-call-a-never-persist",
-        "raw-tool-call-b-never-persist",
-        "raw-fallback-command-never-persist",
-        "raw-fallback-description-never-persist",
-        "raw-fallback-pattern-never-persist",
-        "raw-fallback-secondary-never-persist",
-        "/raw/cwd-never-persist",
-    ];
-    for persisted in [snapshot.as_str(), journal.as_str()] {
-        for field in [
-            "\"extra\"",
-            "\"command\"",
-            "\"description\"",
-            "\"pattern_key\"",
-            "\"pattern_keys\"",
-            "\"session_key\"",
-            "\"surface\"",
-            "\"tool_call_id\"",
-            "\"cwd\"",
-        ] {
-            assert!(
-                !persisted.contains(field),
-                "raw shell field persisted: {field}"
-            );
-        }
-        for raw in raw_values {
-            assert!(!persisted.contains(raw), "raw shell value persisted: {raw}");
-        }
-    }
-    assert!(session_dir.join("activity.replay.bin").is_file());
 }
 
 #[test]
@@ -12406,23 +11856,16 @@ fn glance_returns_pane_tail_and_status_contract() {
 }
 
 #[test]
-fn start_hermes_launches_interactive_chat_session() {
+fn retired_hermes_agent_is_rejected_by_every_cli_entrypoint() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).expect("repo dir");
-    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
-    let hermes_bin = fake_agent(tmp.path(), "hermes");
-
     let state_arg = state_dir.to_string_lossy().to_string();
     let cwd_arg = cwd.to_string_lossy().to_string();
-    let tmux_arg = tmux_bin.to_string_lossy().to_string();
-    let hermes_arg = hermes_bin.to_string_lossy().to_string();
-    let tmux_log_arg = tmux_log.to_string_lossy().to_string();
 
-    let output = run(
-        tmp.path(),
-        &[
+    for args in [
+        vec![
             "--state-dir",
             &state_arg,
             "start",
@@ -12430,63 +11873,8 @@ fn start_hermes_launches_interactive_chat_session() {
             "hermes",
             "--cwd",
             &cwd_arg,
-            "--tmux-bin",
-            &tmux_arg,
-            "--agent-bin",
-            &hermes_arg,
-            "--format",
-            "json",
         ],
-        &[("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str())],
-    );
-    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
-    let value = output.stdout_json();
-    assert_eq!(value["schema_version"], "cli.agent-session.start.v1");
-    let result = data(&value);
-    assert_eq!(result["agent"], "hermes");
-    assert!(
-        result["tmux_session"]
-            .as_str()
-            .unwrap()
-            .starts_with("hs-hermes-"),
-        "tmux_session={}",
-        result["tmux_session"]
-    );
-
-    let calls = tmux_calls(&tmux_log);
-    let new_session = calls
-        .iter()
-        .find(|call| call.first().is_some_and(|arg| arg == "new-session"))
-        .expect("new-session call");
-    let bin_idx = new_session
-        .iter()
-        .position(|arg| arg == &hermes_arg)
-        .expect("hermes bin in new-session call");
-    assert_eq!(
-        new_session.get(bin_idx + 1).map(String::as_str),
-        Some("chat"),
-        "hermes must launch the `chat` subcommand: {new_session:?}"
-    );
-}
-
-#[test]
-fn run_rejects_hermes_agent_without_orphaning_state() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let state_dir = tmp.path().join("state");
-    let cwd = tmp.path().join("repo");
-    fs::create_dir_all(&cwd).expect("repo dir");
-    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
-    let hermes_bin = fake_agent(tmp.path(), "hermes");
-
-    let state_arg = state_dir.to_string_lossy().to_string();
-    let cwd_arg = cwd.to_string_lossy().to_string();
-    let tmux_arg = tmux_bin.to_string_lossy().to_string();
-    let hermes_arg = hermes_bin.to_string_lossy().to_string();
-    let tmux_log_arg = tmux_log.to_string_lossy().to_string();
-
-    let output = run(
-        tmp.path(),
-        &[
+        vec![
             "--state-dir",
             &state_arg,
             "run",
@@ -12496,26 +11884,31 @@ fn run_rejects_hermes_agent_without_orphaning_state() {
             &cwd_arg,
             "--prompt",
             "do a thing",
-            "--tmux-bin",
-            &tmux_arg,
-            "--agent-bin",
-            &hermes_arg,
-            "--format",
-            "json",
         ],
-        &[("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str())],
-    );
-    assert_eq!(output.code, 64, "stderr={}", output.stderr_text());
-    let value = output.stdout_json();
-    assert_eq!(value["schema_version"], "cli.agent-session.run.v1");
-    assert_eq!(value["ok"], false);
-    assert_eq!(value["error"]["code"], "unsupported-run-agent");
-    let orphans = fs::read_dir(state_dir.join("sessions"))
+        vec![
+            "--state-dir",
+            &state_arg,
+            "activity",
+            "setup",
+            "--agent",
+            "hermes",
+        ],
+        vec!["activity", "hook", "--agent", "hermes"],
+    ] {
+        let output = run(tmp.path(), &args, &[]);
+        assert_ne!(output.code, 0, "args={args:?}");
+        assert!(
+            output.stderr_text().contains("hermes"),
+            "args={args:?} stderr={}",
+            output.stderr_text()
+        );
+    }
+    let sessions = fs::read_dir(state_dir.join("sessions"))
         .map(|dir| dir.count())
         .unwrap_or(0);
     assert_eq!(
-        orphans, 0,
-        "rejected hermes run must not leave session state"
+        sessions, 0,
+        "a rejected hermes agent must not create session state"
     );
 }
 

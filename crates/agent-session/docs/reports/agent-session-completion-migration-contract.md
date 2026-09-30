@@ -28,7 +28,7 @@ commands below.
 | command path | clap source | completion obligations | notes |
 | --- | --- | --- | --- |
 | `agent-session` | `crates/agent-session/src/cli.rs` | root flags + top-level subcommands | `--state-dir`, `--host`, `-h`, `-V` |
-| `agent-session start` | `crates/agent-session/src/cli.rs` | agent/coordination/format enums, path hints, prompt and runtime flags | interactive Codex, Claude, or Hermes handoff |
+| `agent-session start` | `crates/agent-session/src/cli.rs` | agent/coordination/format enums, path hints, prompt and runtime flags | interactive Codex or Claude handoff (DSH panes start only through serve launch profiles) |
 | `agent-session run` | `crates/agent-session/src/cli.rs` | agent/coordination/format enums, path hints, prompt and runtime flags | one-shot Codex or Claude task |
 | `agent-session list` | `crates/agent-session/src/cli.rs` | format enum | service-readable inventory |
 | `agent-session command` | `crates/agent-session/src/cli.rs` | session id + format enum | prints attach commands |
@@ -89,7 +89,7 @@ Checklist:
 
 | argument or flag | provider type | source location | context-aware behavior | tests |
 | --- | --- | --- | --- | --- |
-| `--agent` | `ValueEnum` | `crates/agent-session/src/cli.rs` | static `codex`, `claude`, `hermes` values | completion freshness/flag parity |
+| `--agent` | `ValueEnum` | `crates/agent-session/src/cli.rs` | static `codex`, `claude`, `dsh` values | completion freshness/flag parity |
 | `--coordination-mode` | `ValueEnum` | `crates/agent-session/src/cli.rs` | static `advisory`, `enforce`, `off` values | completion freshness/flag parity |
 | `--format` | `ValueEnum` | `nils_common::cli_contract::OutputFormat` | static `text`, `json` values | completion freshness/flag parity |
 | `send --key` | `ValueEnum` | `crates/agent-session/src/cli.rs` | static `enter`, `escape`, `backspace`, `c-c`, `up`, `down`, `left`, `shift-left`, `right`, `tab` values | completion freshness/flag parity |

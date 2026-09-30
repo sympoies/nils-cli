@@ -25314,10 +25314,7 @@ mod tests {
     fn submit_key_recovery_is_only_for_fresh_codex_and_claude_workers() {
         assert!(worker_submit_key_recovery_eligible(true, AgentKind::Codex));
         assert!(worker_submit_key_recovery_eligible(true, AgentKind::Claude));
-        assert!(!worker_submit_key_recovery_eligible(
-            true,
-            AgentKind::Hermes
-        ));
+        assert!(!worker_submit_key_recovery_eligible(true, AgentKind::Dsh));
         assert!(!worker_submit_key_recovery_eligible(
             false,
             AgentKind::Codex

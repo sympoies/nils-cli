@@ -359,8 +359,9 @@ fail-closed.
   `capabilities.codex_account_switch` / `capabilities.claude_account_switch`.
 - `AGENT_SESSION_LAUNCH_PROFILES`: JSON array of server-owned launch profiles.
   Only profiles whose executable, optional provider root, and readiness probe
-  pass are advertised. A Hermes-backed DSH profile may add an absolute
-  `dsh_history.command`, absolute `dsh_history.root`, and `zstd` or `none`
+  pass are advertised. A profile with base agent `dsh` launches its
+  `agent_bin` in tmux with no implicit subcommand, waits 5 s before pasting an
+  initial prompt, and may add an absolute `dsh_history.command`, absolute `dsh_history.root`, and `zstd` or `none`
   compression. Adapter availability affects history reads only, never profile
   readiness.
 - `AGENT_SESSION_CODEX_RUNTIME=raw|app-server`: force the Codex runtime choice.
@@ -431,9 +432,9 @@ api_key_env = "EXAMPLE_API_KEY"
 max_chars = 12000
 
 [[launch_profiles]]
-id = "dsh-tui"
-label = "DSH TUI"
-agent = "hermes"
+id = "dsh-workbench"
+label = "DSH"
+agent = "dsh"
 agent_bin = "/absolute/path/to/dsh"
 ```
 

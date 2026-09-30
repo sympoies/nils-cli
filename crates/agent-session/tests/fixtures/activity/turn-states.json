@@ -24,7 +24,7 @@
     "phase": "waiting",
     "phase_changed_at": "2026-07-10T00:00:06Z",
     "revision": 7,
-    "source": { "kind": "provider_hook", "provider": "hermes", "confidence": "authoritative" },
+    "source": { "kind": "provider_hook", "provider": "dsh", "confidence": "authoritative" },
     "last_turn": {
       "started_at": "2026-07-10T00:00:01Z",
       "completed_at": "2026-07-10T00:00:06Z",

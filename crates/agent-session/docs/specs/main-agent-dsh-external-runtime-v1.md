@@ -253,11 +253,14 @@ lane needs. The classification table itself is not modified.
 - `worker stop-runtime`, `worker stop-claimed-runtime`: `dsh-runtime-plugin-owned`
   — the plugin interrupts the lane; `worker reconcile-stopped` then proceeds
   store-side unchanged once the sidecar proves the lane stopped.
-- `agent-session start`, `run`, provider-resume import, and `activity setup`
-  refuse before provider launch or configuration side effects; dsh sessions
-  and lifecycle configuration are external-runtime owned.
-- `agent-session resume`/provider resume surfaces: dsh sessions are not
-  CLI-resumable (same typed-refusal pattern as Hermes).
+- `agent-session start` without a server-owned launch profile, `run`,
+  provider-resume import, and `activity setup` refuse before provider launch
+  or configuration side effects; external dsh sessions and lifecycle
+  configuration are external-runtime owned. Only records created through the
+  external path carry `runtime.kind = "dsh_external"`; a dsh pane started
+  through a serve launch profile is an ordinary tmux runtime.
+- `agent-session resume`/provider resume surfaces: external dsh sessions are
+  not CLI-resumable.
 - `agent-session delete`, `maintenance` `remove-console-record`: an unproven
   lane refuses with `coordination-runtime-unverified`.
 

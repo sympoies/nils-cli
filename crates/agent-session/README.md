@@ -2,8 +2,8 @@
 
 ## Overview
 
-`agent-session` starts and manages tmux-backed Codex, Claude Code, and Hermes sessions for mobile handoff workflows. It is designed for
-personal automation such as Hermes Telegram skills and the agent-console mobile control plane: a service can create the session with a full
+`agent-session` starts and manages tmux-backed Codex, Claude Code, and DSH sessions for mobile handoff workflows. It is designed for
+personal automation such as the agent-console mobile control plane: a service can create the session with a full
 prompt, then return a short tmux attach command for the user to continue from Termius, glance at the pane, or steer it with keystrokes.
 
 ## Package vs binary name
@@ -45,7 +45,6 @@ documented here.
 
 ```bash
 agent-session start --agent codex --cwd ~/Project/foo --prompt-file prompt.md
-agent-session start --agent hermes --cwd ~
 agent-session start --agent claude --issue sympoies/nils-cli#2032   # child of this session; inherits its program
 agent-session work set <id> --issue sympoies/nils-cli#2040 --if-revision 1
 agent-session lineage adopt <child> --by <steward>   # successor takes over a child
@@ -375,7 +374,9 @@ and still requires every persisted process boundary to verify stopped before rem
 For a stopped session without a one-shot run log, `agent-session logs <id>` falls back to the private, tail-capped startup
 diagnostic. Codex sessions retain that diagnostic after a startup failure or non-zero provider-client exit; a clean exit
 after readiness discards it.
-`--agent hermes` launches `hermes chat` interactively (one-shot `run` mode is codex/claude only).
+DSH panes start only through a server-owned `serve` launch profile with base agent `dsh`, which launches the profile's
+`agent_bin` with no implicit subcommand; a profile-less `start --agent dsh` is refused, and one-shot `run` mode is
+codex/claude only.
 
 ## Work coordination
 

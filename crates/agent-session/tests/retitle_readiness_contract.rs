@@ -60,7 +60,7 @@ const V2_REQUIRED_KEYS: &[&str] = &[
     "schema_version",
     "status",
 ];
-const V2_CONTEXT_CAPABILITY_KEYS: &[&str] = &["claude", "codex", "hermes"];
+const V2_CONTEXT_CAPABILITY_KEYS: &[&str] = &["claude", "codex"];
 const V2_CONTEXT_CAPABILITY_VALUES: &[&str] = &["provider_transcript", "unavailable"];
 const V2_STATUSES: &[&str] = &["ready", "degraded", "unavailable"];
 const V2_REASONS: &[&str] = &[

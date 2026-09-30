@@ -3345,7 +3345,7 @@ esac
                         compression: "zstd".to_string(),
                     },
                     DshHistorySource {
-                        agent_profile: "dsh-tui".to_string(),
+                        agent_profile: "dsh-workbench".to_string(),
                         command: adapter,
                         root,
                         compression: "zstd".to_string(),
@@ -3357,7 +3357,7 @@ esac
         assert!(page.truncated);
         let session = &page.sessions[0];
         assert_eq!(session.provider, "dsh");
-        assert_eq!(session.agent_profile.as_deref(), Some("dsh-tui"));
+        assert_eq!(session.agent_profile.as_deref(), Some("dsh-workbench"));
         assert_eq!(session.title.as_deref(), Some("DSH title"));
         assert_eq!(session.first_user_prompt_preview.as_deref(), Some("first"));
         assert_eq!(session.last_user_prompt_preview.as_deref(), Some("last"));
@@ -3404,7 +3404,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         let root = tmp.path().join("sessions");
         fs::create_dir(&root).unwrap();
         let source = DshHistorySource {
-            agent_profile: "dsh-tui".to_string(),
+            agent_profile: "dsh-workbench".to_string(),
             command: adapter,
             root,
             compression: "zstd".to_string(),

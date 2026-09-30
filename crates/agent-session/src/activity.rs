@@ -66,8 +66,6 @@ const CODEX_FORWARD_TIMEOUT: Duration = Duration::from_secs(2);
 const CODEX_COMPLETION_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_UNHEALTHY_LOCK_TIMEOUT: Duration = Duration::from_millis(250);
 const AGENT_HOOK_DOCTOR_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-const AGENT_CONSOLE_DSH_PROFILE: &str = "dsh-tui";
-const AGENT_CONSOLE_DSH_LAUNCHER: &str = "run-agent-console-dsh";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1144,79 +1142,6 @@ pub(crate) fn projected_codex_session_identifier(
     projected_provider_identifier(runtime_id, AgentKind::Codex, "session", value)
 }
 
-fn hermes_approval_correlation_id(runtime_id: &str, raw: &Value) -> Result<String, CliError> {
-    fn required_string<'a>(raw: &'a Value, field: &str) -> Result<&'a str, CliError> {
-        raw.get(field).and_then(Value::as_str).ok_or_else(|| {
-            CliError::data(
-                "provider-hook-correlation-missing",
-                "recognized Hermes approval hook is missing matching correlation metadata",
-                Some(json!({ "field": field })),
-            )
-        })
-    }
-
-    let mut pattern_keys = raw
-        .get("pattern_keys")
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            CliError::data(
-                "provider-hook-correlation-missing",
-                "recognized Hermes approval hook is missing matching correlation metadata",
-                Some(json!({ "field": "pattern_keys" })),
-            )
-        })?
-        .iter()
-        .map(|value| {
-            value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
-                CliError::data(
-                    "provider-hook-correlation-missing",
-                    "recognized Hermes approval hook has invalid matching correlation metadata",
-                    Some(json!({ "field": "pattern_keys" })),
-                )
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    pattern_keys.sort();
-    pattern_keys.dedup();
-
-    let canonical = serde_json::to_vec(&json!([
-        required_string(raw, "command")?,
-        required_string(raw, "description")?,
-        required_string(raw, "pattern_key")?,
-        pattern_keys,
-        required_string(raw, "session_key")?,
-        required_string(raw, "surface")?,
-    ]))
-    .map_err(|_| {
-        CliError::data(
-            "provider-hook-correlation-invalid",
-            "Hermes approval correlation metadata could not be canonicalized",
-            None,
-        )
-    })?;
-    let mut digest = Sha256::new();
-    digest.update(b"agent-session.hermes-approval-correlation.v1\0");
-    digest.update(canonical);
-    projected_provider_identifier(
-        runtime_id,
-        AgentKind::Hermes,
-        "attention",
-        &format!("sha256:{}", hex_digest(digest.finalize())),
-    )
-}
-
-fn hermes_approval_metadata(raw: &Value) -> Result<&Value, CliError> {
-    match raw.get("extra") {
-        Some(extra) if extra.is_object() => Ok(extra),
-        Some(Value::Null) | None => Ok(raw),
-        Some(_) => Err(CliError::data(
-            "provider-hook-correlation-invalid",
-            "recognized Hermes approval hook has invalid matching correlation metadata",
-            Some(json!({ "field": "extra" })),
-        )),
-    }
-}
-
 fn optional_hook_string<'a>(raw: &'a Value, field: &str) -> Result<Option<&'a str>, CliError> {
     match raw.get(field) {
         None | Some(Value::Null) => Ok(None),
@@ -1226,26 +1151,6 @@ fn optional_hook_string<'a>(raw: &'a Value, field: &str) -> Result<Option<&'a st
             "provider-hook-identifier-invalid",
             "provider hook identifier is invalid",
             Some(json!({ "field": field })),
-        )),
-    }
-}
-
-fn hermes_approval_correlation(
-    runtime_id: &str,
-    metadata: &Value,
-) -> Result<(String, bool), CliError> {
-    match metadata.get("tool_call_id") {
-        Some(Value::String(value)) if !value.is_empty() => {
-            projected_provider_identifier(runtime_id, AgentKind::Hermes, "attention", value)
-                .map(|id| (id, false))
-        }
-        None | Some(Value::Null) | Some(Value::String(_)) => {
-            hermes_approval_correlation_id(runtime_id, metadata).map(|id| (id, true))
-        }
-        Some(_) => Err(CliError::data(
-            "provider-hook-correlation-invalid",
-            "recognized Hermes approval hook has invalid matching correlation metadata",
-            Some(json!({ "field": "tool_call_id" })),
         )),
     }
 }
@@ -1263,25 +1168,6 @@ fn event_dedupe_key(runtime_id: &str, event_id: &str) -> [u8; REPLAY_SLOT_BYTES]
     key
 }
 
-fn stable_hermes_approval_event_id(
-    runtime_id: &str,
-    kind: &TurnEventKind,
-    projected_tool_call_id: &str,
-) -> String {
-    let mut digest = Sha256::new();
-    digest.update(b"agent-session.provider-replay.v1\0");
-    digest.update(runtime_id.as_bytes());
-    digest.update(b"\0");
-    digest.update(match kind {
-        TurnEventKind::AttentionRequested => b"attention_requested".as_slice(),
-        TurnEventKind::AttentionCleared => b"attention_cleared".as_slice(),
-        _ => unreachable!("Hermes approval event kind"),
-    });
-    digest.update(b"\0");
-    digest.update(projected_tool_call_id.as_bytes());
-    format!("local:v1:{}", hex_digest(digest.finalize()))
-}
-
 fn semantic_event_key(event: &TurnEvent) -> String {
     let mut digest = Sha256::new();
     digest.update(b"agent-session.semantic-event.v1\0");
@@ -1290,15 +1176,12 @@ fn semantic_event_key(event: &TurnEvent) -> String {
         .as_deref()
         .is_some_and(|id| id.starts_with("local:v1:"))
         && !event.attention_correlation_ambiguous;
-    let correlated_attention_id = if exact_attention
-        || (event.provider == AgentKind::Hermes.as_str()
-            && event.attention_kind.as_deref() == Some("approval"))
-        || event.kind == TurnEventKind::AttentionCleared
-    {
-        event.attention_id.as_deref().unwrap_or("")
-    } else {
-        ""
-    };
+    let correlated_attention_id =
+        if exact_attention || event.kind == TurnEventKind::AttentionCleared {
+            event.attention_id.as_deref().unwrap_or("")
+        } else {
+            ""
+        };
     for value in [
         event.provider.as_str(),
         event.provider_session_id.as_deref().unwrap_or(""),
@@ -1328,17 +1211,6 @@ fn semantic_event_is_duplicate(
     received_at: &str,
 ) -> bool {
     if !matches!(event.source_kind, SourceKind::ProviderHook) {
-        return false;
-    }
-    if event.provider == AgentKind::Hermes.as_str()
-        && event.kind == TurnEventKind::AttentionRequested
-        && event.attention_kind.as_deref() == Some("approval")
-        && event.attention_correlation_ambiguous
-    {
-        // Hermes provides no delivery id distinct from the derived request
-        // tuple. Preserve every observed pre-request as conservative
-        // multiplicity; the runtime-scoped event-id replay index still rejects
-        // exact normalized event replays.
         return false;
     }
     if event.kind == TurnEventKind::TurnStarted
@@ -3072,23 +2944,23 @@ fn live_external_dsh_turn(record: &SessionRecord) -> Result<TurnState, CliError>
 
 fn session_accepts_activity_provider(record: &SessionRecord, provider: &str) -> bool {
     if provider == AgentKind::Dsh.as_str() {
-        return agent_console_dsh_transport(record)
+        return dsh_profile_transport(record)
             || crate::dsh_provider_lease_scope(record).is_ok_and(|scope| scope.is_some());
     }
-    !agent_console_dsh_transport(record) && provider == record.agent
+    provider == record.agent
 }
 
-pub(crate) fn agent_console_dsh_transport(record: &SessionRecord) -> bool {
-    if record.agent != AgentKind::Hermes.as_str()
-        || crate::session_agent_profile(record) != Some(AGENT_CONSOLE_DSH_PROFILE)
-    {
-        return false;
-    }
-    record.agent_bin.as_deref().is_some_and(|agent_bin| {
-        let path = Path::new(agent_bin);
-        path.is_absolute()
-            && path.file_name().and_then(|name| name.to_str()) == Some(AGENT_CONSOLE_DSH_LAUNCHER)
-    })
+/// A tmux pane started through a dsh launch profile. External dsh workers own
+/// their activity through the plugin-owned lane instead, and a record without
+/// a server-owned profile launcher cannot claim the DSH provider transport.
+pub(crate) fn dsh_profile_transport(record: &SessionRecord) -> bool {
+    record.agent == AgentKind::Dsh.as_str()
+        && !crate::dsh_external::is_external_record(record)
+        && crate::session_agent_profile(record).is_some()
+        && record
+            .agent_bin
+            .as_deref()
+            .is_some_and(|agent_bin| Path::new(agent_bin).is_absolute())
 }
 
 fn arm_auto_resume_from_event(
@@ -3706,7 +3578,7 @@ pub(crate) fn doctor(
 ) -> Result<DoctorResult, CliError> {
     let agents = agent
         .map(|agent| vec![agent])
-        .unwrap_or_else(|| vec![AgentKind::Codex, AgentKind::Claude, AgentKind::Hermes]);
+        .unwrap_or_else(|| vec![AgentKind::Codex, AgentKind::Claude]);
     let activity_by_provider = latest_provider_activity(context);
     let version_probes = thread::scope(|scope| {
         let handles = agents
@@ -3797,20 +3669,18 @@ pub(crate) fn doctor(
                     reported_config_path,
                 )
             }
-            AgentKind::Claude | AgentKind::Hermes | AgentKind::Dsh => {
-                match provider_configured(agent, &path) {
-                    Ok(configured) => (configured, None, None, None, None, None, path.clone()),
-                    Err(error) => (
-                        false,
-                        Some(error.code().to_string()),
-                        None,
-                        None,
-                        None,
-                        None,
-                        path.clone(),
-                    ),
-                }
-            }
+            AgentKind::Claude | AgentKind::Dsh => match provider_configured(agent, &path) {
+                Ok(configured) => (configured, None, None, None, None, None, path.clone()),
+                Err(error) => (
+                    false,
+                    Some(error.code().to_string()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    path.clone(),
+                ),
+            },
         };
         let activity_summary = activity_by_provider
             .get(agent.as_str())
@@ -3839,13 +3709,6 @@ pub(crate) fn doctor(
                     "AskUserQuestion uses exact runtime-scoped tool_use_id correlation; Elicitation uses exact elicitation_id when both callbacks provide it and otherwise latches conservatively; other PermissionRequest and configured notification signals remain conservative latches",
                     "Claude settings hooks compose additively and execute with the user's permissions",
                     "Run activity setup --agent claude --dry-run and then --apply",
-                ),
-                AgentKind::Hermes => (
-                    "supported",
-                    "post_llm_call is authoritative for successful non-interrupted turns on the supported version",
-                    "Hermes 0.18.2 shell approval hooks use projected non-empty tool_call_id for exact correlation; missing/empty-id tuple fallback retains conservative multiplicity until completion, a new turn, or a runtime boundary",
-                    "Hermes shell hooks require first-use consent unless explicitly accepted",
-                    "Run activity setup --agent hermes --dry-run, apply it, then approve and verify with hermes hooks doctor",
                 ),
                 AgentKind::Dsh => (
                     "unverified",
@@ -3890,7 +3753,6 @@ pub(crate) fn doctor(
                 },
                 "hook",
             ),
-            AgentKind::Hermes => (if audited { "supported" } else { "unverified" }, "hook"),
             AgentKind::Dsh => ("unverified", "external-runtime"),
         };
         let mut guidance = if matches!(classification, "unavailable" | "unverified") {
@@ -4051,7 +3913,7 @@ fn latest_provider_activity(context: &CliContext) -> BTreeMap<String, ProviderAc
         let Ok(record) = serde_json::from_slice::<SessionRecord>(&record_bytes) else {
             continue;
         };
-        if !matches!(record.agent.as_str(), "codex" | "claude" | "hermes") {
+        if !matches!(record.agent.as_str(), "codex" | "claude") {
             continue;
         }
         let summary = activity.entry(record.agent.clone()).or_default();
@@ -4167,7 +4029,6 @@ fn audited_floor(agent: AgentKind) -> (u64, u64, u64) {
     match agent {
         AgentKind::Codex => (0, 144, 1),
         AgentKind::Claude => (2, 1, 206),
-        AgentKind::Hermes => (0, 18, 2),
         // No provider activity pipeline exists for dsh; the config-path gate
         // refuses `--agent dsh` before any floor comparison can run.
         AgentKind::Dsh => (u64::MAX, 0, 0),
@@ -4201,7 +4062,6 @@ fn provider_config_path(agent: AgentKind) -> Result<std::path::PathBuf, CliError
     Ok(match agent {
         AgentKind::Codex => home.join(".codex/hooks.json"),
         AgentKind::Claude => home.join(".claude/settings.json"),
-        AgentKind::Hermes => home.join(".hermes/config.yaml"),
         AgentKind::Dsh => {
             return Err(CliError::usage(
                 "unsupported-activity-agent",
@@ -4327,24 +4187,6 @@ fn provider_specs(agent: AgentKind) -> Vec<ProviderSpec> {
                 matcher: Some("agent_needs_input"),
             },
         ],
-        AgentKind::Hermes => vec![
-            ProviderSpec {
-                event: "pre_llm_call",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "post_llm_call",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "pre_approval_request",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "post_approval_response",
-                matcher: None,
-            },
-        ],
         // No provider activity hooks exist for dsh; lifecycle evidence is
         // owned by the external dsh-runtime-kit runtime.
         AgentKind::Dsh => Vec::new(),
@@ -4363,7 +4205,7 @@ fn retired_provider_specs(agent: AgentKind) -> Vec<ProviderSpec> {
                 matcher: None,
             },
         ],
-        AgentKind::Codex | AgentKind::Hermes | AgentKind::Dsh => Vec::new(),
+        AgentKind::Codex | AgentKind::Dsh => Vec::new(),
     }
 }
 
@@ -4375,9 +4217,6 @@ fn owned_command(agent: AgentKind, event: Option<&str>) -> String {
             "then exit 0; fi; exec agent-session activity hook --agent codex'"
         )
         .to_string(),
-        Some(event) if agent == AgentKind::Hermes => {
-            format!("agent-session activity hook --agent hermes --event {event}")
-        }
         _ => format!("agent-session activity hook --agent {}", agent.as_str()),
     }
 }
@@ -4391,7 +4230,6 @@ fn provider_configured(agent: AgentKind, path: &Path) -> Result<bool, CliError> 
             Ok(hooks.configured && notification.configured)
         }
         AgentKind::Claude => json_provider_configured(agent, path),
-        AgentKind::Hermes => hermes_configured(path),
         // Unreachable in practice: provider_config_path refuses dsh first.
         AgentKind::Dsh => Ok(false),
     }
@@ -5091,46 +4929,6 @@ fn json_has_spec(value: &Value, agent: AgentKind, spec: ProviderSpec) -> bool {
                                     && handler.get("timeout").and_then(Value::as_u64) == Some(5)
                             })
                         })
-            })
-        })
-}
-
-fn hermes_configured(path: &Path) -> Result<bool, CliError> {
-    if !path.is_file() {
-        return Ok(false);
-    }
-    let value: serde_yaml_ng::Value = serde_yaml_ng::from_slice(
-        &fs::read(path)
-            .map_err(|err| activity_io_error("provider-config-read-failed", path, err))?,
-    )
-    .map_err(|err| {
-        CliError::data(
-            "provider-config-invalid",
-            format!("failed to parse {}: {err}", path.display()),
-            None,
-        )
-    })?;
-    Ok(provider_specs(AgentKind::Hermes)
-        .iter()
-        .all(|spec| yaml_has_spec(&value, *spec)))
-}
-
-fn yaml_has_spec(value: &serde_yaml_ng::Value, spec: ProviderSpec) -> bool {
-    let key = serde_yaml_ng::Value::String(spec.event.to_string());
-    value
-        .get("hooks")
-        .and_then(|hooks| hooks.get(&key))
-        .and_then(serde_yaml_ng::Value::as_sequence)
-        .is_some_and(|handlers| {
-            handlers.iter().any(|handler| {
-                handler
-                    .get("command")
-                    .and_then(serde_yaml_ng::Value::as_str)
-                    == Some(owned_command(AgentKind::Hermes, Some(spec.event)).as_str())
-                    && handler
-                        .get("timeout")
-                        .and_then(serde_yaml_ng::Value::as_i64)
-                        == Some(5)
             })
         })
 }
@@ -7354,8 +7152,8 @@ mod tests {
         assert_eq!(claude.kind, TurnEventKind::TurnCompleted);
         assert_eq!(claude.confidence, Confidence::Observed);
 
-        let hermes = normalize_provider_hook(
-            AgentKind::Hermes,
+        let dsh = normalize_provider_hook(
+            AgentKind::Dsh,
             Some("post_llm_call"),
             "runtime-1",
             &json!({
@@ -7363,10 +7161,10 @@ mod tests {
                 "assistant_response": "discarded"
             }),
         )
-        .expect("Hermes mapping")
-        .expect("Hermes event");
-        assert_eq!(hermes.kind, TurnEventKind::TurnCompleted);
-        assert_eq!(hermes.confidence, Confidence::Authoritative);
+        .expect("DSH mapping")
+        .expect("DSH event");
+        assert_eq!(dsh.kind, TurnEventKind::TurnCompleted);
+        assert_eq!(dsh.confidence, Confidence::Authoritative);
     }
 
     #[test]
@@ -7838,218 +7636,6 @@ mod tests {
     }
 
     #[test]
-    fn hermes_approval_hooks_use_runtime_scoped_metadata_correlation() {
-        let fixture = include_str!("../tests/fixtures/activity/hermes-approval-events.jsonl")
-            .lines()
-            .map(|line| serde_json::from_str::<Value>(line).expect("Hermes approval fixture"))
-            .collect::<Vec<_>>();
-        let approval = fixture[0].clone();
-        let request = normalize_provider_hook(
-            AgentKind::Hermes,
-            Some("pre_approval_request"),
-            "runtime-1",
-            &approval,
-        )
-        .expect("request mapping")
-        .expect("recognized request");
-        assert_eq!(request.kind, TurnEventKind::AttentionRequested);
-        assert_eq!(request.attention_kind.as_deref(), Some("approval"));
-        assert_eq!(request.confidence, Confidence::Observed);
-        let correlation = request.attention_id.as_deref().expect("correlation id");
-        assert!(correlation.starts_with("local:v1:"));
-
-        let response_payload = fixture[1].clone();
-        let response = normalize_provider_hook(
-            AgentKind::Hermes,
-            Some("post_approval_response"),
-            "runtime-1",
-            &response_payload,
-        )
-        .expect("response mapping")
-        .expect("recognized response");
-        assert_eq!(response.kind, TurnEventKind::AttentionCleared);
-        assert_eq!(response.attention_id.as_deref(), Some(correlation));
-        assert_eq!(response.confidence, Confidence::Observed);
-
-        let mut reordered = response_payload.clone();
-        reordered["pattern_keys"] = json!(["shell_escalation", "sudo", "sudo"]);
-        let reordered = normalize_provider_hook(
-            AgentKind::Hermes,
-            Some("post_approval_response"),
-            "runtime-1",
-            &reordered,
-        )
-        .expect("reordered mapping")
-        .expect("recognized response");
-        assert_eq!(reordered.attention_id.as_deref(), Some(correlation));
-
-        let same_other_runtime = normalize_provider_hook(
-            AgentKind::Hermes,
-            Some("pre_approval_request"),
-            "runtime-2",
-            &approval,
-        )
-        .expect("other runtime mapping")
-        .expect("recognized request");
-        assert_ne!(same_other_runtime.attention_id, request.attention_id);
-
-        let mut different = approval.clone();
-        different["pattern_keys"] = json!(["sudo"]);
-        let different = normalize_provider_hook(
-            AgentKind::Hermes,
-            Some("pre_approval_request"),
-            "runtime-1",
-            &different,
-        )
-        .expect("different mapping")
-        .expect("recognized request");
-        assert_ne!(different.attention_id, request.attention_id);
-        assert_ne!(semantic_event_key(&different), semantic_event_key(&request));
-        assert_eq!(
-            semantic_event_key(&reordered),
-            semantic_event_key(&response)
-        );
-
-        let missing = normalize_provider_hook(
-            AgentKind::Hermes,
-            Some("pre_approval_request"),
-            "runtime-1",
-            &json!({
-                "session_key": "hermes-session",
-                "surface": "cli",
-                "command": "must-not-appear-in-diagnostic"
-            }),
-        )
-        .expect_err("the complete matching tuple is required");
-        assert_eq!(missing.code(), "provider-hook-correlation-missing");
-        assert!(!format!("{missing:?}").contains("must-not-appear-in-diagnostic"));
-
-        let mut invalid_response = response_payload.clone();
-        invalid_response["choice"] = json!("future-choice");
-        let invalid_response = normalize_provider_hook(
-            AgentKind::Hermes,
-            Some("post_approval_response"),
-            "runtime-1",
-            &invalid_response,
-        )
-        .expect_err("unknown response choices must not clear attention");
-        assert_eq!(invalid_response.code(), "provider-hook-response-invalid");
-
-        let mut document = document();
-        reduce(
-            &mut document,
-            &event(TurnEventKind::TurnStarted, "start"),
-            "2026-07-10T00:00:01Z",
-        );
-        reduce(&mut document, &request, "2026-07-10T00:00:02Z");
-        reduce(&mut document, &different, "2026-07-10T00:00:03Z");
-        assert_eq!(
-            document
-                .state
-                .current_turn
-                .as_ref()
-                .and_then(|turn| turn.attention.as_ref())
-                .map(|attention| attention.pending_count),
-            Some(2)
-        );
-        reduce(&mut document, &response, "2026-07-10T00:00:04Z");
-        assert_eq!(document.state.phase, TurnPhase::NeedsInput);
-        assert_eq!(
-            document
-                .state
-                .current_turn
-                .as_ref()
-                .and_then(|turn| turn.attention.as_ref())
-                .map(|attention| attention.pending_count),
-            Some(1)
-        );
-
-        for event in [&request, &response] {
-            let serialized = serde_json::to_string(event).expect("event json");
-            for forbidden in [
-                "discarded-command",
-                "discarded-description",
-                "shell_escalation",
-                "hermes-session",
-                "choice",
-            ] {
-                assert!(!serialized.contains(forbidden), "forbidden {forbidden}");
-            }
-        }
-    }
-
-    #[test]
-    fn identical_concurrent_hermes_approvals_remain_latched_after_one_response() {
-        let fixture = include_str!("../tests/fixtures/activity/hermes-approval-events.jsonl")
-            .lines()
-            .map(|line| serde_json::from_str::<Value>(line).expect("Hermes approval fixture"))
-            .collect::<Vec<_>>();
-        let first = normalize_provider_hook(AgentKind::Hermes, None, "runtime-1", &fixture[0])
-            .expect("first mapping")
-            .expect("first request");
-        let second = normalize_provider_hook(AgentKind::Hermes, None, "runtime-1", &fixture[0])
-            .expect("second mapping")
-            .expect("second request");
-        assert_ne!(first.event_id, second.event_id);
-        assert_eq!(first.attention_id, second.attention_id);
-
-        let mut document = document();
-        reduce(&mut document, &first, "2026-07-10T00:00:01Z");
-        let first_key = semantic_event_key(&first);
-        document.last_semantic_event = Some(first_key);
-        document.last_semantic_event_at = Some("2026-07-10T00:00:01Z".to_string());
-        let second_key = semantic_event_key(&second);
-        assert!(
-            !semantic_event_is_duplicate(&document, &second, &second_key, "2026-07-10T00:00:01Z"),
-            "distinct hook deliveries must retain ambiguous request multiplicity"
-        );
-        reduce(&mut document, &second, "2026-07-10T00:00:01Z");
-        assert_eq!(
-            document
-                .state
-                .current_turn
-                .as_ref()
-                .and_then(|turn| turn.attention.as_ref())
-                .map(|attention| attention.pending_count),
-            Some(2)
-        );
-
-        let response = normalize_provider_hook(AgentKind::Hermes, None, "runtime-1", &fixture[1])
-            .expect("response mapping")
-            .expect("response");
-        reduce(&mut document, &response, "2026-07-10T00:00:02Z");
-        assert_eq!(document.state.phase, TurnPhase::NeedsInput);
-        assert_eq!(
-            document
-                .state
-                .current_turn
-                .as_ref()
-                .and_then(|turn| turn.attention.as_ref())
-                .map(|attention| attention.pending_count),
-            Some(1)
-        );
-
-        let completion = normalize_provider_hook(
-            AgentKind::Hermes,
-            Some("post_llm_call"),
-            "runtime-1",
-            &json!({"session_id": "hermes-session"}),
-        )
-        .expect("completion mapping")
-        .expect("completion");
-        reduce(&mut document, &completion, "2026-07-10T00:00:03Z");
-        assert_eq!(document.state.phase, TurnPhase::Waiting);
-        assert!(
-            document
-                .state
-                .current_turn
-                .as_ref()
-                .and_then(|turn| turn.attention.as_ref())
-                .is_none()
-        );
-    }
-
-    #[test]
     fn frozen_provider_fixtures_replay_through_each_adapter() {
         let cases = [
             (
@@ -8080,8 +7666,8 @@ mod tests {
                 ],
             ),
             (
-                AgentKind::Hermes,
-                include_str!("../tests/fixtures/activity/hermes-events.jsonl"),
+                AgentKind::Dsh,
+                include_str!("../tests/fixtures/activity/dsh-events.jsonl"),
                 vec![TurnEventKind::TurnStarted, TurnEventKind::TurnCompleted],
             ),
         ];
@@ -8107,7 +7693,7 @@ mod tests {
                 let serialized = serde_json::to_string(&event).expect("normalized event json");
                 assert!(!serialized.contains("codex-session"));
                 assert!(!serialized.contains("claude-session"));
-                assert!(!serialized.contains("hermes-session"));
+                assert!(!serialized.contains("dsh-session"));
                 assert!(!serialized.contains("tool-1"));
                 assert!(!serialized.contains("subagent-secret"));
                 assert!(!serialized.contains("rate_limit"));
@@ -8151,10 +7737,8 @@ mod tests {
             parse_version_triplet("2.1.206 (Claude Code)"),
             Some((2, 1, 206))
         );
-        assert_eq!(parse_version_triplet("Hermes 0.18.2"), Some((0, 18, 2)));
         assert_eq!(parse_version_triplet("development build"), None);
         assert_eq!(audited_floor(AgentKind::Claude), (2, 1, 206));
-        assert_eq!(audited_floor(AgentKind::Hermes), (0, 18, 2));
     }
 
     #[test]
@@ -8816,92 +8400,6 @@ mod tests {
     }
 
     #[test]
-    fn exact_hermes_replay_survives_restart_and_bounded_journal_eviction() {
-        let tmp = tempfile::TempDir::new().expect("tempdir");
-        let context = CliContext {
-            state_dir: tmp.path().join("state"),
-            host: None,
-        };
-        let cwd = tmp.path().join("repo");
-        fs::create_dir_all(&cwd).expect("repo dir");
-        let mut created = create_record(RecordRequest {
-            context: &context,
-            agent: AgentKind::Hermes,
-            mode: "interactive",
-            coordination_mode: crate::cli::CoordinationMode::Advisory,
-            title: None,
-            title_state: None,
-            explicit_id: Some("hermes-replay-horizon"),
-            cwd: &cwd,
-            prompt: None,
-            log_file_name: None,
-            provider_resume: None,
-            agent_args: Vec::new(),
-            agent_bin: None,
-        })
-        .expect("Hermes session");
-        created.release_lifecycle_lock();
-        let runtime_id = created
-            .record
-            .runtime
-            .as_ref()
-            .expect("runtime")
-            .launch_id
-            .clone();
-        let raw = json!({
-            "hook_event_name": "pre_approval_request",
-            "session_id": "",
-            "extra": {
-                "command": "discarded-command",
-                "description": "discarded-description",
-                "pattern_key": "discarded-pattern",
-                "pattern_keys": ["discarded-pattern"],
-                "session_key": "provider-session",
-                "surface": "shell",
-                "turn_id": "provider-turn",
-                "tool_call_id": "exact-tool-call"
-            }
-        });
-        let exact = normalize_provider_hook(AgentKind::Hermes, None, &runtime_id, &raw)
-            .expect("normalize exact approval")
-            .expect("exact approval event");
-        let first = ingest_event(&context, &created.record.id, exact.clone())
-            .expect("first exact approval");
-        assert_eq!(first.turn_state.phase, TurnPhase::NeedsInput);
-
-        for index in 0..=(MAX_JOURNAL_EVENTS + 20) {
-            let mut progress = exact.clone();
-            progress.event_id = format!("eviction-progress-{index}");
-            progress.kind = TurnEventKind::Progress;
-            progress.attention_id = None;
-            progress.attention_kind = None;
-            progress.provider_turn_id = Some(format!("eviction-turn-{index}"));
-            ingest_event(&context, &created.record.id, progress).expect("accepted progress");
-        }
-
-        let dir = session_dir(&context, &created.record.id);
-        let journal_path = dir.join(ACTIVITY_JOURNAL_FILE);
-        let journal_before = fs::read_to_string(&journal_path).expect("bounded journal");
-        assert!(!journal_before.contains("attention_requested"));
-        let before = activity_status(&context, &created.record.id)
-            .expect("status before replay")
-            .turn_state;
-        let restarted_replay = normalize_provider_hook(AgentKind::Hermes, None, &runtime_id, &raw)
-            .expect("normalize replay after restart")
-            .expect("replayed exact approval event");
-        assert_eq!(restarted_replay.event_id, exact.event_id);
-        let replay = ingest_event(&context, &created.record.id, restarted_replay)
-            .expect("replay after bounded eviction");
-        assert!(replay.duplicate);
-        assert_eq!(replay.turn_state.revision, before.revision);
-        assert_eq!(replay.turn_state.phase, before.phase);
-        assert_eq!(
-            fs::read_to_string(journal_path).expect("journal after replay"),
-            journal_before
-        );
-    }
-
-    #[test]
     fn pending_journal_is_repaired_idempotently_after_a_split_write() {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let (context, created) = test_session(&tmp);
@@ -9232,16 +8730,6 @@ mod tests {
         assert!(permission_command.contains("= protocol"));
         assert!(permission_command.contains("exec agent-session activity hook --agent codex"));
 
-        let hermes: serde_yaml_ng::Value = serde_yaml_ng::from_str(&format!(
-            "hooks:\n  pre_llm_call:\n    - command: {}\n      timeout: 1\n",
-            owned_command(AgentKind::Hermes, Some("pre_llm_call"))
-        ))
-        .expect("Hermes config");
-        assert!(!yaml_has_spec(
-            &hermes,
-            provider_specs(AgentKind::Hermes)[0]
-        ));
-
         let claude_specs = provider_specs(AgentKind::Claude);
         assert!(
             claude_specs
@@ -9560,7 +9048,7 @@ mod tests {
         for fixture in [
             include_str!("../tests/fixtures/activity/codex-events.jsonl"),
             include_str!("../tests/fixtures/activity/claude-events.jsonl"),
-            include_str!("../tests/fixtures/activity/hermes-events.jsonl"),
+            include_str!("../tests/fixtures/activity/dsh-events.jsonl"),
             events,
         ] {
             for forbidden in [
@@ -9635,13 +9123,10 @@ fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Result<(), Cl
             ));
         }
     }
-    if !matches!(
-        event.provider.as_str(),
-        "codex" | "claude" | "hermes" | "dsh"
-    ) {
+    if !matches!(event.provider.as_str(), "codex" | "claude" | "dsh") {
         return Err(CliError::data(
             "activity-provider-unsupported",
-            "activity event provider must be codex, claude, hermes, or dsh",
+            "activity event provider must be codex, claude, or dsh",
             None,
         ));
     }
@@ -9817,31 +9302,7 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
                 current.provider_turn_id = event.provider_turn_id.clone();
             }
             let attention_id = event.attention_id.as_deref().unwrap_or_default();
-            let duplicate_hermes_approval = event.attention_correlation_ambiguous
-                && event.provider == AgentKind::Hermes.as_str()
-                && event.attention_kind.as_deref() == Some("approval")
-                && document
-                    .pending_attention
-                    .iter()
-                    .any(|pending| pending.id == attention_id);
-            if duplicate_hermes_approval {
-                let kind = event
-                    .attention_kind
-                    .clone()
-                    .unwrap_or_else(|| "other".to_string());
-                if let Some(overflow) = document.overflow_attention.as_mut() {
-                    overflow.count = overflow.count.saturating_add(1);
-                    overflow.certainty = AttentionCertainty::Conservative;
-                } else {
-                    document.overflow_attention = Some(OverflowAttention {
-                        kind,
-                        requested_at: at.to_string(),
-                        count: 1,
-                        certainty: AttentionCertainty::Conservative,
-                        extra: Map::new(),
-                    });
-                }
-            } else if !document
+            if !document
                 .pending_attention
                 .iter()
                 .any(|pending| pending.id == attention_id)

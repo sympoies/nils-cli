@@ -794,11 +794,11 @@ busy terminal runtimes, rate-limited, controller-unavailable, and
 provider-not-ready targets remain queued with a bounded safe reason. A
 rejected or outcome-unknown `turn/steer` is retained as `attempt_unknown` for
 the same transcript-based reconciliation used by idle submission. Replaced incarnations,
-coordination-off sessions, Hermes, unmanaged sessions, and other unsupported
+coordination-off sessions, retained `hermes` records, unmanaged sessions, and other unsupported
 providers are explicitly undeliverable.
 
-DeepSeek Harness (DSH) recipients, meaning a `dsh` lane or an Agent Console
-`hermes` session on the `dsh-tui` profile, have no serve prompt route. serve
+DeepSeek Harness (DSH) recipients, meaning an external `dsh` lane or a pane
+started from a `dsh` launch profile, have no serve prompt route. serve
 marks their generation `undeliverable` with reason `hook-delivered`. The DSH
 runtime instead calls `agent-hook dispatch --product dsh` at every model step,
 and its prompt-time rule runs the authenticated

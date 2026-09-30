@@ -2233,17 +2233,18 @@ fn start_session_inner(
     mut lifecycle_guards: StartLifecycleGuards<'_>,
     claude_account: Option<InitialClaudeAccount>,
 ) -> Result<StartView, CliError> {
-    if args.agent == AgentKind::Dsh {
-        // Refused before any durable side effect: dsh session records are
+    if args.agent == AgentKind::Dsh && args.initial_agent_profile.is_none() {
+        // Refused before any durable side effect: a dsh pane is launched only
+        // through a server-owned launch profile, and external dsh records are
         // created only by `main-agent worker start`'s external-runtime arm.
         return Err(CliError::usage(
             "unsupported-start-agent",
-            "dsh sessions are launched by the external dsh-runtime-kit runtime; use main-agent worker start with launch.agent \"dsh\"",
+            "dsh sessions start through a server-owned launch profile or the external dsh-runtime-kit runtime (main-agent worker start with launch.agent \"dsh\")",
             None,
         ));
     }
     validate_agent_args(args.agent, &args.agent_args)?;
-    if args.initial_agent_profile.as_deref() == Some("dsh-tui")
+    if args.agent == AgentKind::Dsh
         && args.initial_dsh_history_root.is_some()
         && !args.agent_args.is_empty()
     {
@@ -2838,7 +2839,7 @@ pub(crate) fn start_dsh_history_resume_session(
         )]),
     };
     let start_args = ProviderResumeImportArgs {
-        agent: AgentKind::Hermes,
+        agent: AgentKind::Dsh,
         provider_resume_id,
         title: args.title,
         title_state: args.title_state,
@@ -2897,8 +2898,8 @@ fn start_resolved_provider_resume_session(
         args.codex_usage_account.as_deref(),
     )?;
 
-    // DSH's durable provider identity is distinct from the Hermes base agent
-    // and becomes valid only after the owning profile context is persisted.
+    // DSH's durable provider identity becomes valid only after the owning
+    // profile context is persisted.
     // Re-seed the still-unreleased runtime activity document at that point so
     // the first provider event is fenced to the exact historical session.
     if provider_resume.provider == AgentKind::Dsh.as_str()
@@ -3349,7 +3350,9 @@ fn create_record_with_lineage(
         updated_at: iso.clone(),
         provider_resume: request.provider_resume,
         runtime: Some(RuntimeInfo {
-            kind: if request.agent == AgentKind::Dsh {
+            // Only `main-agent worker start` creates "external" records; a
+            // profile-launched dsh pane is an ordinary tmux runtime.
+            kind: if request.mode == "external" {
                 dsh_external::DSH_RUNTIME_KIND.to_string()
             } else {
                 "tmux".to_string()
@@ -3518,7 +3521,7 @@ fn initial_provider_resume_plan(
             }
         }
         AgentKind::Codex => InitialProviderPlan::default(),
-        AgentKind::Hermes if profile == Some("dsh-tui") && dsh_history_root.is_some() => {
+        AgentKind::Dsh if profile.is_some() && dsh_history_root.is_some() => {
             let root = dsh_history_root.ok_or_else(|| {
                 CliError::unavailable(
                     "dsh-history-unavailable",
@@ -3556,7 +3559,6 @@ fn initial_provider_resume_plan(
                 launch_args: vec!["--agent-session-seed".to_string(), session_id],
             }
         }
-        AgentKind::Hermes => InitialProviderPlan::default(),
         AgentKind::Dsh => InitialProviderPlan::default(),
     };
     Ok(plan)
@@ -3665,17 +3667,10 @@ fn resolve_provider_resume_source(
     let provider = match agent {
         AgentKind::Codex => ResumeProvider::Codex,
         AgentKind::Claude => ResumeProvider::Claude,
-        AgentKind::Hermes => {
-            return Err(CliError::usage(
-                "unsupported-provider-resume-agent",
-                "hermes sessions cannot be imported by provider resume id",
-                Some(json!({ "agent": agent.as_str() })),
-            ));
-        }
         AgentKind::Dsh => {
             return Err(CliError::usage(
                 "unsupported-provider-resume-agent",
-                "dsh sessions are owned by the external dsh-runtime-kit runtime and cannot be imported by provider resume id",
+                "dsh sessions cannot be imported by provider resume id",
                 Some(json!({ "agent": agent.as_str() })),
             ));
         }
@@ -3800,7 +3795,6 @@ pub(crate) fn resolve_provider_transcript_path_from_roots(
             );
             budget.truncated
         }
-        AgentKind::Hermes => return None,
         AgentKind::Dsh => return None,
     };
     if truncated || matches.len() != 1 {
@@ -8686,16 +8680,9 @@ fn start_interactive_tmux(
                 command.arg("--name").arg(title);
             }
         }
-        AgentKind::Hermes => {
-            command.arg("chat");
-            command.args(provider_launch_args);
-        }
         AgentKind::Dsh => {
-            return Err(CliError::usage(
-                "unsupported-start-agent",
-                "dsh sessions are launched by the external dsh-runtime-kit runtime, never by tmux",
-                None,
-            ));
+            // The launch profile's agent_bin owns the whole command line.
+            command.args(provider_launch_args);
         }
     }
     command.args(agent_args);
@@ -8731,17 +8718,10 @@ fn start_run_tmux(
         AgentKind::Claude => {
             parts.push("-p".to_string());
         }
-        AgentKind::Hermes => {
-            return Err(CliError::usage(
-                "unsupported-run-agent",
-                "hermes does not support one-shot run mode; use start --agent hermes",
-                None,
-            ));
-        }
         AgentKind::Dsh => {
             return Err(CliError::usage(
                 "unsupported-run-agent",
-                "dsh sessions are launched by the external dsh-runtime-kit runtime, never by tmux",
+                "dsh does not support one-shot run mode",
                 None,
             ));
         }
@@ -9004,7 +8984,7 @@ fn capture_provider_resume_after_launch(
 ) -> Option<ProviderResume> {
     match agent {
         AgentKind::Codex => capture_codex_resume(record, launch_started_at),
-        AgentKind::Claude | AgentKind::Hermes | AgentKind::Dsh => None,
+        AgentKind::Claude | AgentKind::Dsh => None,
     }
 }
 
@@ -10413,7 +10393,7 @@ fn update_session_title_if_revision(
     // session would show a stale name in the terminal while the console shows the
     // new one. Claude exposes `/rename <name>` as a runtime rename, so push the
     // new title into the live pane to keep the two in sync. Best-effort: a tmux
-    // hiccup must not fail the title update, and Codex/Hermes have no such display
+    // hiccup must not fail the title update, and Codex/DSH have no such display
     // name so this is Claude-only and only when the title actually changed.
     if status == "running"
         && AgentKind::from_name(&record.agent) == Some(AgentKind::Claude)
@@ -11097,7 +11077,6 @@ fn add_runtime_tmux_environment(
         let env_key = match agent {
             AgentKind::Codex => Some("CODEX_HOME"),
             AgentKind::Claude => Some("CLAUDE_CONFIG_DIR"),
-            AgentKind::Hermes => None,
             AgentKind::Dsh => None,
         };
         if let Some(env_key) = env_key {
@@ -12974,7 +12953,7 @@ fn durable_profile_resume_context(
     let Some(agent) = AgentKind::from_name(&record.agent) else {
         return Err(profile_metadata_unavailable(profile_id));
     };
-    if agent == AgentKind::Hermes {
+    if agent == AgentKind::Dsh {
         return Err(profile_metadata_unavailable(profile_id));
     }
     let Some(agent_bin) = record
@@ -17604,7 +17583,7 @@ fn validate_resume_metadata(
             Some(json!({ "id": record.id.clone(), "agent": record.agent.clone() })),
         )
     })?;
-    let dsh_history_resume = agent == AgentKind::Hermes
+    let dsh_history_resume = agent == AgentKind::Dsh
         && provider_resume.provider == AgentKind::Dsh.as_str()
         && provider_resume.capture_method == "dsh-history-exact-id"
         && session_agent_profile(record).is_some()
@@ -17672,7 +17651,6 @@ pub(crate) fn canonical_provider_resume_args(
             "--no-alt-screen".to_string(),
         ]),
         AgentKind::Claude => Some(vec!["--resume".to_string(), session_id.to_string()]),
-        AgentKind::Hermes => None,
         AgentKind::Dsh => None,
     }
 }
@@ -17717,7 +17695,6 @@ fn validate_stored_agent_args(record: &SessionRecord, agent: AgentKind) -> Resul
             .agent_args
             .iter()
             .find_map(|arg| reserved_claude_resume_arg(arg)),
-        AgentKind::Hermes => None,
         AgentKind::Dsh => None,
     };
     if let Some(flag) = flag {
@@ -18163,9 +18140,8 @@ fn resolve_agent_bin(agent: AgentKind, explicit: Option<&Path>) -> PathBuf {
     let env_key = match agent {
         AgentKind::Codex => "AGENT_SESSION_CODEX_BIN",
         AgentKind::Claude => "AGENT_SESSION_CLAUDE_BIN",
-        AgentKind::Hermes => "AGENT_SESSION_HERMES_BIN",
-        // Never launched by this crate; the resolved name is only ever used
-        // in typed-refusal diagnostics.
+        // A dsh pane always launches its profile's agent_bin; the resolved
+        // name is only ever used in typed-refusal diagnostics.
         AgentKind::Dsh => "AGENT_SESSION_DSH_BIN",
     };
     non_empty_env(env_key)
@@ -19134,8 +19110,8 @@ mod tests {
     fn managed_dsh_profile_assigns_provider_identity_before_launch() {
         let temp = tempfile::TempDir::new().expect("history root");
         let plan = super::initial_provider_resume_plan(
-            AgentKind::Hermes,
-            Some("dsh-tui"),
+            AgentKind::Dsh,
+            Some("dsh-workbench"),
             Some(temp.path()),
         )
         .expect("managed DSH plan");
@@ -19155,13 +19131,13 @@ mod tests {
             serde_json::json!(temp.path().canonicalize().expect("canonical root")),
         );
         assert!(
-            super::initial_provider_resume_plan(AgentKind::Hermes, None, None)
-                .expect("ordinary Hermes plan")
+            super::initial_provider_resume_plan(AgentKind::Dsh, None, None)
+                .expect("ordinary DSH plan")
                 .provider_resume
                 .is_none()
         );
         assert!(
-            super::initial_provider_resume_plan(AgentKind::Hermes, Some("dsh-tui"), None)
+            super::initial_provider_resume_plan(AgentKind::Dsh, Some("dsh-workbench"), None)
                 .expect("read-only DSH profile plan")
                 .provider_resume
                 .is_none()
@@ -24108,7 +24084,7 @@ fi
         for (agent, slug) in [
             (AgentKind::Codex, "codex"),
             (AgentKind::Claude, "claude"),
-            (AgentKind::Hermes, "hermes"),
+            (AgentKind::Dsh, "dsh"),
         ] {
             let context = test_context(&tmp.path().join(slug));
             let id = create_test_record_id(&context, agent, None, None);
@@ -24503,6 +24479,33 @@ fi
         let views = super::list_sessions(&context, Some(&tmux)).unwrap();
         assert_eq!(views.len(), 2);
         assert_eq!(fs::read_to_string(calls).unwrap(), "list-windows\n");
+    }
+
+    #[test]
+    fn retired_hermes_records_still_list_without_failing_the_inventory() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        let id = create_test_record_id(&context, AgentKind::Codex, None, Some("retired-hermes"));
+        let mut record = load_session_record(&context, &id).unwrap();
+        record.agent = "hermes".to_string();
+        write_session_record(&context, &record).unwrap();
+        let tmux = tmp.path().join("tmux");
+        fs::write(&tmux, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let views = super::list_sessions(&context, Some(&tmux)).unwrap();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].agent, "hermes");
+    }
+
+    #[test]
+    fn interactive_dsh_records_are_tmux_backed_and_not_external() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        let id = create_test_record_id(&context, AgentKind::Dsh, None, Some("profile-dsh"));
+        let record = load_session_record(&context, &id).unwrap();
+        assert_eq!(record.runtime.as_ref().unwrap().kind, "tmux");
+        assert!(!crate::dsh_external::is_external_record(&record));
     }
 
     #[test]
@@ -25164,17 +25167,15 @@ fi
         let context = test_context(tmp.path());
         let id = create_test_record_id(
             &context,
-            AgentKind::Hermes,
+            AgentKind::Dsh,
             None,
             Some("profiled-graceful-delete"),
         );
         let mut record = load_session_record(&context, &id).unwrap();
-        record
-            .runtime
-            .as_mut()
-            .unwrap()
-            .extra
-            .insert("agent_profile".to_string(), serde_json::json!("dsh-tui"));
+        record.runtime.as_mut().unwrap().extra.insert(
+            "agent_profile".to_string(),
+            serde_json::json!("dsh-workbench"),
+        );
         record.runtime.as_mut().unwrap().extra.insert(
             "agent_profile_graceful_shutdown".to_string(),
             serde_json::json!("double-ctrl-c"),
@@ -25230,17 +25231,15 @@ fi
         let context = test_context(tmp.path());
         let id = create_test_record_id(
             &context,
-            AgentKind::Hermes,
+            AgentKind::Dsh,
             None,
             Some("profiled-graceful-delete-success"),
         );
         let mut record = load_session_record(&context, &id).unwrap();
-        record
-            .runtime
-            .as_mut()
-            .unwrap()
-            .extra
-            .insert("agent_profile".to_string(), serde_json::json!("dsh-tui"));
+        record.runtime.as_mut().unwrap().extra.insert(
+            "agent_profile".to_string(),
+            serde_json::json!("dsh-workbench"),
+        );
         record.runtime.as_mut().unwrap().extra.insert(
             "agent_profile_graceful_shutdown".to_string(),
             serde_json::json!("double-ctrl-c"),
