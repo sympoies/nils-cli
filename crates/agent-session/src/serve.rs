@@ -20632,11 +20632,14 @@ esac
 
         // A broker failure while choosing the automatic default leaves the
         // session unbound; an explicit account still fails closed.
-        let _failing = EnvGuard::set(
-            &lock,
-            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
-            r#"["/bin/false"]"#,
+        // A broker that runs and exits non-zero (`/bin/false` is not on macOS).
+        let failing_broker = executable(
+            &tmp.path().join("failing-broker"),
+            "#!/usr/bin/env sh\nexit 1\n",
         );
+        let failing_argv =
+            serde_json::to_string(&vec![failing_broker.to_string_lossy().into_owned()]).unwrap();
+        let _failing = EnvGuard::set(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER", &failing_argv);
         assert_eq!(
             resolve_initial_codex_account(AgentKind::Codex, None).unwrap(),
             (None, None)
