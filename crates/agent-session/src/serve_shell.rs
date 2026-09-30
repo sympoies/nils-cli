@@ -875,7 +875,9 @@ mod tests {
             .await
             .unwrap();
         let mut output = String::new();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        // An immediate reconnect can include the prior broker's bounded
+        // teardown as well as pipe setup and snapshot capture after upgrade.
+        tokio::time::timeout(Duration::from_secs(10), async {
             while !output.contains("state=kept") {
                 if let Some(Ok(Frame::Binary(bytes))) = socket.next().await {
                     output.push_str(&String::from_utf8_lossy(&bytes));
@@ -883,7 +885,7 @@ mod tests {
             }
         })
         .await
-        .expect("detach must preserve shell-local state");
+        .unwrap_or_else(|_| panic!("detach must preserve shell-local state; output: {output:?}"));
         let old = current(&context, &f.tmux, "alice").unwrap().unwrap();
         let old_record = terminal_record(&old);
         let closed: Value = client
