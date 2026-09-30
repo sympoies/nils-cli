@@ -24213,6 +24213,7 @@ fi
         let mut record = load_session_record(&context, &id).unwrap();
         let identity: super::TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
             "macos_boot_id": old, "session_id": "$0", "pane_id": "%0",
+            "launch_id": record.runtime.as_ref().unwrap().launch_id,
             "pane_pid": unsafe { libc::getpid() }, "process_group_id": unsafe { libc::getpgrp() }
         }))
         .unwrap();
