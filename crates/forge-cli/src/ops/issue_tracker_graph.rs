@@ -119,7 +119,7 @@ pub fn compute<R: BackendRunner>(
         &view.body,
         write,
         global.dry_run,
-    );
+    )?;
     if let Some(body) = body {
         let call = issue_edit::build_body_edit_call(ctx, id, &body)?;
         if global.dry_run {
@@ -147,7 +147,7 @@ fn run_draft(
         ));
     }
     let draft = read_draft(path)?;
-    let (mut payload, body) = plan(TrackerTarget::draft(), &draft, write, global.dry_run);
+    let (mut payload, body) = plan(TrackerTarget::draft(), &draft, write, global.dry_run)?;
     if let Some(body) = body
         && !global.dry_run
     {
@@ -165,12 +165,27 @@ fn run_draft(
 
 /// Generate the graph for `body` and, when `write` changes the body, return
 /// the new body next to the payload.
+///
+/// A write needs a `## Phase table` section: without one the body is not a
+/// tracker, and a mistyped issue id must not append a graph section to an
+/// unrelated issue. Reading such a body still yields the zero-row graph.
 fn plan(
     target: TrackerTarget,
     body: &str,
     write: bool,
     dry_run: bool,
-) -> (IssueTrackerGraphPayload, Option<String>) {
+) -> Result<(IssueTrackerGraphPayload, Option<String>), ForgeError> {
+    if write && !tracker::has_phase_table(body) {
+        return Err(ForgeError::validation(
+            schema_err(),
+            "tracker_no_phase_table",
+            format!(
+                "{} has no `## Phase table` section; --write only edits a tracker",
+                target.describe()
+            ),
+            None,
+        ));
+    }
     let table = tracker::parse(body);
     let findings: Vec<TrackerFinding> = tracker::row_findings(&table)
         .iter()
@@ -188,18 +203,18 @@ fn plan(
         actions: Vec::new(),
     };
     if !payload.findings.is_empty() {
-        return (payload, None);
+        return Ok((payload, None));
     }
     let graph = tracker::generate(&table.rows);
     let edit = write_graph(body, &graph);
     payload.graph = Some(graph.join("\n"));
     payload.current = edit.change == GraphChange::None;
     if !write || payload.current {
-        return (payload, None);
+        return Ok((payload, None));
     }
     payload.change = edit.change.as_str();
     payload.changed = true;
-    (payload, Some(edit.body))
+    Ok((payload, Some(edit.body)))
 }
 
 fn emit(payload: IssueTrackerGraphPayload, write: bool, format: OutputFormat) -> i32 {
@@ -341,6 +356,56 @@ mod tests {
         assert_eq!(payload.findings[0].code, "unknown-dependency");
         assert!(!payload.changed);
         assert!(!payload.written);
+        assert_eq!(forge.log(), ["view 1"]);
+        assert_eq!(forge.body(1), body);
+    }
+
+    #[test]
+    fn write_refuses_a_body_without_a_phase_table() {
+        // A mistyped id must not append a graph section to an unrelated issue.
+        let unrelated = "An unrelated issue.\n\n## Notes\n\n- [ ] **A1** Not a tracker row: #2\n";
+        for dry_run in [false, true] {
+            let forge = FakeForge::with_tracker(unrelated);
+            let err = compute(&forge, &global(dry_run), &ctx(), 1, true).expect_err("refused");
+            assert_eq!(err.kind(), "tracker_no_phase_table");
+            assert_eq!(err.exit_code(), nils_common::cli_contract::exit::DATA);
+            assert_eq!(forge.log(), ["view 1"]);
+            assert_eq!(forge.body(1), unrelated);
+        }
+
+        // Reading keeps the grammar's zero-row graph.
+        let forge = FakeForge::with_tracker(unrelated);
+        let payload = compute(&forge, &global(false), &ctx(), 1, false).expect("graph");
+        assert_eq!(payload.graph.as_deref(), Some("graph LR"));
+        assert!(!payload.current);
+        assert_eq!(forge.log(), ["view 1"]);
+    }
+
+    #[test]
+    fn write_fills_a_phase_table_that_has_no_rows() {
+        let placeholder = "## Phase table\n\nNothing planned yet.\n";
+        let forge = FakeForge::with_tracker(placeholder);
+        let payload = compute(&forge, &global(false), &ctx(), 1, true).expect("graph");
+        assert_eq!(payload.change, "inserted-section");
+        assert!(payload.written);
+        assert_eq!(
+            forge.body(1),
+            format!("{placeholder}\n## Dependency graph\n\n```mermaid\ngraph LR\n```\n")
+        );
+    }
+
+    #[test]
+    fn refuses_a_table_over_the_row_limit() {
+        let mut body = String::from("## Phase table\n");
+        for n in 1..=crate::tracker::MAX_ROWS + 1 {
+            body.push_str(&format!("- [ ] **A{n}** Row {n}: #{n}\n"));
+        }
+        let forge = FakeForge::with_tracker(&body);
+        let payload = compute(&forge, &global(false), &ctx(), 1, true).expect("graph");
+        assert_eq!(payload.graph, None);
+        let codes: Vec<&str> = payload.findings.iter().map(|f| f.code).collect();
+        assert_eq!(codes, ["too-many-rows"]);
+        assert!(!payload.changed);
         assert_eq!(forge.log(), ["view 1"]);
         assert_eq!(forge.body(1), body);
     }

@@ -271,7 +271,11 @@ Global flags (every subcommand):
   exact argv under `data.plan` for atomic commands or `data.actions[].plan`
   for `label ensure`. `repo push-default` instead runs its read-only local and
   provider preflight and emits `pushed=false` with the exact `push_refspec`;
-  it never invokes `git push` in dry-run mode.
+  it never invokes `git push` in dry-run mode. `issue tracker graph --write`
+  and `issue tracker tick` likewise perform their provider read, so the planned
+  change can be shown, and emit `written=false` with the write and comment
+  calls under `data.actions[].plan`; they never invoke those calls in dry-run
+  mode.
 
 Every backend subprocess is bound to the resolved authority for that call.
 `forge-cli` removes ambient `GH_HOST` and `GITLAB_HOST` from the child
@@ -1289,7 +1293,17 @@ module, and its conformance corpus is vendored unchanged under
   `malformed-row`, `duplicate-id`, `unknown-dependency`, `self-dependency`,
   `cycle`, and `stale-graph`, which is reported only when the table has no
   other grammar finding. Provider codes: `missing-tracking-label`,
-  `state-mismatch`, and `unreadable-ref`.
+  `state-mismatch`, and `unreadable-ref`. Limit codes: `too-many-rows` and
+  `too-many-refs`, each a single whole-tracker finding (`line = null`,
+  `ids = []`).
+- **Limits.** A tracker body is author-controlled text, so the work it can ask
+  for is bounded. A phase table with more than 500 row lines, valid or
+  malformed, is not analysed: `lint` reports `too-many-rows` as its only table
+  finding (no row, graph, or state finding), `graph` refuses with it, and
+  `tick` refuses with `tracker_too_many_rows` (`DATA 65`). 500 rows is the
+  bound the downstream board applies. `--check-state` reads at most 200
+  distinct issues: above that it reads none of them and reports the single
+  finding `too-many-refs`, whose message states the count and the limit.
 - `issue tracker lint <id>` emits `cli.forge-cli.issue.tracker.lint.v1` with
   `data = { source, provider, number, url, row_count, state_checked, findings }`.
   It reports the grammar findings, plus `missing-tracking-label` when the issue
@@ -1300,9 +1314,16 @@ module, and its conformance corpus is vendored unchanged under
   disagrees with its issue: the row is ticked but the issue is open, or the row
   is open but the issue is closed or merged. An issue named by several rows is
   delivered in steps and judged as a whole, so an open issue disagrees with its
-  rows only when all of them are ticked. A target that cannot be read is an
-  `unreadable-ref` finding, not an error. A local store holds one repository,
-  so `owner/repo#N` for any other repository is unreadable there.
+  rows only when all of them are ticked. `#N` and `owner/repo#N` for the
+  tracker's own repository are one issue.
+- A referenced issue that does not exist or is not accessible, which the
+  backend reports as `backend_error`, is an `unreadable-ref` finding on its
+  row. So is `owner/repo#N` for another repository under a local store, which
+  holds one repository. Every other read failure is returned as the command's
+  error with its own exit code, not as a finding: a throttled or
+  unauthenticated provider is `UNAVAILABLE 69`, and a reply that cannot be
+  interpreted is `SOFTWARE 70`. The findings envelope never blames the tracker
+  for a provider outage.
 - Any finding exits `DATA 65` with `ok = false` and `error.code =
   tracker_findings`, and the envelope still carries `data`, so consumers read
   `data.findings[]` on both outcomes.
@@ -1315,11 +1336,22 @@ module, and its conformance corpus is vendored unchanged under
 - `graph --write` changes only the block inside the `## Dependency graph`
   section. A section without a block gets the block right after its heading; a
   body without the section gets the section right after the phase table
-  section, or at the end of a body that has no phase table. No other byte of
-  the body changes, inserted lines follow the line ending in use where they
-  land, and nothing is written when the block is already current
-  (`changed = false`). `change` is `none`, `replaced-block`, `inserted-block`,
-  or `inserted-section`.
+  section. No other byte of the body changes, inserted lines follow the line
+  ending in use where they land, and nothing is written when the block is
+  already current.
+- `graph --write` needs a `## Phase table` section. A body without one is not a
+  tracker, so the write is refused with `tracker_no_phase_table` (`DATA 65`)
+  and no edit call, for an issue and for a `--body-file` draft alike: a
+  mistyped issue id must not append a graph section to an unrelated issue. A
+  body that has the section but no rows still gets the zero-row block
+  (`graph LR`). `lint` and a read-only `graph` keep the grammar's behaviour for
+  a body without the section: no rows and the zero-row graph.
+- `current` is the staleness signal: whether the body's block already holds the
+  generated lines. `change` and `changed` describe the `--write` edit only:
+  `change` is `replaced-block`, `inserted-block`, or `inserted-section`, and
+  `changed = true`, when `--write` edits the body. Without `--write`, and when
+  the block is already current, they are `none` and `false`, whatever `current`
+  says. `written` is `true` only when the edit was applied.
 - `issue tracker tick <id> --item <item-id>` emits
   `cli.forge-cli.issue.tracker.tick.v1` with `data = { provider, number, url,
   item, line, row_before, row_after, changed, written, dry_run, comment_posted,
@@ -1331,13 +1363,16 @@ module, and its conformance corpus is vendored unchanged under
   group. A PR the notes already name is not added again. `<ref>` must be one token without
   whitespace, parentheses, commas, or a middle dot (`tracker_pr_invalid`).
 - `tick --comment-file <path>` posts that file as one issue comment after the
-  body write succeeds. The comment is validated before anything is written. If
+  body write succeeds. The comment is validated before anything is written,
+  with the `issue comment` guards and error kinds and messages that name
+  `--comment-file`. If
   the comment call still fails after the write, the error is
   `tracker_comment_not_posted` (`RUNTIME 1`): the row is ticked, and the caller
   posts the comment with `issue comment`, because ticking again is a no-op.
 - `tick` refuses with `tracker_item_unknown`, `tracker_item_duplicated`, or
   `tracker_item_malformed` (`DATA 65`) when no row, more than one row, or a
-  malformed row line carries the item id. Ticking a row that is already ticked,
+  malformed row line carries the item id. A body without a phase table has no
+  row, so every item is `tracker_item_unknown`. Ticking a row that is already ticked,
   with no new PR to record, is a no-op: `changed = false`, nothing is written,
   and no comment is posted.
 - **Write rule.** Every provider write reads the issue immediately before
@@ -1347,6 +1382,11 @@ module, and its conformance corpus is vendored unchanged under
   earlier read is never written, so a change another session made since the
   caller last looked is kept. The provider offers no compare-and-swap, so a
   write landing between this read and this write can still be lost.
+- **Re-submitted text.** `graph --write` and `tick` save the whole body again,
+  so text the issue's authors wrote is re-submitted under the caller's
+  identity. On GitLab a saved description is interpreted for quick actions with
+  the saving user's permissions. This is a known property of writing a body
+  through `issue edit`; these commands do not change it.
 - `--body-file <path>` on `lint` and `graph` works on a local draft: no
   provider is resolved or called, the provider findings are skipped, and
   `source = body-file` with `provider`, `number`, and `url` set to `null`.

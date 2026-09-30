@@ -180,7 +180,7 @@ fn build_comment_call(ctx: &ProviderContext, id: u64, body: &str) -> BackendCall
     BackendCall::new(program, argv)
 }
 
-pub(crate) fn read_body(inline: Option<&str>, file: Option<&str>) -> Result<String, ForgeError> {
+fn read_body(inline: Option<&str>, file: Option<&str>) -> Result<String, ForgeError> {
     if let Some(s) = inline {
         return Ok(s.to_string());
     }

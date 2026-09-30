@@ -344,6 +344,13 @@ pub(crate) mod testing {
                 ));
             };
             match argv[2].as_str() {
+                // A state of `RATE_LIMITED` stands for a throttled provider.
+                "view" if issue.state == "RATE_LIMITED" => Err(ForgeError::unavailable(
+                    super::schema_err(),
+                    crate::rate_limit::RATE_LIMITED_KIND,
+                    "backend reports the GitHub API rate limit is exhausted",
+                    None,
+                )),
                 "view" => {
                     if let Some(hook) = self.before_view.borrow().as_ref() {
                         hook(issue);

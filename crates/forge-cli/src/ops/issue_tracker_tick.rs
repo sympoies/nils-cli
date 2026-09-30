@@ -13,10 +13,13 @@
 //! `tracker_comment_not_posted`. A row that is already ticked with nothing to
 //! record writes nothing and posts nothing.
 
+use std::fs;
+use std::io::Read as _;
+
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::Serialize;
 
-use crate::backend::BackendRunner;
+use crate::backend::{BackendCall, BackendRunner};
 use crate::cli::{BINARY, GlobalFlags, IssueTrackerTickArgs};
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
@@ -103,12 +106,7 @@ pub fn compute<R: BackendRunner>(
         return Err(refusal(&args.item, TickError::InvalidPr));
     }
     let comment = match args.comment_file.as_deref() {
-        Some(path) => {
-            let body = issue_comment::read_body(None, Some(path))?;
-            Some(issue_comment::build_guarded_comment_call(
-                ctx, args.id, &body,
-            )?)
-        }
+        Some(path) => Some(comment_call(ctx, args.id, path)?),
         None => None,
     };
 
@@ -166,6 +164,43 @@ pub fn compute<R: BackendRunner>(
     Ok(payload)
 }
 
+/// Read `--comment-file` (`-` is stdin) and build the guarded comment call.
+/// The guards and error kinds are those of `issue comment`; the messages name
+/// this command's flag instead of `--body` / `--body-file`.
+fn comment_call(ctx: &ProviderContext, id: u64, path: &str) -> Result<BackendCall, ForgeError> {
+    let body = if path == "-" {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf).map_err(|e| {
+            ForgeError::software(
+                schema_err(),
+                "failed to read --comment-file from stdin",
+                Some(e.to_string()),
+            )
+        })?;
+        buf
+    } else {
+        fs::read_to_string(path).map_err(|e| {
+            ForgeError::software(
+                schema_err(),
+                format!("failed to read --comment-file '{path}'"),
+                Some(e.to_string()),
+            )
+        })?
+    };
+    issue_comment::build_guarded_comment_call(ctx, id, &body).map_err(|err| {
+        if err.kind() == "body_missing_summary" {
+            ForgeError::validation(
+                schema_err(),
+                "body_missing_summary",
+                "comment body is empty (--comment-file has no text)",
+                None,
+            )
+        } else {
+            err
+        }
+    })
+}
+
 fn refusal(item: &str, err: TickError) -> ForgeError {
     let lines = |lines: &[usize]| {
         let list: Vec<String> = lines.iter().map(usize::to_string).collect();
@@ -187,6 +222,14 @@ fn refusal(item: &str, err: TickError) -> ForgeError {
             "tracker_item_malformed",
             format!("the row for {item} does not match the tracker row grammar"),
             lines(&at),
+        ),
+        TickError::TooManyRows => (
+            "tracker_too_many_rows",
+            format!(
+                "the phase table has more than {} rows and was not analysed",
+                crate::tracker::MAX_ROWS
+            ),
+            None,
         ),
         TickError::InvalidPr => (
             "tracker_pr_invalid",
@@ -412,6 +455,65 @@ mod tests {
 
         assert!(forge.log().is_empty());
         assert_eq!(forge.body(1), TABLE);
+    }
+
+    #[test]
+    fn comment_file_errors_name_the_comment_file_flag() {
+        let forge = FakeForge::with_tracker(TABLE);
+
+        let missing = compute(
+            &forge,
+            &global(false),
+            &ctx(),
+            &args("A1", None, Some("no-such-dir/comment.md")),
+        )
+        .expect_err("missing file");
+        assert_eq!(missing.kind(), "software_error");
+        assert_eq!(
+            missing.message(),
+            "failed to read --comment-file 'no-such-dir/comment.md'"
+        );
+
+        let blank = comment_file(" \n");
+        let empty = compute(
+            &forge,
+            &global(false),
+            &ctx(),
+            &args("A1", None, blank.path().to_str()),
+        )
+        .expect_err("blank file");
+        assert_eq!(empty.kind(), "body_missing_summary");
+        assert_eq!(
+            empty.message(),
+            "comment body is empty (--comment-file has no text)"
+        );
+
+        assert!(forge.log().is_empty());
+    }
+
+    #[test]
+    fn refuses_a_table_over_the_row_limit() {
+        let mut body = String::from("## Phase table\n");
+        for n in 1..=crate::tracker::MAX_ROWS + 1 {
+            body.push_str(&format!("- [ ] **A{n}** Row {n}: #{n}\n"));
+        }
+        let forge = FakeForge::with_tracker(&body);
+        let err = compute(&forge, &global(false), &ctx(), &args("A1", None, None))
+            .expect_err("too many rows");
+        assert_eq!(err.kind(), "tracker_too_many_rows");
+        assert_eq!(err.exit_code(), nils_common::cli_contract::exit::DATA);
+        assert_eq!(forge.log(), ["view 1"]);
+        assert_eq!(forge.body(1), body);
+    }
+
+    #[test]
+    fn a_body_without_a_phase_table_has_no_item_to_tick() {
+        let forge = FakeForge::with_tracker("An unrelated issue.\n- [ ] **A1** Not a row: #2\n");
+        let err =
+            compute(&forge, &global(false), &ctx(), &args("A1", None, None)).expect_err("no table");
+        assert_eq!(err.kind(), "tracker_item_unknown");
+        assert_eq!(err.message(), "no phase-table row has the id A1");
+        assert_eq!(forge.log(), ["view 1"]);
     }
 
     #[test]

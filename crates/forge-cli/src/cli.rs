@@ -1733,6 +1733,12 @@ pub enum IssueTrackerCommand {
       has no row finding. Provider: missing-tracking-label when the issue lacks \
       the `workflow::tracking` label, and with --check-state, state-mismatch and \
       unreadable-ref.\n\n\
+      LIMITS\n  \
+      too-many-rows: a phase table with more than 500 rows is not analysed and \
+      this is its only table finding. too-many-refs: --check-state reads at \
+      most 200 distinct issues; above that it reads none and reports this one \
+      finding. A throttled, unauthenticated, or uninterpretable provider read \
+      is an error (exit 69 or 70), not a finding.\n\n\
       EXIT STATUS\n  \
       0 when there is no finding. Any finding exits 65 with `ok: false`, \
       `error.code` `tracker_findings`, and the findings under `data.findings[]`.")]
@@ -1754,14 +1760,17 @@ pub struct IssueTrackerLintArgs {
 #[derive(Args, Debug, Clone)]
 #[command(after_help = "\
       Refuses with the row findings (exit 65, `tracker_findings`) when the phase \
-      table has any, because such a table has no generated graph.\n\n\
+      table has any, because such a table has no generated graph. That includes \
+      too-many-rows for a table with more than 500 rows.\n\n\
       WRITE\n  \
       --write changes only the `mermaid` block of the `## Dependency graph` \
       section. A section without a block gets the block right after its \
       heading; a body without the section gets the section right after the \
       phase table. Nothing is written when the block is already current. The \
       issue is read immediately before the write, and --dry-run reports the \
-      planned change without writing.")]
+      planned change without writing. A body without a `## Phase table` section \
+      is not a tracker: --write refuses it with `tracker_no_phase_table` (exit \
+      65), so a mistyped id cannot add a graph to an unrelated issue.")]
 pub struct IssueTrackerGraphArgs {
     /// Numeric id of the tracker issue. Omit with `--body-file`.
     #[arg(required_unless_present = "body_file", conflicts_with = "body_file")]
@@ -1785,7 +1794,7 @@ pub struct IssueTrackerGraphArgs {
       posts no comment.\n\n\
       REFUSALS (exit 65)\n  \
       tracker_item_unknown, tracker_item_duplicated, tracker_item_malformed, \
-      tracker_pr_invalid.\n\n\
+      tracker_pr_invalid, tracker_too_many_rows (more than 500 rows).\n\n\
       PARTIAL FAILURE (exit 1)\n  \
       tracker_comment_not_posted: the row was ticked but the comment call \
       failed. Post the comment with `issue comment`; ticking again posts nothing.")]

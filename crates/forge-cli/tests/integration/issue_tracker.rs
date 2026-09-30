@@ -662,6 +662,90 @@ fn graph_body_file_writes_the_draft_and_never_writes_stdin() {
     );
 }
 
+#[test]
+fn graph_write_refuses_a_body_without_a_phase_table() {
+    let forge = Forge::new();
+    let unrelated = "An unrelated issue with no tracker sections.\n";
+    let id = forge.create(unrelated, &[]).to_string();
+    for args in [
+        vec!["issue", "tracker", "graph", id.as_str(), "--write"],
+        vec![
+            "--dry-run",
+            "issue",
+            "tracker",
+            "graph",
+            id.as_str(),
+            "--write",
+        ],
+    ] {
+        let out = forge.run(&args);
+        assert_eq!(out.code, DATA, "{args:?}: stdout={}", out.stdout);
+        let env = parse_envelope(&out.stdout);
+        assert_eq!(env["ok"], false);
+        assert_eq!(env["error"]["code"], "tracker_no_phase_table");
+    }
+    assert_eq!(forge.body(1), unrelated);
+
+    // Reading is still allowed and yields the zero-row graph.
+    let env = forge.ok(&["issue", "tracker", "graph", &id]);
+    assert_eq!(env["data"]["graph"], "graph LR");
+
+    // The same guard protects a draft file.
+    let draft = forge.file("unrelated.md", unrelated);
+    let stub = StubEnv::new().gh_stub(NEVER_RUN);
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--format",
+            "json",
+            "issue",
+            "tracker",
+            "graph",
+            "--body-file",
+            &draft,
+            "--write",
+        ],
+    );
+    assert_eq!(out.code, DATA, "stdout={}", out.stdout);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "tracker_no_phase_table"
+    );
+    assert_eq!(fs::read_to_string(&draft).unwrap(), unrelated);
+}
+
+#[test]
+fn a_table_over_the_row_limit_is_refused_by_every_command() {
+    let mut body = String::from("## Phase table\n\n");
+    for n in 1..=501 {
+        body.push_str(&format!("- [ ] **A{n}** Row {n}: #{n}\n"));
+    }
+    let forge = Forge::new();
+    let id = forge.create(&body, &[TRACKING]).to_string();
+
+    let out = forge.run(&["issue", "tracker", "lint", &id, "--check-state"]);
+    let env = assert_findings_failure(&out, "cli.forge-cli.issue.tracker.lint.v1");
+    assert_eq!(
+        findings(&env),
+        [json!({"code": "too-many-rows", "line": null, "ids": []})]
+    );
+
+    let out = forge.run(&["issue", "tracker", "graph", &id, "--write"]);
+    let env = assert_findings_failure(&out, "cli.forge-cli.issue.tracker.graph.v1");
+    assert_eq!(
+        findings(&env),
+        [json!({"code": "too-many-rows", "line": null, "ids": []})]
+    );
+
+    let out = forge.run(&["issue", "tracker", "tick", &id, "--item", "A1"]);
+    assert_eq!(out.code, DATA, "stdout={}", out.stdout);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "tracker_too_many_rows"
+    );
+    assert_eq!(forge.body(1), body);
+}
+
 // ----- tick ------------------------------------------------------------------
 
 #[test]

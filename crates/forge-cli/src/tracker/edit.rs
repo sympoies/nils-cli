@@ -6,8 +6,8 @@
 //! Inserted lines follow the line ending in use where they land.
 
 use super::{
-    BLANK, CLOSE_FENCE, GraphLocation, OPEN_FENCE, PHASE_TABLE, RowLine, line_text, locate_graph,
-    scan, section,
+    BLANK, CLOSE_FENCE, GraphLocation, MAX_ROWS, OPEN_FENCE, PHASE_TABLE, RowLine, line_text,
+    locate_graph, scan, section,
 };
 
 const GRAPH_HEADING: &str = "## Dependency graph";
@@ -54,6 +54,8 @@ pub enum TickError {
     MalformedRow { lines: Vec<usize> },
     /// The PR reference cannot be recorded in a notes group.
     InvalidPr,
+    /// The phase table has more than [`MAX_ROWS`] row lines.
+    TooManyRows,
 }
 
 /// Result of [`tick`].
@@ -111,7 +113,8 @@ fn splice(raw: &[&str], at: usize, remove: usize, new: &[&str]) -> String {
 /// - An existing block: only the lines between its fences change.
 /// - A section without a block: the block goes right after the heading.
 /// - No section: the section goes right after the phase table section, or at
-///   the end of a body that has no phase table.
+///   the end of a body that has no phase table. (`issue tracker graph --write`
+///   refuses a body without a phase table before it gets here.)
 ///
 /// A block that already holds `graph` leaves the body as it is.
 pub fn write_graph(body: &str, graph: &[String]) -> GraphEdit {
@@ -208,9 +211,13 @@ pub fn tick(body: &str, item: &str, pr: Option<&str>) -> Result<TickEdit, TickEr
     let raw: Vec<&str> = body.split('\n').collect();
     let lines: Vec<&str> = raw.iter().map(|line| line_text(line)).collect();
 
+    let row_lines = scan(&lines);
+    if row_lines.len() > MAX_ROWS {
+        return Err(TickError::TooManyRows);
+    }
     let mut rows = Vec::new();
     let mut malformed = Vec::new();
-    for (at, row_line) in scan(&lines) {
+    for (at, row_line) in row_lines {
         match row_line {
             RowLine::Row(row, spans) if row.id == item => rows.push((at, row, spans)),
             RowLine::Malformed { shown_id } if shown_id == Some(item) => malformed.push(at + 1),
@@ -646,6 +653,17 @@ mod tests {
             Err(TickError::MalformedRow { lines: vec![3] })
         );
         assert!(tick(malformed, "A1", None).is_ok());
+    }
+
+    #[test]
+    fn tick_refuses_a_table_over_the_row_limit() {
+        let mut body = String::from("## Phase table\n");
+        for n in 1..=crate::tracker::MAX_ROWS {
+            body.push_str(&format!("- [ ] **A{n}** Row {n}: #{n}\n"));
+        }
+        assert!(tick(&body, "A7", None).is_ok());
+        body.push_str("- [ ] not a row\n");
+        assert_eq!(tick(&body, "A7", None), Err(TickError::TooManyRows));
     }
 
     #[test]

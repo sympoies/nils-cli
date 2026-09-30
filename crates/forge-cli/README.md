@@ -408,11 +408,19 @@ forge-cli issue tracker graph --body-file tracker.md --write
   `missing-tracking-label` when the issue lacks `workflow::tracking`.
   `--check-state` reads each referenced issue and adds `state-mismatch` for a
   row whose checkbox disagrees with its issue, and `unreadable-ref` for a
-  target that cannot be read.
+  target that does not exist or is not accessible. A throttled or
+  unauthenticated provider is the command's error (exit 69), not a finding.
+- The work a tracker body can ask for is bounded. A phase table with more than
+  500 rows is not analysed: `lint` reports only `too-many-rows`, `graph`
+  refuses with it, and `tick` refuses with `tracker_too_many_rows`.
+  `--check-state` reads at most 200 distinct issues; above that it reads none
+  and reports `too-many-refs`.
 - `graph` refuses when the phase table has row findings, because such a table
   has no generated graph. `--write` changes only the block in the
   `## Dependency graph` section, inserts the block or the section when it is
-  missing, and writes nothing when the block is already current.
+  missing, and writes nothing when the block is already current. A body without
+  a `## Phase table` section is not a tracker, so `--write` refuses it with
+  `tracker_no_phase_table` instead of adding a graph to an unrelated issue.
 - `tick` changes only the one row line. It refuses an unknown, duplicated, or
   malformed item, and a row that is already ticked with nothing new to record
   is a no-op that posts no comment. When the comment call fails after the row

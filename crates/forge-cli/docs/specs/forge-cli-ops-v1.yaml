@@ -1113,8 +1113,13 @@ operations:
     findings:
       grammar: [malformed-row, duplicate-id, unknown-dependency, self-dependency, cycle, stale-graph]
       provider: [missing-tracking-label, state-mismatch, unreadable-ref]
+      limit: [too-many-rows, too-many-refs]
       tracking_label: "workflow::tracking"
       failure: { error_kind: tracker_findings, exit: DATA, carries_data: true }
+    limits:
+      max_rows: 500 # row lines, valid or malformed; above it the table is not analysed and too-many-rows is its only table finding
+      max_state_refs: 200 # distinct issues --check-state reads; above it none is read and too-many-refs is reported
+    state_read_errors: "a missing or inaccessible target (backend_error) and another repository under a local store are unreadable-ref findings; UNAVAILABLE (rate limit, unauthenticated) and SOFTWARE errors propagate with their own exit code"
     output:
       data:
         source: enum<issue|body-file>
@@ -1140,7 +1145,8 @@ operations:
       write: "runs the read; written=false and data.actions[] = { kind: edit-body, plan }"
     write_rule: "read the issue immediately before writing and write a transformation of that body; change only the mermaid block of the Dependency graph section; no write when the block is current"
     errors:
-      - { error_kind: tracker_findings,           exit: DATA, when: "the phase table has row findings (data.findings[], graph=null)" }
+      - { error_kind: tracker_findings,           exit: DATA, when: "the phase table has row findings, too-many-rows included (data.findings[], graph=null)" }
+      - { error_kind: tracker_no_phase_table,     exit: DATA, when: "--write and the body (issue or draft) has no Phase table section; no edit call" }
       - { error_kind: tracker_stdin_not_writable, exit: DATA, when: "--write with --body-file -" }
     backends:
       github: { derives_from: [issue.view, issue.edit] }
@@ -1152,9 +1158,9 @@ operations:
         number: "integer | null"
         url: "string | null"
         graph: "string | null"
-        current: bool
-        change: enum<none|replaced-block|inserted-block|inserted-section>
-        changed: bool
+        current: bool # the staleness signal: the body's block already holds the generated lines
+        change: enum<none|replaced-block|inserted-block|inserted-section> # the --write edit; none without --write
+        changed: bool # whether --write edits the body; false without --write
         written: bool
         dry_run: bool
         findings: list<{ code, line, ids, message }>
@@ -1179,6 +1185,7 @@ operations:
       - { error_kind: tracker_item_duplicated,    exit: DATA }
       - { error_kind: tracker_item_malformed,     exit: DATA }
       - { error_kind: tracker_pr_invalid,         exit: DATA }
+      - { error_kind: tracker_too_many_rows,      exit: DATA, when: "the phase table has more than 500 row lines" }
       - { error_kind: tracker_comment_not_posted, exit: RUNTIME, when: "the body write landed and the comment call failed" }
     backends:
       github: { derives_from: [issue.view, issue.edit, issue.comment] }

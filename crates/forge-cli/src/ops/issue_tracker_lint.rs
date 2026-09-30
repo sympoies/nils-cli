@@ -25,7 +25,7 @@ use crate::ops::issue_tracker::{
 use crate::ops::issue_view;
 use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
-use crate::tracker::{self, IssueRef, Row};
+use crate::tracker::{self, FindingCode, IssueRef, Row};
 
 const SCHEMA: &str = "issue.tracker.lint";
 const SCHEMA_VERSION: u32 = 1;
@@ -37,7 +37,8 @@ pub struct IssueTrackerLintPayload {
     pub target: TrackerTarget,
     /// Valid rows in the phase table.
     pub row_count: usize,
-    /// Whether `--check-state` read the referenced issues.
+    /// Whether the `--check-state` pass ran. A table over the row limit skips
+    /// it.
     pub state_checked: bool,
     pub findings: Vec<TrackerFinding>,
 }
@@ -118,13 +119,18 @@ pub fn compute<R: BackendRunner>(
             message: format!("the issue does not carry the {TRACKING_LABEL} label"),
         });
     }
-    if check_state {
-        findings.extend(state_findings(runner, global, ctx, &report.rows));
+    // A table over the row limit was not analysed, so its refs are not read.
+    let analysed = !report
+        .findings
+        .iter()
+        .any(|finding| finding.code == FindingCode::TooManyRows);
+    if check_state && analysed {
+        findings.extend(state_findings(runner, global, ctx, &report.rows)?);
     }
     Ok(IssueTrackerLintPayload {
         target: TrackerTarget::issue(&view),
         row_count: report.rows.len(),
-        state_checked: check_state,
+        state_checked: check_state && analysed,
         findings,
     })
 }
@@ -154,17 +160,19 @@ type RefKey = (Option<String>, u64);
 
 /// Compare every row that has a ref with its issue's state.
 ///
-/// Each distinct issue is read once through the `issue view` call. An issue
-/// named by several rows is delivered in steps, so it is judged as a whole: a
-/// closed issue disagrees with each row that is still open, and an open issue
-/// disagrees with its rows only once all of them are done. A target that
-/// cannot be read is an `unreadable-ref` finding, not an error.
+/// Each distinct issue is read once through the `issue view` call, and at most
+/// [`tracker::MAX_STATE_REFS`] of them: above that nothing is read and the one
+/// finding is `too-many-refs`. An issue named by several rows is delivered in
+/// steps, so it is judged as a whole: a closed issue disagrees with each row
+/// that is still open, and an open issue disagrees with its rows only once all
+/// of them are done. A target that does not exist or is not accessible is an
+/// `unreadable-ref` finding; any other read failure is returned as the error.
 fn state_findings<R: BackendRunner>(
     runner: &R,
     global: &GlobalFlags,
     ctx: &ProviderContext,
     rows: &[Row],
-) -> Vec<TrackerFinding> {
+) -> Result<Vec<TrackerFinding>, ForgeError> {
     let own_repo = match ctx.provider {
         Provider::Local => Some(crate::local::resolve_slug(global.repo.as_deref())),
         _ => ctx.repo.clone(),
@@ -182,17 +190,35 @@ fn state_findings<R: BackendRunner>(
         (other, reference.number)
     };
 
-    let mut states: HashMap<RefKey, RefState> = HashMap::new();
+    // Distinct issues in table order, each with whether all its rows are done.
+    let mut distinct: Vec<RefKey> = Vec::new();
     let mut all_done: HashMap<RefKey, bool> = HashMap::new();
     for row in rows {
         let Some(reference) = &row.reference else {
             continue;
         };
         let key = key_of(reference);
-        *all_done.entry(key.clone()).or_insert(true) &= row.done;
-        states
-            .entry(key)
-            .or_insert_with_key(|(repo, number)| read_state(runner, ctx, repo.as_deref(), *number));
+        if !all_done.contains_key(&key) {
+            distinct.push(key.clone());
+        }
+        *all_done.entry(key).or_insert(true) &= row.done;
+    }
+    if distinct.len() > tracker::MAX_STATE_REFS {
+        return Ok(vec![TrackerFinding {
+            code: "too-many-refs",
+            line: None,
+            ids: Vec::new(),
+            message: format!(
+                "the rows reference {count} distinct issues; --check-state reads at most {limit}, so none was read",
+                count = distinct.len(),
+                limit = tracker::MAX_STATE_REFS,
+            ),
+        }]);
+    }
+    let mut states: HashMap<RefKey, RefState> = HashMap::new();
+    for key in distinct {
+        let state = read_state(runner, ctx, key.0.as_deref(), key.1)?;
+        states.insert(key, state);
     }
 
     let mut findings = Vec::new();
@@ -223,20 +249,24 @@ fn state_findings<R: BackendRunner>(
             message,
         });
     }
-    findings
+    Ok(findings)
 }
 
+/// Read one referenced issue. Only a backend error, which is what a missing or
+/// inaccessible target produces, makes the ref unreadable. A throttled or
+/// unauthenticated provider (`UNAVAILABLE`) or an uninterpretable reply
+/// (`SOFTWARE`) is not the tracker's fault and is returned as the error.
 fn read_state<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
     repo: Option<&str>,
     number: u64,
-) -> RefState {
+) -> Result<RefState, ForgeError> {
     let target = match repo {
         None => ctx.clone(),
         // One local store holds one repository.
         Some(_) if ctx.provider == Provider::Local => {
-            return RefState::Unreadable("the local store holds one repository");
+            return Ok(RefState::Unreadable("the local store holds one repository"));
         }
         Some(repo) => ProviderContext {
             repo: Some(repo.to_string()),
@@ -244,9 +274,10 @@ fn read_state<R: BackendRunner>(
         },
     };
     match read_issue(runner, &target, number) {
-        Ok(view) if view.state == "open" => RefState::Open,
-        Ok(_) => RefState::Closed,
-        Err(err) => RefState::Unreadable(err.kind()),
+        Ok(view) if view.state == "open" => Ok(RefState::Open),
+        Ok(_) => Ok(RefState::Closed),
+        Err(err @ ForgeError::BackendError { .. }) => Ok(RefState::Unreadable(err.kind())),
+        Err(err) => Err(err),
     }
 }
 
@@ -437,6 +468,104 @@ mod tests {
                 ("state-mismatch", Some(4), ids(&["S2"])),
             ]
         );
+    }
+
+    /// A phase table of `count` open rows, row `n` naming issue `#(100 + n)`.
+    fn table_of_refs(count: usize) -> String {
+        let mut table = String::from("## Phase table\n\n");
+        for n in 1..=count {
+            table.push_str(&format!("- [ ] **A{n}** Row {n}: #{}\n", 100 + n));
+        }
+        table
+    }
+
+    #[test]
+    fn check_state_over_the_ref_limit_reads_no_referenced_issue() {
+        let table = table_of_refs(tracker::MAX_STATE_REFS + 1);
+        let forge = FakeForge::with_tracker(&tracker_body(&table));
+        let payload = compute(&forge, &global(false), &ctx(), 1, true).expect("lint");
+        assert_eq!(summary(&payload), [("too-many-refs", None, Vec::new())]);
+        let message = &payload.findings[0].message;
+        assert!(message.contains("201"), "{message}");
+        assert!(message.contains("200"), "{message}");
+        assert_eq!(forge.log(), ["view 1"]);
+    }
+
+    #[test]
+    fn check_state_at_the_ref_limit_reads_each_issue_once() {
+        // Ten more rows repeat an issue, so the distinct refs stay at the limit.
+        let mut table = table_of_refs(tracker::MAX_STATE_REFS);
+        for n in 1..=10 {
+            table.push_str(&format!("- [ ] **B{n}** Second step: #{}\n", 100 + n));
+        }
+        let forge = FakeForge::with_tracker(&tracker_body(&table));
+        for n in 1..=tracker::MAX_STATE_REFS as u64 {
+            forge.put(OWN_REPO, 100 + n, "", "OPEN", &[]);
+        }
+        let payload = compute(&forge, &global(false), &ctx(), 1, true).expect("lint");
+        assert_eq!(payload.findings, Vec::new());
+        let mut expected = vec!["view 1".to_string()];
+        expected.extend((1..=tracker::MAX_STATE_REFS).map(|n| format!("view {}", 100 + n)));
+        assert_eq!(forge.log(), expected);
+    }
+
+    #[test]
+    fn check_state_reads_the_own_repository_once_in_either_ref_form() {
+        // `#20` and `Example/Tracker#20` are the same issue of the tracker's
+        // own repository, delivered in two steps.
+        let table = "## Phase table\n\n- [x] **S1** Step one: #20\n- [ ] **S2** Step two: Example/Tracker#20 · after S1\n";
+        let forge = FakeForge::with_tracker(&tracker_body(table));
+        forge.put(OWN_REPO, 20, "", "OPEN", &[]);
+        let payload = compute(&forge, &global(false), &ctx(), 1, true).expect("lint");
+        assert_eq!(payload.findings, Vec::new());
+        assert_eq!(forge.log(), ["view 1", "view 20"]);
+    }
+
+    #[test]
+    fn check_state_propagates_a_provider_outage_instead_of_a_finding() {
+        let table = "## Phase table\n\n- [ ] **A1** First: #11\n- [ ] **A2** Second: #12\n";
+
+        // A throttled read is not the tracker's fault: exit UNAVAILABLE.
+        let forge = FakeForge::with_tracker(&tracker_body(table));
+        forge.put(OWN_REPO, 11, "", "RATE_LIMITED", &[]);
+        forge.put(OWN_REPO, 12, "", "OPEN", &[]);
+        let err = compute(&forge, &global(false), &ctx(), 1, true).expect_err("throttled");
+        assert_eq!(err.kind(), "backend_rate_limited");
+        assert_eq!(
+            err.exit_code(),
+            nils_common::cli_contract::exit::UNAVAILABLE
+        );
+
+        // A reply this tool cannot interpret is a software error: exit SOFTWARE.
+        let forge = FakeForge::with_tracker(&tracker_body(table));
+        forge.put(OWN_REPO, 11, "", "SOMETHING_NEW", &[]);
+        forge.put(OWN_REPO, 12, "", "OPEN", &[]);
+        let err = compute(&forge, &global(false), &ctx(), 1, true).expect_err("unknown state");
+        assert_eq!(err.kind(), "software_error");
+        assert_eq!(err.exit_code(), nils_common::cli_contract::exit::SOFTWARE);
+
+        // A target that does not exist is still a finding about that row.
+        let forge = FakeForge::with_tracker(&tracker_body(table));
+        forge.put(OWN_REPO, 12, "", "OPEN", &[]);
+        let payload = compute(&forge, &global(false), &ctx(), 1, true).expect("lint");
+        assert_eq!(
+            summary(&payload),
+            [("unreadable-ref", Some(3), ids(&["A1"]))]
+        );
+    }
+
+    #[test]
+    fn a_table_over_the_row_limit_reports_one_finding_and_reads_no_ref() {
+        let table = table_of_refs(tracker::MAX_ROWS + 1);
+        let forge = FakeForge::with_tracker(&table);
+        let payload = compute(&forge, &global(false), &ctx(), 1, true).expect("lint");
+        assert_eq!(summary(&payload), [("too-many-rows", None, Vec::new())]);
+        assert_eq!(payload.row_count, tracker::MAX_ROWS + 1);
+        assert!(!payload.state_checked);
+        assert_eq!(forge.log(), ["view 1"]);
+
+        let draft = lint_draft(&table);
+        assert_eq!(summary(&draft), [("too-many-rows", None, Vec::new())]);
     }
 
     #[test]

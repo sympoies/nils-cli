@@ -26,6 +26,14 @@ pub(crate) const DEPENDENCY_GRAPH: &str = "## dependency graph";
 pub(crate) const OPEN_FENCE: &str = "```mermaid";
 pub(crate) const CLOSE_FENCE: &str = "```";
 
+/// Row lines a phase table may hold; a larger table is not analysed. A body is
+/// author-controlled text, and 500 rows is the bound the downstream board
+/// applies.
+pub const MAX_ROWS: usize = 500;
+/// Distinct issues `lint --check-state` reads; each one is a provider call
+/// that author-controlled text asks for.
+pub const MAX_STATE_REFS: usize = 200;
+
 const ROW_MARKS: [&str; 3] = ["- [ ]", "- [x]", "- [X]"];
 /// Space, U+00B7 MIDDLE DOT, space, `after`.
 const AFTER_MARK: &str = " \u{b7} after";
@@ -72,6 +80,9 @@ pub enum FindingCode {
     SelfDependency,
     Cycle,
     StaleGraph,
+    /// Not a grammar code: the table has more than [`MAX_ROWS`] row lines and
+    /// was not analysed.
+    TooManyRows,
 }
 
 impl FindingCode {
@@ -83,6 +94,7 @@ impl FindingCode {
             Self::SelfDependency => "self-dependency",
             Self::Cycle => "cycle",
             Self::StaleGraph => "stale-graph",
+            Self::TooManyRows => "too-many-rows",
         }
     }
 }
@@ -117,6 +129,9 @@ impl Finding {
             FindingCode::StaleGraph => {
                 "the mermaid block in the Dependency graph section is missing or not current"
                     .to_string()
+            }
+            FindingCode::TooManyRows => {
+                format!("the phase table has more than {MAX_ROWS} rows and was not analysed")
             }
         }
     }
@@ -403,6 +418,11 @@ pub(crate) fn scan<'a>(lines: &[&'a str]) -> Vec<(usize, RowLine<'a>)> {
     found
 }
 
+/// Whether `body` has a `## Phase table` section.
+pub fn has_phase_table(body: &str) -> bool {
+    section(&lines(body), PHASE_TABLE).is_some()
+}
+
 /// Read the phase table of `body`. A body without one has no rows.
 pub fn parse(body: &str) -> Table {
     let mut table = Table::default();
@@ -415,8 +435,13 @@ pub fn parse(body: &str) -> Table {
     table
 }
 
-/// The row findings of a table: every code except `stale-graph`.
+/// The row findings of a table: every code except `stale-graph`. A table
+/// with more than [`MAX_ROWS`] row lines is not analysed and reports only
+/// `too-many-rows`.
 pub fn row_findings(table: &Table) -> Vec<Finding> {
+    if table.rows.len() + table.malformed.len() > MAX_ROWS {
+        return vec![Finding::new(FindingCode::TooManyRows, None, Vec::new())];
+    }
     let mut findings: Vec<Finding> = table
         .malformed
         .iter()
@@ -664,6 +689,60 @@ mod tests {
                 .iter()
                 .all(|f| f.code == FindingCode::MalformedRow)
         );
+    }
+
+    fn table_of(rows: usize) -> String {
+        let mut body = String::from("## Phase table\n");
+        for n in 1..=rows {
+            body.push_str(&format!("- [ ] **A{n}** Row {n}: #{n}\n"));
+        }
+        body
+    }
+
+    #[test]
+    fn a_table_over_the_row_limit_is_not_analysed() {
+        let too_many = vec![Finding {
+            code: FindingCode::TooManyRows,
+            line: None,
+            ids: Vec::new(),
+        }];
+
+        // At the limit the table is analysed as usual.
+        let at_limit = lint(&table_of(MAX_ROWS));
+        assert_eq!(at_limit.rows.len(), MAX_ROWS);
+        assert_eq!(
+            at_limit.findings,
+            vec![Finding {
+                code: FindingCode::StaleGraph,
+                line: None,
+                ids: Vec::new(),
+            }]
+        );
+
+        // One more row line and only the limit is reported, whatever else the
+        // table would have shown.
+        let over = format!(
+            "{}- [ ] **A1** Reuses an id and names a missing one: #1 · after Z9\n",
+            table_of(MAX_ROWS)
+        );
+        assert_eq!(lint(&over).findings, too_many);
+        assert_eq!(row_findings(&parse(&over)), too_many);
+
+        // A malformed row line counts as a row line too.
+        let malformed = format!("{}- [ ] not a row\n", table_of(MAX_ROWS));
+        assert_eq!(lint(&malformed).findings, too_many);
+        assert!(lint(&over).findings[0].message().contains("500"));
+    }
+
+    #[test]
+    fn has_phase_table_finds_only_the_exact_section() {
+        assert!(has_phase_table("Intro\n## PHASE table \r\n"));
+        assert!(has_phase_table("## Phase table\n"));
+        assert!(!has_phase_table(
+            "## Phase table notes\n- [ ] **A1** x: #1\n"
+        ));
+        assert!(!has_phase_table("No sections.\n"));
+        assert!(!has_phase_table(""));
     }
 
     #[test]
