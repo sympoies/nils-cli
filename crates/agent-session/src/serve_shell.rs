@@ -639,10 +639,16 @@ mod tests {
                 .unwrap();
             let wrapper = tmp.path().join("tmux");
             let socket = tmp.path().join("tmux.sock");
+            let zdotdir = tmp.path().join("zsh");
+            fs::create_dir(&zdotdir).unwrap();
+            // Keep host first-run and completion prompts out of this fixture.
+            fs::write(zdotdir.join(".zshenv"), "unsetopt GLOBAL_RCS\n").unwrap();
+            fs::write(zdotdir.join(".zshrc"), "").unwrap();
             fs::write(
                 &wrapper,
                 format!(
-                    "#!/bin/sh\nexec tmux -S {} -f /dev/null \"$@\"\n",
+                    "#!/bin/sh\nexport ZDOTDIR={}\nexec tmux -S {} -f /dev/null \"$@\"\n",
+                    shell_words::quote(zdotdir.to_str().unwrap()),
                     shell_words::quote(socket.to_str().unwrap())
                 ),
             )
