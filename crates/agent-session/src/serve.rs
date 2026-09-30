@@ -35414,6 +35414,22 @@ esac
             "terminal-notification-reentry-timeout-0002",
         )
         .await;
+        // Pin generation two into a later second than generation one so the
+        // two dated prompts never share bytes, however fast the runner is.
+        let mut registry: Value =
+            serde_json::from_slice(&fs::read(&coordination_registry).expect("registry"))
+                .expect("registry json");
+        registry["notifications"]
+            .as_object_mut()
+            .expect("notifications")
+            .values_mut()
+            .next()
+            .expect("notification")["queued_at_epoch"] = json!(candidate.queued_at_epoch + 1);
+        fs::write(
+            &coordination_registry,
+            serde_json::to_vec_pretty(&registry).expect("registry json"),
+        )
+        .expect("pin generation two queue time");
         drain_coordination_notifications(state.clone()).await;
         let notification = notification_fixture(tmp.path());
         assert_eq!(notification["state"], "attempt_unknown");
