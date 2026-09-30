@@ -232,7 +232,7 @@ pub struct StartArgs {
     pub agent_bin: Option<PathBuf>,
 
     /// Extra argument passed to the underlying agent command.
-    #[arg(long = "agent-arg", value_name = "ARG")]
+    #[arg(long = "agent-arg", value_name = "ARG", allow_hyphen_values = true)]
     pub agent_args: Vec<String>,
 
     /// Session collision coordination mode.
@@ -313,7 +313,7 @@ pub struct RunArgs {
     pub agent_bin: Option<PathBuf>,
 
     /// Extra argument passed to the underlying agent command.
-    #[arg(long = "agent-arg", value_name = "ARG")]
+    #[arg(long = "agent-arg", value_name = "ARG", allow_hyphen_values = true)]
     pub agent_args: Vec<String>,
 
     /// Session collision coordination mode.
