@@ -403,7 +403,7 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install bash + ripgrep
+      - name: Install bash + ripgrep + tmux
         if: needs.changes.outputs.release_only != 'true'
         run: |
           if ! /opt/homebrew/bin/bash --version >/dev/null 2>&1; then
@@ -411,6 +411,9 @@ jobs:
           fi
           if ! command -v rg >/dev/null 2>&1; then
             brew install ripgrep
+          fi
+          if ! command -v tmux >/dev/null 2>&1; then
+            brew install tmux
           fi
 
       - name: Install cargo-nextest + cargo-llvm-cov

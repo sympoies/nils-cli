@@ -15402,6 +15402,10 @@ fn main_agent_worker_bootstrap_rejects_assignment_checkout_mismatch_before_grant
         "[pre-claim:worker-bootstrap-checkout-mismatch] worker bootstrap failed"
     );
 
+    // Synthetic coordination metadata needs a fixture-owned live tmux status.
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let tmux_arg = tmux_bin.to_string_lossy().into_owned();
+    let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
     let diagnosed = run_main_agent(
         &main_checkout,
         &[
@@ -15413,7 +15417,11 @@ fn main_agent_worker_bootstrap_rejects_assignment_checkout_mismatch_before_grant
             "--format",
             "json",
         ],
-        &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+        &[
+            ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+            ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+        ],
     );
     assert_eq!(diagnosed.code, 0, "stderr={}", diagnosed.stderr_text());
     assert_eq!(data(&diagnosed)["classification"], "pre_claim_failure");
@@ -15436,7 +15444,11 @@ fn main_agent_worker_bootstrap_rejects_assignment_checkout_mismatch_before_grant
             "--format",
             "json",
         ],
-        &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+        &[
+            ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+            ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+        ],
     );
     assert_eq!(cancelled.code, 0, "stderr={}", cancelled.stderr_text());
     assert_eq!(data(&cancelled)["assignment"]["state"], "cancelled");
@@ -16217,6 +16229,10 @@ fn main_agent_worker_bootstrap_acquires_claim_and_checkpoints_from_packet() {
         data(&shown_claim).get("checkout_shell_grant").is_none(),
         "private admission grants must not enter public work-context output"
     );
+    // Synthetic coordination metadata needs a fixture-owned live tmux status.
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let tmux_arg = tmux_bin.to_string_lossy().into_owned();
+    let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
     let diagnosed = run_main_agent(
         &main_checkout,
         &[
@@ -16228,7 +16244,11 @@ fn main_agent_worker_bootstrap_acquires_claim_and_checkpoints_from_packet() {
             "--format",
             "json",
         ],
-        &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+        &[
+            ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+            ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+        ],
     );
     assert_eq!(diagnosed.code, 0, "stderr={}", diagnosed.stderr_text());
     assert_eq!(data(&diagnosed)["classification"], "healthy_progress");
@@ -16463,7 +16483,11 @@ fn main_agent_worker_bootstrap_acquires_claim_and_checkpoints_from_packet() {
             "--format",
             "json",
         ],
-        &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+        &[
+            ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+            ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+        ],
     );
     assert_eq!(
         resumed_diagnosis.code,
@@ -16898,6 +16922,10 @@ fn main_agent_failed_preclaim_worker_is_cancelled_retired_and_reassigned_in_isol
     });
     write_private_json(&failed_worker_record_path, &failed_worker_record);
 
+    // Synthetic coordination metadata needs a fixture-owned live tmux status.
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let tmux_arg = tmux_bin.to_string_lossy().into_owned();
+    let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
     let supervised = run_main_agent(
         &main_checkout,
         &[
@@ -16909,7 +16937,11 @@ fn main_agent_failed_preclaim_worker_is_cancelled_retired_and_reassigned_in_isol
             "--format",
             "json",
         ],
-        &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+        &[
+            ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+            ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+        ],
     );
     assert_eq!(supervised.code, 0, "stderr={}", supervised.stderr_text());
     assert_eq!(data(&supervised)["classification"], "pre_claim_failure");
@@ -16948,7 +16980,11 @@ fn main_agent_failed_preclaim_worker_is_cancelled_retired_and_reassigned_in_isol
             "--format",
             "json",
         ],
-        &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+        &[
+            ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+            ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+        ],
     );
     assert_eq!(stale_cancel.code, 65);
     assert_eq!(
@@ -17002,7 +17038,11 @@ fn main_agent_failed_preclaim_worker_is_cancelled_retired_and_reassigned_in_isol
                 "--format",
                 "json",
             ],
-            &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+            &[
+                ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+                ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+                ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+            ],
         );
         assert_ne!(refused.code, 0, "outcome={}", refused.stdout_text());
         assert_eq!(refused.stdout_json()["error"]["code"], expected_code);
@@ -17043,10 +17083,7 @@ fn main_agent_failed_preclaim_worker_is_cancelled_retired_and_reassigned_in_isol
             "durable_refs": []
         }),
     );
-    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
     let codex_bin = fake_agent(tmp.path(), "codex-worker");
-    let tmux_arg = tmux_bin.to_string_lossy().into_owned();
-    let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
     let codex_arg = codex_bin.to_string_lossy().into_owned();
     let reassign_args = [
         "--state-dir",
@@ -32339,7 +32376,7 @@ fn strand_blocked_delivery_worker(
 fn supervise_assignment(
     state_dir: &Path,
     main_checkout: &Path,
-    main_capability: &str,
+    main_env: &[(&str, &str)],
     assignment_id: &str,
 ) -> serde_json::Value {
     let supervised = run_main_agent(
@@ -32353,7 +32390,7 @@ fn supervise_assignment(
             "--format",
             "json",
         ],
-        &[("AGENT_SESSION_CAPABILITY_FILE", main_capability)],
+        main_env,
     );
     assert_eq!(supervised.code, 0, "{}", supervised.stdout_text());
     data(&supervised)
@@ -32362,7 +32399,7 @@ fn supervise_assignment(
 fn resume_assignment(
     state_dir: &Path,
     main_checkout: &Path,
-    main_capability: &str,
+    main_env: &[(&str, &str)],
     assignment_id: &str,
     if_revision: &str,
     idempotency_key: &str,
@@ -32384,7 +32421,7 @@ fn resume_assignment(
             "--format",
             "json",
         ],
-        &[("AGENT_SESSION_CAPABILITY_FILE", main_capability)],
+        main_env,
     )
 }
 
@@ -32395,6 +32432,15 @@ fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
         let (state_dir, worker_checkout, worker_capability, main_capability) =
             strand_blocked_delivery_worker(tmp.path(), disposition);
         let main_checkout = tmp.path().join("main-checkout");
+        // Synthetic coordination metadata needs a fixture-owned live tmux status.
+        let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+        let tmux_arg = tmux_bin.to_string_lossy().into_owned();
+        let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
+        let runtime_env = [
+            ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+            ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+        ];
         let state = state_dir.to_string_lossy().into_owned();
 
         // The stranded worker cannot re-acquire its claim on its own: its
@@ -32424,7 +32470,7 @@ fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
         let supervised = supervise_assignment(
             &state_dir,
             &main_checkout,
-            &main_capability,
+            &runtime_env,
             "assignment-delivery",
         );
         assert_eq!(
@@ -32460,7 +32506,7 @@ fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
         let stale = resume_assignment(
             &state_dir,
             &main_checkout,
-            &main_capability,
+            &runtime_env,
             "assignment-delivery",
             "3",
             "worker-delivery-resume-stale-0001",
@@ -32474,7 +32520,7 @@ fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
         let resumed = resume_assignment(
             &state_dir,
             &main_checkout,
-            &main_capability,
+            &runtime_env,
             "assignment-delivery",
             "4",
             "worker-delivery-resume-0001",
@@ -32494,7 +32540,7 @@ fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
         let replayed = resume_assignment(
             &state_dir,
             &main_checkout,
-            &main_capability,
+            &runtime_env,
             "assignment-delivery",
             "4",
             "worker-delivery-resume-0001",
@@ -32518,7 +32564,7 @@ fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
                 "--format",
                 "json",
             ],
-            &[("AGENT_SESSION_CAPABILITY_FILE", &main_capability)],
+            &runtime_env,
         );
         assert_eq!(changed_request.code, 65, "{disposition}");
         assert_eq!(
@@ -32529,7 +32575,7 @@ fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
         let not_blocked = resume_assignment(
             &state_dir,
             &main_checkout,
-            &main_capability,
+            &runtime_env,
             "assignment-delivery",
             "5",
             "worker-delivery-resume-working-0001",
@@ -32593,7 +32639,7 @@ fn main_agent_blocked_worker_resume_restores_its_exact_checkout_shell_claim() {
             let pending = supervise_assignment(
                 &state_dir,
                 &main_checkout,
-                &main_capability,
+                &runtime_env,
                 "assignment-delivery",
             );
             assert_eq!(pending["recovery_action"]["kind"], "worker_rebootstrap");
@@ -33152,7 +33198,7 @@ fn main_agent_supervise_wakes_an_idle_claude_worker_with_queued_guidance() {
     let resumed = resume_assignment(
         &state_dir,
         &main_checkout,
-        &main_capability,
+        &[("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str())],
         "assignment-delivery",
         "4",
         "worker-delivery-wake-resume-0001",
@@ -33343,6 +33389,15 @@ fn main_agent_supervise_routes_an_orphaned_worker_lease_to_worker_owned_recovery
     let (state_dir, _worker_checkout, _worker_capability, main_capability) =
         strand_blocked_delivery_worker(tmp.path(), "released");
     let main_checkout = tmp.path().join("main-checkout");
+    // Synthetic coordination metadata needs a fixture-owned live tmux status.
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let tmux_arg = tmux_bin.to_string_lossy().into_owned();
+    let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
+    let runtime_env = [
+        ("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str()),
+        ("AGENT_SESSION_TMUX_BIN", tmux_arg.as_str()),
+        ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log_arg.as_str()),
+    ];
     rewrite_registry(&state_dir, |registry| {
         registry["operations"]
             .as_array_mut()
@@ -33369,7 +33424,7 @@ fn main_agent_supervise_routes_an_orphaned_worker_lease_to_worker_owned_recovery
     let supervised = supervise_assignment(
         &state_dir,
         &main_checkout,
-        &main_capability,
+        &runtime_env,
         "assignment-delivery",
     );
     assert_eq!(supervised["classification"], "uncertain_mutation");
@@ -33436,7 +33491,7 @@ fn main_agent_worker_resume_refuses_a_pre_claim_blocked_assignment() {
     let refused = resume_assignment(
         &state_dir,
         &main_checkout,
-        &main_capability,
+        &[("AGENT_SESSION_CAPABILITY_FILE", main_capability.as_str())],
         "assignment-delivery",
         "4",
         "worker-delivery-resume-preclaim-0001",
