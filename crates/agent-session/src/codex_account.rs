@@ -4,17 +4,15 @@
 //! binding metadata. Access tokens are resolved on demand, kept in memory, and
 //! never serialized into the session document or HTTP projection.
 
-use std::collections::BTreeSet;
-use std::env;
-#[cfg(test)]
-use std::thread;
 use std::time::Duration;
-#[cfg(test)]
-use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::account_broker::{
+    AccountInventory, AccountSummary, BROKER_OUTPUT_LIMIT, BROKER_TIMEOUT, BrokerClient,
+    BrokerProtocol, MAX_PLAN_BYTES,
+};
 use crate::{
     CliContext, CliError, SessionRecord, acquire_session_record_lock, load_session_record,
     write_session_record,
@@ -28,14 +26,27 @@ const BINDING_KEY: &str = "codex_account_binding";
 const INPUT_FENCE_KEY: &str = "codex_account_input_fence";
 const NEXT_KEY: &str = "codex_account_next";
 const BROKER_ENV: &str = "AGENT_SESSION_CODEX_ACCOUNT_BROKER";
-const BROKER_TIMEOUT: Duration = Duration::from_secs(10);
 // Codex 0.144.1 waits ten seconds for external-auth refresh. Leave transport
 // margin so a late helper result is never persisted after Codex gives up.
 const BROKER_REFRESH_TIMEOUT: Duration = Duration::from_secs(8);
-const BROKER_OUTPUT_LIMIT: u64 = crate::account_broker::BROKER_OUTPUT_LIMIT;
-const MAX_ACCOUNT_BYTES: usize = 64;
 const MAX_ACCOUNT_ID_BYTES: usize = 512;
-const MAX_PLAN_BYTES: usize = 128;
+
+/// Codex keeps the v1 broker protocol: no `--provider` argument.
+pub(crate) const BROKER: BrokerClient = BrokerClient {
+    provider: "codex",
+    display: "Codex",
+    env: BROKER_ENV,
+    schema: BROKER_SCHEMA_VERSION,
+    protocol: BrokerProtocol::CodexV1,
+    unsupported: unsupported_error,
+};
+
+/// Selection strategies the daemon understands from a Codex broker.
+const SELECTION_STRATEGIES: [&str; 3] = [
+    "current_default",
+    "default_with_capacity",
+    "next_with_capacity",
+];
 
 #[derive(Clone)]
 pub(crate) struct CodexAccountCredentials {
@@ -171,26 +182,28 @@ pub struct CodexNextAccountView {
     pub failure_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct CodexAccountSummary {
+pub(crate) type CodexAccountSummary = AccountSummary;
+
+/// One listed account in the v1 wire shape, which also accepts the older
+/// `nickname` and `chatgpt_plan_type` field names.
+#[derive(Deserialize)]
+struct BrokerListedAccount {
     #[serde(alias = "nickname")]
-    pub(crate) account: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) label: Option<String>,
-    #[serde(
-        default,
-        alias = "chatgpt_plan_type",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub(crate) plan: Option<String>,
+    account: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default, alias = "chatgpt_plan_type")]
+    plan: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct BrokerListResponse {
-    schema_version: String,
-    accounts: Vec<CodexAccountSummary>,
-    #[serde(default)]
-    selection_strategies: Vec<String>,
+impl From<BrokerListedAccount> for AccountSummary {
+    fn from(listed: BrokerListedAccount) -> Self {
+        Self {
+            account: listed.account,
+            label: listed.label,
+            plan: listed.plan,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -214,7 +227,7 @@ struct BrokerSelectResponse {
 }
 
 pub(crate) fn broker_is_configured() -> bool {
-    matches!(broker_argv(), Ok(Some(_)))
+    BROKER.is_configured()
 }
 
 pub fn view_for_record(record: &SessionRecord) -> CodexAccountView {
@@ -1489,52 +1502,51 @@ fn not_bound_error(record: &SessionRecord, binding: Option<&DurableBinding>) -> 
 }
 
 pub(crate) fn list_accounts() -> Result<Vec<CodexAccountSummary>, CliError> {
-    let response = broker_list()?;
-    let mut seen = BTreeSet::new();
-    let mut accounts = Vec::with_capacity(response.accounts.len());
-    for mut account in response.accounts {
-        validate_account(&account.account)?;
-        validate_optional_public_string(&account.label, MAX_ACCOUNT_BYTES)?;
-        validate_optional_public_string(&account.plan, MAX_PLAN_BYTES)?;
-        if !seen.insert(account.account.clone()) {
-            return Err(broker_error(
-                "codex-account-broker-invalid-response",
-                "Codex account broker returned duplicate account nicknames",
-            ));
-        }
-        account.label = account.label.filter(|value| !value.trim().is_empty());
-        account.plan = account.plan.filter(|value| !value.trim().is_empty());
-        accounts.push(account);
+    Ok(list_inventory()?.accounts)
+}
+
+/// Validated accounts plus the selection strategies the daemon understands.
+pub(crate) fn list_inventory() -> Result<AccountInventory, CliError> {
+    let mut inventory = BROKER.list::<BrokerListedAccount>(BROKER_TIMEOUT)?;
+    inventory
+        .selection_strategies
+        .retain(|strategy| SELECTION_STRATEGIES.contains(&strategy.as_str()));
+    Ok(inventory)
+}
+
+/// Refuses an invalid nickname, a daemon without a broker, or an account the
+/// broker does not list.
+pub(crate) fn ensure_listed(account: &str) -> Result<(), CliError> {
+    validate_account(account)?;
+    if broker_argv()?.is_none() {
+        return Err(CliError::data(
+            "codex-account-unsupported",
+            "Codex account switching is not configured for this daemon",
+            None,
+        ));
     }
-    Ok(accounts)
+    if list_accounts()?
+        .iter()
+        .any(|listed| listed.account == account)
+    {
+        return Ok(());
+    }
+    Err(CliError::usage(
+        "codex-account-unknown",
+        "Codex account is not configured in the account broker",
+        None,
+    ))
 }
 
 pub(crate) fn broker_advertises_selection_strategy(strategy: &str) -> Result<bool, CliError> {
-    if !matches!(
-        strategy,
-        "current_default" | "default_with_capacity" | "next_with_capacity"
-    ) {
-        return Err(broker_error(
-            "codex-account-broker-invalid-config",
-            "Codex account selection strategy is unsupported",
-        ));
+    if !SELECTION_STRATEGIES.contains(&strategy) {
+        return Err(unsupported_strategy_error());
     }
-    Ok(broker_list()?
+    Ok(BROKER
+        .list_response::<Value>(BROKER_TIMEOUT)?
         .selection_strategies
         .iter()
         .any(|candidate| candidate == strategy))
-}
-
-fn broker_list() -> Result<BrokerListResponse, CliError> {
-    let value = run_broker(&["list", "--format", "json"], BROKER_TIMEOUT)?;
-    let response: BrokerListResponse = serde_json::from_value(value).map_err(|_| {
-        broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned an invalid account list",
-        )
-    })?;
-    ensure_schema(&response.schema_version)?;
-    Ok(response)
 }
 
 pub(crate) fn resolve_account(
@@ -1555,38 +1567,31 @@ pub(crate) fn resolve_account_with_timeout(
     timeout: Duration,
 ) -> Result<CodexAccountCredentials, CliError> {
     validate_account(account)?;
-    let mut args = vec!["resolve", "--account", account];
+    let mut args = vec!["--account", account];
     if force_refresh {
         args.push("--force-refresh");
     }
-    args.extend(["--format", "json"]);
     let broker_timeout = if force_refresh {
         BROKER_REFRESH_TIMEOUT
     } else {
         BROKER_TIMEOUT
     }
     .min(timeout);
-    let value = run_broker(&args, broker_timeout)?;
-    let response: BrokerResolveResponse = serde_json::from_value(value).map_err(|_| {
-        broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned invalid credentials",
-        )
-    })?;
-    ensure_schema(&response.schema_version)?;
-    validate_account(&response.account)?;
+    let value = BROKER.call("resolve", &args, broker_timeout)?;
+    let response: BrokerResolveResponse = BROKER.decode(
+        value,
+        "invalid credentials",
+        |response: &BrokerResolveResponse| (response.schema_version.as_str(), None),
+    )?;
     if response.account != account
         || response.access_token.trim().is_empty()
         || response.access_token.len() as u64 > BROKER_OUTPUT_LIMIT
         || response.chatgpt_account_id.trim().is_empty()
         || response.chatgpt_account_id.len() > MAX_ACCOUNT_ID_BYTES
     {
-        return Err(broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned mismatched or invalid credentials",
-        ));
+        return Err(BROKER.invalid_response("mismatched or invalid credentials"));
     }
-    validate_optional_public_string(&response.plan, MAX_PLAN_BYTES)?;
+    BROKER.ensure_public_string(&response.plan, MAX_PLAN_BYTES)?;
     Ok(CodexAccountCredentials {
         access_token: response.access_token,
         chatgpt_account_id: response.chatgpt_account_id,
@@ -1603,40 +1608,10 @@ pub(crate) fn select_account_with_timeout(
     timeout: Duration,
 ) -> Result<CodexAccountSummary, CliError> {
     if !matches!(strategy, "default_with_capacity" | "current_default") {
-        return Err(broker_error(
-            "codex-account-broker-invalid-config",
-            "Codex account selection strategy is unsupported",
-        ));
+        return Err(unsupported_strategy_error());
     }
-    let value = run_broker(
-        &["select", "--strategy", strategy, "--format", "json"],
-        BROKER_TIMEOUT.min(timeout),
-    )?;
-    let response: BrokerSelectResponse = serde_json::from_value(value).map_err(|_| {
-        broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned an invalid account selection",
-        )
-    })?;
-    ensure_schema(&response.schema_version)?;
-    let Some(account) = response.account else {
-        return Err(broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned an invalid account selection",
-        ));
-    };
-    if validate_account(&account).is_err() {
-        return Err(broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned an invalid account selection",
-        ));
-    }
-    validate_optional_public_string(&response.plan, MAX_PLAN_BYTES)?;
-    Ok(CodexAccountSummary {
-        account,
-        label: None,
-        plan: response.plan.filter(|value| !value.trim().is_empty()),
-    })
+    let selected = broker_select(&["--strategy", strategy], BROKER_TIMEOUT.min(timeout))?;
+    selected.ok_or_else(|| BROKER.invalid_response(INVALID_SELECTION))
 }
 
 pub(crate) fn select_next_account(
@@ -1644,40 +1619,35 @@ pub(crate) fn select_next_account(
     excluded: &[String],
 ) -> Result<Option<CodexAccountSummary>, CliError> {
     validate_account(after)?;
-    let mut args = vec![
-        "select",
-        "--strategy",
-        "next_with_capacity",
-        "--after",
-        after,
-    ];
+    let mut args = vec!["--strategy", "next_with_capacity", "--after", after];
     for account in excluded {
         validate_account(account)?;
         args.extend(["--exclude", account.as_str()]);
     }
-    args.extend(["--format", "json"]);
-    let value = match run_broker(&args, BROKER_TIMEOUT) {
-        Ok(value) => value,
-        Err(error) if error.code() == "codex-account-broker-rejected" => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let response: BrokerSelectResponse = serde_json::from_value(value).map_err(|_| {
-        broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned an invalid account selection",
-        )
-    })?;
-    ensure_schema(&response.schema_version)?;
+    match broker_select(&args, BROKER_TIMEOUT) {
+        Err(error) if error.code() == "codex-account-broker-rejected" => Ok(None),
+        result => result,
+    }
+}
+
+const INVALID_SELECTION: &str = "an invalid account selection";
+
+/// Runs `select` and validates the selected account, if any.
+fn broker_select(
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Option<CodexAccountSummary>, CliError> {
+    let value = BROKER.call("select", args, timeout)?;
+    let response: BrokerSelectResponse = BROKER.decode(
+        value,
+        INVALID_SELECTION,
+        |response: &BrokerSelectResponse| (response.schema_version.as_str(), None),
+    )?;
     let Some(account) = response.account else {
         return Ok(None);
     };
-    validate_account(&account).map_err(|_| {
-        broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned an invalid account selection",
-        )
-    })?;
-    validate_optional_public_string(&response.plan, MAX_PLAN_BYTES)?;
+    BROKER.ensure_broker_nickname(&account, INVALID_SELECTION)?;
+    BROKER.ensure_public_string(&response.plan, MAX_PLAN_BYTES)?;
     Ok(Some(CodexAccountSummary {
         account,
         label: None,
@@ -1742,12 +1712,7 @@ fn ensure_runtime(record: &SessionRecord, expected_launch_id: &str) -> Result<()
 }
 
 pub fn validate_account(account: &str) -> Result<(), CliError> {
-    if account.is_empty()
-        || account.len() > MAX_ACCOUNT_BYTES
-        || !account
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
+    if !nils_common::provider_runtime::accounts::is_valid_account_nickname(account) {
         return Err(CliError::usage(
             "invalid-codex-account",
             "Codex account must be a short configured nickname",
@@ -1770,93 +1735,24 @@ fn validate_selection_source(source: Option<&str>) -> Result<(), CliError> {
     ))
 }
 
-fn validate_optional_public_string(value: &Option<String>, max: usize) -> Result<(), CliError> {
-    if value
-        .as_ref()
-        .is_some_and(|value| value.len() > max || value.contains(['\n', '\r', '\0']))
-    {
-        return Err(broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned invalid public metadata",
-        ));
-    }
-    Ok(())
-}
-
-fn ensure_schema(schema: &str) -> Result<(), CliError> {
-    if schema == BROKER_SCHEMA_VERSION {
-        Ok(())
-    } else {
-        Err(broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned an unsupported schema",
-        ))
-    }
-}
-
-/// Bounds shared by the broker environment variable and `serve --config`.
-pub(crate) fn valid_broker_argv(argv: &[String]) -> bool {
-    crate::account_broker::valid_argv(argv)
-}
-
 fn broker_argv() -> Result<Option<Vec<String>>, CliError> {
-    crate::account_broker::parse_argv(env::var(BROKER_ENV).ok()).map_err(|error| match error {
-        crate::account_broker::BrokerArgvError::NotJsonArgv => broker_error(
-            "codex-account-broker-invalid-config",
-            "Codex account broker configuration must be a JSON argv array",
-        ),
-        crate::account_broker::BrokerArgvError::Invalid => broker_error(
-            "codex-account-broker-invalid-config",
-            "Codex account broker configuration is invalid",
-        ),
-    })
+    BROKER.argv()
 }
 
-fn run_broker(args: &[&str], timeout: Duration) -> Result<Value, CliError> {
-    use crate::account_broker::BrokerProcessError;
-    let argv = broker_argv()?.ok_or_else(|| {
-        broker_error(
-            "codex-account-unsupported",
-            "Codex account switching is not configured for this daemon",
-        )
-    })?;
-    crate::account_broker::run(&argv, args, timeout).map_err(|error| match error {
-        BrokerProcessError::SpawnFailed => broker_error(
-            "codex-account-broker-unavailable",
-            "Codex account broker could not be started",
-        ),
-        BrokerProcessError::StdoutUnavailable => broker_error(
-            "codex-account-broker-unavailable",
-            "Codex account broker output was unavailable",
-        ),
-        BrokerProcessError::StderrUnavailable => broker_error(
-            "codex-account-broker-unavailable",
-            "Codex account broker error output was unavailable",
-        ),
-        BrokerProcessError::WaitFailed => {
-            broker_error("codex-account-broker-failed", "Codex account broker failed")
-        }
-        BrokerProcessError::Rejected => broker_error(
-            "codex-account-broker-rejected",
-            "Codex account broker rejected the request",
-        ),
-        BrokerProcessError::OutputTooLarge => broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker output exceeded the size limit",
-        ),
-        BrokerProcessError::MalformedJson => broker_error(
-            "codex-account-broker-invalid-response",
-            "Codex account broker returned malformed JSON",
-        ),
-        BrokerProcessError::Timeout => broker_error(
-            "codex-account-broker-timeout",
-            "Codex account broker timed out",
-        ),
-    })
+fn unsupported_error() -> CliError {
+    CliError::runtime(
+        "codex-account-unsupported",
+        "Codex account switching is not configured for this daemon",
+        None,
+    )
 }
 
-fn broker_error(code: &'static str, message: &'static str) -> CliError {
-    CliError::runtime(code, message, None)
+fn unsupported_strategy_error() -> CliError {
+    CliError::runtime(
+        "codex-account-broker-invalid-config",
+        "Codex account selection strategy is unsupported",
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -1928,6 +1824,15 @@ mod tests {
         assert!(validate_account("../auth.json").is_err());
         assert!(validate_account("person@example.com").is_err());
         assert!(validate_account("").is_err());
+        // Nicknames reach broker argv (`resolve --account <nick>`), so an
+        // option-shaped or dot-segment value must never pass.
+        for invalid in ["--format", "-x", ".", "..", "_hidden", &"a".repeat(65)] {
+            assert_eq!(
+                validate_account(invalid).unwrap_err().code(),
+                "invalid-codex-account",
+                "{invalid}"
+            );
+        }
     }
 
     #[test]
@@ -2404,9 +2309,6 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
 mode=$1
 shift
 case "$mode" in
-  malformed)
-    printf '{'
-    ;;
   future-list)
     printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v2","accounts":[]}'
     ;;
@@ -2416,12 +2318,8 @@ case "$mode" in
   invalid-select)
     printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"../auth.json"}'
     ;;
-  oversized)
-    dd if=/dev/zero bs=1048577 count=1 2>/dev/null | tr '\000' x
-    ;;
-  rejected)
-    printf '%s\n' 'private broker failure' >&2
-    exit 7
+  unsafe-list)
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts":[{"account":"--format"}]}'
     ;;
   *) exit 2 ;;
 esac
@@ -2430,29 +2328,25 @@ esac
         .unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
 
-        let cases = [
-            ("malformed", "codex-account-broker-invalid-response"),
-            ("oversized", "codex-account-broker-invalid-response"),
-            ("rejected", "codex-account-broker-rejected"),
-        ];
-        for (mode, expected_code) in cases {
-            let argv = serde_json::to_string(&vec![
-                script.to_string_lossy().into_owned(),
-                mode.to_string(),
-            ])
-            .unwrap();
-            let broker = EnvGuard::set(&lock, BROKER_ENV, &argv);
-            let error = run_broker(&["list"], Duration::from_secs(2)).unwrap_err();
-            assert_eq!(error.code(), expected_code, "mode={mode}");
-            drop(broker);
-        }
-
         let future_argv = serde_json::to_string(&vec![
             script.to_string_lossy().into_owned(),
             "future-list".to_string(),
         ])
         .unwrap();
         let broker = EnvGuard::set(&lock, BROKER_ENV, &future_argv);
+        assert_eq!(
+            list_accounts().unwrap_err().code(),
+            "codex-account-broker-invalid-response"
+        );
+        drop(broker);
+
+        // An unsafe listed nickname is a broker fault, not a client error.
+        let unsafe_list_argv = serde_json::to_string(&vec![
+            script.to_string_lossy().into_owned(),
+            "unsafe-list".to_string(),
+        ])
+        .unwrap();
+        let broker = EnvGuard::set(&lock, BROKER_ENV, &unsafe_list_argv);
         assert_eq!(
             list_accounts().unwrap_err().code(),
             "codex-account-broker-invalid-response"
@@ -2482,45 +2376,6 @@ esac
             select_account("default_with_capacity").unwrap_err().code(),
             "codex-account-broker-invalid-response"
         );
-    }
-
-    #[test]
-    fn broker_timeout_terminates_its_process_group() {
-        let lock = GlobalStateLock::new();
-        let tmp = tempfile::TempDir::new().unwrap();
-        let script = tmp.path().join("hanging-broker");
-        let child_pid_file = tmp.path().join("child-pid");
-        fs::write(
-            &script,
-            r#"#!/bin/sh
-child_pid_file=$1
-sleep 60 &
-child=$!
-printf '%s\n' "$child" > "$child_pid_file"
-wait "$child"
-"#,
-        )
-        .unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
-        let argv = serde_json::to_string(&vec![
-            script.to_string_lossy().into_owned(),
-            child_pid_file.to_string_lossy().into_owned(),
-        ])
-        .unwrap();
-        let _broker = EnvGuard::set(&lock, BROKER_ENV, &argv);
-
-        let error = run_broker(&["list"], Duration::from_millis(100)).unwrap_err();
-        assert_eq!(error.code(), "codex-account-broker-timeout");
-        let child_pid: i32 = fs::read_to_string(child_pid_file)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while unsafe { libc::kill(child_pid, 0) } == 0 && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert_eq!(unsafe { libc::kill(child_pid, 0) }, -1);
     }
 
     fn persisted_bound(tmp: &tempfile::TempDir) -> (CliContext, SessionRecord) {

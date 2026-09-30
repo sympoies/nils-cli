@@ -26,7 +26,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /history/sessions/{history_id}/messages` | Bearer | This specification |
 | `POST /history/sessions/{history_id}/star` | Bearer | This specification |
 | `POST /history/sessions/{history_id}/resume` | Bearer | This specification |
-| `GET /codex/accounts` | Bearer | This specification |
+| `GET /codex/accounts` | Bearer | [Codex account broker](#codex-account-broker) |
 | `GET /claude/accounts` | Bearer | [Claude account broker](#claude-account-broker) |
 | `POST /clipboard/unwrap/v1` | Bearer | This specification |
 | `GET /activity/events` | Bearer | [Activity stream v1](activity-stream-v1.md) |
@@ -263,9 +263,13 @@ recorded in `sympoies/nils-cli#1409`.
   tmux sessions and all Claude sessions omit that session capability. Consumers
   must require both the global protocol advertisement and the per-session
   capability before presenting managed handoff controls.
-  `data.capabilities.claude_account_switch` is `true` only while
-  `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER` is configured; see the
-  [Claude account broker](#claude-account-broker).
+  `data.capabilities.codex_account_switch` and
+  `data.capabilities.claude_account_switch` are each `true` only while that
+  provider's broker (`AGENT_SESSION_CODEX_ACCOUNT_BROKER` /
+  `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER`) is configured; see
+  [Account brokers](#account-brokers). `codex_account_switch` is additive:
+  older daemons omit it, and a Codex session's own
+  `codex_account.supported` remains the per-session authority.
   Sessions report
   `running`, `stopped`, `unknown`, or `missing` live status plus a boolean `resumable` field and best-effort `repo_name` derived from
   the recorded `cwd`. `missing` is reported only for an external-runtime record
@@ -521,7 +525,12 @@ recorded in `sympoies/nils-cli#1409`.
   the curated project picker: only primary git working trees are returned, ordered by most-recent session cwd usage
   (`last_used`) and then name/path.
 - `GET /codex/accounts` — authenticated nickname-only account inventory from
-  the configured host credential broker. The additive `readiness` projection
+  the configured host credential broker:
+  `{ "machine", "provider": "codex", "accounts": [{ "account", "label"?,
+  "plan"? }], "selection_strategies", "readiness" }`. `selection_strategies`
+  lists the broker-advertised selectors the daemon understands
+  (`current_default`, `default_with_capacity`, `next_with_capacity`); `provider`
+  and `selection_strategies` are additive. The `readiness` projection
   reports whether the installed Codex version meets the minimum app-server
   floor and currently advertises Unix listen support, with only a canonical
   provider version and stable safe reason code. A capable CLI also needs a
@@ -536,9 +545,9 @@ recorded in `sympoies/nils-cli#1409`.
   account ids, auth paths, or broker diagnostics.
 - `GET /claude/accounts` — authenticated nickname-only Claude account
   inventory from the configured Claude account broker:
-  `{ "machine", "accounts": [{ "account", "label"?, "plan"? }],
-  "selection_strategies" }`. It never contains credentials or account
-  directory paths.
+  `{ "machine", "provider": "claude", "accounts": [{ "account", "label"?,
+  "plan"? }], "selection_strategies" }` (`provider` is additive). It never
+  contains credentials or account directory paths.
 - `GET /activity/events` — authenticated metadata-only SSE for activity snapshots and heartbeats. Events carry a daemon-boot
   `stream_id` and increasing `sequence`; `Last-Event-ID` enables count-and-byte-bounded replay, while stale/foreign cursors
   and lagged consumers receive a reset. Concurrent subscribers are daemon-capped and saturation returns a stable
@@ -625,7 +634,17 @@ recorded in `sympoies/nils-cli#1409`.
   and outcome-unknown handling retain the rules above.
 - `PUT /sessions/{id}/account` accepts
   `{ "account": "nickname", "expected_session_incarnation": "launch-id" }`
-  only for a serve-managed Codex app-server runtime. At the authoritative
+  for a serve-managed Codex app-server runtime or a broker-bound Claude
+  session; the response carries the provider's `codex_account` or
+  `claude_account` projection. Both providers share these outcomes: an invalid
+  nickname is `400 invalid-<provider>-account`; a nickname the broker does not
+  list is `400 <provider>-account-unknown` (re-selecting the currently bound
+  account is always accepted, so it can cancel a queued switch); a stale
+  `expected_session_incarnation` is `409
+  <provider>-account-session-incarnation-conflict`; a daemon or session
+  without that provider's broker is `409 <provider>-account-unsupported`.
+  Claude applies a switch by relaunching; see the
+  [Claude account broker](#claude-account-broker). For Codex, at the authoritative
   `waiting` boundary, the daemon applies the account immediately without
   recreating tmux or resuming the provider conversation. While a turn is
   `working`, it instead stores an additive durable `next` intent and leaves
@@ -663,14 +682,19 @@ recorded in `sympoies/nils-cli#1409`.
   base root. The server resolves the profile's executable, provider config root, readiness command, and
   auto-resume capability; callers cannot submit or override those fields. A
   fresh Codex create may additionally provide
-  `codex_account`; when a prompt is also present, the daemon completes account
-  binding before submitting that prompt. `codex_account` is rejected for other
-  providers and for provider-import mode. A fresh, profile-free Claude create
-  may provide `claude_account`; see the
-  [Claude account broker](#claude-account-broker). It is rejected for other
-  providers (`claude-account-agent-conflict`), with an `agent_profile`
-  (`claude-account-profile-conflict`), and in provider-import mode
-  (`claude-account-provider-resume-conflict`).
+  `codex_account`; like `claude_account`, an explicit account must be a valid
+  nickname the broker lists (`invalid-codex-account` /
+  `codex-account-unknown`, both HTTP 400) before anything launches, and when a
+  prompt is also present, the daemon completes account binding before
+  submitting that prompt. A fresh, profile-free Claude create may provide
+  `claude_account`; see the [Claude account broker](#claude-account-broker).
+  Each account field is rejected for another provider
+  (`<provider>-account-agent-conflict`) and in provider-import mode
+  (`<provider>-account-provider-resume-conflict`). Only `claude_account` is
+  also rejected with an `agent_profile` (`claude-account-profile-conflict`),
+  intentionally: a Claude launch profile owns the provider config root that an
+  account binding would replace, while Codex credentials are injected through
+  the app-server control plane and compose with a profile.
   When `provider_resume_id` is present (alias: `resume_id`), the daemon imports an existing Codex or
   Claude provider conversation instead: it resolves the original cwd from the selected local provider history, persists exact
   `provider_resume` metadata, and starts tmux with the canonical resume command. A capable Codex import uses the daemon-managed
@@ -1038,36 +1062,56 @@ daemon does not currently scrub it before launch, which would grant those
 children machine-operator authority. Deployments that create sessions must use
 `--token-stdin` from a private, non-exported credential source.
 
-## Codex account broker
+## Account brokers
 
-Codex account switching is enabled by
-`AGENT_SESSION_CODEX_ACCOUNT_BROKER`, whose value is a JSON argv array rather
-than a shell command, for example
-`["/opt/agent-console/bin/codex-account-broker"]`. The daemon invokes that argv
-with `list`, `resolve`, or a bounded `select` request. `select --strategy
-current_default` returns the configured nickname matched by the live default;
-`select --strategy next_with_capacity --after <nickname> [--exclude
-<nickname>]...` walks configured order once and returns only a fresh,
-network-confirmed usable account. Broker output
-uses `agent-session.codex-auth-broker.v1`: list returns public `accounts`, while
-resolve returns the exact nickname plus `access_token`, `chatgpt_account_id`,
-and optional `plan`. The additive list field `selection_strategies` advertises
-these selectors. A daemon paired with an older broker that omits the field
-preserves default creation as unbound instead of invoking an unsupported
-selector; genuine failures remain closed after capability is advertised.
-Broker execution is process-group and time bounded with
-bounded output. Credential values remain in memory only and are never added to
-session documents or HTTP projections. Invalid configuration, malformed output,
-duplicate or unsafe nicknames, timeout, and non-zero exit all fail closed.
+A provider's account broker is enabled by one environment variable, or by the
+matching `serve --config` table: `AGENT_SESSION_CODEX_ACCOUNT_BROKER` /
+`[codex_account_broker]` and `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER` /
+`[claude_account_broker]`. The value is a JSON argv array, never a shell
+command, for example `["/opt/agent-console/bin/codex-account-broker"]`, of at
+most 16 non-empty arguments of at most 4096 bytes each. The daemon appends a
+verb, its arguments, and `--format json`. Every call runs in a fresh process
+group with a null stdin, at most 1 MiB of stdout and stderr, and a 10 second
+deadline (8 seconds for a Codex forced refresh); a timed-out broker's whole
+process group is killed. Broker stderr is never projected.
 
-## Claude account broker
+Both brokers fail closed. Invalid configuration is
+`<provider>-account-broker-invalid-config`; a broker that cannot start is
+`-unavailable`; a non-zero exit is `-rejected`; a timeout is `-timeout`; and
+malformed or oversized output, a wrong `schema_version` (or, for v2, a wrong
+`provider`), and a listed account with an unsafe or duplicate nickname or
+oversized or multi-line public metadata are all
+`<provider>-account-broker-invalid-response`, a broker fault rather than a
+client error. Account nicknames follow one rule for both providers and for the
+provider CLIs: `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, so a nickname can never read
+as an option (`--format`) or a dot path segment. Credential values and account
+directory paths stay in daemon memory or durable session state only and are
+never added to HTTP projections.
 
-Claude account binding is enabled by `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER`, a
-JSON argv array with the same bounds and process-group, timeout, and output
-limits as the Codex broker. It speaks the provider-neutral
-`agent-session.account-broker.v2` contract; the Codex broker keeps
-`agent-session.codex-auth-broker.v1` unchanged. The daemon appends a
-subcommand, `--provider claude`, its arguments, and `--format json`:
+The per-provider differences are the protocol and what the broker returns.
+
+### Codex account broker
+
+The Codex broker speaks `agent-session.codex-auth-broker.v1`, without a
+`--provider` argument. The daemon invokes `list`, `resolve`, or a bounded
+`select` request. `select --strategy current_default` returns the configured
+nickname matched by the live default; `select --strategy next_with_capacity
+--after <nickname> [--exclude <nickname>]...` walks configured order once and
+returns only a fresh, network-confirmed usable account. `list` returns public
+`accounts`, while `resolve` returns the exact nickname plus `access_token`,
+`chatgpt_account_id`, and optional `plan`; tokens are resolved on demand and
+kept in memory. The additive list field `selection_strategies` advertises these
+selectors. Choosing the automatic default for a new session is intentionally
+best effort: a daemon paired with an older broker that omits the field, or a
+broker that cannot list, leaves the new session unbound on the host login
+instead of failing the create. An explicit account, an account switch, and a
+selector failure after capability is advertised remain fail closed.
+
+### Claude account broker
+
+The Claude broker speaks the provider-neutral
+`agent-session.account-broker.v2` contract. Every call passes
+`--provider claude` after the verb:
 
 - `list --provider claude --format json` returns
   `accounts: [{account, label?, plan?}]` and `selection_strategies`
@@ -1084,9 +1128,8 @@ configuration directory and returns only its path. Before any Claude process
 runs in it, the daemon requires `config_dir` to be absolute and normalized, a
 real directory (not a symlink) owned by the daemon user and not world-writable,
 holding a regular, non-symlink `.credentials.json` owned by the same user.
-Otherwise it fails with `claude-account-dir-unsafe` and a safe `reason`.
-Malformed output, a wrong schema or provider, a mismatched nickname, timeout,
-and non-zero exit fail closed with `claude-account-broker-*` codes.
+Otherwise it fails with `claude-account-dir-unsafe` and a safe `reason`. A
+mismatched nickname is `claude-account-broker-invalid-response`.
 
 - Create: an explicit `claude_account` wins; otherwise, when `list` advertises
   `current_default`, the daemon records that account as `default_at_launch`.
@@ -1111,9 +1154,7 @@ and non-zero exit fail closed with `claude-account-broker-*` codes.
   `{ "account", "expected_session_incarnation" }` on a Claude session durably
   queues `agent-session.claude-account-next.v1`; requesting the bound account
   cancels a queued intent. A nickname the broker does not list is refused
-  with `claude-account-unknown`. Nicknames are at most 64 bytes of ASCII
-  letters, digits, `.`, `_`, and `-`, and start with a letter or digit.
-  Claude Code has no live credential swap, so the switch is applied only by a
+  with `claude-account-unknown`. Claude Code has no live credential swap, so the switch is applied only by a
   relaunch: when the session is running and its turn is `waiting`, the daemon
   first materializes and validates the new account directory. A refusal
   returns `claude-account-switch-refused` (HTTP 422, with the broker's

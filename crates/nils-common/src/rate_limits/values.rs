@@ -124,6 +124,27 @@ pub fn render_cache_entry(fetched_at_epoch: i64, values: &WeeklyValues) -> Optio
     Some(lines.join("\n"))
 }
 
+/// Default freshness TTL of a cached entry, in seconds.
+pub const DEFAULT_CACHE_TTL_SECONDS: u64 = 180;
+
+/// The cache freshness TTL from `<PREFIX>_RATE_LIMITS_CACHE_TTL` (a duration
+/// such as `90`, `5m`, or `1h`), else [`DEFAULT_CACHE_TTL_SECONDS`].
+pub fn cache_ttl_seconds(env_prefix: &str) -> u64 {
+    std::env::var(format!("{env_prefix}_RATE_LIMITS_CACHE_TTL"))
+        .ok()
+        .and_then(|raw| crate::env::parse_duration_seconds(&raw))
+        .unwrap_or(DEFAULT_CACHE_TTL_SECONDS)
+}
+
+/// Whether `<PREFIX>_RATE_LIMITS_CACHE_ALLOW_STALE` lets `--cached` show an
+/// entry past its TTL.
+pub fn cache_allow_stale(env_prefix: &str) -> bool {
+    crate::env::env_truthy_or(
+        &format!("{env_prefix}_RATE_LIMITS_CACHE_ALLOW_STALE"),
+        false,
+    )
+}
+
 /// Whether a cache fetched at `fetched_at_epoch` is still within the fixed
 /// display ceiling at `now_epoch`.
 pub fn fetched_at_within_display_age(fetched_at_epoch: Option<i64>, now_epoch: i64) -> bool {
@@ -234,7 +255,25 @@ pub fn parse_one_line_output(line: &str) -> Option<ParsedOneLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn cache_policy_env_is_read_under_the_provider_prefix() {
+        let lock = GlobalStateLock::new();
+        let _ttl = EnvGuard::remove(&lock, "EXAMPLE_RATE_LIMITS_CACHE_TTL");
+        let _stale = EnvGuard::remove(&lock, "EXAMPLE_RATE_LIMITS_CACHE_ALLOW_STALE");
+        assert_eq!(cache_ttl_seconds("EXAMPLE"), DEFAULT_CACHE_TTL_SECONDS);
+        assert!(!cache_allow_stale("EXAMPLE"));
+
+        let _ttl = EnvGuard::set(&lock, "EXAMPLE_RATE_LIMITS_CACHE_TTL", "5m");
+        let _stale = EnvGuard::set(&lock, "EXAMPLE_RATE_LIMITS_CACHE_ALLOW_STALE", "true");
+        assert_eq!(cache_ttl_seconds("EXAMPLE"), 300);
+        assert!(cache_allow_stale("EXAMPLE"));
+
+        let _invalid = EnvGuard::set(&lock, "EXAMPLE_RATE_LIMITS_CACHE_TTL", "soon");
+        assert_eq!(cache_ttl_seconds("EXAMPLE"), DEFAULT_CACHE_TTL_SECONDS);
+    }
 
     fn values() -> WeeklyValues {
         WeeklyValues {

@@ -342,14 +342,21 @@ fail-closed.
 
 ## Optional integrations
 
-- `AGENT_SESSION_CODEX_ACCOUNT_BROKER`: JSON argv array for a bounded host
-  credential broker. Credentials remain in memory and are not projected into
-  session documents or HTTP responses.
-- `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER`: JSON argv array for a bounded host
-  Claude account broker (`agent-session.account-broker.v2`). It materializes a
-  per-account `CLAUDE_CONFIG_DIR` and returns only the directory path; no token
-  crosses it. Bound sessions resume only while it stays configured. See the
-  [Claude account broker](../specs/serve-api-v1.md#claude-account-broker).
+- `AGENT_SESSION_CODEX_ACCOUNT_BROKER` and
+  `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER` (or the `[codex_account_broker]` and
+  `[claude_account_broker]` config tables): JSON argv arrays for bounded host
+  account brokers. Both run with the same bounds and fail closed; see
+  [Account brokers](../specs/serve-api-v1.md#account-brokers). Each provider
+  differs only in what its broker returns:
+  - Codex (`agent-session.codex-auth-broker.v1`) resolves credentials that stay
+    in daemon memory and are never projected into session documents or HTTP
+    responses.
+  - Claude (`agent-session.account-broker.v2`) materializes a per-account
+    `CLAUDE_CONFIG_DIR` and returns only the directory path; no token crosses
+    it. Bound sessions resume only while it stays configured.
+
+  `GET /sessions` advertises each configured broker as
+  `capabilities.codex_account_switch` / `capabilities.claude_account_switch`.
 - `AGENT_SESSION_LAUNCH_PROFILES`: JSON array of server-owned launch profiles.
   Only profiles whose executable, optional provider root, and readiness probe
   pass are advertised. A Hermes-backed DSH profile may add an absolute
@@ -411,6 +418,9 @@ append = ["/opt/tools/bin"]
 [codex_account_broker]
 argv = ["/absolute/path/to/broker"]
 
+[claude_account_broker]
+argv = ["/absolute/path/to/claude-broker"]
+
 [retitle]
 provider = "openai_compatible"
 base_url = "http://127.0.0.1:1237/v1"
@@ -431,8 +441,9 @@ Each table uses the fields and bounds of the value it replaces:
 `launch_profiles` entries are the objects of `AGENT_SESSION_LAUNCH_PROFILES`,
 `retitle` is the object described in
 [Session retitle v2](../specs/session-retitle-v2.md#provider-configuration),
-and `codex_account_broker.argv` is the argv array of
-`AGENT_SESSION_CODEX_ACCOUNT_BROKER`. `path.append` holds at most 16 absolute
+and `codex_account_broker.argv` / `claude_account_broker.argv` are the argv
+arrays of `AGENT_SESSION_CODEX_ACCOUNT_BROKER` /
+`AGENT_SESSION_CLAUDE_ACCOUNT_BROKER`. `path.append` holds at most 16 absolute
 directories without `:` or control characters. Every table is optional; only
 `schema_version` is required. An unknown key is an error rather than ignored.
 
@@ -462,6 +473,7 @@ whitespace-only variable counts as unset, as it does without a config file.
 | `AGENT_SESSION_LAUNCH_PROFILES` | `[[launch_profiles]]` | Merged: environment entries first, then file entries in order. The first entry for an id wins; a later file entry with the same id is dropped with a warning. The merged list must stay within 16 profiles. |
 | `AGENT_SESSION_RETITLE_CONFIG` | `[retitle]` | The environment value replaces the whole table, with a warning. |
 | `AGENT_SESSION_CODEX_ACCOUNT_BROKER` | `[codex_account_broker] argv` | The environment value replaces the whole table, with a warning. |
+| `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER` | `[claude_account_broker] argv` | The environment value replaces the whole table, with a warning. |
 | `PATH` (a launcher's appended entries) | `[path] append` | File entries are appended after the inherited `PATH`, never before it; entries already present are skipped. |
 
 The ordered, first-id-wins launch-profile merge is the same one a launcher

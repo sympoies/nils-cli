@@ -175,33 +175,21 @@ fn handle_auth(args: &cli::AuthArgs) -> i32 {
             api_key,
             device_code,
         }) => auth::login::run_with_json(*api_key, *device_code, output.is_json()).unwrap_or(1),
-        Some(cli::AuthCommand::Use { output, args }) => {
-            if args.len() != 1 || args[0].is_empty() {
-                eprintln!("codex-use: usage: codex-use <name|name.json|email>");
-                return 64;
-            }
-            auth::use_secret::run_with_json(&args[0], output.is_json()).unwrap_or(1)
+        Some(cli::AuthCommand::Use { output, target }) => {
+            auth::use_secret::run_with_json(target, output.is_json()).unwrap_or(1)
         }
-        Some(cli::AuthCommand::Save { output, yes, args }) => {
-            if args.len() != 1 || args[0].is_empty() {
-                eprintln!("codex-save: usage: codex-save [--yes] <secret|secret.json>");
-                return 64;
-            }
-            auth::save::run_with_json(&args[0], *yes, output.is_json()).unwrap_or(1)
-        }
-        Some(cli::AuthCommand::Remove { output, yes, args }) => {
-            if args.len() != 1 || args[0].is_empty() {
-                eprintln!("codex-remove: usage: codex-remove [--yes] <secret|secret.json>");
-                return 64;
-            }
-            auth::remove::run_with_json(&args[0], *yes, output.is_json()).unwrap_or(1)
-        }
-        Some(cli::AuthCommand::Refresh { output, args }) => {
-            if args.len() > 1 {
-                eprintln!("codex-refresh: usage: codex-refresh-auth [secret.json]");
-                return 64;
-            }
-            auth::refresh::run_with_json(args, output.is_json()).unwrap_or(1)
+        Some(cli::AuthCommand::Save {
+            output,
+            yes,
+            secret,
+        }) => auth::save::run_with_json(secret, *yes, output.is_json()).unwrap_or(1),
+        Some(cli::AuthCommand::Remove {
+            output,
+            yes,
+            secret,
+        }) => auth::remove::run_with_json(secret, *yes, output.is_json()).unwrap_or(1),
+        Some(cli::AuthCommand::Refresh { output, secret }) => {
+            auth::refresh::run_with_json(secret.as_slice(), output.is_json()).unwrap_or(1)
         }
         Some(cli::AuthCommand::AutoRefresh { output }) => {
             auth::auto_refresh::run_with_json(output.is_json()).unwrap_or(1)

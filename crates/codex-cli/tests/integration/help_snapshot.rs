@@ -11,6 +11,7 @@ fn help_snapshot_root_help() {
             "EXAMPLES:",
             "ENVIRONMENT:",
             "EXIT CODES:",
+            "2   ambiguous or unmatched account target",
             "CODEX_SECRET_CACHE_DIR",
             "CODEX_CHATGPT_BASE_URL",
             "ZSH_CACHE_DIR",

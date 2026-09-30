@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 use crate::auth;
 use crate::paths;
 use crate::rate_limits::render;
-use nils_common::env as shared_env;
 
 pub use nils_common::rate_limits::CacheEntry;
 
-const DEFAULT_CACHE_TTL_SECONDS: u64 = 180;
+/// Prefix of the shared `<PREFIX>_RATE_LIMITS_CACHE_*` settings.
+const ENV_PREFIX: &str = "CODEX";
 const CACHE_MISS_HINT: &str =
     "rerun without --cached to refresh, or set CODEX_RATE_LIMITS_CACHE_ALLOW_STALE=true";
 
@@ -214,16 +214,11 @@ fn ensure_cache_within_display_age(target_file: &Path, entry: &CacheEntry) -> Re
 
 /// Freshness TTL for cached rate-limit entries (`CODEX_RATE_LIMITS_CACHE_TTL`).
 pub fn cache_ttl_seconds() -> u64 {
-    if let Ok(raw) = std::env::var("CODEX_RATE_LIMITS_CACHE_TTL")
-        && let Some(value) = shared_env::parse_duration_seconds(&raw)
-    {
-        return value;
-    }
-    DEFAULT_CACHE_TTL_SECONDS
+    rate_limits_values::cache_ttl_seconds(ENV_PREFIX)
 }
 
 fn cache_allow_stale() -> bool {
-    shared_env::env_truthy_or("CODEX_RATE_LIMITS_CACHE_ALLOW_STALE", false)
+    rate_limits_values::cache_allow_stale(ENV_PREFIX)
 }
 
 fn cache_root() -> Option<PathBuf> {

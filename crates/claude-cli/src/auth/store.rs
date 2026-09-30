@@ -23,6 +23,8 @@ pub const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 const CURRENT_FILE: &str = "current";
 /// Marks an account config dir as created and owned by claude-cli.
 pub const ACCOUNT_MARKER: &str = ".claude-cli-account";
+/// The accounts directory's recorded default, read by the host account broker.
+const ACCOUNTS_CURRENT_FILE: &str = ".current";
 const PRIVATE_DIR_MODE: u32 = 0o700;
 
 /// The `claudeAiOauth` fields an access-only replica may hold.
@@ -129,7 +131,7 @@ pub fn profile_name_from_target(target: &str) -> AuthResult<String> {
 fn invalid_profile_name() -> AuthError {
     AuthError::usage(
         "invalid-profile-name",
-        "profile names use [A-Za-z0-9._-] and no .json suffix",
+        "profile names start with a letter or digit, use [A-Za-z0-9._-], and have no .json suffix",
     )
 }
 
@@ -683,6 +685,29 @@ pub fn prune_account_dirs(
     }
     pruned.sort();
     Ok(pruned)
+}
+
+/// Records `current` as the accounts directory's default in `<dir>/.current`:
+/// one nickname line, owner-only, replaced atomically. This is the file the
+/// host account broker reads. `None` removes a stale record. The caller holds
+/// [`lock_accounts`].
+pub fn record_accounts_current(accounts_dir: &Path, current: Option<&str>) -> AuthResult<()> {
+    let path = accounts_dir.join(ACCOUNTS_CURRENT_FILE);
+    let failed = |err: &dyn std::fmt::Display| {
+        AuthError::runtime(
+            "accounts-current-write-failed",
+            format!("cannot update {}: {err}", path.display()),
+        )
+    };
+    match current.filter(|name| is_account_dir_name(name)) {
+        Some(name) => fs::write_atomic(&path, format!("{name}\n").as_bytes(), fs::SECRET_FILE_MODE)
+            .map_err(|err| failed(&err)),
+        None => match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(failed(&err)),
+        },
+    }
 }
 
 /// The access-only subset of `claudeAiOauth`, with the empty refresh token.

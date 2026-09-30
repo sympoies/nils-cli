@@ -131,7 +131,7 @@ impl RateLimitsProvider for ClaudeRateLimits {
     }
 
     fn clear_cache(&self) -> std::result::Result<(), String> {
-        Ok(())
+        cache::clear()
     }
 
     fn run_single(&self, args: &RunOptions, cached: bool, one_line: bool) -> Result<i32> {
@@ -247,15 +247,13 @@ impl RateLimitsProvider for ClaudeRateLimits {
             .unwrap_or_default()
     }
 
+    /// The recorded current default `auth current` reports, when listed.
     fn current_name(&self, targets: &[PathBuf]) -> Option<String> {
-        let active = read_active_login().ok()?;
+        let current = store::read_current().ok().flatten()?;
         targets
             .iter()
-            .find(|target| {
-                read_profile_login(target)
-                    .is_ok_and(|login| login.access_token == active.access_token)
-            })
             .map(|target| target_name(target))
+            .find(|name| *name == current)
     }
 }
 
@@ -712,6 +710,39 @@ fn format_local_with_offset(epoch: i64) -> Option<String> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn all_accounts_mark_the_recorded_current_default_like_auth_current() {
+        use nils_test_support::{EnvGuard, GlobalStateLock};
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let secrets = tmp.path().join("secrets");
+        let config = tmp.path().join("config");
+        std::fs::create_dir_all(&secrets).unwrap();
+        std::fs::create_dir_all(&config).unwrap();
+        let credentials = |token: &str| {
+            serde_json::json!({ "claudeAiOauth": { "accessToken": token } }).to_string()
+        };
+        std::fs::write(secrets.join("alpha.json"), credentials("token-alpha")).unwrap();
+        std::fs::write(secrets.join("beta.json"), credentials("token-beta")).unwrap();
+        // The active login still carries alpha's token, but beta is the
+        // recorded current default that `auth current` reports.
+        std::fs::write(config.join(".credentials.json"), credentials("token-alpha")).unwrap();
+        std::fs::write(secrets.join("current"), "beta\n").unwrap();
+        let _secrets = EnvGuard::set(&lock, "CLAUDE_SECRET_DIR", secrets.to_str().unwrap());
+        let _config = EnvGuard::set(&lock, "CLAUDE_CONFIG_DIR", config.to_str().unwrap());
+        let _keychain = EnvGuard::set(&lock, "CLAUDE_AUTH_KEYCHAIN", "off");
+        let targets = vec![secrets.join("alpha.json"), secrets.join("beta.json")];
+
+        assert_eq!(
+            ClaudeRateLimits.current_name(&targets).as_deref(),
+            Some("beta")
+        );
+        std::fs::write(secrets.join("current"), "gamma\n").unwrap();
+        assert_eq!(ClaudeRateLimits.current_name(&targets), None);
+        std::fs::remove_file(secrets.join("current")).unwrap();
+        assert_eq!(ClaudeRateLimits.current_name(&targets), None);
+    }
 
     #[test]
     fn http_statuses_map_to_the_diag_reason_codes() {

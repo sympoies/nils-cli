@@ -436,6 +436,10 @@ fn pull_all(options: &PullOptions<'_>) -> i32 {
             });
         }
         let pruned = store::prune_account_dirs(&into, &names)?;
+        store::record_accounts_current(
+            &into,
+            current.as_deref().filter(|name| names.contains(*name)),
+        )?;
         Ok(PullAllResult {
             ssh: options.ssh.to_string(),
             into: into.display().to_string(),

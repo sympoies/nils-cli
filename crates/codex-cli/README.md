@@ -277,7 +277,11 @@ Auth examples:
 ## Exit codes
 
 - `0`: success and help output.
-- `64`: usage or argument errors.
+- `2`: an ambiguous or unmatched account target (`auth use`, `auth current`),
+  or credential state a command needs is missing (for example `auth refresh`
+  without a refresh token).
+- `64`: usage or argument errors, including a missing or extra positional
+  argument, which clap reports as plain usage text.
 - `65`: invalid input data, including an invalid capsule, missing host-access
   acknowledgement, or an `agent resume` id that cannot be resolved.
 - `1`: operational errors.

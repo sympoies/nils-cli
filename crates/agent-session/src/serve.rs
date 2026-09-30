@@ -204,7 +204,7 @@ struct ServeState {
     provider_prompt_discovery: Arc<ProviderPromptDiscoveryRegistry>,
     activity_broker: Arc<ActivityBroker>,
     codex_controls: Arc<StdMutex<HashMap<String, CodexControlEntry>>>,
-    codex_account_switches: CodexAccountSwitchRegistry,
+    account_switches: AccountSwitchRegistry,
     session_collector: SessionCollector,
     launch_profiles: AgentLaunchProfiles,
     history_catalog: Arc<HistoryCatalog>,
@@ -251,11 +251,11 @@ struct CodexControlEntry {
 }
 
 #[derive(Clone, Default)]
-struct CodexAccountSwitchRegistry {
+struct AccountSwitchRegistry {
     entries: Arc<tokio::sync::Mutex<HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>>,
 }
 
-impl CodexAccountSwitchRegistry {
+impl AccountSwitchRegistry {
     async fn lock(&self, session_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
         let slot = {
             let mut entries = self.entries.lock().await;
@@ -1111,7 +1111,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             provider_prompt_discovery: Arc::new(ProviderPromptDiscoveryRegistry::default()),
             activity_broker,
             codex_controls: Arc::new(StdMutex::new(HashMap::new())),
-            codex_account_switches: CodexAccountSwitchRegistry::default(),
+            account_switches: AccountSwitchRegistry::default(),
             session_collector,
             launch_profiles,
             history_catalog,
@@ -1357,7 +1357,7 @@ fn router(state: Arc<ServeState>) -> Router {
         )
         .route(
             "/sessions/{id}/account",
-            axum::routing::put(codex_account_handler),
+            axum::routing::put(session_account_handler),
         )
         .route(
             "/sessions/{id}/auto-resume",
@@ -2545,7 +2545,6 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "retitle-v3-history-conflict"
         | "retitle-v3-history-stale"
         | "retitle-v3-idempotency-conflict"
-        | "codex-account-session-incarnation-conflict"
         | "codex-account-session-busy"
         | "provider-session-already-running"
         | "agent-blocked" => StatusCode::CONFLICT,
@@ -2558,6 +2557,12 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         }
         "retitle-v3-history-unavailable" | "retitle-v3-history-degraded" => {
             StatusCode::SERVICE_UNAVAILABLE
+        }
+        // Provider account conditions share one status across providers.
+        code if code.ends_with("-account-session-incarnation-conflict")
+            || code.ends_with("-account-unsupported") =>
+        {
+            StatusCode::CONFLICT
         }
         _ => match data.exit_code {
             exit::USAGE => StatusCode::BAD_REQUEST,
@@ -3457,7 +3462,7 @@ struct AutoResumeBody {
 }
 
 #[derive(Debug, Deserialize)]
-struct CodexAccountBody {
+struct AccountSwitchBody {
     account: String,
     expected_session_incarnation: Option<String>,
     #[serde(default)]
@@ -5236,6 +5241,7 @@ async fn list_handler(State(state): State<Arc<ServeState>>) -> Response {
                     "history_star": true,
                     "managed_account_handoff": crate::codex_app_server::MANAGED_ACCOUNT_HANDOFF_CAPABILITY,
                     "claude_account_switch": crate::claude_account::broker_is_configured(),
+                    "codex_account_switch": crate::codex_account::broker_is_configured(),
                     "session_retitle_v2": true,
                     "session_retitle_v3": true,
                     "session_retitle_v3_receipts": true,
@@ -5762,16 +5768,18 @@ async fn codex_accounts_handler(
     let agent_bin = crate::resolve_agent_bin(AgentKind::Codex, None);
     let state_dir = state.context.state_dir.clone();
     match tokio::task::spawn_blocking(move || {
-        crate::codex_account::list_accounts().map(|accounts| {
+        crate::codex_account::list_inventory().map(|inventory| {
             let readiness = codex_app_server::account_binding_readiness(&agent_bin, &state_dir);
-            (accounts, readiness)
+            (inventory, readiness)
         })
     })
     .await
     {
-        Ok(Ok((accounts, readiness))) => envelope_ok(json!({
+        Ok(Ok((inventory, readiness))) => envelope_ok(json!({
             "machine": state.machine,
-            "accounts": accounts,
+            "provider": "codex",
+            "accounts": inventory.accounts,
+            "selection_strategies": inventory.selection_strategies,
             "readiness": readiness,
         })),
         Ok(Err(err)) => envelope_err(err),
@@ -5789,6 +5797,7 @@ async fn claude_accounts_handler(
     match tokio::task::spawn_blocking(crate::claude_account::list_accounts).await {
         Ok(Ok(inventory)) => envelope_ok(json!({
             "machine": state.machine,
+            "provider": "claude",
             "accounts": inventory.accounts,
             "selection_strategies": inventory.selection_strategies,
         })),
@@ -6511,38 +6520,16 @@ async fn create_handler(
         }
         None => (title, None),
     };
-    if body.codex_account.is_some() && agent != AgentKind::Codex {
-        return envelope_err(CliError::usage(
-            "codex-account-agent-conflict",
-            "codex_account is supported only for Codex sessions",
-            None,
-        ));
-    }
-    if body.claude_account.is_some() && agent != AgentKind::Claude {
-        return envelope_err(crate::claude_account::agent_conflict_error());
-    }
-    if body.claude_account.is_some() && launch_profile.is_some() {
-        return envelope_err(CliError::usage(
-            "claude-account-profile-conflict",
-            "claude_account cannot be combined with an agent_profile",
-            None,
-        ));
+    if let Err(err) = validate_create_accounts(
+        agent,
+        body.codex_account.is_some(),
+        body.claude_account.is_some(),
+        launch_profile.is_some(),
+        body.provider_resume_id.is_some(),
+    ) {
+        return envelope_err(err);
     }
     if let Some(provider_resume_id) = body.provider_resume_id {
-        if body.codex_account.is_some() {
-            return envelope_err(CliError::usage(
-                "codex-account-provider-resume-conflict",
-                "create the resumable Codex session first, then bind its account",
-                None,
-            ));
-        }
-        if body.claude_account.is_some() {
-            return envelope_err(CliError::usage(
-                "claude-account-provider-resume-conflict",
-                "provider_resume_id imports run on the host Claude login; omit claude_account",
-                None,
-            ));
-        }
         if body.cwd.is_some() {
             return envelope_err(CliError::usage(
                 "provider-resume-cwd-conflict",
@@ -6777,16 +6764,85 @@ async fn create_handler(
     }
 }
 
+/// Conflict rules for the per-provider account fields of a create body, in
+/// one place for both providers:
+///
+/// - `<provider>_account` is accepted only for that provider's sessions;
+/// - `provider_resume_id` imports run on the host login, so neither account
+///   field may accompany one;
+/// - Claude only, intentionally: a Claude `agent_profile` owns the provider
+///   config root (`CLAUDE_CONFIG_DIR`) that an account binding would replace,
+///   so `claude_account` cannot be combined with it. Codex credentials are
+///   injected over its app-server control plane instead and do not conflict.
+fn validate_create_accounts(
+    agent: AgentKind,
+    codex_account: bool,
+    claude_account: bool,
+    agent_profile: bool,
+    provider_resume: bool,
+) -> Result<(), CliError> {
+    let requested = [
+        (
+            AgentKind::Codex,
+            codex_account,
+            "codex",
+            "Codex",
+            "create the resumable Codex session first, then bind its account",
+        ),
+        (
+            AgentKind::Claude,
+            claude_account,
+            "claude",
+            "Claude",
+            "provider_resume_id imports run on the host Claude login; omit claude_account",
+        ),
+    ];
+    for (owner, requested, provider, display, _) in requested {
+        if requested && agent != owner {
+            return Err(CliError::usage(
+                format!("{provider}-account-agent-conflict"),
+                format!("{provider}_account is supported only for {display} sessions"),
+                None,
+            ));
+        }
+    }
+    if claude_account && agent_profile {
+        return Err(CliError::usage(
+            "claude-account-profile-conflict",
+            "claude_account cannot be combined with an agent_profile",
+            None,
+        ));
+    }
+    if provider_resume {
+        for (_, requested, provider, _, message) in requested {
+            if requested {
+                return Err(CliError::usage(
+                    format!("{provider}-account-provider-resume-conflict"),
+                    message,
+                    None,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn resolve_initial_codex_account(
     agent: AgentKind,
     explicit_account: Option<String>,
 ) -> Result<(Option<String>, Option<String>), CliError> {
     if let Some(account) = explicit_account {
+        // An explicit account must be valid and listed before anything
+        // launches, as for Claude.
+        crate::codex_account::ensure_listed(&account)?;
         return Ok((Some(account), Some("explicit".to_string())));
     }
     if agent != AgentKind::Codex || !crate::codex_account::broker_is_configured() {
         return Ok((None, None));
     }
+    // Intentional: the automatic default is best effort. A broker that cannot
+    // list its strategies leaves the new session unbound on the host login
+    // instead of failing the create; only an explicit account fails closed.
     if !crate::codex_account::broker_advertises_selection_strategy("current_default")
         .unwrap_or(false)
     {
@@ -7091,11 +7147,11 @@ async fn submit_structured_prompt_locked(
     response
 }
 
-async fn codex_account_handler(
+async fn session_account_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
-    Json(body): Json<CodexAccountBody>,
+    Json(body): Json<AccountSwitchBody>,
 ) -> Response {
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
@@ -7123,7 +7179,7 @@ async fn codex_account_handler(
         Err(_) => return join_err(),
     };
     let canonical_id = resolved_record.id;
-    let _switch_guard = state.codex_account_switches.lock(&canonical_id).await;
+    let _switch_guard = state.account_switches.lock(&canonical_id).await;
     let context = state.context.clone();
     let load_id = canonical_id.clone();
     let record =
@@ -7166,6 +7222,21 @@ async fn codex_account_handler(
             "codex-account-session-incarnation-conflict",
             "session was replaced before its Codex account switch was applied",
         );
+    }
+    // Like Claude, refuse an account the broker does not list before any
+    // binding or queued intent is written. Re-selecting the current account
+    // stays allowed so it can still cancel a queued switch.
+    if crate::codex_account::selected_account(&record).as_deref() != Some(body.account.as_str()) {
+        let listed_account = body.account.clone();
+        match tokio::task::spawn_blocking(move || {
+            crate::codex_account::ensure_listed(&listed_account)
+        })
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => return envelope_err(err),
+            Err(_) => return join_err(),
+        }
     }
     let Some(handle) = wait_for_codex_control(&state, &canonical_id, &launch_id).await else {
         return status_json(
@@ -16520,7 +16591,7 @@ mod tests {
             provider_prompt_discovery: Arc::new(ProviderPromptDiscoveryRegistry::default()),
             activity_broker,
             codex_controls: Arc::new(StdMutex::new(HashMap::new())),
-            codex_account_switches: CodexAccountSwitchRegistry::default(),
+            account_switches: AccountSwitchRegistry::default(),
             session_collector,
             launch_profiles,
             history_catalog,
@@ -17152,6 +17223,28 @@ esac
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms).unwrap();
         path.to_path_buf()
+    }
+
+    /// A Codex v1 broker that lists `accounts` and refuses every other verb.
+    fn codex_listing_broker(lock: &GlobalStateLock, dir: &Path, accounts: &[&str]) -> EnvGuard {
+        let listed = accounts
+            .iter()
+            .map(|account| json!({ "account": account }))
+            .collect::<Vec<_>>();
+        let response = json!({
+            "schema_version": crate::codex_account::BROKER_SCHEMA_VERSION,
+            "accounts": listed,
+            "selection_strategies": ["current_default", "default_with_capacity"],
+        });
+        let broker = executable(
+            &dir.join("codex-listing-broker"),
+            &format!(
+                "#!/usr/bin/env sh\n[ \"$1\" = list ] || exit 1\nprintf '%s\\n' {}\n",
+                shell_words::quote(&response.to_string())
+            ),
+        );
+        let argv = serde_json::to_string(&vec![broker.to_string_lossy().into_owned()]).unwrap();
+        EnvGuard::set(lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER", &argv)
     }
 
     fn resume_tmux(dir: &Path, log: &Path) -> PathBuf {
@@ -20498,7 +20591,7 @@ esac
         let tmp = tempfile::TempDir::new().unwrap();
         let broker = executable(
             &tmp.path().join("broker"),
-            "#!/usr/bin/env sh\ncase \"$1\" in\n  list) printf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"accounts\":[],\"selection_strategies\":[\"current_default\"]}' ;;\n  select) printf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"account-a\"}' ;;\n  *) exit 1 ;;\nesac\n",
+            "#!/usr/bin/env sh\ncase \"$1\" in\n  list) printf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"accounts\":[{\"account\":\"account-a\"},{\"account\":\"account-b\"}],\"selection_strategies\":[\"current_default\"]}' ;;\n  select) printf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"account-a\"}' ;;\n  *) exit 1 ;;\nesac\n",
         );
         let broker_argv =
             serde_json::to_string(&vec![broker.to_string_lossy().into_owned()]).unwrap();
@@ -20512,6 +20605,18 @@ esac
             resolve_initial_codex_account(AgentKind::Codex, Some("account-b".to_string())).unwrap();
         assert_eq!(explicit.0.as_deref(), Some("account-b"));
         assert_eq!(explicit.1.as_deref(), Some("explicit"));
+        // An explicit account is validated and must be listed before launch.
+        for (account, code) in [
+            ("delta", "codex-account-unknown"),
+            ("--format", "invalid-codex-account"),
+        ] {
+            assert_eq!(
+                resolve_initial_codex_account(AgentKind::Codex, Some(account.to_string()))
+                    .unwrap_err()
+                    .code(),
+                code
+            );
+        }
 
         let old_broker = executable(
             &tmp.path().join("old-broker"),
@@ -20523,6 +20628,31 @@ esac
         assert_eq!(
             resolve_initial_codex_account(AgentKind::Codex, None).unwrap(),
             (None, None)
+        );
+
+        // A broker failure while choosing the automatic default leaves the
+        // session unbound; an explicit account still fails closed.
+        let _failing = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            r#"["/bin/false"]"#,
+        );
+        assert_eq!(
+            resolve_initial_codex_account(AgentKind::Codex, None).unwrap(),
+            (None, None)
+        );
+        assert_eq!(
+            resolve_initial_codex_account(AgentKind::Codex, Some("account-b".to_string()))
+                .unwrap_err()
+                .code(),
+            "codex-account-broker-rejected"
+        );
+        let _unset = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+        assert_eq!(
+            resolve_initial_codex_account(AgentKind::Codex, Some("account-b".to_string()))
+                .unwrap_err()
+                .code(),
+            "codex-account-unsupported"
         );
     }
 
@@ -24103,11 +24233,7 @@ esac
     async fn codex_account_switch_routes_the_nickname_to_the_exact_runtime_control() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = EnvGuard::set(
-            &lock,
-            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
-            r#"["/bin/false"]"#,
-        );
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["gamania", "sym"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "account-switch").unwrap();
@@ -24184,11 +24310,7 @@ esac
     async fn codex_account_switch_queues_during_a_working_turn_without_control_dispatch() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = EnvGuard::set(
-            &lock,
-            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
-            r#"["/bin/false"]"#,
-        );
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["gamania", "sym"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-queued");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let mut record = load_session_record(&st.context, "account-switch-queued").unwrap();
@@ -24254,11 +24376,7 @@ esac
     async fn codex_account_switch_queues_an_unbound_session_during_a_working_turn() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = EnvGuard::set(
-            &lock,
-            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
-            r#"["/bin/false"]"#,
-        );
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["gamania", "sym"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "unbound-account-switch-queued");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "unbound-account-switch-queued").unwrap();
@@ -24329,14 +24447,52 @@ esac
     }
 
     #[tokio::test]
+    async fn codex_account_switch_refuses_an_account_the_broker_does_not_list() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["gamania"]);
+        let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-unknown");
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let record = load_session_record(&st.context, "account-switch-unknown").unwrap();
+        crate::activity::activate_runtime(&st.context, &record).unwrap();
+        let (handle, mut commands) = codex_app_server::control_channel();
+        st.codex_controls.lock().unwrap().insert(
+            record.id.clone(),
+            CodexControlEntry {
+                launch_id: launch_id.clone(),
+                handle,
+            },
+        );
+
+        for (account, status_code, code) in [
+            ("delta", StatusCode::BAD_REQUEST, "codex-account-unknown"),
+            ("--format", StatusCode::BAD_REQUEST, "invalid-codex-account"),
+        ] {
+            let (status, body) = call(
+                router(st.clone()),
+                put_json(
+                    "/sessions/account-switch-unknown/account",
+                    Some(TOKEN),
+                    json!({ "account": account, "expected_session_incarnation": launch_id }),
+                ),
+            )
+            .await;
+            assert_eq!(status, status_code, "body={body}");
+            assert_eq!(body["error"]["code"], code);
+        }
+        assert!(matches!(
+            commands.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+        let persisted = load_session_record(&st.context, &record.id).unwrap();
+        assert!(!crate::codex_account::binding_is_present(&persisted));
+    }
+
+    #[tokio::test]
     async fn codex_account_switch_serializes_full_id_and_prefix_as_one_transaction() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = EnvGuard::set(
-            &lock,
-            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
-            r#"["/bin/false"]"#,
-        );
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["gamania", "sym"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-serialized");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "account-switch-serialized").unwrap();
@@ -28025,7 +28181,7 @@ esac
         fs::write(
             &broker,
             r#"#!/bin/sh
-printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts":[{"account":"gamania","label":"Gamania","plan":"team"}]}'
+printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts":[{"account":"gamania","label":"Gamania","plan":"team"}],"selection_strategies":["current_default","next_with_capacity","future_strategy"]}'
 "#,
         )
         .unwrap();
@@ -28042,8 +28198,13 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts"
         let (status, body) = call(router(st), get_auth("/codex/accounts", Some(TOKEN))).await;
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert_eq!(body["data"]["machine"], MACHINE);
+        assert_eq!(body["data"]["provider"], "codex");
         assert_eq!(body["data"]["accounts"][0]["account"], "gamania");
         assert_eq!(body["data"]["accounts"][0]["label"], "Gamania");
+        assert_eq!(
+            body["data"]["selection_strategies"],
+            json!(["current_default", "next_with_capacity"])
+        );
         assert_eq!(
             body["data"]["readiness"],
             json!({
@@ -28421,6 +28582,7 @@ esac
         let (status, body) = call(router(st), get_auth("/claude/accounts", Some(TOKEN))).await;
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert_eq!(body["data"]["machine"], MACHINE);
+        assert_eq!(body["data"]["provider"], "claude");
         assert_eq!(
             body["data"]["accounts"],
             json!([
@@ -28439,18 +28601,27 @@ esac
     }
 
     #[tokio::test]
-    async fn sessions_capabilities_advertise_claude_account_switch_only_with_a_broker() {
+    async fn sessions_capabilities_advertise_account_switch_only_with_a_broker() {
         let lock = GlobalStateLock::new();
+        let _no_claude = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
+        let _no_codex = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let (status, body) = call(router(st.clone()), get("/sessions")).await;
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert_eq!(body["data"]["capabilities"]["claude_account_switch"], false);
+        assert_eq!(body["data"]["capabilities"]["codex_account_switch"], false);
 
         let _broker = claude_broker_fixture(&lock, tmp.path());
-        let (status, body) = call(router(st), get("/sessions")).await;
+        let (status, body) = call(router(st.clone()), get("/sessions")).await;
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert_eq!(body["data"]["capabilities"]["claude_account_switch"], true);
+        assert_eq!(body["data"]["capabilities"]["codex_account_switch"], false);
+
+        let _codex_broker = codex_listing_broker(&lock, tmp.path(), &["gamania"]);
+        let (status, body) = call(router(st), get("/sessions")).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["capabilities"]["codex_account_switch"], true);
     }
 
     #[tokio::test]
@@ -28504,6 +28675,61 @@ esac
             )),
             "{calls:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn account_switch_statuses_match_across_providers() {
+        let lock = GlobalStateLock::new();
+        let no_claude = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
+        let no_codex = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        seed_bound_claude_session(tmp.path(), "claude-status", &cwd, "alpha");
+        let codex_launch = seed_codex_app_server_session(tmp.path(), "codex-status");
+        let log = tmp.path().join("tmux.log");
+        let st = state(tmp.path(), Some(TOKEN), resume_tmux(tmp.path(), &log));
+        let switch = |id: &str, incarnation: &str| {
+            put_json(
+                &format!("/sessions/{id}/account"),
+                Some(TOKEN),
+                json!({"account":"beta","expected_session_incarnation":incarnation}),
+            )
+        };
+
+        // Without a broker, both providers report `*-account-unsupported` as 409.
+        for (id, incarnation, code) in [
+            (
+                "claude-status",
+                "never-launched-fixture",
+                "claude-account-unsupported",
+            ),
+            (
+                "codex-status",
+                codex_launch.as_str(),
+                "codex-account-unsupported",
+            ),
+        ] {
+            let (status, body) = call(router(st.clone()), switch(id, incarnation)).await;
+            assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+            assert_eq!(body["error"]["code"], code);
+        }
+
+        // A stale incarnation is a 409 conflict for both providers.
+        drop((no_claude, no_codex));
+        let _claude = claude_broker_fixture(&lock, tmp.path());
+        let _codex = codex_listing_broker(&lock, tmp.path(), &["beta"]);
+        for (id, code) in [
+            (
+                "claude-status",
+                "claude-account-session-incarnation-conflict",
+            ),
+            ("codex-status", "codex-account-session-incarnation-conflict"),
+        ] {
+            let (status, body) = call(router(st.clone()), switch(id, "stale-incarnation")).await;
+            assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+            assert_eq!(body["error"]["code"], code);
+        }
     }
 
     #[tokio::test]

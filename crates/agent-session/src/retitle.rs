@@ -369,11 +369,9 @@ impl RetitleConfig {
         }
         match self.provider.as_str() {
             "codex_subscription"
-                if ((self
-                    .account
-                    .as_deref()
-                    .is_some_and(|account| safe_label(account, 64))
-                    && self.account_selection.is_none())
+                if ((self.account.as_deref().is_some_and(
+                    nils_common::provider_runtime::accounts::is_valid_account_nickname,
+                ) && self.account_selection.is_none())
                     || (self.account.is_none()
                         && self.account_selection.as_deref() == Some("default_with_capacity")))
                     && self.codex_bin.as_deref().is_some_and(Path::is_absolute)
@@ -4478,6 +4476,10 @@ mod tests {
             r#"{"provider":"codex_subscription","account":"sym","account_selection":"default_with_capacity","codex_bin":"/usr/bin/codex"}"#,
             r#"{"provider":"codex_subscription","account_selection":"unknown","codex_bin":"/usr/bin/codex"}"#,
             r#"{"provider":"codex_subscription","codex_bin":"/usr/bin/codex"}"#,
+            // The account is a broker nickname, so it follows the shared rule.
+            r#"{"provider":"codex_subscription","account":"--format","codex_bin":"/usr/bin/codex"}"#,
+            r#"{"provider":"codex_subscription","account":"..","codex_bin":"/usr/bin/codex"}"#,
+            r#"{"provider":"codex_subscription","account":"has space","codex_bin":"/usr/bin/codex"}"#,
         ] {
             assert_eq!(RetitleConfig::parse(invalid).unwrap_err(), "config_invalid");
         }

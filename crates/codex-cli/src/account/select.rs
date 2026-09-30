@@ -40,8 +40,10 @@ pub const MIN_REMAINING_PERCENT: i64 = 1;
 /// Upper bound on assessed candidates; extra profiles (in nickname order) are
 /// ignored so output and fetch fan-out stay bounded.
 pub const MAX_CANDIDATES: usize = 64;
-/// Nicknames follow the account-broker grammar: `[A-Za-z0-9._-]{1,64}`.
-pub const MAX_NICKNAME_BYTES: usize = 64;
+/// Nicknames follow the shared account grammar:
+/// `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`.
+pub const MAX_NICKNAME_BYTES: usize =
+    nils_common::provider_runtime::accounts::MAX_ACCOUNT_NICKNAME_BYTES;
 
 const WEEKLY_LABEL: &str = "weekly";
 
@@ -352,13 +354,7 @@ fn first_eligible_after(
 
 /// Whether `value` is a valid profile nickname.
 pub fn valid_nickname(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_NICKNAME_BYTES
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-        && value != "."
-        && value != ".."
+    nils_common::provider_runtime::accounts::is_valid_account_nickname(value)
 }
 
 /// One configured profile. The path stays in-process and is never serialized.
@@ -636,7 +632,7 @@ pub fn run(options: &SelectOptions) -> Result<i32> {
         return emit_usage_error(
             options.output_json,
             "invalid-nickname",
-            "Profile nicknames must match [A-Za-z0-9._-]{1,64}.",
+            "Profile nicknames must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}.",
         );
     }
 

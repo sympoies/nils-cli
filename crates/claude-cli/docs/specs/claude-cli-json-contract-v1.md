@@ -8,6 +8,8 @@ This specification extends
 - `claude-cli usage --format json`
 - `claude-cli prompt-segment status --format json`
 - `claude-cli auth status --format json`
+- the `claude-cli auth` profile commands listed under
+  [Auth profiles](#auth-profiles)
 - `claude-cli agent doctor --format json`
 
 Text remains the default. JSON is opt-in and is emitted to stdout as one
@@ -20,6 +22,7 @@ versioned envelope.
 | `usage` | `claude-cli.usage.v1` | `result` or `error` |
 | `prompt-segment status` | `claude-cli.prompt-segment.v1` | `result` |
 | `auth status` | `claude-cli.auth.v1` | `result` or `error` |
+| `auth save`, `auth use`, `auth remove`, `auth current`, `auth refresh`, `auth auto-refresh`, `auth remote pull` | `claude-cli.auth.v1` | `result` or `error` |
 | `agent doctor` | `claude-cli.agent.doctor.v1` | `result` |
 
 Every envelope contains `schema_version`, `command`, and `ok`. Additive fields
@@ -125,6 +128,38 @@ Other upstream exit values and the three-second child deadline are runtime
 errors. A non-`0`/`1` exit is classified before parsing stdout, so malformed
 diagnostic output cannot hide a runtime failure. Captured stdout and stderr
 share one aggregate limit while the child is still running.
+
+## Auth profiles
+
+Profiles are stored as `CLAUDE_SECRET_DIR/<name>.json`, where the name follows
+the shared account nickname rule `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` (a
+`name.json` target is accepted); anything else is `invalid-profile-name`
+(exit `64`). The current default is the single nickname line in
+`CLAUDE_SECRET_DIR/current`. Every command below takes `--format json` and
+emits the `command` shown with these stable result fields:
+
+| Command | `result` fields |
+| --- | --- |
+| `auth save [--yes] <name>` | `profile`, `account_uuid`, `replaced` |
+| `auth use <name\|name.json\|email>` | `target`, `profile`, `account_uuid`, `credentials_file`, `config_updated`, `keychain` |
+| `auth remove [--yes] <name>` | `profile`, `removed` |
+| `auth current` | `matched`, `profile`, `account_uuid`, `organization_uuid`, `expires_at`, `profiles` |
+| `auth refresh <name>...`, `auth auto-refresh` | `refreshed`, `skipped`, `failed[{profile, code, message}]`, optional `projected` and `projection_failed` |
+| `auth remote pull --ssh <host> (--name <name> \| --current) --access-only --write-active` | `ssh`, `profile`, `account_uuid`, `expires_at`, `credentials_file`, `config_updated`, `keychain`, `has_refresh_token` |
+| `auth remote pull --ssh <host> --all --into <dir> --access-only` | `ssh`, `into`, `current`, `profiles[{name, config_dir, written, keychain, expires_at, has_refresh_token, error?}]`, `pruned` |
+
+`auth remove` refuses the current default with `profile-is-current-default`;
+switch the default first. `auth use` reports an ambiguous target with
+`ambiguous-profile` and `auth current` without a recorded default with
+`matched: false`; both exit `2`. `auth remote export` prints the transport
+payload rather than an envelope.
+
+`auth current` and `diag rate-limits --all` agree on the current default: both
+read `CLAUDE_SECRET_DIR/current`. `auth remote pull --all --into <dir>` also
+records the authority's current default in `<dir>/.current` (one nickname line,
+owner-only, replaced atomically under the accounts lock), the file the host
+account broker reads, and removes a stale `.current` when the authority reports
+none.
 
 ## Agent doctor
 

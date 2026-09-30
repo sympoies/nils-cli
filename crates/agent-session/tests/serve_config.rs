@@ -19,6 +19,7 @@ const MANAGED_ENV: &[&str] = &[
     "AGENT_SESSION_LAUNCH_PROFILES",
     "AGENT_SESSION_RETITLE_CONFIG",
     "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+    "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER",
     "AGENT_SESSION_TOKEN",
 ];
 
@@ -29,6 +30,9 @@ schema_version = "agent-session.serve-config.v1"
 append = ["/opt/example/bin", "/opt/example/tools"]
 
 [codex_account_broker]
+argv = ["/opt/example/broker", "--mode", "serve"]
+
+[claude_account_broker]
 argv = ["/opt/example/broker", "--mode", "serve"]
 
 [retitle]
@@ -163,6 +167,7 @@ fn check_accepts_a_versioned_toml_document() {
     );
     assert_eq!(data["retitle"]["source"], "file");
     assert_eq!(data["codex_account_broker"]["source"], "file");
+    assert_eq!(data["claude_account_broker"]["source"], "file");
     assert_eq!(data["path"]["append"], 2);
     assert_eq!(warnings(&value), Vec::<String>::new());
 }
