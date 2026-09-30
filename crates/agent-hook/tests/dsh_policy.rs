@@ -1,9 +1,11 @@
 mod support;
 
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -269,6 +271,26 @@ fn session_json_records(state_home: &std::path::Path) -> Vec<std::path::PathBuf>
     records
 }
 
+/// Spawns the private agent-hook copy, retrying while Linux reports `ETXTBSY`.
+/// Tests in this binary copy and exec concurrently, so a sibling thread's
+/// spawn can briefly inherit the copy's write descriptor across its fork until
+/// that child execs; the busy state clears on its own within that window.
+fn spawn_retrying_text_busy(command: &mut Command) -> Child {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match command.spawn() {
+            Ok(child) => return child,
+            Err(error)
+                if error.kind() == io::ErrorKind::ExecutableFileBusy
+                    && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("copied agent-hook spawn: {error}"),
+        }
+    }
+}
+
 fn dispatch_with_release_binary(fixture: &Fixture, binary: &std::path::Path, input: &str) -> Value {
     dispatch_with_release_binary_env(fixture, binary, input, &[])
 }
@@ -294,7 +316,7 @@ fn dispatch_with_release_binary_env(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command.envs(envs.iter().copied());
-    let mut child = command.spawn().expect("copied agent-hook spawn");
+    let mut child = spawn_retrying_text_busy(&mut command);
     child
         .stdin
         .take()
