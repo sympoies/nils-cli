@@ -299,6 +299,10 @@ When a user systemd manager or `systemd-run` is unavailable, the daemon falls
 back to direct tmux launch. Pair the isolated scope with `KillMode=process` on
 the serve service for defense in depth.
 
+The scope passes tmux its arguments verbatim. On systemd 254 or newer the
+daemon adds `--expand-environment=no`, because newer `systemd-run` otherwise
+expands `${VAR}` and `$$` in scope command arguments.
+
 ### Restart after a binary upgrade
 
 A package-manager upgrade replaces or removes the installed `agent-session`
