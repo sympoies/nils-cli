@@ -2548,6 +2548,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "codex-account-session-incarnation-conflict"
         | "codex-account-session-busy"
         | "provider-session-already-running"
+        | "history-session-live"
         | "agent-blocked" => StatusCode::CONFLICT,
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
         "retitle-v3-objective-unavailable" => StatusCode::UNPROCESSABLE_ENTITY,
@@ -5333,6 +5334,7 @@ async fn history_resume_handler(
                 None,
             ));
         }
+        let restored = history_resume_identity(&context, &history)?;
         match history.provider.as_str() {
             "dsh" => {
                 let profile_id = history.agent_profile.as_deref().ok_or_else(|| {
@@ -5356,6 +5358,8 @@ async fn history_resume_handler(
                         cwd: PathBuf::from(history.cwd),
                         history_root: dsh_history.root.clone(),
                         title: history.title,
+                        title_state: restored.title_state,
+                        id: restored.id,
                         coordination_mode: cli::CoordinationMode::Advisory,
                         tmux_bin: Some(tmux_bin),
                         agent_bin: profile.agent_bin.clone(),
@@ -5394,8 +5398,8 @@ async fn history_resume_handler(
                         agent,
                         provider_resume_id: history.provider_session_id,
                         title: history.title,
-                        title_state: None,
-                        id: None,
+                        title_state: restored.title_state,
+                        id: restored.id,
                         coordination_mode: cli::CoordinationMode::Advisory,
                         tmux_bin: Some(tmux_bin),
                         agent_bin: profile.map(|profile| profile.agent_bin.clone()),
@@ -5425,6 +5429,55 @@ async fn history_resume_handler(
         Ok(Err(error)) => envelope_err(error),
         Err(_) => join_err(),
     }
+}
+
+/// Managed identity a history resume restores.
+struct RestoredHistoryIdentity {
+    /// The archived session id, when the archive recorded one and it is free.
+    id: Option<String>,
+    title_state: Option<crate::SessionTitleState>,
+}
+
+/// Refuse a conversation a live managed session already owns, so resume never
+/// gives one conversation two session ids, and restore the archived session id
+/// so peers addressing it keep reaching the conversation.
+fn history_resume_identity(
+    context: &CliContext,
+    history: &provider_history::HistorySession,
+) -> Result<RestoredHistoryIdentity, CliError> {
+    if let Some(live_id) = live_managed_session_for_history(context, &history.id) {
+        return Err(CliError::data(
+            "history-session-live",
+            "a live session already owns this conversation",
+            Some(json!({ "id": live_id })),
+        ));
+    }
+    let id = history
+        .archived_session_id
+        .clone()
+        .filter(|id| crate::validate_id(id).is_ok() && !crate::session_dir(context, id).exists());
+    Ok(RestoredHistoryIdentity {
+        id,
+        title_state: history.archived_title_state.clone(),
+    })
+}
+
+fn live_managed_session_for_history(context: &CliContext, history_id: &str) -> Option<String> {
+    let entries = fs::read_dir(context.state_dir.join("sessions")).ok()?;
+    entries.flatten().find_map(|entry| {
+        let id = entry.file_name().to_str()?.to_string();
+        if !managed_history_record_is_bounded(&entry.path()) {
+            return None;
+        }
+        let record = load_session_record(context, &id).ok()?;
+        let resume = record.provider_resume.as_ref()?;
+        (provider_history::stable_history_id(
+            &resume.provider,
+            crate::session_agent_profile(&record),
+            &resume.session_id,
+        ) == history_id)
+            .then_some(id)
+    })
 }
 
 fn history_resume_catalog_error(error: HistoryError) -> CliError {
@@ -19707,6 +19760,128 @@ esac
         assert_eq!(body["data"]["capabilities"]["resume"], true);
     }
 
+    #[test]
+    fn history_resume_restores_the_archived_session_id_only_while_it_is_free() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let transcripts = tmp.path().join("codex-sessions");
+        let day = transcripts.join("2026/09/30");
+        fs::create_dir_all(&day).unwrap();
+        fs::write(
+            day.join("rollout.jsonl"),
+            "{\"timestamp\":\"2026-09-30T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"resume-session-id\",\"cwd\":\"/work/example\",\"source\":\"cli\",\"timestamp\":\"2026-09-30T00:00:00Z\"}}\n",
+        )
+        .unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        seed_resumable_session(
+            tmp.path(),
+            "archived-owner",
+            "codex",
+            "hs-codex-archived-owner",
+            tmp.path(),
+            &["resume", "resume-session-id"],
+        );
+        let mut record = load_session_record(&context, "archived-owner").unwrap();
+        record.title = Some("Saved title".to_string());
+        crate::write_session_record(&context, &record).unwrap();
+        let tmux = executable(
+            &tmp.path().join("archive-tmux"),
+            "#!/usr/bin/env sh\ncase \"$1\" in\n  display-message|has-session) printf '%s\\n' \"can't find session: archive-me\" >&2; exit 1 ;;\n  *) exit 42 ;;\nesac\n",
+        );
+        let (archived, _) = crate::archive_session_with_expected_incarnation(
+            &context,
+            "archived-owner",
+            tmux,
+            "never-launched-fixture",
+        )
+        .unwrap();
+        assert_eq!(archived.session_id.as_deref(), Some("archived-owner"));
+        assert_eq!(archived.title.as_deref(), record.title.as_deref());
+        let catalog = HistoryCatalog::new(
+            vec![provider_history::HistorySource {
+                provider: "codex".to_string(),
+                agent_profile: None,
+                root: transcripts,
+            }],
+            provider_history::archive_root(tmp.path()),
+            provider_history::star_root(tmp.path()),
+        );
+        let history = catalog.resolve_fresh(&archived.history_id).unwrap();
+        assert_eq!(history.title.as_deref(), Some("Saved title"));
+
+        let restored = history_resume_identity(&context, &history).unwrap();
+        assert_eq!(restored.id.as_deref(), Some("archived-owner"));
+
+        // Another session took the id meanwhile: resume falls back to a new id.
+        fs::create_dir_all(tmp.path().join("sessions/archived-owner")).unwrap();
+        let restored = history_resume_identity(&context, &history).unwrap();
+        assert_eq!(restored.id, None);
+    }
+
+    #[tokio::test]
+    async fn history_resume_refuses_a_conversation_a_live_session_already_owns() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir(&cwd).unwrap();
+        let transcripts = tmp.path().join("codex-sessions");
+        let day = transcripts.join("2026/09/30");
+        fs::create_dir_all(&day).unwrap();
+        fs::write(
+            day.join("rollout.jsonl"),
+            format!(
+                "{{\"timestamp\":\"2026-09-30T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"resume-session-id\",\"cwd\":\"{}\",\"source\":\"cli\",\"timestamp\":\"2026-09-30T00:00:00Z\"}}}}\n",
+                cwd.display()
+            ),
+        )
+        .unwrap();
+        seed_resumable_session(
+            tmp.path(),
+            "live-owner",
+            "codex",
+            "hs-codex-live-owner",
+            &cwd,
+            &["resume", "resume-session-id"],
+        );
+        let log = tmp.path().join("tmux.log");
+        let tmux = resume_tmux(tmp.path(), &log);
+        let mut st = state(tmp.path(), Some(TOKEN), tmux);
+        Arc::get_mut(&mut st).unwrap().history_catalog = Arc::new(HistoryCatalog::new(
+            vec![provider_history::HistorySource {
+                provider: "codex".to_string(),
+                agent_profile: None,
+                root: transcripts,
+            }],
+            provider_history::archive_root(tmp.path()),
+            provider_history::star_root(tmp.path()),
+        ));
+        let id = provider_history::stable_history_id("codex", None, "resume-session-id");
+
+        let (status, body) = call(
+            router(st),
+            post_json(
+                &format!("/history/sessions/{id}/resume"),
+                Some(TOKEN),
+                json!({}),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+        assert_eq!(body["error"]["code"], "history-session-live");
+        assert_eq!(body["error"]["details"]["id"], "live-owner");
+        assert!(
+            !log.exists(),
+            "a live conversation must not launch a duplicate"
+        );
+        let sessions: Vec<_> = fs::read_dir(tmp.path().join("sessions"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(sessions, vec![std::ffi::OsString::from("live-owner")]);
+    }
+
     #[tokio::test]
     async fn history_resume_re_resolves_dsh_and_launches_canonical_exact_id() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -20318,6 +20493,8 @@ esac
             body["data"]["archived"]["provider_session_id"],
             "resume-session-id"
         );
+        // History resume reuses this id so peers addressing it still reach it.
+        assert_eq!(body["data"]["archived"]["session_id"], "archive-me");
         assert!(!tmp.path().join("sessions/archive-me").exists());
         let archive = tmp.path().join("history/archives").join(format!(
             "{}.json",

@@ -71,8 +71,14 @@ pub(crate) struct ArchivedSession {
     pub(crate) provider_session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) agent_profile: Option<String>,
+    /// The managed session id the archive removed, so a later history resume
+    /// can restore it. Absent in archives written before it was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) title_state: Option<crate::SessionTitleState>,
     pub(crate) cwd: String,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
@@ -114,6 +120,11 @@ pub(crate) struct HistorySession {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) starred_at: Option<String>,
     pub(crate) resumable: bool,
+    /// Resume input restored from the archive record, never listed.
+    #[serde(skip)]
+    pub(crate) archived_session_id: Option<String>,
+    #[serde(skip)]
+    pub(crate) archived_title_state: Option<crate::SessionTitleState>,
     #[serde(skip)]
     transcript_path: PathBuf,
     #[serde(skip)]
@@ -358,12 +369,13 @@ impl HistoryCatalog {
                     &item.provider_session_id,
                 );
                 if id == history_id {
+                    let archive = read_archive(&self.archives_root, &id);
                     return Ok(HistorySession {
                         id,
                         provider: "dsh".to_string(),
                         provider_session_id: item.provider_session_id,
                         agent_profile: Some(source.agent_profile.clone()),
-                        title: None,
+                        title: archive.as_ref().and_then(|archive| archive.title.clone()),
                         prompt_preview: None,
                         first_user_prompt_preview: None,
                         last_user_prompt_preview: None,
@@ -371,9 +383,13 @@ impl HistoryCatalog {
                         cwd: item.cwd,
                         created_at: item.created_at,
                         updated_at: item.updated_at,
-                        archived_at: None,
+                        archived_at: archive.as_ref().map(|archive| archive.archived_at.clone()),
                         starred_at: None,
                         resumable: false,
+                        archived_session_id: archive
+                            .as_ref()
+                            .and_then(|archive| archive.session_id.clone()),
+                        archived_title_state: archive.and_then(|archive| archive.title_state),
                         transcript_path: source.root.clone(),
                         incremental_catalog_stamp: item.revision,
                     });
@@ -1091,6 +1107,8 @@ fn scan_catalog(
                 session.id = archive.history_id.clone();
                 session.agent_profile = archive.agent_profile.clone();
                 session.title = archive.title.clone();
+                session.archived_session_id = archive.session_id.clone();
+                session.archived_title_state = archive.title_state.clone();
                 session.cwd = archive.cwd.clone();
                 session.repo_name = repo_name(&archive.cwd);
                 session.archived_at = Some(archive.archived_at.clone());
@@ -1158,6 +1176,8 @@ fn scan_catalog(
                 archived_at: archives.get(&id).map(|archive| archive.archived_at.clone()),
                 starred_at: stars.get(&id).cloned(),
                 resumable: false,
+                archived_session_id: None,
+                archived_title_state: None,
                 transcript_path: source.root.clone(),
                 incremental_catalog_stamp: item.revision,
             });
@@ -1633,6 +1653,8 @@ fn inspect_history_file(
         archived_at: None,
         starred_at: None,
         resumable: true,
+        archived_session_id: None,
+        archived_title_state: None,
         transcript_path: path.to_path_buf(),
         incremental_catalog_stamp: incremental_catalog_stamp(
             path,
@@ -3059,6 +3081,17 @@ fn matches_metadata(session: &HistorySession, machine: &str, query: Option<&str>
     .any(|value| value.to_lowercase().contains(&query))
 }
 
+/// The archive record for one history id, if a readable one exists.
+fn read_archive(root: &Path, history_id: &str) -> Option<ArchivedSession> {
+    let path = root.join(format!("{history_id}.json"));
+    if fs::metadata(&path).ok()?.len() > MAX_ARCHIVE_BYTES {
+        return None;
+    }
+    serde_json::from_slice::<ArchivedSession>(&fs::read(path).ok()?)
+        .ok()
+        .filter(|archive| archive.history_id == history_id)
+}
+
 fn read_archives(
     root: &Path,
     deadline: Instant,
@@ -3269,6 +3302,8 @@ mod tests {
             archived_at: None,
             starred_at: None,
             resumable: true,
+            archived_session_id: None,
+            archived_title_state: None,
             transcript_path: PathBuf::new(),
             incremental_catalog_stamp: String::new(),
         }
@@ -3480,6 +3515,68 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         assert!(write_star(&stars, "../escape", "2026-08-10T00:00:00Z").is_err());
         assert!(remove_star(&stars, "../escape").is_err());
         assert!(!tmp.path().join("escape.json").exists());
+    }
+
+    #[test]
+    fn resolved_archived_session_carries_its_managed_identity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("sessions/2026/09/30");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("rollout.jsonl"),
+            "{\"timestamp\":\"2026-09-30T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"abc\",\"cwd\":\"/work/example\",\"source\":\"cli\",\"timestamp\":\"2026-09-30T00:00:00Z\"}}\n",
+        )
+        .unwrap();
+        let history_id = stable_history_id("codex", None, "abc");
+        let archives = archive_root(tmp.path());
+        let title_state: crate::SessionTitleState = serde_json::from_value(serde_json::json!({
+            "topic": "Saved topic",
+            "topic_source": "auto",
+            "references": [],
+            "activity": "Saved activity"
+        }))
+        .unwrap();
+        write_archive(
+            &archives,
+            &ArchivedSession {
+                schema_version: "agent-session.history-archive.v1".to_string(),
+                history_id: history_id.clone(),
+                provider: "codex".to_string(),
+                provider_session_id: "abc".to_string(),
+                agent_profile: None,
+                session_id: Some("managed-abc".to_string()),
+                title: Some("Saved topic - Saved activity".to_string()),
+                title_state: Some(title_state.clone()),
+                cwd: "/work/example".to_string(),
+                created_at: "2026-09-30T00:00:00Z".to_string(),
+                updated_at: "2026-09-30T00:00:00Z".to_string(),
+                archived_at: "2026-09-30T00:00:01Z".to_string(),
+            },
+        )
+        .unwrap()
+        .commit();
+        let catalog = HistoryCatalog::new(
+            vec![HistorySource {
+                provider: "codex".into(),
+                agent_profile: None,
+                root: tmp.path().join("sessions"),
+            }],
+            archives,
+            star_root(tmp.path()),
+        );
+
+        let session = catalog.resolve_fresh(&history_id).unwrap();
+
+        assert_eq!(
+            session.title.as_deref(),
+            Some("Saved topic - Saved activity")
+        );
+        assert_eq!(session.archived_session_id.as_deref(), Some("managed-abc"));
+        assert_eq!(session.archived_title_state, Some(title_state));
+        // The managed identity is resume input, not part of the history API.
+        let listed = serde_json::to_value(&session).unwrap();
+        assert!(listed.get("archived_session_id").is_none());
+        assert!(listed.get("archived_title_state").is_none());
     }
 
     #[test]
@@ -5215,6 +5312,8 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
                 archived_at: None,
                 starred_at: None,
                 resumable: true,
+                archived_session_id: None,
+                archived_title_state: None,
                 transcript_path: PathBuf::new(),
                 incremental_catalog_stamp: String::new(),
             }],
@@ -5532,7 +5631,9 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
                 provider: "codex".into(),
                 provider_session_id: "shared-id".into(),
                 agent_profile: Some("profile-a".into()),
+                session_id: None,
                 title: Some("Archived profile A".into()),
+                title_state: None,
                 cwd: "/work/profile-a".into(),
                 created_at: "2026-08-31T00:00:00Z".into(),
                 updated_at: "2026-08-31T00:00:01Z".into(),
@@ -5599,7 +5700,9 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
                 provider: "codex".into(),
                 provider_session_id: "missing".into(),
                 agent_profile: None,
+                session_id: None,
                 title: Some("Orphaned archive".into()),
+                title_state: None,
                 cwd: "/work/example".into(),
                 created_at: "2026-08-31T00:00:00Z".into(),
                 updated_at: "2026-08-31T00:00:01Z".into(),
@@ -5636,7 +5739,9 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
             provider: "codex".to_string(),
             provider_session_id: "abc".to_string(),
             agent_profile: None,
+            session_id: None,
             title: Some("original".to_string()),
+            title_state: None,
             cwd: "/work/example".to_string(),
             created_at: "2026-08-31T00:00:00Z".to_string(),
             updated_at: "2026-08-31T00:00:01Z".to_string(),
