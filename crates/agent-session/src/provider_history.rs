@@ -16,7 +16,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::provider_prompt::{
-    ProviderPromptSource, claude_user_message_text, parse_history_user_prompt, read_last_prompt,
+    ProviderPromptSource, claude_queued_prompt_text, claude_user_message_text,
+    parse_history_user_prompt, read_last_prompt,
 };
 
 const SCAN_MAX_ENTRIES: usize = 10_000;
@@ -2987,17 +2988,20 @@ fn normalize_message(
             Some((role.to_string(), text, timestamp, human_prompt))
         }
         "claude" => {
-            let role = value.get("type")?.as_str()?;
-            if !matches!(role, "user" | "assistant")
-                || value.get("isSidechain").and_then(Value::as_bool) == Some(true)
-            {
+            // A prompt sent while a turn was running is an attachment row.
+            let role = match value.get("type")?.as_str()? {
+                "attachment" => "user",
+                role @ ("user" | "assistant") => role,
+                _ => return None,
+            };
+            if value.get("isSidechain").and_then(Value::as_bool) == Some(true) {
                 return None;
             }
-            let message = value.get("message")?;
             let text = if role == "user" {
-                claude_user_message_text(value)?
+                claude_user_message_text(value)
+                    .or_else(|| claude_queued_prompt_text(value).map(str::to_string))?
             } else {
-                content_text(message.get("content")?)
+                content_text(value.get("message")?.get("content")?)
             };
             let human_prompt = role == "user"
                 && parse_history_user_prompt(
@@ -5396,6 +5400,87 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
                 ("user", "first"),
                 ("user", "second"),
                 ("assistant", "answer")
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_history_includes_human_prompts_queued_during_a_turn() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("projects/repo");
+        fs::create_dir_all(&root).unwrap();
+        let queued = |attachment: Value, is_sidechain: bool| {
+            serde_json::json!({
+                "sessionId": "claude-id",
+                "cwd": "/work/claude",
+                "type": "attachment",
+                "isSidechain": is_sidechain,
+                "timestamp": "2026-10-01T00:00:02Z",
+                "attachment": attachment,
+            })
+            .to_string()
+        };
+        let mailbox = "Coordination mailbox has unread messages; run agent-session message inbox --session s --state unread --limit 50 --format json.";
+        let lines = [
+            serde_json::json!({"sessionId": "claude-id", "cwd": "/work/claude", "type": "user", "promptSource": "typed", "message": {"role": "user", "content": "first"}}).to_string(),
+            queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "queued human"}), false),
+            queued(serde_json::json!({"type": "queued_command", "prompt": "queued without mode or origin"}), false),
+            queued(serde_json::json!({"type": "queued_command", "commandMode": "task-notification", "prompt": "task done"}), false),
+            queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "peer"}, "prompt": "peer message"}), false),
+            queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "auto-continuation"}, "prompt": "keep going"}), false),
+            queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "isMeta": true, "prompt": "meta prompt"}), false),
+            queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "<task-notification>\n<task-id>t</task-id>"}), false),
+            queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "<cross-session-message from=\"x\">hi</cross-session-message>"}), false),
+            queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": mailbox}), false),
+            queued(serde_json::json!({"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "sidechain prompt"}), true),
+            queued(serde_json::json!({"type": "hook_success", "content": "hook output"}), false),
+            serde_json::json!({"sessionId": "claude-id", "cwd": "/work/claude", "type": "user", "promptSource": "typed", "message": {"role": "user", "content": mailbox}}).to_string(),
+            serde_json::json!({"sessionId": "claude-id", "cwd": "/work/claude", "type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "answer"}]}}).to_string(),
+        ];
+        fs::write(root.join("claude-id.jsonl"), lines.join("\n") + "\n").unwrap();
+        let sources = [HistorySource {
+            provider: "claude".into(),
+            agent_profile: None,
+            root: tmp.path().join("projects"),
+        }];
+
+        let page = list(
+            &sources,
+            HistoryRoots {
+                archives: &tmp.path().join("archives"),
+                stars: &tmp.path().join("stars"),
+            },
+            "test",
+            Some("first"),
+            Some("claude"),
+            None,
+            10,
+        )
+        .unwrap();
+        let result = messages(
+            &sources,
+            &page.sessions[0].id,
+            None,
+            20,
+            HistoryMessageDirection::Forward,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result
+                .messages
+                .iter()
+                .map(|message| (
+                    message.role.as_str(),
+                    message.text.as_str(),
+                    message.human_prompt
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("user", "first", true),
+                ("user", "queued human", true),
+                ("user", "queued without mode or origin", true),
+                ("assistant", "answer", false)
             ]
         );
     }
