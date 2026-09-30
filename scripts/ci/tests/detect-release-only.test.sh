@@ -220,6 +220,11 @@ producer_repo="$tmp_root/producer"
 git clone -q --shared "$repo_root" "$producer_repo"
 git -C "$producer_repo" config user.name "Release CI Test"
 git -C "$producer_repo" config user.email "release-ci@example.test"
+# Newer Git detaches automatic maintenance after a commit. A detached
+# maintenance run still writing into this clone makes the EXIT trap's rm -rf
+# fail with "Directory not empty" after the test has passed.
+git -C "$producer_repo" config maintenance.auto false
+git -C "$producer_repo" config gc.auto 0
 
 # Local validation runs before this change is committed, so copy the current
 # producer into the clone and make it part of the immutable fixture baseline.
