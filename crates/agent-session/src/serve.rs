@@ -20648,11 +20648,19 @@ esac
             "codex-account-broker-rejected"
         );
         let _unset = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
-        assert_eq!(
+        let unsupported =
             resolve_initial_codex_account(AgentKind::Codex, Some("account-b".to_string()))
                 .unwrap_err()
-                .code(),
-            "codex-account-unsupported"
+                .into_inner();
+        assert_eq!(unsupported.code, "codex-account-unsupported");
+        // One error kind for the condition, whichever Codex path reports it.
+        assert_eq!(unsupported.exit_code, exit::DATA);
+        assert_eq!(
+            crate::codex_account::list_accounts()
+                .unwrap_err()
+                .into_inner()
+                .exit_code,
+            exit::DATA
         );
     }
 
@@ -24370,6 +24378,96 @@ esac
         let view = crate::codex_account::view_for_record(&persisted);
         assert_eq!(view.selected_account.as_deref(), Some("gamania"));
         assert_eq!(view.next.unwrap().account.as_deref(), Some("sym"));
+    }
+
+    #[tokio::test]
+    async fn codex_account_switch_to_the_bound_account_skips_the_broker_list_check() {
+        let lock = GlobalStateLock::new();
+        let _no_claude = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
+        let tmp = tempfile::TempDir::new().unwrap();
+        // The broker lists `sym` but not the bound `gamania`.
+        let listing = codex_listing_broker(&lock, tmp.path(), &["sym"]);
+        let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-reselect");
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let mut record = load_session_record(&st.context, "account-switch-reselect").unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::write_session_record(&st.context, &record).unwrap();
+        crate::codex_account::finish_binding(
+            &st.context,
+            &record.id,
+            &launch_id,
+            "gamania",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+        record = load_session_record(&st.context, &record.id).unwrap();
+        crate::activity::activate_runtime(&st.context, &record).unwrap();
+        let event = serde_json::from_value(json!({
+            "schema_version": crate::activity::TURN_EVENT_VERSION,
+            "event_id": "turn-start",
+            "runtime_id": launch_id,
+            "provider": "codex",
+            "provider_turn_id": "turn-account-switch-reselect",
+            "kind": "turn_started",
+            "confidence": "authoritative"
+        }))
+        .unwrap();
+        crate::activity::ingest_event(&st.context, &record.id, event).unwrap();
+        let (handle, mut commands) = codex_app_server::control_channel();
+        st.codex_controls.lock().unwrap().insert(
+            record.id.clone(),
+            CodexControlEntry {
+                launch_id: launch_id.clone(),
+                handle,
+            },
+        );
+        let switch = |account: &str| {
+            put_json(
+                "/sessions/account-switch-reselect/account",
+                Some(TOKEN),
+                json!({ "account": account, "expected_session_incarnation": launch_id }),
+            )
+        };
+
+        let (status, body) = call(router(st.clone()), switch("sym")).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["codex_account"]["next"]["account"], "sym");
+
+        // Re-selecting the bound account must not consult the broker list: a
+        // failing broker that records any call replaces the listing one.
+        drop(listing);
+        let calls = tmp.path().join("failing-broker-calls");
+        let failing = executable(
+            &tmp.path().join("failing-broker"),
+            &format!(
+                "#!/usr/bin/env sh\nprintf '%s\\n' \"$*\" >> {}\nexit 1\n",
+                shell_words::quote(&calls.to_string_lossy())
+            ),
+        );
+        let _failing = EnvGuard::set(
+            &lock,
+            "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
+            &serde_json::to_string(&vec![failing.to_string_lossy().into_owned()]).unwrap(),
+        );
+        let (status, body) = call(router(st.clone()), switch("gamania")).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["codex_account"]["selected_account"], "gamania");
+        assert!(
+            body["data"]["codex_account"].get("next").is_none(),
+            "re-selecting the bound account cancels the queued intent: {body}"
+        );
+        assert!(!calls.exists(), "the broker list must not be consulted");
+        assert!(matches!(
+            commands.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+        let persisted = load_session_record(&st.context, &record.id).unwrap();
+        assert!(
+            crate::codex_account::view_for_record(&persisted)
+                .next
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -28413,7 +28511,8 @@ esac
 
     #[tokio::test]
     async fn create_claude_session_without_a_broker_keeps_the_host_login() {
-        let _lock = GlobalStateLock::new();
+        let lock = GlobalStateLock::new();
+        let _no_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("repo");
         fs::create_dir_all(&cwd).unwrap();
@@ -28448,7 +28547,7 @@ esac
             ),
         )
         .await;
-        assert_ne!(status, StatusCode::OK, "body={body}");
+        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
         assert_eq!(body["error"]["code"], "claude-account-unsupported");
     }
 
@@ -28544,7 +28643,8 @@ esac
 
     #[tokio::test]
     async fn resume_of_a_bound_claude_session_fails_closed_without_a_broker() {
-        let _lock = GlobalStateLock::new();
+        let lock = GlobalStateLock::new();
+        let _no_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("repo");
         fs::create_dir_all(&cwd).unwrap();
@@ -28558,7 +28658,7 @@ esac
         )
         .await;
 
-        assert_ne!(status, StatusCode::OK, "body={body}");
+        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
         assert_eq!(body["error"]["code"], "claude-account-unsupported");
         assert!(
             !fs::read_to_string(&log)
@@ -28566,6 +28666,23 @@ esac
                 .contains("new-session"),
             "a bound session must never fall back to the host login"
         );
+    }
+
+    #[tokio::test]
+    async fn account_list_routes_without_a_broker_are_409_unsupported() {
+        let lock = GlobalStateLock::new();
+        let _no_claude = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
+        let _no_codex = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        for (route, code) in [
+            ("/codex/accounts", "codex-account-unsupported"),
+            ("/claude/accounts", "claude-account-unsupported"),
+        ] {
+            let (status, body) = call(router(st.clone()), get_auth(route, Some(TOKEN))).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{route}: body={body}");
+            assert_eq!(body["error"]["code"], code);
+        }
     }
 
     #[tokio::test]

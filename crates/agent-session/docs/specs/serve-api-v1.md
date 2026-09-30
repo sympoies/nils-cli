@@ -542,12 +542,14 @@ recorded in `sympoies/nils-cli#1409`.
   accepted by capability instead of an exact-version allowlist; exact protocol
   attention remains limited to explicitly audited versions and otherwise falls
   back to hook authority. The response never contains access tokens, ChatGPT
-  account ids, auth paths, or broker diagnostics.
+  account ids, auth paths, or broker diagnostics. Without a configured broker
+  the route returns `409 codex-account-unsupported`.
 - `GET /claude/accounts` — authenticated nickname-only Claude account
   inventory from the configured Claude account broker:
   `{ "machine", "provider": "claude", "accounts": [{ "account", "label"?,
   "plan"? }], "selection_strategies" }` (`provider` is additive). It never
-  contains credentials or account directory paths.
+  contains credentials or account directory paths. Without a configured broker
+  the route returns `409 claude-account-unsupported`.
 - `GET /activity/events` — authenticated metadata-only SSE for activity snapshots and heartbeats. Events carry a daemon-boot
   `stream_id` and increasing `sequence`; `Last-Event-ID` enables count-and-byte-bounded replay, while stale/foreign cursors
   and lagged consumers receive a reset. Concurrent subscribers are daemon-capped and saturation returns a stable
@@ -684,7 +686,8 @@ recorded in `sympoies/nils-cli#1409`.
   fresh Codex create may additionally provide
   `codex_account`; like `claude_account`, an explicit account must be a valid
   nickname the broker lists (`invalid-codex-account` /
-  `codex-account-unknown`, both HTTP 400) before anything launches, and when a
+  `codex-account-unknown`, both HTTP 400; `409 codex-account-unsupported`
+  without a broker) before anything launches, and when a
   prompt is also present, the daemon completes account binding before
   submitting that prompt. A fresh, profile-free Claude create may provide
   `claude_account`; see the [Claude account broker](#claude-account-broker).
@@ -1088,6 +1091,13 @@ as an option (`--format`) or a dot path segment. Credential values and account
 directory paths stay in daemon memory or durable session state only and are
 never added to HTTP projections.
 
+A missing broker is one condition with one status, `409
+<provider>-account-unsupported`, on every route that needs it: `GET
+/{provider}/accounts`, `PUT /sessions/{id}/account`, `POST /sessions` with an
+explicit `<provider>_account`, and `POST /sessions/{id}/resume` of a session
+bound to that provider's account. The same applies to `409
+<provider>-account-session-incarnation-conflict`.
+
 The per-provider differences are the protocol and what the broker returns.
 
 ### Codex account broker
@@ -1135,14 +1145,14 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   `current_default`, the daemon records that account as `default_at_launch`.
   Without a configured broker, a Claude session keeps the host login exactly as
   before, and an explicit `claude_account` fails with
-  `claude-account-unsupported`.
+  `409 claude-account-unsupported`.
 - Launch: the account is materialized before tmux starts and the provider runs
   with `CLAUDE_CONFIG_DIR=<config_dir>`. The session record keeps a durable
   `agent-session.claude-account-binding.v1` binding (nickname, selection
   source, revision, the runtime it was applied to, and the directory).
 - Resume: every resume re-materializes the bound nickname. A bound session
   whose broker is no longer configured fails closed with
-  `claude-account-unsupported` rather than falling back to the host login.
+  `409 claude-account-unsupported` rather than falling back to the host login.
 - Projection: Claude sessions carry an additive `claude_account` object
   (`agent-session.claude-account.v1`: `supported`, `state`
   `bound`/`unbound`/`failed`/`unsupported`, `selected_account`,

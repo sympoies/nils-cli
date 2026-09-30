@@ -156,6 +156,16 @@ the error message.
 - Informational fields may be added/adjusted, but must not break stable field interpretation.
 - Keep prior schema behavior available until consumers migrate.
 
+### Stored secret names
+
+A stored secret name (`<name>` or `<name>.json` in `CODEX_SECRET_DIR`) that
+the account tooling resolves follows the shared account nickname rule
+`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. It used to also accept a leading `.`, `_`,
+or `-` and names longer than 64 bytes. Such a name is now ignored where secret
+names are discovered (`account select` candidates, inferring the remote name
+for the active login) and rejected where one is given (`auth remote pull
+--name`, `CODEX_AUTH_REMOTE_NAME`). Rename those secrets to a valid nickname.
+
 ## Examples
 
 ### diag rate-limits (single, success: `result`)

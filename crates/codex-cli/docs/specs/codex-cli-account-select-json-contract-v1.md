@@ -23,7 +23,9 @@ the kebab-case name.
   the filename without `.json`.
 - Nicknames must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, the shared account
   nickname rule. Profiles with other filenames are ignored, and so are profiles
-  past the first 64 in nickname order.
+  past the first 64 in nickname order. The rule used to accept a leading `.`,
+  `_`, or `-` and names longer than 64 bytes; a profile named that way is no
+  longer a candidate and must be renamed to a valid nickname.
 - The default profile is the one whose content, or failing that identity,
   matches the active auth file (`CODEX_AUTH_FILE`). It is the same match
   `diag rate-limits --all` uses to mark the current account.

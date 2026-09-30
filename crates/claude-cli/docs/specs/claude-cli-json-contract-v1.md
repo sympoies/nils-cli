@@ -135,7 +135,16 @@ Profiles are stored as `CLAUDE_SECRET_DIR/<name>.json`, where the name follows
 the shared account nickname rule `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` (a
 `name.json` target is accepted); anything else is `invalid-profile-name`
 (exit `64`). The current default is the single nickname line in
-`CLAUDE_SECRET_DIR/current`. Every command below takes `--format json` and
+`CLAUDE_SECRET_DIR/current`.
+
+The nickname rule became stricter in the account alignment change: it used to
+accept a leading `.`, `_`, or `-` and names longer than 64 bytes. A stored
+profile whose name no longer fits is left out of `auth current`'s `profiles`
+list, and naming it in a command is `invalid-profile-name`. A `current` file that records such a name
+makes `auth current` fail. Rename the profile file to a valid nickname, then
+run `auth use <name>` again if it was the current default.
+
+Every command below takes `--format json` and
 emits the `command` shown with these stable result fields:
 
 | Command | `result` fields |

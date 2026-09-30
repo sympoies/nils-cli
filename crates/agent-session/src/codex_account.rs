@@ -385,11 +385,7 @@ pub(crate) fn set_initial_binding_with_source(
         ));
     }
     if broker_argv()?.is_none() {
-        return Err(CliError::data(
-            "codex-account-unsupported",
-            "Codex account switching is not configured for this daemon",
-            None,
-        ));
+        return Err(unsupported_error());
     }
     store_binding(
         record,
@@ -495,11 +491,7 @@ pub(crate) fn begin_refresh_binding(
     let mut record = load_session_record(context, id)?;
     ensure_runtime(&record, expected_launch_id)?;
     if !broker_is_configured() {
-        return Err(CliError::data(
-            "codex-account-unsupported",
-            "Codex account switching is not configured for this daemon",
-            Some(json!({ "id": id })),
-        ));
+        return Err(unsupported_error_with(Some(json!({ "id": id }))));
     }
     let prior = match decode_binding(&record) {
         DecodedBinding::Valid(binding)
@@ -824,11 +816,7 @@ pub(crate) fn begin_switch_binding(
         )
     })?;
     if !broker_is_configured() {
-        return Err(CliError::data(
-            "codex-account-unsupported",
-            "Codex account switching is not configured for this daemon",
-            Some(json!({ "id": id })),
-        ));
+        return Err(unsupported_error_with(Some(json!({ "id": id }))));
     }
     let activity = crate::activity::state_for_view(context, &record);
     let Some(activity) =
@@ -1131,11 +1119,7 @@ fn queue_next_account_inner(
         )
     })?;
     if !broker_is_configured() {
-        return Err(CliError::data(
-            "codex-account-unsupported",
-            "Codex account switching is not configured for this daemon",
-            Some(json!({ "id": id })),
-        ));
+        return Err(unsupported_error_with(Some(json!({ "id": id }))));
     }
     if let Some(expected_next) = expected_next {
         let current_next = next_account_identity(&record)?;
@@ -1518,13 +1502,7 @@ pub(crate) fn list_inventory() -> Result<AccountInventory, CliError> {
 /// broker does not list.
 pub(crate) fn ensure_listed(account: &str) -> Result<(), CliError> {
     validate_account(account)?;
-    if broker_argv()?.is_none() {
-        return Err(CliError::data(
-            "codex-account-unsupported",
-            "Codex account switching is not configured for this daemon",
-            None,
-        ));
-    }
+    // Without a broker, listing fails with `unsupported_error()`.
     if list_accounts()?
         .iter()
         .any(|listed| listed.account == account)
@@ -1739,11 +1717,17 @@ fn broker_argv() -> Result<Option<Vec<String>>, CliError> {
     BROKER.argv()
 }
 
+/// The one `codex-account-unsupported` error: a data condition (no broker is
+/// configured), shared by every Codex path and the broker client.
 fn unsupported_error() -> CliError {
-    CliError::runtime(
+    unsupported_error_with(None)
+}
+
+fn unsupported_error_with(details: Option<Value>) -> CliError {
+    CliError::data(
         "codex-account-unsupported",
         "Codex account switching is not configured for this daemon",
-        None,
+        details,
     )
 }
 
