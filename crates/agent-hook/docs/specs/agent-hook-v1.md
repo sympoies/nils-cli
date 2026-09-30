@@ -1123,9 +1123,8 @@ the provider-native neutral `{}` response and is never model-visible: Codex
 `Stop` does not support additional context, and Claude turns `Stop` or
 `SubagentStop` context into a new model turn, so a persisting warning would
 re-prompt the model on every stop — the very loop this warning exists to
-prevent (sympoies/nils-cli#1962). Because the provider never receives it, the
-warning never reaches the model, which is stricter than once per runtime generation;
-the warning decision and its observability record remain for operators.
+prevent (sympoies/nils-cli#1962). The warning never reaches the model; the
+warning decision and its observability record remain for operators.
 
 When the activity helper fails, the reason keeps the stable
 `session-activity-failed` code and appends the helper's typed cause from its

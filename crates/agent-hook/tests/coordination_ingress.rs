@@ -302,7 +302,7 @@ fn exact_recovery_reaches_coordination_when_the_activity_helper_is_unresolvable(
 #[test]
 fn activity_failure_reason_names_the_helper_typed_code() {
     for (helper_code, surfaced) in [
-        ("activity-dedupe-capacity-reached", true),
+        ("activity-replay-index-full", true),
         ("provider-turn-id-mismatch", true),
         ("Not A Code; rm -rf", false),
     ] {
