@@ -710,6 +710,34 @@ fn seed_brokers_at(state_dir: &Path, sessions: &[(&str, &str, &str, &Path, Optio
     fs::set_permissions(&registry, fs::Permissions::from_mode(0o600)).expect("registry mode");
 }
 
+/// Re-stamp every existing fixture broker heartbeat with the current epoch,
+/// keeping its recorded incarnation, the way a live broker heartbeat sidecar
+/// keeps it fresh. A heartbeat seeded once at fixture setup otherwise ages with
+/// the test's elapsed wall clock and crosses the edit-authority freshness
+/// window when a long scenario runs slowly. Missing heartbeats stay missing.
+fn refresh_fixture_heartbeats(state_dir: &Path) {
+    let Ok(sessions) = fs::read_dir(state_dir.join("sessions")) else {
+        return;
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    for session in sessions {
+        let heartbeat_path = session
+            .expect("session entry")
+            .path()
+            .join("coordination/heartbeat");
+        let Ok(heartbeat) = fs::read_to_string(&heartbeat_path) else {
+            continue;
+        };
+        let Some((incarnation, _)) = heartbeat.trim().rsplit_once(':') else {
+            continue;
+        };
+        fs::write(&heartbeat_path, format!("{incarnation}:{now}\n")).expect("refresh heartbeat");
+    }
+}
+
 fn set_context_for_recorded_cwd(root: &Path, recorded_cwd: &Path, command_cwd: &Path) -> CmdOutput {
     let state_dir = root.join("state");
     fs::create_dir_all(&state_dir).expect("state");
@@ -28164,6 +28192,7 @@ fn main_agent_supervise_exposes_the_fail_closed_classification_matrix_without_mu
     let tmux_log_arg = tmux_log.to_string_lossy().into_owned();
     let account_broker = r#"["/bin/false"]"#;
     let observe = |command| {
+        refresh_fixture_heartbeats(&state_dir);
         run_main_agent(
             &main_checkout,
             &[
