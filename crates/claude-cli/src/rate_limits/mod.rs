@@ -5,8 +5,13 @@
 //! target, the active login. Each target's stored access token reads
 //! `GET /api/oauth/usage` once. Tokens are never refreshed, rewritten, or
 //! printed; an expired token is reported without a request.
+//!
+//! The read sends Claude Code's status query and User-Agent (`status.rs`), so
+//! every network result also carries the normalized `limit_resets`. Cached
+//! and cache-fallback results omit it.
 
 mod cache;
+pub(crate) mod status;
 
 use anyhow::Result;
 use chrono::{Local, TimeZone, Utc};
@@ -26,7 +31,7 @@ use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
 use crate::auth::{keychain, store};
-use crate::prompt_segment::client::{self, RequestFailure};
+use crate::prompt_segment::client::RequestFailure;
 use crate::prompt_segment::render::{self as usage_render, Window};
 
 pub use nils_common::rate_limits::RunOptions as RateLimitsOptions;
@@ -87,8 +92,11 @@ enum Fetch {
     Windows {
         values: WeeklyValues,
         windows: Vec<RateLimitWindow>,
+        limit_resets: Value,
     },
-    NoWindow,
+    NoWindow {
+        limit_resets: Value,
+    },
     Failed {
         code: &'static str,
         message: String,
@@ -162,7 +170,7 @@ impl RateLimitsProvider for ClaudeRateLimits {
                     ..Default::default()
                 };
             }
-            Fetch::NoWindow => {
+            Fetch::NoWindow { .. } => {
                 if let Some(fetch) = stale_one_line(&name, &mut errors) {
                     return fetch;
                 }
@@ -207,7 +215,7 @@ impl RateLimitsProvider for ClaudeRateLimits {
                     ..Default::default()
                 }
             }
-            Fetch::NoWindow => OneLineFetch {
+            Fetch::NoWindow { .. } => OneLineFetch {
                 line: cache::read_allow_stale(&name, now_epoch())
                     .ok()
                     .and_then(|read| {
@@ -389,17 +397,25 @@ fn json_result(
     }
 
     match fetch(target) {
-        Fetch::Windows { values, windows } => {
+        Fetch::Windows {
+            values,
+            windows,
+            limit_resets,
+        } => {
             write_cache(&name, &values);
             let summary = schema::summary_from_weekly_values(&values, format_local_with_offset);
-            sanitize(RateLimitResult::ok(identity, "network", summary, windows))
+            let mut result = sanitize(RateLimitResult::ok(identity, "network", summary, windows));
+            result.limit_resets = Some(limit_resets);
+            result
         }
-        Fetch::NoWindow => {
+        Fetch::NoWindow { limit_resets } => {
             let fallback_result = from_cache(identity.clone(), "cache-fallback", &name, false);
             if fallback_result.ok {
                 return fallback_result;
             }
-            RateLimitResult::no_window(identity, None)
+            let mut result = RateLimitResult::no_window(identity, None);
+            result.limit_resets = Some(limit_resets);
+            result
         }
         Fetch::Failed {
             code,
@@ -521,7 +537,7 @@ fn fetch(target: &Path) -> Fetch {
         };
     }
 
-    let body = match client::request_usage(&login.access_token) {
+    let body = match status::request_status(&login.access_token) {
         Ok(body) => body,
         Err(failure) => {
             let reason = request_failure_reason(&failure);
@@ -557,9 +573,11 @@ fn parse_usage_body(body: &str) -> Fetch {
             reason: None,
         };
     };
+    let limit_resets =
+        serde_json::to_value(status::parse_limit_resets(&value)).unwrap_or(Value::Null);
     let Some(usage) = usage_render::parse_usage_value(&value) else {
         return if value.is_object() {
-            Fetch::NoWindow
+            Fetch::NoWindow { limit_resets }
         } else {
             Fetch::Failed {
                 code: "invalid-usage-payload",
@@ -600,7 +618,11 @@ fn parse_usage_body(body: &str) -> Fetch {
         })
     })
     .collect();
-    Fetch::Windows { values, windows }
+    Fetch::Windows {
+        values,
+        windows,
+        limit_resets,
+    }
 }
 
 fn reset_epoch(window: &Window) -> Option<i64> {
@@ -782,9 +804,12 @@ mod tests {
 
     #[test]
     fn usage_body_maps_claude_windows_and_treats_null_windows_as_benign() {
-        let Fetch::Windows { values, windows } = parse_usage_body(
+        let Fetch::Windows {
+            values, windows, ..
+        } = parse_usage_body(
             r#"{"five_hour":{"utilization":12.6,"resets_at":null},"seven_day":{"utilization":99.5,"resets_at":"2023-11-20T17:06:40Z"}}"#,
-        ) else {
+        )
+        else {
             panic!("expected windows");
         };
         assert_eq!(values.non_weekly.expect("5h").remaining, 87);
@@ -798,7 +823,7 @@ mod tests {
         );
         assert!(matches!(
             parse_usage_body(r#"{"five_hour":null,"seven_day":null}"#),
-            Fetch::NoWindow
+            Fetch::NoWindow { .. }
         ));
         assert!(matches!(
             parse_usage_body("not json"),

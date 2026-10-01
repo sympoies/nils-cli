@@ -1,7 +1,8 @@
-//! `GET /usage/v1` and `POST /codex/reset/v1`: provider usage and the earned
-//! Codex rate-limit reset, backed by the `codex-cli` and `claude-cli` provider
-//! CLIs. The contract lives in `docs/specs/serve-api-v1.md` under "Provider
-//! usage and Codex reset".
+//! `GET /usage/v1`, `POST /codex/reset/v1`, and `POST /claude/reset/v1`:
+//! provider usage, the earned Codex rate-limit reset, and the Claude limit
+//! resets, backed by the `codex-cli` and `claude-cli` provider CLIs. The
+//! contract lives in `docs/specs/serve-api-v1.md` under "Provider usage and
+//! resets".
 //!
 //! Only allowlisted fields cross the boundary: account nicknames, a bounded
 //! plan tier, numeric window fields, fixed reason codes, and fixed note and
@@ -26,9 +27,13 @@ pub(crate) const USAGE_SCHEMA_VERSION: &str = "agent-session.provider-usage.v1";
 pub(crate) const RESET_SCHEMA_VERSION: &str = "agent-console.codex-rate-limit-reset.v1";
 const RESET_CLI_SCHEMA_VERSION: &str = "codex-cli.account.reset-rate-limits.v1";
 const RESET_CLI_COMMAND: &str = "account reset-rate-limits";
+pub(crate) const CLAUDE_RESET_SCHEMA_VERSION: &str = "agent-console.claude-limit-reset.v1";
+const CLAUDE_RESET_CLI_SCHEMA_VERSION: &str = "claude-cli.auth.reset-rate-limits.v1";
+const CLAUDE_RESET_CLI_COMMAND: &str = "auth reset-rate-limits";
 
 const REFRESH_ENV: &str = "AGENT_SESSION_USAGE_V1_REFRESH_SECONDS";
 const RESET_ACCOUNTS_ENV: &str = "AGENT_SESSION_CODEX_RESET_ACCOUNTS";
+const CLAUDE_RESET_ACCOUNTS_ENV: &str = "AGENT_SESSION_CLAUDE_RESET_ACCOUNTS";
 const CLAUDE_INNER_TIMEOUT_ENV: &str = "CLAUDE_PROMPT_SEGMENT_CLAUDE_TIMEOUT_SECONDS";
 
 /// A completed snapshot is served as fresh for this long; the next read after
@@ -50,6 +55,13 @@ const HELPER_TIMEOUT: Duration = Duration::from_secs(30);
 /// `claude-cli` may fall back to a PTY probe; leave room to kill it cleanly.
 const CLAUDE_INNER_TIMEOUT_SECONDS: u64 = 25;
 const RESET_TIMEOUT: Duration = Duration::from_secs(30);
+/// `claude-cli` may probe the Claude Code version (3 seconds), reads status
+/// (`CLAUDE_RESET_STATUS_SECONDS`), and then posts once
+/// (`CLAUDE_RESET_POST_SECONDS`). serve pins both so the CLI always finishes
+/// before this kill deadline, never in the middle of the irreversible POST.
+const CLAUDE_RESET_TIMEOUT: Duration = Duration::from_secs(35);
+const CLAUDE_RESET_STATUS_SECONDS: &str = "5";
+const CLAUDE_RESET_POST_SECONDS: &str = "25";
 const HELPER_OUTPUT_LIMIT: u64 = 1024 * 1024;
 const RESET_OUTPUT_LIMIT: u64 = 64 * 1024;
 const MAX_RESET_BODY_BYTES: usize = 16 * 1024;
@@ -69,6 +81,31 @@ const CODEX_PLAN_TYPES: &[&str] = &[
     "edu",
 ];
 const RESET_OUTCOMES: &[&str] = &["reset", "nothing_to_reset", "no_credit", "already_redeemed"];
+const CLAUDE_PROGRAMS: &[&str] = &["juniper_tide", "cedar_ember"];
+const CLAUDE_RESET_OUTCOMES: &[&str] = &[
+    "reset",
+    "already_used",
+    "not_limited",
+    "cooldown",
+    "ineligible",
+    "unavailable",
+];
+/// `claude-cli auth reset-rate-limits` error codes a failure may surface, and
+/// whether a retry with the same key is meaningful.
+const CLAUDE_RESET_CLI_CODES: &[(&str, bool)] = &[
+    ("claude-auth-required", false),
+    ("provider-unavailable", true),
+    ("provider-rejected", false),
+    ("invalid-provider-response", false),
+    ("profile-not-found", false),
+    ("profile-invalid", false),
+    ("organization-unknown", false),
+    ("endpoint-invalid", false),
+    ("invalid-profile-name", false),
+    ("confirmation-required", false),
+    ("request-id-required", false),
+    ("invalid-request-id", false),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Provider {
@@ -940,6 +977,8 @@ pub(crate) struct UsageApiError {
     pub(crate) status: StatusCode,
     pub(crate) code: &'static str,
     pub(crate) message: &'static str,
+    /// Daemon-validated context; only Claude reset failures carry it.
+    pub(crate) details: Option<Value>,
 }
 
 const fn api_error(status: StatusCode, code: &'static str, message: &'static str) -> UsageApiError {
@@ -947,23 +986,112 @@ const fn api_error(status: StatusCode, code: &'static str, message: &'static str
         status,
         code,
         message,
+        details: None,
     }
 }
 
-struct RecordedReset {
+/// One recorded reset, replayed for a repeated idempotency key.
+struct RecordedReset<O> {
     key: String,
-    account: String,
-    outcome: &'static str,
-    windows_reset: Option<u64>,
+    /// What the key was first used for: the account, plus the program for
+    /// Claude. The same key for another scope is a conflict.
+    scope: String,
+    outcome: O,
     at: Instant,
+}
+
+/// Serializes one provider's resets and remembers recent outcomes by key.
+type ResetLog<O> = Arc<tokio::sync::Mutex<VecDeque<RecordedReset<O>>>>;
+
+type CodexOutcome = (&'static str, Option<u64>);
+
+/// A validated `claude-cli auth reset-rate-limits` result.
+#[derive(Clone, Debug, PartialEq)]
+struct ClaudeOutcome {
+    outcome: &'static str,
+    posted: bool,
+    reason: Option<String>,
+    resets_left: Option<u64>,
+    next_available_at: Option<i64>,
+    cooldown_until: Option<i64>,
+    weekly_resets_at: Option<i64>,
 }
 
 pub(crate) struct UsageService {
     codex: Arc<Slot>,
     claude: Arc<Slot>,
     reset_accounts: Vec<String>,
-    /// Serializes resets and remembers recent outcomes by idempotency key.
-    resets: Arc<tokio::sync::Mutex<VecDeque<RecordedReset>>>,
+    claude_reset_accounts: Vec<String>,
+    resets: ResetLog<CodexOutcome>,
+    claude_resets: ResetLog<ClaudeOutcome>,
+}
+
+/// A nickname allowlist separated by commas or whitespace.
+fn reset_allowlist(env: &str) -> Vec<String> {
+    let mut accounts = Vec::new();
+    let raw = std::env::var(env).unwrap_or_default();
+    for account in raw.split(|c: char| c == ',' || c.is_whitespace()) {
+        if account.is_empty() {
+            continue;
+        }
+        if !valid_nickname(account) {
+            eprintln!("warning: {env} ignored an invalid account nickname");
+        } else if !accounts.iter().any(|known| known == account) {
+            accounts.push(account.to_string());
+        }
+    }
+    accounts
+}
+
+/// Run `run` at most once per idempotency key. The lookup, the run, and the
+/// record happen in one task that owns the log lock, so a disconnected caller
+/// cannot release it mid-run or lose the outcome a same-key retry must replay.
+/// Returns the outcome and, for a new run, the `slot` completion it refreshes
+/// past; a replay returns `None`. A failed run is not recorded.
+async fn run_once<O, F>(
+    log: &ResetLog<O>,
+    slot: &Arc<Slot>,
+    key: String,
+    scope: String,
+    conflict: &'static str,
+    run: F,
+) -> Result<(O, Option<u64>), UsageApiError>
+where
+    O: Clone + Send + Sync + 'static,
+    F: FnOnce() -> Result<O, UsageApiError> + Send + 'static,
+{
+    let log = Arc::clone(log);
+    let slot = Arc::clone(slot);
+    let task = tokio::spawn(async move {
+        let mut resets = log.lock_owned().await;
+        resets.retain(|recorded| recorded.at.elapsed() < RESET_REPLAY_TTL);
+        match resets.iter().find(|recorded| recorded.key == key) {
+            Some(recorded) if recorded.scope != scope => Err(api_error(
+                StatusCode::CONFLICT,
+                "idempotency-key-reused",
+                conflict,
+            )),
+            Some(recorded) => Ok((recorded.outcome.clone(), None)),
+            None => {
+                let outcome = tokio::task::spawn_blocking(run)
+                    .await
+                    .map_err(|_| task_failed())??;
+                if resets.len() >= RESET_REPLAY_CAPACITY {
+                    resets.pop_front();
+                }
+                resets.push_back(RecordedReset {
+                    key,
+                    scope,
+                    outcome: outcome.clone(),
+                    at: Instant::now(),
+                });
+                // Invalidate before releasing the lock, so even a replay
+                // after a disconnect never sees pre-reset numbers as fresh.
+                Ok((outcome, Some(slot.invalidate())))
+            }
+        }
+    });
+    task.await.map_err(|_| task_failed())?
 }
 
 impl UsageService {
@@ -974,23 +1102,13 @@ impl UsageService {
             .filter(|seconds| (1..=MAX_REFRESH_SECONDS).contains(seconds))
             .unwrap_or(DEFAULT_REFRESH_SECONDS);
         let refresh_interval = Duration::from_secs(refresh_seconds);
-        let mut reset_accounts = Vec::new();
-        let raw = std::env::var(RESET_ACCOUNTS_ENV).unwrap_or_default();
-        for account in raw.split(|c: char| c == ',' || c.is_whitespace()) {
-            if account.is_empty() {
-                continue;
-            }
-            if !valid_nickname(account) {
-                eprintln!("warning: {RESET_ACCOUNTS_ENV} ignored an invalid account nickname");
-            } else if !reset_accounts.iter().any(|known| known == account) {
-                reset_accounts.push(account.to_string());
-            }
-        }
         Self {
             codex: Slot::new(Provider::Codex, refresh_interval),
             claude: Slot::new(Provider::Claude, refresh_interval),
-            reset_accounts,
+            reset_accounts: reset_allowlist(RESET_ACCOUNTS_ENV),
+            claude_reset_accounts: reset_allowlist(CLAUDE_RESET_ACCOUNTS_ENV),
             resets: Arc::new(tokio::sync::Mutex::new(VecDeque::new())),
+            claude_resets: Arc::new(tokio::sync::Mutex::new(VecDeque::new())),
         }
     }
 
@@ -1030,45 +1148,16 @@ impl UsageService {
                 "the requested Codex account is not allowlisted for resets",
             ));
         }
-        // The lookup, the CLI run, and the record happen in one task that owns
-        // the lock, so a disconnected caller cannot release it mid-run or lose
-        // the outcome a same-key retry must replay.
-        let resets = Arc::clone(&self.resets);
-        let codex = Arc::clone(&self.codex);
-        let task = tokio::spawn(async move {
-            let mut resets = resets.lock_owned().await;
-            resets.retain(|recorded| recorded.at.elapsed() < RESET_REPLAY_TTL);
-            match resets.iter().find(|recorded| recorded.key == key) {
-                Some(recorded) if recorded.account != account => Err(api_error(
-                    StatusCode::CONFLICT,
-                    "idempotency-key-reused",
-                    "the idempotency key was already used for another account",
-                )),
-                Some(recorded) => Ok((recorded.outcome, recorded.windows_reset, None)),
-                None => {
-                    let (run_account, run_key) = (account.clone(), key.clone());
-                    let (outcome, windows_reset) = tokio::task::spawn_blocking(move || {
-                        run_codex_reset(&run_account, &run_key)
-                    })
-                    .await
-                    .map_err(|_| task_failed())??;
-                    if resets.len() >= RESET_REPLAY_CAPACITY {
-                        resets.pop_front();
-                    }
-                    resets.push_back(RecordedReset {
-                        key,
-                        account,
-                        outcome,
-                        windows_reset,
-                        at: Instant::now(),
-                    });
-                    // Invalidate before releasing the lock, so even a replay
-                    // after a disconnect never sees pre-reset numbers as fresh.
-                    Ok((outcome, windows_reset, Some(codex.invalidate())))
-                }
-            }
-        });
-        let (outcome, windows_reset, refresh) = task.await.map_err(|_| task_failed())??;
+        let (run_account, run_key) = (account.clone(), key.clone());
+        let ((outcome, windows_reset), refresh) = run_once(
+            &self.resets,
+            &self.codex,
+            key,
+            account,
+            "the idempotency key was already used for another account",
+            move || run_codex_reset(&run_account, &run_key),
+        )
+        .await?;
         let replayed = refresh.is_none();
         let wait = RESET_RESPONSE_BUDGET
             .saturating_sub(started.elapsed())
@@ -1092,6 +1181,54 @@ impl UsageService {
         result.insert("replayed".into(), json!(replayed));
         result.insert("machine".into(), json!(machine));
         result.insert("usage".into(), usage);
+        Ok(Value::Object(result))
+    }
+
+    /// `POST /claude/reset/v1`: redeem at most one Claude limit reset for an
+    /// allowlisted profile and return the outcome. A recorded run marks the
+    /// Claude usage snapshot stale and starts a refresh without waiting for it.
+    pub(crate) async fn claude_reset(
+        &self,
+        machine: &str,
+        body: &[u8],
+    ) -> Result<Value, UsageApiError> {
+        if self.claude_reset_accounts.is_empty() {
+            return Err(api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "claude-reset-not-configured",
+                "no Claude account is allowlisted for limit resets",
+            ));
+        }
+        let (account, program, key) = parse_claude_reset_request(body)?;
+        if !self.claude_reset_accounts.contains(&account) {
+            return Err(api_error(
+                StatusCode::FORBIDDEN,
+                "claude-reset-account-not-allowed",
+                "the requested Claude account is not allowlisted for limit resets",
+            ));
+        }
+        let (run_account, run_key) = (account.clone(), key.clone());
+        let (outcome, refresh) = run_once(
+            &self.claude_resets,
+            &self.claude,
+            key,
+            format!("{account}\n{program}"),
+            "the idempotency key was already used for another account or program",
+            move || run_claude_reset(&run_account, program, &run_key),
+        )
+        .await?;
+        let mut result = Map::new();
+        result.insert("schema_version".into(), json!(CLAUDE_RESET_SCHEMA_VERSION));
+        result.insert("program".into(), json!(program));
+        result.insert("outcome".into(), json!(outcome.outcome));
+        result.insert("posted".into(), json!(outcome.posted));
+        result.insert("reason".into(), json!(outcome.reason));
+        result.insert("resets_left".into(), json!(outcome.resets_left));
+        result.insert("next_available_at".into(), json!(outcome.next_available_at));
+        result.insert("cooldown_until".into(), json!(outcome.cooldown_until));
+        result.insert("weekly_resets_at".into(), json!(outcome.weekly_resets_at));
+        result.insert("replayed".into(), json!(refresh.is_none()));
+        result.insert("machine".into(), json!(machine));
         Ok(Value::Object(result))
     }
 }
@@ -1215,6 +1352,198 @@ fn parse_reset_output(output: &HelperOutput) -> Result<(&'static str, Option<u64
     }
 }
 
+fn parse_claude_reset_request(
+    body: &[u8],
+) -> Result<(String, &'static str, String), UsageApiError> {
+    let invalid = || {
+        api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid-request",
+            "body must contain only a safe account, a known program, and a canonical lowercase idempotency_key UUID",
+        )
+    };
+    if body.len() > MAX_RESET_BODY_BYTES {
+        return Err(invalid());
+    }
+    let value: Value = serde_json::from_slice(body).map_err(|_| invalid())?;
+    let object = value
+        .as_object()
+        .filter(|object| object.len() == 3)
+        .ok_or_else(invalid)?;
+    let account = object
+        .get("account")
+        .and_then(Value::as_str)
+        .filter(|a| valid_nickname(a));
+    let program = object
+        .get("program")
+        .and_then(Value::as_str)
+        .and_then(|program| {
+            CLAUDE_PROGRAMS
+                .iter()
+                .find(|known| **known == program)
+                .copied()
+        });
+    let key = object
+        .get("idempotency_key")
+        .and_then(Value::as_str)
+        .filter(|k| canonical_uuid(k));
+    match (account, program, key) {
+        (Some(account), Some(program), Some(key)) => {
+            Ok((account.to_string(), program, key.to_string()))
+        }
+        _ => Err(invalid()),
+    }
+}
+
+fn run_claude_reset(
+    account: &str,
+    program: &'static str,
+    key: &str,
+) -> Result<ClaudeOutcome, UsageApiError> {
+    let output = run_helper(
+        "claude-cli",
+        &[
+            "auth",
+            "reset-rate-limits",
+            "--yes",
+            "--program",
+            program,
+            "--request-id",
+            key,
+            "--format",
+            "json",
+            account,
+        ],
+        &[
+            (
+                "CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS",
+                CLAUDE_RESET_STATUS_SECONDS.to_string(),
+            ),
+            (
+                "CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS",
+                CLAUDE_RESET_POST_SECONDS.to_string(),
+            ),
+        ],
+        CLAUDE_RESET_TIMEOUT,
+        RESET_OUTPUT_LIMIT,
+    )
+    .map_err(|error| match error {
+        HelperError::Timeout => api_error(
+            StatusCode::GATEWAY_TIMEOUT,
+            "claude-reset-timeout",
+            "the Claude limit reset did not finish in time; retry with the same idempotency key",
+        ),
+        HelperError::Spawn => api_error(
+            StatusCode::BAD_GATEWAY,
+            "claude-reset-unavailable",
+            "the Claude limit-reset command is unavailable",
+        ),
+        HelperError::TooLarge => claude_reset_invalid(),
+    })?;
+    parse_claude_reset_output(&output, program)
+}
+
+fn claude_reset_invalid() -> UsageApiError {
+    api_error(
+        StatusCode::BAD_GATEWAY,
+        "claude-reset-invalid-response",
+        "the Claude limit-reset command returned an invalid response",
+    )
+}
+
+/// The CLI's own error code, when it is one this module knows, with its
+/// classified reason and whether retrying the same key is meaningful.
+fn claude_reset_failure_details(stdout: &[u8]) -> Option<Value> {
+    let value: Value = serde_json::from_slice(stdout).ok()?;
+    let error = value.get("error")?;
+    let code = error.get("code").and_then(Value::as_str)?;
+    let (code, retryable) = CLAUDE_RESET_CLI_CODES
+        .iter()
+        .find(|(known, _)| *known == code)
+        .copied()?;
+    let reason = reason_code(
+        error
+            .get("details")
+            .and_then(|details| details.get("reason_code")),
+    );
+    Some(json!({
+        "cli_code": code,
+        "reason_code": reason.map(ProviderUsageReason::as_str),
+        "retryable": retryable,
+    }))
+}
+
+fn parse_claude_reset_output(
+    output: &HelperOutput,
+    program: &'static str,
+) -> Result<ClaudeOutcome, UsageApiError> {
+    if output.status != Some(0) {
+        let mut error = api_error(
+            StatusCode::BAD_GATEWAY,
+            "claude-reset-failed",
+            "the Claude limit-reset request could not be completed",
+        );
+        error.details = claude_reset_failure_details(&output.stdout);
+        return Err(error);
+    }
+    let value: Value =
+        serde_json::from_slice(&output.stdout).map_err(|_| claude_reset_invalid())?;
+    let valid_envelope = value.get("schema_version").and_then(Value::as_str)
+        == Some(CLAUDE_RESET_CLI_SCHEMA_VERSION)
+        && value.get("command").and_then(Value::as_str) == Some(CLAUDE_RESET_CLI_COMMAND)
+        && value.get("ok").and_then(Value::as_bool) == Some(true);
+    let result = value
+        .get("result")
+        .and_then(Value::as_object)
+        .filter(|_| valid_envelope)
+        .filter(|result| result.get("program").and_then(Value::as_str) == Some(program))
+        .ok_or_else(claude_reset_invalid)?;
+    let outcome = result
+        .get("outcome")
+        .and_then(Value::as_str)
+        .and_then(|outcome| {
+            CLAUDE_RESET_OUTCOMES
+                .iter()
+                .find(|known| **known == outcome)
+                .copied()
+        })
+        .ok_or_else(claude_reset_invalid)?;
+    let posted = result
+        .get("posted")
+        .and_then(Value::as_bool)
+        .ok_or_else(claude_reset_invalid)?;
+    let reason = match result.get("reason") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(reason))
+            if safe_token(reason, 40, b"_") && reason == &reason.to_ascii_lowercase() =>
+        {
+            Some(reason.clone())
+        }
+        Some(_) => return Err(claude_reset_invalid()),
+    };
+    let count = |key: &str| match result.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value.as_u64().map(Some).ok_or_else(claude_reset_invalid),
+    };
+    let epoch = |key: &str| match result.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_i64()
+            .filter(|epoch| *epoch > 0)
+            .map(Some)
+            .ok_or_else(claude_reset_invalid),
+    };
+    Ok(ClaudeOutcome {
+        outcome,
+        posted,
+        reason,
+        resets_left: count("resets_left")?,
+        next_available_at: epoch("next_available_at")?,
+        cooldown_until: epoch("cooldown_until")?,
+        weekly_resets_at: epoch("weekly_resets_at")?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1336,6 +1665,90 @@ mod tests {
         assert!(entries[0].windows.is_empty());
         assert!(entries[0].stale);
         assert_eq!(entries[0].note, Some(Provider::Codex.expired_note()));
+    }
+
+    #[test]
+    fn claude_reset_request_requires_exactly_account_program_and_key() {
+        let key = "0b5f4c1e-8d2a-4c7b-9e3f-2a1b0c9d8e7f";
+        let body = |value: Value| serde_json::to_vec(&value).unwrap();
+        assert!(matches!(
+            parse_claude_reset_request(&body(json!({
+                "account": "alpha", "program": "cedar_ember", "idempotency_key": key
+            }))),
+            Ok((account, "cedar_ember", _)) if account == "alpha"
+        ));
+        for bad in [
+            json!({ "account": "alpha", "idempotency_key": key }),
+            json!({ "account": "alpha", "program": "other", "idempotency_key": key }),
+            json!({ "account": "alpha", "program": "cedar_ember", "idempotency_key": "x" }),
+            json!({ "account": "alpha", "program": "cedar_ember", "idempotency_key": key, "x": 1 }),
+        ] {
+            assert!(parse_claude_reset_request(&body(bad)).is_err());
+        }
+    }
+
+    #[test]
+    fn claude_reset_output_requires_the_versioned_cli_envelope() {
+        let output = |status: i32, body: Value| HelperOutput {
+            status: Some(status),
+            stdout: serde_json::to_vec(&body).unwrap(),
+        };
+        let envelope = |result: Value| {
+            json!({
+                "schema_version": CLAUDE_RESET_CLI_SCHEMA_VERSION,
+                "command": CLAUDE_RESET_CLI_COMMAND,
+                "ok": true,
+                "result": result,
+            })
+        };
+        let parsed = parse_claude_reset_output(
+            &output(
+                0,
+                envelope(json!({
+                    "program": "juniper_tide", "outcome": "cooldown", "posted": true,
+                    "reason": "cooldown", "resets_left": 0, "cooldown_until": 1_791_421_200
+                })),
+            ),
+            "juniper_tide",
+        );
+        assert_eq!(
+            parsed.ok(),
+            Some(ClaudeOutcome {
+                outcome: "cooldown",
+                posted: true,
+                reason: Some("cooldown".into()),
+                resets_left: Some(0),
+                next_available_at: None,
+                cooldown_until: Some(1_791_421_200),
+                weekly_resets_at: None,
+            })
+        );
+        for result in [
+            json!({ "program": "juniper_tide", "outcome": "reset" }),
+            json!({ "program": "juniper_tide", "outcome": "reset", "posted": true, "resets_left": -1 }),
+            json!({ "program": "juniper_tide", "outcome": "reset", "posted": true, "weekly_resets_at": "soon" }),
+            json!({ "program": "juniper_tide", "outcome": "reset", "posted": true, "reason": "Upper" }),
+        ] {
+            assert!(
+                parse_claude_reset_output(&output(0, envelope(result)), "juniper_tide").is_err()
+            );
+        }
+        let Err(failed) = parse_claude_reset_output(
+            &output(
+                3,
+                json!({ "ok": false, "error": { "code": "provider-unavailable" } }),
+            ),
+            "juniper_tide",
+        ) else {
+            panic!("expected a failure");
+        };
+        assert_eq!(failed.code, "claude-reset-failed");
+        assert_eq!(
+            failed.details,
+            Some(
+                json!({ "cli_code": "provider-unavailable", "reason_code": null, "retryable": true })
+            )
+        );
     }
 
     #[test]

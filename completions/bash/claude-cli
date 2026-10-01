@@ -106,6 +106,9 @@ _claude__cli() {
             claude__cli__auth,remove)
                 cmd="claude__cli__auth__remove"
                 ;;
+            claude__cli__auth,reset-rate-limits)
+                cmd="claude__cli__auth__reset__rate__limits"
+                ;;
             claude__cli__auth,save)
                 cmd="claude__cli__auth__save"
                 ;;
@@ -138,6 +141,9 @@ _claude__cli() {
                 ;;
             claude__cli__auth__help,remove)
                 cmd="claude__cli__auth__help__remove"
+                ;;
+            claude__cli__auth__help,reset-rate-limits)
+                cmd="claude__cli__auth__help__reset__rate__limits"
                 ;;
             claude__cli__auth__help,save)
                 cmd="claude__cli__auth__help__save"
@@ -264,6 +270,9 @@ _claude__cli() {
                 ;;
             claude__cli__help__auth,remove)
                 cmd="claude__cli__help__auth__remove"
+                ;;
+            claude__cli__help__auth,reset-rate-limits)
+                cmd="claude__cli__help__auth__reset__rate__limits"
                 ;;
             claude__cli__help__auth,save)
                 cmd="claude__cli__help__auth__save"
@@ -599,7 +608,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth)
-            opts="-h --help login status logout save use remove current refresh auto-refresh remote help"
+            opts="-h --help login status logout save use remove current refresh auto-refresh remote reset-rate-limits help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -656,7 +665,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth__help)
-            opts="login status logout save use remove current refresh auto-refresh remote help"
+            opts="login status logout save use remove current refresh auto-refresh remote reset-rate-limits help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -796,6 +805,20 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__auth__help__remove)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__help__reset__rate__limits)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1040,6 +1063,32 @@ _claude__cli() {
                 return 0
             fi
             case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__auth__reset__rate__limits)
+            opts="-y -h --program --request-id --yes --format --json --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --program)
+                    COMPREPLY=($(compgen -W "juniper_tide cedar_ember" -- "${cur}"))
+                    return 0
+                    ;;
+                --request-id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
@@ -1408,7 +1457,7 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__help__auth)
-            opts="login status logout save use remove current refresh auto-refresh remote"
+            opts="login status logout save use remove current refresh auto-refresh remote reset-rate-limits"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1534,6 +1583,20 @@ _claude__cli() {
             return 0
             ;;
         claude__cli__help__auth__remove)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        claude__cli__help__auth__reset__rate__limits)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

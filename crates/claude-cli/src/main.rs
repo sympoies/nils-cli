@@ -162,6 +162,25 @@ fn handle_auth(args: &cli::AuthArgs) -> i32 {
             )
         }
         Some(cli::AuthCommand::Remote(remote)) => handle_auth_remote(remote),
+        Some(cli::AuthCommand::ResetRateLimits {
+            program,
+            request_id,
+            yes,
+            output,
+            profile,
+        }) => {
+            use claude_cli::auth::reset_rate_limits::{self, Program, ResetOptions};
+            reset_rate_limits::run(&ResetOptions {
+                program: match program {
+                    cli::ResetProgramArg::JuniperTide => Program::JuniperTide,
+                    cli::ResetProgramArg::CedarEmber => Program::CedarEmber,
+                },
+                request_id: request_id.clone(),
+                yes: *yes,
+                output_json: output.is_json(),
+                profile: profile.clone(),
+            })
+        }
         None => print_subcommand_help("auth"),
     }
 }

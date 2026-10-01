@@ -79,6 +79,7 @@ impl Fixture {
                 &format!("{}/api/oauth/usage", self.server.url()),
             )
             .with_env("TZ", "UTC")
+            .with_env("CLAUDE_RATE_LIMITS_CLAUDE_CODE_VERSION", "9.8.7")
     }
 
     fn write_profile(&self, name: &str, access: &str, expires_at_ms: i64) {
@@ -141,7 +142,7 @@ fn write_json(path: &Path, value: &Value) {
 }
 
 fn alpha_result(source: &str) -> Value {
-    json!({
+    let mut result = json!({
         "provider": "claude",
         "name": "alpha",
         "target_file": "alpha.json",
@@ -172,7 +173,12 @@ fn alpha_result(source: &str) -> Value {
                 "reset_at_epoch": 1_700_500_000
             }
         ]
-    })
+    });
+    // A network read always reports reset status; cached values never do.
+    if source == "network" {
+        result["limit_resets"] = json!({ "juniper_tide": null, "cedar_ember": null });
+    }
+    result
 }
 
 fn error_result(name: &str, reason: &str, code: &str) -> Value {
@@ -242,6 +248,11 @@ fn diag_rate_limits_all_json_reports_every_profile_and_fails_when_one_has_no_win
     for request in &requests {
         assert_eq!(request.method, "GET");
         assert_eq!(request.path, "/api/oauth/usage");
+        assert_eq!(request.query.as_deref(), Some("at_wall=1&skip_spend=1"));
+        assert_eq!(
+            request.header_value("user-agent").as_deref(),
+            Some("claude-cli/9.8.7 (external, cli)")
+        );
         assert_eq!(
             request.header_value("anthropic-beta").as_deref(),
             Some("oauth-2025-04-20")
@@ -485,4 +496,314 @@ fn diag_rate_limits_rejects_codex_style_flag_conflicts() {
     let output = fx.run(&["diag", "rate-limits", "--watch"]);
     assert_exit(&output, 64);
     assert!(fx.requests().is_empty());
+}
+
+const RESETS_USAGE: &str = r#"{
+  "five_hour": { "utilization": 25.0, "resets_at": "2023-11-14T22:13:20.000000+00:00" },
+  "seven_day": { "utilization": 40.0, "resets_at": "2023-11-20T17:06:40+00:00" },
+  "juniper_tide": {
+    "eligible": true,
+    "ineligible_reason": null,
+    "in_experiment": true,
+    "arm": "reset",
+    "available": true,
+    "next_available_at": "2026-10-08T01:00:00+00:00",
+    "weekly_resets_at": "2026-10-07T01:00:00+00:00",
+    "resets_per_week": 1,
+    "event_props": { "cohort": "EVENT-PROPS-MARKER" }
+  },
+  "cedar_ember": {
+    "eligible": true,
+    "ineligible_reason": null,
+    "at_limit": true,
+    "exhausted": ["five_hour", "Not A Limit"],
+    "grants": [
+      {
+        "id": "grant_a",
+        "label": "Welcome reset",
+        "resets_total": 2,
+        "resets_left": 2,
+        "starts_at": "2026-09-01T00:00:00Z",
+        "ends_at": "2026-10-12T00:00:00Z",
+        "clears": ["five_hour", "seven_day"],
+        "paused": false,
+        "usable_now": true,
+        "percent_used": { "five_hour": 100 },
+        "blocking": []
+      },
+      { "id": "BAD ID", "resets_left": 1 },
+      { "id": "grant_b", "resets_left": -1 },
+      {
+        "id": "grant_c",
+        "label": null,
+        "resets_left": 1,
+        "ends_at": "not a date",
+        "clears": [],
+        "paused": true,
+        "use_requires_limit": false
+      }
+    ],
+    "next_grant_id": "grant_a",
+    "weekly_resets_at": "2026-10-07T01:00:00+00:00",
+    "cooldown_until": null
+  }
+}"#;
+
+fn resets_server(body: &'static str) -> TestServer {
+    TestServer::new(move |_request: &RecordedRequest| HttpResponse::new(200, body)).expect("server")
+}
+
+fn resets_options(fx: &Fixture, server: &TestServer, endpoint_suffix: &str) -> CmdOptions {
+    fx.options().with_env(
+        "CLAUDE_PROMPT_SEGMENT_ENDPOINT",
+        &format!("{}/api/oauth/usage{endpoint_suffix}", server.url()),
+    )
+}
+
+#[test]
+fn diag_rate_limits_reports_normalized_limit_resets() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let server = resets_server(RESETS_USAGE);
+
+    let output = run(
+        &["diag", "rate-limits", "alpha", "--format", "json"],
+        &resets_options(&fx, &server, ""),
+    );
+
+    assert_exit(&output, 0);
+    let text = stdout(&output);
+    assert!(!text.contains("EVENT-PROPS-MARKER"), "{text}");
+    assert!(!text.contains("access-alpha"), "{text}");
+    let payload: Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(
+        payload["result"]["limit_resets"],
+        json!({
+            "juniper_tide": {
+                "available": true,
+                "eligible": true,
+                "ineligible_reason": null,
+                "arm": "reset",
+                "resets_per_week": 1,
+                "next_available_at": 1_791_421_200,
+                "weekly_resets_at": 1_791_334_800
+            },
+            "cedar_ember": {
+                "available": true,
+                "eligible": true,
+                "ineligible_reason": null,
+                "at_limit": true,
+                "exhausted": ["five_hour"],
+                "next_grant_id": "grant_a",
+                "grants": [
+                    {
+                        "id": "grant_a",
+                        "label": "Welcome reset",
+                        "resets_left": 2,
+                        "resets_total": 2,
+                        "starts_at": 1_788_220_800,
+                        "ends_at": 1_791_763_200,
+                        "clears": ["five_hour", "seven_day"],
+                        "paused": false,
+                        "usable_now": true,
+                        "use_requires_limit": true
+                    },
+                    {
+                        "id": "grant_c",
+                        "label": null,
+                        "resets_left": 1,
+                        "resets_total": null,
+                        "starts_at": null,
+                        "ends_at": null,
+                        "clears": [],
+                        "paused": true,
+                        "usable_now": false,
+                        "use_requires_limit": false
+                    }
+                ],
+                "cooldown_until": null,
+                "weekly_resets_at": 1_791_334_800
+            }
+        })
+    );
+    // The windows are unaffected by the reset blocks.
+    let mut expected = alpha_result("network");
+    expected["limit_resets"] = payload["result"]["limit_resets"].clone();
+    assert_eq!(payload["result"], expected);
+
+    let requests = server.take_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/api/oauth/usage");
+    assert_eq!(requests[0].query.as_deref(), Some("at_wall=1&skip_spend=1"));
+    assert_eq!(
+        requests[0].header_value("user-agent").as_deref(),
+        Some("claude-cli/9.8.7 (external, cli)")
+    );
+    assert_eq!(
+        requests[0].header_value("anthropic-beta").as_deref(),
+        Some("oauth-2025-04-20")
+    );
+}
+
+#[test]
+fn diag_rate_limits_degrades_malformed_reset_blocks_to_null_without_failing() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let server = resets_server(
+        r#"{
+          "five_hour": { "utilization": 25.0, "resets_at": "2023-11-14T22:13:20.000000+00:00" },
+          "seven_day": { "utilization": 40.0, "resets_at": "2023-11-20T17:06:40+00:00" },
+          "juniper_tide": "surprise",
+          "cedar_ember": {
+            "eligible": "yes",
+            "ineligible_reason": "Has Spaces!",
+            "at_limit": "no",
+            "exhausted": "five_hour",
+            "grants": { "id": "grant_a" },
+            "next_grant_id": "grant_missing",
+            "weekly_resets_at": 17,
+            "cooldown_until": "tomorrow"
+          }
+        }"#,
+    );
+
+    let output = run(
+        &["diag", "rate-limits", "alpha", "--format", "json"],
+        &resets_options(&fx, &server, ""),
+    );
+
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["result"]["ok"], true);
+    assert_eq!(
+        payload["result"]["limit_resets"],
+        json!({
+            "juniper_tide": null,
+            "cedar_ember": {
+                "available": false,
+                "eligible": false,
+                "ineligible_reason": "unknown",
+                "at_limit": null,
+                "exhausted": [],
+                "next_grant_id": null,
+                "grants": [],
+                "cooldown_until": null,
+                "weekly_resets_at": null
+            }
+        })
+    );
+}
+
+#[test]
+fn diag_rate_limits_juniper_control_arm_and_ineligible_programs_are_unavailable() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let server = resets_server(
+        r#"{
+          "five_hour": { "utilization": 25.0, "resets_at": null },
+          "seven_day": null,
+          "juniper_tide": { "eligible": true, "available": true, "arm": "control", "resets_per_week": 1 },
+          "cedar_ember": {
+            "eligible": false,
+            "ineligible_reason": "tenure",
+            "at_limit": false,
+            "exhausted": [],
+            "grants": [{ "id": "grant_a", "resets_left": 1 }],
+            "next_grant_id": "grant_a",
+            "weekly_resets_at": "2026-10-07T01:00:00+00:00",
+            "cooldown_until": null
+          }
+        }"#,
+    );
+
+    let output = run(
+        &["diag", "rate-limits", "alpha", "--format", "json"],
+        &resets_options(&fx, &server, ""),
+    );
+
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    let resets = &payload["result"]["limit_resets"];
+    assert_eq!(resets["juniper_tide"]["available"], false);
+    assert_eq!(resets["juniper_tide"]["eligible"], true);
+    assert_eq!(resets["juniper_tide"]["arm"], "control");
+    assert_eq!(resets["cedar_ember"]["available"], false);
+    assert_eq!(resets["cedar_ember"]["ineligible_reason"], "tenure");
+    assert_eq!(resets["cedar_ember"]["next_grant_id"], "grant_a");
+}
+
+#[test]
+fn diag_rate_limits_appends_the_status_query_to_an_endpoint_override() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let server = resets_server(ALPHA_USAGE);
+
+    let output = run(
+        &["diag", "rate-limits", "alpha", "--format", "json"],
+        &resets_options(&fx, &server, "?tenant=demo"),
+    );
+
+    assert_exit(&output, 0);
+    let requests = server.take_requests();
+    assert_eq!(
+        requests[0].query.as_deref(),
+        Some("tenant=demo&at_wall=1&skip_spend=1")
+    );
+}
+
+#[test]
+fn diag_rate_limits_user_agent_follows_the_installed_claude_code_version() {
+    let fx = Fixture::new();
+    fx.write_profile("alpha", "access-alpha", FUTURE_MS);
+    let server = resets_server(ALPHA_USAGE);
+    let bin_dir = write_fake_claude(
+        &fx.root,
+        "#!/bin/sh\n[ \"$1\" = \"--version\" ] || exit 9\nprintf '2.3.45 (Claude Code)\\n'\n",
+    );
+    let user_agent = |options: CmdOptions| {
+        let output = run(
+            &["diag", "rate-limits", "alpha", "--format", "json"],
+            &options,
+        );
+        assert_exit(&output, 0);
+        server
+            .take_requests()
+            .pop()
+            .and_then(|request| request.header_value("user-agent"))
+            .expect("user agent")
+    };
+
+    // The installed Claude Code reports its version (an empty pin is unset).
+    assert_eq!(
+        user_agent(
+            resets_options(&fx, &server, "")
+                .with_env("CLAUDE_RATE_LIMITS_CLAUDE_CODE_VERSION", "")
+                .with_fake_claude(&bin_dir)
+        ),
+        "claude-cli/2.3.45 (external, cli)"
+    );
+    // A malformed pin is ignored in favor of detection.
+    assert_eq!(
+        user_agent(
+            resets_options(&fx, &server, "")
+                .with_env("CLAUDE_RATE_LIMITS_CLAUDE_CODE_VERSION", "2.x")
+                .with_fake_claude(&bin_dir)
+        ),
+        "claude-cli/2.3.45 (external, cli)"
+    );
+    // No Claude Code binary falls back to the pinned default.
+    assert_eq!(
+        user_agent(
+            resets_options(&fx, &server, "").with_env("CLAUDE_RATE_LIMITS_CLAUDE_CODE_VERSION", "")
+        ),
+        "claude-cli/2.1.284 (external, cli)"
+    );
+    // An explicit user-agent override still wins.
+    assert_eq!(
+        user_agent(
+            resets_options(&fx, &server, "")
+                .with_env("CLAUDE_PROMPT_SEGMENT_USER_AGENT", "custom-agent/1")
+        ),
+        "custom-agent/1"
+    );
 }

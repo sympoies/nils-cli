@@ -1,6 +1,7 @@
 pub mod keychain;
 pub mod profile;
 pub mod remote;
+pub mod reset_rate_limits;
 pub mod store;
 
 use std::process::{Command, Stdio};

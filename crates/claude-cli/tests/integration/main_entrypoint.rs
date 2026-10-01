@@ -34,6 +34,9 @@ fn main_completion_exports_bash_and_zsh_scripts() {
     assert!(zsh_text.contains("config:Configuration command group"));
     assert!(zsh_text.contains("prompt-segment:Prompt-segment command group"));
     assert!(zsh_text.contains(":shell -- Shell to generate completion script for:(bash zsh)"));
+    assert!(
+        zsh_text.contains("'reset-rate-limits:Redeem one Claude limit reset for a stored profile'")
+    );
 
     let bash = run(&["completion", "bash"], &options);
     assert_exit(&bash, 0);
@@ -41,4 +44,17 @@ fn main_completion_exports_bash_and_zsh_scripts() {
     assert!(bash_text.contains("_claude__cli()"));
     assert!(bash_text.contains("complete -F _claude__cli"));
     assert!(bash_text.contains("opts=\"-h --help bash zsh\""));
+}
+
+#[test]
+fn main_auth_help_lists_reset_rate_limits() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let output = run(&["auth", "--help"], &base_options(tmp.path()));
+    assert_exit(&output, 0);
+    assert!(
+        stdout(&output)
+            .contains("reset-rate-limits  Redeem one Claude limit reset for a stored profile"),
+        "{}",
+        stdout(&output)
+    );
 }

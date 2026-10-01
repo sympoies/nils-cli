@@ -215,7 +215,7 @@ struct ServeState {
     coordination_wait_workers: Arc<tokio::sync::Semaphore>,
     coordination_notification_wake: Arc<tokio::sync::Notify>,
     remote_outbox_wake: Arc<tokio::sync::Notify>,
-    /// `GET /usage/v1` and `POST /codex/reset/v1` (`usage.rs`).
+    /// `GET /usage/v1`, `POST /codex/reset/v1`, and `POST /claude/reset/v1` (`usage.rs`).
     provider_usage: Arc<crate::usage::UsageService>,
 }
 
@@ -1265,6 +1265,7 @@ fn router(state: Arc<ServeState>) -> Router {
         .route("/usage", get(usage_handler))
         .route("/usage/v1", get(usage_v1_handler))
         .route("/codex/reset/v1", post(codex_reset_v1_handler))
+        .route("/claude/reset/v1", post(claude_reset_v1_handler))
         .route("/workdirs", get(workdirs_handler))
         .route("/repos/remote-url", get(repo_remote_url_handler))
         .route("/sessions/{id}/glance", get(glance_handler))
@@ -2732,6 +2733,37 @@ async fn codex_reset_v1_handler(
     {
         Ok(result) => Json(result).into_response(),
         Err(error) => status_json(error.status, error.code, error.message),
+    }
+}
+
+/// `POST /claude/reset/v1`: a raw versioned result on success (`usage.rs`).
+/// A failed CLI run adds `error.details` with only daemon-validated codes.
+async fn claude_reset_v1_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    match state
+        .provider_usage
+        .claude_reset(&state.machine, &body)
+        .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => match error.details {
+            None => status_json(error.status, error.code, error.message),
+            Some(details) => (
+                error.status,
+                Json(json!({
+                    "schema_version": serve_schema(),
+                    "ok": false,
+                    "error": { "code": error.code, "message": error.message, "details": details },
+                })),
+            )
+                .into_response(),
+        },
     }
 }
 

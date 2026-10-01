@@ -32,8 +32,9 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /activity/events` | Bearer | [Activity stream v1](activity-stream-v1.md) |
 | `POST /activity/hook/v1` | Session capability only; direct loopback peers only | [Activity stream v1](activity-stream-v1.md#provider-hook-ingress) |
 | `GET /usage` | Open | This specification |
-| `GET /usage/v1` | Bearer | [Provider usage and Codex reset](#provider-usage-and-codex-reset) |
-| `POST /codex/reset/v1` | Bearer; account allowlist and idempotency key | [Provider usage and Codex reset](#provider-usage-and-codex-reset) |
+| `GET /usage/v1` | Bearer | [Provider usage and resets](#provider-usage-and-resets) |
+| `POST /codex/reset/v1` | Bearer; account allowlist and idempotency key | [Provider usage and resets](#provider-usage-and-resets) |
+| `POST /claude/reset/v1` | Bearer; account allowlist and idempotency key | [Provider usage and resets](#provider-usage-and-resets) |
 | `GET /workdirs` | Bearer | This specification |
 | `GET /repos/remote-url` | Bearer | This specification |
 | `GET /sessions/{id}/glance` | Open | This specification |
@@ -415,7 +416,7 @@ recorded in `sympoies/nils-cli#1409`.
   `rate_limited`, `service_unavailable`, `timeout`, or `unknown`) copied only
   from the helpers' allowlisted structured field. The authenticated, cached,
   per-account successor is `GET /usage/v1`, specified under
-  [Provider usage and Codex reset](#provider-usage-and-codex-reset).
+  [Provider usage and resets](#provider-usage-and-resets).
 - `GET /repos/remote-url?cwd=...` — authenticated repository lookup. `cwd` is
   required. The ordinary serve envelope returns `data.url` as a normalized
   credential-free HTTPS URL for any parseable Git origin host, or `null` when
@@ -948,11 +949,11 @@ recorded in `sympoies/nils-cli#1409`.
   retain their documented local fallback when capability is absent/false or an event does not arrive within its bounded
   fallback interval.
 
-### Provider usage and Codex reset
+### Provider usage and resets
 
-`GET /usage/v1` and `POST /codex/reset/v1` serve provider usage and the earned
-Codex rate-limit reset from the `codex-cli` and `claude-cli` provider CLIs on
-`PATH`, so a console edge needs no separate host helper. Both require the
+`GET /usage/v1`, `POST /codex/reset/v1`, and `POST /claude/reset/v1` serve
+provider usage, the earned Codex rate-limit reset, and the Claude limit
+resets from the `codex-cli` and `claude-cli` provider CLIs on `PATH`, so a console edge needs no separate host helper. All three require the
 server bearer, like every other authenticated route. Their response shapes
 match what a console edge already parses from the helpers they replace; the
 synthetic fixtures under `tests/fixtures/usage-v1/` pin that projection.
@@ -1073,6 +1074,70 @@ that refresh only until 6 seconds after the request arrived, so a client with
 an 8-second timeout still receives the outcome. A slower refresh leaves the
 Codex entries `stale: true` with the refreshing note. A replay returns the
 cached snapshot instead.
+
+**Claude reset.** `POST /claude/reset/v1` takes exactly
+`{"account": "<nickname>", "program": "juniper_tide" | "cedar_ember", "idempotency_key": "<uuid>"}`
+and redeems at most one Claude limit reset through
+`claude-cli auth reset-rate-limits --yes --program <program> --request-id <uuid> --format json <nickname>`.
+`juniper_tide` is the weekly reset of the 5-hour session limit and
+`cedar_ember` the next granted reset; `claude-cli` picks the grant on the
+host, so grant ids never cross this boundary.
+
+- `AGENT_SESSION_CLAUDE_RESET_ACCOUNTS` is the allowlist of stored
+  `claude-cli` profile nicknames, separated by spaces or commas. Unset or
+  empty disables the route with `503 claude-reset-not-configured`; an unlisted
+  account is `403 claude-reset-account-not-allowed`.
+- Replay works as for Codex, in a separate 24-hour record: the same key for
+  the same account and program replays the recorded outcome
+  (`replayed: true`, no second CLI run), and the same key for another account
+  or program is `409 idempotency-key-reused`. The key is also the
+  `cedar_ember` request id the provider receives. A reset keeps running and
+  is recorded when its caller disconnects; a failed run is not recorded.
+  Recording a reset marks the Claude usage snapshot stale and starts a
+  refresh, without waiting for it.
+- A malformed body is `422 invalid-request`. CLI failures are
+  `502 claude-reset-failed`, `502 claude-reset-invalid-response`,
+  `502 claude-reset-unavailable`, or `504 claude-reset-timeout` (35 seconds,
+  an unknown result to retry with the same key). serve runs the CLI with
+  `CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS=5` and
+  `CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS=25`, overriding its own
+  environment, so the CLI finishes its status read and POST before that
+  deadline. `claude-reset-failed` adds
+  `error.details` when the CLI reported one of its documented error codes:
+  `{"cli_code": "<code>", "reason_code": "<reason>" | null, "retryable": <bool>}`.
+  `cli_code` is one of `claude-auth-required`, `provider-unavailable`,
+  `provider-rejected`, `invalid-provider-response`, `profile-not-found`,
+  `profile-invalid`, `organization-unknown`, `endpoint-invalid`,
+  `invalid-profile-name`, `confirmation-required`, `request-id-required`, or
+  `invalid-request-id`; `reason_code` uses the usage reason vocabulary; and
+  `retryable` is true only for `provider-unavailable`. Helper messages never
+  pass through.
+
+Success is a raw versioned document:
+
+```json
+{
+  "schema_version": "agent-console.claude-limit-reset.v1",
+  "program": "cedar_ember",
+  "outcome": "reset",
+  "posted": true,
+  "reason": null,
+  "resets_left": 1,
+  "next_available_at": null,
+  "cooldown_until": null,
+  "weekly_resets_at": 1791334800,
+  "replayed": false,
+  "machine": "workstation"
+}
+```
+
+`outcome` is `reset`, `already_used`, `not_limited`, `cooldown`,
+`ineligible`, or `unavailable`. `posted` is `false` when `claude-cli` found
+the program unavailable and sent nothing. `reason` is `null` or a bounded
+lowercase token, `resets_left` a non-negative integer or `null`, and the
+three timestamps epoch seconds or `null`. Every field is always present. The
+daemon accepts only a CLI result whose envelope, program, outcome, and field
+types match; anything else is `claude-reset-invalid-response`.
 
 ## Response and authentication
 

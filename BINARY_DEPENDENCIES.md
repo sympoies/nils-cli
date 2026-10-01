@@ -23,7 +23,7 @@ These tools are required for common command paths. Each row is anchored to at le
 | `grpcurl` | `api-grpc` unary backend (via `api-testing-core::grpc::runner`); overridable with `GRPCURL_BIN` | Required (for `api-grpc call` / suite gRPC cases) | `brew install grpcurl` |
 | `ffmpeg` | `screen-record` on Linux (X11 + Wayland portal capture, audio mux) | Required on Linux | `brew install ffmpeg` |
 | `codex` | `codex-cli auth login` and `codex-cli agent *` flows | Required for `codex-cli` runtime | Install from official Codex distribution |
-| `claude` | `claude-cli agent *`, `auth *`, `agent resume`, and the native usage fallback | Required for those `claude-cli` flows | Install from official Claude Code distribution |
+| `claude` | `claude-cli agent *`, `auth *`, `agent resume`, and the native usage fallback; `diag rate-limits` and `auth reset-rate-limits` read its `--version` for the User-Agent | Required for those `claude-cli` flows; the version read falls back to a pinned default | Install from official Claude Code distribution |
 | `semantic-commit` | `claude-cli agent commit` and `codex-cli agent commit` safe commit paths | Required for those agent commit flows | Install the matching nils-cli `semantic-commit` binary |
 | `ssh` | `codex-cli auth remote pull`; `claude-cli auth remote pull`; `macos-agent --host` fixed-command JSON transport | Required for those remote flows | Usually preinstalled (`brew install openssh`) |
 | `curl` | locked Peekaboo asset download for `macos-agent backend install` | Required for those flows | Usually preinstalled (`brew install curl`) |

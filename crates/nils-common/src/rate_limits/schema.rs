@@ -63,6 +63,9 @@ pub struct RateLimitResult {
     pub windows: Option<Vec<RateLimitWindow>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reset_credits: Option<ResetCredits>,
+    /// Provider-owned limit-reset status (Claude only); absent elsewhere.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit_resets: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_usage: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,6 +99,7 @@ impl RateLimitResult {
             summary: Some(summary),
             windows: Some(windows),
             reset_credits: None,
+            limit_resets: None,
             raw_usage: None,
             error: None,
         }
@@ -121,6 +125,7 @@ impl RateLimitResult {
             summary: None,
             windows: None,
             reset_credits: None,
+            limit_resets: None,
             raw_usage: None,
             error: Some(ErrorEnvelope {
                 code: code.to_string(),
@@ -143,6 +148,7 @@ impl RateLimitResult {
             summary: None,
             windows: Some(Vec::new()),
             reset_credits,
+            limit_resets: None,
             raw_usage: None,
             error: None,
         }

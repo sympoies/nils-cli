@@ -74,6 +74,8 @@ fn completion_contract_declares_enum_value_candidates() {
             "'--runtime=[Runtime profile (default\\: safe)]:mode:(safe inherited)' \\",
             "'--effort=[Claude effort override]:level:(low medium high xhigh max)' \\",
             "':shell -- Shell to generate completion script for:(bash zsh)' \\",
+            "'--program=[Limit-reset program to redeem]:program:((juniper_tide\\:\"The weekly session-limit reset offered at the 5-hour limit\"",
+            "cedar_ember\\:\"A granted reset with its own id and expiry\"))' \\",
         ],
     );
 }

@@ -12,6 +12,7 @@ EXAMPLES:
   claude-cli auth current --format json
   claude-cli auth remote pull --ssh authority --current --access-only --write-active
   claude-cli auth remote pull --ssh authority --all --into ~/.claude-accounts --access-only
+  claude-cli auth reset-rate-limits --yes --program cedar_ember --request-id <uuid> --format json work
   claude-cli config show
   claude-cli diag rate-limits --all --format json
   claude-cli prompt-segment
@@ -26,7 +27,8 @@ ENVIRONMENT:
   CLAUDE_CONFIG_DIR, CLAUDE_SECRET_DIR, CLAUDE_AUTH_REFRESH_MARGIN_SECONDS, CLAUDE_AUTH_KEYCHAIN
   CLAUDE_ACCOUNTS_DIR
   CLAUDE_RATE_LIMITS_CACHE_TTL, CLAUDE_RATE_LIMITS_CACHE_ALLOW_STALE
-  CLAUDE_RATE_LIMITS_DEFAULT_ALL_ENABLED
+  CLAUDE_RATE_LIMITS_DEFAULT_ALL_ENABLED, CLAUDE_RATE_LIMITS_CLAUDE_CODE_VERSION
+  CLAUDE_RATE_LIMITS_API_BASE_URL, CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS
   CLAUDE_CLI_AGENT_RUNTIME, CLAUDE_CLI_NO_SESSION_PERSISTENCE
   CLAUDE_PROMPT_TTL, CLAUDE_PROMPT_STALE_SUFFIX
   CLAUDE_PROMPT_SEGMENT_TTL, CLAUDE_PROMPT_SEGMENT_STALE_SUFFIX
@@ -40,7 +42,8 @@ ENVIRONMENT:
 EXIT CODES:
   0   success
   1   runtime false/failed state
-  2   ambiguous profile target, or no current default profile
+  2   ambiguous profile target, no current default profile, or reset sign-in required
+  3   reset-rate-limits provider failure (see error.details.retryable)
   64  command-line usage error
   65  invalid input data or unresolved session id
   69  required Claude capability unavailable";
@@ -258,6 +261,34 @@ pub enum AuthCommand {
     },
     /// Move access-only logins between a token authority and replicas
     Remote(AuthRemoteArgs),
+    /// Redeem one Claude limit reset for a stored profile
+    ResetRateLimits {
+        /// Limit-reset program to redeem
+        #[arg(long = "program", value_enum, value_name = "program")]
+        program: ResetProgramArg,
+        /// Stable UUID for this logical redemption attempt
+        #[arg(long = "request-id", value_name = "uuid")]
+        request_id: Option<String>,
+        /// Confirm redemption without an interactive prompt
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+        #[command(flatten)]
+        output: OutputModeArgs,
+        /// Stored profile name under CLAUDE_SECRET_DIR
+        #[arg(value_name = "profile")]
+        profile: String,
+    },
+}
+
+/// `auth reset-rate-limits --program`, spelled as the upstream program ids.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ResetProgramArg {
+    /// The weekly session-limit reset offered at the 5-hour limit
+    #[value(name = "juniper_tide")]
+    JuniperTide,
+    /// A granted reset with its own id and expiry
+    #[value(name = "cedar_ember")]
+    CedarEmber,
 }
 
 #[derive(Args, Clone, Debug, Default)]

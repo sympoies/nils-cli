@@ -320,6 +320,20 @@ esac
     ;;
 esac
 ;;
+(reset-rate-limits)
+_arguments "${_arguments_options[@]}" : \
+'--program=[Limit-reset program to redeem]:program:((juniper_tide\:"The weekly session-limit reset offered at the 5-hour limit"
+cedar_ember\:"A granted reset with its own id and expiry"))' \
+'--request-id=[Stable UUID for this logical redemption attempt]:uuid:_default' \
+'--format=[Output format (\`text\` or \`json\`)]:format:(text json)' \
+'-y[Confirm redemption without an interactive prompt]' \
+'--yes[Confirm redemption without an interactive prompt]' \
+'(--format)--json[Hidden alias for \`--format json\`]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':profile -- Stored profile name under CLAUDE_SECRET_DIR:_default' \
+&& ret=0
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 ":: :_claude-cli__subcmd__auth__subcmd__help_commands" \
@@ -391,6 +405,10 @@ _arguments "${_arguments_options[@]}" : \
         esac
     ;;
 esac
+;;
+(reset-rate-limits)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
 ;;
 (help)
 _arguments "${_arguments_options[@]}" : \
@@ -731,6 +749,10 @@ _arguments "${_arguments_options[@]}" : \
     ;;
 esac
 ;;
+(reset-rate-limits)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
         esac
     ;;
 esac
@@ -942,6 +964,7 @@ _claude-cli__subcmd__auth_commands() {
 'refresh:Refresh the named profiles through Claude Code'\''s refresh-token login' \
 'auto-refresh:Refresh every profile whose access token is close to expiry' \
 'remote:Move access-only logins between a token authority and replicas' \
+'reset-rate-limits:Redeem one Claude limit reset for a stored profile' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'claude-cli auth commands' commands "$@"
@@ -969,6 +992,7 @@ _claude-cli__subcmd__auth__subcmd__help_commands() {
 'refresh:Refresh the named profiles through Claude Code'\''s refresh-token login' \
 'auto-refresh:Refresh every profile whose access token is close to expiry' \
 'remote:Move access-only logins between a token authority and replicas' \
+'reset-rate-limits:Redeem one Claude limit reset for a stored profile' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'claude-cli auth help commands' commands "$@"
@@ -1025,6 +1049,11 @@ _claude-cli__subcmd__auth__subcmd__help__subcmd__remote__subcmd__pull_commands()
 _claude-cli__subcmd__auth__subcmd__help__subcmd__remove_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli auth help remove commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__reset-rate-limits_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__help__subcmd__reset-rate-limits_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth help reset-rate-limits commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__auth__subcmd__help__subcmd__save_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__help__subcmd__save_commands() {
@@ -1103,6 +1132,11 @@ _claude-cli__subcmd__auth__subcmd__remote__subcmd__pull_commands() {
 _claude-cli__subcmd__auth__subcmd__remove_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli auth remove commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__auth__subcmd__reset-rate-limits_commands] )) ||
+_claude-cli__subcmd__auth__subcmd__reset-rate-limits_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli auth reset-rate-limits commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__auth__subcmd__save_commands] )) ||
 _claude-cli__subcmd__auth__subcmd__save_commands() {
@@ -1267,6 +1301,7 @@ _claude-cli__subcmd__help__subcmd__auth_commands() {
 'refresh:Refresh the named profiles through Claude Code'\''s refresh-token login' \
 'auto-refresh:Refresh every profile whose access token is close to expiry' \
 'remote:Move access-only logins between a token authority and replicas' \
+'reset-rate-limits:Redeem one Claude limit reset for a stored profile' \
     )
     _describe -t commands 'claude-cli help auth commands' commands "$@"
 }
@@ -1317,6 +1352,11 @@ _claude-cli__subcmd__help__subcmd__auth__subcmd__remote__subcmd__pull_commands()
 _claude-cli__subcmd__help__subcmd__auth__subcmd__remove_commands() {
     local commands; commands=()
     _describe -t commands 'claude-cli help auth remove commands' commands "$@"
+}
+(( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__reset-rate-limits_commands] )) ||
+_claude-cli__subcmd__help__subcmd__auth__subcmd__reset-rate-limits_commands() {
+    local commands; commands=()
+    _describe -t commands 'claude-cli help auth reset-rate-limits commands' commands "$@"
 }
 (( $+functions[_claude-cli__subcmd__help__subcmd__auth__subcmd__save_commands] )) ||
 _claude-cli__subcmd__help__subcmd__auth__subcmd__save_commands() {
