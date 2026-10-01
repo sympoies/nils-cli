@@ -1203,9 +1203,10 @@ request finishes until expiry. Due entries are selected by their retry deadline,
 so a repeatedly timed-out entry cannot starve later messages. A retryable
 transport failure (`remote-messaging-unavailable`, `coordination-unavailable`)
 also defers every other already-attempted queued envelope for the same
-destination machine to the same retry deadline, so an offline machine costs one
-probe per retry interval and cannot delay due envelopes for other machines. A
-fresh envelope still gets its own first attempt. The worker wakes
+destination address (machine, session and incarnation) to the same retry
+deadline. An unavailable session or offline machine then costs one probe per
+destination session per retry interval and cannot delay due envelopes for other
+destinations. A fresh envelope still gets its own first attempt. The worker wakes
 on enqueue or the next pending deadline and sleeps indefinitely when no entries
 remain queued. No registry, journal or session lock spans network I/O.
 A source restart preserves the original envelope and

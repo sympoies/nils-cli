@@ -30,7 +30,7 @@ const MAX_PENDING_PER_DESTINATION: usize = 512;
 const MAX_PENDING: usize = 2048;
 /// Every retained source identity: queued envelopes plus body-free terminal records.
 const MAX_RETAINED_IDS: usize = 16384;
-/// Retryable transport failures back off every queued envelope to that machine.
+/// Retry interval; an unavailable destination backs off its attempted envelopes together.
 const RETRY_SECS: i64 = 5;
 
 #[derive(Clone)]
@@ -820,13 +820,13 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
         }
         if unreachable {
             // Envelopes that already failed share one probe per retry interval
-            // to an unreachable machine, so it cannot delay other machines. A
-            // fresh envelope still gets its own first attempt.
+            // to an unavailable destination session, so it cannot delay other
+            // sessions or machines. A fresh envelope gets its own first attempt.
             let retry_at = now_epoch().saturating_add(RETRY_SECS);
             for other in locked.registry.remote_outbox.iter_mut().filter(|other| {
                 other.state == "queued"
                     && other.attempts > 0
-                    && other.envelope.to.machine == item.envelope.to.machine
+                    && other.envelope.to == item.envelope.to
             }) {
                 other.next_attempt_epoch = other.next_attempt_epoch.max(retry_at);
             }
@@ -2046,6 +2046,10 @@ mod tests {
             .registry
             .remote_outbox
             .extend(own_queued("awake", 0..1));
+        // A healthy session on the same machine as the unavailable one.
+        let mut healthy = own_queued("asleep", 2..3);
+        healthy[0].envelope.to.session_id = "healthy".into();
+        locked.registry.remote_outbox.extend(healthy);
         let due = locked.registry.remote_outbox[0].next_attempt_epoch;
         for item in &mut locked.registry.remote_outbox {
             item.attempts = 1;
@@ -2061,12 +2065,19 @@ mod tests {
             outbox[0].reason.as_deref(),
             Some("remote-messaging-unavailable")
         );
-        assert_eq!(outbox[1].attempts, 1, "only one probe per machine");
-        assert!(outbox[1].next_attempt_epoch > due, "same machine backs off");
+        assert_eq!(outbox[1].attempts, 1, "only one probe per destination");
+        assert!(
+            outbox[1].next_attempt_epoch > due,
+            "same destination backs off"
+        );
         assert_eq!(
             outbox[2].next_attempt_epoch,
             due + 1000,
             "other machine is untouched"
+        );
+        assert_eq!(
+            outbox[3].next_attempt_epoch, due,
+            "another session on the same machine stays due"
         );
     }
     #[test]
