@@ -18,6 +18,14 @@ use super::support::{StubEnv, parse_envelope, run_forge_cli};
 /// the final snapshot, so callers that poll longer than the prepared
 /// sequence keep seeing the trailing snapshot (essential for timeout tests).
 fn gh_sequence_stub(stub: &StubEnv, sequence: &[&str]) {
+    gh_sequence_stub_with(stub, sequence, false);
+}
+
+/// Like [`gh_sequence_stub`], but when `no_required_checks` is set the
+/// `--required` list answers the way `gh` does for a repository without
+/// branch-protection required checks: empty stdout, a "no required checks
+/// reported" notice on stderr, and exit 1.
+fn gh_sequence_stub_with(stub: &StubEnv, sequence: &[&str], no_required_checks: bool) {
     assert!(!sequence.is_empty(), "sequence must have at least one snap");
     for (idx, snap) in sequence.iter().enumerate() {
         let path = stub.tempdir.path().join(format!("snap-{idx}.json"));
@@ -36,6 +44,10 @@ case "$1 $2" in
     idx=$(cat "$counter")
     case " $* " in
       *" --required "*)
+        if [ "{no_required_checks}" = "true" ]; then
+            echo "no required checks reported on the 'feature' branch" >&2
+            exit 1
+        fi
         idx=$((idx - 1))
         if [ "$idx" -lt 0 ]; then
             idx=0
@@ -67,6 +79,8 @@ const PENDING_SNAP: &str =
     r#"[{"name":"build","bucket":"pending","state":"IN_PROGRESS","link":"https://ci/1"}]"#;
 const SUCCESS_SNAP: &str =
     r#"[{"name":"build","bucket":"pass","state":"COMPLETED","link":"https://ci/1"}]"#;
+const QUEUED_SNAP: &str =
+    r#"[{"name":"build","bucket":"pending","state":"QUEUED","link":"https://ci/1"}]"#;
 const FAILURE_SNAP: &str =
     r#"[{"name":"build","bucket":"fail","state":"COMPLETED","link":"https://ci/1"}]"#;
 
@@ -393,4 +407,75 @@ fn pr_wait_checks_repo_declared_no_checks_completes_immediately() {
     assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
     let env = parse_envelope(&out.stdout);
     assert_eq!(env["data"]["required_count"], 0);
+}
+
+/// #2018: a repository without branch-protection required checks still runs
+/// CI. While that visible check is queued or in progress the wait must keep
+/// polling, the same way `pr deliver` gates its visible checks, instead of
+/// reporting success over the empty required set.
+#[test]
+fn pr_wait_checks_without_required_checks_waits_for_visible_checks() {
+    let mut stub = StubEnv::new();
+    gh_sequence_stub_with(&stub, &[QUEUED_SNAP, PENDING_SNAP, SUCCESS_SNAP], true);
+    let gh_path = stub.tempdir.path().join("gh");
+    stub = stub.env("FORGE_CLI_GH_BIN", gh_path.to_string_lossy());
+
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "wait-checks",
+            "1",
+            "--interval",
+            "10ms",
+            "--timeout",
+            "20s",
+        ],
+    );
+
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["data"]["state"], "success");
+    assert_eq!(env["data"]["required_count"], 1);
+    assert_eq!(env["data"]["success_count"], 1);
+    let polls = std::fs::read_to_string(stub.tempdir.path().join("counter")).expect("counter");
+    assert_eq!(polls.trim(), "3", "success must wait for the third poll");
+}
+
+/// A visible check that stays queued must expire as `checks_timeout`, never
+/// as success.
+#[test]
+fn pr_wait_checks_without_required_checks_times_out_on_a_queued_check() {
+    let mut stub = StubEnv::new();
+    gh_sequence_stub_with(&stub, &[QUEUED_SNAP], true);
+    let gh_path = stub.tempdir.path().join("gh");
+    stub = stub.env("FORGE_CLI_GH_BIN", gh_path.to_string_lossy());
+
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "wait-checks",
+            "1",
+            "--interval",
+            "10ms",
+            "--timeout",
+            "50ms",
+        ],
+    );
+
+    assert_eq!(out.code, 69, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "checks_timeout");
+    assert_eq!(env["data"]["state"], "pending");
+    assert_eq!(env["data"]["pending"][0]["name"], "build");
 }
