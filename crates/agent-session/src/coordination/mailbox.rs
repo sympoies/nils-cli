@@ -806,10 +806,11 @@ where
     let recipient_incarnation = broker.incarnation.clone();
     let now_millis = now_epoch_millis();
     admit_message(
-        &locked.registry,
+        &mut locked.registry,
         sender_session_id,
         &recipient.id,
         body.len(),
+        reply_to.as_deref(),
         now,
         now_millis,
     )?;
@@ -1222,10 +1223,11 @@ fn message_revision_conflict() -> CliError {
 
 // Both local and federated ingress enforce the same mailbox policy.
 pub(super) fn admit_message(
-    registry: &Registry,
+    registry: &mut Registry,
     sender_session_id: &str,
     recipient_id: &str,
     body_bytes: usize,
+    keep_message_id: Option<&str>,
     now: i64,
     now_millis: i64,
 ) -> Result<(), CliError> {
@@ -1261,23 +1263,27 @@ pub(super) fn admit_message(
             None,
         ));
     }
+    // Acknowledged and expired messages are retained only for idempotency and
+    // audit; they never count toward the per-recipient quota.
     let live_for_recipient: Vec<_> = registry
         .messages
         .iter()
         .filter(|message| {
-            message.recipient_session_id == recipient_id && message.state != "deleted"
+            message.recipient_session_id == recipient_id && counts_toward_quota(message, now)
         })
         .collect();
+    let recipient_count = live_for_recipient.len();
     let recipient_bytes: usize = live_for_recipient
         .iter()
         .map(|message| message.body_bytes)
         .sum();
-    let registry_bytes: usize = registry
-        .messages
-        .iter()
-        .filter(|message| message.state != "deleted")
-        .map(|message| message.body_bytes)
-        .sum();
+    let registry_bytes = registry_message_bytes(registry);
+    if registry_bytes.saturating_add(body_bytes) > super::MAX_REGISTRY_BYTES as usize {
+        // Retained terminal bodies must not starve live delivery: reclaim the
+        // oldest ones before refusing.
+        evict_terminal_messages(registry, body_bytes, keep_message_id);
+    }
+    let registry_bytes = registry_message_bytes(registry);
     let refuse = |quota, count, limit| {
         Err(super::quota_exceeded(
             "coordination mailbox quota exceeded",
@@ -1286,12 +1292,8 @@ pub(super) fn admit_message(
             limit,
         ))
     };
-    if live_for_recipient.len() >= MAX_SESSION_MESSAGES {
-        return refuse(
-            "recipient-messages",
-            live_for_recipient.len(),
-            MAX_SESSION_MESSAGES,
-        );
+    if recipient_count >= MAX_SESSION_MESSAGES {
+        return refuse("recipient-messages", recipient_count, MAX_SESSION_MESSAGES);
     }
     if recipient_bytes.saturating_add(body_bytes) > MAX_SESSION_BYTES {
         return refuse(
@@ -1312,9 +1314,202 @@ pub(super) fn admit_message(
     Ok(())
 }
 
+fn counts_toward_quota(message: &StoredMessage, now: i64) -> bool {
+    !matches!(
+        message.state.as_str(),
+        "acknowledged" | "expired" | "deleted"
+    ) && message.expires_at_epoch > now
+}
+
+fn registry_message_bytes(registry: &Registry) -> usize {
+    registry
+        .messages
+        .iter()
+        .filter(|message| message.state != "deleted")
+        .map(|message| message.body_bytes)
+        .sum()
+}
+
+fn evict_terminal_messages(
+    registry: &mut Registry,
+    body_bytes: usize,
+    keep_message_id: Option<&str>,
+) {
+    let cap = super::MAX_REGISTRY_BYTES as usize;
+    let mut total = registry_message_bytes(registry);
+    let mut terminal: Vec<_> = registry
+        .messages
+        .iter()
+        .filter(|message| {
+            matches!(message.state.as_str(), "acknowledged" | "expired")
+                && Some(message.message_id.as_str()) != keep_message_id
+        })
+        .map(|message| {
+            (
+                message.terminal_at_epoch.unwrap_or(0),
+                message.message_id.clone(),
+                message.body_bytes,
+            )
+        })
+        .collect();
+    terminal.sort();
+    let mut evicted = std::collections::BTreeSet::new();
+    for (_, message_id, bytes) in terminal {
+        if total.saturating_add(body_bytes) <= cap {
+            break;
+        }
+        total = total.saturating_sub(bytes);
+        evicted.insert(message_id);
+    }
+    registry
+        .messages
+        .retain(|message| !evicted.contains(&message.message_id));
+    registry
+        .notifications
+        .retain(|key, _| !evicted.contains(key));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const NOW: i64 = 1_000_000;
+
+    fn quota_message(index: usize, recipient: &str, state: &str, bytes: usize) -> StoredMessage {
+        StoredMessage {
+            schema_version: MESSAGE_VERSION.to_string(),
+            message_id: format!("message-{index}"),
+            // Distinct senders and old timestamps keep pair rate limits out of play.
+            sender_session_id: format!("sender-{index}"),
+            sender_incarnation: "incarnation".to_string(),
+            recipient_session_id: recipient.to_string(),
+            recipient_incarnation: "incarnation".to_string(),
+            state: state.to_string(),
+            revision: 0,
+            reply_to: None,
+            reply_depth: 0,
+            created_at: String::new(),
+            created_at_epoch: NOW - 3_600,
+            created_at_epoch_millis: (NOW - 3_600) * 1_000,
+            expires_at: String::new(),
+            expires_at_epoch: NOW + 3_600,
+            terminal_at_epoch: (state == "acknowledged").then_some(NOW - 60 - index as i64),
+            forwarded_from_incarnation: None,
+            forwarded_at_epoch: None,
+            body_bytes: bytes,
+            body: String::new(),
+        }
+    }
+
+    fn admit(registry: &mut Registry, bytes: usize) -> Result<(), CliError> {
+        admit_message(
+            registry,
+            "new-sender",
+            "recipient",
+            bytes,
+            None,
+            NOW,
+            NOW * 1_000,
+        )
+    }
+
+    #[test]
+    fn acknowledged_messages_do_not_count_toward_recipient_quota() {
+        let mut registry = Registry::default();
+        for index in 0..MAX_SESSION_MESSAGES + 10 {
+            registry
+                .messages
+                .push(quota_message(index, "recipient", "acknowledged", 16 * 1024));
+        }
+        admit(&mut registry, 16 * 1024).expect("acknowledged mail must not block delivery");
+    }
+
+    #[test]
+    fn unacknowledged_messages_still_hit_recipient_message_quota() {
+        let mut registry = Registry::default();
+        for index in 0..MAX_SESSION_MESSAGES {
+            let state = if index % 2 == 0 { "unread" } else { "read" };
+            registry
+                .messages
+                .push(quota_message(index, "recipient", state, 1));
+        }
+        let error = admit(&mut registry, 1).unwrap_err();
+        assert_eq!(
+            error.details().map(|details| details["quota"].clone()),
+            Some(serde_json::json!("recipient-messages"))
+        );
+    }
+
+    #[test]
+    fn unacknowledged_bytes_still_hit_recipient_byte_quota() {
+        let mut registry = Registry::default();
+        registry
+            .messages
+            .push(quota_message(0, "recipient", "unread", MAX_SESSION_BYTES));
+        registry
+            .messages
+            .push(quota_message(1, "recipient", "acknowledged", 1));
+        let error = admit(&mut registry, 1).unwrap_err();
+        assert_eq!(
+            error.details().map(|details| details["quota"].clone()),
+            Some(serde_json::json!("recipient-bytes"))
+        );
+    }
+
+    #[test]
+    fn retained_terminal_messages_are_evicted_before_registry_cap_refuses() {
+        let cap = super::super::MAX_REGISTRY_BYTES as usize;
+        let mut registry = Registry::default();
+        registry
+            .messages
+            .push(quota_message(0, "other", "acknowledged", cap - 10));
+        registry
+            .messages
+            .push(quota_message(1, "other", "unread", 10));
+        admit(&mut registry, 5).expect("terminal bytes must not starve live delivery");
+        assert_eq!(registry.messages.len(), 1);
+        assert_eq!(registry.messages[0].state, "unread");
+    }
+
+    #[test]
+    fn eviction_keeps_the_reply_parent() {
+        let cap = super::super::MAX_REGISTRY_BYTES as usize;
+        let mut registry = Registry::default();
+        registry
+            .messages
+            .push(quota_message(0, "other", "acknowledged", cap - 10));
+        registry
+            .messages
+            .push(quota_message(1, "other", "acknowledged", 10));
+        // Make the parent the oldest terminal message so only the guard keeps it.
+        registry.messages[0].terminal_at_epoch = Some(0);
+        admit_message(
+            &mut registry,
+            "new-sender",
+            "recipient",
+            5,
+            Some("message-0"),
+            NOW,
+            NOW * 1_000,
+        )
+        .expect("evicting the other terminal message is enough");
+        assert_eq!(registry.messages.len(), 1);
+        assert_eq!(registry.messages[0].message_id, "message-0");
+    }
+
+    #[test]
+    fn live_messages_alone_over_registry_cap_still_refuse() {
+        let cap = super::super::MAX_REGISTRY_BYTES as usize;
+        let mut registry = Registry::default();
+        registry
+            .messages
+            .push(quota_message(0, "other", "unread", cap));
+        let error = admit(&mut registry, 1).unwrap_err();
+        assert_eq!(
+            error.details().map(|details| details["quota"].clone()),
+            Some(serde_json::json!("registry-message-bytes"))
+        );
+    }
 
     #[test]
     fn public_metadata_omits_body_and_incarnations() {
