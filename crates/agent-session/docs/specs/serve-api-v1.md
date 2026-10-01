@@ -216,6 +216,15 @@ retryable. Archive never deletes or rewrites the provider transcript. Existing
 `DELETE /sessions/{id}` remains the distinct permanent Console-record removal
 operation and likewise does not delete provider history.
 
+Both routes refuse a session that sessions on this machine still name as their
+effective parent: HTTP 409 `session-has-live-children`, with
+`details.children` and `details.scope`, before anything is archived or
+deleted. The archive body's optional `orphan_children: true`, or
+`DELETE /sessions/{id}?orphan_children=true`, closes it anyway; any other query
+key or value fails with HTTP 400 `invalid-query`. On success
+`deleted.children` reports `{scope, orphaned}`. See
+[Session lineage and work v1](session-lineage-work-v1.md#closing-a-parent).
+
 `GET /sessions` advertises additive `history`, `archive`, `group_archive`, and
 `history_star` capabilities. Older daemons omit them and do not serve these
 routes.

@@ -38,6 +38,7 @@ const LINEAGE_ADOPT_FORBIDDEN: &str = "lineage-adopt-forbidden";
 const LINEAGE_REVISION_CONFLICT: &str = "lineage-revision-conflict";
 const WORK_SET_FORBIDDEN: &str = "work-set-forbidden";
 const WORK_REVISION_CONFLICT: &str = "work-revision-conflict";
+const SESSION_HAS_LIVE_CHILDREN: &str = "session-has-live-children";
 pub(crate) const LINEAGE_ADOPT_COMMAND: &str = "lineage-adopt";
 pub(crate) const WORK_SET_COMMAND: &str = "work-set";
 
@@ -631,6 +632,66 @@ pub(crate) fn effective_parent(record: &SessionRecord) -> Option<&SessionRef> {
             .as_ref()
             .and_then(|lineage| lineage.parent.as_ref()),
     }
+}
+
+/// The children check of a delete or archive: which scope was searched and
+/// which children were orphaned by an explicit `--orphan-children`.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct ChildrenCheck {
+    pub scope: &'static str,
+    pub orphaned: Vec<SessionRef>,
+}
+
+/// Records in this state directory whose effective parent is `record`. A
+/// record that cannot be read is skipped. Machine labels are not compared: a
+/// child names its parent with the label of whichever process started it, and
+/// `(session_id, session_created_at)` already identifies the parent.
+pub(crate) fn local_children(
+    context: &CliContext,
+    machine: &str,
+    record: &SessionRecord,
+) -> Vec<SessionRef> {
+    let Ok(entries) = std::fs::read_dir(context.state_dir.join("sessions")) else {
+        return Vec::new();
+    };
+    let mut children: Vec<SessionRef> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|id| *id != record.id)
+        .filter_map(|id| crate::load_session_record(context, &id).ok())
+        .filter(|child| {
+            effective_parent(child).is_some_and(|parent| {
+                parent.session_id == record.id && parent.session_created_at == record.created_at
+            })
+        })
+        .map(|child| SessionRef::of(machine, &child).without_incarnation())
+        .collect();
+    children.sort_by(|left, right| left.session_id.cmp(&right.session_id));
+    children
+}
+
+/// Refuse to close `id` while sessions on this machine name it as their
+/// effective parent, unless the caller acknowledged orphaning them. Child
+/// references name this machine as `machine`.
+pub(crate) fn guard_children(
+    context: &CliContext,
+    machine: &str,
+    id: &str,
+    orphan_children: bool,
+) -> Result<ChildrenCheck, CliError> {
+    let record = crate::load_session_record(context, id)?;
+    let children = local_children(context, machine, &record);
+    if !children.is_empty() && !orphan_children {
+        return Err(CliError::data(
+            SESSION_HAS_LIVE_CHILDREN,
+            "the session still has children; close them first, or pass --orphan-children",
+            Some(json!({ "children": children, "scope": "local" })),
+        ));
+    }
+    Ok(ChildrenCheck {
+        scope: "local",
+        orphaned: children,
+    })
 }
 
 /// Who runs a lineage or work mutation: the managed session this command

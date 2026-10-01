@@ -1430,6 +1430,11 @@ pub struct DeleteArgs {
     #[arg(value_name = "ID")]
     pub id: String,
 
+    /// Delete even though sessions on this machine still name this one as
+    /// their parent; they are left as orphans.
+    #[arg(long)]
+    pub orphan_children: bool,
+
     /// tmux binary override.
     #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub tmux_bin: Option<PathBuf>,
