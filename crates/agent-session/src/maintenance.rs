@@ -476,6 +476,21 @@ fn assess(
         ));
     }
     if running.is_empty() {
+        // A restarted tmux server can reuse an older numeric selector for an
+        // unrelated session. All prior identities share this tmux target and
+        // their process boundaries were checked above. Match ordinary retry's
+        // stopped verifier before claiming healthy; keep termination fail-closed
+        // and use the existing no-signal fallback only if the managed name is absent.
+        if verify_stopped_tmux_runtime(tmux_bin, &identity, Duration::ZERO).is_err() {
+            return Ok(blocked_assessment(
+                "runtime_identity_unavailable",
+                "the recorded tmux runtime could not be verified stopped",
+                "stopped",
+                "none",
+                0,
+                identities,
+            ));
+        }
         if startup_projection(record).is_some_and(|startup| startup.state == "failed") {
             return Ok(startup_failed_assessment(identities));
         }
