@@ -3306,6 +3306,12 @@ fn unwrap_invocation(tokens: Vec<String>) -> (Vec<String>, Option<String>, bool)
         if words.is_empty() || unwraps >= 12 {
             return (words, None, unwraps >= 12);
         }
+        // After a precommand modifier or reserved word (`!`, `time`, zsh
+        // `noglob`/`nocorrect`), an assignment is a prefix of the command that
+        // follows, not the command word; `env` consumes its own assignments.
+        if unwraps > 0 && assignment(&words[0]).is_some() {
+            return (Vec::new(), None, true);
+        }
         unwraps += 1;
         let executable = basename(&words[0]);
         match executable {
