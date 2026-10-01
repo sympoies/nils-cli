@@ -534,6 +534,31 @@ fn sync_default_updates_the_ref_when_the_default_branch_is_not_checked_out() {
 }
 
 #[test]
+fn sync_default_caches_a_missing_remote_head() {
+    let harness = GitCliHarness::new();
+    let (repo, remote) = repo_with_published_main();
+    git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(repo.path(), &["remote", "set-head", "origin", "--delete"]);
+    let head = rev_parse(repo.path(), "HEAD");
+
+    let output = harness.run(repo.path(), &["sync-default", "--format", "json"]);
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+
+    let json = parse_json(&output);
+    assert_eq!(json["data"]["default_branch"], "main");
+    assert_eq!(json["data"]["new_head"], head);
+    assert!(
+        git_output(
+            repo.path(),
+            &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]
+        )
+        .status
+        .success(),
+        "sync-default must leave the remote HEAD cached"
+    );
+}
+
+#[test]
 fn sync_default_is_a_noop_when_already_current() {
     let harness = GitCliHarness::new();
     let (repo, _remote) = repo_with_published_main();

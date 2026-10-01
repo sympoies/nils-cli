@@ -131,6 +131,11 @@ Three strategies, selected by where the default branch is checked out:
 `update-ref` is the everyday agent case — working on a topic branch while local
 `main` lags — and it moves the ref without touching any working tree.
 
+When `refs/remotes/<remote>/HEAD` is not cached and the command may contact the
+remote (no `--no-fetch`), it first runs `git remote set-head <remote> --auto`.
+`git-cli worktree add` does the same for `origin` before it resolves the default
+base ref. Both are best effort: an unreachable remote leaves the cache unset.
+
 Refusals:
 
 | `error.code` | Condition |

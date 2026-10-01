@@ -670,6 +670,11 @@ fn configured_remote_without_cached_default_fails_closed() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(text(&output.stderr).contains("cached default branch cannot be resolved"));
+    assert!(
+        text(&output.stderr).contains("git remote set-head origin --auto"),
+        "the refusal names the fix, got: {}",
+        text(&output.stderr)
+    );
 }
 
 #[test]

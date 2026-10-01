@@ -1,4 +1,6 @@
-use crate::commit_shared::{git_output, git_status_success, git_stdout_trimmed_optional};
+use crate::commit_shared::{
+    ensure_remote_head_cached, git_output, git_status_success, git_stdout_trimmed_optional,
+};
 use anyhow::Context;
 use nils_common::cli_contract::{Envelope, EnvelopeError, OutputFormat, exit, schema_version_for};
 use nils_common::git::PrKind;
@@ -386,7 +388,10 @@ fn add_worktree(args: &AddArgs) -> Result<AddOutput, CliError> {
         .worktree_root
         .join(&layout.repo_key)
         .join(&branch_slug);
-    let base_ref = args.from.clone().unwrap_or_else(resolve_default_base_ref);
+    let base_ref = args.from.clone().unwrap_or_else(|| {
+        ensure_remote_head_cached("origin");
+        resolve_default_base_ref()
+    });
 
     let branch_ref = format!("refs/heads/{branch}");
     if git_status_success(&["show-ref", "--verify", "--quiet", &branch_ref]) {

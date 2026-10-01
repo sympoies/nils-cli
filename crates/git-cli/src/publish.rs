@@ -18,8 +18,8 @@
 //! forbidden" from "this could not be proven" without parsing prose.
 
 use crate::commit_shared::{
-    git_output, git_output_optional, git_status_success, git_stdout_trimmed,
-    git_stdout_trimmed_optional,
+    ensure_remote_head_cached, git_output, git_output_optional, git_status_success,
+    git_stdout_trimmed, git_stdout_trimmed_optional,
 };
 use crate::worktree::{
     CliError, detect_format, emit_error, emit_success, ensure_inside_git_repo,
@@ -459,6 +459,9 @@ fn sync_default(args: &SyncArgs) -> Result<SyncOutput, CliError> {
     ensure_inside_git_repo()?;
     require_remote(&args.remote)?;
 
+    if args.fetch {
+        ensure_remote_head_cached(&args.remote);
+    }
     let default_branch = cached_default_branch(&args.remote).ok_or_else(|| {
         CliError::data(
             "default-branch-unresolved",
