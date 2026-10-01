@@ -8619,8 +8619,8 @@ fn tmux_session_attached(tmux_bin: &Path, tmux_session: &str) -> Result<bool, ()
 fn observe_terminal_coordination_prompt(mut tail: ProviderPromptTail, prompt: &str) -> bool {
     let deadline = Instant::now() + CLAUDE_NOTIFICATION_OBSERVATION_TIMEOUT;
     loop {
-        match tail.poll() {
-            Ok(events) if events.iter().any(|event| event.prompt == prompt) => return true,
+        match tail.poll_submitted_prompts() {
+            Ok(prompts) if prompts.iter().any(|submitted| submitted == prompt) => return true,
             Ok(_) => {}
             Err(_) => return false,
         }
@@ -16455,6 +16455,39 @@ mod tests {
         let _ = socket.close(None).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
         server.abort();
+    }
+
+    /// #2027: a reminder typed into a busy Claude turn is logged as a
+    /// `queue-operation` enqueue. That is the submission; reading it as unknown
+    /// requeues the reminder and types it again every few seconds.
+    #[test]
+    fn terminal_notification_observes_a_claude_queue_enqueue() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let transcript = tmp.path().join("claude.jsonl");
+        std::fs::write(&transcript, "").expect("baseline");
+        let tail = ProviderPromptTail::open_path(
+            ProviderKind::Claude,
+            "provider-beta",
+            transcript.clone(),
+            Duration::ZERO,
+        )
+        .expect("tail");
+        let prompt = "Coordination mailbox has unread messages; run it.";
+        std::fs::write(
+            &transcript,
+            format!(
+                "{}\n",
+                json!({
+                    "type": "queue-operation",
+                    "operation": "enqueue",
+                    "timestamp": "2099-01-01T00:00:00Z",
+                    "sessionId": "provider-beta",
+                    "content": prompt
+                })
+            ),
+        )
+        .expect("append enqueue");
+        assert!(observe_terminal_coordination_prompt(tail, prompt));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
