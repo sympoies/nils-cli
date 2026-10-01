@@ -701,16 +701,18 @@ pub(crate) fn run_work(context: &CliContext, args: crate::cli::WorkArgs) -> i32 
 
 fn adopt(context: &CliContext, args: crate::cli::LineageAdoptArgs) -> Result<Value, CliError> {
     crate::validate_id(&args.child)?;
-    let machine = crate::board::machine_identity(None, context);
     let caller = caller(context, args.capability_file.as_deref())?;
     let steward = match &args.by {
         None => None,
-        Some(by) => Some(steward_ref(context, &machine, by, &args)?),
+        Some(by) => Some(steward_ref(context, by, &args)?),
     };
     if let Caller::Session { id, created_at } = &caller {
-        let own = steward.as_ref().is_some_and(|steward| {
-            steward.session_id == *id && steward.session_created_at == *created_at
-        });
+        // A remote steward cannot be the caller: a managed session names
+        // itself only through its own local record.
+        let own = args.by_machine.is_none()
+            && steward.as_ref().is_some_and(|steward| {
+                steward.session_id == *id && steward.session_created_at == *created_at
+            });
         if !own {
             return Err(forbidden(
                 LINEAGE_ADOPT_FORBIDDEN,
@@ -719,12 +721,13 @@ fn adopt(context: &CliContext, args: crate::cli::LineageAdoptArgs) -> Result<Val
         }
     }
     crate::mutate_session_record(context, &args.child, |record| {
-        if steward.as_ref().is_some_and(|steward| {
-            steward.session_id == record.id && steward.session_created_at == record.created_at
-        }) {
+        if steward
+            .as_ref()
+            .is_some_and(|steward| reaches(context, steward, &record.id, &record.created_at))
+        {
             return Err(CliError::usage(
                 LINEAGE_INVALID,
-                "a session cannot adopt itself",
+                "a session cannot adopt itself or one of its own stewards or ancestors",
                 None,
             ));
         }
@@ -758,35 +761,48 @@ fn adopt(context: &CliContext, args: crate::cli::LineageAdoptArgs) -> Result<Val
     })
 }
 
+/// Whether following effective parents up from `start` through this state
+/// directory reaches the session `(id, created_at)`, which would make an
+/// adoption loop. A reference that is not local ends the walk.
+fn reaches(context: &CliContext, start: &SessionRef, id: &str, created_at: &str) -> bool {
+    let mut current = Some(start.clone());
+    for _ in 0..=MAX_DEPTH {
+        let Some(reference) = current.take() else {
+            return false;
+        };
+        if reference.session_id == id && reference.session_created_at == created_at {
+            return true;
+        }
+        let Ok(record) = crate::load_session_record(context, &reference.session_id) else {
+            return false;
+        };
+        if record.created_at != reference.session_created_at {
+            return false;
+        }
+        current = effective_parent(&record).cloned();
+    }
+    false
+}
+
 /// `--by` as a session reference: a local session resolves to its exact
-/// identity; a steward on another machine is named with `--by-machine` and
-/// `--by-created-at`.
+/// identity and current incarnation; a steward on another machine is named
+/// with both `--by-machine` and `--by-created-at` (clap requires the pair).
 fn steward_ref(
     context: &CliContext,
-    machine: &str,
     by: &str,
     args: &crate::cli::LineageAdoptArgs,
 ) -> Result<SessionRef, CliError> {
     crate::validate_id(by)?;
-    let by_machine = args.by_machine.as_deref().unwrap_or(machine);
-    if let Some(created_at) = &args.by_created_at {
-        let reference = SessionRef {
-            machine: by_machine.to_string(),
+    if let (Some(by_machine), Some(created_at)) = (&args.by_machine, &args.by_created_at) {
+        return checked_ref(SessionRef {
+            machine: by_machine.clone(),
             session_id: by.to_string(),
             session_created_at: created_at.clone(),
             session_incarnation: None,
-        };
-        return checked_ref(reference);
-    }
-    if by_machine != machine {
-        return Err(CliError::usage(
-            LINEAGE_INVALID,
-            "a steward on another machine needs --by-created-at",
-            None,
-        ));
+        });
     }
     let record = crate::load_session_record(context, by)?;
-    Ok(SessionRef::of(machine, &record))
+    Ok(SessionRef::of(&own_machine(context, &record), &record))
 }
 
 fn set_work(context: &CliContext, args: crate::cli::WorkSetArgs) -> Result<Value, CliError> {

@@ -1182,6 +1182,18 @@ fn a_managed_session_sets_only_its_own_work_and_adopts_only_for_itself() {
             "--format",
             "json",
         ],
+        vec![
+            "adopt",
+            "20300101-000000-child",
+            "--by",
+            SESSION,
+            "--by-machine",
+            "other-host",
+            "--by-created-at",
+            "2030-01-01T00:00:00Z",
+            "--format",
+            "json",
+        ],
     ] {
         let output = fixture.run("lineage", &args, true);
         assert_eq!(output.code, 65, "{args:?}: stdout={}", output.stdout_text());

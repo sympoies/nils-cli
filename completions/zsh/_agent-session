@@ -859,8 +859,8 @@ _arguments "${_arguments_options[@]}" : \
             (adopt)
 _arguments "${_arguments_options[@]}" : \
 '--by=[The steward session. Inside a managed session it must be that session]:SESSION:_default' \
-'--by-machine=[The steward'\''s machine, when it is not this one]:MACHINE:_default' \
-'--by-created-at=[The steward'\''s creation time, required for a steward on another machine]:TIMESTAMP:_default' \
+'--by-machine=[The steward'\''s machine, for a steward on another machine. Requires --by-created-at]:MACHINE:_default' \
+'--by-created-at=[The steward'\''s creation time, for a steward on another machine. Requires --by-machine]:TIMESTAMP:_default' \
 '--if-revision=[Expected current adoption revision (0 when never adopted)]:IF_REVISION:_default' \
 '--capability-file=[Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE]:PATH:_files' \
 '--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"

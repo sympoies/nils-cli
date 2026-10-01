@@ -973,12 +973,14 @@ pub struct LineageAdoptArgs {
     #[arg(long, value_name = "SESSION", required_unless_present = "clear")]
     pub by: Option<String>,
 
-    /// The steward's machine, when it is not this one.
-    #[arg(long, value_name = "MACHINE", requires = "by")]
+    /// The steward's machine, for a steward on another machine. Requires
+    /// --by-created-at.
+    #[arg(long, value_name = "MACHINE", requires_all = ["by", "by_created_at"])]
     pub by_machine: Option<String>,
 
-    /// The steward's creation time, required for a steward on another machine.
-    #[arg(long, value_name = "TIMESTAMP", requires = "by")]
+    /// The steward's creation time, for a steward on another machine.
+    /// Requires --by-machine.
+    #[arg(long, value_name = "TIMESTAMP", requires_all = ["by", "by_machine"])]
     pub by_created_at: Option<String>,
 
     /// Remove the steward; the original parent is effective again.

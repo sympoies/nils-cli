@@ -192,19 +192,23 @@ agent-session lineage adopt <CHILD> --clear [--if-revision N]
 
 - The command runs on the child's machine and changes only the child's record.
 - `--by` names a session in this state directory, recorded with its exact
-  identity and current incarnation. A steward on another machine is named with
-  `--by-machine` and `--by-created-at`; `--by-machine` without
-  `--by-created-at` fails with `lineage-invalid`, because a remote creation
-  time cannot be looked up locally.
+  identity, its own `lineage.machine` label, and its current incarnation. A
+  steward on another machine is named with `--by-machine` and
+  `--by-created-at` together; either one alone is a usage error, because a
+  remote creation time cannot be looked up locally.
 - `--clear` removes the steward, so the original parent is effective again.
 - Each change increments `revision`. With `--if-revision N`, a revision other
   than `N` (0 when the child was never adopted) fails with
   `lineage-revision-conflict` and `details.current_revision`.
-- A session cannot adopt itself (`lineage-invalid`).
+- Adoption cannot create a loop: when the steward is local, the command
+  follows effective parents up from the steward through this state directory
+  (at most 64 hops) and fails with `lineage-invalid` if it reaches the child,
+  including the child itself. A remote steward ends the walk.
 - **Authorization.** Inside a managed session (`AGENT_SESSION_ID` set) the
   caller authenticates with its capability (`coordination-unauthorized`
-  otherwise) and may only name itself as the steward; naming another steward
-  or clearing one fails with `lineage-adopt-forbidden`. A caller outside any
+  otherwise) and may only name itself, through its local record, as the
+  steward; naming another steward, any remote steward, or clearing one fails
+  with `lineage-adopt-forbidden`. A caller outside any
   managed session is an operator and may do either.
 - The result (`cli.agent-session.lineage-adopt.v1`) carries `session_id`, the
   unchanged `lineage`, the new `lineage_adoption`, and `effective_parent`.
