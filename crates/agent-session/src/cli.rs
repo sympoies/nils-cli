@@ -84,6 +84,8 @@ pub enum Command {
     Glance(GlanceArgs),
     /// Recreate a missing tmux runtime from exact provider resume metadata.
     Resume(ResumeArgs),
+    /// Show or switch the provider account of one session.
+    Account(AccountArgs),
     /// Inspect or ingest metadata-only agent turn lifecycle events.
     Activity(ActivityArgs),
     /// Manage authenticated structured work context and mutation leases.
@@ -1036,6 +1038,58 @@ pub struct ResumeArgs {
     /// Session id.
     #[arg(value_name = "ID")]
     pub id: String,
+
+    /// tmux binary override.
+    #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub tmux_bin: Option<PathBuf>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct AccountArgs {
+    #[command(subcommand)]
+    pub command: AccountCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AccountCommand {
+    /// Show the session's current provider account and any queued next account.
+    Show(AccountShowArgs),
+    /// Switch the session's provider account, like serve's
+    /// `PUT /sessions/{id}/account`. Codex binds the account for the next
+    /// prompt; Claude queues it, then at idle preflights it, stops the session
+    /// and resumes the same conversation under it (busy keeps it queued).
+    Switch(AccountSwitchArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AccountShowArgs {
+    /// Session id.
+    #[arg(value_name = "ID")]
+    pub id: String,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct AccountSwitchArgs {
+    /// Session id.
+    #[arg(value_name = "ID")]
+    pub id: String,
+
+    /// Account nickname listed by the provider's account broker.
+    #[arg(long, value_name = "NICKNAME")]
+    pub account: String,
+
+    /// Runtime launch id the switch is fenced to. Defaults to the session's
+    /// current runtime.
+    #[arg(long = "expected-incarnation", value_name = "ID")]
+    pub expected_incarnation: Option<String>,
 
     /// tmux binary override.
     #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]

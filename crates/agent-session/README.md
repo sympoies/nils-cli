@@ -53,6 +53,8 @@ agent-session send <id> --key c-c
 agent-session send <id> --key down --key enter   # answer a dialog while blocked
 agent-session send <id> --text "custom answer" --allow-blocked
 agent-session resume <id>
+agent-session account show <id> --format json
+agent-session account switch <id> --account <nickname> --format json
 agent-session activity status <id> --format json
 agent-session activity doctor --format json
 agent-session activity setup --agent codex --dry-run
@@ -476,6 +478,31 @@ Claude session binds to a chosen account: the broker materializes a
 per-account `CLAUDE_CONFIG_DIR`, the binding survives resume, and a switch
 relaunches the session with `--resume` in the new account directory. See the
 [Claude account broker](docs/specs/serve-api-v1.md#claude-account-broker).
+
+`account switch <id> --account <nickname>` is the local, owner-run CLI for the
+same switch as serve's `PUT /sessions/{id}/account`; both call one shared code
+path and need no serve token. Claude queues the next account; when the session
+is idle it preflights that account, stops the session and resumes the same
+conversation under it, and while busy the switch stays queued. Codex binds the
+account for the next prompt: the CLI durably queues it and the serve daemon's
+control connection applies it at the idle boundary, so the next prompt is
+fenced until then. `--expected-incarnation` fences the switch to one runtime
+and defaults to the current one. JSON output returns the provider's
+`codex_account` or `claude_account` view with `session_incarnation`, and
+failures keep serve's typed codes (`claude-account-switch-refused`,
+`<provider>-account-session-incarnation-conflict`,
+`<provider>-account-unknown`, `<provider>-account-unsupported`).
+`account show <id>` returns the current account and any queued `next` one.
+Both commands, and `resume`, use the provider's account broker variable from
+the caller's environment, or else the brokers serve recorded in the private
+state dir at startup; with neither, `show` reports the account as unsupported.
+Run from inside the session's own tmux session, a Claude switch only queues.
+After stopping, the switch retires the stopped runtime's coordination
+incarnation before resuming. If the resume still fails, it returns
+`claude-account-switch-resume-failed` with the `agent-session resume <id>`
+recovery command; the session is stopped with the account queued. A Codex
+switch needs a running serve daemon to apply; re-selecting the current account
+cancels a queued switch.
 
 ## Output contract
 

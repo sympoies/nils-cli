@@ -687,6 +687,9 @@ recorded in `sympoies/nils-cli#1409`.
   any live or malformed next intent exists, so the next accepted prompt uses
   the newly selected account. An interrupted `applying` intent is re-queued
   when the session runtime restarts.
+  The local `agent-session account switch` CLI shares this route's code path.
+  Without the daemon's in-process Codex control it always takes the durable
+  `next` path above, which the control loop applies before the next prompt.
 - `POST /sessions` normally creates a fresh session from `agent`, optional
   `cwd`, `title`, `title_state`, `id`, `prompt`, `coordination_mode`, and
   `agent_args`. `coordination_mode` accepts `advisory`, `enforce`, or `off` and
@@ -1121,6 +1124,15 @@ explicit `<provider>_account`, and `POST /sessions/{id}/resume` of a session
 bound to that provider's account. The same applies to `409
 <provider>-account-session-incarnation-conflict`.
 
+serve records the effective broker argv for each provider, from its
+environment or `--config`, in the owner-private
+`<state-dir>/serve/account-brokers.json` (`agent-session.serve-account-brokers.v1`,
+mode `0600`) at startup, and removes it when no broker is configured. Owner-run
+`agent-session account` and `agent-session resume` commands do not inherit
+serve's environment; they adopt that record for any provider whose broker
+variable is unset in their own environment, and ignore a record that is not a
+private, owner-owned regular file.
+
 The per-provider differences are the protocol and what the broker returns.
 
 ### Codex account broker
@@ -1198,7 +1210,18 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   returns the new `session_incarnation`. While a turn
   is busy, or while the session is stopped, the intent stays queued and the
   next resume applies it. If the verified stop is refused, nothing relaunches
-  and the intent stays queued. There is no automatic failover for Claude.
+  and the intent stays queued. After a verified stop, the switch retires the
+  stopped runtime's coordination incarnation (its heartbeat writer died with
+  it) before resuming, so the resume is not refused as a live prior
+  incarnation. If the resume still fails, the response is
+  `claude-account-switch-resume-failed` (HTTP 422) with
+  `details: {id, session_state: "stopped", next_account, cause, recovery}`:
+  the session is stopped with the account queued, and `recovery` names the
+  `agent-session resume <id>` command that applies it. The local
+  `agent-session account switch` CLI shares this path; run from inside the
+  session's own tmux session it only queues, since restarting the runtime that
+  hosts it would stop the switch mid-way. There is no automatic failover for
+  Claude.
 - History: catalog scans attribute each physical transcript once, by its
   canonical path, so an account directory whose `projects/` links to the
   shared `~/.claude/projects` is not counted twice.
