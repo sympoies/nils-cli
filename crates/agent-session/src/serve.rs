@@ -33222,6 +33222,7 @@ exit 0
     }
 
     #[cfg(target_os = "linux")]
+    #[allow(deprecated)] // `fetch_update`: renamed `try_update` in Rust 1.99
     fn signal_fixture_process_if_matches_with_fault(
         identity: &FixtureProcessIdentity,
         signal: libc::c_int,

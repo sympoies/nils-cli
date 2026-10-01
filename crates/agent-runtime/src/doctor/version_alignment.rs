@@ -536,7 +536,7 @@ fn normalize_version_policy(
     path: &Path,
 ) -> Result<NormalizedPinManifest, VersionAlignmentError> {
     let invalid = |message: String| invalid_policy_error(path, message);
-    validate_required_clis(&raw.required_clis).map_err(&invalid)?;
+    validate_required_clis(&raw.required_clis).map_err(invalid)?;
 
     debug_assert_eq!(raw.schema_version, VERSION_POLICY_SCHEMA_VERSION);
     if raw.nils_cli.pinned_tag.is_some() {
@@ -554,14 +554,14 @@ fn normalize_version_policy(
         .validated_tag
         .ok_or_else(|| invalid("schema v2 requires nils_cli.validated_tag".to_string()))?;
     let minimum =
-        parse_stable_tag("minimum_supported_tag", &minimum_supported_tag).map_err(&invalid)?;
-    let validated = parse_stable_tag("validated_tag", &validated_tag).map_err(&invalid)?;
+        parse_stable_tag("minimum_supported_tag", &minimum_supported_tag).map_err(invalid)?;
+    let validated = parse_stable_tag("validated_tag", &validated_tag).map_err(invalid)?;
     if minimum > validated {
         return Err(invalid(format!(
             "minimum_supported_tag {minimum_supported_tag} must not exceed validated_tag {validated_tag}"
         )));
     }
-    validate_release_digests(raw.nils_cli.release_sha256.as_ref()).map_err(&invalid)?;
+    validate_release_digests(raw.nils_cli.release_sha256.as_ref()).map_err(invalid)?;
 
     Ok(NormalizedPinManifest {
         schema_version: raw.schema_version,

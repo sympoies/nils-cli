@@ -145,6 +145,9 @@ fn sampler_permit() -> Option<SamplerPermit> {
     reserve_sampler(&ACTIVE_SAMPLERS, MAX_CONCURRENT_SAMPLERS).then_some(SamplerPermit)
 }
 
+// Rust 1.99 renames `fetch_update` to `try_update`; keep the older name until
+// the toolchain floor reaches 1.99.
+#[allow(deprecated)]
 fn reserve_sampler(counter: &AtomicUsize, limit: usize) -> bool {
     counter
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
