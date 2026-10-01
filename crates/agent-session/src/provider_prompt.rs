@@ -35,6 +35,8 @@ const CLAUDE_MACHINE_PROMPT_PREFIXES: &[&str] = &[
     "<local-command-",
     "<command-",
 ];
+/// Claude Code writes this `user` record when a turn is interrupted.
+const CLAUDE_INTERRUPT_MARKER_PREFIX: &str = "[Request interrupted by user";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderKind {
@@ -794,7 +796,8 @@ pub(crate) fn parse_history_user_prompt(
 
 /// History shows what the user wrote: a prompt typed at the input box, or one
 /// queued while a turn was running. It hides the mailbox reminder this crate
-/// injects as typed input.
+/// injects as typed input, and the slash-command, local-command, and interrupt
+/// markers Claude Code records as `user` rows.
 fn parse_claude_history_prompt(line: &str, session_id: &str) -> Option<ParsedPrompt> {
     let value = serde_json::from_str::<Value>(line).ok()?;
     let prompt = parse_claude_user_prompt_value(&value, session_id).or_else(|| {
@@ -806,7 +809,43 @@ fn parse_claude_history_prompt(line: &str, session_id: &str) -> Option<ParsedPro
         prompt.submitted_at = provider_timestamp(&value);
         Some(prompt)
     })?;
-    (!crate::coordination::is_mailbox_reminder_prompt(&prompt.prompt)).then_some(prompt)
+    if let Some(command) = claude_slash_command_text(&prompt.prompt) {
+        return Some(ParsedPrompt {
+            prompt: command,
+            ..prompt
+        });
+    }
+    // Claude Code records `/compact` twice: as this untagged plain row and as
+    // command markup. The markup row above is the one kept.
+    if prompt.prompt.trim() == "/compact" && value.get("promptSource").is_none() {
+        return None;
+    }
+    let head = prompt.prompt.trim_start();
+    (!crate::coordination::is_mailbox_reminder_prompt(&prompt.prompt)
+        && !head.starts_with(CLAUDE_INTERRUPT_MARKER_PREFIX)
+        && !CLAUDE_MACHINE_PROMPT_PREFIXES
+            .iter()
+            .any(|prefix| head.starts_with(prefix)))
+    .then_some(prompt)
+}
+
+/// The slash command a Claude `user` row records as command markup
+/// (`<command-name>/goal</command-name>…<command-args>x</command-args>`),
+/// rendered as the user typed it: `/goal x`.
+pub(crate) fn claude_slash_command_text(text: &str) -> Option<String> {
+    let tag = |name: &str| {
+        let (_, rest) = text.split_once(&format!("<{name}>"))?;
+        let (value, _) = rest.split_once(&format!("</{name}>"))?;
+        Some(value.trim())
+    };
+    if !text.trim_start().starts_with("<command-") {
+        return None;
+    }
+    let name = tag("command-name").filter(|name| name.starts_with('/'))?;
+    Some(match tag("command-args").filter(|args| !args.is_empty()) {
+        Some(args) => format!("{name} {args}"),
+        None => name.to_string(),
+    })
 }
 
 /// Text of a prompt the user sent while a Claude turn was running. Claude Code

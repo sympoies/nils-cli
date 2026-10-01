@@ -16,8 +16,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::provider_prompt::{
-    ProviderPromptSource, claude_queued_prompt_text, claude_user_message_text,
-    parse_history_user_prompt, read_last_prompt,
+    ProviderPromptSource, claude_queued_prompt_text, claude_slash_command_text,
+    claude_user_message_text, parse_history_user_prompt, read_last_prompt,
 };
 
 const SCAN_MAX_ENTRIES: usize = 10_000;
@@ -3035,6 +3035,11 @@ fn normalize_message(
             if role == "user" && !human_prompt {
                 return None;
             }
+            let text = if role == "user" {
+                claude_slash_command_text(&text).unwrap_or(text)
+            } else {
+                text
+            };
             Some((role.to_string(), text, timestamp, human_prompt))
         }
         _ => None,
@@ -5580,6 +5585,119 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
                 ("user", "queued human", true),
                 ("user", "queued without mode or origin", true),
                 ("assistant", "answer", false)
+            ]
+        );
+    }
+
+    /// Record shapes from a live Claude Code 2.1.x transcript, text redacted:
+    /// a `/compact` run, other slash commands recorded only as command markup,
+    /// interrupt markers, and the queue bookkeeping around a prompt that was
+    /// absorbed mid-turn and one that was dequeued after it.
+    #[test]
+    fn claude_history_hides_harness_markers_and_counts_each_prompt_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("projects/repo");
+        fs::create_dir_all(&root).unwrap();
+        let row = |mut value: Value| {
+            value["sessionId"] = "claude-id".into();
+            value["cwd"] = "/work/claude".into();
+            value.to_string()
+        };
+        let user = |content: Value| {
+            row(
+                serde_json::json!({"type": "user", "message": {"role": "user", "content": content}}),
+            )
+        };
+        let queue = |operation: &str, content: Option<&str>| {
+            let mut value = serde_json::json!({"type": "queue-operation", "operation": operation});
+            if let Some(content) = content {
+                value["content"] = content.into();
+            }
+            if operation == "remove" {
+                value["reason"] = "absorbed_mid_turn".into();
+            }
+            row(value)
+        };
+        let typed = |prompt_source: &str, text: &str| {
+            row(
+                serde_json::json!({"type": "user", "promptSource": prompt_source, "origin": {"kind": "human"}, "message": {"role": "user", "content": text}}),
+            )
+        };
+        let assistant = || {
+            row(
+                serde_json::json!({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "working"}]}}),
+            )
+        };
+        let lines = [
+            typed("typed", "idle prompt"),
+            assistant(),
+            queue("enqueue", Some("absorbed prompt")),
+            queue("remove", Some("absorbed prompt")),
+            row(serde_json::json!({"type": "attachment", "attachment": {"type": "queued_command", "commandMode": "prompt", "origin": {"kind": "human"}, "prompt": "absorbed prompt"}})),
+            assistant(),
+            queue("enqueue", Some("dequeued prompt")),
+            queue("dequeue", None),
+            typed("queued", "dequeued prompt"),
+            assistant(),
+            user(serde_json::json!([{"type": "text", "text": "[Request interrupted by user]"}])),
+            user(serde_json::json!([{"type": "text", "text": "[Request interrupted by user for tool use]"}])),
+            queue("enqueue", Some("/compact")),
+            user("/compact".into()),
+            row(serde_json::json!({"type": "user", "isMeta": true, "message": {"role": "user", "content": "<local-command-caveat>Caveat: redacted</local-command-caveat>"}})),
+            user("<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args></command-args>".into()),
+            row(serde_json::json!({"type": "user", "isCompactSummary": true, "isVisibleInTranscriptOnly": true, "message": {"role": "user", "content": "This session is being continued from a previous conversation."}})),
+            user("<local-command-stdout>\u{1b}[2mCompacted\u{1b}[22m</local-command-stdout>".into()),
+            typed("typed", "after compact"),
+            assistant(),
+            user("<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args></command-args>".into()),
+            user("<local-command-stdout>Set model to redacted</local-command-stdout>".into()),
+            user("<command-message>goal</command-message>\n<command-name>/goal</command-name>\n<command-args>ship the fix</command-args>".into()),
+            assistant(),
+        ];
+        fs::write(root.join("claude-id.jsonl"), lines.join("\n") + "\n").unwrap();
+        let sources = [HistorySource {
+            provider: "claude".into(),
+            agent_profile: None,
+            root: tmp.path().join("projects"),
+        }];
+
+        let page = list(
+            &sources,
+            HistoryRoots {
+                archives: &tmp.path().join("archives"),
+                stars: &tmp.path().join("stars"),
+            },
+            "test",
+            None,
+            Some("claude"),
+            None,
+            10,
+        )
+        .unwrap();
+        let result = messages(
+            &sources,
+            &page.sessions[0].id,
+            None,
+            50,
+            HistoryMessageDirection::Forward,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result
+                .messages
+                .iter()
+                .filter(|message| message.role == "user")
+                .map(|message| (message.text.as_str(), message.human_prompt))
+                .collect::<Vec<_>>(),
+            vec![
+                ("idle prompt", true),
+                ("absorbed prompt", true),
+                ("dequeued prompt", true),
+                ("/compact", true),
+                ("after compact", true),
+                ("/model", true),
+                ("/goal ship the fix", true),
             ]
         );
     }
