@@ -111,7 +111,13 @@ struct UntrustedBody {
 }
 
 pub(crate) fn send(context: &CliContext, args: MessageSendArgs) -> Result<Value, CliError> {
-    if args.to_machine.is_some() {
+    // A machine that names this host is the local mailbox, never the federation outbox.
+    let local_machine = crate::board::machine_identity(None, context);
+    if args
+        .to_machine
+        .as_deref()
+        .is_some_and(|machine| machine != local_machine)
+    {
         return super::remote::cli_send(context, args);
     }
     send_impl(context, args, false, || Ok(()))

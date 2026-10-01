@@ -146,7 +146,14 @@ pub(crate) fn run(context: &CliContext, args: BoardArgs) -> i32 {
                 crate::render_single_success(COMMAND, format, &data, |_| String::new())
             }
             OutputFormat::Text => {
-                print!("{}", render_text(&data, caller.as_ref()));
+                print!(
+                    "{}",
+                    render_text(
+                        &data,
+                        caller.as_ref(),
+                        &super::machine_identity(None, context)
+                    )
+                );
                 nils_common::cli_contract::exit::SUCCESS
             }
         },
@@ -337,13 +344,20 @@ fn exact_identifier(value: &Value) -> Option<&str> {
 /// The `message send` target of a peer that can currently receive a remote
 /// message. It names the exact identifiers, never the truncated columns, and
 /// is omitted when any of them cannot be printed exactly.
-fn send_target(record: &Value) -> Option<String> {
+/// A session on the viewer's own machine is sent to through the local
+/// mailbox, so its target omits `--to-machine`.
+fn send_target(record: &Value, local_machine: &str) -> Option<String> {
     if record["messaging_supported"] != true {
         return None;
     }
+    let machine = exact_identifier(&record["machine"])?;
+    let route = if machine == local_machine {
+        String::new()
+    } else {
+        format!("--to-machine {machine} ")
+    };
     Some(format!(
-        "  send: --to-machine {} --to {} (incarnation {})",
-        exact_identifier(&record["machine"])?,
+        "  send: {route}--to {} (incarnation {})",
         exact_identifier(&record["session_id"])?,
         exact_identifier(&record["session_incarnation"])?,
     ))
@@ -353,10 +367,19 @@ fn send_target(record: &Value) -> Option<String> {
 /// The caller's own session is marked, and a peer that can currently receive
 /// a remote message carries its `message send` target. `summary` is never
 /// printed.
-fn render_text(data: &Value, caller: Option<&Caller>) -> String {
+fn render_text(data: &Value, caller: Option<&Caller>, local_machine: &str) -> String {
     let board = &data["board"];
     let now = timestamp_seconds(&board["generated_at"])
         .unwrap_or_else(|| jiff::Timestamp::now().as_second());
+    // The caller's own row names the daemon's machine, which a CLI cannot
+    // otherwise see (`serve --machine`); fall back to the CLI's own label.
+    let local_machine = board["records"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|record| is_caller(record, caller))
+        .and_then(|record| record["machine"].as_str())
+        .unwrap_or(local_machine);
     let mut out = format!("mode: {}\n", data["mode"].as_str().unwrap_or("local"));
     for machine in board["machines"].as_array().into_iter().flatten() {
         if machine["available"] == false {
@@ -385,7 +408,7 @@ fn render_text(data: &Value, caller: Option<&Caller>) -> String {
         ));
         if is_caller(record, caller) {
             out.push_str("  (this session)");
-        } else if let Some(target) = send_target(record) {
+        } else if let Some(target) = send_target(record, local_machine) {
             out.push_str(&target);
         }
         out.push('\n');
@@ -477,7 +500,7 @@ mod tests {
                 ]
             }
         });
-        let text = render_text(&data, None);
+        let text = render_text(&data, None, "local-host");
         let lines: Vec<&str> = text.lines().collect();
         // Columns truncate, but the send target names the exact values.
         assert!(
@@ -492,6 +515,26 @@ mod tests {
         // A value that cannot be printed exactly gets no send target.
         assert!(!lines[2].contains("send:"), "{}", lines[2]);
         assert!(!lines[3].contains("send:"), "{}", lines[3]);
+    }
+
+    #[test]
+    fn same_host_send_targets_omit_the_machine_route() {
+        let record = |machine: &str| {
+            json!({
+                "machine": machine,
+                "session_id": "s1",
+                "session_incarnation": "i1",
+                "messaging_supported": true
+            })
+        };
+        assert_eq!(
+            send_target(&record("host-a"), "host-a").as_deref(),
+            Some("  send: --to s1 (incarnation i1)")
+        );
+        assert_eq!(
+            send_target(&record("host-b"), "host-a").as_deref(),
+            Some("  send: --to-machine host-b --to s1 (incarnation i1)")
+        );
     }
 
     #[test]
@@ -526,7 +569,7 @@ mod tests {
                 }]
             }
         });
-        let text = render_text(&data, None);
+        let text = render_text(&data, None, "local-host");
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines[0], "mode: relay");
         assert_eq!(lines[1], "unavailable  host-b  last seen -");

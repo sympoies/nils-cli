@@ -555,7 +555,17 @@ fn relay_text_marks_the_caller_and_offers_send_targets_only_to_messageable_peers
     let fixture = Fixture::new();
     let aggregator = Aggregator::start();
     let _serve = fixture.serve(&["--board"], Some(&aggregator));
-    aggregator.reply_json(200, &view());
+    let mut board = view();
+    board["records"]
+        .as_array_mut()
+        .expect("records")
+        .push(record(
+            MACHINE,
+            "20300101-000000-local",
+            Some("local-incarnation"),
+            true,
+        ));
+    aggregator.reply_json(200, &board);
 
     let output = fixture.board(&[]);
     assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
@@ -570,6 +580,7 @@ fn relay_text_marks_the_caller_and_offers_send_targets_only_to_messageable_peers
             "live  host-b  20300101-000000-peer  nils-cli  working  1m  Title 20300101-000000-peer  send: --to-machine host-b --to 20300101-000000-peer (incarnation peer-incarnation)",
             "live  host-b  20300101-000000-quiet  nils-cli  working  1m  Title 20300101-000000-quiet",
             "live  host-b  20300101-000000-self  nils-cli  working  1m  Title 20300101-000000-self  send: --to-machine host-b --to 20300101-000000-self (incarnation namesake-incarnation)",
+            "live  host-a  20300101-000000-local  nils-cli  working  1m  Title 20300101-000000-local  send: --to 20300101-000000-local (incarnation local-incarnation)",
         ]
     );
 }

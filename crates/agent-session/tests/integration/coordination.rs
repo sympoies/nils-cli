@@ -4720,6 +4720,89 @@ fn concurrent_definite_contenders_admit_exactly_one_claim() {
 }
 
 #[test]
+fn message_send_to_own_machine_uses_the_local_mailbox() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    fs::create_dir(&state_dir).expect("state");
+    seed_brokers(
+        &state_dir,
+        &[
+            (
+                "alpha",
+                "incarnation-alpha",
+                "alpha-private-capability-material",
+            ),
+            (
+                "beta",
+                "incarnation-beta",
+                "beta-private-capability-material",
+            ),
+        ],
+    );
+    let body = tmp.path().join("body.txt");
+    fs::write(&body, "same-host message").expect("body");
+    let state = state_dir.to_string_lossy();
+    let alpha_cap = capability(&state_dir, "alpha");
+    let beta_cap = capability(&state_dir, "beta");
+    let sent = run_with_env(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state,
+            "message",
+            "send",
+            "--from",
+            "alpha",
+            "--to-machine",
+            "host-self",
+            "--to",
+            "beta",
+            "--body-file",
+            body.to_str().expect("body"),
+            "--capability-file",
+            &alpha_cap,
+            "--idempotency-key",
+            "message-alpha-self-0001",
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_MACHINE", "host-self")],
+    );
+    assert_eq!(
+        sent.code,
+        0,
+        "stdout={} stderr={}",
+        sent.stdout_text(),
+        sent.stderr_text()
+    );
+    let message_id = data(&sent)["message_id"].as_str().expect("id").to_string();
+    let inbox = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state,
+            "message",
+            "inbox",
+            "--session",
+            "beta",
+            "--capability-file",
+            &beta_cap,
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(inbox.code, 0, "stderr={}", inbox.stderr_text());
+    assert_eq!(data(&inbox)["messages"][0]["message_id"], message_id);
+    let journal = state_dir
+        .join("coordination")
+        .join("federation-journal.json");
+    assert!(
+        !journal.exists(),
+        "no federation journal entry: {journal:?}"
+    );
+}
+
+#[test]
 fn mailbox_is_private_bounded_and_recipient_authenticated() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
