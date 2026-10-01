@@ -802,6 +802,15 @@ recorded in `sympoies/nils-cli#1409`.
   allocation from the request. Every accepted name resolves to one of the
   canonical `SpecialKey` values, so the bound is far above any real caller. An
   unknown name still fails the whole request with `400 invalid-key`.
+- `POST /sessions/{id}/send` pastes `text` with bracketed-paste markers. A request
+  with literal `text` and `keys` exactly `["enter"]` is a prompt submission and
+  `data.sent.submission` reports `{ outcome, enter_presses }`. `outcome` is
+  `submitted`, `queued` (Claude Code queued it behind a running turn), or
+  `unverified` (the pane could not prove either way). A prompt still in the
+  composer after the bounded Enter retries returns `409 send-submit-stuck` with
+  `{ id, outcome: "stuck", enter_presses }`. The text has reached the pane, so
+  do not resend it. Inspect or clear the composer first. Retries never press
+  Enter while the session is `needs_input` or the pane shows a dialog.
 - Blocked-input contract. While a session's turn phase is `needs_input` — reached
   only through a provider `attention_requested` event, never a terminal
   heuristic — the pane belongs to an approval or question dialog rather than to a

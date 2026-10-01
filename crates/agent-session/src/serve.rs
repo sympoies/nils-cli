@@ -2548,7 +2548,8 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "codex-account-session-busy"
         | "provider-session-already-running"
         | "history-session-live"
-        | "agent-blocked" => StatusCode::CONFLICT,
+        | "agent-blocked"
+        | "send-submit-stuck" => StatusCode::CONFLICT,
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
         "retitle-v3-objective-unavailable" => StatusCode::UNPROCESSABLE_ENTITY,
         "board-cursor-expired" => StatusCode::GONE,
@@ -8549,6 +8550,7 @@ fn start_terminal_coordination_notification(
         &[SpecialKey::Enter],
         tmux_bin,
         None,
+        crate::PasteMode::Raw,
     )
     .map_err(|_| TerminalNotificationStartError::Unknown)?;
     Ok(tail)
