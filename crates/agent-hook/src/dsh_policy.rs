@@ -864,6 +864,9 @@ fn shell_write_targets(invocations: &[Invocation]) -> ShellWriteTargets {
                 }
             }
             "diff" => modeled_diff_targets(words, &mut targets),
+            // `[[`, `[`, and a zsh `$+name[key]` presence test only evaluate
+            // their operands; a redirection on them is modeled above.
+            _ if literal_test_command_word(&words[0]) => {}
             "cat" | "printf" | "echo" | "head" | "tail" | "grep" | "rg" | "ls" | "stat"
             | "test" | "[" | "cmp" | "sha256sum" | "shasum" | "md5sum" | "file" | "readlink"
             | "realpath" | "pwd" | "wc" | "cut" | "tr" | "true" | "false" | "bash" | "sh"
@@ -4068,6 +4071,7 @@ fn semantic_body_missing(invocations: &[Invocation]) -> bool {
                 words.get(1).map(String::as_str),
                 Some("commit" | "fixup" | "squash")
             )
+            || !semantic_commit_authors(words)
         {
             return false;
         }
@@ -4670,19 +4674,42 @@ const SEMANTIC_COMMIT_VALUE_OPTIONS: &[&str] = &[
     "--type",
 ];
 
+/// `semantic-commit` options that take no value.
+const SEMANTIC_COMMIT_FLAGS: &[&str] = &[
+    "--allow-empty",
+    "--amend",
+    "--auto-fix",
+    "--automation",
+    "--json",
+    "--message-only",
+    "--no-edit",
+    "--no-progress",
+    "--no-summary",
+    "--no-unstaged",
+    "--non-interactive",
+    "--quiet",
+    "--require-clean",
+    "--signoff",
+];
+
 /// Whether a `semantic-commit` invocation authors a commit. Help exits before
 /// work, and `--dry-run` and `--validate-only` author nothing.
+///
+/// A non-authoring flag counts only when every word before it is a literal,
+/// known option or a known option's literal value. A dynamic word can expand
+/// into a value-taking option (or into nothing, shifting a value position),
+/// and an unknown option may take a value; either can swallow the flag in
+/// semantic-commit's own parser, so the invocation is treated as authoring.
 fn semantic_commit_authors(words: &[String]) -> bool {
     let mut index = 2;
     while index < words.len() {
         let token = words[index].as_str();
+        if dynamic(token) {
+            return true;
+        }
         match token {
             "--" => break,
             "-h" | "--help" | "--dry-run" | "--validate-only" => return false,
-            "-m" | "-F" => {
-                index += 2;
-                continue;
-            }
             _ => {}
         }
         let name = if token.starts_with("--") {
@@ -4690,11 +4717,28 @@ fn semantic_commit_authors(words: &[String]) -> bool {
         } else {
             token
         };
-        if SEMANTIC_COMMIT_VALUE_OPTIONS.contains(&name) {
-            index += if name.len() < token.len() { 1 } else { 2 };
-            continue;
+        let value_index =
+            if matches!(token, "-m" | "-F") || SEMANTIC_COMMIT_VALUE_OPTIONS.contains(&token) {
+                Some(index + 1)
+            } else if SEMANTIC_COMMIT_VALUE_OPTIONS.contains(&name)
+                || ((token.starts_with("-m") || token.starts_with("-F")) && token.len() > 2)
+            {
+                None
+            } else if SEMANTIC_COMMIT_FLAGS.contains(&token) {
+                index += 1;
+                continue;
+            } else {
+                return true;
+            };
+        match value_index {
+            Some(value_index) => {
+                if words.get(value_index).is_some_and(|value| dynamic(value)) {
+                    return true;
+                }
+                index += 2;
+            }
+            None => index += 1,
         }
-        index += 1;
     }
     true
 }
