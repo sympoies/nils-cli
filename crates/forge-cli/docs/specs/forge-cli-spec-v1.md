@@ -142,6 +142,7 @@ Parity matrix (v1):
 | `issue reopen <id>`                         | `gh issue reopen <id>`                                                                                                                       | `glab issue reopen <id>`                                               | exact                                                                                                                    |
 | `issue tracker lint <id>`                   | `issue view`, plus one `issue view` per referenced issue with `--check-state`                                                                | same                                                                   | exact (grammar is provider-neutral)                                                                                      |
 | `issue tracker graph <id>`                  | `issue view`; with `--write`, `issue edit --body`                                                                                            | `issue view`; with `--write`, `issue update --description`             | exact                                                                                                                    |
+| `issue tracker show <ref>`                  | `issue view`                                                                                                                                 | `issue view`                                                           | exact                                                                                                                    |
 | `issue tracker tick <id>`                   | `issue view` + `issue edit --body`; with `--comment-file`, the `issue comment` call                                                          | `issue view` + `issue update --description`; `issue note`              | exact                                                                                                                    |
 | `label list`                                | `gh label list --json …`                                                                                                                     | paged `glab label list --output json --per-page … --page …`            | exact                                                                                                                    |
 | `label audit`                               | read labels, compare with caller catalog                                                                                                     | same                                                                   | exact                                                                                                                    |
@@ -1357,6 +1358,23 @@ module, and its conformance corpus is vendored unchanged under
   `changed = true`, when `--write` edits the body. Without `--write`, and when
   the block is already current, they are `none` and `false`, whatever `current`
   says. `written` is `true` only when the edit was applied.
+- `issue tracker show <ref>` emits `cli.forge-cli.issue.tracker.show.v1` with
+  `data = { source, provider, number, url, repo, title, state, labels,
+  row_count, rows, findings }`. `<ref>` is `N`, `#N`, or `owner/repo#N`; a
+  repository in the ref replaces `--repo`. It makes one `issue view` call and
+  no write. Each `rows[]` entry holds `id`, `title`, `reference`, `done`,
+  `phase`, `after`, `notes`, and `line`, in table order: `reference` is `owner/repo#N` (an
+  own-repository `#N` is qualified with `repo` when it is known) or `null` for a
+  gate, `phase` is the third-level heading above the row or `null`, and `line` is the
+  1-based body line. Row findings do not fail the command: `rows` lists every
+  valid row and `findings[]` reports `malformed-row`, `duplicate-id`,
+  `unknown-dependency`, `self-dependency`, and `cycle`, so a board shows the
+  lanes of an imperfect tracker. `stale-graph` and the label check are `lint`'s
+  and are not reported. A table over 500 rows is not analysed: `rows` is empty
+  and `too-many-rows` is its only finding. A body without a `## Phase table`
+  section has zero rows. A row whose ref does not end the row text before its
+  notes (`title: #12; depends on T1 (PR #13)`) is a gate by the grammar and has
+  `reference = null`.
 - `issue tracker tick <id> --item <item-id>` emits
   `cli.forge-cli.issue.tracker.tick.v1` with `data = { provider, number, url,
   item, line, row_before, row_after, changed, written, dry_run, comment_posted,

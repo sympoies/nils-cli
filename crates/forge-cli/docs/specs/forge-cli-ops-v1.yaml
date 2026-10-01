@@ -1169,6 +1169,32 @@ operations:
         findings: list<{ code, line, ids, message }>
         actions: "list<{ kind, plan }>, present under --dry-run when a call is planned"
 
+  - id: issue.tracker.show
+    schema_version: cli.forge-cli.issue.tracker.show.v1
+    summary: Serialize a program tracker issue's phase-table rows with its title, state, and URL.
+    inputs:
+      - { name: <ref>, type: string, required: true } # N, #N, or owner/repo#N; a repository replaces --repo
+    validations: []
+    dry_run:
+      plan: "issue.view argv; no backend call"
+    backends:
+      github: { derives_from: issue.view }
+      gitlab: { derives_from: issue.view }
+    row_findings: "reported under data.findings[] with exit 0; rows lists every valid row; too-many-rows (more than 500 row lines) lists no rows"
+    output:
+      data:
+        source: enum<issue>
+        provider: enum<github|gitlab|local>
+        number: integer
+        url: string
+        repo: "string | null"
+        title: string
+        state: enum<open|closed>
+        labels: list<string>
+        row_count: integer
+        rows: "list<{ id, title, reference: 'string | null' (owner/repo#N), done: bool, phase: 'string | null', after: list<string>, notes: 'string | null', line: integer }>"
+        findings: list<{ code, line, ids, message }>
+
   - id: issue.tracker.tick
     schema_version: cli.forge-cli.issue.tracker.tick.v1
     summary: Tick one phase-table row and optionally record its delivering PR.

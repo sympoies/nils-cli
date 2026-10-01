@@ -78,6 +78,11 @@ const PARITY_ROWS: &[(&str, &str, &[&str])] = &[
         &["issue", "tracker", "graph", "1"],
     ),
     (
+        "issue.tracker.show.v1",
+        "cli.forge-cli.issue.tracker.show.v1",
+        &["issue", "tracker", "show", "1"],
+    ),
+    (
         "issue.create.v1",
         "cli.forge-cli.issue.create.v1",
         &["issue", "create", "--title", "demo"],

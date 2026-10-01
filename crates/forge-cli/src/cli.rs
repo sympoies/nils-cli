@@ -1724,6 +1724,8 @@ pub enum IssueTrackerCommand {
     Graph(IssueTrackerGraphArgs),
     /// Tick one phase-table row and optionally record its delivering PR.
     Tick(IssueTrackerTickArgs),
+    /// Serialize the phase-table rows and the tracker's title, state, and URL.
+    Show(IssueTrackerShowArgs),
 }
 
 /// `issue tracker lint` arguments.
@@ -1785,6 +1787,27 @@ pub struct IssueTrackerGraphArgs {
     /// `--body-file` draft.
     #[arg(long, action = ArgAction::SetTrue)]
     pub write: bool,
+}
+
+/// `issue tracker show` arguments.
+#[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+      Reads the tracker once and prints its valid rows as structured data. \
+      `reference` is `owner/repo#N`; a row's own-repository `#N` is qualified \
+      with the tracker's repository. A row without a reference is a gate.\n\n\
+      FINDINGS\n  \
+      Unlike `lint` and `graph`, row findings (malformed-row, duplicate-id, \
+      unknown-dependency, self-dependency, cycle, too-many-rows) do not fail \
+      the command: `rows` keeps every valid row in table order and \
+      `findings` reports the rest, so a board still shows the lanes of an \
+      imperfect tracker. A table over 500 rows is not analysed: `rows` is \
+      empty and `too-many-rows` is its only finding. A body without a \
+      `## Phase table` section has zero rows.")]
+pub struct IssueTrackerShowArgs {
+    /// The tracker issue: `N`, `#N`, or `owner/repo#N`. A repository in the
+    /// ref replaces `--repo`.
+    #[arg(value_name = "REF", value_parser = crate::ops::issue_tracker_show::parse_target)]
+    pub target: crate::ops::issue_tracker_show::ShowTarget,
 }
 
 /// `issue tracker tick` arguments.
@@ -2481,6 +2504,9 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
             }
             IssueTrackerCommand::Tick(tick_args) => {
                 ops::issue_tracker_tick::run(&global, tick_args, format)
+            }
+            IssueTrackerCommand::Show(show_args) => {
+                ops::issue_tracker_show::run(&global, show_args, format)
             }
         },
         Some(Command::Activity(ActivityArgs {

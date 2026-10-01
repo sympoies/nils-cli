@@ -16,6 +16,7 @@ pub mod issue_reopen;
 pub mod issue_tracker;
 pub mod issue_tracker_graph;
 pub mod issue_tracker_lint;
+pub mod issue_tracker_show;
 pub mod issue_tracker_tick;
 pub mod issue_view;
 pub mod label;

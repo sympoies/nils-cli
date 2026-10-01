@@ -46,6 +46,14 @@ fn fixture(name: &str) -> String {
     String::from_utf8(fs::read(path).expect("read fixture")).expect("utf-8 fixture")
 }
 
+fn fixture_at(dir: &str, name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(dir)
+        .join(name);
+    String::from_utf8(fs::read(path).expect("read fixture")).expect("utf-8 fixture")
+}
+
 fn fixture_path(name: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/tracker-row-grammar")
@@ -417,6 +425,7 @@ fn read_only_dry_run_renders_the_view_plan_without_a_backend_call() {
     for (command, schema) in [
         ("lint", "cli.forge-cli.issue.tracker.lint.v1"),
         ("graph", "cli.forge-cli.issue.tracker.graph.v1"),
+        ("show", "cli.forge-cli.issue.tracker.show.v1"),
     ] {
         let out = run_forge_cli(
             &stub,
@@ -443,6 +452,31 @@ fn read_only_dry_run_renders_the_view_plan_without_a_backend_call() {
             .collect();
         assert_eq!(plan[1..4], ["issue", "view", "7"], "{command}");
     }
+}
+
+#[test]
+fn show_ref_repository_replaces_the_repo_flag() {
+    let stub = StubEnv::new().gh_stub(NEVER_RUN);
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "flag/repo",
+            "--dry-run",
+            "--format",
+            "json",
+            "issue",
+            "tracker",
+            "show",
+            "ref/repo#7",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    let plan = parse_envelope(&out.stdout)["data"]["plan"].to_string();
+    assert!(plan.contains("ref/repo"), "{plan}");
+    assert!(!plan.contains("flag/repo"), "{plan}");
 }
 
 // ----- graph -----------------------------------------------------------------
@@ -920,6 +954,180 @@ fn tick_keeps_what_another_session_wrote_since_the_last_read() {
     );
 }
 
+// ----- show ------------------------------------------------------------------
+
+fn show_fixture(name: &str) -> (String, Vec<Value>) {
+    let body = fixture_at("tracker-show", &format!("{name}.md"));
+    let rows: Vec<Value> =
+        serde_json::from_str(&fixture_at("tracker-show", &format!("{name}.rows.json")))
+            .expect("rows fixture");
+    (body, rows)
+}
+
+/// The rows a fixture expects once an own-repository `#N` is qualified with
+/// the tracker's repository.
+fn qualified(rows: &[Value], repo: &str) -> Vec<Value> {
+    rows.iter()
+        .map(|row| {
+            let mut row = row.clone();
+            if let Some(reference) = row["reference"].as_str()
+                && reference.starts_with('#')
+            {
+                row["reference"] = json!(format!("{repo}{reference}"));
+            }
+            row
+        })
+        .collect()
+}
+
+impl Forge {
+    fn create_titled(&self, title: &str, body: &str, labels: &[&str]) -> u64 {
+        let body_file = self.file("create-body.md", body);
+        let mut args = vec![
+            "issue",
+            "create",
+            "--title",
+            title,
+            "--body-file",
+            &body_file,
+        ];
+        for label in labels {
+            args.extend_from_slice(&["--label", label]);
+        }
+        self.ok(&args)["data"]["number"].as_u64().expect("number")
+    }
+}
+
+#[test]
+fn show_serializes_the_rows_of_real_trackers() {
+    for (name, title) in [
+        (
+            "dsh-runtime-kit-306",
+            "Track agent-runtime-kit policy parity for DSH as primary harness",
+        ),
+        (
+            "sympoies-infra-1072",
+            "Track private-repo Actions migration to self-hosted runners",
+        ),
+    ] {
+        let (body, rows) = show_fixture(name);
+        let forge = Forge::new();
+        let id = forge.create_titled(title, &body, &[TRACKING, "area::ci"]);
+        let env = forge.ok(&["issue", "tracker", "show", &id.to_string()]);
+        assert_eq!(env["schema_version"], "cli.forge-cli.issue.tracker.show.v1");
+        assert_eq!(env["ok"], true, "{name}");
+        assert_eq!(
+            env["data"],
+            json!({
+                "source": "issue",
+                "provider": "local",
+                "number": 1,
+                "url": "local://demo/issues/1",
+                "repo": "local:demo",
+                "title": title,
+                "state": "open",
+                "labels": [TRACKING, "area::ci"],
+                "row_count": rows.len(),
+                "rows": qualified(&rows, "local:demo"),
+                "findings": [],
+            }),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn show_accepts_the_ref_forms_of_a_tracker() {
+    let (body, rows) = show_fixture("dsh-runtime-kit-306");
+    let forge = Forge::new();
+    let id = forge
+        .create_titled("Tracker", &body, &[TRACKING])
+        .to_string();
+    for reference in [id.clone(), format!("#{id}"), format!("local:demo#{id}")] {
+        let env = forge.ok(&["issue", "tracker", "show", &reference]);
+        assert_eq!(env["data"]["number"], 1, "{reference}");
+        assert_eq!(
+            env["data"]["rows"],
+            json!(qualified(&rows, "local:demo")),
+            "{reference}"
+        );
+    }
+    let out = forge.run(&["issue", "tracker", "show", "not-a-ref"]);
+    assert_eq!(
+        out.code, USAGE,
+        "stdout={} stderr={}",
+        out.stdout, out.stderr
+    );
+}
+
+#[test]
+fn show_keeps_valid_rows_and_reports_findings_without_failing() {
+    // A cycle makes `lint` and `graph` refuse; the board still needs the lanes.
+    let body = "\
+## Phase table
+
+- [x] **A1** First: #2 · after A2
+- [ ] **A2** Second: other/repo#3 · after A1
+- [ ] this line is not a row but starts like one
+- [ ] **B1**missing space
+";
+    let forge = Forge::new();
+    let id = forge.create_titled("Cyclic", body, &[TRACKING]);
+    let env = forge.ok(&["issue", "tracker", "show", &id.to_string()]);
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["row_count"], 2);
+    assert_eq!(
+        env["data"]["rows"],
+        json!([
+            {"id": "A1", "title": "First", "reference": "local:demo#2", "done": true,
+             "phase": null, "after": ["A2"], "notes": null, "line": 3},
+            {"id": "A2", "title": "Second", "reference": "other/repo#3", "done": false,
+             "phase": null, "after": ["A1"], "notes": null, "line": 4},
+        ])
+    );
+    let codes: Vec<Value> = findings(&env).iter().map(|f| f["code"].clone()).collect();
+    assert_eq!(
+        codes,
+        [
+            json!("malformed-row"),
+            json!("malformed-row"),
+            json!("cycle")
+        ]
+    );
+}
+
+#[test]
+fn show_reports_a_body_without_a_phase_table_as_zero_rows() {
+    let forge = Forge::new();
+    let id = forge.create_titled("Plain issue", "Nothing here.\n", &[]);
+    let env = forge.ok(&["issue", "tracker", "show", &id.to_string()]);
+    assert_eq!(env["data"]["rows"], json!([]));
+    assert_eq!(env["data"]["row_count"], 0);
+    assert_eq!(env["data"]["findings"], json!([]));
+}
+
+#[test]
+fn show_reports_a_closed_tracker_and_does_not_check_the_graph_block() {
+    let (body, _) = show_fixture("dsh-runtime-kit-306");
+    let stale = body.replace("  N1 --> S1\n", "");
+    let forge = Forge::new();
+    let id = forge
+        .create_titled("Tracker", &stale, &[TRACKING])
+        .to_string();
+    forge.ok(&["issue", "close", &id]);
+    let env = forge.ok(&["issue", "tracker", "show", &id]);
+    assert_eq!(env["data"]["state"], "closed");
+    assert_eq!(env["data"]["findings"], json!([]));
+}
+
+#[test]
+fn show_reports_a_missing_issue_as_a_backend_error() {
+    let forge = Forge::new();
+    let out = forge.run(&["issue", "tracker", "show", "99"]);
+    assert_ne!(out.code, 0);
+    assert_eq!(parse_envelope(&out.stdout)["ok"], false);
+}
+
 // ----- help ------------------------------------------------------------------
 
 #[test]
@@ -931,7 +1139,7 @@ fn help_lists_the_tracker_subcommands_and_their_flags() {
 
     let out = run_forge_cli(&stub, &["issue", "tracker", "--help"]);
     assert_eq!(out.code, 0);
-    for sub in ["lint", "graph", "tick"] {
+    for sub in ["lint", "graph", "tick", "show"] {
         assert!(out.stdout.contains(sub), "missing {sub}: {}", out.stdout);
     }
 
@@ -947,6 +1155,10 @@ fn help_lists_the_tracker_subcommands_and_their_flags() {
         (
             "tick",
             vec!["--item", "--pr", "--comment-file", "tracker_item_unknown"],
+        ),
+        (
+            "show",
+            vec!["REF", "owner/repo#N", "malformed-row", "too-many-rows"],
         ),
     ] {
         let out = run_forge_cli(&stub, &["issue", "tracker", sub, "--help"]);

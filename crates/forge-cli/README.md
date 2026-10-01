@@ -394,6 +394,9 @@ forge-cli issue tracker lint 123 --check-state --format json
 forge-cli issue tracker graph 123
 forge-cli issue tracker graph 123 --write --format json
 
+# Serialize the rows (lanes, references, done flags, dependencies) as JSON
+forge-cli issue tracker show owner/repo#123 --format json
+
 # Tick one row, record the delivering PR, and post one comment
 forge-cli issue tracker tick 123 --item S2 --pr owner/repo#45 \
   --comment-file note.md --format json
@@ -403,6 +406,9 @@ forge-cli issue tracker lint --body-file tracker.md --format json
 forge-cli issue tracker graph --body-file tracker.md --write
 ```
 
+- `show` reads the tracker once and lists its valid rows plus the tracker's
+  `title`, `state`, and `url`; row findings are reported without failing, so a
+  board still shows the lanes of an imperfect tracker.
 - `lint` reports the grammar findings (`malformed-row`, `duplicate-id`,
   `unknown-dependency`, `self-dependency`, `cycle`, `stale-graph`) and
   `missing-tracking-label` when the issue lacks `workflow::tracking`.
