@@ -133,7 +133,10 @@ Codex `goal` creation objectives in bounded pages. Injected AGENTS and Goal
 continuation context are excluded. Claude user messages include prompts the
 user sent while a turn was running (`queued_command` attachments); queued task
 notifications, peer messages, auto-continuations, meta or machine-markup
-prompts, and agent-session mailbox reminders are excluded. The retained default `direction=forward` uses `next_cursor` as
+prompts, and agent-session mailbox reminders are excluded. A slash command
+that Claude Code records as command markup is shown as typed (`/name args`), once;
+local-command output and interrupt markers recorded as `user` rows are excluded. Queue bookkeeping
+(`queue-operation`) never adds a message, so a queued prompt appears once. The retained default `direction=forward` uses `next_cursor` as
 before. `direction=latest` accepts no cursor, reads one at-most-16-MiB window
 from the selected transcript tail, and returns the latest page in chronological
 order. `direction=older` requires the prior `older_cursor`, reads only bytes
