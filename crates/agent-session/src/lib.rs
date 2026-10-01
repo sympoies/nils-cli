@@ -9410,6 +9410,7 @@ fn send_to_session(context: &CliContext, args: cli::SendArgs) -> Result<SendResu
     // left the composer instead of assuming it did.
     let submits_prompt = carries_literal_text(text.as_deref()) && args.keys == [SpecialKey::Enter];
     let keys_after_paste: &[SpecialKey] = if submits_prompt { &[] } else { &args.keys };
+    let hold_started = Instant::now();
     send_input_unlocked(
         context,
         &record,
@@ -9427,6 +9428,7 @@ fn send_to_session(context: &CliContext, args: cli::SendArgs) -> Result<SendResu
             text.as_deref().unwrap_or_default(),
             &tmux_bin,
             &mut manual_input,
+            hold_started,
         )?)
     } else {
         None
@@ -9471,6 +9473,7 @@ fn confirm_prompt_submission(
     text: &str,
     tmux_bin: &Path,
     manual_input: &mut ManualInputSection,
+    hold_started: Instant,
 ) -> Result<send_submit::SubmitReport, CliError> {
     let target = format!("{}:0.0", record.tmux_session);
     let mut press_enter = || {
@@ -9487,7 +9490,8 @@ fn confirm_prompt_submission(
     send_submit::submit_and_confirm(
         &record.agent,
         &probe,
-        || capture_visible_pane(tmux_bin, &target),
+        hold_started,
+        |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
         || {
             activity::state_for_view(context, record)
                 .is_none_or(|turn| turn.phase != activity::TurnPhase::NeedsInput)
@@ -9498,14 +9502,19 @@ fn confirm_prompt_submission(
 
 /// The visible pane text, or `None` when tmux cannot answer.
 fn capture_visible_pane(tmux_bin: &Path, target: &str) -> Option<String> {
+    capture_visible_pane_with_timeout(tmux_bin, target, PANE_OBSERVATION_COMMAND_TIMEOUT)
+}
+
+fn capture_visible_pane_with_timeout(
+    tmux_bin: &Path,
+    target: &str,
+    timeout: Duration,
+) -> Option<String> {
     let mut command = ProcessCommand::new(tmux_bin);
     command.arg("capture-pane").arg("-p").arg("-t").arg(target);
-    let output = run_output_with_timeout_and_cap(
-        command,
-        PANE_OBSERVATION_COMMAND_TIMEOUT,
-        PANE_OBSERVATION_MAX_OUTPUT_BYTES,
-    )
-    .ok()?;
+    let output =
+        run_output_with_timeout_and_cap(command, timeout, PANE_OBSERVATION_MAX_OUTPUT_BYTES)
+            .ok()?;
     output
         .status
         .success()

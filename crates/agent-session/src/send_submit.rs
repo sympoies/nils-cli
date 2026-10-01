@@ -24,10 +24,13 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const RETRY_AFTER: Duration = Duration::from_millis(1500);
 /// The caller's Enter plus one retry for the swallowed first Enter.
 const MAX_ENTER_PRESSES: u32 = 2;
-/// Upper bound on the whole confirmation. `send` holds the session record lock
+/// Upper bound on the record-lock hold from the paste to the last pane read,
+/// including the caller's settle delay. `send` holds the session record lock
 /// throughout, and a provider hook event that finds the lock busy is retried
-/// for only five seconds, so the loop must end well before that.
-const CONFIRM_DEADLINE: Duration = Duration::from_millis(3500);
+/// for only five seconds, so the hold must end well before that.
+pub(crate) const HOLD_BUDGET: Duration = Duration::from_millis(4000);
+/// Longest single pane read; a read never runs past the hold budget either.
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Consecutive unrecognized polls after the text was seen before the loop stops
 /// waiting: a dialog has replaced the composer, and nothing will be pressed.
 const UNRECOGNIZED_POLLS_AFTER_PENDING: u32 = 2;
@@ -121,10 +124,18 @@ pub(crate) fn classify(agent: &str, pane: &str, probe: &str) -> Composer {
         return Composer::Unrecognized;
     }
     let region = compact(&region.join("\n"));
-    if region.contains(probe) || PASTE_PLACEHOLDERS.iter().any(|mark| region.contains(mark)) {
-        Composer::Pending
-    } else if agent == "claude" && region.contains(CLAUDE_QUEUED_HINT) {
+    let input = region.trim_start_matches(['❯', '›']);
+    // The sent text starts the input. An empty composer shows a placeholder
+    // ("Ask Codex to do anything"), so a short probe such as `y` must not be
+    // found inside it; only a full-length probe may match further in, after
+    // an existing draft.
+    let holds_text = input.starts_with(probe)
+        || (probe.chars().count() >= PROBE_CHARS && input.contains(probe))
+        || PASTE_PLACEHOLDERS.iter().any(|mark| input.contains(mark));
+    if agent == "claude" && input == CLAUDE_QUEUED_HINT {
         Composer::Queued
+    } else if holds_text {
+        Composer::Pending
     } else {
         Composer::Clear
     }
@@ -155,21 +166,35 @@ fn claude_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a 
 }
 
 /// Codex draws its composer as the last `›` line plus indented continuation
-/// lines, followed only by a short status footer. Its transcript echoes earlier
-/// prompts with the same `›`, so a `›` block followed by more than a footer is
-/// transcript, not the composer.
+/// lines, followed by a blank line and a short status footer. A pasted
+/// paragraph break is a blank line inside the composer, so the footer is the
+/// block after the last blank line. Its transcript echoes earlier prompts with
+/// the same `›`, so a `›` block followed by more than a footer, or by
+/// unindented output, is transcript, not the composer.
 fn codex_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a str])> {
     let start = lines.iter().rposition(|line| line.starts_with('›'))?;
     if starts_with_numbered_choice(&lines[start]['›'.len_utf8()..]) {
         return None;
     }
-    let end = lines[start + 1..]
+    let mut end = lines.len();
+    while end > start + 1 && lines[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    let below = &lines[start + 1..end];
+    let region_end = match below.iter().rposition(|line| line.trim().is_empty()) {
+        Some(blank) => start + 1 + blank,
+        None => below
+            .iter()
+            .position(|line| !line.starts_with("  "))
+            .map_or(end, |offset| start + 1 + offset),
+    };
+    let region = &lines[start..region_end];
+    let continuation_indented = region[1..]
         .iter()
-        .position(|line| !line.starts_with("  ") || line.trim().is_empty())
-        .map_or(lines.len(), |offset| start + 1 + offset);
-    let footer = &lines[end..];
+        .all(|line| line.trim().is_empty() || line.starts_with("  "));
+    let footer = &lines[region_end..];
     let footer_lines = footer.iter().filter(|line| !line.trim().is_empty()).count();
-    (footer_lines <= CODEX_MAX_FOOTER_LINES).then_some((&lines[start..end], footer))
+    (continuation_indented && footer_lines <= CODEX_MAX_FOOTER_LINES).then_some((region, footer))
 }
 
 /// Provider selection lists draw their cursor as the composer glyph followed by
@@ -181,7 +206,9 @@ fn starts_with_numbered_choice(after_glyph: &str) -> bool {
 }
 
 /// Press the submitting Enter, then watch the composer until it proves the
-/// outcome. `observe` returns the visible pane (`None` when tmux cannot answer),
+/// outcome within [`HOLD_BUDGET`] of `hold_started`, the moment the text was
+/// pasted. `observe` returns the visible pane read within the given timeout
+/// (`None` when tmux cannot answer),
 /// `may_press` is consulted before every retry so a session recorded as waiting
 /// on a dialog is never answered, and `press_enter` sends one Enter. Provider
 /// events cannot land while the caller holds the session lock, so the pane
@@ -190,15 +217,18 @@ fn starts_with_numbered_choice(after_glyph: &str) -> bool {
 pub(crate) fn submit_and_confirm(
     agent: &str,
     probe: &str,
-    mut observe: impl FnMut() -> Option<String>,
+    hold_started: Instant,
+    mut observe: impl FnMut(Duration) -> Option<String>,
     mut may_press: impl FnMut() -> bool,
     mut press_enter: impl FnMut() -> Result<(), crate::CliError>,
 ) -> Result<SubmitReport, crate::CliError> {
     let view = |pane: Option<String>| {
         pane.map_or(Composer::Unrecognized, |pane| classify(agent, &pane, probe))
     };
+    let deadline = hold_started + HOLD_BUDGET;
+    let remaining = || deadline.saturating_duration_since(Instant::now());
     // A blank capture is a pane tmux could not show us, not an empty composer.
-    let before = observe().filter(|pane| !pane.trim().is_empty());
+    let before = observe(remaining().min(CAPTURE_TIMEOUT)).filter(|pane| !pane.trim().is_empty());
     let observable = before.is_some();
     let mut seen_pending = view(before) == Composer::Pending;
     press_enter()?;
@@ -213,9 +243,19 @@ pub(crate) fn submit_and_confirm(
         return Ok(report(SubmitOutcome::Unverified, presses));
     }
     let mut unrecognized_polls = 0;
+    let mut last_view = Composer::Unrecognized;
     loop {
+        if remaining() <= POLL_INTERVAL {
+            let outcome = if last_view == Composer::Pending {
+                SubmitOutcome::Stuck
+            } else {
+                SubmitOutcome::Unverified
+            };
+            return Ok(report(outcome, presses));
+        }
         thread::sleep(POLL_INTERVAL);
-        let current = view(observe());
+        let current = view(observe(remaining().min(CAPTURE_TIMEOUT)));
+        last_view = current;
         unrecognized_polls = if current == Composer::Unrecognized {
             unrecognized_polls + 1
         } else {
@@ -244,18 +284,12 @@ pub(crate) fn submit_and_confirm(
             {
                 return Ok(report(SubmitOutcome::Unverified, presses));
             }
-            Composer::Unrecognized if unrecognized_polls >= UNRECOGNIZED_POLLS_AFTER_PENDING => {
+            Composer::Unrecognized
+                if seen_pending && unrecognized_polls >= UNRECOGNIZED_POLLS_AFTER_PENDING =>
+            {
                 return Ok(report(SubmitOutcome::Unverified, presses));
             }
             Composer::Clear | Composer::Unrecognized => {}
-        }
-        if started.elapsed() >= CONFIRM_DEADLINE {
-            let outcome = if current == Composer::Pending {
-                SubmitOutcome::Stuck
-            } else {
-                SubmitOutcome::Unverified
-            };
-            return Ok(report(outcome, presses));
         }
     }
 }
@@ -424,6 +458,34 @@ mod tests {
     }
 
     #[test]
+    fn a_short_probe_is_not_found_inside_an_empty_composer_placeholder() {
+        for probe in ["y", "n", "do", "fix"] {
+            assert_eq!(
+                classify("codex", CODEX_SUBMITTED, probe),
+                Composer::Clear,
+                "{probe}"
+            );
+            assert_eq!(
+                classify("claude", CLAUDE_STARTUP_PLACEHOLDER, probe),
+                Composer::Clear,
+                "{probe}"
+            );
+        }
+        assert_eq!(classify("claude", CLAUDE_QUEUED, "up"), Composer::Queued);
+        let pending = "────────────────────\n❯\u{a0}y\n────────────────────\n";
+        assert_eq!(classify("claude", pending, "y"), Composer::Pending);
+    }
+
+    #[test]
+    fn a_codex_prompt_with_a_paragraph_break_stays_one_composer() {
+        let pane = "› Earlier prompt\n\n• Working (3s • esc to interrupt)\n\n› Release notes\n  \n  first body line\n  second body line\n  third body line\n  fourth body line\n\n  fake-model · Context 100% left\n";
+        assert_eq!(
+            classify("codex", pane, &probe_of("Release notes")),
+            Composer::Pending
+        );
+    }
+
+    #[test]
     fn unknown_providers_and_blank_text_are_unverifiable() {
         assert_eq!(
             classify("hermes", CLAUDE_PENDING, &probe_of("[Monitoring]")),
@@ -459,7 +521,8 @@ mod tests {
         let result = submit_and_confirm(
             "claude",
             &probe,
-            || {
+            Instant::now(),
+            |_| {
                 let mut index = observed.borrow_mut();
                 let pane = panes[(*index).min(panes.len() - 1)];
                 *index += 1;
@@ -540,6 +603,41 @@ mod tests {
         assert_eq!(result.unwrap().outcome, SubmitOutcome::Unverified);
         assert_eq!((pressed, observed), (1, 1));
         assert!(started.elapsed() < POLL_INTERVAL);
+    }
+
+    #[test]
+    fn slow_pane_reads_never_hold_the_lock_past_the_budget() {
+        let hold_started = Instant::now();
+        let presses = RefCell::new(0u32);
+        let result = submit_and_confirm(
+            "claude",
+            &probe_of("[Monitoring] REPRO A1: Disk usage high"),
+            hold_started,
+            |timeout| {
+                thread::sleep(timeout.min(Duration::from_millis(900)));
+                Some(CLAUDE_PENDING.to_string())
+            },
+            || true,
+            || {
+                *presses.borrow_mut() += 1;
+                Ok(())
+            },
+        );
+        assert_eq!(result.unwrap().outcome, SubmitOutcome::Stuck);
+        assert!(
+            hold_started.elapsed() < HOLD_BUDGET + POLL_INTERVAL,
+            "held for {:?}",
+            hold_started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_composer_never_seen_gets_the_full_grace_before_unverified() {
+        let started = Instant::now();
+        let (result, pressed, _) = scripted(&[CLAUDE_TRUST_DIALOG], true);
+        assert_eq!(result.unwrap().outcome, SubmitOutcome::Unverified);
+        assert_eq!(pressed, 1);
+        assert!(started.elapsed() >= RETRY_AFTER);
     }
 
     #[test]

@@ -325,7 +325,8 @@ stays one prompt with its line breaks. `--text`/`--text-stdin` followed by exact
 Claude Code or Codex composer, and `queued` means Claude Code queued it behind a running turn ("Press up to edit queued
 messages"). When the text is still in the composer, `send` presses Enter once more, unless the
 session is `needs_input` or the pane shows a dialog. If the text is still there after that, `send` fails with
-`send-submit-stuck` (`error.details.outcome = "stuck"`) and leaves the text in place. `unverified` means the pane could not
+`send-submit-stuck` (`error.details.outcome = "stuck"`) and leaves the text in place. The text has already reached the
+pane, so do not resend it: `glance` the session or clear the composer first. `unverified` means the pane could not
 prove either way: another provider, an unrecognized layout, a dialog, or a first line that looks like a numbered
 choice (`1. …`). Text without `--key enter`, or with other keys, only
 types; `--key` alone presses keys as before.

@@ -12954,6 +12954,26 @@ impl RealTmuxServer {
             &wrapper,
             &format!("#!/bin/sh\nexec tmux -f /dev/null -L '{socket}' \"$@\"\n"),
         );
+        // A sibling test forking while the script was open for writing makes
+        // exec fail with ETXTBSY until that child execs. Run it once, retrying,
+        // so neither this test nor agent-session hits that window later.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match Command::new(&wrapper)
+                .arg("-V")
+                .stdout(Stdio::null())
+                .status()
+            {
+                Ok(_) => break,
+                Err(error)
+                    if error.kind() == io::ErrorKind::ExecutableFileBusy
+                        && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("run tmux wrapper: {error}"),
+            }
+        }
         Some(Self { wrapper })
     }
 
@@ -13071,6 +13091,10 @@ fn send_submits_multiline_text_once_through_real_tmux_claude_and_codex() {
             "ascii",
             "Steer: first line\nsecond line\nthird line",
         ),
+        // A one-letter reply must not be mistaken for the placeholder of the
+        // empty composer it leaves behind.
+        ("codex", "short", "y"),
+        ("claude", "short", "y"),
     ];
     for (agent, label, text) in cases {
         let id = format!("{agent}-{label}");
@@ -13100,7 +13124,9 @@ fn send_submits_multiline_text_once_through_real_tmux_claude_and_codex() {
             "{id}: the prompt must be submitted once with its line breaks: {}",
             server.pane(&tmux_name)
         );
-        assert_no_secret(&output, text.lines().next().unwrap());
+        if text.len() > 1 {
+            assert_no_secret(&output, text.lines().next().unwrap());
+        }
     }
 }
 
@@ -13119,6 +13145,10 @@ fn send_retries_a_swallowed_enter_through_real_tmux() {
         ("claude", "first line\nsecond line".to_string()),
         ("claude", long_line),
         ("codex", "first line\nsecond line".to_string()),
+        (
+            "codex",
+            "Release notes\n\nbody one\nbody two\nbody three\nbody four".to_string(),
+        ),
     ] {
         let id = format!("{agent}-swallow-{}", text.len());
         let tmux_name = format!("hs-{id}");

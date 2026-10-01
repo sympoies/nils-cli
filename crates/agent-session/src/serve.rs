@@ -23484,11 +23484,27 @@ esac
         assert_eq!(body["data"]["machine"], MACHINE);
         assert_eq!(body["data"]["sent"]["sent_text"], true);
         assert_eq!(body["data"]["sent"]["keys"][0], "enter");
+        // The stub pane draws no recognizable composer, so the submission is
+        // reported but cannot be proven either way.
+        assert_eq!(
+            body["data"]["sent"]["submission"],
+            json!({ "outcome": "unverified", "enter_presses": 1 })
+        );
         // The literal text is never echoed back into the response contract.
         assert!(
             !serde_json::to_string(&body).unwrap().contains(secret),
             "secret text leaked into serve response: {body}"
         );
+    }
+
+    #[test]
+    fn a_prompt_stuck_in_the_composer_is_a_conflict() {
+        let response = envelope_err(CliError::runtime(
+            "send-submit-stuck",
+            "the text is still in the session's input box",
+            Some(json!({ "id": "steer", "outcome": "stuck", "enter_presses": 2 })),
+        ));
+        assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
