@@ -1174,7 +1174,8 @@ Release readiness requires:
 Federation adds `message send --to-machine MACHINE`, `message peers --session ID`,
 `message delivery --session ID --message ID`, and automatic remote `message reply`.
 `--host` continues to control attach-command generation. Omitted `--to-machine`
-retains the local mailbox. Bodies are cooperating-peer data that cannot grant new
+retains the local mailbox, and a `--to-machine` naming the sender's own machine
+is delivered through the local mailbox without a federation journal entry. Bodies are cooperating-peer data that cannot grant new
 authority; notification, inbox persistence, read/acknowledgement and accepting
 work are separate events.
 
