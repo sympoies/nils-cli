@@ -2011,6 +2011,17 @@ fn literal_test_command_word(word: &str) -> bool {
             .is_match(word)
 }
 
+/// Whether words follow the `]]` closing a `[[` test. zsh's short forms
+/// (`if [[ ... ]] cmd`, `while [[ ... ]] { cmd }`, SHORT_LOOPS) run those
+/// words as a command, so the test cannot stand for the whole invocation.
+fn short_form_body_follows_test(words: &[String]) -> bool {
+    words.first().is_some_and(|word| word == "[[")
+        && words
+            .iter()
+            .position(|word| word == "]]")
+            .is_some_and(|close| close + 1 < words.len())
+}
+
 /// Whether a command word could expand into a different executable.
 fn dynamic_command_word(word: &str) -> bool {
     dynamic(word) && !literal_test_command_word(word)
@@ -2110,7 +2121,11 @@ fn visit_source(source: &str, depth: usize, nesting: usize, output: &mut Vec<Inv
             }
             continue;
         }
-        if matches!(tokens[0].as_str(), "case" | "esac" | "select" | "coproc") {
+        // zsh `repeat N sublist` runs its body without `do`.
+        if matches!(
+            tokens[0].as_str(),
+            "case" | "esac" | "select" | "coproc" | "repeat"
+        ) {
             output.push(Invocation::unresolved());
             continue;
         }
@@ -2128,6 +2143,7 @@ fn visit_source(source: &str, depth: usize, nesting: usize, output: &mut Vec<Inv
                 || words.first().is_some_and(|word| {
                     dynamic_command_word(word) || command_consumer(basename(word))
                 })
+                || short_form_body_follows_test(&words)
                 || git_command_consumer(&words),
             output_targets,
             unresolved_output,
@@ -2184,7 +2200,7 @@ struct ExtractionFailed;
 /// only outside quotes, expansions, parentheses, and `[[` tests, a body
 /// without its delimiter line fails, and unquoted `$[...]` arithmetic fails, so
 /// a misread operator cannot hide later commands. An unterminated
-/// substitution is left in place, where the opaque-execution check refuses it.
+/// substitution fails the whole extraction.
 fn extract_command_substitutions(source: &str) -> Result<ExtractedSource, ExtractionFailed> {
     let text = source.as_bytes();
     let length = text.len();
@@ -2321,7 +2337,9 @@ struct SubstitutionEnd {
 }
 
 /// Recognize a `$(...)`, backtick, or arithmetic `$((` opener at `index`.
-/// A recognized substitution's body is handed to `take`.
+/// A recognized substitution's body is handed to `take`. An unterminated
+/// opener fails at once: the shell rejects it, and rescanning the rest of the
+/// source for every later opener would be quadratic.
 fn substitution_at(
     source: &str,
     index: usize,
@@ -2330,8 +2348,10 @@ fn substitution_at(
 ) -> Result<Option<SubstitutionEnd>, ExtractionFailed> {
     let text = source.as_bytes();
     if text[index..].starts_with(b"$((") {
-        let inner = command_substitution_end(text, index + 3, 0)?;
-        if inner.is_none_or(|end| text.get(end + 1) == Some(&b')')) {
+        let Some(inner) = command_substitution_end(text, index + 3, 0)? else {
+            return Err(ExtractionFailed);
+        };
+        if text.get(inner + 1) == Some(&b')') {
             return Ok(Some(SubstitutionEnd {
                 next: index + 3,
                 arithmetic: true,
@@ -2340,12 +2360,12 @@ fn substitution_at(
     }
     let (end, body) = if text[index..].starts_with(b"$(") {
         let Some(end) = command_substitution_end(text, index + 2, 0)? else {
-            return Ok(None);
+            return Err(ExtractionFailed);
         };
         (end, source[index + 2..end].to_string())
     } else if text[index] == b'`' {
         let Some(end) = backtick_end(text, index) else {
-            return Ok(None);
+            return Err(ExtractionFailed);
         };
         (end, backtick_body(&source[index + 1..end], double_quoted))
     } else {
@@ -2664,7 +2684,9 @@ struct Heredoc {
 
 /// Read the `<<` or `<<-` operator at `index` and its delimiter word. Returns
 /// the operator (at offset `index`) and the index after the word. An operator
-/// without a delimiter word fails.
+/// without a delimiter word fails, and so does a word containing `$`: bash
+/// quote-removes `$'EOF'` and `$"EOF"` to `EOF` but keeps a bare `$EOF`, so
+/// such a word is not matched here at all.
 fn heredoc_operator_at(text: &[u8], index: usize) -> Result<(Heredoc, usize), ExtractionFailed> {
     let mut cursor = index + 2;
     let strip_tabs = text.get(cursor) == Some(&b'-');
@@ -2682,6 +2704,8 @@ fn heredoc_operator_at(text: &[u8], index: usize) -> Result<(Heredoc, usize), Ex
         if let Some(open) = word_quote {
             if byte == open {
                 word_quote = None;
+            } else if byte == b'$' {
+                return Err(ExtractionFailed);
             } else {
                 delimiter.push(byte);
             }
@@ -2699,6 +2723,7 @@ fn heredoc_operator_at(text: &[u8], index: usize) -> Result<(Heredoc, usize), Ex
                 delimiter.extend(text.get(cursor + 1));
                 cursor += 2;
             }
+            b'$' => return Err(ExtractionFailed),
             b' ' | b'\t' | b'\n' | b'\r' | b';' | b'&' | b'|' | b'<' | b'>' | b'(' | b')' => break,
             _ => {
                 delimiter.push(byte);
@@ -2789,12 +2814,20 @@ fn heredoc_closes(line: &[u8], heredoc: &Heredoc) -> bool {
 
 /// Return the index after the here-document body starting at `start`,
 /// including its delimiter line, or `None` when the delimiter never appears.
+/// An unquoted body joins a backslash-newline continuation before the shell
+/// compares a line with the delimiter, so such a line also yields `None`
+/// rather than a guessed end.
 fn heredoc_body_end(text: &[u8], start: usize, heredoc: &Heredoc) -> Option<usize> {
     let mut cursor = start;
     while cursor < text.len() {
         let line_end = find_byte(text, b'\n', cursor).unwrap_or(text.len());
-        if heredoc_closes(&text[cursor..line_end], heredoc) {
+        let line = &text[cursor..line_end];
+        if heredoc_closes(line, heredoc) {
             return Some((line_end + 1).min(text.len()));
+        }
+        let trailing_backslashes = line.iter().rev().take_while(|byte| **byte == b'\\').count();
+        if !heredoc.quoted && line_end < text.len() && trailing_backslashes % 2 == 1 {
+            return None;
         }
         cursor = line_end + 1;
     }
@@ -3333,7 +3366,9 @@ fn unwrap_invocation(tokens: Vec<String>) -> (Vec<String>, Option<String>, bool)
                 }
                 words = words.get(cursor..).unwrap_or_default().to_vec();
             }
-            "command" | "nohup" | "!" => {
+            // zsh `noglob` and `nocorrect` precommand modifiers run the
+            // command they precede.
+            "command" | "nohup" | "!" | "noglob" | "nocorrect" => {
                 let mut cursor = 1;
                 while cursor < words.len() && words[cursor].starts_with('-') {
                     cursor += 1;

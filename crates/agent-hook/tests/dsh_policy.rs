@@ -4270,6 +4270,7 @@ const READ_ONLY_SHELLS: &[&str] = &[
     "cat <<E\nnote $(git rev-parse HEAD)\nE",
     "cat <<E\nit's fine\nE\ngit status",
     "disable; git status",
+    "gh pr view --json body \"$(cat <<'EOF'\ndon't run `git commit` here (see #182)\nEOF\n)\"",
 ];
 
 #[test]
@@ -4339,6 +4340,14 @@ fn direct_git_commit_still_blocks_inside_substitutions_tests_and_conditionals() 
         "echo ${x/<<E/y}\ngit commit -m x\nE/y}",
         "echo $[1<<2]\ngit commit -m x\n2]",
         "cat <<E\ngit commit -m x",
+        // agent-runtime-kit 5efd7752: a `#` inside an expansion or arithmetic
+        // group is no comment, so it cannot hide the command after it.
+        "echo ${x:- #} `git commit -m y`",
+        "echo ${x:-\"}\" #\"$(git commit -m x)\"}",
+        "x=\"$(: ${y#)} ; git commit -m x)\"",
+        "echo $(( 1 + (2 #3) )); git commit -m x",
+        // A here-doc inside a substitution still expands its body.
+        "x=\"$(cat <<E\n# \"$(git commit -m x)\"\nE\n)\"",
         nested.as_str(),
     ];
     let fixture = Fixture::new(&policy("block-direct-git-commit", "dsh"));
@@ -4380,6 +4389,7 @@ fn unsafe_default_delivery_still_blocks_default_pushes_hidden_in_shell_syntax() 
         "alias g=git 2>/dev/null; g push origin main",
         "disable git; git push origin main",
         "echo \"unterminated; git push origin main",
+        "echo ${x:- #} `git push origin main`",
         nested.as_str(),
     ];
     let mut mismatches = disposition_mismatches(
@@ -4643,5 +4653,90 @@ fn checkout_lease_v2_marker_defers_unclassifiable_bash() {
             .join("dsh-runtime-kit/agent-hook/dsh-checkout-leases")
             .exists()
     );
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+/// Commands that hide `{inner}` from a classifier that misreads here-doc
+/// delimiters or zsh short-form compound commands.
+fn hidden_command_forms(inner: &str) -> Vec<String> {
+    vec![
+        // bash quote-removes `$'EOF'` and `$"EOF"` to `EOF`.
+        format!("cat <<$'EOF'\nEOF\n{inner}\n$EOF\n"),
+        format!("cat <<$\"EOF\"\nEOF\n{inner}\n$EOF\n"),
+        format!("cat <<E\"O\"F\nEOF\n{inner}\n"),
+        format!("cat <<\\EOF\nEOF\n{inner}\n"),
+        // An unquoted body joins backslash-newline before the delimiter check.
+        format!("cat <<EOF\nEO\\\nF\n{inner}\nEOF\n"),
+        format!("cat <<-EOF\n\tEO\\\nF\n{inner}\nEOF\n"),
+        // zsh SHORT_LOOPS runs the command after the condition.
+        format!("if [[ -n x ]] {inner}"),
+        format!("while [[ -n x ]] {inner}"),
+        format!("until [[ -z x ]] {inner}"),
+        format!("if false; then :; elif [[ -n x ]] {inner}; fi"),
+        format!("if [[ -n x ]] {{ {inner} }}"),
+        format!("! [[ -n x ]] {inner}"),
+        format!("repeat 2 {inner}"),
+        // zsh precommand modifiers run the command they precede.
+        format!("noglob {inner}"),
+        format!("nocorrect {inner}"),
+    ]
+}
+
+#[test]
+fn heredoc_delimiters_and_zsh_short_forms_cannot_hide_a_direct_commit() {
+    let fixture = Fixture::new(&policy("block-direct-git-commit", "dsh"));
+    let blocked = hidden_command_forms("git commit -m y");
+    let blocked = blocked.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut mismatches =
+        disposition_mismatches(&fixture, "block-direct-git-commit", &blocked, "block", &[]);
+    // A quoted delimiter still makes an inert body, and a long-form test stays
+    // admitted.
+    mismatches.extend(disposition_mismatches(
+        &fixture,
+        "block-direct-git-commit",
+        &[
+            "cat <<E\"O\"F\n$(git commit -m y)\nEOF\ngit status",
+            "if [[ -e \"$f\" ]]; then git status; fi",
+            "while [[ -n x ]]; do git status; done",
+        ],
+        "allow",
+        &[],
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn heredoc_delimiters_and_zsh_short_forms_cannot_hide_a_default_push() {
+    let fixture = Fixture::new(&policy("block-unsafe-default-delivery", "dsh"));
+    init_default_tracking_repository(&fixture, "main");
+    let blocked = hidden_command_forms("git push origin main");
+    let blocked = blocked.iter().map(String::as_str).collect::<Vec<_>>();
+    let mismatches = disposition_mismatches(
+        &fixture,
+        "block-unsafe-default-delivery",
+        &blocked,
+        "block",
+        &[],
+    );
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn unterminated_substitution_openers_are_refused_in_linear_time() {
+    // Each unterminated opener used to rescan the rest of the command.
+    let fixture = Fixture::new(&policy("block-direct-git-commit", "dsh"));
+    let mut mismatches = Vec::new();
+    for opener in ["$( #", "$(( #", "` #"] {
+        let command = format!("git status; {}", opener.repeat(192 * 1024 / opener.len()));
+        let started = Instant::now();
+        let output = dispatch_bash(&fixture, &command, &[]);
+        let elapsed = started.elapsed();
+        if output.code != 1 || elapsed > Duration::from_secs(3) {
+            mismatches.push(format!(
+                "opener={opener:?} code={} elapsed={elapsed:?}",
+                output.code
+            ));
+        }
+    }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
