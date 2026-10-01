@@ -112,10 +112,21 @@ python3 -c '
 import fcntl
 import os
 import sys
+import time
 
 log = os.environ["AGENT_SESSION_FAKE_TMUX_LOG"]
 with open(log + ".call-lock", "ab") as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print("fake tmux call log lock timed out", file=sys.stderr)
+                sys.exit(1)
+            time.sleep(min(0.01, remaining))
     record = b"".join(os.fsencode(arg) + b"\0" for arg in sys.argv[1:]) + b"\x1e"
     with open(log, "ab", buffering=0) as output:
         if output.write(record) != len(record):
@@ -582,6 +593,26 @@ fn fake_tmux_logs_complete_concurrent_call_records() {
     );
 }
 
+fn fake_tmux_log_lock_holder(lock: &Path, ready: &Path) -> TestProcessGroup {
+    let mut holder = Command::new("python3");
+    holder
+        .args([
+            "-c",
+            "import fcntl, pathlib, sys, time; lock = open(sys.argv[1], 'a'); fcntl.flock(lock, fcntl.LOCK_EX); pathlib.Path(sys.argv[2]).touch(); time.sleep(30)",
+        ])
+        .arg(lock)
+        .arg(ready)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let holder = spawn_test_process_group_command(holder);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !ready.exists() && holder.is_running() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(ready.exists(), "writer never acquired its diagnostic lock");
+    holder
+}
+
 #[test]
 fn fake_tmux_call_log_recovers_after_its_writer_is_killed() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
@@ -590,22 +621,7 @@ fn fake_tmux_call_log_recovers_after_its_writer_is_killed() {
     let ready = tmp.path().join("writer-lock-ready");
     // A killed probe can leave the diagnostic lock file behind. Kernel locks
     // must disappear with their owner; file existence is not lock ownership.
-    let mut holder = Command::new("python3");
-    holder
-        .args([
-            "-c",
-            "import fcntl, pathlib, sys, time; lock = open(sys.argv[1], 'a'); fcntl.flock(lock, fcntl.LOCK_EX); pathlib.Path(sys.argv[2]).touch(); time.sleep(30)",
-        ])
-        .arg(&lock)
-        .arg(&ready)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut holder = spawn_test_process_group_command(holder);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !ready.exists() && holder.is_running() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(5));
-    }
-    assert!(ready.exists(), "writer never acquired its diagnostic lock");
+    let mut holder = fake_tmux_log_lock_holder(&lock, &ready);
     holder.stop();
     assert!(lock.exists(), "interrupted writer's file should remain");
 
@@ -642,6 +658,56 @@ fn fake_tmux_call_log_recovers_after_its_writer_is_killed() {
             "fixture-log-only".to_owned(),
             "after-killed-writer".to_owned()
         ]]
+    );
+}
+
+#[test]
+fn fake_tmux_call_log_times_out_behind_a_live_writer() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (tmux, log) = fake_tmux(tmp.path());
+    let lock = log.with_extension("log.call-lock");
+    let ready = tmp.path().join("writer-lock-ready");
+    let holder = fake_tmux_log_lock_holder(&lock, &ready);
+    let error_path = tmp.path().join("probe.stderr");
+    let mut command = Command::new(tmux);
+    command
+        .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+        .args(["fixture-log-only", "behind-live-writer"])
+        .stdout(Stdio::null())
+        .stderr(fs::File::create(&error_path).expect("probe diagnostics"));
+    let probe = spawn_test_process_group_command(command);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let status = loop {
+        if let Some(status) = probe
+            .child
+            .lock()
+            .expect("probe lock")
+            .try_wait()
+            .expect("probe exit")
+        {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
+    assert!(
+        status.is_some_and(|status| !status.success()),
+        "a live diagnostic writer must cause a bounded explicit timeout"
+    );
+    assert!(
+        fs::read_to_string(error_path)
+            .expect("diagnostic text")
+            .contains("fake tmux call log lock timed out")
+    );
+    assert!(
+        holder.is_running(),
+        "timeout must not signal the live holder"
+    );
+    assert!(
+        tmux_calls(&log).is_empty(),
+        "blocked call must not record an operation"
     );
 }
 
