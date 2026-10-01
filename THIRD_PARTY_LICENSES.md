@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `5b78ece0e9735682b4ed866b20f8a938163492fa3623f4280a86c7c57fee3343`
+- Cargo.lock SHA256: `25925cf7ac41a61aeb089a0d897b5c606f43ba2f9f6556d8a2ff0b9246a59981`
 - Third-party crates (`source != null`): 493
 - Workspace crates (`source == null`, excluded below): 43
 
@@ -421,8 +421,8 @@ This file documents third-party Rust crate licenses used by this workspace.
 | sync_wrapper | 1.0.2 | Apache-2.0 | crates.io |
 | synstructure | 0.13.2 | MIT | crates.io |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | crates.io |
-| thiserror | 2.0.20 | MIT OR Apache-2.0 | crates.io |
-| thiserror-impl | 2.0.20 | MIT OR Apache-2.0 | crates.io |
+| thiserror | 2.0.21 | MIT OR Apache-2.0 | crates.io |
+| thiserror-impl | 2.0.21 | MIT OR Apache-2.0 | crates.io |
 | thread_local | 1.1.9 | MIT OR Apache-2.0 | crates.io |
 | time | 0.3.55 | MIT OR Apache-2.0 | crates.io |
 | time-core | 0.1.9 | MIT OR Apache-2.0 | crates.io |
