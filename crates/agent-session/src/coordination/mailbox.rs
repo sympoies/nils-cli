@@ -29,6 +29,7 @@ const PAIR_RATE_PER_MINUTE: usize = 30;
 const PAIR_BURST: usize = 10;
 const CURSOR_TTL_SECS: i64 = 60 * 60;
 const MAX_CURSORS: usize = 4_096;
+const MAX_PRINCIPAL_CURSORS: usize = 128;
 const DEFAULT_PAGE: usize = 50;
 const MAX_PAGE: usize = 100;
 const MAX_WAIT_SECS: u64 = 60;
@@ -279,11 +280,20 @@ pub(crate) fn inbox(context: &CliContext, args: MessageInboxArgs) -> Result<Valu
                         && cursor.recipient_incarnation == recipient_incarnation
                 })
                 .count();
-            if locked.registry.cursors.len() >= MAX_CURSORS || principal_cursors >= 128 {
-                return Err(CliError::data(
-                    "quota-exceeded",
+            if locked.registry.cursors.len() >= MAX_CURSORS {
+                return Err(super::quota_exceeded(
                     "coordination cursor quota exceeded",
-                    None,
+                    "cursors",
+                    locked.registry.cursors.len(),
+                    MAX_CURSORS,
+                ));
+            }
+            if principal_cursors >= MAX_PRINCIPAL_CURSORS {
+                return Err(super::quota_exceeded(
+                    "coordination cursor quota exceeded",
+                    "recipient-cursors",
+                    principal_cursors,
+                    MAX_PRINCIPAL_CURSORS,
                 ));
             }
             let opaque = uuid::Uuid::new_v4().simple().to_string();
@@ -1221,17 +1231,36 @@ pub(super) fn admit_message(
         .filter(|message| message.state != "deleted")
         .map(|message| message.body_bytes)
         .sum();
-    if live_for_recipient.len() >= MAX_SESSION_MESSAGES
-        || recipient_bytes.saturating_add(body_bytes) > MAX_SESSION_BYTES
-        // Mirror the enforced whole-registry cap (`super::MAX_REGISTRY_BYTES`,
-        // 68 MiB) so a send is refused before the persisted registry can exceed it.
-        || registry_bytes.saturating_add(body_bytes) > super::MAX_REGISTRY_BYTES as usize
-    {
-        return Err(CliError::data(
-            "quota-exceeded",
+    let refuse = |quota, count, limit| {
+        Err(super::quota_exceeded(
             "coordination mailbox quota exceeded",
-            None,
-        ));
+            quota,
+            count,
+            limit,
+        ))
+    };
+    if live_for_recipient.len() >= MAX_SESSION_MESSAGES {
+        return refuse(
+            "recipient-messages",
+            live_for_recipient.len(),
+            MAX_SESSION_MESSAGES,
+        );
+    }
+    if recipient_bytes.saturating_add(body_bytes) > MAX_SESSION_BYTES {
+        return refuse(
+            "recipient-bytes",
+            recipient_bytes.saturating_add(body_bytes),
+            MAX_SESSION_BYTES,
+        );
+    }
+    // Mirror the enforced whole-registry cap (`super::MAX_REGISTRY_BYTES`,
+    // 68 MiB) so a send is refused before the persisted registry can exceed it.
+    if registry_bytes.saturating_add(body_bytes) > super::MAX_REGISTRY_BYTES as usize {
+        return refuse(
+            "registry-message-bytes",
+            registry_bytes.saturating_add(body_bytes),
+            super::MAX_REGISTRY_BYTES as usize,
+        );
     }
     Ok(())
 }

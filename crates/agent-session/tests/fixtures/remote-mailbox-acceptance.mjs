@@ -148,7 +148,7 @@ const original=await inspect
 (beta,initial.message_id,'response-loss');assert.equal(original.sender.machine,'alpha');assert.equal(original.sender.session_incarnation,alpha.incarnation);
   const replied=await cli(beta,['reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(original.revision),'--body-file',bodyFile('reply','reply'),'--idempotency-key','reply-0001']);
   await delivered(beta,replied.message_id);const shownReply=await inspect(alpha,replied.message_id,'reply');
-  assert.equal(shownReply.reply_to,initial.message_id);assert.equal(JSON.parse(readFileSync(join(beta.root,'coordination','federation-journal.json'),'utf8')).remote_outbox.find(i=>i.envelope.message_id===replied.message_id).envelope.reply_depth,1);
+  assert.equal(shownReply.reply_to,initial.message_id);assert.equal(JSON.parse(readFileSync(join(alpha.root,'coordination','registry.json'),'utf8')).messages.find(m=>m.message_id===replied.message_id).reply_depth,1);
   const replyReplay=await cli(beta,['reply','--session',beta.session,'--message',initial.message_id,'--if-revision',String(original.revision),'--body-file',bodyFile('reply','reply'),'--idempotency-key','reply-0001']);assert.equal(replyReplay.message_id,replied.message_id);
 checks.push('bidirectional-reply-show-status');
   const alphaPath=join(alpha.root,'sessions',alpha.session,'session.json');const alphaRecord=JSON.parse(readFileSync(alphaPath,'utf8'));const originalAlphaIncarnation=alpha.incarnation;

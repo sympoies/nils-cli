@@ -392,6 +392,11 @@ fn evaluate_group(
     effect: OperationEffectClass,
     run_child: &mut dyn FnMut(Command) -> Result<Output, HookError>,
 ) -> Result<Outcome, HookError> {
+    if group == DshCapabilityGroup::CheckoutLeaseGuard && workspace_lease_v2_owns_checkouts() {
+        // The deferral does not depend on the command, so an unclassifiable
+        // shell must not fail closed before it.
+        return Ok(Outcome::allow(group));
+    }
     let invocations = if command_dependent(group, request) {
         let Some(command) = command(raw) else {
             return Ok(unclassifiable(group, request, None, &SHELL_COMMAND_INVALID));
@@ -1394,6 +1399,12 @@ fn active_portable_surface(path: &str) -> bool {
         return false;
     }
     let name = normalized.rsplit('/').next().unwrap_or(&normalized);
+    // Canonical `*.md.tera` sources render to the active docs they template.
+    let name = name
+        .len()
+        .checked_sub(".tera".len())
+        .filter(|&stem| name.is_char_boundary(stem) && name[stem..].eq_ignore_ascii_case(".tera"))
+        .map_or(name, |stem| &name[..stem]);
     matches!(
         name,
         "README.md"
@@ -1528,7 +1539,7 @@ fn forge_label_reminder(invocations: &[Invocation]) -> Result<Outcome, HookError
             let word = &words[index];
             if matches!(
                 word.as_str(),
-                "--format" | "--remote" | "--provider" | "--repo" | "--store-root"
+                "--format" | "--host" | "--remote" | "--provider" | "--repo" | "--store-root"
             ) {
                 index += 2;
                 continue;
@@ -1547,10 +1558,11 @@ fn forge_label_reminder(invocations: &[Invocation]) -> Result<Outcome, HookError
         let has_label = words
             .iter()
             .any(|word| word == "--label" || word.starts_with("--label="));
-        let help = words
+        // Help and dry-run invocations create no provider record.
+        let creates_nothing = words
             .iter()
-            .any(|word| matches!(word.as_str(), "-h" | "--help"));
-        if labelable && !has_label && !help {
+            .any(|word| matches!(word.as_str(), "-h" | "--help" | "--dry-run"));
+        if labelable && !has_label && !creates_nothing {
             return Ok(Outcome::context(group, FORGE_LABEL_CONTEXT));
         }
     }
@@ -1806,11 +1818,37 @@ struct Invocation {
     /// Whether the segment text can expand into operands its literal words
     /// do not show; see `shell_text_expands`.
     operands_expand: bool,
+    /// Whether the words before `git` change PATH or Git's exec-path, so an
+    /// installed `git-<name>` program the hook sees may be absent for Git.
+    lookup_retargeted: bool,
+}
+
+impl Invocation {
+    /// An invocation that runs no command of its own.
+    fn empty() -> Self {
+        Self {
+            words: Vec::new(),
+            cwd_override: None,
+            unresolved_nested: false,
+            output_targets: Vec::new(),
+            unresolved_output: false,
+            operands_expand: false,
+            lookup_retargeted: false,
+        }
+    }
+
+    /// A marker for shell text that could not be classified.
+    fn unresolved() -> Self {
+        Self {
+            unresolved_nested: true,
+            ..Self::empty()
+        }
+    }
 }
 
 fn parse_invocations(command: &str) -> Vec<Invocation> {
     let mut output = Vec::new();
-    visit_source(command, 0, &mut output);
+    visit_source(command, 0, 0, &mut output);
     output
 }
 
@@ -1827,10 +1865,14 @@ fn shell_state_mutator(words: &[String]) -> bool {
     let Some(executable) = words.first().map(|word| basename(word)) else {
         return false;
     };
+    // A redirection cannot define an alias, bind a variable, or disable a
+    // builtin, so `alias name 2>/dev/null` stays a query.
+    let arguments = without_redirections(&words[1..]);
     match executable {
         "cd" | "pushd" | "popd" => true,
         "unalias" | "set" | "shopt" => words.len() > 1,
-        "read" | "getopts" | "let" => true,
+        "read" => read_binds_execution_context(&arguments),
+        "getopts" | "let" => true,
         "export" | "readonly" | "declare" | "typeset" => {
             words[1..].iter().any(|word| word != "-p" && word != "--")
         }
@@ -1839,7 +1881,10 @@ fn shell_state_mutator(words: &[String]) -> bool {
                 || word.starts_with("-d")
                 || word.starts_with("-p")
         }),
-        "alias" => words[1..].iter().any(|word| word.contains('=')),
+        "alias" => arguments.iter().any(|word| word.contains('=')),
+        // zsh `disable` with names or patterns removes them from lookup, like
+        // `enable`; the bare and option-only forms only list.
+        "disable" => arguments.iter().any(|word| !word.starts_with('-')),
         "printf" => words[1..]
             .iter()
             .any(|word| word == "-v" || word.starts_with("-v")),
@@ -1852,77 +1897,241 @@ fn shell_state_mutator(words: &[String]) -> bool {
     }
 }
 
-fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
-    if depth > MAX_PARSE_DEPTH
-        || source.len() > MAX_COMMAND_BYTES
-        || has_unmodeled_execution(source)
-    {
-        output.push(Invocation {
-            words: Vec::new(),
-            cwd_override: None,
-            unresolved_nested: true,
-            output_targets: Vec::new(),
-            unresolved_output: false,
-            operands_expand: false,
-        });
-        return;
+/// Drop redirection words (`2>/dev/null`, `<<< word`, `>&2`) from arguments.
+fn without_redirections(arguments: &[String]) -> Vec<&str> {
+    let mut kept = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        let word = arguments[index].as_str();
+        let operator_start = word.trim_start_matches(|ch: char| ch.is_ascii_digit());
+        let is_redirection =
+            operator_start.starts_with(['<', '>']) || operator_start.starts_with("&>");
+        if !is_redirection {
+            kept.push(word);
+            index += 1;
+            continue;
+        }
+        let target = operator_start.trim_start_matches(['<', '>', '&', '|', '!']);
+        index += if target.is_empty() { 2 } else { 1 };
     }
-    let Some(segments) = shell_segments(source) else {
-        output.push(Invocation {
-            words: Vec::new(),
-            cwd_override: None,
-            unresolved_nested: true,
-            output_targets: Vec::new(),
-            unresolved_output: false,
-            operands_expand: false,
-        });
-        return;
-    };
-    for segment in segments {
-        let Ok(tokens) = shell_words::split(segment.trim()) else {
-            output.push(Invocation {
-                words: Vec::new(),
-                cwd_override: None,
-                unresolved_nested: true,
-                output_targets: Vec::new(),
-                unresolved_output: false,
-                operands_expand: false,
-            });
+    kept
+}
+
+/// Whether `read` binds a variable that changes command resolution or word
+/// splitting. Other names, such as `read -r sha subject`, only bind data that a
+/// later command could use through an expansion, which is itself dynamic.
+fn read_binds_execution_context(arguments: &[&str]) -> bool {
+    let mut names = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        let word = arguments[index];
+        if word == "--" {
+            names.extend(arguments[index + 1..].iter().copied());
+            break;
+        }
+        let Some(cluster) = word.strip_prefix('-').filter(|cluster| !cluster.is_empty()) else {
+            names.push(word);
+            index += 1;
             continue;
         };
+        let mut consumed_value = false;
+        for (offset, option) in cluster.char_indices() {
+            match option {
+                'r' | 's' | 'e' => {}
+                'a' | 'd' | 'i' | 'n' | 'N' | 'p' | 't' | 'u' => {
+                    let attached = &cluster[offset + option.len_utf8()..];
+                    let value = if attached.is_empty() {
+                        consumed_value = true;
+                        arguments.get(index + 1).copied()
+                    } else {
+                        Some(attached)
+                    };
+                    if option == 'a' {
+                        let Some(value) = value else {
+                            return true;
+                        };
+                        names.push(value);
+                    }
+                    break;
+                }
+                _ => return true,
+            }
+        }
+        index += if consumed_value { 2 } else { 1 };
+    }
+    names
+        .iter()
+        .any(|name| *name == "IFS" || dynamic(name) || execution_context_assignment(name))
+}
+
+/// Words that open or continue a compound command. The command after them is
+/// the simple command the shell runs.
+fn compound_prefix_word(word: &str) -> bool {
+    matches!(
+        word,
+        "if" | "then" | "else" | "elif" | "do" | "while" | "until" | "{"
+    )
+}
+
+/// Words that close a compound command.
+fn compound_closing_word(word: &str) -> bool {
+    matches!(word, "fi" | "done" | "}")
+}
+
+/// Whether a `for NAME [in WORDS]` header only binds a data variable. The
+/// loop words are ordinary arguments; a binding of PATH, IFS, or another
+/// execution-context name changes later command resolution.
+fn inert_for_header(tokens: &[String]) -> bool {
+    let Some(name) = tokens.get(1) else {
+        return false;
+    };
+    let valid_name = name.bytes().enumerate().all(|(index, byte)| {
+        byte == b'_' || byte.is_ascii_alphabetic() || (index > 0 && byte.is_ascii_digit())
+    });
+    valid_name
+        && !name.is_empty()
+        && name != "IFS"
+        && !execution_context_assignment(name)
+        && tokens.get(2).is_none_or(|word| word == "in")
+}
+
+/// Whether a command word that reads as a glob is literal test syntax: a lone
+/// `[` has no closing bracket to match and `[[` is a reserved word. A zsh
+/// `$+name[key]` presence test with a literal key expands only to `0` or `1`.
+/// None can name `git` or `semantic-commit`, and their operands are never
+/// executed; a substitution among them is classified on its own.
+fn literal_test_command_word(word: &str) -> bool {
+    static PRESENCE_TEST: OnceLock<Regex> = OnceLock::new();
+    matches!(word, "[" | "[[")
+        || PRESENCE_TEST
+            .get_or_init(|| {
+                Regex::new(r"^\$\+[A-Za-z_][A-Za-z0-9_]*(?:\[[A-Za-z0-9_.:+-]+\])?$")
+                    .expect("valid presence-test pattern")
+            })
+            .is_match(word)
+}
+
+/// Whether words follow the `]]` closing a `[[` test. zsh's short forms
+/// (`if [[ ... ]] cmd`, `while [[ ... ]] { cmd }`, SHORT_LOOPS) run those
+/// words as a command, so the test cannot stand for the whole invocation.
+fn short_form_body_follows_test(words: &[String]) -> bool {
+    words.first().is_some_and(|word| word == "[[")
+        && words
+            .iter()
+            .position(|word| word == "]]")
+            .is_some_and(|close| close + 1 < words.len())
+}
+
+/// Whether a command word could expand into a different executable.
+fn dynamic_command_word(word: &str) -> bool {
+    dynamic(word) && !literal_test_command_word(word)
+}
+
+/// Whether the words before `git` retarget program lookup: a PATH or
+/// GIT_EXEC_PATH assignment, unset, or reference, or an `env` that resets the
+/// environment.
+fn retargets_git_lookup(tokens: &[String]) -> bool {
+    static LOOKUP_NAME: OnceLock<Regex> = OnceLock::new();
+    let lookup_name = LOOKUP_NAME.get_or_init(|| {
+        Regex::new(r"(?:^|[\s=]|^-u)(?:PATH|GIT_EXEC_PATH)(?:=|\s|$)")
+            .expect("valid lookup-name pattern")
+    });
+    let prefix_end = tokens
+        .iter()
+        .position(|token| basename(token) == "git")
+        .unwrap_or(tokens.len());
+    let prefix = &tokens[..prefix_end];
+    prefix.iter().any(|token| lookup_name.is_match(token))
+        || (prefix.iter().any(|token| basename(token) == "env")
+            && prefix.iter().any(|token| {
+                matches!(token.as_str(), "-" | "-i" | "--ignore-environment")
+                    || (token.starts_with('-')
+                        && !token.starts_with("--")
+                        && token[1..].contains('i'))
+            }))
+}
+
+fn visit_source(source: &str, depth: usize, nesting: usize, output: &mut Vec<Invocation>) {
+    if depth > MAX_PARSE_DEPTH || source.len() > MAX_COMMAND_BYTES {
+        output.push(Invocation::unresolved());
+        return;
+    }
+    // Every command substitution the shell runs, unquoted, double-quoted, or
+    // backtick, is classified as its own source ahead of the command whose
+    // words it expands; that command keeps one dynamic placeholder word.
+    let Ok(extracted) = extract_command_substitutions(source) else {
+        output.push(Invocation::unresolved());
+        return;
+    };
+    let rewritten = extracted.text.as_str();
+    if has_unmodeled_execution(rewritten) {
+        output.push(Invocation::unresolved());
+        return;
+    }
+    let Some(segments) = shell_segments(rewritten) else {
+        output.push(Invocation::unresolved());
+        return;
+    };
+    let mut substitutions = extracted.substitutions.into_iter().peekable();
+    let mut visit_substitutions = |before: usize, output: &mut Vec<Invocation>| {
+        while let Some(substitution) = substitutions.next_if(|next| next.offset < before) {
+            if nesting >= SUBSTITUTION_NESTING_LIMIT {
+                output.push(Invocation::unresolved());
+            } else {
+                visit_source(&substitution.body, depth, nesting + 1, output);
+            }
+        }
+    };
+    for segment in segments {
+        let segment_end = segment.as_ptr() as usize - rewritten.as_ptr() as usize + segment.len();
+        visit_substitutions(segment_end, output);
+        let Ok(mut tokens) = shell_words::split(segment.trim()) else {
+            output.push(Invocation::unresolved());
+            continue;
+        };
+        while tokens
+            .first()
+            .is_some_and(|word| compound_prefix_word(word))
+        {
+            tokens.remove(0);
+        }
         if tokens.is_empty() {
             continue;
         }
-        if tokens.first().is_some_and(|word| {
-            matches!(
-                word.as_str(),
-                "if" | "then"
-                    | "else"
-                    | "elif"
-                    | "fi"
-                    | "for"
-                    | "while"
-                    | "until"
-                    | "do"
-                    | "done"
-                    | "case"
-                    | "esac"
-                    | "select"
-                    | "coproc"
-            )
-        }) {
-            output.push(Invocation {
-                words: Vec::new(),
-                cwd_override: None,
-                unresolved_nested: true,
-                output_targets: Vec::new(),
-                unresolved_output: false,
-                operands_expand: false,
-            });
+        if compound_closing_word(&tokens[0]) {
+            // A redirection on the closing word applies to the whole compound
+            // command, so its output targets stay modeled.
+            if !without_redirections(&tokens[1..]).is_empty() {
+                output.push(Invocation::unresolved());
+                continue;
+            }
+            let (output_targets, unresolved_output) = parse_output_redirections(segment.trim());
+            if !output_targets.is_empty() || unresolved_output {
+                output.push(Invocation {
+                    output_targets,
+                    unresolved_output,
+                    ..Invocation::empty()
+                });
+            }
+            continue;
+        }
+        if tokens[0] == "for" {
+            if !inert_for_header(&tokens) {
+                output.push(Invocation::unresolved());
+            }
+            continue;
+        }
+        // zsh `repeat N sublist` runs its body without `do`.
+        if matches!(
+            tokens[0].as_str(),
+            "case" | "esac" | "select" | "coproc" | "repeat"
+        ) {
+            output.push(Invocation::unresolved());
             continue;
         }
         let (output_targets, unresolved_output) = parse_output_redirections(segment.trim());
         let cwd_override = invocation_env_chdir(&tokens);
+        let lookup_retargeted = retargets_git_lookup(&tokens);
         let (words, nested, unresolved_nested) = unwrap_invocation(tokens);
         if words.is_empty() && nested.is_none() && !unresolved_nested {
             continue;
@@ -1931,29 +2140,735 @@ fn visit_source(source: &str, depth: usize, output: &mut Vec<Invocation>) {
             words: words.clone(),
             cwd_override,
             unresolved_nested: unresolved_nested
-                || words
-                    .first()
-                    .is_some_and(|word| dynamic(word) || command_consumer(basename(word)))
+                || words.first().is_some_and(|word| {
+                    dynamic_command_word(word) || command_consumer(basename(word))
+                })
+                || short_form_body_follows_test(&words)
                 || git_command_consumer(&words),
             output_targets,
             unresolved_output,
             operands_expand: shell_text_expands(segment),
+            lookup_retargeted,
         });
         if let Some(nested) = nested {
             if depth == MAX_PARSE_DEPTH {
-                output.push(Invocation {
-                    words: Vec::new(),
-                    cwd_override: None,
-                    unresolved_nested: true,
-                    output_targets: Vec::new(),
-                    unresolved_output: false,
-                    operands_expand: false,
-                });
+                output.push(Invocation::unresolved());
             } else {
-                visit_source(&nested, depth + 1, output);
+                visit_source(&nested, depth + 1, nesting, output);
             }
         }
     }
+    // A substitution whose word no segment kept still runs.
+    visit_substitutions(usize::MAX, output);
+}
+
+/// The word a command substitution leaves in the command it expands: one
+/// dynamic argument, so several substitutions stay arguments.
+const SUBSTITUTION_PLACEHOLDER: &str = "$__agent_hook_command_substitution__";
+/// Command substitutions nested deeper than this are not followed.
+const SUBSTITUTION_NESTING_LIMIT: usize = 32;
+
+/// One command substitution body and where it runs: the offset of its
+/// placeholder in the rewritten source, or of the here-doc operator whose
+/// body expands it.
+struct Substitution {
+    offset: usize,
+    body: String,
+}
+
+struct ExtractedSource {
+    text: String,
+    substitutions: Vec<Substitution>,
+}
+
+/// The source cannot be rewritten safely: substitutions nest too deeply or a
+/// here-doc operator has no delimiter word.
+struct ExtractionFailed;
+
+/// Replace each command substitution the shell would run with a placeholder.
+///
+/// `$(...)` and backtick substitutions are found unquoted and inside double
+/// quotes; single-quoted and ANSI-C quoted text and escaped markers stay
+/// literal. Arithmetic `$((...))` is not a substitution, but a `$((` whose
+/// inner group does not close as `))` is `$( (...) )`, as bash reads it.
+/// Shell comments are dropped (a `#` never starts one inside `${...}`, an open
+/// parenthesis, or a `[[` test), so comment prose can neither hide later
+/// commands from the segmenter nor be classified. Here-document bodies follow
+/// bash: an unquoted-delimiter body expands every substitution, with no quotes
+/// or comments, and a quoted-delimiter body is inert data; both bodies are
+/// dropped from the rewritten text. A here-document operator is recognized
+/// only outside quotes, expansions, parentheses, and `[[` tests, a body
+/// without its delimiter line fails, and unquoted `$[...]` arithmetic fails, so
+/// a misread operator cannot hide later commands. An unterminated
+/// substitution fails the whole extraction.
+fn extract_command_substitutions(source: &str) -> Result<ExtractedSource, ExtractionFailed> {
+    let text = source.as_bytes();
+    let length = text.len();
+    let mut out: Vec<u8> = Vec::with_capacity(length);
+    let mut substitutions = Vec::new();
+    let mut double_quoted = false;
+    // The double-quote state at each open `${`; its `}` closes only in that
+    // same state, so a quoted `}` inside the expansion stays literal.
+    let mut parameter_quotes: Vec<bool> = Vec::new();
+    let mut paren_depth = 0usize;
+    let mut open_tests = 0usize;
+    // Here-document operators read on the current line; their bodies start
+    // after its newline.
+    let mut pending_heredocs: Vec<Heredoc> = Vec::new();
+    let mut index = 0usize;
+    while index < length {
+        let byte = text[index];
+        if byte == b'\\' {
+            let end = (index + 2).min(length);
+            out.extend_from_slice(&text[index..end]);
+            index = end;
+            continue;
+        }
+        if byte == b'\n' && !double_quoted && parameter_quotes.is_empty() {
+            out.push(b'\n');
+            index += 1;
+            for heredoc in pending_heredocs.drain(..) {
+                index = heredoc_body(source, index, &heredoc, &mut substitutions)?;
+            }
+            continue;
+        }
+        let unquoted_word_context =
+            !double_quoted && parameter_quotes.is_empty() && paren_depth == 0 && open_tests == 0;
+        if unquoted_word_context && text[index..].starts_with(b"<<") {
+            if text[index..].starts_with(b"<<<") {
+                out.extend_from_slice(b"<<<");
+                index += 3;
+                continue;
+            }
+            let (mut heredoc, end) = heredoc_operator_at(text, index)?;
+            heredoc.operator = out.len();
+            pending_heredocs.push(heredoc);
+            out.extend_from_slice(&text[index..end]);
+            index = end;
+            continue;
+        }
+        if !double_quoted && text[index..].starts_with(b"$[") {
+            return Err(ExtractionFailed);
+        }
+        if unquoted_word_context && byte == b'#' && comment_starts_at(text, index, 0) {
+            index = find_byte(text, b'\n', index).unwrap_or(length);
+            continue;
+        }
+        if !double_quoted && byte == b'\'' {
+            let end = find_byte(text, b'\'', index + 1).map_or(length, |end| end + 1);
+            out.extend_from_slice(&text[index..end]);
+            index = end;
+            continue;
+        }
+        if !double_quoted && text[index..].starts_with(b"$'") {
+            let mut end = index + 2;
+            while end < length && text[end] != b'\'' {
+                end += if text[end] == b'\\' { 2 } else { 1 };
+            }
+            let end = (end + 1).min(length);
+            out.extend_from_slice(&text[index..end]);
+            index = end;
+            continue;
+        }
+        if byte == b'"' {
+            double_quoted = !double_quoted;
+            out.push(byte);
+            index += 1;
+            continue;
+        }
+        if text[index..].starts_with(b"${") {
+            parameter_quotes.push(double_quoted);
+            out.extend_from_slice(b"${");
+            index += 2;
+            continue;
+        }
+        if byte == b'}' && parameter_quotes.last() == Some(&double_quoted) {
+            parameter_quotes.pop();
+            out.push(byte);
+            index += 1;
+            continue;
+        }
+        if !double_quoted && matches!(byte, b'[' | b']') {
+            let delta = double_bracket_delta(text, index, 0);
+            if delta != 0 {
+                open_tests = open_tests.saturating_add_signed(delta);
+                out.extend_from_slice(&text[index..index + 2]);
+                index += 2;
+                continue;
+            }
+        }
+        let found = substitution_at(source, index, double_quoted, &mut |body| {
+            substitutions.push(Substitution {
+                offset: out.len(),
+                body,
+            });
+            out.extend_from_slice(SUBSTITUTION_PLACEHOLDER.as_bytes());
+        })?;
+        if let Some(end) = found {
+            if end.arithmetic {
+                out.extend_from_slice(b"$((");
+                if !double_quoted {
+                    paren_depth += 2;
+                }
+            }
+            index = end.next;
+            continue;
+        }
+        if !double_quoted && byte == b'(' {
+            paren_depth += 1;
+        } else if !double_quoted && byte == b')' {
+            paren_depth = paren_depth.saturating_sub(1);
+        }
+        out.push(byte);
+        index += 1;
+    }
+    let text = String::from_utf8(out).map_err(|_| ExtractionFailed)?;
+    Ok(ExtractedSource {
+        text,
+        substitutions,
+    })
+}
+
+/// Where scanning resumes after a substitution opener at some index.
+struct SubstitutionEnd {
+    next: usize,
+    /// The opener was arithmetic `$((`, which is copied, not extracted.
+    arithmetic: bool,
+}
+
+/// Recognize a `$(...)`, backtick, or arithmetic `$((` opener at `index`.
+/// A recognized substitution's body is handed to `take`. An unterminated
+/// opener fails at once: the shell rejects it, and rescanning the rest of the
+/// source for every later opener would be quadratic.
+fn substitution_at(
+    source: &str,
+    index: usize,
+    double_quoted: bool,
+    take: &mut dyn FnMut(String),
+) -> Result<Option<SubstitutionEnd>, ExtractionFailed> {
+    let text = source.as_bytes();
+    if text[index..].starts_with(b"$((") {
+        let Some(inner) = command_substitution_end(text, index + 3, 0)? else {
+            return Err(ExtractionFailed);
+        };
+        if text.get(inner + 1) == Some(&b')') {
+            return Ok(Some(SubstitutionEnd {
+                next: index + 3,
+                arithmetic: true,
+            }));
+        }
+    }
+    let (end, body) = if text[index..].starts_with(b"$(") {
+        let Some(end) = command_substitution_end(text, index + 2, 0)? else {
+            return Err(ExtractionFailed);
+        };
+        (end, source[index + 2..end].to_string())
+    } else if text[index] == b'`' {
+        let Some(end) = backtick_end(text, index) else {
+            return Err(ExtractionFailed);
+        };
+        (end, backtick_body(&source[index + 1..end], double_quoted))
+    } else {
+        return Ok(None);
+    };
+    take(body);
+    Ok(Some(SubstitutionEnd {
+        next: end + 1,
+        arithmetic: false,
+    }))
+}
+
+fn find_byte(text: &[u8], needle: u8, from: usize) -> Option<usize> {
+    text.get(from..)?
+        .iter()
+        .position(|byte| *byte == needle)
+        .map(|offset| from + offset)
+}
+
+/// Return the closing backtick for the one at `index`.
+fn backtick_end(text: &[u8], index: usize) -> Option<usize> {
+    let mut cursor = index + 1;
+    while cursor < text.len() {
+        match text[cursor] {
+            b'\\' => cursor += 2,
+            b'`' => return Some(cursor),
+            _ => cursor += 1,
+        }
+    }
+    None
+}
+
+/// Remove the backslashes the shell strips from a backtick body.
+fn backtick_body(raw: &str, double_quoted: bool) -> String {
+    let mut body = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\'
+            && chars.peek().is_some_and(|next| {
+                matches!(next, '$' | '`' | '\\') || (double_quoted && *next == '"')
+            })
+        {
+            body.extend(chars.next());
+            continue;
+        }
+        body.push(ch);
+    }
+    body
+}
+
+/// Return the closing quote for the `"` at `index`.
+fn double_quoted_end(
+    text: &[u8],
+    index: usize,
+    nesting: usize,
+) -> Result<Option<usize>, ExtractionFailed> {
+    let mut cursor = index + 1;
+    while cursor < text.len() {
+        let end = match text[cursor] {
+            b'\\' => {
+                cursor += 2;
+                continue;
+            }
+            b'"' => return Ok(Some(cursor)),
+            b'`' => backtick_end(text, cursor),
+            b'$' if text.get(cursor + 1) == Some(&b'{') => {
+                parameter_expansion_end(text, cursor, nesting + 1, true)?
+            }
+            b'$' if text.get(cursor + 1) == Some(&b'(') => {
+                command_substitution_end(text, cursor + 2, nesting + 1)?
+            }
+            _ => {
+                cursor += 1;
+                continue;
+            }
+        };
+        let Some(end) = end else {
+            return Ok(None);
+        };
+        cursor = end + 1;
+    }
+    Ok(None)
+}
+
+/// Return the `}` closing the `${` at `index`. A `)`, `#`, or quote inside a
+/// parameter expansion belongs to the expansion, not to an enclosing
+/// substitution.
+fn parameter_expansion_end(
+    text: &[u8],
+    index: usize,
+    nesting: usize,
+    double_quoted: bool,
+) -> Result<Option<usize>, ExtractionFailed> {
+    if nesting > SUBSTITUTION_NESTING_LIMIT {
+        return Err(ExtractionFailed);
+    }
+    let mut depth = 0usize;
+    let mut cursor = index + 2;
+    while cursor < text.len() {
+        let end = match text[cursor] {
+            b'\\' => {
+                cursor += 2;
+                continue;
+            }
+            b'}' => {
+                if depth == 0 {
+                    return Ok(Some(cursor));
+                }
+                depth -= 1;
+                cursor += 1;
+                continue;
+            }
+            b'{' => {
+                depth += 1;
+                cursor += 1;
+                continue;
+            }
+            b'\'' if !double_quoted => find_byte(text, b'\'', cursor + 1),
+            b'"' => double_quoted_end(text, cursor, nesting)?,
+            b'`' => backtick_end(text, cursor),
+            b'$' if text.get(cursor + 1) == Some(&b'{') => {
+                parameter_expansion_end(text, cursor, nesting + 1, double_quoted)?
+            }
+            b'$' if text.get(cursor + 1) == Some(&b'(') => {
+                command_substitution_end(text, cursor + 2, nesting + 1)?
+            }
+            _ => {
+                cursor += 1;
+                continue;
+            }
+        };
+        let Some(end) = end else {
+            return Ok(None);
+        };
+        cursor = end + 1;
+    }
+    Ok(None)
+}
+
+/// Whether an unquoted `#` at `index` certainly starts a comment: at `start`
+/// or right after an unescaped blank, newline, `;`, or `&`. Missing a real
+/// comment is safe; its text is classified like any other.
+fn comment_starts_at(text: &[u8], index: usize, start: usize) -> bool {
+    if index == start {
+        return true;
+    }
+    if !matches!(text[index - 1], b' ' | b'\t' | b'\n' | b';' | b'&') {
+        return false;
+    }
+    let backslashes = text[start..index - 1]
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'\\')
+        .count();
+    backslashes % 2 == 0
+}
+
+/// Return `+1` at a `[[` word, `-1` at a `]]` word, otherwise `0`.
+fn double_bracket_delta(text: &[u8], index: usize, start: usize) -> isize {
+    let end = index + 2;
+    let ends_word = text
+        .get(end)
+        .is_none_or(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b')'));
+    if !ends_word {
+        return 0;
+    }
+    if text[index..].starts_with(b"[[")
+        && (index == start
+            || matches!(
+                text[index - 1],
+                b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'(' | b'!'
+            ))
+    {
+        return 1;
+    }
+    if text[index..].starts_with(b"]]") && index > start && matches!(text[index - 1], b' ' | b'\t')
+    {
+        return -1;
+    }
+    0
+}
+
+/// Return the `)` closing a `$(` whose body starts at `index`.
+///
+/// The body is a new quoting context: quotes, nested substitutions, comments,
+/// and here-document bodies are skipped so a parenthesis or apostrophe inside
+/// them cannot end the body early, a `)` inside a `${...}` belongs to that
+/// expansion, and a `case` pattern's unbalanced `)` does not close the body
+/// while the `case` is open.
+fn command_substitution_end(
+    text: &[u8],
+    index: usize,
+    nesting: usize,
+) -> Result<Option<usize>, ExtractionFailed> {
+    if nesting > SUBSTITUTION_NESTING_LIMIT {
+        return Err(ExtractionFailed);
+    }
+    let length = text.len();
+    let separator = |byte: u8| {
+        matches!(
+            byte,
+            b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'(' | b')'
+        )
+    };
+    let keyword_at = |cursor: usize, word: &[u8]| {
+        let end = cursor + word.len();
+        text[cursor..].starts_with(word)
+            && (cursor == index || separator(text[cursor - 1]))
+            && (end == length || separator(text[end]))
+    };
+    let command_position = |cursor: usize| {
+        let before = text[index..cursor]
+            .iter()
+            .rposition(|byte| !matches!(byte, b' ' | b'\t'))
+            .map_or(&text[index..index], |last| &text[index..index + last + 1]);
+        match before.last() {
+            None | Some(b';' | b'&' | b'|' | b'(' | b'\n') => true,
+            Some(_) => before
+                .split(u8::is_ascii_whitespace)
+                .rfind(|word| !word.is_empty())
+                .is_some_and(|word| matches!(word, b"!" | b"{" | b"do" | b"else" | b"then")),
+        }
+    };
+    let mut depth = 0usize;
+    let mut open_cases = 0usize;
+    let mut open_tests = 0usize;
+    let mut line_start = index;
+    let mut cursor = index;
+    while cursor < length {
+        let byte = text[cursor];
+        if byte == b'c' && keyword_at(cursor, b"case") && command_position(cursor) {
+            open_cases += 1;
+            cursor += 4;
+            continue;
+        }
+        if byte == b'e' && open_cases > 0 && keyword_at(cursor, b"esac") {
+            open_cases -= 1;
+            cursor += 4;
+            continue;
+        }
+        let end = match byte {
+            b'\\' => {
+                cursor += 2;
+                continue;
+            }
+            b'\'' => find_byte(text, b'\'', cursor + 1),
+            b'"' => double_quoted_end(text, cursor, nesting)?,
+            b'`' => backtick_end(text, cursor),
+            b'$' if text.get(cursor + 1) == Some(&b'{') => {
+                parameter_expansion_end(text, cursor, nesting + 1, false)?
+            }
+            b'$' if text.get(cursor + 1) == Some(&b'(') => {
+                command_substitution_end(text, cursor + 2, nesting + 1)?
+            }
+            b'[' | b']' if double_bracket_delta(text, cursor, index) != 0 => {
+                open_tests =
+                    open_tests.saturating_add_signed(double_bracket_delta(text, cursor, index));
+                cursor += 2;
+                continue;
+            }
+            b'#' if depth == 0 && open_tests == 0 && comment_starts_at(text, cursor, index) => {
+                let Some(end) = find_byte(text, b'\n', cursor) else {
+                    return Ok(None);
+                };
+                cursor = end;
+                continue;
+            }
+            b'(' => {
+                depth += 1;
+                cursor += 1;
+                continue;
+            }
+            b')' => {
+                if depth == 0 && open_cases == 0 {
+                    return Ok(Some(cursor));
+                }
+                depth = depth.saturating_sub(1);
+                cursor += 1;
+                continue;
+            }
+            b'\n' => {
+                let heredocs = heredoc_operators(&text[line_start..cursor])?;
+                cursor += 1;
+                for heredoc in heredocs {
+                    let Some(end) = heredoc_body_end(text, cursor, &heredoc) else {
+                        return Ok(None);
+                    };
+                    cursor = end;
+                }
+                line_start = cursor;
+                continue;
+            }
+            _ => {
+                cursor += 1;
+                continue;
+            }
+        };
+        let Some(end) = end else {
+            return Ok(None);
+        };
+        cursor = end + 1;
+    }
+    Ok(None)
+}
+
+/// One here-document operator on a shell line.
+struct Heredoc {
+    delimiter: Vec<u8>,
+    strip_tabs: bool,
+    /// A quoted delimiter word makes the body inert data.
+    quoted: bool,
+    /// Offset of the `<<` operator in the rewritten source, where the
+    /// substitutions its body expands are classified.
+    operator: usize,
+}
+
+/// Read the `<<` or `<<-` operator at `index` and its delimiter word. Returns
+/// the operator (at offset `index`) and the index after the word. An operator
+/// without a delimiter word fails, and so does a word containing `$`: bash
+/// quote-removes `$'EOF'` and `$"EOF"` to `EOF` but keeps a bare `$EOF`, so
+/// such a word is not matched here at all.
+fn heredoc_operator_at(text: &[u8], index: usize) -> Result<(Heredoc, usize), ExtractionFailed> {
+    let mut cursor = index + 2;
+    let strip_tabs = text.get(cursor) == Some(&b'-');
+    if strip_tabs {
+        cursor += 1;
+    }
+    while matches!(text.get(cursor), Some(b' ' | b'\t')) {
+        cursor += 1;
+    }
+    let mut delimiter = Vec::new();
+    let mut quoted = false;
+    let mut word_quote = None;
+    while cursor < text.len() {
+        let byte = text[cursor];
+        if let Some(open) = word_quote {
+            if byte == open {
+                word_quote = None;
+            } else if byte == b'$' {
+                return Err(ExtractionFailed);
+            } else {
+                delimiter.push(byte);
+            }
+            cursor += 1;
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => {
+                quoted = true;
+                word_quote = Some(byte);
+                cursor += 1;
+            }
+            b'\\' => {
+                quoted = true;
+                delimiter.extend(text.get(cursor + 1));
+                cursor += 2;
+            }
+            b'$' => return Err(ExtractionFailed),
+            b' ' | b'\t' | b'\n' | b'\r' | b';' | b'&' | b'|' | b'<' | b'>' | b'(' | b')' => break,
+            _ => {
+                delimiter.push(byte);
+                cursor += 1;
+            }
+        }
+    }
+    if word_quote.is_some() || delimiter.is_empty() {
+        return Err(ExtractionFailed);
+    }
+    Ok((
+        Heredoc {
+            delimiter,
+            strip_tabs,
+            quoted,
+            operator: index,
+        },
+        cursor.min(text.len()),
+    ))
+}
+
+/// Return the here-document operators on one shell line, in order. A `<<<`
+/// here-string, a `<<` inside quotes, a comment, or arithmetic `((...))` (left
+/// shift) starts no body. An operator without a delimiter word fails.
+fn heredoc_operators(line: &[u8]) -> Result<Vec<Heredoc>, ExtractionFailed> {
+    let mut heredocs = Vec::new();
+    let mut quote = None;
+    let mut arithmetic = 0usize;
+    let mut index = 0;
+    while index < line.len() {
+        let byte = line[index];
+        if let Some(open) = quote {
+            if byte == b'\\' && open == b'"' {
+                index += 2;
+                continue;
+            }
+            if byte == open {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => {
+                quote = Some(byte);
+                index += 1;
+            }
+            b'#' if comment_starts_at(line, index, 0) => break,
+            b'\\' => index += 2,
+            b'(' if line.get(index + 1) == Some(&b'(') => {
+                arithmetic += 1;
+                index += 2;
+            }
+            b')' if arithmetic > 0 && line.get(index + 1) == Some(&b')') => {
+                arithmetic -= 1;
+                index += 2;
+            }
+            b'<' if line.get(index + 1) == Some(&b'<') => {
+                if line.get(index + 2) == Some(&b'<') {
+                    index += 3;
+                    continue;
+                }
+                if arithmetic > 0 {
+                    index += 2;
+                    continue;
+                }
+                let (heredoc, end) = heredoc_operator_at(line, index)?;
+                heredocs.push(heredoc);
+                index = end;
+            }
+            _ => index += 1,
+        }
+    }
+    Ok(heredocs)
+}
+
+/// Whether a body line closes the here-document.
+fn heredoc_closes(line: &[u8], heredoc: &Heredoc) -> bool {
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let line = if heredoc.strip_tabs {
+        let tabs = line.iter().take_while(|byte| **byte == b'\t').count();
+        &line[tabs..]
+    } else {
+        line
+    };
+    line == heredoc.delimiter.as_slice()
+}
+
+/// Return the index after the here-document body starting at `start`,
+/// including its delimiter line, or `None` when the delimiter never appears.
+/// An unquoted body joins a backslash-newline continuation before the shell
+/// compares a line with the delimiter, so such a line also yields `None`
+/// rather than a guessed end.
+fn heredoc_body_end(text: &[u8], start: usize, heredoc: &Heredoc) -> Option<usize> {
+    let mut cursor = start;
+    while cursor < text.len() {
+        let line_end = find_byte(text, b'\n', cursor).unwrap_or(text.len());
+        let line = &text[cursor..line_end];
+        if heredoc_closes(line, heredoc) {
+            return Some((line_end + 1).min(text.len()));
+        }
+        let trailing_backslashes = line.iter().rev().take_while(|byte| **byte == b'\\').count();
+        if !heredoc.quoted && line_end < text.len() && trailing_backslashes % 2 == 1 {
+            return None;
+        }
+        cursor = line_end + 1;
+    }
+    None
+}
+
+/// Consume one here-document body (and its delimiter line) from `start`. An
+/// unquoted-delimiter body expands its substitutions, which are recorded at
+/// the operator that feeds the body; quotes and `#` are literal there. A body
+/// without its delimiter line fails rather than swallowing later text.
+fn heredoc_body(
+    source: &str,
+    start: usize,
+    heredoc: &Heredoc,
+    substitutions: &mut Vec<Substitution>,
+) -> Result<usize, ExtractionFailed> {
+    let text = source.as_bytes();
+    let end = heredoc_body_end(text, start, heredoc).ok_or(ExtractionFailed)?;
+    let offset = heredoc.operator;
+    if heredoc.quoted {
+        return Ok(end);
+    }
+    // Substitutions cannot reach past the body's own text.
+    let body = &source[..end];
+    let mut cursor = start;
+    while cursor < end {
+        if body.as_bytes()[cursor] == b'\\' {
+            cursor += 2;
+            continue;
+        }
+        match substitution_at(body, cursor, false, &mut |inner| {
+            substitutions.push(Substitution {
+                offset,
+                body: inner,
+            });
+        })? {
+            Some(next) => cursor = next.next,
+            None => cursor += 1,
+        }
+    }
+    Ok(end)
 }
 
 fn command_consumer(executable: &str) -> bool {
@@ -2391,6 +3306,12 @@ fn unwrap_invocation(tokens: Vec<String>) -> (Vec<String>, Option<String>, bool)
         if words.is_empty() || unwraps >= 12 {
             return (words, None, unwraps >= 12);
         }
+        // After a precommand modifier or reserved word (`!`, `time`, zsh
+        // `noglob`/`nocorrect`), an assignment is a prefix of the command that
+        // follows, not the command word; `env` consumes its own assignments.
+        if unwraps > 0 && assignment(&words[0]).is_some() {
+            return (Vec::new(), None, true);
+        }
         unwraps += 1;
         let executable = basename(&words[0]);
         match executable {
@@ -2451,7 +3372,9 @@ fn unwrap_invocation(tokens: Vec<String>) -> (Vec<String>, Option<String>, bool)
                 }
                 words = words.get(cursor..).unwrap_or_default().to_vec();
             }
-            "command" | "nohup" | "!" => {
+            // zsh `noglob` and `nocorrect` precommand modifiers run the
+            // command they precede.
+            "command" | "nohup" | "!" | "noglob" | "nocorrect" => {
                 let mut cursor = 1;
                 while cursor < words.len() && words[cursor].starts_with('-') {
                     cursor += 1;
@@ -2687,7 +3610,11 @@ fn direct_git_commit(
     let mut literal_subcommands = Vec::new();
     for invocation in invocations {
         let Some(subcommand) = git_subcommand(&invocation.words) else {
-            if invocation.words.first().is_some_and(|word| dynamic(word)) {
+            if invocation
+                .words
+                .first()
+                .is_some_and(|word| dynamic_command_word(word))
+            {
                 return Ok(true);
             }
             continue;
@@ -2695,15 +3622,18 @@ fn direct_git_commit(
         if subcommand == "commit" || dynamic(subcommand) {
             return Ok(true);
         }
-        literal_subcommands.push(subcommand);
+        literal_subcommands.push((subcommand, invocation.lookup_retargeted));
     }
     if literal_subcommands.is_empty() {
         return Ok(false);
     }
-    let commands = git_commands(run_child)?;
-    Ok(literal_subcommands
-        .into_iter()
-        .any(|subcommand| !commands.contains(subcommand)))
+    let mut commands = GitCommandInventory::load(run_child)?;
+    for (subcommand, lookup_retargeted) in literal_subcommands {
+        if !commands.admits(subcommand, lookup_retargeted, run_child) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn git_subcommand(words: &[String]) -> Option<&str> {
@@ -2746,11 +3676,69 @@ fn git_subcommand_index(words: &[String]) -> Option<usize> {
     None
 }
 
-fn git_commands(
+/// The Git subcommands that an alias cannot hide.
+///
+/// Git dispatches a builtin, then an installed `git-<name>` program (exec-path
+/// porcelain such as `submodule`, or a PATH extension such as `git-lfs`),
+/// before it consults aliases. Builtins are admitted unconditionally; an
+/// installed program only while the invocation keeps the lookup environment
+/// this probe saw, since Git falls back to a same-named alias when PATH or the
+/// exec-path no longer finds the program.
+struct GitCommandInventory {
+    builtins: BTreeSet<String>,
+    installed: Option<BTreeSet<String>>,
+}
+
+impl GitCommandInventory {
+    fn load(
+        run_child: &mut dyn FnMut(Command) -> Result<Output, HookError>,
+    ) -> Result<Self, HookError> {
+        let builtins = git_command_list(run_child, "builtins", false)?;
+        if !builtins.contains("status") || !builtins.contains("commit") {
+            return Err(HookError::data(
+                "git-command-inventory-invalid",
+                "trusted Git command inventory is incomplete",
+            ));
+        }
+        Ok(Self {
+            builtins,
+            installed: None,
+        })
+    }
+
+    fn admits(
+        &mut self,
+        subcommand: &str,
+        lookup_retargeted: bool,
+        run_child: &mut dyn FnMut(Command) -> Result<Output, HookError>,
+    ) -> bool {
+        if self.builtins.contains(subcommand) {
+            return true;
+        }
+        if lookup_retargeted {
+            return false;
+        }
+        self.installed
+            .get_or_insert_with(|| {
+                git_command_list(run_child, "main,others", true).unwrap_or_default()
+            })
+            .contains(subcommand)
+    }
+}
+
+/// Run `git --list-cmds=<categories>` through the trusted Git. The `others`
+/// category scans PATH for `git-<name>` programs, so `with_path` passes the
+/// hook's own PATH, the lookup environment the shell command inherits.
+fn git_command_list(
     run_child: &mut dyn FnMut(Command) -> Result<Output, HookError>,
+    categories: &str,
+    with_path: bool,
 ) -> Result<BTreeSet<String>, HookError> {
     let mut command = trusted_git_command()?;
-    command.arg("--list-cmds=builtins,main");
+    command.arg(format!("--list-cmds={categories}"));
+    if with_path {
+        command.env("PATH", std::env::var_os("PATH").unwrap_or_default());
+    }
     let output = run_child(command)?;
     if !output.status.success() || output.stdout.len() > 1024 * 1024 {
         return Err(HookError::runtime(
@@ -2774,12 +3762,6 @@ fn git_commands(
         })
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
-    if commands.is_empty() || !commands.contains("status") || !commands.contains("commit") {
-        return Err(HookError::data(
-            "git-command-inventory-invalid",
-            "trusted Git command inventory is incomplete",
-        ));
-    }
     Ok(commands)
 }
 
@@ -3188,11 +4170,11 @@ fn unsafe_default_delivery(
             let _ = protected_default_branch(&layout, state_home)?;
         }
     }
-    let known_git_commands = if invocations
+    let mut known_git_commands = if invocations
         .iter()
         .any(|invocation| invocation.words.first().map(|word| basename(word)) == Some("git"))
     {
-        Some(git_commands(run_child)?)
+        Some(GitCommandInventory::load(run_child)?)
     } else {
         None
     };
@@ -3206,6 +4188,15 @@ fn unsafe_default_delivery(
             continue;
         }
         if executable == "semantic-commit" {
+            // Help, dry-run, and validate-only forms author nothing, so neither
+            // an earlier command nor the checkout branch makes them delivery.
+            if matches!(
+                invocation.words.get(1).map(String::as_str),
+                Some("commit" | "fixup" | "squash" | "default-branch")
+            ) && !semantic_commit_authors(&invocation.words)
+            {
+                continue;
+            }
             if shell_context_changed
                 || semantic_delivery_blocked(&invocation.words, base, state_home)?
             {
@@ -3229,9 +4220,9 @@ fn unsafe_default_delivery(
         };
         let subcommand = &invocation.words[subcommand_index];
         if dynamic(subcommand)
-            || !known_git_commands
-                .as_ref()
-                .is_some_and(|commands| commands.contains(subcommand))
+            || !known_git_commands.as_mut().is_some_and(|commands| {
+                commands.admits(subcommand, invocation.lookup_retargeted, run_child)
+            })
         {
             return Ok(true);
         }
@@ -3578,6 +4569,56 @@ fn semantic_delivery_blocked(
         return Ok(true);
     };
     Ok(current_branch(&layout).is_none_or(|current| current == default))
+}
+
+/// Value-taking `semantic-commit` options, consumed before operational flags
+/// are recognized so a value such as `--dry-run` cannot pose as one.
+const SEMANTIC_COMMIT_VALUE_OPTIONS: &[&str] = &[
+    "--body-bullet",
+    "--bullet",
+    "--expect-head",
+    "--format",
+    "--max-header-width",
+    "--message",
+    "--message-file",
+    "--message-out",
+    "--receipt-out",
+    "--repo",
+    "--scope",
+    "--subject",
+    "--summary",
+    "--target",
+    "--trailer",
+    "--type",
+];
+
+/// Whether a `semantic-commit` invocation authors a commit. Help exits before
+/// work, and `--dry-run` and `--validate-only` author nothing.
+fn semantic_commit_authors(words: &[String]) -> bool {
+    let mut index = 2;
+    while index < words.len() {
+        let token = words[index].as_str();
+        match token {
+            "--" => break,
+            "-h" | "--help" | "--dry-run" | "--validate-only" => return false,
+            "-m" | "-F" => {
+                index += 2;
+                continue;
+            }
+            _ => {}
+        }
+        let name = if token.starts_with("--") {
+            token.split_once('=').map_or(token, |(name, _)| name)
+        } else {
+            token
+        };
+        if SEMANTIC_COMMIT_VALUE_OPTIONS.contains(&name) {
+            index += if name.len() < token.len() { 1 } else { 2 };
+            continue;
+        }
+        index += 1;
+    }
+    true
 }
 
 fn git_delivery_context(words: &[String], base: &Path) -> Result<Option<(PathBuf, usize)>, ()> {
@@ -4078,9 +5119,7 @@ fn checkout_lease(
     run_child: &mut dyn FnMut(Command) -> Result<Output, HookError>,
 ) -> Result<Outcome, HookError> {
     let group = DshCapabilityGroup::CheckoutLeaseGuard;
-    // Current runtime-kit owns an exact-target WorkspaceLease v2 fence. Older
-    // DSH integrations retain the earlier checkout guard during nils rollout.
-    if std::env::var("DSH_RUNTIME_KIT_WORKSPACE_LEASE_V2").as_deref() == Ok("1") {
+    if workspace_lease_v2_owns_checkouts() {
         return Ok(Outcome::allow(group));
     }
     if crate::liveness::coordination_failure_mode().is_some() {
@@ -4117,6 +5156,12 @@ fn checkout_lease(
         }
     }
     Ok(Outcome::allow(group))
+}
+
+/// Current runtime-kit owns an exact-target WorkspaceLease v2 fence. Older DSH
+/// integrations retain the earlier checkout guard during nils rollout.
+fn workspace_lease_v2_owns_checkouts() -> bool {
+    std::env::var("DSH_RUNTIME_KIT_WORKSPACE_LEASE_V2").as_deref() == Ok("1")
 }
 
 fn sole_managed_worktree_add(invocations: &[Invocation]) -> bool {
