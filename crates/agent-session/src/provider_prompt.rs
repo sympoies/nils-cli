@@ -269,6 +269,9 @@ pub struct ProviderPromptTail {
     preview: Option<LastPrompt>,
     discarding_oversized_line: bool,
     pending_claude: VecDeque<PendingClaudePrompt>,
+    /// Claude input enqueued behind a running turn during the current poll.
+    /// Only [`ProviderPromptTail::poll_submitted_prompts`] reads it.
+    claude_enqueued: Vec<String>,
     claude_fallback_delay: Duration,
     disabled: bool,
 }
@@ -335,6 +338,7 @@ impl ProviderPromptTail {
             preview: None,
             discarding_oversized_line: false,
             pending_claude: VecDeque::new(),
+            claude_enqueued: Vec::new(),
             claude_fallback_delay,
             disabled: false,
         })
@@ -367,7 +371,21 @@ impl ProviderPromptTail {
         self.poll_status().map(|status| status.events)
     }
 
+    /// Prompts the provider accepted during this poll: the prompt events plus,
+    /// for Claude, input enqueued behind a running turn, which reaches the
+    /// transcript as a `user` record only once the turn takes it.
+    pub(crate) fn poll_submitted_prompts(&mut self) -> io::Result<Vec<String>> {
+        let mut prompts = self
+            .poll()?
+            .into_iter()
+            .map(|event| event.prompt)
+            .collect::<Vec<_>>();
+        prompts.append(&mut self.claude_enqueued);
+        Ok(prompts)
+    }
+
     fn poll_status(&mut self) -> io::Result<ProviderPromptPoll> {
+        self.claude_enqueued.clear();
         if self.disabled {
             return Ok(ProviderPromptPoll {
                 events: Vec::new(),
@@ -446,6 +464,7 @@ impl ProviderPromptTail {
         self.preview = None;
         self.discarding_oversized_line = false;
         self.pending_claude.clear();
+        self.claude_enqueued.clear();
         Ok(())
     }
 
@@ -494,6 +513,10 @@ impl ProviderPromptTail {
                 }
             }
             ProviderKind::Claude => {
+                if let Some(prompt) = parse_claude_enqueued_prompt(&line, &self.source.session_id) {
+                    self.claude_enqueued.push(prompt.prompt);
+                    return;
+                }
                 if let Some(prompt) = parse_claude_last_prompt(&line, &self.source.session_id) {
                     let match_index = match prompt.turn_id.as_deref() {
                         Some(turn_id) => self.pending_claude.iter().position(|candidate| {
@@ -848,6 +871,25 @@ pub(crate) fn claude_slash_command_text(text: &str) -> Option<String> {
     })
 }
 
+fn parse_claude_enqueued_prompt(line: &str, session_id: &str) -> Option<ParsedPrompt> {
+    parse_claude_enqueued_prompt_value(&serde_json::from_str(line).ok()?, session_id)
+}
+
+/// Input typed while a Claude turn is running. Claude Code logs it as a
+/// `queue-operation` enqueue, not as a `user` record; the turn later takes it
+/// as a `user` record or absorbs it as a `queued_command` attachment.
+fn parse_claude_enqueued_prompt_value(value: &Value, session_id: &str) -> Option<ParsedPrompt> {
+    if value.get("type").and_then(Value::as_str) != Some("queue-operation")
+        || value.get("operation").and_then(Value::as_str) != Some("enqueue")
+        || !claude_session_matches(value, session_id)
+    {
+        return None;
+    }
+    let mut prompt = bounded_prompt(value.get("content")?.as_str()?)?;
+    prompt.submitted_at = provider_timestamp(value);
+    Some(prompt)
+}
+
 /// Text of a prompt the user sent while a Claude turn was running. Claude Code
 /// records it as a `queued_command` attachment instead of a `user` record.
 /// Task notifications, peer messages, auto-continuations, and meta injections
@@ -1060,7 +1102,11 @@ pub fn prompt_observed_after(
         };
         let parsed = match source.provider {
             ProviderKind::Codex => parse_codex_prompt(line),
-            ProviderKind::Claude => parse_claude_user_prompt(line, &source.session_id),
+            // Input typed into a busy turn is enqueued, not yet a `user` record.
+            ProviderKind::Claude => serde_json::from_str::<Value>(line).ok().and_then(|value| {
+                parse_claude_user_prompt_value(&value, &source.session_id)
+                    .or_else(|| parse_claude_enqueued_prompt_value(&value, &source.session_id))
+            }),
         };
         let Some(parsed) = parsed else {
             continue;
@@ -2161,6 +2207,93 @@ mod tests {
         assert!(
             resolve_provider_prompt_source_from_roots(&record, Some(&codex_root), None).is_none()
         );
+    }
+
+    fn claude_enqueue_line(session_id: &str, timestamp: &str, content: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"queue-operation","operation":"enqueue","timestamp":timestamp,
+            "sessionId":session_id,"content":content})
+        )
+    }
+
+    /// #2027: while a Claude turn runs, typed input lands as a `queue-operation`
+    /// enqueue instead of a `user` record. Reconciliation must count it as the
+    /// submission, or the reminder is requeued and retyped every few seconds.
+    #[test]
+    fn claude_queue_enqueue_after_the_attempt_counts_as_observed() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        let reminder = "Coordination mailbox has unread messages; run it.";
+        let before = json!({"type":"user","sessionId":"claude-id","cwd":"/repo","timestamp":"2099-01-01T00:00:00Z",
+            "promptSource":"typed","message":{"role":"user","content":"earlier prompt"}});
+        fs::write(
+            &path,
+            format!(
+                "{before}\n{}{}",
+                claude_enqueue_line("foreign-id", "2099-01-01T00:00:02Z", reminder),
+                claude_enqueue_line("claude-id", "2099-01-01T00:00:03Z", "another prompt"),
+            ),
+        )
+        .unwrap();
+        let source =
+            ProviderPromptSource::test_path(ProviderKind::Claude, "claude-id", path.clone());
+        let attempted_at = "2099-01-01T00:00:01Z".parse::<jiff::Timestamp>().unwrap();
+        assert_eq!(
+            prompt_observed_after(&source, reminder, &attempted_at),
+            Some(false),
+            "a foreign session's enqueue or another prompt is not this submission"
+        );
+
+        append(
+            &path,
+            claude_enqueue_line("claude-id", "2099-01-01T00:00:04Z", reminder).as_bytes(),
+        );
+        assert_eq!(
+            prompt_observed_after(&source, reminder, &attempted_at),
+            Some(true)
+        );
+        let later = "2099-01-01T00:00:05Z".parse::<jiff::Timestamp>().unwrap();
+        assert_eq!(
+            prompt_observed_after(&source, reminder, &later),
+            Some(false),
+            "an enqueue before the attempt does not prove the new attempt"
+        );
+    }
+
+    /// The post-typing check sees the enqueue as a submission, while the
+    /// prompt events other tail consumers read stay limited to `user` records.
+    #[test]
+    fn claude_tail_reports_an_enqueue_as_submitted_but_not_as_a_prompt_event() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("claude.jsonl");
+        fs::write(&path, "").unwrap();
+        let mut tail = ProviderPromptTail::open_path(
+            ProviderKind::Claude,
+            "claude-id",
+            path.clone(),
+            Duration::ZERO,
+        )
+        .unwrap();
+        append(
+            &path,
+            format!(
+                "{}{}",
+                claude_enqueue_line("foreign-id", "2099-01-01T00:00:01Z", "foreign reminder"),
+                claude_enqueue_line("claude-id", "2099-01-01T00:00:02Z", "queued reminder"),
+            )
+            .as_bytes(),
+        );
+        assert_eq!(
+            tail.poll_submitted_prompts().unwrap(),
+            vec!["queued reminder".to_string()]
+        );
+
+        append(
+            &path,
+            claude_enqueue_line("claude-id", "2099-01-01T00:00:03Z", "queued again").as_bytes(),
+        );
+        assert!(tail.poll().unwrap().is_empty());
     }
 
     fn append(path: &Path, bytes: &[u8]) {
