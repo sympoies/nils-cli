@@ -626,6 +626,36 @@ fn reset_rate_limits_times_out_as_a_retryable_unknown_result() {
 }
 
 #[test]
+fn reset_rate_limits_refuses_a_cleartext_non_loopback_api_base_url() {
+    let fx = Fixture::new();
+    for base in ["http://api.example.invalid", "ftp://127.0.0.1", "not a url"] {
+        let options = fx
+            .options()
+            .with_env("CLAUDE_RATE_LIMITS_API_BASE_URL", base);
+        let output = fx.run_with(
+            &[
+                "auth",
+                "reset-rate-limits",
+                "--yes",
+                "--program",
+                "juniper_tide",
+                "--request-id",
+                REQUEST_ID,
+                "--format",
+                "json",
+                "alpha",
+            ],
+            &options,
+        );
+        assert_error(&output, 1, "endpoint-invalid");
+        assert!(
+            fx.requests().is_empty(),
+            "{base} must not send the token anywhere"
+        );
+    }
+}
+
+#[test]
 fn reset_rate_limits_posts_to_the_configured_api_base_url() {
     let fx = Fixture::new();
     let other = TestServer::new(|_request: &RecordedRequest| {

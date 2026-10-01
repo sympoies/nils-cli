@@ -317,24 +317,38 @@ fn read_login(profile: &str) -> Result<Login, Failure> {
     })
 }
 
-/// `CLAUDE_RATE_LIMITS_API_BASE_URL`, else the usage endpoint's origin.
+/// `CLAUDE_RATE_LIMITS_API_BASE_URL`, else the usage endpoint's origin. The
+/// bearer token travels only over https, or plain http to a loopback host.
 fn api_base_url() -> Result<String, Failure> {
-    if let Some(base) = shared_env::env_non_empty(API_BASE_URL_ENV) {
-        return Ok(base.trim().trim_end_matches('/').to_string());
+    let invalid = Failure {
+        code: "endpoint-invalid",
+        message: "The Claude API base URL must be https, or http on a loopback host.",
+        exit_code: EXIT_PROFILE,
+        retryable: false,
+        reason_code: None,
+        next_action: "Fix CLAUDE_PROMPT_SEGMENT_ENDPOINT or set CLAUDE_RATE_LIMITS_API_BASE_URL.",
+    };
+    let (raw, keep_path) = match shared_env::env_non_empty(API_BASE_URL_ENV) {
+        Some(base) => (base.trim().trim_end_matches('/').to_string(), true),
+        None => (client::usage_endpoint(), false),
+    };
+    let Ok(url) = reqwest::Url::parse(&raw) else {
+        return Err(invalid);
+    };
+    let loopback = url.host_str().is_some_and(|host| {
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        host == "localhost"
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    if !(url.scheme() == "https" || (url.scheme() == "http" && loopback)) {
+        return Err(invalid);
     }
-    reqwest::Url::parse(&client::usage_endpoint())
-        .ok()
-        .map(|url| url.origin())
-        .filter(|origin| origin.is_tuple())
-        .map(|origin| origin.ascii_serialization())
-        .ok_or(Failure {
-            code: "endpoint-invalid",
-            message: "The configured Claude usage endpoint is not a valid URL.",
-            exit_code: EXIT_PROFILE,
-            retryable: false,
-            reason_code: None,
-            next_action: "Fix CLAUDE_PROMPT_SEGMENT_ENDPOINT or set CLAUDE_RATE_LIMITS_API_BASE_URL.",
-        })
+    if keep_path {
+        return Ok(raw);
+    }
+    Ok(url.origin().ascii_serialization())
 }
 
 fn post_reset(

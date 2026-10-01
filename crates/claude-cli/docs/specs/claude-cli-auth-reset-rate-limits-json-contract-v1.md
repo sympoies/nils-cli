@@ -68,7 +68,8 @@ claude-cli auth reset-rate-limits --program <juniper_tide|cedar_ember>
 
 The API base is `CLAUDE_RATE_LIMITS_API_BASE_URL`, else the origin of the
 usage endpoint (`CLAUDE_PROMPT_SEGMENT_ENDPOINT`, default
-`https://api.anthropic.com`). The POST times out after
+`https://api.anthropic.com`). It must be `https`, or `http` on a loopback
+host; anything else is `endpoint-invalid` before any request. The POST times out after
 `CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS` (default 25, at most 120).
 
 ## Envelope

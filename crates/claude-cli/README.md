@@ -450,7 +450,8 @@ collector reads both.
   `diag rate-limits` and `auth reset-rate-limits` User-Agent; default: detected
   from `claude --version`, else `2.1.284`.
 - `CLAUDE_RATE_LIMITS_API_BASE_URL`: `auth reset-rate-limits` API base;
-  default: the usage endpoint's origin.
+  default: the usage endpoint's origin. Must be `https`, or `http` on a
+  loopback host.
 - `CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS`: reset POST timeout; default
   `25`, at most `120`.
 - `CLAUDE_PROMPT_SEGMENT_REFRESH_MIN_SECONDS`: detached refresh cooldown;
