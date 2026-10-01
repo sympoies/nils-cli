@@ -810,6 +810,7 @@ where
         sender_session_id,
         &recipient.id,
         body.len(),
+        reply_to.as_deref(),
         now,
         now_millis,
     )?;
@@ -1226,6 +1227,7 @@ pub(super) fn admit_message(
     sender_session_id: &str,
     recipient_id: &str,
     body_bytes: usize,
+    keep_message_id: Option<&str>,
     now: i64,
     now_millis: i64,
 ) -> Result<(), CliError> {
@@ -1279,7 +1281,7 @@ pub(super) fn admit_message(
     if registry_bytes.saturating_add(body_bytes) > super::MAX_REGISTRY_BYTES as usize {
         // Retained terminal bodies must not starve live delivery: reclaim the
         // oldest ones before refusing.
-        evict_terminal_messages(registry, body_bytes);
+        evict_terminal_messages(registry, body_bytes, keep_message_id);
     }
     let registry_bytes = registry_message_bytes(registry);
     let refuse = |quota, count, limit| {
@@ -1328,13 +1330,20 @@ fn registry_message_bytes(registry: &Registry) -> usize {
         .sum()
 }
 
-fn evict_terminal_messages(registry: &mut Registry, body_bytes: usize) {
+fn evict_terminal_messages(
+    registry: &mut Registry,
+    body_bytes: usize,
+    keep_message_id: Option<&str>,
+) {
     let cap = super::MAX_REGISTRY_BYTES as usize;
     let mut total = registry_message_bytes(registry);
     let mut terminal: Vec<_> = registry
         .messages
         .iter()
-        .filter(|message| matches!(message.state.as_str(), "acknowledged" | "expired"))
+        .filter(|message| {
+            matches!(message.state.as_str(), "acknowledged" | "expired")
+                && Some(message.message_id.as_str()) != keep_message_id
+        })
         .map(|message| {
             (
                 message.terminal_at_epoch.unwrap_or(0),
@@ -1355,6 +1364,9 @@ fn evict_terminal_messages(registry: &mut Registry, body_bytes: usize) {
     registry
         .messages
         .retain(|message| !evicted.contains(&message.message_id));
+    registry
+        .notifications
+        .retain(|key, _| !evicted.contains(key));
 }
 
 #[cfg(test)]
@@ -1390,7 +1402,15 @@ mod tests {
     }
 
     fn admit(registry: &mut Registry, bytes: usize) -> Result<(), CliError> {
-        admit_message(registry, "new-sender", "recipient", bytes, NOW, NOW * 1_000)
+        admit_message(
+            registry,
+            "new-sender",
+            "recipient",
+            bytes,
+            None,
+            NOW,
+            NOW * 1_000,
+        )
     }
 
     #[test]
@@ -1449,6 +1469,32 @@ mod tests {
         admit(&mut registry, 5).expect("terminal bytes must not starve live delivery");
         assert_eq!(registry.messages.len(), 1);
         assert_eq!(registry.messages[0].state, "unread");
+    }
+
+    #[test]
+    fn eviction_keeps_the_reply_parent() {
+        let cap = super::super::MAX_REGISTRY_BYTES as usize;
+        let mut registry = Registry::default();
+        registry
+            .messages
+            .push(quota_message(0, "other", "acknowledged", cap - 10));
+        registry
+            .messages
+            .push(quota_message(1, "other", "acknowledged", 10));
+        // Make the parent the oldest terminal message so only the guard keeps it.
+        registry.messages[0].terminal_at_epoch = Some(0);
+        admit_message(
+            &mut registry,
+            "new-sender",
+            "recipient",
+            5,
+            Some("message-0"),
+            NOW,
+            NOW * 1_000,
+        )
+        .expect("evicting the other terminal message is enough");
+        assert_eq!(registry.messages.len(), 1);
+        assert_eq!(registry.messages[0].message_id, "message-0");
     }
 
     #[test]

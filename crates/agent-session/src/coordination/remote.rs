@@ -939,6 +939,7 @@ fn receive_admitted(
         &encode_sender(&envelope.from),
         &recipient.id,
         envelope.body.len(),
+        envelope.reply_to.as_deref(),
         now,
         now_millis,
     )?;
@@ -1448,6 +1449,7 @@ mod tests {
                 "other-sender",
                 "recipient",
                 1,
+                None,
                 now_epoch(),
                 super::super::mailbox::now_epoch_millis()
             )
