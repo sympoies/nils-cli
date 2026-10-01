@@ -18,9 +18,8 @@ The version bump itself. The entrypoint
 `.agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh`
 (reached through `.agents/scripts/release.sh`) is the canonical bump
 transform. The broker consumes it through
-`.github/workflows/prepare-private-release.yml`, which runs it with
-`--skip-push` on a hosted runner and uploads only a patch and a
-checksum-bound manifest. The broker then opens and lands the release PR as the
+`.github/workflows/prepare-private-release.yml`, which runs it on a hosted
+runner and uploads only a patch and a checksum-bound manifest. The broker then opens and lands the release PR as the
 single commit `chore(release): bump cli versions to X.Y.Z`.
 
 The transform:
@@ -32,9 +31,11 @@ The transform:
   `cargo check --workspace --locked`;
 - regenerates `THIRD_PARTY_LICENSES.md` and `THIRD_PARTY_NOTICES.md`.
 
+Unless `--prepare-only` is given it then validates, stages, and makes the
+single local commit `chore(release): bump cli versions to X.Y.Z`.
 `--prepare-only` applies the same transform and exits before validation,
-staging, commit, push, tag, or deployment; it is the contract mode used by
-tests.
+staging, and commit; it is the contract mode used by tests. The script has no
+tag, push, tap, or install path and rejects any such flag.
 
 A canonical version-only release PR may use the reduced release-only CI lane
 only when protected base policy recognizes it and the exact base `main` SHA has
@@ -57,5 +58,4 @@ bash scripts/ci/tests/release-workflow-contract.test.sh
 bash scripts/ci/tests/detect-release-only.test.sh
 ```
 
-Do not use the script's tag, push, or tap flags to cut a real release; that is
-not the supported release path.
+The script is preparation-only; the release path is the broker.

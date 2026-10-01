@@ -226,30 +226,25 @@ assert_contains .agents/skills/project-bump-version-tag-release/SKILL.md \
 assert_contains .agents/skills/project-bump-version-tag-release/SKILL.md \
   "cargo update --workspace" \
   "release skill documents the implemented lockfile refresh command"
-assert_contains .agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh \
-  "reuses that exact-SHA PR CI" \
-  "release helper help documents tag-gate CI reuse"
 
-# Both ends of the tap handoff must verify a receiver-side fact. The dispatches
-# endpoint answers 204 with no workflow listening, and a tap run's name is a
-# sender-chosen string whose shape differs per trigger path, so neither is proof
-# that the formula moved.
-assert_contains .github/workflows/release.yml \
-  "listWorkflowRuns" \
-  "release dispatch job confirms a tap run exists instead of trusting HTTP 204"
-assert_contains .agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh \
-  "read_tap_formula_version" \
-  "tap wait gates on the version published in the tap formula"
-
-# PR-mode delivery must leave a window between opening the PR and merging it: the
-# ledger merge gate needs an observation at the current head, and the chain
-# refuses an append at a stale head.
-assert_contains .agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh \
-  "record_release_review_genesis" \
-  "release PR delivery records the review-loop ledger genesis before merging"
-assert_contains .agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh \
-  "mode delivery" \
-  "release genesis envelope comes from the review-specialists delivery generator"
+# The bump script and its /release wrapper are preparation-only: the release
+# broker owns tagging, publishing, the tap, and fleet convergence, so neither
+# file may carry a path that can reach a remote or a release.
+for prepare_only_file in \
+  .agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh \
+  .agents/scripts/release.sh; do
+  # README tag-example patterns legitimately mention `git tag -a v` and
+  # `git push origin v`, so match the mutating invocations, not the words.
+  for forbidden in 'tag -a "$tag"' 'git push -u' 'git push origin HEAD' 'push origin "$tag"' 'forge-cli' 'homebrew' 'brew ' 'gh run' 'gh api' \
+    'wait_for_release_run' 'run_tap_stage' 'read_tap_formula_version' \
+    'record_release_review_genesis'; do
+    if grep -Fq -- "$forbidden" "$prepare_only_file"; then
+      echo "FAIL: $prepare_only_file must stay preparation-only, found: $forbidden" >&2
+      exit 1
+    fi
+  done
+done
+echo "ok: release bump script is preparation-only"
 
 echo
 echo "PASS: release-workflow-contract.test.sh"
