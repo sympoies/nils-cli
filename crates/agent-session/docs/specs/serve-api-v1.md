@@ -158,10 +158,9 @@ never set is a success, so a repeated toggle from two clients settles.
 the owning provider source again, recomputes the opaque history identity, and
 derives provider id, cwd, profile, executable, and canonical resume arguments
 only from trusted server-side metadata. Codex and Claude use their existing
-provider-import behavior. DSH requires an owning ready Hermes profile whose
-`dsh_history.resume` is `exact-id`; it persists provider `dsh` independently
-from base agent `hermes` and invokes the profile with exactly
-`--resume <provider-session-id>`. The response contains the normal newly
+provider-import behavior. DSH requires an owning ready profile with base agent `dsh` whose
+`dsh_history.resume` is `exact-id`; it persists provider `dsh` and invokes the
+profile with exactly `--resume <provider-session-id>`. The response contains the normal newly
 created managed `session` projection.
 
 A conversation keeps one managed identity across archive and resume. Archive
@@ -174,7 +173,7 @@ allocated id. When a live managed record already owns the conversation, resume
 launches nothing and returns `history-session-live` with that session's `id` in
 the error details, so one conversation never runs under two session ids.
 
-For a fresh `POST /sessions` using the server-owned `dsh-tui` profile with
+For a fresh `POST /sessions` using a server-owned `dsh` profile with
 `dsh_history.resume=exact-id`, agent-session allocates the DSH UUID before
 creating the managed record. It stores the exact provider identity and canonical
 history root in `provider_resume`, then passes
@@ -1339,13 +1338,17 @@ advertise it as a managed copy action. Set
 `auto_resume_supported` only when the profile has authoritative usage semantics
 for its provider; the default is fail-closed `false`.
 
-A Hermes-backed DSH profile may add
+The retired base agent `hermes` is a deprecated alias: such a profile loads
+and is advertised as `dsh`, and serve warns at startup. The alias will be
+removed in a later release.
+
+A profile with base agent `dsh` may add
 `"dsh_history":{"command":"/absolute/dsh-runtime-kit-history","root":"/absolute/dsh-sessions","compression":"zstd"}`.
 `command` and `root` must be absolute and `compression` is `zstd` (the default)
 or `none`. This optional read adapter is not a launch readiness prerequisite:
 if it is unavailable, ordinary DSH launch and readiness keep their existing
 behavior and the history endpoints return only the remaining valid catalog data.
-The managed `dsh-tui` exact-id fresh launch requires the configured root.
+A managed exact-id fresh launch requires the configured root.
 Adding `"resume":"exact-id"` to that object explicitly enables daemon-owned
 history resume for the ready profile. Omitting it preserves read-only behavior.
 

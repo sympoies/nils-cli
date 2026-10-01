@@ -416,7 +416,7 @@ mod tests {
         assert!(!eligible("codex", "running", &fresh));
         assert!(eligible("codex", "running", &unknown));
         assert!(eligible("claude", "running", &unknown));
-        assert!(!eligible("hermes", "running", &unknown));
+        assert!(!eligible("dsh", "running", &unknown));
         assert!(!eligible("codex", "stopped", &unknown));
     }
 

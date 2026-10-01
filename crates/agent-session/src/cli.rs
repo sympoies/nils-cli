@@ -40,10 +40,10 @@ impl CoordinationMode {
     name = "agent-session",
     version,
     long_version = nils_build_info::long_version(env!("CARGO_PKG_VERSION")),
-    about = "Start and manage tmux-backed Codex, Claude Code, and Hermes sessions.",
-    long_about = "Start and manage tmux-backed Codex, Claude Code, and Hermes sessions for mobile handoff workflows.",
+    about = "Start and manage tmux-backed Codex, Claude Code, and DSH sessions.",
+    long_about = "Start and manage tmux-backed Codex, Claude Code, and DSH sessions for mobile handoff workflows.",
     disable_help_subcommand = true,
-    after_help = "EXAMPLES:\n  agent-session start --agent codex --cwd ~/Project/app --prompt-file prompt.md\n  agent-session start --agent hermes --cwd ~\n  agent-session list\n  agent-session glance <id> --tail 40\n  agent-session send <id> --text yes --key enter\n  agent-session send <id> --key c-c\n  agent-session resume <id>\n  agent-session metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json\n  agent-session metadata show <id> --label acceptance.synthetic --format json\n  agent-session command <id>\n  agent-session attach <id>\n  agent-session delete <id>\n\nENVIRONMENT:\n  AGENT_SESSION_HOST       Hostname used in generated ssh attach commands.\n  AGENT_SESSION_STATE_DIR  Default state directory override.\n  AGENT_SESSION_TMUX_BIN   tmux binary override.\n  AGENT_SESSION_CODEX_BIN  codex binary override.\n  AGENT_SESSION_CLAUDE_BIN claude binary override.\n  AGENT_SESSION_HERMES_BIN hermes binary override.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
+    after_help = "EXAMPLES:\n  agent-session start --agent codex --cwd ~/Project/app --prompt-file prompt.md\n  agent-session list\n  agent-session glance <id> --tail 40\n  agent-session send <id> --text yes --key enter\n  agent-session send <id> --key c-c\n  agent-session resume <id>\n  agent-session metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json\n  agent-session metadata show <id> --label acceptance.synthetic --format json\n  agent-session command <id>\n  agent-session attach <id>\n  agent-session delete <id>\n\nENVIRONMENT:\n  AGENT_SESSION_HOST       Hostname used in generated ssh attach commands.\n  AGENT_SESSION_STATE_DIR  Default state directory override.\n  AGENT_SESSION_TMUX_BIN   tmux binary override.\n  AGENT_SESSION_CODEX_BIN  codex binary override.\n  AGENT_SESSION_CLAUDE_BIN claude binary override.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
 )]
 pub struct Cli {
     /// State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session.
@@ -1456,9 +1456,10 @@ pub struct CompletionArgs {
 pub enum AgentKind {
     Codex,
     Claude,
-    Hermes,
-    /// DeepSeek Harness workers managed by an external runtime (the
-    /// dsh-runtime-kit bundle); never tmux-launched by this crate.
+    /// DeepSeek Harness, launched through a launch profile or an external runtime
+    // A tmux pane started through a server-owned launch profile, or an
+    // external-runtime worker owned by the dsh-runtime-kit bundle
+    // (`main-agent worker start`). A plain profile-less start is refused.
     Dsh,
 }
 
@@ -1467,7 +1468,6 @@ impl AgentKind {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
-            Self::Hermes => "hermes",
             Self::Dsh => "dsh",
         }
     }
@@ -1478,7 +1478,6 @@ impl AgentKind {
         match name {
             "codex" => Some(Self::Codex),
             "claude" => Some(Self::Claude),
-            "hermes" => Some(Self::Hermes),
             "dsh" => Some(Self::Dsh),
             _ => None,
         }

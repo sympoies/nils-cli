@@ -27,7 +27,7 @@ and `plan`, plus `context_capabilities`. Provider kinds are
 The readiness object is a closed allowlist: exactly `schema_version`,
 `capability`, `status`, `reason_code`, `next_action`, and
 `context_capabilities`, plus the four optional keys above, and no other key.
-`context_capabilities` has exactly the keys `claude`, `codex`, and `hermes`,
+`context_capabilities` has exactly the keys `claude` and `codex`,
 each `provider_transcript` or `unavailable`. `status`, `reason_code`,
 `next_action`, `provider_kind`, and every `context_capabilities` value come
 from the stable vocabularies above, and `model_label` appears only when it

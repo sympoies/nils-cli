@@ -122,11 +122,12 @@ const MAX_CONCURRENT_AUTO_RESUME_TICKS: usize = 4;
 pub(crate) const MAX_AGENT_LAUNCH_PROFILES: usize = 16;
 // The DSH TUI draws its composer before it accepts pasted input. The ordinary
 // 1.2-second launch delay can submit the prompt during that interval and leave
-// an apparently ready session with no first turn.
+// an apparently ready session with no first turn. Every dsh launch profile
+// runs that TUI.
 const DSH_TUI_INITIAL_PROMPT_DELAY_MS: u64 = 5_000;
 
-fn initial_prompt_paste_delay_ms(profile_id: Option<&str>) -> u64 {
-    if profile_id == Some("dsh-tui") {
+fn initial_prompt_paste_delay_ms(agent: AgentKind) -> u64 {
+    if agent == AgentKind::Dsh {
         DSH_TUI_INITIAL_PROMPT_DELAY_MS
     } else {
         cli::DEFAULT_PASTE_DELAY_MS
@@ -276,6 +277,9 @@ fn default_session_collector() -> SessionCollector {
     Arc::new(|context, tmux_bin| crate::list_sessions_for_serve(context, Some(tmux_bin)))
 }
 
+/// Retired base agent that launch profiles may still name; it loads as `dsh`.
+const DEPRECATED_HERMES_PROFILE_AGENT: &str = "hermes";
+
 #[derive(Clone, Debug)]
 struct AgentLaunchProfiles {
     entries: Vec<AgentLaunchProfile>,
@@ -412,10 +416,23 @@ impl AgentLaunchProfiles {
         let Some(raw) = non_empty_env("AGENT_SESSION_LAUNCH_PROFILES") else {
             return Ok(Self::default());
         };
-        Self::from_json(&raw)
+        let (profiles, deprecated_hermes_ids) = Self::parse(&raw)?;
+        for id in deprecated_hermes_ids {
+            eprintln!(
+                "warning: deprecated-launch-profile-agent: launch profile {id} uses base agent \
+                 `hermes`, which now launches as `dsh`; change the profile to `dsh`"
+            );
+        }
+        Ok(profiles)
     }
 
     fn from_json(raw: &str) -> Result<Self, CliError> {
+        Self::parse(raw).map(|(profiles, _)| profiles)
+    }
+
+    /// Parses launch profiles and also returns the ids of profiles that still
+    /// name the retired `hermes` base agent, which load as `dsh`.
+    fn parse(raw: &str) -> Result<(Self, Vec<String>), CliError> {
         let configs: Vec<AgentLaunchProfileConfig> = serde_json::from_str(raw).map_err(|_| {
             invalid_agent_launch_profiles("launch profiles must be a valid JSON array")
         })?;
@@ -425,6 +442,7 @@ impl AgentLaunchProfiles {
             ));
         }
         let mut entries = Vec::with_capacity(configs.len());
+        let mut deprecated_hermes_ids = Vec::new();
         for config in configs {
             if !valid_agent_profile_id(&config.id) {
                 return Err(invalid_agent_launch_profiles(
@@ -445,10 +463,19 @@ impl AgentLaunchProfiles {
                     "launch profile labels must contain 1-64 safe characters",
                 ));
             }
-            let Some(agent) = AgentKind::from_name(&config.agent) else {
-                return Err(invalid_agent_launch_profiles(
-                    "launch profiles must reference a supported base agent",
-                ));
+            // Deprecated: `hermes` was the base agent of DSH launch profiles
+            // before the dsh kind could launch them. Remove the alias once no
+            // host launcher emits it.
+            let agent = if config.agent == DEPRECATED_HERMES_PROFILE_AGENT {
+                deprecated_hermes_ids.push(config.id.clone());
+                AgentKind::Dsh
+            } else {
+                let Some(agent) = AgentKind::from_name(&config.agent) else {
+                    return Err(invalid_agent_launch_profiles(
+                        "launch profiles must reference a supported base agent",
+                    ));
+                };
+                agent
             };
             if !config.agent_bin.is_absolute() {
                 return Err(invalid_agent_launch_profiles(
@@ -483,13 +510,13 @@ impl AgentLaunchProfiles {
                 ));
             }
             if let Some(history) = config.dsh_history.as_ref()
-                && (!matches!(agent, AgentKind::Hermes)
+                && (!matches!(agent, AgentKind::Dsh)
                     || !history.command.is_absolute()
                     || !history.root.is_absolute()
                     || !matches!(history.compression.as_str(), "zstd" | "none"))
             {
                 return Err(invalid_agent_launch_profiles(
-                    "dsh_history requires a Hermes profile, absolute command/root paths, and zstd or none compression",
+                    "dsh_history requires a dsh profile, absolute command/root paths, and zstd or none compression",
                 ));
             }
             entries.push(AgentLaunchProfile {
@@ -507,13 +534,16 @@ impl AgentLaunchProfiles {
                 dsh_history: config.dsh_history,
             });
         }
-        Ok(Self {
-            entries,
-            readiness_probe: Arc::new((
-                StdMutex::new(AgentLaunchProfileReadiness::default()),
-                std::sync::Condvar::new(),
-            )),
-        })
+        Ok((
+            Self {
+                entries,
+                readiness_probe: Arc::new((
+                    StdMutex::new(AgentLaunchProfileReadiness::default()),
+                    std::sync::Condvar::new(),
+                )),
+            },
+            deprecated_hermes_ids,
+        ))
     }
 
     fn get(&self, id: &str) -> Option<&AgentLaunchProfile> {
@@ -6793,7 +6823,6 @@ async fn create_handler(
         initial_agent_profile: launch_profile.as_ref().map(|profile| profile.id.clone()),
         initial_dsh_history_root: launch_profile
             .as_ref()
-            .filter(|profile| profile.id == "dsh-tui")
             .and_then(|profile| profile.dsh_history.as_ref())
             .filter(|history| history.resume == Some(DshHistoryResumeCapability::ExactId))
             .map(|history| history.root.clone()),
@@ -6828,9 +6857,7 @@ async fn create_handler(
             .map(|profile| profile.agent_bin.clone()),
         agent_args: body.agent_args,
         coordination_mode: body.coordination_mode,
-        paste_delay_ms: initial_prompt_paste_delay_ms(
-            launch_profile.as_ref().map(|profile| profile.id.as_str()),
-        ),
+        paste_delay_ms: initial_prompt_paste_delay_ms(agent),
         via_console: false,
         machine: None,
         account: None,
@@ -8063,6 +8090,13 @@ async fn reconcile_coordination_notifications(state: Arc<ServeState>) {
     }
 }
 
+/// A recipient with no delivery path: a retained record whose agent this build
+/// no longer knows (a retired `hermes` pane). Deferring would retry it until
+/// the pane is replaced. DSH recipients are hook-delivered before this check.
+fn coordination_notification_provider_unsupported(record: &crate::SessionRecord) -> bool {
+    AgentKind::from_name(&record.agent).is_none()
+}
+
 async fn dispatch_coordination_notification(
     state: Arc<ServeState>,
     candidate: crate::coordination::NotificationCandidate,
@@ -8096,12 +8130,10 @@ async fn dispatch_coordination_notification(
         update_notification_undeliverable(&state, &candidate, "coordination-disabled").await;
         return;
     }
-    // DSH (a `dsh` lane or an Agent Console `hermes`/`dsh-tui` session) has no
-    // serve prompt route; its policy hook claims the reminder at a model-step
+    // DSH (an external `dsh` lane or a dsh launch-profile pane) has no serve
+    // prompt route; its policy hook claims the reminder at a model-step
     // boundary through `message reminder`.
-    if record.agent == AgentKind::Dsh.as_str()
-        || crate::activity::agent_console_dsh_transport(&record)
-    {
+    if record.agent == AgentKind::Dsh.as_str() {
         update_notification_undeliverable(
             &state,
             &candidate,
@@ -8110,7 +8142,7 @@ async fn dispatch_coordination_notification(
         .await;
         return;
     }
-    if record.agent == AgentKind::Hermes.as_str() {
+    if coordination_notification_provider_unsupported(&record) {
         update_notification_undeliverable(&state, &candidate, "provider-unsupported").await;
         return;
     }
@@ -8595,7 +8627,6 @@ fn terminal_notification_waiting(
                     .is_some_and(|last_turn| last_turn.outcome == "completed")
                 && turn.current_turn.is_none()
         }),
-        AgentKind::Hermes => false,
         AgentKind::Dsh => false,
     }
 }
@@ -10998,7 +11029,7 @@ const ATTACH_REPLAY_RESET: &str = "\x1b]8;;\x1b\\\x1b[0m\x0f";
 /// edge — the client then repaints the same content correctly underneath, which
 /// is what surfaced as a duplicated, mangled attach screen.
 ///
-/// This is provider-agnostic on purpose: Codex, Claude Code, and Hermes all
+/// This is provider-agnostic on purpose: Codex, Claude Code, and DSH all
 /// stream through this one capture path, and each of their TUIs repaints over
 /// this baseline on its next render or on the resize the client sends right
 /// after attach.
@@ -11668,7 +11699,7 @@ fn provider_prompt_new_runtime_source_authorized(record: &crate::SessionRecord) 
         Some(AgentKind::Claude) => {
             resume.provider == "claude" && resume.capture_method == "claude-explicit-session-id"
         }
-        Some(AgentKind::Hermes) | Some(AgentKind::Dsh) | None => false,
+        Some(AgentKind::Dsh) | None => false,
     }
 }
 
@@ -11687,7 +11718,7 @@ fn provider_prompt_pending_fresh_runtime(record: &crate::SessionRecord) -> bool 
                 && resume.capture_method == "claude-explicit-session-id"
                 && !resume.session_id.trim().is_empty()
         }),
-        Some(AgentKind::Hermes) | Some(AgentKind::Dsh) | None => false,
+        Some(AgentKind::Dsh) | None => false,
     }
 }
 
@@ -11893,7 +11924,7 @@ async fn next_outbound_message(
 /// After a fresh (re)attach the client rebuilds its terminal emulator from
 /// scratch and sends its real size as the first resize frame. A `resize-window`
 /// to dimensions the tmux pane already has is a no-op — no SIGWINCH — so a
-/// full-screen agent (codex/claude/hermes) never repaints, and the client is
+/// full-screen agent (codex/claude/dsh) never repaints, and the client is
 /// left rendering the stale pre-attach snapshot mis-wrapped against its new
 /// grid. Force exactly one guaranteed size change on that first resize so the
 /// agent redraws its whole frame into the fresh grid. The short pause lets the
@@ -14192,15 +14223,15 @@ mod tests {
     fn launch_profiles_accept_a_bounded_double_ctrl_c_graceful_shutdown_contract() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launcher = executable(
-            &tmp.path().join("dsh-tui-launcher"),
+            &tmp.path().join("dsh-workbench-launcher"),
             "#!/usr/bin/env sh\nexit 0\n",
         );
 
         let profiles = AgentLaunchProfiles::from_json(
             &json!([{
-                "id": "dsh-tui",
-                "label": "DSH TUI",
-                "agent": "hermes",
+                "id": "dsh-workbench",
+                "label": "DSH",
+                "agent": "dsh",
                 "agent_bin": launcher,
                 "graceful_shutdown": "double-ctrl-c",
             }])
@@ -14212,16 +14243,80 @@ mod tests {
     }
 
     #[test]
-    fn dsh_tui_start_waits_for_its_interactive_composer_before_initial_prompt() {
-        assert_eq!(initial_prompt_paste_delay_ms(Some("dsh-tui")), 5_000);
+    fn dsh_start_waits_for_its_interactive_composer_before_initial_prompt() {
+        assert_eq!(initial_prompt_paste_delay_ms(AgentKind::Dsh), 5_000);
         assert_eq!(
-            initial_prompt_paste_delay_ms(None),
+            initial_prompt_paste_delay_ms(AgentKind::Codex),
             cli::DEFAULT_PASTE_DELAY_MS
         );
         assert_eq!(
-            initial_prompt_paste_delay_ms(Some("other-profile")),
+            initial_prompt_paste_delay_ms(AgentKind::Claude),
             cli::DEFAULT_PASTE_DELAY_MS
         );
+    }
+
+    #[test]
+    fn launch_profiles_load_the_deprecated_hermes_base_agent_as_dsh() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launcher = executable(&tmp.path().join("launcher"), "#!/bin/sh\nexit 0\n");
+        let (profiles, deprecated) = AgentLaunchProfiles::parse(
+            &json!([
+                { "id": "dsh-workbench", "label": "DSH", "agent": "hermes", "agent_bin": launcher },
+                { "id": "codex", "label": "Codex", "agent": "codex", "agent_bin": launcher },
+            ])
+            .to_string(),
+        )
+        .expect("a hermes profile still loads");
+        assert_eq!(deprecated, vec!["dsh-workbench".to_string()]);
+        let profile = profiles.get("dsh-workbench").expect("aliased profile");
+        assert_eq!(profile.agent, AgentKind::Dsh);
+        assert_eq!(profile.summary().agent, "dsh");
+        assert_eq!(
+            validate_launch_profiles_json(
+                &json!([{ "id": "dsh-tui", "label": "DSH", "agent": "hermes", "agent_bin": launcher }])
+                    .to_string()
+            )
+            .expect("serve config validation accepts the alias"),
+            vec!["dsh-tui".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn deprecated_hermes_profile_launches_as_a_dsh_pane() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir(&cwd).unwrap();
+        let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
+        let profiles = AgentLaunchProfiles::from_json(
+            &json!([{ "id":"dsh-workbench", "label":"DSH", "agent":"hermes", "agent_bin": launcher }])
+                .to_string(),
+        )
+        .unwrap();
+        let log = tmp.path().join("tmux.log");
+        let tmux = resume_tmux(tmp.path(), &log);
+        let mut st = state(tmp.path(), Some(TOKEN), tmux);
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
+
+        let (status, body) = call(
+            router(st),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({
+                    "agent":"dsh", "agent_profile":"dsh-workbench", "id":"aliased-dsh", "cwd":cwd
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["session"]["agent"], "dsh");
+        assert_eq!(body["data"]["session"]["agent_profile"], "dsh-workbench");
+        assert_ne!(
+            body["data"]["session"]["runtime"]["kind"],
+            crate::dsh_external::DSH_RUNTIME_KIND
+        );
+        let calls = fs::read_to_string(log).unwrap();
+        assert!(!calls.contains(" chat"), "calls={calls}");
     }
 
     #[test]
@@ -14233,9 +14328,9 @@ mod tests {
         fs::create_dir(&sessions).unwrap();
         let profiles = AgentLaunchProfiles::from_json(
             &json!([{
-                "id": "dsh-tui",
-                "label": "DSH TUI",
-                "agent": "hermes",
+                "id": "dsh-workbench",
+                "label": "DSH",
+                "agent": "dsh",
                 "agent_bin": launcher,
                 "dsh_history": {
                     "command": adapter,
@@ -14249,7 +14344,7 @@ mod tests {
 
         let sources = profiles.dsh_history_sources();
         assert_eq!(sources.len(), 1);
-        assert_eq!(sources[0].agent_profile, "dsh-tui");
+        assert_eq!(sources[0].agent_profile, "dsh-workbench");
         assert_eq!(sources[0].compression, "zstd");
     }
 
@@ -14265,7 +14360,7 @@ mod tests {
             &json!([{
                 "id": "dsh-read-only",
                 "label": "DSH read only",
-                "agent": "hermes",
+                "agent": "dsh",
                 "agent_bin": launcher,
                 "dsh_history": {
                     "command": adapter,
@@ -14281,7 +14376,7 @@ mod tests {
             &json!([{
                 "id": "dsh-exact-resume",
                 "label": "DSH exact resume",
-                "agent": "hermes",
+                "agent": "dsh",
                 "agent_bin": launcher,
                 "dsh_history": {
                     "command": adapter,
@@ -14303,9 +14398,9 @@ mod tests {
         let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
         let profiles = AgentLaunchProfiles::from_json(
             &json!([{
-                "id": "dsh-tui",
-                "label": "DSH TUI",
-                "agent": "hermes",
+                "id": "dsh-workbench",
+                "label": "DSH",
+                "agent": "dsh",
                 "agent_bin": launcher,
                 "dsh_history": {
                     "command": tmp.path().join("missing-history-adapter"),
@@ -14323,15 +14418,15 @@ mod tests {
     fn launch_profiles_reject_unknown_graceful_shutdown_contracts() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launcher = executable(
-            &tmp.path().join("dsh-tui-launcher"),
+            &tmp.path().join("dsh-workbench-launcher"),
             "#!/usr/bin/env sh\nexit 0\n",
         );
 
         let error = AgentLaunchProfiles::from_json(
             &json!([{
-                "id": "dsh-tui",
-                "label": "DSH TUI",
-                "agent": "hermes",
+                "id": "dsh-workbench",
+                "label": "DSH",
+                "agent": "dsh",
                 "agent_bin": launcher,
                 "graceful_shutdown": "force-kill",
             }])
@@ -16315,7 +16410,7 @@ mod tests {
     async fn websocket_unsubscribed_client_gets_binary_only_and_unsupported_ack() {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let state_dir = tmp.path().join("state");
-        seed_session(&state_dir, "ws-unsupported", "hermes", "hs-hermes-ws");
+        seed_session(&state_dir, "ws-unsupported", "dsh", "hs-dsh-ws");
         let tmux = minimal_tmux(tmp.path());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -19900,9 +19995,9 @@ esac
         );
         let profiles = AgentLaunchProfiles::from_json(
             &json!([{
-                "id":"dsh-tui",
-                "label":"DSH TUI",
-                "agent":"hermes",
+                "id":"dsh-workbench",
+                "label":"DSH",
+                "agent":"dsh",
                 "agent_bin":launcher,
                 "dsh_history":{
                     "command":adapter,
@@ -20105,9 +20200,9 @@ esac
         );
         let profiles = AgentLaunchProfiles::from_json(
             &json!([{
-                "id":"dsh-tui",
-                "label":"DSH TUI",
-                "agent":"hermes",
+                "id":"dsh-workbench",
+                "label":"DSH",
+                "agent":"dsh",
                 "agent_bin":launcher,
                 "dsh_history":{
                     "command":adapter,
@@ -20120,9 +20215,9 @@ esac
         .unwrap();
         let read_only_profiles = AgentLaunchProfiles::from_json(
             &json!([{
-                "id":"dsh-tui",
-                "label":"DSH TUI",
-                "agent":"hermes",
+                "id":"dsh-workbench",
+                "label":"DSH",
+                "agent":"dsh",
                 "agent_bin":launcher,
                 "dsh_history":{
                     "command":adapter,
@@ -20144,7 +20239,7 @@ esac
             .with_dsh_sources(profiles.dsh_history_sources()),
         );
         Arc::get_mut(&mut st).unwrap().launch_profiles = read_only_profiles;
-        let id = provider_history::stable_history_id("dsh", Some("dsh-tui"), "dsh-one");
+        let id = provider_history::stable_history_id("dsh", Some("dsh-workbench"), "dsh-one");
 
         let (status, body) = call(
             router(st.clone()),
@@ -20169,7 +20264,8 @@ esac
 
         Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
 
-        let missing_id = provider_history::stable_history_id("dsh", Some("dsh-tui"), "missing");
+        let missing_id =
+            provider_history::stable_history_id("dsh", Some("dsh-workbench"), "missing");
         let (status, body) = call(
             router(st.clone()),
             post_json(
@@ -20199,7 +20295,7 @@ esac
                 history_id: id.clone(),
                 provider: "dsh".to_string(),
                 provider_session_id: "dsh-one".to_string(),
-                agent_profile: Some("dsh-tui".to_string()),
+                agent_profile: Some("dsh-workbench".to_string()),
                 session_id: Some("kept-dsh".to_string()),
                 title: Some("Kept topic - Kept activity".to_string()),
                 title_state: Some(title_state),
@@ -20233,8 +20329,8 @@ esac
             body["data"]["session"]["title_state"]["topic"],
             "Kept topic"
         );
-        assert_eq!(body["data"]["session"]["agent"], "hermes");
-        assert_eq!(body["data"]["session"]["agent_profile"], "dsh-tui");
+        assert_eq!(body["data"]["session"]["agent"], "dsh");
+        assert_eq!(body["data"]["session"]["agent_profile"], "dsh-workbench");
         let record: Value = serde_json::from_slice(
             &fs::read(
                 tmp.path()
@@ -20306,7 +20402,7 @@ esac
         let adapter = executable(&tmp.path().join("dsh-history"), "#!/bin/sh\nexit 0\n");
         let profiles = AgentLaunchProfiles::from_json(
             &json!([{
-                "id":"dsh-tui", "label":"DSH TUI", "agent":"hermes",
+                "id":"dsh-workbench", "label":"DSH", "agent":"dsh",
                 "agent_bin": launcher,
                 "dsh_history": { "command": adapter, "root": history_root, "resume":"exact-id" }
             }])
@@ -20324,7 +20420,7 @@ esac
                 "/sessions",
                 Some(TOKEN),
                 json!({
-                    "agent":"hermes", "agent_profile":"dsh-tui", "id":"bad-dsh", "cwd":cwd,
+                    "agent":"dsh", "agent_profile":"dsh-workbench", "id":"bad-dsh", "cwd":cwd,
                     "agent_args":["--continue"]
                 }),
             ),
@@ -20341,7 +20437,7 @@ esac
                 "/sessions",
                 Some(TOKEN),
                 json!({
-                    "agent":"hermes", "agent_profile":"dsh-tui", "id":"fresh-dsh", "cwd":cwd,
+                    "agent":"dsh", "agent_profile":"dsh-workbench", "id":"fresh-dsh", "cwd":cwd,
                     "prompt":"initial DSH prompt"
                 }),
             ),
@@ -20370,7 +20466,7 @@ esac
     }
 
     #[tokio::test]
-    async fn read_only_dsh_profile_keeps_ordinary_hermes_launch() {
+    async fn read_only_dsh_profile_launches_its_bin_without_a_chat_subcommand() {
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("repo");
         let history_root = tmp.path().join("dsh-sessions");
@@ -20380,7 +20476,7 @@ esac
         let adapter = executable(&tmp.path().join("dsh-history"), "#!/bin/sh\nexit 0\n");
         let profiles = AgentLaunchProfiles::from_json(
             &json!([{
-                "id":"dsh-tui", "label":"DSH TUI", "agent":"hermes",
+                "id":"dsh-workbench", "label":"DSH", "agent":"dsh",
                 "agent_bin": launcher,
                 "dsh_history": { "command": adapter, "root": history_root }
             }])
@@ -20398,7 +20494,7 @@ esac
                 "/sessions",
                 Some(TOKEN),
                 json!({
-                    "agent":"hermes", "agent_profile":"dsh-tui", "id":"read-only-dsh", "cwd":cwd,
+                    "agent":"dsh", "agent_profile":"dsh-workbench", "id":"read-only-dsh", "cwd":cwd,
                     "agent_args":["--verbose"]
                 }),
             ),
@@ -20407,7 +20503,9 @@ esac
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert!(body["data"]["session"]["provider_resume"].is_null());
         let calls = fs::read_to_string(log).unwrap();
-        assert!(calls.contains("chat --verbose"), "calls={calls}");
+        assert_eq!(body["data"]["session"]["agent"], "dsh");
+        assert!(calls.contains("--verbose"), "calls={calls}");
+        assert!(!calls.contains(" chat"), "calls={calls}");
         assert!(!calls.contains("--agent-session-seed"), "calls={calls}");
     }
 
@@ -23655,7 +23753,19 @@ esac
         let tmp = tempfile::TempDir::new().unwrap();
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
 
-        for agent in ["hermes", "dsh"] {
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({ "agent": "hermes", "provider_resume_id": "external-id" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "invalid-agent");
+
+        for agent in ["dsh"] {
             let (status, body) = call(
                 router(st.clone()),
                 post_json(
@@ -24655,6 +24765,40 @@ esac
             commands.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         ));
+    }
+
+    #[test]
+    fn coordination_notifications_refuse_providers_without_a_delivery_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = crate::CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        for (id, agent, runtime_kind, unsupported) in [
+            ("retained-hermes", "hermes", "tmux", true),
+            ("dsh-pane", "dsh", "tmux", false),
+            (
+                "dsh-external",
+                "dsh",
+                crate::dsh_external::DSH_RUNTIME_KIND,
+                false,
+            ),
+            ("codex-pane", "codex", "tmux", false),
+            ("claude-pane", "claude", "tmux", false),
+        ] {
+            seed_session_with_runtime(tmp.path(), id, agent, &format!("hs-{id}"));
+            let record_path = tmp.path().join("sessions").join(id).join("session.json");
+            let mut record: Value =
+                serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
+            record["runtime"]["kind"] = json!(runtime_kind);
+            std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+            let record = load_session_record(&context, id).unwrap();
+            assert_eq!(
+                coordination_notification_provider_unsupported(&record),
+                unsupported,
+                "agent={agent} runtime={runtime_kind}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -32040,12 +32184,12 @@ exit 0
     async fn websocket_attach_replays_a_pty_ready_snapshot_for_every_provider() {
         // The staircased attach screen was provider-visible but not
         // provider-specific: the same tmux capture path serves Codex, Claude
-        // Code, and Hermes, so every provider must receive CRLF-terminated
+        // Code, and DSH, so every provider must receive CRLF-terminated
         // rows from a deterministic origin.
         for (id, agent, tmux_session) in [
             ("ws-replay-codex", "codex", "hs-codex-ws-replay"),
             ("ws-replay-claude", "claude", "hs-claude-ws-replay"),
-            ("ws-replay-hermes", "hermes", "hs-hermes-ws-replay"),
+            ("ws-replay-dsh", "dsh", "hs-dsh-ws-replay"),
         ] {
             let tmp = tempfile::TempDir::new().expect("tempdir");
             let state_dir = tmp.path().join("state");
@@ -36710,9 +36854,12 @@ exit 0
         // the reminder at a model-step boundary (sympoies/nils-cli#2011), so
         // serve must neither defer the generation forever nor report the
         // provider unsupported.
+        // A retained record of the retired `hermes` kind has no prompt route,
+        // whichever profile it was launched from.
         for (agent, dsh_console, expected_reason) in [
             ("dsh", false, "hook-delivered"),
-            ("hermes", true, "hook-delivered"),
+            ("dsh", true, "hook-delivered"),
+            ("hermes", true, "provider-unsupported"),
             ("hermes", false, "provider-unsupported"),
         ] {
             let tmp = tempfile::TempDir::new().expect("tempdir");
@@ -36722,8 +36869,8 @@ exit 0
                 let record_path = tmp.path().join("sessions/beta/session.json");
                 let mut record: Value =
                     serde_json::from_str(&fs::read_to_string(&record_path).unwrap()).unwrap();
-                record["runtime"]["agent_profile"] = json!("dsh-tui");
-                record["agent_bin"] = json!("/opt/agent-console/bin/run-agent-console-dsh");
+                record["runtime"]["agent_profile"] = json!("dsh-workbench");
+                record["agent_bin"] = json!("/opt/agent-console/bin/run-agent-console-workbench");
                 fs::write(record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
             }
             let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));

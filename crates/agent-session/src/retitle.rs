@@ -517,7 +517,6 @@ fn context_capabilities() -> BTreeMap<&'static str, &'static str> {
     BTreeMap::from([
         ("claude", "provider_transcript"),
         ("codex", "provider_transcript"),
-        ("hermes", "unavailable"),
     ])
 }
 

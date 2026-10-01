@@ -1,0 +1,2 @@
+{"event":"pre_llm_call","session_id":"dsh-session","is_first_turn":true,"platform":"cli"}
+{"event":"post_llm_call","session_id":"dsh-session","platform":"cli"}

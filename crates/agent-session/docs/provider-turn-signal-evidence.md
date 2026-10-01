@@ -4,8 +4,10 @@
 
 This report freezes the provider lifecycle evidence used by
 `agent-session.turn-event.v1` and `agent-session.turn-state.v1`. It was audited
-on 2026-07-11 against Codex CLI 0.144.1, Claude Code 2.1.206, Hermes Agent
-0.18.2, and the agent-session 1.21.17 implementation baseline. The exact
+on 2026-07-11 against Codex CLI 0.144.1, Claude Code 2.1.206, and the
+agent-session 1.21.17 implementation baseline. The Hermes provider audited at
+that time has since been retired from agent-session; its hooks, fixtures, and
+setup rows no longer exist. The exact
 attention addendum was audited on 2026-07-15 against Codex CLI 0.144.3 and
 Claude Code 2.1.210. The Claude active-turn coverage addendum was audited on
 2026-07-18 against the current hook reference and the live observations in
@@ -15,11 +17,7 @@ The support floors are deliberately the oldest versions directly covered by
 this audit, not guesses about earlier releases.
 
 The fixtures under `tests/fixtures/activity/` contain lifecycle identifiers and
-event names. The dedicated Hermes approval fixtures additionally freeze the
-0.18.2 shell `_serialize_payload` envelope and carry explicit discarded
-sentinel values for the matching metadata fields required by the provider
-contract; tests prove those values do not survive normalization.
-Prompt text, assistant output, tool input/output, commands, transcript paths,
+event names. Prompt text, assistant output, tool input/output, commands, transcript paths,
 credentials, and terminal content are removed before the normalized event is
 created.
 
@@ -52,11 +50,6 @@ created.
   subagent finishes responding, notifications including `idle_prompt`, and
   `Elicitation` / `ElicitationResult` with an optional `elicitation_id` on both
   callbacks.
-- [Hermes hooks](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/hooks.md)
-  documents `pre_llm_call`, `post_llm_call`, `pre_approval_request`,
-  `post_approval_response`, shell-hook consent, and synthetic hook tests. The
-  installed source was also checked because Hermes is not an agent-session-owned
-  stable interface.
 
 ## Support matrix
 
@@ -64,7 +57,6 @@ created.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Codex | 0.144.1 baseline; exact-attention versions 0.144.1 and 0.144.3; capacity enum re-audited at 0.153.4 | supported; exact attention and structured failure recovery require an audited agent-session app-server v2 runtime | `UserPromptSubmit`, observed | matching `agent-turn-complete`, authoritative; raw `Stop` remains journal evidence only | managed protocol authority: typed exact request/resolution; raw/unmanaged hook authority: `PermissionRequest` conservative latch | live app-server terminal `failed` + exact `usageLimitExceeded` or `serverOverloaded`, authoritative; raw TUI remains unavailable | additive hooks/notify plus capability-probed private Unix app-server runtime for fresh sessions |
 | Claude Code | 2.1.206 baseline; Elicitation audit 2.1.210; prompt-identity audit 2.1.285 | partial; usage failure supported; Elicitation exact only when both callbacks carry the same non-empty id | `UserPromptSubmit`, observed; general `PreToolUse` provides observed progress/reactivation; `SubagentStop` is ignored | `idle_prompt`, observed; raw `Stop` is journal evidence only | exact `AskUserQuestion`; conditional exact `Elicitation`; `PermissionRequest`/notification conservative latch | structured `StopFailure.error`, authoritative; only `rate_limit` can arm auto-resume | additive merge into `~/.claude/settings.json` |
-| Hermes | 0.18.2 | supported | `pre_llm_call`, observed | successful non-interrupted `post_llm_call`, authoritative | non-empty shell `extra.tool_call_id` projects to exact pre/post correlation; missing/empty-id tuple fallback remains conservative | runtime/fallback only | additive merge into `~/.hermes/config.yaml`; Hermes consent remains mandatory |
 
 Versions below the audited floor remain usable. `activity doctor` reports them
 as unverified and session views retain optional-field/activity fallback rather
@@ -263,37 +255,12 @@ enum as authoritative failure classification, maps it to the metadata-only
 server, max-output-token, and unknown controls remain non-resumable. The
 sanitized `auto-resume-failures.jsonl` fixture freezes this matrix.
 
-### Hermes
-
-The installed `post_llm_call` fires only after a successful final response and
-does not fire for interruption, so it is authoritative completion at the
-audited version. The 0.18.2 shell serializer places approval kwargs under
-`extra`, emits an empty top-level `session_id` for this callback, and carries
-the same non-empty `tool_call_id` on pre/post. The adapter reads only allowlisted
-extra fields, falls back to non-empty `extra.session_key`, and projects the
-tool-call id as an exact runtime-scoped correlation. Identical commands with
-different tool-call ids therefore clear independently and out of order;
-the event kind and projected tool-call id also derive a stable event id in the
-runtime replay index, so exact callbacks stay idempotent across interleaving,
-elapsed time, clearing, restart, and bounded journal eviction. Missing, null,
-or empty tool-call ids
-retain the older tuple fallback over `command`, `description`, `pattern_key`,
-`pattern_keys`, `session_key`, and `surface`. That tuple is canonicalized only
-in memory and projected by SHA-256; duplicate-identical fallback concurrency
-remains conservatively latched until authoritative completion, a new turn, or a
-runtime boundary. Raw kwargs never persist. Missing, malformed, or undocumented
-response choices fail open with sanitized diagnostics and do not clear.
-
 ## Concurrency, continuation, and privacy probes
 
 The executable fixtures cover:
 
 - two concurrent attention requests, correlated one-by-one clearing, and a
   metadata-only `pending_count`;
-- the frozen Hermes 0.18.2 shell envelope with nested `extra`, empty top-level
-  session id, exact tool-call replay/ordering, missing/empty-id fallback, stale
-  runtime rejection, sanitized diagnostics, raw-field non-persistence, restart,
-  and bounded journal eviction;
 - exact AskUserQuestion request/success/failure correlation and independent
   clearing alongside unrelated generic attention;
 - conditional exact Claude Elicitation form/URL correlation, identifier-less
@@ -414,9 +381,9 @@ migration, conflict state, and active hook path. Inline migration changes Codex
 hook source identities, so operators review the new definitions through
 `/hooks` and verify the absence of the dual-representation warning in a fresh
 session.
-Claude and Hermes do not have this two-file reviewed-plan contract, so the same
+Claude does not have this two-file reviewed-plan contract, so the same
 combined flags reject with `provider-repair-preview-unsupported`; ordinary
-dry-run and repair remain separate supported actions for those providers.
+dry-run and repair remain separate supported actions for that provider.
 Apply/repair/remove parse and plan both physical files before either mutation;
 the reviewed digest binds file creation, replacement, and deletion candidates.
 A guarded second-write failure restores the first write, including an already

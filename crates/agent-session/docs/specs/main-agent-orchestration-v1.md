@@ -332,7 +332,7 @@ reserved worker incarnation. A later accepted, released, or relationship
 revision does not invalidate that worker-authored proof. Before such proof,
 every manager-owned assignment mutation is fenced. A recovered checkpoint uses
 `delivery.transport_state: submit-key-recovery-succeeded`. Existing/replayed
-sessions, Hermes, stopped or replaced sessions, and any second recovery
+sessions, DSH, stopped or replaced sessions, and any second recovery
 keypress are ineligible. A final timeout reports `delivery.state: unverified`,
 `automatic_retry_safe: false`, and explicitly forbids duplicate prompt or
 further Enter injection. A successful terminal submit command alone is not

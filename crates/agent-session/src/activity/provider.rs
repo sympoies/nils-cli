@@ -36,29 +36,6 @@ pub(super) fn normalize_provider_hook(
         return Ok(None);
     }
     let exact_elicitation = claude_elicitation && elicitation_id.is_some();
-    let exact_hermes_approval = agent == AgentKind::Hermes
-        && matches!(
-            event_name,
-            "pre_approval_request" | "post_approval_response"
-        );
-    let hermes_approval_metadata = exact_hermes_approval
-        .then(|| hermes_approval_metadata(raw))
-        .transpose()?;
-    if agent == AgentKind::Hermes
-        && event_name == "post_approval_response"
-        && !matches!(
-            hermes_approval_metadata
-                .and_then(|metadata| metadata.get("choice"))
-                .and_then(Value::as_str),
-            Some("once" | "session" | "always" | "deny" | "timeout")
-        )
-    {
-        return Err(CliError::data(
-            "provider-hook-response-invalid",
-            "recognized Hermes approval response has an invalid or missing choice",
-            None,
-        ));
-    }
     let (kind, attention_kind, confidence) = match (agent, event_name, notification) {
         (AgentKind::Codex, "UserPromptSubmit", _) => {
             (TurnEventKind::TurnStarted, None, Confidence::Observed)
@@ -122,22 +99,14 @@ pub(super) fn normalize_provider_hook(
         (AgentKind::Claude, "Notification", Some("idle_prompt")) => {
             (TurnEventKind::TurnCompleted, None, Confidence::Observed)
         }
-        (AgentKind::Hermes | AgentKind::Dsh, "pre_llm_call", _) => {
+        (AgentKind::Dsh, "pre_llm_call", _) => {
             (TurnEventKind::TurnStarted, None, Confidence::Observed)
         }
-        (AgentKind::Hermes | AgentKind::Dsh, "post_llm_call", _) => (
+        (AgentKind::Dsh, "post_llm_call", _) => (
             TurnEventKind::TurnCompleted,
             None,
             Confidence::Authoritative,
         ),
-        (AgentKind::Hermes, "pre_approval_request", _) => (
-            TurnEventKind::AttentionRequested,
-            Some("approval"),
-            Confidence::Observed,
-        ),
-        (AgentKind::Hermes, "post_approval_response", _) => {
-            (TurnEventKind::AttentionCleared, None, Confidence::Observed)
-        }
         _ => return Ok(None),
     };
     let failure_reason = (agent == AgentKind::Claude && event_name == "StopFailure")
@@ -151,20 +120,10 @@ pub(super) fn normalize_provider_hook(
     if provider_session.is_none() {
         provider_session = optional_hook_string(raw, "session_key")?;
     }
-    if provider_session.is_none()
-        && let Some(metadata) = hermes_approval_metadata
-    {
-        provider_session = optional_hook_string(metadata, "session_key")?;
-    }
     let provider_session_id = provider_session
         .map(|value| projected_provider_identifier(runtime_id, agent, "session", value))
         .transpose()?;
-    let mut provider_turn = optional_hook_string(raw, "turn_id")?;
-    if provider_turn.is_none()
-        && let Some(metadata) = hermes_approval_metadata
-    {
-        provider_turn = optional_hook_string(metadata, "turn_id")?;
-    }
+    let provider_turn = optional_hook_string(raw, "turn_id")?;
     let provider_turn_id = provider_turn
         .map(|value| projected_provider_identifier(runtime_id, agent, "turn", value))
         .transpose()?;
@@ -183,9 +142,6 @@ pub(super) fn normalize_provider_hook(
                 .transpose()?,
             false,
         )
-    } else if let Some(metadata) = hermes_approval_metadata {
-        let (id, ambiguous) = hermes_approval_correlation(runtime_id, metadata)?;
-        (Some(id), ambiguous)
     } else {
         (None, false)
     };
@@ -197,26 +153,14 @@ pub(super) fn normalize_provider_hook(
         ));
     }
     let attention_id = match kind {
-        TurnEventKind::AttentionRequested
-            if exact_clarification || exact_elicitation || exact_hermes_approval =>
-        {
+        TurnEventKind::AttentionRequested if exact_clarification || exact_elicitation => {
             exact_attention_id
         }
         TurnEventKind::AttentionRequested => Some(uuid::Uuid::new_v4().to_string()),
         TurnEventKind::AttentionCleared => exact_attention_id,
         _ => None,
     };
-    let event_id = if exact_hermes_approval && !attention_correlation_ambiguous {
-        stable_hermes_approval_event_id(
-            runtime_id,
-            &kind,
-            attention_id
-                .as_deref()
-                .expect("exact Hermes approval correlation"),
-        )
-    } else {
-        uuid::Uuid::new_v4().to_string()
-    };
+    let event_id = uuid::Uuid::new_v4().to_string();
     Ok(Some(TurnEvent {
         schema_version: TURN_EVENT_VERSION.to_string(),
         event_id,
@@ -229,9 +173,7 @@ pub(super) fn normalize_provider_hook(
         attention_id,
         attention_kind: attention_kind.map(str::to_string),
         attention_correlation_ambiguous,
-        attention_correlation_exact: exact_clarification
-            || exact_elicitation
-            || (exact_hermes_approval && !attention_correlation_ambiguous),
+        attention_correlation_exact: exact_clarification || exact_elicitation,
         confidence,
         source_kind: SourceKind::ProviderHook,
         provider_time: None,

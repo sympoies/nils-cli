@@ -322,7 +322,7 @@ and continues waiting within the original `--await-ready` deadline. This is not
 a Main Agent decision or a prompt retry. The typed `submit_key_recovery`
 projection reports eligibility, whether the single recovery was attempted, and
 whether it produced the authenticated checkpoint. Existing/replayed sessions,
-Hermes, stopped or replaced sessions, and a second keypress are ineligible.
+DSH, stopped or replaced sessions, and a second keypress are ineligible.
 Prompt transport loads, pastes, and submits exactly once per completed start
 stage. An exact replay never repeats those effects; if `new-session` failed
 before launch, replay may replace only the same matching record carrying the

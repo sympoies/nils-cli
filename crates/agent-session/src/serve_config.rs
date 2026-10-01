@@ -1140,7 +1140,7 @@ mod tests {
 [[launch_profiles]]
 id = "dsh"
 label = "DSH"
-agent = "hermes"
+agent = "dsh"
 agent_bin = "/opt/dsh"
 provider_config_dir = "/opt/dsh-home"
 readiness_args = ["--version"]

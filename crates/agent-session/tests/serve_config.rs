@@ -46,16 +46,16 @@ timeout_ms = 20000
 max_chars = 12000
 
 [[launch_profiles]]
-id = "dsh-tui"
-label = "DSH TUI"
-agent = "hermes"
+id = "dsh-alt"
+label = "DSH Alt"
+agent = "dsh"
 agent_bin = "/opt/example/dsh"
 readiness_args = ["--version"]
 
 [[launch_profiles]]
 id = "dsh-workbench"
-label = "DSH Workbench"
-agent = "hermes"
+label = "DSH"
+agent = "dsh"
 agent_bin = "/opt/example/workbench"
 "#;
 
@@ -163,7 +163,7 @@ fn check_accepts_a_versioned_toml_document() {
     assert_eq!(data["launch_profiles"]["source"], "file");
     assert_eq!(
         data["launch_profiles"]["ids"],
-        serde_json::json!(["dsh-tui", "dsh-workbench"])
+        serde_json::json!(["dsh-alt", "dsh-workbench"])
     );
     assert_eq!(data["retitle"]["source"], "file");
     assert_eq!(data["codex_account_broker"]["source"], "file");
@@ -196,7 +196,7 @@ fn check_accepts_the_same_document_as_json() {
             }
           },
           "launch_profiles": [
-            {"id": "dsh-tui", "label": "DSH TUI", "agent": "hermes", "agent_bin": "/opt/example/dsh"}
+            {"id": "dsh-workbench", "label": "DSH", "agent": "dsh", "agent_bin": "/opt/example/dsh"}
           ]
         }"#,
     );
@@ -209,7 +209,7 @@ fn check_accepts_the_same_document_as_json() {
     assert_eq!(data["retitle"]["source"], "file");
     assert_eq!(
         data["launch_profiles"]["ids"],
-        serde_json::json!(["dsh-tui"])
+        serde_json::json!(["dsh-workbench"])
     );
 }
 
@@ -475,7 +475,7 @@ fn environment_launch_profiles_merge_ahead_of_file_profiles() {
     let config = fixture.write("serve.toml", VALID_TOML);
     let env_profiles = r#"[
       {"id":"codex-alt","label":"Codex Alt","agent":"codex","agent_bin":"/opt/env/codex"},
-      {"id":"dsh-tui","label":"DSH (env)","agent":"hermes","agent_bin":"/opt/env/dsh"}
+      {"id":"dsh-alt","label":"DSH (env)","agent":"dsh","agent_bin":"/opt/env/dsh"}
     ]"#;
 
     let output = fixture.check(&config, &[("AGENT_SESSION_LAUNCH_PROFILES", env_profiles)]);
@@ -485,13 +485,13 @@ fn environment_launch_profiles_merge_ahead_of_file_profiles() {
     assert_eq!(value["data"]["launch_profiles"]["source"], "merged");
     assert_eq!(
         value["data"]["launch_profiles"]["ids"],
-        serde_json::json!(["codex-alt", "dsh-tui", "dsh-workbench"])
+        serde_json::json!(["codex-alt", "dsh-alt", "dsh-workbench"])
     );
     let warnings = warnings(&value);
     assert!(
         warnings
             .iter()
-            .any(|w| w.contains("launch_profiles[0]") && w.contains("dsh-tui")),
+            .any(|w| w.contains("launch_profiles[0]") && w.contains("dsh-alt")),
         "{warnings:?}"
     );
 }
