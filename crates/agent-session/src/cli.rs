@@ -718,6 +718,20 @@ pub enum MessageCommand {
     Reply(MessageReplyArgs),
     /// Wait a bounded duration for one message revision change.
     Wait(MessageWaitArgs),
+    /// Claim the authenticated recipient's pending fixed mailbox reminder once.
+    Reminder(MessageReminderArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct MessageReminderArgs {
+    /// Authenticated recipient session id.
+    #[arg(long)]
+    pub session: String,
+    /// Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub capability_file: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, Args)]

@@ -3078,7 +3078,7 @@ fn session_accepts_activity_provider(record: &SessionRecord, provider: &str) -> 
     !agent_console_dsh_transport(record) && provider == record.agent
 }
 
-fn agent_console_dsh_transport(record: &SessionRecord) -> bool {
+pub(crate) fn agent_console_dsh_transport(record: &SessionRecord) -> bool {
     if record.agent != AgentKind::Hermes.as_str()
         || crate::session_agent_profile(record) != Some(AGENT_CONSOLE_DSH_PROFILE)
     {

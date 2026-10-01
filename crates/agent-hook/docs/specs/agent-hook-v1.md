@@ -1287,7 +1287,14 @@ capability-group fixture and reported per rule by `inventory` as `tier` and
   returns a block (asserted in debug builds; the identity-incomplete activity
   failure in the dispatcher is not a group outcome). `block-direct-python` is
   therefore advisory: under a uv or venv project it names the manager and the
-  expected interpreter instead of denying.
+  expected interpreter instead of denying. `user-prompt-agent-memory` also
+  carries the coordination mailbox reminder on every DSH model step. For an
+  authenticated managed session (`AGENT_SESSION_ID`, plus an absolute
+  `AGENT_SESSION_CAPABILITY_FILE` and `AGENT_SESSION_STATE_DIR`), it runs the
+  same-release `agent-session message reminder`, which claims each live
+  unread generation once. It appends the reminder only when the text is the
+  fixed body-free prompt for that session. A refusal, timeout, or any other
+  output adds nothing, so the step is never blocked.
 
 A rule declared `mode = "advise"` and a config override to `advise` are both
 rejected with `rule-override-advise-unsupported` when one of the rule's product

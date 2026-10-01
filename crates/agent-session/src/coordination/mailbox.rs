@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::cli::{
-    MessageAckArgs, MessageInboxArgs, MessageReplyArgs, MessageSendArgs, MessageShowArgs,
-    MessageWaitArgs,
+    MessageAckArgs, MessageInboxArgs, MessageReminderArgs, MessageReplyArgs, MessageSendArgs,
+    MessageShowArgs, MessageWaitArgs,
 };
 use crate::{CliContext, CliError};
 
@@ -159,6 +159,47 @@ where
         require_active_sender_claim,
         authorize,
     )
+}
+
+/// Claim the authenticated recipient's pending mailbox reminder.
+///
+/// A runtime without a serve prompt route (DSH) asks at its own safe model-step
+/// boundary. The claim is the same locked generation compare-and-swap serve
+/// uses, so one generation is announced once by exactly one owner; the
+/// returned text is the fixed body-free prompt, or `null` when no live unread
+/// generation is pending.
+pub(crate) fn reminder(context: &CliContext, args: MessageReminderArgs) -> Result<Value, CliError> {
+    let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
+    // One bounded acquisition: the claim either completes well inside the
+    // calling hook's child deadline or gives up without claiming.
+    let (record, recipient_incarnation, mut locked) =
+        super::authenticate_reminder_from_file(context, &args.session, Some(&capability_file))?;
+    let now = now_epoch();
+    clean_expired(&mut locked.registry, now);
+    revalidate_capability_file(
+        context,
+        &locked.registry,
+        &record,
+        &recipient_incarnation,
+        &capability_file,
+    )?;
+    let claimed = super::notification::claim_hook_reminder(
+        &mut locked.registry,
+        &record.id,
+        &recipient_incarnation,
+        now,
+    );
+    if claimed.is_some() {
+        locked.save()?;
+    }
+    Ok(json!({
+        "session_id": record.id,
+        "generation": claimed.as_ref().map(|candidate| candidate.generation),
+        "reminder": claimed.as_ref().map(|candidate| super::notification::fixed_prompt(
+            &candidate.target_session_id,
+            candidate.queued_at_epoch,
+        )),
+    }))
 }
 
 pub(crate) fn inbox(context: &CliContext, args: MessageInboxArgs) -> Result<Value, CliError> {

@@ -795,7 +795,31 @@ provider-not-ready targets remain queued with a bounded safe reason. A
 rejected or outcome-unknown `turn/steer` is retained as `attempt_unknown` for
 the same transcript-based reconciliation used by idle submission. Replaced incarnations,
 coordination-off sessions, Hermes, unmanaged sessions, and other unsupported
-providers are explicitly undeliverable. A non-app-server Codex generation
+providers are explicitly undeliverable.
+
+DeepSeek Harness (DSH) recipients, meaning a `dsh` lane or an Agent Console
+`hermes` session on the `dsh-tui` profile, have no serve prompt route. serve
+marks their generation `undeliverable` with reason `hook-delivered`. The DSH
+runtime instead calls `agent-hook dispatch --product dsh` at every model step,
+and its prompt-time rule runs the authenticated
+`agent-session message reminder`. Under the registry lock, that command claims
+the exact recipient incarnation's generation when it is live, unread, and
+either `queued` or `undeliverable`/`hook-delivered`. It records the generation
+as `prompt_submitted`, so a generation is announced once whichever owner
+claims it, and returns the same fixed prompt, or `null` when nothing is
+pending. A generation that serve is already submitting is not claimable. A
+later send re-queues the receipt as usual.
+
+Hook delivery is at most once per generation. The claim is persisted before
+the hook reads the output, so a hook child that is killed or abandoned after
+the save loses that generation's reminder until the next send. To keep that
+window small, the command authenticates, claims, and saves under one registry
+acquisition whose wait is bounded at 1 second, well inside the hook's 5-second
+child deadline. Under contention it fails with `coordination-lock-timeout`
+without claiming, and the generation stays claimable at the next model step. The hook appends the text to the
+model context as a `context` decision and fails open: a refusal, timeout, or
+text that is not the fixed reminder yields no context and never blocks the
+step. A non-app-server Codex generation
 previously marked `undeliverable` only for `provider-unsupported` may be re-queued by the
 typed manager-owned worker re-entry macro without allocating a new message
 generation. Prompt acceptance never changes message state; only authenticated
@@ -926,6 +950,7 @@ agent-session message show --session ID --message UUID [--capability-file FILE]
 agent-session message ack --session ID --message UUID --if-revision N [--capability-file FILE] --idempotency-key KEY
 agent-session message reply --session ID --message UUID --if-revision N --body-file FILE [--capability-file FILE] --idempotency-key KEY
 agent-session message wait --session ID --message UUID --if-revision N --timeout DURATION [--capability-file FILE]
+agent-session message reminder --session ID [--capability-file FILE]
 ```
 
 JSON uses the existing `cli.agent-session.<command>.v1` success/error envelope

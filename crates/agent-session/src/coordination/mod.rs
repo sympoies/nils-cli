@@ -38,6 +38,10 @@ const CLAIM_FENCE_REGISTRY_VERSION: &str = "agent-session.coordination-registry.
 const REGISTRY_FILE: &str = "registry.json";
 const REGISTRY_LOCK: &str = "registry.lock";
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+/// `message reminder` runs inside a hook child deadline (5 s). It takes the
+/// registry once with this shorter wait, so authentication, the claim, and
+/// the save finish well inside that deadline or give up unclaimed.
+const REMINDER_LOCK_TIMEOUT: Duration = Duration::from_secs(1);
 // Single source of truth lives in nils-common; keep the projection reader and
 // this read/write path on the same whole-registry cap.
 const MAX_REGISTRY_BYTES: u64 = nils_common::coordination_projection::MAX_REGISTRY_BYTES;
@@ -312,6 +316,11 @@ pub(crate) fn run_message(context: &CliContext, args: cli::MessageArgs) -> i32 {
             ("message-reply", args.format, mailbox::reply(context, args))
         }
         MessageCommand::Wait(args) => ("message-wait", args.format, mailbox::wait(context, args)),
+        MessageCommand::Reminder(args) => (
+            "message-reminder",
+            args.format,
+            mailbox::reminder(context, args),
+        ),
     };
     render_coordination(command, format, result)
 }
@@ -2027,6 +2036,14 @@ pub(crate) fn unresolved_notifications(
 
 // Shared private-file and bounded flock rules without loading any registry.
 pub(crate) fn lock_private_store(context: &CliContext, name: &str) -> Result<File, CliError> {
+    lock_private_store_within(context, name, LOCK_TIMEOUT)
+}
+
+fn lock_private_store_within(
+    context: &CliContext,
+    name: &str,
+    timeout: Duration,
+) -> Result<File, CliError> {
     let lock_path = coordination_root(context)?.join(name);
     let lock = OpenOptions::new()
         .read(true)
@@ -2060,7 +2077,7 @@ pub(crate) fn lock_private_store(context: &CliContext, name: &str) -> Result<Fil
             break;
         }
         let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::EWOULDBLOCK) || started.elapsed() >= LOCK_TIMEOUT {
+        if error.raw_os_error() != Some(libc::EWOULDBLOCK) || started.elapsed() >= timeout {
             return Err(CliError::runtime(
                 "coordination-lock-timeout",
                 "coordination registry lock could not be acquired",
@@ -2167,6 +2184,8 @@ pub(crate) fn reconcile_notification_absent(
 ) -> Result<bool, CliError> {
     notification::reconcile_absent(context, candidate)
 }
+
+pub(crate) const NOTIFICATION_REASON_HOOK_DELIVERED: &str = notification::REASON_HOOK_DELIVERED;
 
 pub(crate) fn notification_prompt(candidate: &NotificationCandidate) -> String {
     notification::fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch)
@@ -2374,31 +2393,56 @@ pub(crate) fn authenticate_token(
     let record = load_session_record(context, session_id).map_err(|_| unauthorized())?;
     let incarnation = incarnation(&record)?;
     let locked = lock_registry(context)?;
-    let broker = locked
-        .registry
-        .brokers
-        .get(&record.id)
-        .ok_or_else(unauthorized)?;
+    verify_capability_token(context, &locked.registry, &record, &incarnation, token)?;
+    Ok((record, incarnation))
+}
+
+/// Authenticate the recipient of `message reminder` under one registry
+/// acquisition bounded by [`REMINDER_LOCK_TIMEOUT`], returning that lock.
+pub(crate) fn authenticate_reminder_from_file(
+    context: &CliContext,
+    session_id: &str,
+    capability_file: Option<&Path>,
+) -> Result<(SessionRecord, String, LockedRegistry), CliError> {
+    let token = capability_token_from_file(capability_file)?;
+    if token.len() < 32 || token.len() > 256 || !token.is_ascii() {
+        return Err(unauthorized());
+    }
+    let record = load_session_record(context, session_id).map_err(|_| unauthorized())?;
+    let incarnation = incarnation(&record)?;
+    let locked = lock_registry_within(context, RegistryMaintenance::Full, REMINDER_LOCK_TIMEOUT)?;
+    verify_capability_token(context, &locked.registry, &record, &incarnation, &token)?;
+    Ok((record, incarnation, locked))
+}
+
+fn verify_capability_token(
+    context: &CliContext,
+    registry: &Registry,
+    record: &SessionRecord,
+    incarnation: &str,
+    token: &str,
+) -> Result<(), CliError> {
+    let broker = registry.brokers.get(&record.id).ok_or_else(unauthorized)?;
     if broker.state != "ready"
         || broker.incarnation != incarnation
         || !digest_eq(&broker.capability_digest, &digest_bytes(token.as_bytes()))
         || !broker::capability_available(
             context,
             &record.id,
-            &incarnation,
+            incarnation,
             &broker.capability_digest,
         )
     {
         return Err(unauthorized());
     }
-    if !broker::heartbeat_fresh(context, &record.id, &incarnation, broker.heartbeat_epoch) {
+    if !broker::heartbeat_fresh(context, &record.id, incarnation, broker.heartbeat_epoch) {
         return Err(CliError::runtime(
             "coordination-broker-lost",
             "coordination broker heartbeat is stale",
             None,
         ));
     }
-    Ok((record, incarnation))
+    Ok(())
 }
 
 pub(crate) fn authenticate_recovery_token(
@@ -2593,8 +2637,16 @@ fn lock_registry_with_maintenance(
     context: &CliContext,
     maintenance: RegistryMaintenance,
 ) -> Result<LockedRegistry, CliError> {
+    lock_registry_within(context, maintenance, LOCK_TIMEOUT)
+}
+
+fn lock_registry_within(
+    context: &CliContext,
+    maintenance: RegistryMaintenance,
+    timeout: Duration,
+) -> Result<LockedRegistry, CliError> {
     let root = coordination_root(context)?;
-    let lock = lock_private_store(context, REGISTRY_LOCK)?;
+    let lock = lock_private_store_within(context, REGISTRY_LOCK, timeout)?;
     let path = root.join(REGISTRY_FILE);
     let mut registry = match read_private_file(&path, MAX_REGISTRY_BYTES) {
         Ok(bytes) => {

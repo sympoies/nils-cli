@@ -8090,6 +8090,20 @@ async fn dispatch_coordination_notification(
         update_notification_undeliverable(&state, &candidate, "coordination-disabled").await;
         return;
     }
+    // DSH (a `dsh` lane or an Agent Console `hermes`/`dsh-tui` session) has no
+    // serve prompt route; its policy hook claims the reminder at a model-step
+    // boundary through `message reminder`.
+    if record.agent == AgentKind::Dsh.as_str()
+        || crate::activity::agent_console_dsh_transport(&record)
+    {
+        update_notification_undeliverable(
+            &state,
+            &candidate,
+            crate::coordination::NOTIFICATION_REASON_HOOK_DELIVERED,
+        )
+        .await;
+        return;
+    }
     if record.agent == AgentKind::Hermes.as_str() {
         update_notification_undeliverable(&state, &candidate, "provider-unsupported").await;
         return;
@@ -35985,6 +35999,48 @@ exit 0
         let notification = notification_fixture(tmp.path());
         assert_eq!(notification["state"], "prompt_submitted");
         assert_eq!(notification["notified_generation"], 2);
+    }
+
+    #[tokio::test]
+    async fn coordination_notification_leaves_dsh_recipients_to_hook_delivery() {
+        // A DSH recipient has no serve prompt route: its policy hook claims
+        // the reminder at a model-step boundary (sympoies/nils-cli#2011), so
+        // serve must neither defer the generation forever nor report the
+        // provider unsupported.
+        for (agent, dsh_console, expected_reason) in [
+            ("dsh", false, "hook-delivered"),
+            ("hermes", true, "hook-delivered"),
+            ("hermes", false, "provider-unsupported"),
+        ] {
+            let tmp = tempfile::TempDir::new().expect("tempdir");
+            seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
+            seed_session_with_runtime(tmp.path(), "beta", agent, "hs-beta");
+            if dsh_console {
+                let record_path = tmp.path().join("sessions/beta/session.json");
+                let mut record: Value =
+                    serde_json::from_str(&fs::read_to_string(&record_path).unwrap()).unwrap();
+                record["runtime"]["agent_profile"] = json!("dsh-tui");
+                record["agent_bin"] = json!("/opt/agent-console/bin/run-agent-console-dsh");
+                fs::write(record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+            }
+            let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+            let alpha = load_session_record(&state.context, "alpha").expect("alpha");
+            let beta = load_session_record(&state.context, "beta").expect("beta");
+            let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
+            provision_ready_coordination_fixture(&state.context, &beta);
+            send_notification_fixture(&state, &alpha_capability, "dsh-hook-delivery-0001").await;
+            drain_coordination_notifications(state.clone()).await;
+            let notification = notification_fixture(tmp.path());
+            assert_eq!(
+                notification["state"], "undeliverable",
+                "agent={agent} dsh_console={dsh_console} notification={notification}"
+            );
+            assert_eq!(
+                notification["last_reason"], expected_reason,
+                "agent={agent} dsh_console={dsh_console}"
+            );
+            assert_eq!(notification["notified_generation"], 0);
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
