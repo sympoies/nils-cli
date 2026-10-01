@@ -19,6 +19,9 @@ const REASON_PENDING: &str = "notification-pending";
 const REASON_ATTEMPTING: &str = "notification-attempting";
 const REASON_MIGRATED_UNKNOWN: &str = "migrated-attempt-outcome-unknown";
 const REASON_INVALID_STATE: &str = "notification-state-invalid";
+/// serve has no prompt route to the recipient; its policy hook claims the
+/// reminder at the runtime's own safe boundary instead.
+pub(crate) const REASON_HOOK_DELIVERED: &str = "hook-delivered";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
@@ -105,6 +108,52 @@ pub(crate) fn has_live_unread(
             && message.recipient_incarnation == target_incarnation
             && message.state == "unread"
             && message.expires_at_epoch > now
+    })
+}
+
+/// Claim the exact recipient incarnation's pending generation for delivery by
+/// its policy hook, under the caller's registry lock.
+///
+/// Only a live unread generation that serve has not started submitting is
+/// claimable: `queued`, or the `undeliverable`/`hook-delivered` state serve
+/// records for a hook-delivered recipient. The claim records the generation as
+/// submitted in one step, so neither serve nor a repeated hook call announces
+/// it again; a later send advances the generation.
+pub(crate) fn claim_hook_reminder(
+    registry: &mut Registry,
+    target_session_id: &str,
+    target_incarnation: &str,
+    now: i64,
+) -> Option<NotificationCandidate> {
+    normalize_registry(registry, now);
+    if !has_live_unread(registry, target_session_id, target_incarnation, now) {
+        return None;
+    }
+    let receipt = registry
+        .notifications
+        .get_mut(&receipt_key(target_session_id, target_incarnation))?;
+    let claimable = receipt.state == "queued"
+        || (receipt.state == "undeliverable"
+            && receipt.last_reason.as_deref() == Some(REASON_HOOK_DELIVERED));
+    if !claimable || receipt.generation <= receipt.notified_generation {
+        return None;
+    }
+    let attempted_at = jiff::Timestamp::from_second(now).ok()?;
+    receipt.state = "prompt_submitted".to_string();
+    receipt.attempted_generation = receipt.generation;
+    receipt.notified_generation = receipt.generation;
+    receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
+    receipt.attempted_at_epoch = now;
+    receipt.attempted_at = Some(attempted_at.to_string());
+    receipt.updated_at_epoch = now;
+    receipt.last_reason = Some("prompt-accepted".to_string());
+    Some(NotificationCandidate {
+        target_session_id: target_session_id.to_string(),
+        target_incarnation: target_incarnation.to_string(),
+        generation: receipt.generation,
+        queued_at_epoch: receipt.queued_at_epoch,
+        attempted_at_epoch: now,
+        attempted_at: receipt.attempted_at.clone(),
     })
 }
 
@@ -810,7 +859,8 @@ fn safe_reason(reason: &str) -> String {
         | "submission-outcome-unknown"
         | "provider-observation-unavailable"
         | "migrated-attempt-outcome-unknown"
-        | "notification-state-invalid" => reason.to_string(),
+        | "notification-state-invalid"
+        | REASON_HOOK_DELIVERED => reason.to_string(),
         _ => REASON_INVALID_STATE.to_string(),
     }
 }

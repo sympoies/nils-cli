@@ -389,6 +389,7 @@ fn coordination_command_name(command: &Command) -> Option<&'static str> {
             cli::MessageCommand::Ack(_) => "message-ack",
             cli::MessageCommand::Reply(_) => "message-reply",
             cli::MessageCommand::Wait(_) => "message-wait",
+            cli::MessageCommand::Reminder(_) => "message-reminder",
         }),
         Command::Metadata(args) => Some(match &args.command {
             cli::MetadataCommand::Attach(_) => "metadata-attach",
@@ -428,6 +429,7 @@ fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("message", "ack") => Some("message-ack"),
             ("message", "reply") => Some("message-reply"),
             ("message", "wait") => Some("message-wait"),
+            ("message", "reminder") => Some("message-reminder"),
             ("metadata", "attach") => Some("metadata-attach"),
             ("metadata", "show") => Some("metadata-show"),
             _ => None,
@@ -484,6 +486,7 @@ fn command_format(command: &Command) -> OutputFormat {
             cli::MessageCommand::Ack(args) => args.format,
             cli::MessageCommand::Reply(args) => args.format,
             cli::MessageCommand::Wait(args) => args.format,
+            cli::MessageCommand::Reminder(args) => args.format,
         },
         Command::Metadata(args) => match &args.command {
             cli::MetadataCommand::Attach(args) => args.format,

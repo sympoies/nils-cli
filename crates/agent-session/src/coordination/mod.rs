@@ -312,6 +312,11 @@ pub(crate) fn run_message(context: &CliContext, args: cli::MessageArgs) -> i32 {
             ("message-reply", args.format, mailbox::reply(context, args))
         }
         MessageCommand::Wait(args) => ("message-wait", args.format, mailbox::wait(context, args)),
+        MessageCommand::Reminder(args) => (
+            "message-reminder",
+            args.format,
+            mailbox::reminder(context, args),
+        ),
     };
     render_coordination(command, format, result)
 }
@@ -2167,6 +2172,8 @@ pub(crate) fn reconcile_notification_absent(
 ) -> Result<bool, CliError> {
     notification::reconcile_absent(context, candidate)
 }
+
+pub(crate) const NOTIFICATION_REASON_HOOK_DELIVERED: &str = notification::REASON_HOOK_DELIVERED;
 
 pub(crate) fn notification_prompt(candidate: &NotificationCandidate) -> String {
     notification::fixed_prompt(&candidate.target_session_id, candidate.queued_at_epoch)
