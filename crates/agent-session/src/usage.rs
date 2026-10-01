@@ -55,8 +55,13 @@ const HELPER_TIMEOUT: Duration = Duration::from_secs(30);
 /// `claude-cli` may fall back to a PTY probe; leave room to kill it cleanly.
 const CLAUDE_INNER_TIMEOUT_SECONDS: u64 = 25;
 const RESET_TIMEOUT: Duration = Duration::from_secs(30);
-/// `claude-cli` reads status (5 seconds) and then posts once (25 seconds).
+/// `claude-cli` may probe the Claude Code version (3 seconds), reads status
+/// (`CLAUDE_RESET_STATUS_SECONDS`), and then posts once
+/// (`CLAUDE_RESET_POST_SECONDS`). serve pins both so the CLI always finishes
+/// before this kill deadline, never in the middle of the irreversible POST.
 const CLAUDE_RESET_TIMEOUT: Duration = Duration::from_secs(35);
+const CLAUDE_RESET_STATUS_SECONDS: &str = "5";
+const CLAUDE_RESET_POST_SECONDS: &str = "25";
 const HELPER_OUTPUT_LIMIT: u64 = 1024 * 1024;
 const RESET_OUTPUT_LIMIT: u64 = 64 * 1024;
 const MAX_RESET_BODY_BYTES: usize = 16 * 1024;
@@ -1409,7 +1414,16 @@ fn run_claude_reset(
             "json",
             account,
         ],
-        &[],
+        &[
+            (
+                "CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS",
+                CLAUDE_RESET_STATUS_SECONDS.to_string(),
+            ),
+            (
+                "CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS",
+                CLAUDE_RESET_POST_SECONDS.to_string(),
+            ),
+        ],
         CLAUDE_RESET_TIMEOUT,
         RESET_OUTPUT_LIMIT,
     )

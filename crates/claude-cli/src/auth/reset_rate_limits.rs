@@ -259,7 +259,9 @@ fn redeem(options: &ResetOptions) -> Result<Option<ResetResult>, Failure> {
         403 => Err(auth_required("permission_denied")),
         429 => Err(provider_unavailable("rate_limited")),
         500..=599 => Err(provider_unavailable("service_unavailable")),
-        _ => parse_reset_response(options.program, &text).map_err(|_| provider_rejected()),
+        // Claude Code reports any other status as a failed claim; a body that
+        // happens to read as a result is not an outcome.
+        _ => Err(provider_rejected()),
     }
     .map(Some)
 }

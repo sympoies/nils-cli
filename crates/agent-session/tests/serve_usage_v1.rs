@@ -83,8 +83,9 @@ impl Stubs {
             ),
         ] {
             let mut script = format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\ncase \"$1\" in\n",
-                log = stubs.log_path(program).display()
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\nprintf 'timeouts post=%s status=%s\\n' \"$CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS\" \"$CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS\" >> '{env_log}'\ncase \"$1\" in\n",
+                log = stubs.log_path(program).display(),
+                env_log = stubs.dir.join(format!("{program}.env.log")).display()
             );
             for (verb, kind) in kinds {
                 script.push_str(&format!(
@@ -734,7 +735,12 @@ fn claude_reset_serve(tmp: &tempfile::TempDir, stubs: &Stubs) -> Serve {
     Serve::spawn(
         tmp.path(),
         stubs,
-        &[("AGENT_SESSION_CLAUDE_RESET_ACCOUNTS", "alpha, charlie")],
+        &[
+            ("AGENT_SESSION_CLAUDE_RESET_ACCOUNTS", "alpha, charlie"),
+            ("AGENT_SESSION_CODEX_RESET_ACCOUNTS", "alpha"),
+            // An operator override must not let the CLI outlive serve's kill.
+            ("CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS", "120"),
+        ],
     )
 }
 
@@ -843,14 +849,21 @@ fn claude_reset_redeems_once_and_replays_the_recorded_outcome() {
         assert!(text.contains("idempotency-key-reused"), "{text}");
     }
     assert_eq!(stubs.calls("claude-cli", "auth").len(), 1);
+    // serve bounds the CLI's status read and POST inside its own kill deadline.
+    let env_log = fs::read_to_string(stubs.dir.join("claude-cli.env.log")).expect("env log");
+    assert!(env_log.contains("timeouts post=25 status=5"), "{env_log}");
 
-    // Codex and Claude keep separate replay records.
+    // Codex and Claude keep separate replay records: the same key is a fresh
+    // Codex redemption, not a Claude replay or a conflict.
     let (status, text) = serve.post(
         "/codex/reset/v1",
         Some(TOKEN),
         &json!({ "account": "alpha", "idempotency_key": RESET_KEY }),
     );
-    assert_eq!(status, 503, "{text}");
+    assert_eq!(status, 200, "{text}");
+    let codex: Value = serde_json::from_str(&text).expect("codex reset json");
+    assert_eq!(codex["replayed"], json!(false), "{text}");
+    assert_eq!(stubs.calls("codex-cli", "account").len(), 1);
 }
 
 #[test]

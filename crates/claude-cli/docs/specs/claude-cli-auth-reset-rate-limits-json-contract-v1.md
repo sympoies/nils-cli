@@ -121,7 +121,7 @@ Upstream response bodies are never forwarded.
 | `profile-not-found`, `profile-invalid`, `organization-unknown`, `endpoint-invalid` | `1` | The profile or configuration cannot be used. |
 | `claude-auth-required` | `2` | Expired token (`reason_code: auth_expired`, no request), or HTTP `401` / `403` (`auth_expired` / `permission_denied`). |
 | `provider-unavailable` | `3` | HTTP `429` (`rate_limited`), `5xx` (`service_unavailable`), transport failure, or timeout (`timeout`). `retryable: true`: retry with the same request id. |
-| `provider-rejected` | `3` | Any other non-success status without a valid result body. |
+| `provider-rejected` | `3` | Any other non-2xx status (not 401, 403, 429, or 5xx), whatever its body says. |
 | `invalid-provider-response` | `3` | Unreadable status or reset body, or an unknown result. |
 
 ## Privacy boundary

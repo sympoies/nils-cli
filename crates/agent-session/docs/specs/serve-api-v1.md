@@ -944,7 +944,7 @@ recorded in `sympoies/nils-cli#1409`.
 
 `GET /usage/v1`, `POST /codex/reset/v1`, and `POST /claude/reset/v1` serve
 provider usage, the earned Codex rate-limit reset, and the Claude limit
-resets from the `codex-cli` and `claude-cli` provider CLIs on `PATH`, so a console edge needs no separate host helper. Both require the
+resets from the `codex-cli` and `claude-cli` provider CLIs on `PATH`, so a console edge needs no separate host helper. All three require the
 server bearer, like every other authenticated route. Their response shapes
 match what a console edge already parses from the helpers they replace; the
 synthetic fixtures under `tests/fixtures/usage-v1/` pin that projection.
@@ -1089,7 +1089,11 @@ host, so grant ids never cross this boundary.
 - A malformed body is `422 invalid-request`. CLI failures are
   `502 claude-reset-failed`, `502 claude-reset-invalid-response`,
   `502 claude-reset-unavailable`, or `504 claude-reset-timeout` (35 seconds,
-  an unknown result to retry with the same key). `claude-reset-failed` adds
+  an unknown result to retry with the same key). serve runs the CLI with
+  `CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS=5` and
+  `CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS=25`, overriding its own
+  environment, so the CLI finishes its status read and POST before that
+  deadline. `claude-reset-failed` adds
   `error.details` when the CLI reported one of its documented error codes:
   `{"cli_code": "<code>", "reason_code": "<reason>" | null, "retryable": <bool>}`.
   `cli_code` is one of `claude-auth-required`, `provider-unavailable`,

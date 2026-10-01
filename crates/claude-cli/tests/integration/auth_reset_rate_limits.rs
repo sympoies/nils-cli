@@ -560,6 +560,24 @@ fn reset_rate_limits_maps_http_failures_without_retrying_the_post() {
         assert_eq!(requests[1].method, "POST");
     }
 
+    // Like Claude Code, any other non-2xx answer is a rejection, even when its
+    // body reads as a result: only a 2xx response reports an outcome.
+    for status in [400, 404, 409] {
+        fx.set_reset(status, json!({ "result": "reset", "resets_left": 0 }));
+        let payload = assert_error(&fx.redeem("cedar_ember"), 3, "provider-rejected");
+        assert_eq!(
+            payload["error"]["details"]["retryable"], false,
+            "status {status}"
+        );
+        assert!(
+            payload.get("result").is_none(),
+            "status {status}: {payload}"
+        );
+        let requests = fx.requests();
+        assert_eq!(requests.len(), 2, "status {status}");
+        assert_eq!(requests[1].method, "POST");
+    }
+
     // A failed status read never posts.
     fx.set_status(403, "{}".to_string());
     assert_error(&fx.redeem("juniper_tide"), 2, "claude-auth-required");
