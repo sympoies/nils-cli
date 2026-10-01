@@ -1000,6 +1000,22 @@ portable-paths seam) or whose command field cannot be read at all; every other
 Tier B or Tier C group explains the retry as context. Git command-consuming forms such as
 rebase exec and submodule foreach, plus explicit transport-helper selection,
 are rejected rather than partially parsed.
+A command substitution, `$(...)` or backtick, whether unquoted, double-quoted,
+in a `[`/`[[`/`test` operand, or in an unquoted-delimiter here-document body,
+is classified as its own command ahead of the command it expands, which keeps
+one dynamic placeholder argument. Shell comments and quoted-delimiter
+here-document bodies are inert; a substitution or here-document that is nested
+too deeply, unterminated, or not certainly read the way the shell reads it
+stays unclassifiable. The `[` and `[[` test words and the `if`, `then`, `else`,
+`elif`, `while`, `until`, `do`, and data-only `for NAME in` compound words are
+classified command by command; `case`, subshells, and process substitution
+stay unclassifiable. The commit and default-delivery seams admit a Git builtin
+and an installed `git-<name>` program (exec-path porcelain or a PATH
+extension), which Git runs before any alias, unless the invocation retargets
+PATH or GIT_EXEC_PATH lookup. `semantic-commit` help, `--dry-run`, and
+`--validate-only` forms author nothing and are not default-branch delivery. The
+`DSH_RUNTIME_KIT_WORKSPACE_LEASE_V2=1` selector defers the checkout guard
+before any shell classification.
 Exact abort/quit recovery and owned delivery CLIs remain admissible.
 `semantic-commit --message-file` and repeated scalar message/repository options
 are not accepted at this transcript boundary.
