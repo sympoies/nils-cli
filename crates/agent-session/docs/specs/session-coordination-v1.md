@@ -808,7 +808,15 @@ either `queued` or `undeliverable`/`hook-delivered`. It records the generation
 as `prompt_submitted`, so a generation is announced once whichever owner
 claims it, and returns the same fixed prompt, or `null` when nothing is
 pending. A generation that serve is already submitting is not claimable. A
-later send re-queues the receipt as usual. The hook appends the text to the
+later send re-queues the receipt as usual.
+
+Hook delivery is at most once per generation. The claim is persisted before
+the hook reads the output, so a hook child that is killed or abandoned after
+the save loses that generation's reminder until the next send. To keep that
+window small, the command authenticates, claims, and saves under one registry
+acquisition whose wait is bounded at 1 second, well inside the hook's 5-second
+child deadline. Under contention it fails with `coordination-lock-timeout`
+without claiming, and the generation stays claimable at the next model step. The hook appends the text to the
 model context as a `context` decision and fails open: a refusal, timeout, or
 text that is not the fixed reminder yields no context and never blocks the
 step. A non-app-server Codex generation

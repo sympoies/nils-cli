@@ -170,10 +170,11 @@ where
 /// generation is pending.
 pub(crate) fn reminder(context: &CliContext, args: MessageReminderArgs) -> Result<Value, CliError> {
     let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
-    let (record, recipient_incarnation) =
-        authenticate_from_file(context, &args.session, Some(&capability_file))?;
+    // One bounded acquisition: the claim either completes well inside the
+    // calling hook's child deadline or gives up without claiming.
+    let (record, recipient_incarnation, mut locked) =
+        super::authenticate_reminder_from_file(context, &args.session, Some(&capability_file))?;
     let now = now_epoch();
-    let mut locked = lock_registry(context)?;
     clean_expired(&mut locked.registry, now);
     revalidate_capability_file(
         context,

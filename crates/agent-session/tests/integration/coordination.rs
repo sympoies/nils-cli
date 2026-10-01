@@ -5034,6 +5034,109 @@ fn message_reminder_claims_each_live_unread_generation_once() {
 }
 
 #[test]
+fn message_reminder_gives_up_under_lock_contention_without_claiming() {
+    // The hook that runs `message reminder` has a 5 s child deadline. The
+    // claim must finish well inside it or give up unclaimed, so a reminder is
+    // never persisted as delivered by a child the hook already abandoned.
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    fs::create_dir(&state_dir).expect("state");
+    seed_brokers(
+        &state_dir,
+        &[
+            (
+                "alpha",
+                "incarnation-alpha",
+                "alpha-private-capability-material",
+            ),
+            (
+                "beta",
+                "incarnation-beta",
+                "beta-private-capability-material",
+            ),
+        ],
+    );
+    let body = tmp.path().join("body.txt");
+    fs::write(&body, "contended reminder body").expect("body");
+    let state = state_dir.to_string_lossy().to_string();
+    let alpha_cap = capability(&state_dir, "alpha");
+    let beta_cap = capability(&state_dir, "beta");
+    let sent = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state,
+            "message",
+            "send",
+            "--from",
+            "alpha",
+            "--to",
+            "beta",
+            "--body-file",
+            body.to_str().expect("body"),
+            "--capability-file",
+            &alpha_cap,
+            "--idempotency-key",
+            "contended-reminder-0001",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(sent.code, 0, "stderr={}", sent.stderr_text());
+    let reminder = || {
+        run(
+            tmp.path(),
+            &[
+                "--state-dir",
+                &state,
+                "message",
+                "reminder",
+                "--session",
+                "beta",
+                "--capability-file",
+                &beta_cap,
+                "--format",
+                "json",
+            ],
+        )
+    };
+
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(state_dir.join("coordination/registry.lock"))
+        .expect("registry lock");
+    lock.lock().expect("hold the registry lock");
+    let started = Instant::now();
+    let contended = reminder();
+    let elapsed = started.elapsed();
+    lock.unlock().expect("release the registry lock");
+    assert_ne!(contended.code, 0, "stdout={}", contended.stdout_text());
+    assert_eq!(
+        contended.stdout_json()["error"]["code"],
+        "coordination-lock-timeout"
+    );
+    assert!(
+        elapsed < Duration::from_millis(1_800),
+        "the reminder claim must give up well inside the hook deadline: {elapsed:?}"
+    );
+    let receipt = coordination_registry(&state_dir)["notifications"]
+        .as_object()
+        .expect("notifications")
+        .values()
+        .find(|receipt| receipt["target_session_id"] == "beta")
+        .expect("beta receipt")
+        .clone();
+    assert_eq!(receipt["notified_generation"], 0);
+
+    // The generation stays claimable once the lock is free.
+    let claimed = reminder();
+    assert_eq!(claimed.code, 0, "stderr={}", claimed.stderr_text());
+    assert_eq!(data(&claimed)["generation"], 1);
+    assert!(data(&claimed)["reminder"].is_string());
+}
+
+#[test]
 fn cli_send_and_reply_share_recipient_generation_scheduling() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
