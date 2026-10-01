@@ -1902,6 +1902,10 @@ struct Invocation {
     /// Whether the words before `git` change PATH or Git's exec-path, so an
     /// installed `git-<name>` program the hook sees may be absent for Git.
     lookup_retargeted: bool,
+    /// The command's arguments as the program receives them: `words` with
+    /// every unquoted redirection operator and its target removed. `None` when
+    /// the redirections could not be removed safely.
+    argument_words: Option<Vec<String>>,
 }
 
 impl Invocation {
@@ -1915,6 +1919,7 @@ impl Invocation {
             unresolved_output: false,
             operands_expand: false,
             lookup_retargeted: false,
+            argument_words: Some(Vec::new()),
         }
     }
 
@@ -1996,6 +2001,120 @@ fn without_redirections(arguments: &[String]) -> Vec<&str> {
         index += if target.is_empty() { 2 } else { 1 };
     }
     kept
+}
+
+/// The unwrapped command words of one simple command as its program receives
+/// them: every unquoted redirection operator and its target removed, while a
+/// quoted or escaped `<` or `>` stays a literal character of its word.
+fn program_arguments(segment: &str) -> Option<Vec<String>> {
+    let mut tokens = shell_words::split(&strip_unquoted_redirections(segment)?).ok()?;
+    while tokens
+        .first()
+        .is_some_and(|word| compound_prefix_word(word))
+    {
+        tokens.remove(0);
+    }
+    let (words, _, unresolved) = unwrap_invocation(tokens);
+    (!unresolved).then_some(words)
+}
+
+/// Remove every unquoted redirection operator (with an optional leading file
+/// descriptor) and its target word, as the shell removes them before the
+/// program sees its arguments. Returns `None` when an operator has no target.
+fn strip_unquoted_redirections(segment: &str) -> Option<String> {
+    let bytes = segment.as_bytes();
+    let mut out = String::with_capacity(segment.len());
+    let mut copied = 0;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut word_start = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        match quote {
+            Some(b'\'') => {
+                if byte == b'\'' {
+                    quote = None;
+                }
+                index += 1;
+                continue;
+            }
+            Some(_) => {
+                match byte {
+                    b'\\' => escaped = true,
+                    b'"' => quote = None,
+                    _ => {}
+                }
+                index += 1;
+                continue;
+            }
+            None => {}
+        }
+        if byte.is_ascii_whitespace() {
+            word_start = None;
+            index += 1;
+            continue;
+        }
+        let start = *word_start.get_or_insert(index);
+        match byte {
+            b'\\' => escaped = true,
+            b'\'' | b'"' => quote = Some(byte),
+            b'<' | b'>' => {
+                // A word of only digits before the operator names its fd.
+                let operator_start = if bytes[start..index].iter().all(u8::is_ascii_digit) {
+                    start
+                } else {
+                    index
+                };
+                let mut cursor = index;
+                while bytes
+                    .get(cursor)
+                    .is_some_and(|byte| matches!(byte, b'<' | b'>'))
+                {
+                    cursor += 1;
+                }
+                if matches!(bytes.get(cursor), Some(b'|' | b'!' | b'-')) {
+                    cursor += 1;
+                }
+                let mut has_target = true;
+                if bytes.get(cursor) == Some(&b'&') {
+                    cursor += 1;
+                    let fd_end = bytes[cursor..]
+                        .iter()
+                        .position(|byte| !(byte.is_ascii_digit() || *byte == b'-'))
+                        .map_or(bytes.len(), |offset| cursor + offset);
+                    let ends_word = bytes
+                        .get(fd_end)
+                        .is_none_or(|byte| byte.is_ascii_whitespace());
+                    if fd_end > cursor && ends_word {
+                        cursor = fd_end;
+                        has_target = false;
+                    }
+                }
+                if has_target {
+                    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+                        cursor += 1;
+                    }
+                    cursor = shell_word_end(segment, cursor)?;
+                }
+                out.push_str(&segment[copied..operator_start]);
+                out.push(' ');
+                copied = cursor;
+                word_start = None;
+                index = cursor;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    out.push_str(&segment[copied..]);
+    Some(out)
 }
 
 /// Whether `read` binds a variable that changes command resolution or word
@@ -2213,6 +2332,7 @@ fn visit_source(source: &str, depth: usize, nesting: usize, output: &mut Vec<Inv
         let (output_targets, unresolved_output) = parse_output_redirections(segment.trim());
         let cwd_override = invocation_env_chdir(&tokens);
         let lookup_retargeted = retargets_git_lookup(&tokens);
+        let argument_words = program_arguments(segment.trim());
         let (words, nested, unresolved_nested) = unwrap_invocation(tokens);
         if words.is_empty() && nested.is_none() && !unresolved_nested {
             continue;
@@ -2230,6 +2350,7 @@ fn visit_source(source: &str, depth: usize, nesting: usize, output: &mut Vec<Inv
             unresolved_output,
             operands_expand: shell_text_expands(segment),
             lookup_retargeted,
+            argument_words,
         });
         if let Some(nested) = nested {
             if depth == MAX_PARSE_DEPTH {
@@ -4071,11 +4192,27 @@ fn semantic_body_missing(invocations: &[Invocation]) -> bool {
                 words.get(1).map(String::as_str),
                 Some("commit" | "fixup" | "squash")
             )
-            || !semantic_commit_authors(words)
+            || !invocation_authors_semantic_commit(invocation)
         {
             return false;
         }
-        if semantic_options_ambiguous(words) || message_file_option(words) {
+        // An authoring invocation that still names an operational flag had
+        // that flag swallowed into an option value; its body is not the one
+        // the author wrote.
+        if semantic_options_ambiguous(words)
+            || message_file_option(words)
+            || invocation
+                .argument_words
+                .as_deref()
+                .is_none_or(|arguments| {
+                    arguments.iter().skip(2).any(|word| {
+                        matches!(
+                            word.as_str(),
+                            "-h" | "--help" | "--dry-run" | "--validate-only"
+                        )
+                    })
+                })
+        {
             return true;
         }
         let message = option(words, &["--message", "-m"]).map(str::to_string);
@@ -4275,7 +4412,7 @@ fn unsafe_default_delivery(
             if matches!(
                 invocation.words.get(1).map(String::as_str),
                 Some("commit" | "fixup" | "squash" | "default-branch")
-            ) && !semantic_commit_authors(&invocation.words)
+            ) && !invocation_authors_semantic_commit(invocation)
             {
                 continue;
             }
@@ -4692,6 +4829,16 @@ const SEMANTIC_COMMIT_FLAGS: &[&str] = &[
     "--signoff",
 ];
 
+/// Whether an invocation's program arguments author a `semantic-commit`
+/// commit. Arguments whose redirections could not be removed count as
+/// authoring.
+fn invocation_authors_semantic_commit(invocation: &Invocation) -> bool {
+    invocation
+        .argument_words
+        .as_deref()
+        .is_none_or(semantic_commit_authors)
+}
+
 /// Whether a `semantic-commit` invocation authors a commit. Help exits before
 /// work, and `--dry-run` and `--validate-only` author nothing.
 ///
@@ -4700,6 +4847,9 @@ const SEMANTIC_COMMIT_FLAGS: &[&str] = &[
 /// into a value-taking option (or into nothing, shifting a value position),
 /// and an unknown option may take a value; either can swallow the flag in
 /// semantic-commit's own parser, so the invocation is treated as authoring.
+/// It reads the program's argument words, with unquoted redirections already
+/// removed as the shell removes them, so a redirection never fills a value
+/// slot while a quoted `'>x'` stays a literal value (sympoies/nils-cli#2017).
 fn semantic_commit_authors(words: &[String]) -> bool {
     let mut index = 2;
     while index < words.len() {

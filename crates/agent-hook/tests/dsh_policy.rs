@@ -5064,6 +5064,19 @@ const SEMANTIC_COMMIT_SWALLOWED_FLAGS: &[&str] = &[
     "semantic-commit commit -m --help",
     "semantic-commit commit --message $M --help",
     "semantic-commit commit --unknown-option --dry-run --type feat --subject 'change behavior'",
+    // The shell removes a redirection before semantic-commit parses its
+    // arguments, so the flag after it fills the value slot (#2017).
+    "semantic-commit commit --type feat --subject 'change behavior' --body-bullet >/dev/null --dry-run",
+    "semantic-commit commit --type feat --subject 'change behavior' --body-bullet 2>/dev/null --help",
+    "semantic-commit commit --type feat --subject 'change behavior' --trailer > /dev/null --validate-only",
+    // A quoted or escaped value that looks like a redirection is a literal
+    // value, not a redirection, and fills its slot.
+    "semantic-commit commit --type feat --subject 'change behavior' --trailer '<x' --trailer --validate-only",
+    "semantic-commit commit --type feat --subject '>x' --body-bullet --help",
+    "semantic-commit commit --type feat --subject 'change behavior' --body-bullet '>x' --body-bullet --dry-run",
+    "semantic-commit commit --type feat --subject 'change behavior' --body-bullet \">x\" --body-bullet --dry-run",
+    "semantic-commit commit --type feat --subject 'change behavior' --body-bullet \\>x --body-bullet --dry-run",
+    "semantic-commit commit --type feat --subject 'change behavior' --body-bullet '2>x' --body-bullet --dry-run",
 ];
 
 #[test]
@@ -5084,6 +5097,10 @@ fn semantic_commit_operational_flags_cannot_be_swallowed_by_a_preceding_word() {
             "semantic-commit commit --dry-run",
             "semantic-commit commit --validate-only",
             "semantic-commit commit --quiet --json --help",
+            "semantic-commit commit --help >/dev/null",
+            "semantic-commit commit --help > /dev/null",
+            "semantic-commit commit 2>/dev/null --dry-run",
+            "semantic-commit commit 2>&1 --dry-run",
         ],
         "allow",
         &[],
