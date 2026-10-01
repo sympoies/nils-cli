@@ -66,9 +66,10 @@ fn request(fixture: &Fixture, tool: &str, arguments: Value) -> String {
     request_for_session(fixture, "dsh-session-1", tool, arguments)
 }
 
-/// Assert one explicitly expected disposition (`block` or `context`) for a
-/// single-group dispatch. The expectation is written out per case by the
-/// caller; this helper only checks the envelope shape that goes with it.
+/// Assert one explicitly expected disposition (`block`, `context`, or
+/// `allow`) for a single-group dispatch. The expectation is written out per
+/// case by the caller; this helper only checks the envelope shape that goes
+/// with it.
 fn assert_shell_disposition(
     output: &nils_test_support::cmd::CmdOutput,
     group: &str,
@@ -98,6 +99,19 @@ fn assert_shell_disposition(
                 "group={group} command={command}"
             );
             assert_eq!(envelope["data"]["reasons"][0]["disposition"], "context");
+        }
+        "allow" => {
+            assert_eq!(
+                output.code,
+                0,
+                "group={group} command={command} envelope={}",
+                output.stdout_text()
+            );
+            assert_eq!(
+                envelope["data"]["action"], "allow",
+                "group={group} command={command} envelope={envelope}"
+            );
+            return;
         }
         other => panic!("unknown expectation {other}"),
     }
@@ -1569,43 +1583,63 @@ fn deterministic_command_groups_block_direct_and_nested_unsafe_forms() {
 
 #[test]
 fn command_and_process_substitutions_are_classified_by_tier_for_every_command_group() {
-    // The substituted inner command always names the group's own subject, so
-    // every Tier B seam and the Tier A lease guard block; the python reminder
-    // (Tier C) explains the gap as context.
+    // A command substitution, double-quoted or backtick, is classified as its
+    // own command (sympoies/nils-cli#2000), so every Tier B seam blocks the
+    // substituted subject exactly as it blocks the plain command, and the
+    // Tier A lease guard evaluates it like the plain command (allowed here,
+    // outside any checkout). A process substitution stays unmodeled: the Tier B
+    // seams block because it names their subject, the lease guard fails
+    // closed, and the python reminder (Tier C) explains the gap as context.
+    // (group, inner, substitution expectation, process-substitution expectation)
     let cases = [
         (
             "block-direct-git-commit",
             "git commit --allow-empty -m bypass",
+            "block",
             "block",
         ),
         (
             "block-direct-git-worktree",
             "git worktree remove ../other",
             "block",
+            "block",
         ),
-        ("block-direct-pr-create", "gh pr create --draft", "block"),
-        ("block-direct-python", "python -c 'print(1)'", "context"),
+        (
+            "block-direct-pr-create",
+            "gh pr create --draft",
+            "block",
+            "block",
+        ),
+        (
+            "block-direct-python",
+            "python -c 'print(1)'",
+            "context",
+            "context",
+        ),
         (
             "semantic-commit-body-gate",
             "semantic-commit commit --type feat --subject bypass",
+            "block",
             "block",
         ),
         (
             "block-unsafe-default-delivery",
             "git push origin main",
             "block",
+            "block",
         ),
         (
             "checkout-lease-guard",
             "git commit --allow-empty -m bypass",
+            "allow",
             "block",
         ),
     ];
-    for (group, inner, expected) in cases {
-        for command in [
-            format!("printf '%s\\n' \"$({inner})\""),
-            format!("printf '%s\\n' \"`{inner}`\""),
-            format!("printf '%s\\n' <({inner})"),
+    for (group, inner, substituted, process_substituted) in cases {
+        for (command, expected) in [
+            (format!("printf '%s\\n' \"$({inner})\""), substituted),
+            (format!("printf '%s\\n' \"`{inner}`\""), substituted),
+            (format!("printf '%s\\n' <({inner})"), process_substituted),
         ] {
             let fixture = Fixture::new(&policy(group, "dsh"));
             let output = fixture.run(
@@ -1838,14 +1872,15 @@ fn command_dependent_groups_are_classified_by_tier_when_parsing_is_indeterminate
     }
     let oversized = format!("printf {}", "x".repeat(256 * 1024));
     // The seven cases in order: missing field, unterminated quote, nested
-    // beyond the parse depth (names git), oversized (unreadable), `if` block
-    // (names git), subshell (names git), variable runner (names git).
+    // beyond the parse depth (names git), oversized (unreadable), `case` block
+    // (names git), subshell (names git), variable runner (names git). An `if`
+    // block is classified command by command since sympoies/nils-cli#2000.
     let cases = [
         json!({}),
         json!({"command": "'unterminated"}),
         json!({"command": nested}),
         json!({"command": oversized}),
-        json!({"command": "if true; then git commit -m test; fi"}),
+        json!({"command": "case x in a) git commit -m test;; esac"}),
         json!({"command": "(git commit -m test)"}),
         json!({"command": "runner=git; \"$runner\" commit -m test"}),
     ];
@@ -4133,4 +4168,480 @@ fn session_health_treats_malformed_agent_docs_output_as_advisory_not_evidence() 
             .as_str()
             .is_some_and(|context| context.contains("agent-docs catalog problem"))
     );
+}
+
+// sympoies/nils-cli#2000: the read-only guard fixes of agent-runtime-kit
+// #180, #184, and #185, ported to the DSH policy groups.
+
+fn dispatch_bash(
+    fixture: &Fixture,
+    command: &str,
+    envs: &[(&str, &str)],
+) -> nils_test_support::cmd::CmdOutput {
+    dispatch_bash_in_session(fixture, "dsh-session-1", command, envs)
+}
+
+fn dispatch_bash_in_session(
+    fixture: &Fixture,
+    session_id: &str,
+    command: &str,
+    envs: &[(&str, &str)],
+) -> nils_test_support::cmd::CmdOutput {
+    fixture.run_with_env(
+        &["dispatch", "--product", "dsh", "--format", "json"],
+        Some(&request_for_session(
+            fixture,
+            session_id,
+            "bash",
+            json!({"command": command}),
+        )),
+        envs,
+    )
+}
+
+/// Collect `group command -> actual` mismatches so one run reports every
+/// misclassified case instead of stopping at the first. Each command runs in
+/// its own session because a context reminder renders once per session.
+fn disposition_mismatches(
+    fixture: &Fixture,
+    group: &str,
+    commands: &[&str],
+    expected: &str,
+    envs: &[(&str, &str)],
+) -> Vec<String> {
+    commands
+        .iter()
+        .enumerate()
+        .filter_map(|(index, command)| {
+            let session = format!("dsh-session-{group}-{expected}-{index}");
+            let output = dispatch_bash_in_session(fixture, &session, command, envs);
+            let envelope = output.stdout_json();
+            let action = envelope["data"]["action"].as_str().unwrap_or("<none>");
+            let code_matches = match expected {
+                "block" => output.code == 1,
+                _ => output.code == 0,
+            };
+            (action != expected || !code_matches).then(|| {
+                format!(
+                    "group={group} expected={expected} actual={action} code={} command={command:?}",
+                    output.code
+                )
+            })
+        })
+        .collect()
+}
+
+/// A repository on `branch` whose remote default branch is `main`.
+fn init_default_tracking_repository(fixture: &Fixture, branch: &str) {
+    git(fixture, &["init", "--quiet", "--initial-branch=main"]);
+    let remote = fixture.root.join(".git/refs/remotes/origin");
+    fs::create_dir_all(&remote).expect("remote refs");
+    fs::write(remote.join("HEAD"), "ref: refs/remotes/origin/main\n").expect("remote HEAD");
+    if branch != "main" {
+        git(fixture, &["checkout", "--quiet", "-b", branch]);
+    }
+}
+
+/// Read-only shells from the source PRs: quoted and backtick substitutions
+/// (#185), literal `[`/`[[` test words and conditionals (#184), alias and
+/// `read` queries, comments, and here-doc bodies.
+const READ_ONLY_SHELLS: &[&str] = &[
+    "printf '%s\\n' \"$(git rev-parse HEAD)\"",
+    "printf '%s\\n' \"`git rev-parse HEAD`\"",
+    "echo $(git rev-parse HEAD)",
+    "git status --short && echo \"$(git rev-parse HEAD)\"",
+    "readlink -f $(which a) $(which b)",
+    "test \"$(git rev-parse --abbrev-ref HEAD)\" = main",
+    "if [[ -e \"$f\" ]]; then echo ok; fi",
+    "if [ -f AGENTS.md ]; then cat AGENTS.md; else printf 'none\\n'; fi",
+    "for f in a b; do if [[ -e \"$f\" ]]; then echo \"$f\"; fi; done",
+    "[ ! -e ~/.kube/config ] && [ -d \"$HOME\" ] || exit 1",
+    "[ -x /usr/bin/git ] && echo yes",
+    "[[ \"$tool\" == git ]]",
+    "test -x /usr/bin/git",
+    "alias ll 2>/dev/null",
+    "git log --oneline | while read -r sha subject; do printf '%s\\n' \"$sha\"; done",
+    "echo '$(git commit -m y)'",
+    "echo '`git commit -m y`'",
+    "echo \"\\$(git commit -m y)\"",
+    "git status  # then `git commit -m y` later",
+    "ls  # \"$(git commit -m y)\"",
+    "cat <<'EOF'\n$(git commit -m y)\n`git commit -m y`\nEOF",
+    "cat <<E\nnote $(git rev-parse HEAD)\nE",
+    "cat <<E\nit's fine\nE\ngit status",
+    "disable; git status",
+];
+
+#[test]
+fn read_only_shells_are_classified_instead_of_opaque_for_every_command_guard() {
+    let mut mismatches = Vec::new();
+    for group in [
+        "block-direct-git-commit",
+        "block-direct-git-worktree",
+        "block-direct-pr-create",
+        "semantic-commit-body-gate",
+        "block-unsafe-default-delivery",
+        "checkout-lease-guard",
+    ] {
+        let fixture = Fixture::new(&policy(group, "dsh"));
+        mismatches.extend(disposition_mismatches(
+            &fixture,
+            group,
+            READ_ONLY_SHELLS,
+            "allow",
+            &[],
+        ));
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn direct_git_commit_still_blocks_inside_substitutions_tests_and_conditionals() {
+    let nested = format!(
+        "echo {}git commit -m y{}",
+        "$(echo ".repeat(40),
+        ")".repeat(40)
+    );
+    let blocked = [
+        "git commit -m y",
+        "echo $(git commit -m y)",
+        "echo \"$(git commit -m y)\"",
+        "echo `git commit -m y`",
+        "echo \"`git commit -m y`\"",
+        "x=\"$(git commit -m y)\"",
+        "x=`git commit -m y`",
+        "[ \"$(git commit -m y)\" ]",
+        "[[ -n `git commit -m y` ]]",
+        "test \"`git commit -m y`\"",
+        "echo \"a $(printf \"%s\" \"$(git commit -m y)\") b\"",
+        "echo \"$(printf ok)\" \"$(git commit -m y)\"",
+        "bash -c 'echo \"$(git commit -m y)\"'",
+        "echo \"${x:-$(git commit -m y)}\"",
+        "echo \"$(case x in a) git commit -m y;; esac)\"",
+        "echo \"$(echo case; git commit -m y)\"",
+        "echo a#`git commit -m y`",
+        "echo \"$(echo ${x:-)} ; git commit -m x)\"",
+        "echo \"$((git commit -m x) )\"",
+        "cat <<E\n# note \"$(git commit -m x)\"\nE",
+        "cat <<E\n## Fix `git commit -m x` hook\nE",
+        "cat <<E\nit's $(git commit -m x)\nE",
+        "cat <<E\nit's fine\nE\ngit commit -m x",
+        "git status # don't stop here\ngit commit -m x",
+        "git status # don't\ngit commit -m x # won't",
+        "echo a\\ #b; git commit -m x",
+        "[[ x =~ a|#b ]]; git commit -m x",
+        "[ -f README.md ] && git commit -m x",
+        "if [[ -f x ]]; then git commit -m x; fi",
+        "for f in a; do git commit -m \"$f\"; done",
+        "echo \"unterminated; git commit -m x",
+        // A `<<` that bash does not read as a here-document cannot hide the
+        // lines after it, and a body without its delimiter fails closed.
+        "echo ${x/<<E/y}\ngit commit -m x\nE/y}",
+        "echo $[1<<2]\ngit commit -m x\n2]",
+        "cat <<E\ngit commit -m x",
+        nested.as_str(),
+    ];
+    let fixture = Fixture::new(&policy("block-direct-git-commit", "dsh"));
+    let mismatches =
+        disposition_mismatches(&fixture, "block-direct-git-commit", &blocked, "block", &[]);
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+
+    // Nesting beyond the bounded parser stays unclassifiable: Tier B explains
+    // the gap when the command names no Git subject.
+    let opaque = format!("echo {}true{}", "$(echo ".repeat(40), ")".repeat(40));
+    let output = dispatch_bash(&fixture, &opaque, &[]);
+    assert_shell_disposition(&output, "block-direct-git-commit", &opaque, "context");
+}
+
+#[test]
+fn unsafe_default_delivery_still_blocks_default_pushes_hidden_in_shell_syntax() {
+    let fixture = Fixture::new(&policy("block-unsafe-default-delivery", "dsh"));
+    init_default_tracking_repository(&fixture, "main");
+    let nested = format!(
+        "echo {}git push origin main{}",
+        "$(echo ".repeat(40),
+        ")".repeat(40)
+    );
+    let blocked = [
+        "git push origin main",
+        "echo $(git push origin main)",
+        "echo \"$(git push origin main)\"",
+        "echo `git push origin main`",
+        "echo \"`git push origin main`\"",
+        "printf '%s\\n' \"$(git push origin main)\"",
+        "[ \"$(git push origin main)\" ]",
+        "test \"`git push origin HEAD:main`\"",
+        "echo \"a $(printf \"%s\" \"$(git push origin main)\") b\"",
+        "bash -c 'echo \"`git push origin main`\"'",
+        "semantic-commit commit -m \"$(git push origin main)\"",
+        "cat <<E\n## Fix `git push origin main`\nE",
+        "[ -f README.md ] && git push origin main",
+        "if [[ -f README.md ]]; then git push origin HEAD:main; fi",
+        "alias g=git 2>/dev/null; g push origin main",
+        "disable git; git push origin main",
+        "echo \"unterminated; git push origin main",
+        nested.as_str(),
+    ];
+    let mut mismatches = disposition_mismatches(
+        &fixture,
+        "block-unsafe-default-delivery",
+        &blocked,
+        "block",
+        &[],
+    );
+    // A dynamic or glob command word stays unclassifiable; with no Git
+    // subject named, the #199 Tier B rule explains the gap as context.
+    mismatches.extend(disposition_mismatches(
+        &fixture,
+        "block-unsafe-default-delivery",
+        &[
+            "[ -n \"$x\" ] && $tool push origin main",
+            "[x] push origin main",
+            "$+tool[$key] push origin main",
+        ],
+        "context",
+        &[],
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn installed_git_programs_are_not_treated_as_possible_aliases() {
+    // Git runs a builtin, then an installed `git-<name>` program (exec-path
+    // porcelain or a PATH extension such as git-lfs), before it consults
+    // aliases, so those names cannot hide `commit` or `push`. A command that
+    // retargets program lookup can hide the program again.
+    let extension_dir = tempfile::TempDir::new().expect("extension dir");
+    let extension = extension_dir.path().join("git-fixture-extension");
+    fs::write(&extension, "#!/bin/sh\nexit 0\n").expect("git extension");
+    fs::set_permissions(&extension, fs::Permissions::from_mode(0o755)).expect("extension mode");
+    let path = format!(
+        "{}:{}",
+        extension_dir.path().display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let envs = [("PATH", path.as_str())];
+
+    let allowed = [
+        "git submodule update --init",
+        "git fixture-extension ls-files",
+        "git add . && git fixture-extension pull",
+        "git fixture-extension pull; echo PATH",
+    ];
+    let blocked = [
+        "git fixture-not-installed pull",
+        "git -c alias.submodule=commit submodule",
+        "PATH=/usr/bin git fixture-extension pull",
+        "env PATH=/usr/bin git fixture-extension pull",
+        "env -u PATH git fixture-extension pull",
+        "env --unset=GIT_EXEC_PATH git fixture-extension pull",
+        "env -i git fixture-extension pull",
+        "git --exec-path=/nonexistent fixture-extension pull",
+        "export PATH=/usr/bin:/bin; git fixture-extension pull",
+        "unset PATH; git fixture-extension pull",
+        "for PATH in /usr/bin; do git fixture-extension pull; done",
+        "read PATH <<< /usr/bin; git fixture-extension pull",
+        "printf -v PATH %s /usr/bin; git fixture-extension pull",
+        "source /tmp/env.sh; git fixture-extension pull",
+        "declare -n r=PATH; r=/x; git fixture-extension pull",
+    ];
+    let mut mismatches = Vec::new();
+    let commit = Fixture::new(&policy("block-direct-git-commit", "dsh"));
+    mismatches.extend(disposition_mismatches(
+        &commit,
+        "block-direct-git-commit",
+        &allowed,
+        "allow",
+        &envs,
+    ));
+    mismatches.extend(disposition_mismatches(
+        &commit,
+        "block-direct-git-commit",
+        &blocked,
+        "block",
+        &envs,
+    ));
+
+    let delivery = Fixture::new(&policy("block-unsafe-default-delivery", "dsh"));
+    init_default_tracking_repository(&delivery, "feature");
+    mismatches.extend(disposition_mismatches(
+        &delivery,
+        "block-unsafe-default-delivery",
+        &["git fixture-extension ls-files"],
+        "allow",
+        &envs,
+    ));
+    mismatches.extend(disposition_mismatches(
+        &delivery,
+        "block-unsafe-default-delivery",
+        &[
+            "git fixture-not-installed ls-files",
+            "env -i git fixture-extension ls-files",
+        ],
+        "block",
+        &envs,
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn non_committing_semantic_commit_forms_are_not_default_branch_delivery() {
+    let fixture = Fixture::new(&policy("block-unsafe-default-delivery", "dsh"));
+    init_default_tracking_repository(&fixture, "main");
+    let allowed = [
+        "semantic-commit commit --help",
+        "cat README.md; semantic-commit commit --help",
+        "git status --short && semantic-commit commit --help | head -5",
+        "printf ok; semantic-commit commit --dry-run --message 'fix: x'",
+        "printf ok; semantic-commit commit --validate-only --message 'fix: x'",
+        "printf ok; semantic-commit default-branch --help",
+    ];
+    let blocked = [
+        "semantic-commit commit --message 'fix: x'",
+        "printf ok; semantic-commit commit --message 'fix: x'",
+        // A flag consumed as an option value does not make a dry run.
+        "semantic-commit commit --trailer --dry-run --message 'fix: x'",
+        "cat README.md; semantic-commit fixup --target HEAD",
+    ];
+    let mut mismatches = disposition_mismatches(
+        &fixture,
+        "block-unsafe-default-delivery",
+        &allowed,
+        "allow",
+        &[],
+    );
+    mismatches.extend(disposition_mismatches(
+        &fixture,
+        "block-unsafe-default-delivery",
+        &blocked,
+        "block",
+        &[],
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn forge_label_reminder_reads_host_values_and_skips_dry_runs() {
+    let fixture = Fixture::new(&task_3_3_policy(
+        "forge-label-reminder",
+        "PreToolUse",
+        Some("bash"),
+    ));
+    let mut mismatches = Vec::new();
+    for (index, (command, expected)) in [
+        (
+            "forge-cli --host gitlab.example.com pr create --title x",
+            "context",
+        ),
+        (
+            "forge-cli --host=gitlab.example.com issue create --title x",
+            "context",
+        ),
+        ("forge-cli --dry-run pr create --title x", "allow"),
+        ("forge-cli pr create --dry-run --title x", "allow"),
+        ("forge-cli pr deliver --kind feature --dry-run", "allow"),
+        ("forge-cli issue create --title x --dry-run", "allow"),
+        (
+            "forge-cli --host gitlab.example.com pr create --title x --label type::bug",
+            "allow",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // Distinct sessions: the same reminder renders once per session.
+        let output = fixture.run(
+            &["dispatch", "--product", "dsh", "--format", "json"],
+            Some(&request_for_session(
+                &fixture,
+                &format!("dsh-session-forge-{index}"),
+                "bash",
+                json!({"command": command}),
+            )),
+        );
+        let action = output.stdout_json()["data"]["action"]
+            .as_str()
+            .unwrap_or("<none>")
+            .to_string();
+        if output.code != 0 || action != expected {
+            mismatches.push(format!(
+                "expected={expected} actual={action} code={} command={command:?}",
+                output.code
+            ));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn portable_paths_scan_covers_canonical_template_sources() {
+    let fixture = Fixture::new(&task_3_3_policy(
+        "portable-paths-scan",
+        "PreToolUse",
+        Some("bash|write|edit|str_replace_editor"),
+    ));
+    let mut mismatches = Vec::new();
+    for (path, expected) in [
+        ("core/skills/example/SKILL.md.tera", "block"),
+        ("core/skills/example/references/guide.md.tera", "block"),
+        ("core/policies/example-policy.md", "block"),
+        ("core/policies/agent-hook/example.toml", "allow"),
+        ("tests/fixtures/example/SKILL.md.tera", "allow"),
+    ] {
+        let output = fixture.run(
+            &["dispatch", "--product", "dsh", "--format", "json"],
+            Some(&request(
+                &fixture,
+                "write",
+                json!({
+                    "file_path": fixture.root.join(path),
+                    "content": "Run /Users/example/project/tool\n"
+                }),
+            )),
+        );
+        let action = output.stdout_json()["data"]["action"]
+            .as_str()
+            .unwrap_or("<none>")
+            .to_string();
+        if action != expected {
+            mismatches.push(format!("expected={expected} actual={action} path={path}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn checkout_lease_v2_marker_defers_unclassifiable_bash() {
+    // The current runtime-kit WorkspaceLease v2 fence owns checkout admission,
+    // so the prior guard must defer before it judges shell classification.
+    let fixture = Fixture::new(&policy("checkout-lease-guard", "dsh"));
+    git(&fixture, &["init", "--quiet"]);
+    let mut mismatches = Vec::new();
+    for command in [
+        "bash ./repository-script.sh",
+        "printf '%s\\n' <(git status --short)",
+    ] {
+        mismatches.extend(disposition_mismatches(
+            &fixture,
+            "checkout-lease-guard",
+            &[command],
+            "allow",
+            &[("DSH_RUNTIME_KIT_WORKSPACE_LEASE_V2", "1")],
+        ));
+        // Without the marker the prior guard keeps failing closed.
+        mismatches.extend(disposition_mismatches(
+            &fixture,
+            "checkout-lease-guard",
+            &[command],
+            "block",
+            &[],
+        ));
+    }
+    assert!(
+        !fixture
+            .state_home
+            .join("dsh-runtime-kit/agent-hook/dsh-checkout-leases")
+            .exists()
+    );
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
