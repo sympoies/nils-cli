@@ -15,6 +15,7 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 
 use super::remote::{self, Config};
+use crate::lineage::{self, LineageSeed, WorkRequest};
 use crate::{CliContext, CliError};
 
 pub(crate) const RESULT_SCHEMA: &str = "agent-session.console-start.v1";
@@ -43,9 +44,29 @@ fn unavailable(message: &str) -> CliError {
 fn invalid() -> CliError {
     CliError::usage(
         INVALID_CODE,
-        "a console start takes only `machine` and a `session` object",
+        "a console start takes only `machine`, `no_parent`, `work`, and a `session` object",
         None,
     )
+}
+
+/// What the caller asks for the child's lineage and work: by default the
+/// caller is the parent and its program and issues are inherited.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ChildLineage {
+    pub(crate) no_parent: bool,
+    pub(crate) work: WorkRequest,
+}
+
+impl Default for ChildLineage {
+    fn default() -> Self {
+        Self {
+            no_parent: false,
+            work: WorkRequest {
+                inherit: true,
+                ..WorkRequest::default()
+            },
+        }
+    }
 }
 
 fn client() -> Result<reqwest::blocking::Client, CliError> {
@@ -103,12 +124,13 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
     }
 }
 
-/// The request body: at most `machine` and a required `session` object.
-fn checked_request(body: &Value) -> Option<(Option<&str>, &Map<String, Value>)> {
+/// The request body: optional `machine`, `no_parent`, and `work`, and a
+/// required `session` object.
+fn checked_request(body: &Value) -> Option<(Option<&str>, ChildLineage, &Map<String, Value>)> {
     let request = body.as_object()?;
     if request
         .keys()
-        .any(|key| key != "machine" && key != "session")
+        .any(|key| !matches!(key.as_str(), "machine" | "session" | "no_parent" | "work"))
     {
         return None;
     }
@@ -116,7 +138,55 @@ fn checked_request(body: &Value) -> Option<(Option<&str>, &Map<String, Value>)> 
         None | Some(Value::Null) => None,
         Some(value) => Some(value.as_str().filter(|machine| !machine.is_empty())?),
     };
-    Some((machine, request.get("session")?.as_object()?))
+    let mut child = ChildLineage::default();
+    match request.get("no_parent") {
+        None | Some(Value::Null) => {}
+        Some(value) => child.no_parent = value.as_bool()?,
+    }
+    match request.get("work") {
+        None | Some(Value::Null) => {}
+        Some(value) => child.work = WorkRequest::from_request_json(value).ok()?,
+    }
+    Some((machine, child, request.get("session")?.as_object()?))
+}
+
+/// The child's `lineage` and resolved `work`, from the caller's own record on
+/// `relay_machine`. The aggregator checks the parent against the caller's
+/// identity and forwards both to the target daemon.
+fn child_session(
+    relay_machine: &str,
+    caller: &crate::SessionRecord,
+    request: &ChildLineage,
+    session: &Map<String, Value>,
+) -> Result<Map<String, Value>, CliError> {
+    let mut session = session.clone();
+    session.remove("lineage");
+    session.remove("work");
+    let (seed, work) = if request.no_parent {
+        let seed = LineageSeed::root(
+            relay_machine,
+            lineage::STARTER_OPERATOR,
+            lineage::VIA_CONSOLE,
+        );
+        (seed, request.work.resolve(None))
+    } else {
+        let seed = LineageSeed::child_of(
+            relay_machine,
+            relay_machine,
+            caller,
+            lineage::STARTER_SESSION,
+            lineage::VIA_CONSOLE,
+        )?;
+        (seed, request.work.resolve(caller.work.as_ref()))
+    };
+    session.insert("lineage".to_string(), seed.to_create_json());
+    if let Some(work) = work {
+        session.insert(
+            "work".to_string(),
+            json!({ "program": work.program, "issues": work.issues, "inherited": work.inherited }),
+        );
+    }
+    Ok(session)
 }
 
 /// `POST /sessions/{id}/console-start/v1`: authenticate the exact current
@@ -130,11 +200,12 @@ pub(crate) fn relay_route(
     token: &str,
     body: &Value,
 ) -> Result<Value, CliError> {
-    let (_, incarnation) = super::authenticate_token(context, session, token)?;
+    let (caller, incarnation) = super::authenticate_token(context, session, token)?;
     let Some(config) = federation else {
         return Err(disabled());
     };
-    let (machine, child) = checked_request(body).ok_or_else(invalid)?;
+    let (machine, lineage, child) = checked_request(body).ok_or_else(invalid)?;
+    let child = child_session(&config.machine, &caller, &lineage, child)?;
     let mut request = json!({
         "source_session_id": session,
         "source_incarnation": incarnation,
@@ -179,6 +250,7 @@ pub(crate) fn cli_start(
     capability_file: Option<&Path>,
     machine: Option<&str>,
     session: Value,
+    lineage: &ChildLineage,
 ) -> Result<Value, CliError> {
     let caller = crate::non_empty_env("AGENT_SESSION_ID").ok_or_else(|| {
         CliError::usage(
@@ -198,6 +270,12 @@ pub(crate) fn cli_start(
     let mut request = json!({ "session": session });
     if let Some(machine) = machine {
         request["machine"] = json!(machine);
+    }
+    if lineage.no_parent {
+        request["no_parent"] = json!(true);
+    }
+    if let Some(work) = lineage.work.to_request_json() {
+        request["work"] = work;
     }
     let response = client()?
         .post(url)
@@ -226,17 +304,39 @@ mod tests {
     fn requests_admit_only_machine_and_a_session_object() {
         let session = json!({"agent": "claude"});
         let with_machine = json!({"machine": "c8", "session": session});
-        let (machine, child) = checked_request(&with_machine).expect("with machine");
-        assert_eq!((machine, child), (Some("c8"), session.as_object().unwrap()));
+        let (machine, lineage, child) = checked_request(&with_machine).expect("with machine");
+        assert_eq!(
+            (machine, lineage, child),
+            (
+                Some("c8"),
+                ChildLineage::default(),
+                session.as_object().unwrap()
+            )
+        );
         let default = json!({"session": session});
-        let (machine, _) = checked_request(&default).expect("default");
+        let (machine, _, _) = checked_request(&default).expect("default");
         assert_eq!(machine, None);
+        let root = json!({
+            "session": session,
+            "no_parent": true,
+            "work": {"issues": [{"provider": "github", "repository": "a/b", "number": 1}], "inherit": false}
+        });
+        let (_, lineage, _) = checked_request(&root).expect("root");
+        assert_eq!(
+            lineage,
+            ChildLineage {
+                no_parent: true,
+                work: WorkRequest::from_flags(None, &["a/b#1".to_string()], true).unwrap(),
+            }
+        );
         for body in [
             json!({"session": session, "principal": "other"}),
             json!({"machine": 7, "session": session}),
             json!({"machine": "", "session": session}),
             json!({"machine": "c8"}),
             json!({"session": "claude"}),
+            json!({"session": session, "no_parent": "yes"}),
+            json!({"session": session, "work": {"program": "a/b#1"}}),
             json!([]),
         ] {
             assert!(checked_request(&body).is_none(), "{body}");

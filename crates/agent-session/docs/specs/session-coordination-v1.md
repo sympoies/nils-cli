@@ -1338,7 +1338,10 @@ optional `title`, prompt (`--prompt`, `--prompt-file`, or `--prompt-stdin`),
 with `console-start-account-unsupported`. `--id`, `--tmux-bin`, `--agent-bin`,
 `--paste-delay-ms`, and `--coordination-mode` conflict with `--via-console`,
 because Agent Console assigns the session id and the target daemon owns the
-launch.
+launch. `--no-parent`, `--program`, `--issue`, and `--no-inherit-work` reach the
+daemon as `no_parent` (boolean) and `work`
+(`{"program", "issues", "inherit"}`, references as JSON objects); see
+[Session lineage and work v1](session-lineage-work-v1.md#console-starts).
 
 As with federated messaging, the CLI reads the private
 `coordination/daemon-endpoint.json` and calls its own daemon at
@@ -1352,13 +1355,17 @@ with the relay token as bearer and this body:
   "source_session_id": "caller",
   "source_incarnation": "caller launch UUID",
   "machine": "optional target machine",
-  "session": {"agent": "claude", "cwd": "/abs/path", "title": "...", "prompt": "..."}
+  "session": {"agent": "claude", "cwd": "/abs/path", "title": "...", "prompt": "...",
+              "lineage": {"…": "…"}, "work": {"…": "…"}}
 }
 ```
 
-The daemon route accepts only `machine` (a nonempty string, optional) and a
-`session` object; anything else fails with `console-start-invalid` (HTTP 400)
-before any network call. Neither the route nor the aggregator request has a
+The daemon route accepts only `machine` (a nonempty string, optional),
+`no_parent` (a boolean, optional), `work` (optional), and a `session` object;
+anything else fails with `console-start-invalid` (HTTP 400) before any network
+call. The daemon computes the child's `lineage` and resolved `work` from the
+caller's record and sets them in `session`, replacing any the caller supplied
+([Session lineage and work v1](session-lineage-work-v1.md#console-starts)). Neither the route nor the aggregator request has a
 field that names an owner: the aggregator takes the owner from the caller's
 exact Console grant. With federation unconfigured the route fails with
 `console-start-disabled` (HTTP 409).

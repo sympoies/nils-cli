@@ -51,12 +51,16 @@ off\:"Disable agent-session collision warnings and admission"))' \
 '--machine=[Target machine for --via-console, as Agent Console names it. Defaults to this daemon'\''s machine]:MACHINE:_default' \
 '--account=[Account for --via-console, as the target daemon'\''s account broker names it\: a Codex account for --agent codex or a Claude account for --agent claude]:NAME:_default' \
 '--agent-profile=[Launch profile for --via-console, as the target daemon advertises it. A profile owns its launch command, so Agent Console ignores --agent-arg with it]:ID:_default' \
+'--program=[Work-mode program tracker issue this session belongs to, as OWNER/REPO#N. Replaces the inherited program]:OWNER/REPO#N:_default' \
+'*--issue=[Issue this session works on, as OWNER/REPO#N. Repeatable, at most 4; replaces the inherited issues]:OWNER/REPO#N:_default' \
 '--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '--prompt-stdin[Read prompt from stdin]' \
 '(--id --tmux-bin --agent-bin --paste-delay-ms --coordination-mode)--via-console[Start the session through Agent Console, owned by the Console owner of the managed session this command runs in. Requires AGENT_SESSION_ID, its capability, and a daemon with federation configured]' \
+'--no-parent[Start a new root session\: do not record the managed session this command runs in as the parent]' \
+'--no-inherit-work[Do not inherit the parent session'\''s program and issues]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0

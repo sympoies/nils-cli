@@ -32,6 +32,7 @@ documented here.
   [Session Retitle v2](docs/specs/session-retitle-v2.md),
   [Session Retitle v3](docs/specs/session-retitle-v3.md),
   [Session public metadata v1](docs/specs/session-public-metadata-v1.md),
+  [Session lineage and work v1](docs/specs/session-lineage-work-v1.md),
   [Session coordination v1](docs/specs/session-coordination-v1.md),
   [Session board v1](docs/specs/session-board-v1.md),
   [Main Agent orchestration v1](docs/specs/main-agent-orchestration-v1.md),
@@ -45,6 +46,7 @@ documented here.
 ```bash
 agent-session start --agent codex --cwd ~/Project/foo --prompt-file prompt.md
 agent-session start --agent hermes --cwd ~
+agent-session start --agent claude --issue sympoies/nils-cli#2032   # child of this session; inherits its program
 agent-session list
 agent-session board --state live --since 3d --format json   # who else is working (session board v1)
 agent-session glance <id> --tail 40

@@ -195,6 +195,11 @@ pub struct StartArgs {
     #[arg(skip)]
     pub initial_codex_usage_account: Option<String>,
 
+    /// Internal: lineage and work resolved by the caller. A plain CLI start
+    /// resolves them from the calling managed session.
+    #[arg(skip)]
+    pub initial_lineage: Option<crate::InitialLineage>,
+
     /// Agent to run.
     #[arg(long, value_enum)]
     pub agent: AgentKind,
@@ -268,6 +273,25 @@ pub struct StartArgs {
     /// with it.
     #[arg(long = "agent-profile", value_name = "ID", requires = "via_console")]
     pub agent_profile: Option<String>,
+
+    /// Start a new root session: do not record the managed session this
+    /// command runs in as the parent.
+    #[arg(long)]
+    pub no_parent: bool,
+
+    /// Work-mode program tracker issue this session belongs to, as
+    /// OWNER/REPO#N. Replaces the inherited program.
+    #[arg(long, value_name = "OWNER/REPO#N")]
+    pub program: Option<String>,
+
+    /// Issue this session works on, as OWNER/REPO#N. Repeatable, at most 4;
+    /// replaces the inherited issues.
+    #[arg(long = "issue", value_name = "OWNER/REPO#N")]
+    pub issues: Vec<String>,
+
+    /// Do not inherit the parent session's program and issues.
+    #[arg(long)]
+    pub no_inherit_work: bool,
 
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]

@@ -8,6 +8,8 @@ mod coordination;
 mod coordination_server;
 #[path = "integration/diagnose.rs"]
 mod diagnose;
+#[path = "integration/lineage.rs"]
+mod lineage;
 #[path = "integration/metadata.rs"]
 mod metadata;
 #[path = "integration/retitle_v3.rs"]

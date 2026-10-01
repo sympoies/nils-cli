@@ -31,6 +31,10 @@ or integrating a specific subsystem.
   contract, and the `agent-session board` CLI.
 - [Session public metadata v1](specs/session-public-metadata-v1.md): bounded
   revision-fenced attachment requests, replay receipts, and read-back privacy.
+- [Session lineage and work v1](specs/session-lineage-work-v1.md): the
+  `lineage` (parent, root, depth, starter) and `work` (program and issue
+  references) members of every session record, and how each start path fills
+  them.
 - [Turn-state contract](turn-state-contract.md): runtime-bound activity state,
   privacy projection, replay, and provider setup behavior.
 - [Activity stream v1](specs/activity-stream-v1.md): SSE stream, replay,

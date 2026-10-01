@@ -3399,6 +3399,35 @@ struct CreateBody {
     codex_account: Option<String>,
     #[serde(default)]
     claude_account: Option<String>,
+    /// `session-lineage-work-v1`: who started this session, as the caller
+    /// (Agent Console) states it. Absent: an operator root over HTTP.
+    #[serde(default)]
+    lineage: Option<Value>,
+    /// `session-lineage-work-v1`: resolved program and issue references.
+    #[serde(default)]
+    work: Option<Value>,
+}
+
+/// The lineage and work a create body states, validated for a session on
+/// `machine`. Without `lineage` the session is an operator root over HTTP.
+fn create_body_lineage(
+    machine: &str,
+    lineage: Option<&Value>,
+    work: Option<&Value>,
+) -> Result<crate::InitialLineage, CliError> {
+    let seed = match lineage.filter(|value| !value.is_null()) {
+        Some(value) => crate::lineage::LineageSeed::from_create_json(machine, value)?,
+        None => crate::lineage::LineageSeed::root(
+            machine,
+            crate::lineage::STARTER_OPERATOR,
+            crate::lineage::VIA_HTTP,
+        ),
+    };
+    let work = match work.filter(|value| !value.is_null()) {
+        Some(value) => crate::lineage::work_from_create_body(value)?,
+        None => None,
+    };
+    Ok(crate::InitialLineage { seed, work })
 }
 
 #[derive(Debug, Default)]
@@ -5327,6 +5356,7 @@ async fn history_resume_handler(
     let tmux_bin = state.tmux_bin.clone();
     let catalog = state.history_catalog.clone();
     let profiles = state.launch_profiles.clone();
+    let machine = state.machine.clone();
     let result = tokio::task::spawn_blocking(move || {
         let history = catalog.resolve_fresh(&id).map_err(history_resume_catalog_error)?;
         let expected_id = provider_history::stable_history_id(
@@ -5421,6 +5451,7 @@ async fn history_resume_handler(
                         codex_usage_account: profile
                             .and_then(|profile| profile.codex_usage_account.clone()),
                         agent_args: Vec::new(),
+                        initial_lineage: Some(create_body_lineage(&machine, None, None)?),
                         format: nils_common::cli_contract::OutputFormat::Json,
                     },
                 )
@@ -6590,6 +6621,11 @@ async fn create_handler(
     ) {
         return envelope_err(err);
     }
+    let initial_lineage =
+        match create_body_lineage(&state.machine, body.lineage.as_ref(), body.work.as_ref()) {
+            Ok(initial_lineage) => initial_lineage,
+            Err(err) => return envelope_err(err),
+        };
     if let Some(provider_resume_id) = body.provider_resume_id {
         if body.cwd.is_some() {
             return envelope_err(CliError::usage(
@@ -6643,6 +6679,7 @@ async fn create_handler(
                 .as_ref()
                 .and_then(|profile| profile.codex_usage_account.clone()),
             agent_args: body.agent_args,
+            initial_lineage: Some(initial_lineage),
             format: nils_common::cli_contract::OutputFormat::Json,
         };
         return match tokio::task::spawn_blocking(move || {
@@ -6721,6 +6758,7 @@ async fn create_handler(
         initial_codex_usage_account: launch_profile
             .as_ref()
             .and_then(|profile| profile.codex_usage_account.clone()),
+        initial_lineage: Some(initial_lineage),
         agent,
         cwd: body.cwd.map(PathBuf::from),
         title,
@@ -6745,6 +6783,10 @@ async fn create_handler(
         machine: None,
         account: None,
         agent_profile: None,
+        no_parent: false,
+        program: None,
+        issues: Vec::new(),
+        no_inherit_work: false,
         format: nils_common::cli_contract::OutputFormat::Json,
     };
     match tokio::task::spawn_blocking(move || {
@@ -22510,6 +22552,141 @@ esac
     }
 
     #[tokio::test]
+    async fn create_stores_and_echoes_the_stated_lineage_and_work() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        let config_dir = tmp.path().join(".claude-lineage");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&config_dir).unwrap();
+        let launcher = fake_agent(tmp.path(), "claude-lineage");
+        let profiles = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id":"claude-lineage",
+                "label":"Claude",
+                "agent":"claude",
+                "agent_bin":launcher,
+                "provider_config_dir":config_dir,
+                "readiness_args":["--check"],
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let log = tmp.path().join("tmux.log");
+        let mut st = state(tmp.path(), Some(TOKEN), logging_tmux(tmp.path(), &log));
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
+        let create = |id: &str, extra: Value| {
+            let mut body = json!({
+                "agent": "claude",
+                "agent_profile": "claude-lineage",
+                "id": id,
+                "cwd": cwd,
+            });
+            for (key, value) in extra.as_object().unwrap() {
+                body[key] = value.clone();
+            }
+            post_json("/sessions", Some(TOKEN), body)
+        };
+        let parent = json!({
+            "machine": "sympoies",
+            "session_id": "85a7379c-0bfc-4675-bab9-31ed8dcfce92",
+            "session_created_at": "2026-10-01T00:00:00Z",
+            "session_incarnation": "parent-launch"
+        });
+        let root = json!({
+            "machine": "sympoies",
+            "session_id": "root-session",
+            "session_created_at": "2026-09-30T00:00:00Z"
+        });
+        let work = json!({
+            "program": {"provider": "github", "repository": "serenvia/laoda", "number": 44},
+            "issues": [{"provider": "github", "repository": "Sympoies/nils-cli", "number": 2032}],
+            "inherited": true
+        });
+
+        let (status, body) = call(
+            router(st.clone()),
+            create(
+                "lineage-child",
+                json!({
+                    "lineage": {
+                        "schema_version": "agent-session.session-lineage.v1",
+                        "parent": parent,
+                        "root": root,
+                        "depth": 2,
+                        "starter": {"kind": "session", "via": "console"}
+                    },
+                    "work": work,
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let expected_lineage = json!({
+            "schema_version": "agent-session.session-lineage.v1",
+            "parent": parent,
+            "root": root,
+            "depth": 2,
+            "starter": {"kind": "session", "via": "console"},
+            "budget": null
+        });
+        let expected_work = json!({
+            "program": {"provider": "github", "repository": "serenvia/laoda", "number": 44},
+            "issues": [{"provider": "github", "repository": "sympoies/nils-cli", "number": 2032}],
+            "inherited": true,
+            "revision": 1
+        });
+        let session = &body["data"]["session"];
+        assert_eq!(session["lineage"], expected_lineage);
+        assert_eq!(session["work"], expected_work);
+        let record: Value = serde_json::from_slice(
+            &fs::read(tmp.path().join("sessions/lineage-child/session.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["lineage"], expected_lineage);
+        assert_eq!(record["work"], expected_work);
+
+        // Without a stated lineage the session is an operator root over HTTP.
+        let (status, body) = call(router(st.clone()), create("lineage-root", json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let session = &body["data"]["session"];
+        assert_eq!(
+            session["lineage"],
+            json!({
+                "schema_version": "agent-session.session-lineage.v1",
+                "parent": null,
+                "root": {
+                    "machine": MACHINE,
+                    "session_id": "lineage-root",
+                    "session_created_at": session["created_at"]
+                },
+                "depth": 0,
+                "starter": {"kind": "operator", "via": "http"},
+                "budget": null
+            })
+        );
+        assert!(session.get("work").is_none(), "{session}");
+
+        for (id, extra, code) in [
+            (
+                "bad-lineage",
+                json!({"lineage": {"parent": parent, "root": null, "depth": 1,
+                    "starter": {"kind": "session", "via": "console"}}}),
+                "lineage-invalid",
+            ),
+            (
+                "bad-work",
+                json!({"work": {"issues": [{"provider": "github", "repository": "a/b", "number": 0}]}}),
+                "work-ref-invalid",
+            ),
+        ] {
+            let (status, body) = call(router(st.clone()), create(id, extra)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
+            assert_eq!(body["error"]["code"], code);
+            assert!(!tmp.path().join("sessions").join(id).exists());
+        }
+    }
+
+    #[tokio::test]
     async fn create_persists_the_profile_codex_usage_account() {
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("repo");
@@ -37119,6 +37296,8 @@ esac
             agent_args: Vec::new(),
             agent_bin: None,
             extra: std::collections::BTreeMap::new(),
+            lineage: None,
+            work: None,
             resume_sidecar_extra: std::collections::BTreeMap::new(),
         }
     }

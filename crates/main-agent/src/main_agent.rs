@@ -4301,6 +4301,11 @@ fn run_worker_start_single_input(
                 initial_profile_auto_resume_supported: None,
                 initial_profile_graceful_shutdown: None,
                 initial_codex_usage_account: None,
+                // Lineage is descriptive: a worker whose owner cannot be
+                // recorded as its parent still starts.
+                initial_lineage: agent_session::lineage::main_agent_worker(context, &record)
+                    .ok()
+                    .map(|(seed, work)| agent_session::InitialLineage { seed, work }),
                 agent,
                 cwd: Some(PathBuf::from(&launch_input.launch.cwd)),
                 title: launch_input.launch.title.clone(),
@@ -4317,6 +4322,10 @@ fn run_worker_start_single_input(
                 machine: None,
                 account: None,
                 agent_profile: None,
+                no_parent: false,
+                program: None,
+                issues: Vec::new(),
+                no_inherit_work: false,
                 format: OutputFormat::Json,
             },
             StartFailureDisposition::ReturnError,
@@ -25074,6 +25083,8 @@ mod tests {
             agent_args: Vec::new(),
             agent_bin: None,
             extra: std::collections::BTreeMap::new(),
+            lineage: None,
+            work: None,
             resume_sidecar_extra: std::collections::BTreeMap::new(),
         }
     }

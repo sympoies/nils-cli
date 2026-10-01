@@ -2334,6 +2334,8 @@ mod tests {
             agent_args: Vec::new(),
             agent_bin: None,
             extra: std::collections::BTreeMap::new(),
+            lineage: None,
+            work: None,
             resume_sidecar_extra: std::collections::BTreeMap::new(),
         }
     }
