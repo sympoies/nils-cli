@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-/// Characters of the first non-blank line used to find the text again. Short
-/// enough to survive the provider wrapping a long line, long enough not to match
-/// a placeholder by accident.
+/// Leading non-whitespace characters used to find the text again. Short enough
+/// to stay ahead of any provider rewriting further into a long text, long enough
+/// not to match a placeholder by accident.
 const PROBE_CHARS: usize = 20;
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// How long the text may stay in the composer after an Enter before that Enter
@@ -25,9 +25,10 @@ const RETRY_AFTER: Duration = Duration::from_millis(1500);
 /// The caller's Enter plus one retry for the swallowed first Enter.
 const MAX_ENTER_PRESSES: u32 = 2;
 /// Upper bound on the record-lock hold from the paste to the last pane read,
-/// including the caller's settle delay. `send` holds the session record lock
-/// throughout, and a provider hook event that finds the lock busy is retried
-/// for only five seconds, so the hold must end well before that.
+/// including the caller's settle delay (the tmux paste and Enter commands keep
+/// their own timeouts). `send` holds the session record lock throughout, and
+/// Codex app-server attention events and turn-complete notifications that
+/// find it busy wait only five seconds, so the hold must end well before that.
 pub(crate) const HOLD_BUDGET: Duration = Duration::from_millis(4000);
 /// Longest single pane read; a read never runs past the hold budget either.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -93,11 +94,29 @@ pub(crate) struct SubmitReport {
     pub(crate) enter_presses: u32,
 }
 
-/// The whitespace-free start of the text's first non-blank line, or `None`
-/// when the text has nothing to find again.
-pub(crate) fn probe(text: &str) -> Option<String> {
-    let line = text.lines().find(|line| !line.trim().is_empty())?;
-    Some(compact(line).chars().take(PROBE_CHARS).collect())
+/// What the composer must show while it still holds the sent text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Probe {
+    /// Whitespace-free text to find at the start of the composer input.
+    head: String,
+    /// `head` is the whole text, so the input must be exactly `head`. A short
+    /// reply such as `Ask` would otherwise match the "Ask Codex to do
+    /// anything" placeholder of the composer it leaves empty.
+    whole: bool,
+}
+
+/// The whitespace-free start of the text, or `None` when the text has nothing
+/// to find again. Line breaks are dropped with the rest of the whitespace, so a
+/// probe spans lines exactly as the compacted composer region does.
+pub(crate) fn probe(text: &str) -> Option<Probe> {
+    let all = compact(text);
+    if all.is_empty() {
+        return None;
+    }
+    Some(Probe {
+        whole: all.chars().count() <= PROBE_CHARS,
+        head: all.chars().take(PROBE_CHARS).collect(),
+    })
 }
 
 /// Whitespace is dropped before matching so a wrapped line and its
@@ -106,7 +125,7 @@ fn compact(text: &str) -> String {
     text.chars().filter(|ch| !ch.is_whitespace()).collect()
 }
 
-pub(crate) fn classify(agent: &str, pane: &str, probe: &str) -> Composer {
+pub(crate) fn classify(agent: &str, pane: &str, probe: &Probe) -> Composer {
     let lines: Vec<&str> = pane.lines().map(str::trim_end).collect();
     let located = match agent {
         "claude" => claude_composer(&lines),
@@ -125,13 +144,14 @@ pub(crate) fn classify(agent: &str, pane: &str, probe: &str) -> Composer {
     }
     let region = compact(&region.join("\n"));
     let input = region.trim_start_matches(['❯', '›']);
-    // The sent text starts the input. An empty composer shows a placeholder
-    // ("Ask Codex to do anything"), so a short probe such as `y` must not be
-    // found inside it; only a full-length probe may match further in, after
-    // an existing draft.
-    let holds_text = input.starts_with(probe)
-        || (probe.chars().count() >= PROBE_CHARS && input.contains(probe))
-        || PASTE_PLACEHOLDERS.iter().any(|mark| input.contains(mark));
+    // An empty composer shows a placeholder ("Ask Codex to do anything"), so a
+    // text no longer than the probe must be the whole input. A full-length
+    // probe may sit after an existing draft.
+    let holds_text = if probe.whole {
+        input == probe.head
+    } else {
+        input.contains(&probe.head)
+    } || PASTE_PLACEHOLDERS.iter().any(|mark| input.contains(mark));
     if agent == "claude" && input == CLAUDE_QUEUED_HINT {
         Composer::Queued
     } else if holds_text {
@@ -216,7 +236,7 @@ fn starts_with_numbered_choice(after_glyph: &str) -> bool {
 /// guard and `may_press` covers state recorded before the send.
 pub(crate) fn submit_and_confirm(
     agent: &str,
-    probe: &str,
+    probe: &Probe,
     hold_started: Instant,
     mut observe: impl FnMut(Duration) -> Option<String>,
     mut may_press: impl FnMut() -> bool,
@@ -402,7 +422,7 @@ mod tests {
   Press enter to confirm or esc to cancel
 ";
 
-    fn probe_of(text: &str) -> String {
+    fn probe_of(text: &str) -> Probe {
         probe(text).expect("probe")
     }
 
@@ -459,28 +479,43 @@ mod tests {
 
     #[test]
     fn a_short_probe_is_not_found_inside_an_empty_composer_placeholder() {
-        for probe in ["y", "n", "do", "fix"] {
+        for text in ["y", "n", "do", "fix", "Ask", "A", "Try"] {
             assert_eq!(
-                classify("codex", CODEX_SUBMITTED, probe),
+                classify("codex", CODEX_SUBMITTED, &probe_of(text)),
                 Composer::Clear,
-                "{probe}"
+                "{text}"
             );
             assert_eq!(
-                classify("claude", CLAUDE_STARTUP_PLACEHOLDER, probe),
+                classify("claude", CLAUDE_STARTUP_PLACEHOLDER, &probe_of(text)),
                 Composer::Clear,
-                "{probe}"
+                "{text}"
             );
         }
-        assert_eq!(classify("claude", CLAUDE_QUEUED, "up"), Composer::Queued);
+        assert_eq!(
+            classify("claude", CLAUDE_QUEUED, &probe_of("up")),
+            Composer::Queued
+        );
         let pending = "────────────────────\n❯\u{a0}y\n────────────────────\n";
-        assert_eq!(classify("claude", pending, "y"), Composer::Pending);
+        assert_eq!(
+            classify("claude", pending, &probe_of("y")),
+            Composer::Pending
+        );
+        let multi = "────────────────────\n❯\u{a0}ok\n  go\n────────────────────\n";
+        assert_eq!(
+            classify("claude", multi, &probe_of("ok\ngo")),
+            Composer::Pending
+        );
     }
 
     #[test]
     fn a_codex_prompt_with_a_paragraph_break_stays_one_composer() {
         let pane = "› Earlier prompt\n\n• Working (3s • esc to interrupt)\n\n› Release notes\n  \n  first body line\n  second body line\n  third body line\n  fourth body line\n\n  fake-model · Context 100% left\n";
         assert_eq!(
-            classify("codex", pane, &probe_of("Release notes")),
+            classify(
+                "codex",
+                pane,
+                &probe_of("Release notes\n\nfirst body line\nsecond body line")
+            ),
             Composer::Pending
         );
     }
@@ -494,7 +529,17 @@ mod tests {
         assert_eq!(probe(" \n\t\n"), None);
         assert_eq!(
             probe_of("  first line that is long enough to cut\nsecond"),
-            "firstlinethatislongenoughtocut"[..20].to_string()
+            Probe {
+                head: "firstlinethatislongenoughtocut"[..20].to_string(),
+                whole: false
+            }
+        );
+        assert_eq!(
+            probe_of("Ask\nfor the deploy status of every host"),
+            Probe {
+                head: "Askforthedeploystatu".to_string(),
+                whole: false
+            }
         );
     }
 
