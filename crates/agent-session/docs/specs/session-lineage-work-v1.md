@@ -168,6 +168,47 @@ with `starter {"kind": "main-agent", "via": "cli"}` and the owner's work
 inherited, for tmux workers and DSH external workers alike. A worker whose owner cannot be recorded (for example a chain already
 64 deep) still starts, without lineage.
 
+## Adoption
+
+`lineage` stays the historical fact. A later steward, for example a successor
+dispatcher that takes over its predecessor's open children, is recorded
+separately in `lineage_adoption`:
+
+```json
+"lineage_adoption": {
+  "adopted_by": {"machine": "sympoies", "session_id": "9c2e…", "session_created_at": "…", "session_incarnation": "…"},
+  "revision": 1,
+  "updated_at": "…"
+}
+```
+
+Readers use `effective_parent = lineage_adoption.adopted_by ?? lineage.parent`.
+
+```bash
+agent-session lineage adopt <CHILD> --by <SESSION> [--if-revision N]
+agent-session lineage adopt <CHILD> --by <SESSION> --by-machine <MACHINE> --by-created-at <TIMESTAMP>
+agent-session lineage adopt <CHILD> --clear [--if-revision N]
+```
+
+- The command runs on the child's machine and changes only the child's record.
+- `--by` names a session in this state directory, recorded with its exact
+  identity and current incarnation. A steward on another machine is named with
+  `--by-machine` and `--by-created-at`; `--by-machine` without
+  `--by-created-at` fails with `lineage-invalid`, because a remote creation
+  time cannot be looked up locally.
+- `--clear` removes the steward, so the original parent is effective again.
+- Each change increments `revision`. With `--if-revision N`, a revision other
+  than `N` (0 when the child was never adopted) fails with
+  `lineage-revision-conflict` and `details.current_revision`.
+- A session cannot adopt itself (`lineage-invalid`).
+- **Authorization.** Inside a managed session (`AGENT_SESSION_ID` set) the
+  caller authenticates with its capability (`coordination-unauthorized`
+  otherwise) and may only name itself as the steward; naming another steward
+  or clearing one fails with `lineage-adopt-forbidden`. A caller outside any
+  managed session is an operator and may do either.
+- The result (`cli.agent-session.lineage-adopt.v1`) carries `session_id`, the
+  unchanged `lineage`, the new `lineage_adoption`, and `effective_parent`.
+
 ## `work`
 
 ```json
@@ -184,9 +225,11 @@ inherited, for tmux workers and DSH external workers alike. A worker whose owner
 | `program` | The work-mode program tracker issue, or `null`. At most one. |
 | `issues` | The issues this session works on, sorted and distinct; at most 4. |
 | `inherited` | `true` when the start named neither a program nor issues and both came from the parent. |
-| `revision` | `1` when created. |
+| `revision` | `1` when created; incremented by every `work set`. |
 
-A session with neither a program nor issues has no `work` member.
+A session created with neither a program nor issues has no `work` member.
+After a `work set` the member stays, even when both dimensions are empty, so its
+revision keeps fencing later updates.
 
 ### References
 
@@ -218,6 +261,28 @@ from the caller's record and sends the resolved `work`.
 object as `work` and stores it with `revision: 1`; unknown keys fail with
 `work-ref-invalid`.
 
+### Updating work
+
+Work moves; lineage does not.
+
+```bash
+agent-session work set <ID> [--program R | --clear-program] [--issue R]... [--clear-issues] --if-revision N
+```
+
+- `--program` replaces the program and `--issue` (repeatable, at most 4)
+  replaces the issues; a dimension that is not named is kept. `--clear-program`
+  and `--clear-issues` empty one. At least one of the four is required
+  (`work-ref-invalid`).
+- `--if-revision` is required: the current revision, or 0 when the session has
+  no `work`. Any other value fails with `work-revision-conflict` and
+  `details.current_revision`.
+- The result sets `inherited: false` and increments `revision`.
+- **Authorization.** Inside a managed session the caller authenticates with
+  its capability and may only set its own work (`work-set-forbidden`
+  otherwise). An operator may set any session's.
+- The result (`cli.agent-session.work-set.v1`) carries `session_id` and the
+  new `work`.
+
 `work` is separate from `work-context`. A work context is a short-lived
 collision claim; `work` is the session's durable statement of what it belongs
 to.
@@ -225,8 +290,8 @@ to.
 ## Read surfaces
 
 The session view (`agent-session list --format json`, `GET /sessions`, and the
-start and create results) carries the stored `lineage` and `work` objects
-unchanged. Both are absent on records that have none.
+start and create results) carries the stored `lineage`, `work`, and
+`lineage_adoption` objects unchanged. Each is absent on records that have none.
 
 ## Failure codes
 
@@ -235,3 +300,7 @@ unchanged. Both are absent on records that have none.
 | `work-ref-invalid` | usage / 400 | A reference outside the grammar, more than 4 issues, or an invalid `work` object. |
 | `lineage-invalid` | usage / 400 | A create body `lineage` with an invalid shape. |
 | `lineage-depth-exceeded` | usage / 400 | A start deeper than 64. |
+| `lineage-revision-conflict` | data | `lineage adopt --if-revision` does not match. |
+| `lineage-adopt-forbidden` | data | A managed session names a steward other than itself, or clears one. |
+| `work-revision-conflict` | data | `work set --if-revision` does not match. |
+| `work-set-forbidden` | data | A managed session sets another session's work. |

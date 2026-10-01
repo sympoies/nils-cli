@@ -1799,6 +1799,7 @@ mod tests {
             extra: BTreeMap::from([(BINDING_KEY.to_string(), value)]),
             lineage: None,
             work: None,
+            lineage_adoption: None,
             resume_sidecar_extra: BTreeMap::new(),
         }
     }

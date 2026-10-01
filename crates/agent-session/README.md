@@ -47,6 +47,8 @@ documented here.
 agent-session start --agent codex --cwd ~/Project/foo --prompt-file prompt.md
 agent-session start --agent hermes --cwd ~
 agent-session start --agent claude --issue sympoies/nils-cli#2032   # child of this session; inherits its program
+agent-session work set <id> --issue sympoies/nils-cli#2040 --if-revision 1
+agent-session lineage adopt <child> --by <steward>   # successor takes over a child
 agent-session list
 agent-session board --state live --since 3d --format json   # who else is working (session board v1)
 agent-session glance <id> --tail 40

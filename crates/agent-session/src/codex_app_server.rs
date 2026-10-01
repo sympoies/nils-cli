@@ -5541,6 +5541,7 @@ mod tests {
             extra: BTreeMap::new(),
             lineage: None,
             work: None,
+            lineage_adoption: None,
             resume_sidecar_extra: BTreeMap::new(),
         }
     }
@@ -12740,6 +12741,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             extra: BTreeMap::new(),
             lineage: None,
             work: None,
+            lineage_adoption: None,
             resume_sidecar_extra: BTreeMap::new(),
         };
         crate::write_session_record(&context, &record).unwrap();

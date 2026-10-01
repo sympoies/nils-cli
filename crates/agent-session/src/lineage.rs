@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use std::path::Path;
+
 use crate::{CliContext, CliError, SessionRecord};
 
 pub(crate) const LINEAGE_SCHEMA: &str = "agent-session.session-lineage.v1";
@@ -32,6 +34,12 @@ pub(crate) const VIA_HTTP: &str = "http";
 const LINEAGE_INVALID: &str = "lineage-invalid";
 const LINEAGE_DEPTH_EXCEEDED: &str = "lineage-depth-exceeded";
 const WORK_REF_INVALID: &str = "work-ref-invalid";
+const LINEAGE_ADOPT_FORBIDDEN: &str = "lineage-adopt-forbidden";
+const LINEAGE_REVISION_CONFLICT: &str = "lineage-revision-conflict";
+const WORK_SET_FORBIDDEN: &str = "work-set-forbidden";
+const WORK_REVISION_CONFLICT: &str = "work-revision-conflict";
+pub(crate) const LINEAGE_ADOPT_COMMAND: &str = "lineage-adopt";
+pub(crate) const WORK_SET_COMMAND: &str = "work-set";
 
 /// One session, as `(machine, session_id, session_created_at)`. The
 /// incarnation is kept on a parent for audit only; it never takes part in a
@@ -435,24 +443,7 @@ impl LineageSeed {
             starter: StarterInput,
         }
         fn checked(input: RefInput, keep_incarnation: bool) -> Result<SessionRef, CliError> {
-            let machine_ok = !input.machine.is_empty()
-                && input.machine.len() <= MAX_MACHINE_BYTES
-                && input.machine.chars().all(|ch| ch.is_ascii_graphic());
-            let time_ok = input.session_created_at.len() <= MAX_TIMESTAMP_BYTES
-                && input.session_created_at.parse::<jiff::Timestamp>().is_ok();
-            let incarnation_ok = input.session_incarnation.as_deref().is_none_or(|value| {
-                !value.is_empty()
-                    && value.len() <= MAX_INCARNATION_BYTES
-                    && value.chars().all(|ch| ch.is_ascii_graphic())
-            });
-            if !machine_ok
-                || !time_ok
-                || !incarnation_ok
-                || crate::validate_id(&input.session_id).is_err()
-            {
-                return Err(lineage_invalid("a lineage session reference is invalid"));
-            }
-            Ok(SessionRef {
+            checked_ref(SessionRef {
                 machine: input.machine,
                 session_id: input.session_id,
                 session_created_at: input.session_created_at,
@@ -582,12 +573,324 @@ pub fn main_agent_worker(
     Ok((seed, work))
 }
 
+/// A session reference with a bounded machine label, a valid session id, an
+/// RFC 3339 creation time, and an optional bounded incarnation.
+fn checked_ref(reference: SessionRef) -> Result<SessionRef, CliError> {
+    let machine_ok = !reference.machine.is_empty()
+        && reference.machine.len() <= MAX_MACHINE_BYTES
+        && reference.machine.chars().all(|ch| ch.is_ascii_graphic());
+    let time_ok = reference.session_created_at.len() <= MAX_TIMESTAMP_BYTES
+        && reference
+            .session_created_at
+            .parse::<jiff::Timestamp>()
+            .is_ok();
+    let incarnation_ok = reference
+        .session_incarnation
+        .as_deref()
+        .is_none_or(|value| {
+            !value.is_empty()
+                && value.len() <= MAX_INCARNATION_BYTES
+                && value.chars().all(|ch| ch.is_ascii_graphic())
+        });
+    if !machine_ok
+        || !time_ok
+        || !incarnation_ok
+        || crate::validate_id(&reference.session_id).is_err()
+    {
+        return Err(lineage_invalid("a lineage session reference is invalid"));
+    }
+    Ok(reference)
+}
+
 fn launch_id(record: &SessionRecord) -> Option<&str> {
     record
         .runtime
         .as_ref()
         .map(|runtime| runtime.launch_id.trim())
         .filter(|launch_id| !launch_id.is_empty())
+}
+
+/// A later steward of a session (`lineage adopt`). `lineage` stays the
+/// historical fact; readers use `adopted_by` when it is set.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct LineageAdoption {
+    pub adopted_by: Option<SessionRef>,
+    pub revision: u64,
+    pub updated_at: String,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// The session's effective parent: its steward when adopted, otherwise the
+/// parent it was started by.
+pub(crate) fn effective_parent(record: &SessionRecord) -> Option<&SessionRef> {
+    match &record.lineage_adoption {
+        Some(adoption) if adoption.adopted_by.is_some() => adoption.adopted_by.as_ref(),
+        _ => record
+            .lineage
+            .as_ref()
+            .and_then(|lineage| lineage.parent.as_ref()),
+    }
+}
+
+/// Who runs a lineage or work mutation: the managed session this command
+/// runs in, authenticated by its capability, or an operator outside any
+/// managed session.
+enum Caller {
+    Session { id: String, created_at: String },
+    Operator,
+}
+
+fn caller(context: &CliContext, capability_file: Option<&Path>) -> Result<Caller, CliError> {
+    let Some(id) = crate::non_empty_env("AGENT_SESSION_ID") else {
+        return Ok(Caller::Operator);
+    };
+    let token = crate::coordination::capability_token_from_file(capability_file)?;
+    let (record, _) = crate::coordination::authenticate_token(context, &id, &token)?;
+    Ok(Caller::Session {
+        id: record.id,
+        created_at: record.created_at,
+    })
+}
+
+fn forbidden(code: &str, message: &str) -> CliError {
+    CliError::data(code, message, None)
+}
+
+fn revision_conflict(code: &str, current: u64, expected: u64) -> CliError {
+    CliError::data(
+        code,
+        "the revision changed; read it again and retry",
+        Some(json!({ "current_revision": current, "expected_revision": expected })),
+    )
+}
+
+pub(crate) fn run_lineage(context: &CliContext, args: crate::cli::LineageArgs) -> i32 {
+    match args.command {
+        crate::cli::LineageCommand::Adopt(args) => {
+            let format = args.format;
+            match adopt(context, args) {
+                Ok(result) => crate::render_single_success(
+                    LINEAGE_ADOPT_COMMAND,
+                    format,
+                    &result,
+                    render_adopt_text,
+                ),
+                Err(error) => crate::render_error(LINEAGE_ADOPT_COMMAND, format, error),
+            }
+        }
+    }
+}
+
+pub(crate) fn run_work(context: &CliContext, args: crate::cli::WorkArgs) -> i32 {
+    match args.command {
+        crate::cli::WorkCommand::Set(args) => {
+            let format = args.format;
+            match set_work(context, args) {
+                Ok(result) => crate::render_single_success(
+                    WORK_SET_COMMAND,
+                    format,
+                    &result,
+                    render_work_text,
+                ),
+                Err(error) => crate::render_error(WORK_SET_COMMAND, format, error),
+            }
+        }
+    }
+}
+
+fn adopt(context: &CliContext, args: crate::cli::LineageAdoptArgs) -> Result<Value, CliError> {
+    crate::validate_id(&args.child)?;
+    let machine = crate::board::machine_identity(None, context);
+    let caller = caller(context, args.capability_file.as_deref())?;
+    let steward = match &args.by {
+        None => None,
+        Some(by) => Some(steward_ref(context, &machine, by, &args)?),
+    };
+    if let Caller::Session { id, created_at } = &caller {
+        let own = steward.as_ref().is_some_and(|steward| {
+            steward.session_id == *id && steward.session_created_at == *created_at
+        });
+        if !own {
+            return Err(forbidden(
+                LINEAGE_ADOPT_FORBIDDEN,
+                "a managed session may only adopt children for itself; run as an operator to name another steward or clear one",
+            ));
+        }
+    }
+    crate::mutate_session_record(context, &args.child, |record| {
+        if steward.as_ref().is_some_and(|steward| {
+            steward.session_id == record.id && steward.session_created_at == record.created_at
+        }) {
+            return Err(CliError::usage(
+                LINEAGE_INVALID,
+                "a session cannot adopt itself",
+                None,
+            ));
+        }
+        let current = record
+            .lineage_adoption
+            .as_ref()
+            .map_or(0, |adoption| adoption.revision);
+        if let Some(expected) = args.if_revision
+            && expected != current
+        {
+            return Err(revision_conflict(
+                LINEAGE_REVISION_CONFLICT,
+                current,
+                expected,
+            ));
+        }
+        let now = jiff::Timestamp::now().to_string();
+        record.lineage_adoption = Some(LineageAdoption {
+            adopted_by: steward.clone(),
+            revision: current + 1,
+            updated_at: now.clone(),
+            extra: BTreeMap::new(),
+        });
+        record.updated_at = now;
+        Ok(json!({
+            "session_id": record.id,
+            "lineage": record.lineage,
+            "lineage_adoption": record.lineage_adoption,
+            "effective_parent": effective_parent(record),
+        }))
+    })
+}
+
+/// `--by` as a session reference: a local session resolves to its exact
+/// identity; a steward on another machine is named with `--by-machine` and
+/// `--by-created-at`.
+fn steward_ref(
+    context: &CliContext,
+    machine: &str,
+    by: &str,
+    args: &crate::cli::LineageAdoptArgs,
+) -> Result<SessionRef, CliError> {
+    crate::validate_id(by)?;
+    let by_machine = args.by_machine.as_deref().unwrap_or(machine);
+    if let Some(created_at) = &args.by_created_at {
+        let reference = SessionRef {
+            machine: by_machine.to_string(),
+            session_id: by.to_string(),
+            session_created_at: created_at.clone(),
+            session_incarnation: None,
+        };
+        return checked_ref(reference);
+    }
+    if by_machine != machine {
+        return Err(CliError::usage(
+            LINEAGE_INVALID,
+            "a steward on another machine needs --by-created-at",
+            None,
+        ));
+    }
+    let record = crate::load_session_record(context, by)?;
+    Ok(SessionRef::of(machine, &record))
+}
+
+fn set_work(context: &CliContext, args: crate::cli::WorkSetArgs) -> Result<Value, CliError> {
+    crate::validate_id(&args.id)?;
+    let program = args.program.as_deref().map(WorkRef::parse).transpose()?;
+    let issues = if args.issues.is_empty() {
+        None
+    } else {
+        Some(canonical_issues(
+            args.issues
+                .iter()
+                .map(|issue| WorkRef::parse(issue))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?)
+    };
+    if program.is_none() && issues.is_none() && !args.clear_program && !args.clear_issues {
+        return Err(CliError::usage(
+            WORK_REF_INVALID,
+            "work set needs --program, --issue, --clear-program, or --clear-issues",
+            None,
+        ));
+    }
+    if let Caller::Session { id, .. } = caller(context, args.capability_file.as_deref())?
+        && id != args.id
+    {
+        return Err(forbidden(
+            WORK_SET_FORBIDDEN,
+            "a managed session may only set its own work; run as an operator to set another session's",
+        ));
+    }
+    crate::mutate_session_record(context, &args.id, |record| {
+        let current = record.work.as_ref().map_or(0, |work| work.revision);
+        if args.if_revision != current {
+            return Err(revision_conflict(
+                WORK_REVISION_CONFLICT,
+                current,
+                args.if_revision,
+            ));
+        }
+        let mut work = record.work.clone().unwrap_or(SessionWork {
+            program: None,
+            issues: Vec::new(),
+            inherited: false,
+            revision: 0,
+            extra: BTreeMap::new(),
+        });
+        if args.clear_program {
+            work.program = None;
+        }
+        if args.clear_issues {
+            work.issues = Vec::new();
+        }
+        if let Some(program) = program {
+            work.program = Some(program);
+        }
+        if let Some(issues) = issues {
+            work.issues = issues;
+        }
+        work.inherited = false;
+        work.revision = current + 1;
+        record.work = Some(work);
+        record.updated_at = jiff::Timestamp::now().to_string();
+        Ok(json!({ "session_id": record.id, "work": record.work }))
+    })
+}
+
+fn render_adopt_text(result: &Value) -> String {
+    let id = result["session_id"].as_str().unwrap_or_default();
+    match result["lineage_adoption"]["adopted_by"]["session_id"].as_str() {
+        Some(steward) => format!("{id} is now adopted by {steward}\n"),
+        None => format!("{id} has no steward; its parent is its effective parent\n"),
+    }
+}
+
+fn render_work_text(result: &Value) -> String {
+    let work = &result["work"];
+    let name = |reference: &Value| {
+        let provider = reference["provider"].as_str().unwrap_or_default();
+        let prefix = if provider == "github" {
+            String::new()
+        } else {
+            format!("{provider}:")
+        };
+        format!(
+            "{prefix}{}#{}",
+            reference["repository"].as_str().unwrap_or_default(),
+            reference["number"]
+        )
+    };
+    let program = if work["program"].is_null() {
+        "none".to_string()
+    } else {
+        name(&work["program"])
+    };
+    let issues = work["issues"]
+        .as_array()
+        .map(|issues| issues.iter().map(name).collect::<Vec<_>>().join(", "))
+        .filter(|issues| !issues.is_empty())
+        .unwrap_or_else(|| "none".to_string());
+    format!(
+        "work for {} (revision {}): program {program}; issues {issues}\n",
+        result["session_id"].as_str().unwrap_or_default(),
+        work["revision"]
+    )
 }
 
 fn lineage_invalid(message: &str) -> CliError {

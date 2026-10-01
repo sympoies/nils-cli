@@ -351,6 +351,8 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Broker(args) => coordination::run_broker(&context, args),
         Command::Message(args) => coordination::run_message(&context, args),
         Command::Metadata(args) => metadata::run_metadata(&context, args),
+        Command::Lineage(args) => lineage::run_lineage(&context, args),
+        Command::Work(args) => lineage::run_work(&context, args),
         Command::Serve(args) => serve::run_serve(&context, args),
         Command::CodexAppServerProxy(args) => codex_app_server::run_proxy(&context, args),
         Command::ProviderStopCanarySupervisor(args) => {
@@ -509,6 +511,12 @@ fn command_format(command: &Command) -> OutputFormat {
         Command::Metadata(args) => match &args.command {
             cli::MetadataCommand::Attach(args) => args.format,
             cli::MetadataCommand::Show(args) => args.format,
+        },
+        Command::Lineage(args) => match &args.command {
+            cli::LineageCommand::Adopt(args) => args.format,
+        },
+        Command::Work(args) => match &args.command {
+            cli::WorkCommand::Set(args) => args.format,
         },
         Command::Delete(args) => args.format,
         Command::Attach(_)
@@ -1108,6 +1116,9 @@ pub struct SessionRecord {
     /// Program and issue references (`session-lineage-work-v1`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work: Option<lineage::SessionWork>,
+    /// A later steward (`lineage adopt`); `lineage` itself never changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage_adoption: Option<lineage::LineageAdoption>,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
     #[serde(skip)]
@@ -1798,6 +1809,8 @@ pub struct SessionView {
     lineage: Option<lineage::SessionLineage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     work: Option<lineage::SessionWork>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lineage_adoption: Option<lineage::LineageAdoption>,
 }
 
 #[derive(Debug)]
@@ -3354,6 +3367,7 @@ fn create_record_with_lineage(
         extra: BTreeMap::new(),
         lineage: None,
         work: None,
+        lineage_adoption: None,
         resume_sidecar_extra: BTreeMap::new(),
     };
     if let Some(initial) = initial_lineage {
@@ -12843,6 +12857,7 @@ fn session_view_from_parts(
             .flatten(),
         lineage: record.lineage.clone(),
         work: record.work.clone(),
+        lineage_adoption: record.lineage_adoption.clone(),
     }
 }
 

@@ -840,6 +840,80 @@ json\:"Single-record JSON envelope (snake_case)"))' \
     ;;
 esac
 ;;
+(lineage)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__lineage_commands" \
+"*::: :->lineage" \
+&& ret=0
+
+    case $state in
+    (lineage)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-lineage-command-$line[1]:"
+        case $line[1] in
+            (adopt)
+_arguments "${_arguments_options[@]}" : \
+'--by=[The steward session. Inside a managed session it must be that session]:SESSION:_default' \
+'--by-machine=[The steward'\''s machine, when it is not this one]:MACHINE:_default' \
+'--by-created-at=[The steward'\''s creation time, required for a steward on another machine]:TIMESTAMP:_default' \
+'--if-revision=[Expected current adoption revision (0 when never adopted)]:IF_REVISION:_default' \
+'--capability-file=[Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE]:PATH:_files' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'(--by)--clear[Remove the steward; the original parent is effective again]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':child -- Session to adopt:_default' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(work)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__work_commands" \
+"*::: :->work" \
+&& ret=0
+
+    case $state in
+    (work)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-work-command-$line[1]:"
+        case $line[1] in
+            (set)
+_arguments "${_arguments_options[@]}" : \
+'(--clear-program)--program=[Program tracker issue as OWNER/REPO#N]:OWNER/REPO#N:_default' \
+'(--clear-issues)*--issue=[Issue as OWNER/REPO#N. Repeatable, at most 4; replaces the issues]:OWNER/REPO#N:_default' \
+'--if-revision=[Expected current work revision (0 when the session has no work)]:IF_REVISION:_default' \
+'--capability-file=[Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE]:PATH:_files' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'--clear-program[Remove the program]' \
+'--clear-issues[Remove every issue]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Session id. Inside a managed session it must be that session:_default' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (serve)
 _arguments "${_arguments_options[@]}" : \
 '--bind=[Versioned work-context (\`work-context/v1\`) and mailbox (\`messages/v1\`) routes share the same loopback control plane and library contracts. Address to bind. Defaults to loopback; a non-loopback address is refused unless --allow-non-loopback is passed (it exposes a remote shell)]:ADDR:_default' \
@@ -938,6 +1012,8 @@ _agent-session_commands() {
 'broker:Inspect or recover the per-session coordination broker' \
 'message:Exchange bounded private coordination mailbox messages' \
 'metadata:Attach and inspect bounded public metadata for one managed session' \
+'lineage:Name a later steward for a session (session lineage v1)' \
+'work:Change a session'\''s program and issue references (session lineage v1)' \
 'serve:Serve the control plane (HTTP) and PTY attach (WebSocket) over loopback' \
 'codex-app-server-proxy:Internal metadata-only bridge for a managed Codex remote TUI' \
 'provider-stop-canary-supervisor:Internal exact-child supervisor for an explicitly armed Main Agent canary' \
@@ -1083,6 +1159,18 @@ _agent-session__subcmd__glance_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session glance commands' commands "$@"
 }
+(( $+functions[_agent-session__subcmd__lineage_commands] )) ||
+_agent-session__subcmd__lineage_commands() {
+    local commands; commands=(
+'adopt:Record a later steward for a session; its original parent is kept' \
+    )
+    _describe -t commands 'agent-session lineage commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__lineage__subcmd__adopt_commands] )) ||
+_agent-session__subcmd__lineage__subcmd__adopt_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session lineage adopt commands' commands "$@"
+}
 (( $+functions[_agent-session__subcmd__list_commands] )) ||
 _agent-session__subcmd__list_commands() {
     local commands; commands=()
@@ -1205,6 +1293,18 @@ _agent-session__subcmd__serve_commands() {
 _agent-session__subcmd__start_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session start commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__work_commands] )) ||
+_agent-session__subcmd__work_commands() {
+    local commands; commands=(
+'set:Replace the program or issues of a session, fenced by its revision' \
+    )
+    _describe -t commands 'agent-session work commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__work__subcmd__set_commands] )) ||
+_agent-session__subcmd__work__subcmd__set_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session work set commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__work-context_commands] )) ||
 _agent-session__subcmd__work-context_commands() {
