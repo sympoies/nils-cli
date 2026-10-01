@@ -197,6 +197,51 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id -- Session id:_default' \
 && ret=0
 ;;
+(account)
+_arguments "${_arguments_options[@]}" : \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agent-session__subcmd__account_commands" \
+"*::: :->account" \
+&& ret=0
+
+    case $state in
+    (account)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agent-session-account-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Session id:_default' \
+&& ret=0
+;;
+(switch)
+_arguments "${_arguments_options[@]}" : \
+'--account=[Account nickname listed by the provider'\''s account broker]:NICKNAME:_default' \
+'--expected-incarnation=[Runtime launch id the switch is fenced to. Defaults to the session'\''s current runtime]:ID:_default' \
+'--tmux-bin=[tmux binary override]:PATH:_files' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Session id:_default' \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (activity)
 _arguments "${_arguments_options[@]}" : \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
@@ -883,6 +928,7 @@ _agent-session_commands() {
 'send:Send input (literal text and/or special keys) to a live session' \
 'glance:Capture the recent pane tail plus live status as a dashboard glance' \
 'resume:Recreate a missing tmux runtime from exact provider resume metadata' \
+'account:Show or switch the provider account of one session' \
 'activity:Inspect or ingest metadata-only agent turn lifecycle events' \
 'work-context:Manage authenticated structured work context and mutation leases' \
 'broker:Inspect or recover the per-session coordination broker' \
@@ -896,6 +942,24 @@ _agent-session_commands() {
 'completion:Print shell completion script' \
     )
     _describe -t commands 'agent-session commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__account_commands] )) ||
+_agent-session__subcmd__account_commands() {
+    local commands; commands=(
+'show:Show the session'\''s current provider account and any queued next account' \
+'switch:Switch the session'\''s provider account, like serve'\''s \`PUT /sessions/{id}/account\`. Codex binds the account for the next prompt; Claude queues it, then at idle preflights it, stops the session and resumes the same conversation under it (busy keeps it queued)' \
+    )
+    _describe -t commands 'agent-session account commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__account__subcmd__show_commands] )) ||
+_agent-session__subcmd__account__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session account show commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__account__subcmd__switch_commands] )) ||
+_agent-session__subcmd__account__subcmd__switch_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session account switch commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__activity_commands] )) ||
 _agent-session__subcmd__activity_commands() {

@@ -687,6 +687,9 @@ recorded in `sympoies/nils-cli#1409`.
   any live or malformed next intent exists, so the next accepted prompt uses
   the newly selected account. An interrupted `applying` intent is re-queued
   when the session runtime restarts.
+  The local `agent-session account switch` CLI shares this route's code path.
+  Without the daemon's in-process Codex control it always takes the durable
+  `next` path above, which the control loop applies before the next prompt.
 - `POST /sessions` normally creates a fresh session from `agent`, optional
   `cwd`, `title`, `title_state`, `id`, `prompt`, `coordination_mode`, and
   `agent_args`. `coordination_mode` accepts `advisory`, `enforce`, or `off` and

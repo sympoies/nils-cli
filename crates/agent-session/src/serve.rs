@@ -74,7 +74,7 @@ use crate::{
     profile_unavailable, repo_remote_url_from_cwd, resolve_tmux_bin, resume_session_by_id,
     search_workdirs, send_auto_resume_input, send_input_serialized, session_clipboard_buffer,
     session_dir, session_status, start_dsh_history_resume_session, start_provider_resume_session,
-    update_session_title_if_revision, write_session_record,
+    update_session_title_if_revision,
 };
 
 #[path = "serve_shell.rs"]
@@ -7259,46 +7259,21 @@ async fn session_account_handler(
         )
         .await;
     }
-    if !crate::codex_account::view_for_record(&record).supported {
-        return status_json(
-            StatusCode::CONFLICT,
-            "codex-account-unsupported",
-            "this session does not support Codex account switching",
-        );
-    }
-    let Some(launch_id) = record
-        .runtime
-        .as_ref()
-        .map(|runtime| runtime.launch_id.clone())
-    else {
-        return status_json(
-            StatusCode::CONFLICT,
-            "codex-account-unsupported",
-            "this session does not support Codex account switching",
-        );
+    let precheck_account = body.account.clone();
+    let expected_session_incarnation = expected_session_incarnation.to_string();
+    let launch_id = match tokio::task::spawn_blocking(move || {
+        crate::session_account::codex_switch_precheck(
+            &record,
+            &expected_session_incarnation,
+            &precheck_account,
+        )
+    })
+    .await
+    {
+        Ok(Ok(launch_id)) => launch_id,
+        Ok(Err(err)) => return envelope_err(err),
+        Err(_) => return join_err(),
     };
-    if launch_id != expected_session_incarnation {
-        return status_json(
-            StatusCode::CONFLICT,
-            "codex-account-session-incarnation-conflict",
-            "session was replaced before its Codex account switch was applied",
-        );
-    }
-    // Like Claude, refuse an account the broker does not list before any
-    // binding or queued intent is written. Re-selecting the current account
-    // stays allowed so it can still cancel a queued switch.
-    if crate::codex_account::selected_account(&record).as_deref() != Some(body.account.as_str()) {
-        let listed_account = body.account.clone();
-        match tokio::task::spawn_blocking(move || {
-            crate::codex_account::ensure_listed(&listed_account)
-        })
-        .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => return envelope_err(err),
-            Err(_) => return join_err(),
-        }
-    }
     let Some(handle) = wait_for_codex_control(&state, &canonical_id, &launch_id).await else {
         return status_json(
             StatusCode::CONFLICT,
@@ -7332,21 +7307,13 @@ async fn session_account_handler(
             let queue_launch_id = launch_id.clone();
             let queue_account = body.account.clone();
             return match tokio::task::spawn_blocking(move || {
-                if supports_unbound_account_queue {
-                    crate::codex_account::queue_next_account_with_unbound(
-                        &queue_context,
-                        &queue_id,
-                        &queue_launch_id,
-                        &queue_account,
-                    )
-                } else {
-                    crate::codex_account::queue_next_account(
-                        &queue_context,
-                        &queue_id,
-                        &queue_launch_id,
-                        &queue_account,
-                    )
-                }
+                crate::session_account::codex_queue_switch(
+                    &queue_context,
+                    &queue_id,
+                    &queue_launch_id,
+                    &queue_account,
+                    supports_unbound_account_queue,
+                )
             })
             .await
             {
@@ -7393,10 +7360,7 @@ async fn session_account_handler(
     }
 }
 
-/// Claude has no live credential swap, so a switch is a durable next-account
-/// intent applied by a restart plus `--resume` in the new account directory.
-/// The restart happens now only when the running session is idle; otherwise
-/// (busy, stopped, or unknown) the intent stays queued for the next resume.
+/// See [`crate::session_account::claude_switch_locked`].
 async fn claude_account_switch_handler(
     state: &ServeState,
     id: String,
@@ -7406,7 +7370,7 @@ async fn claude_account_switch_handler(
     let context = state.context.clone();
     let tmux_bin = state.tmux_bin.clone();
     match tokio::task::spawn_blocking(move || {
-        claude_account_switch_locked(
+        crate::session_account::claude_switch_locked(
             &context,
             &id,
             &account,
@@ -7424,60 +7388,6 @@ async fn claude_account_switch_handler(
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
     }
-}
-
-fn claude_account_switch_locked(
-    context: &CliContext,
-    id: &str,
-    account: &str,
-    expected_session_incarnation: &str,
-    tmux_bin: &Path,
-) -> Result<
-    (
-        Option<String>,
-        Option<crate::claude_account::ClaudeAccountView>,
-    ),
-    CliError,
-> {
-    let _record_lock = crate::acquire_session_record_lock(context, id)?;
-    let mut record = load_session_record(context, id)?;
-    let launch_id = record
-        .runtime
-        .as_ref()
-        .map(|runtime| runtime.launch_id.clone());
-    if launch_id.as_deref() != Some(expected_session_incarnation) {
-        return Err(CliError::data(
-            "claude-account-session-incarnation-conflict",
-            "session was replaced before its Claude account switch was applied",
-            Some(json!({ "id": id })),
-        ));
-    }
-    crate::claude_account::queue_next(&mut record, account)?;
-    let idle = crate::claude_account::has_queued_next(&record)
-        && crate::session_status(context, tmux_bin, &record) == "running"
-        && crate::activity::state_for_view(context, &record)
-            .is_some_and(|activity| activity.phase == crate::activity::TurnPhase::Waiting);
-    if idle {
-        // Prepare the new account before anything is stopped. A refusal
-        // returns before the intent is written, so durable state (including
-        // any previously queued intent) is left exactly as it was.
-        crate::claude_account::preflight_next(&record)?;
-    }
-    let now = jiff::Timestamp::now().to_string();
-    record.updated_at = now.clone();
-    write_session_record(context, &record)?;
-    if !idle {
-        return Ok((launch_id, crate::claude_account::view_for_record(&record)));
-    }
-    crate::auto_resume::cancel_for_account_switch_locked(context, id, &now)?;
-    crate::stop_session_runtime_locked(context, &mut record, tmux_bin)?;
-    let stopped = load_session_record(context, id)?;
-    let outcome = crate::resume_session_locked(context, stopped, tmux_bin)?;
-    let resumed = load_session_record(context, id)?;
-    Ok((
-        outcome.session_incarnation,
-        crate::claude_account::view_for_record(&resumed),
-    ))
 }
 
 async fn send_handler(
@@ -28892,6 +28802,54 @@ esac
         fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
     }
 
+    /// A tmux fake for a live Claude session whose pane is the pid written to
+    /// `pane_pid`; `running` exists while the fake session is up.
+    fn claude_live_tmux(dir: &Path, log: &Path, running: &Path, pane_pid: &Path) -> PathBuf {
+        executable(
+            &dir.join("tmux"),
+            &format!(
+                r#"#!/usr/bin/env sh
+printf '%s\n' "$*" >> {log}
+case "$1" in
+  has-session)
+    test -f {running} && exit 0
+    printf '%s\n' "can't find session: fixture" >&2
+    exit 1
+    ;;
+  new-session)
+    : > {running}
+    heartbeat=''
+    slot=0
+    for arg in "$@"; do
+      if [ "$slot" = 2 ]; then incarnation="$arg"; break
+      elif [ "$slot" = 1 ]; then slot=2
+      else case "$arg" in */coordination/heartbeat) heartbeat="$arg"; slot=1 ;; esac
+      fi
+    done
+    if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then
+      mkdir -p "$(dirname "$heartbeat")"
+      printf '%s:%s\n' "$incarnation" "$(date +%s)" > "$heartbeat"
+      chmod 600 "$heartbeat"
+    fi
+    printf '%s\t%s\t%s\n' '$77' '%77' "$(cat {pane_pid})"
+    ;;
+  display-message)
+    printf '%s\t%s\t%s\n' '$77' '%77' "$(cat {pane_pid})"
+    ;;
+  if-shell|kill-session)
+    kill -KILL "$(cat {pane_pid})" 2>/dev/null || true
+    rm -f {running}
+    ;;
+  *) exit 0 ;;
+esac
+"#,
+                log = shell_words::quote(&log.to_string_lossy()),
+                running = shell_words::quote(&running.to_string_lossy()),
+                pane_pid = shell_words::quote(&pane_pid.to_string_lossy()),
+            ),
+        )
+    }
+
     fn session_record_json(state_dir: &Path, id: &str) -> Value {
         serde_json::from_slice(
             &fs::read(state_dir.join("sessions").join(id).join("session.json")).unwrap(),
@@ -29351,49 +29309,7 @@ esac
         let log = tmp.path().join("tmux.log");
         let running = tmp.path().join("running");
         let pane_pid = tmp.path().join("pane.pid");
-        let tmux = executable(
-            &tmp.path().join("tmux"),
-            &format!(
-                r#"#!/usr/bin/env sh
-printf '%s\n' "$*" >> {log}
-case "$1" in
-  has-session)
-    test -f {running} && exit 0
-    printf '%s\n' "can't find session: fixture" >&2
-    exit 1
-    ;;
-  new-session)
-    : > {running}
-    heartbeat=''
-    slot=0
-    for arg in "$@"; do
-      if [ "$slot" = 2 ]; then incarnation="$arg"; break
-      elif [ "$slot" = 1 ]; then slot=2
-      else case "$arg" in */coordination/heartbeat) heartbeat="$arg"; slot=1 ;; esac
-      fi
-    done
-    if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then
-      mkdir -p "$(dirname "$heartbeat")"
-      printf '%s:%s\n' "$incarnation" "$(date +%s)" > "$heartbeat"
-      chmod 600 "$heartbeat"
-    fi
-    printf '%s\t%s\t%s\n' '$77' '%77' "$(cat {pane_pid})"
-    ;;
-  display-message)
-    printf '%s\t%s\t%s\n' '$77' '%77' "$(cat {pane_pid})"
-    ;;
-  if-shell|kill-session)
-    kill -KILL "$(cat {pane_pid})" 2>/dev/null || true
-    rm -f {running}
-    ;;
-  *) exit 0 ;;
-esac
-"#,
-                log = shell_words::quote(&log.to_string_lossy()),
-                running = shell_words::quote(&running.to_string_lossy()),
-                pane_pid = shell_words::quote(&pane_pid.to_string_lossy()),
-            ),
-        );
+        let tmux = claude_live_tmux(tmp.path(), &log, &running, &pane_pid);
         let st = state(tmp.path(), Some(TOKEN), tmux);
         let first_pane = TestProcessGroup::spawn();
         fs::write(&pane_pid, first_pane.pid().to_string()).unwrap();
@@ -29532,6 +29448,213 @@ esac
             1,
             "the idle switch preflights the next account once, before the stop"
         );
+    }
+
+    /// `agent-session account switch` runs the same Claude switch as the serve
+    /// route: busy queues, an unknown or unpreparable account is refused before
+    /// anything stops, and an idle switch preflights and then stops the runtime
+    /// for the resume. An omitted incarnation fences on the current runtime.
+    #[tokio::test]
+    async fn account_cli_claude_switch_queues_busy_refuses_and_restarts_idle() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let broker = claude_broker_fixture(&lock, tmp.path());
+        let log = tmp.path().join("tmux.log");
+        let running = tmp.path().join("running");
+        let pane_pid = tmp.path().join("pane.pid");
+        let tmux = claude_live_tmux(tmp.path(), &log, &running, &pane_pid);
+        let st = state(tmp.path(), Some(TOKEN), tmux.clone());
+        let first_pane = TestProcessGroup::spawn();
+        fs::write(&pane_pid, first_pane.pid().to_string()).unwrap();
+        let _first_pane = first_pane.into_background_reaper();
+
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({"agent":"claude","id":"claude-cli","cwd":cwd,"claude_account":"alpha"}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let record = load_session_record(&st.context, "claude-cli").unwrap();
+        let first_launch = record.runtime.as_ref().unwrap().launch_id.clone();
+        let provider_session_id = record.provider_resume.as_ref().unwrap().session_id.clone();
+        let turn = |event_id: &str, kind: &str| {
+            serde_json::from_value(json!({
+                "schema_version": crate::activity::TURN_EVENT_VERSION,
+                "event_id": event_id,
+                "runtime_id": first_launch,
+                "provider": "claude",
+                "provider_session_id": provider_session_id,
+                "provider_turn_id": "turn-claude-cli-switch",
+                "kind": kind,
+                "confidence": "authoritative"
+            }))
+            .unwrap()
+        };
+        let launches = || {
+            fs::read_to_string(&log)
+                .unwrap()
+                .lines()
+                .filter(|line| line.starts_with("new-session"))
+                .count()
+        };
+        let switch = |account: &str, expected: Option<&str>| {
+            crate::session_account::switch(&st.context, "claude-cli", account, expected, &tmux)
+                .map(|result| serde_json::to_value(result).unwrap())
+        };
+
+        let shown =
+            serde_json::to_value(crate::session_account::show(&st.context, "claude-cli").unwrap())
+                .unwrap();
+        assert_eq!(shown["id"], "claude-cli");
+        assert_eq!(shown["agent"], "claude");
+        assert_eq!(shown["session_incarnation"], first_launch.as_str());
+        assert_eq!(shown["claude_account"]["selected_account"], "alpha");
+        assert!(shown.get("codex_account").is_none(), "{shown}");
+
+        // Busy: the switch stays queued and nothing restarts.
+        crate::activity::ingest_event(&st.context, &record.id, turn("turn-start", "turn_started"))
+            .unwrap();
+        let queued = switch("beta", None).unwrap();
+        assert_eq!(queued["session_incarnation"], first_launch.as_str());
+        assert_eq!(queued["claude_account"]["selected_account"], "alpha");
+        assert_eq!(queued["claude_account"]["next"]["account"], "beta");
+        assert_eq!(queued["claude_account"]["next"]["state"], "queued");
+        assert_eq!(launches(), 1, "a busy turn must not restart");
+        let shown =
+            serde_json::to_value(crate::session_account::show(&st.context, "claude-cli").unwrap())
+                .unwrap();
+        assert_eq!(shown["claude_account"]["next"]["account"], "beta");
+
+        // Typed errors match the serve route.
+        let stale = switch("beta", Some("stale-incarnation")).unwrap_err();
+        assert_eq!(stale.code(), "claude-account-session-incarnation-conflict");
+        let unknown = switch("delta", Some(&first_launch)).unwrap_err();
+        assert_eq!(unknown.code(), "claude-account-unknown");
+
+        // Idle refusal: the preflight fails before anything is stopped.
+        crate::activity::ingest_event(&st.context, &record.id, turn("turn-done", "turn_completed"))
+            .unwrap();
+        let before_refusal = session_record_json(tmp.path(), "claude-cli");
+        let refused = switch("gamma", None).unwrap_err();
+        assert_eq!(refused.code(), "claude-account-switch-refused");
+        assert_eq!(
+            refused.details().unwrap()["cause"],
+            "claude-account-broker-rejected"
+        );
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(
+            !calls.contains("kill-session") && !calls.contains("if-shell"),
+            "a refused preflight must never stop the runtime: {calls:?}"
+        );
+        assert!(running.exists(), "the session must still be running");
+        let after_refusal = session_record_json(tmp.path(), "claude-cli");
+        assert_eq!(
+            after_refusal["claude_account_binding"],
+            before_refusal["claude_account_binding"]
+        );
+        assert_eq!(
+            after_refusal["claude_account_next"],
+            before_refusal["claude_account_next"]
+        );
+
+        // Idle: preflight once, then the same verified stop as the serve route.
+        // As there, this fixture pane has no dedicated control group, so the
+        // stop refuses and the intent stays queued for the next resume.
+        let stop = switch("beta", None).unwrap_err();
+        assert_eq!(stop.code(), "session-termination-failed");
+        assert_eq!(launches(), 1, "a refused stop must not relaunch");
+        assert_eq!(
+            broker
+                .calls()
+                .matches("materialize --provider claude --account beta")
+                .count(),
+            1,
+            "the idle switch preflights the next account once, before the stop"
+        );
+        let persisted = load_session_record(&st.context, "claude-cli").unwrap();
+        assert!(crate::claude_account::has_queued_next(&persisted));
+    }
+
+    /// `agent-session account switch` on a Codex session has no in-process
+    /// control connection, so it takes the serve route's durable queue path:
+    /// the account is bound for the next prompt, applied by the daemon's control
+    /// connection at the idle boundary, and the prompt is fenced until then.
+    #[tokio::test]
+    async fn account_cli_codex_switch_binds_for_the_next_prompt() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let broker = codex_listing_broker(&lock, tmp.path(), &["gamania", "sym"]);
+        let launch_id = seed_codex_app_server_session(tmp.path(), "codex-cli");
+        let tmux = minimal_tmux(tmp.path());
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let mut record = load_session_record(&context, "codex-cli").unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::codex_account::finish_binding(
+            &context,
+            &record.id,
+            &launch_id,
+            "gamania",
+            1,
+            Ok(()),
+        )
+        .unwrap();
+        let switch = |account: &str, expected: Option<&str>| {
+            crate::session_account::switch(&context, "codex-cli", account, expected, &tmux)
+                .map(|result| serde_json::to_value(result).unwrap())
+        };
+
+        let shown =
+            serde_json::to_value(crate::session_account::show(&context, "codex-cli").unwrap())
+                .unwrap();
+        assert_eq!(shown["agent"], "codex");
+        assert_eq!(shown["session_incarnation"], launch_id.as_str());
+        assert_eq!(shown["codex_account"]["selected_account"], "gamania");
+        assert!(shown.get("claude_account").is_none(), "{shown}");
+
+        let stale = switch("sym", Some("stale-incarnation")).unwrap_err();
+        assert_eq!(stale.code(), "codex-account-session-incarnation-conflict");
+        let unlisted = switch("delta", None).unwrap_err();
+        assert_eq!(unlisted.code(), "codex-account-unknown");
+
+        let bound = switch("sym", None).unwrap();
+        assert_eq!(bound["session_incarnation"], launch_id.as_str());
+        assert_eq!(bound["codex_account"]["selected_account"], "gamania");
+        assert_eq!(bound["codex_account"]["next"]["account"], "sym");
+        assert_eq!(bound["codex_account"]["next"]["state"], "queued");
+        let persisted = load_session_record(&context, "codex-cli").unwrap();
+        assert_eq!(
+            crate::codex_account::pending_next_apply(&persisted)
+                .unwrap()
+                .map(|(account, _)| account),
+            Some("sym".to_string()),
+            "the daemon's control connection applies it at the idle boundary"
+        );
+        assert!(
+            crate::codex_account::ensure_input_allowed(&persisted).is_err(),
+            "the next prompt is fenced until the queued account is applied"
+        );
+
+        // Re-selecting the bound account cancels the queued switch, as in serve.
+        let cancelled = switch("gamania", Some(&launch_id)).unwrap();
+        assert!(
+            cancelled["codex_account"].get("next").is_none(),
+            "{cancelled}"
+        );
+
+        drop(broker);
+        let _no_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+        let unsupported = switch("sym", None).unwrap_err();
+        assert_eq!(unsupported.code(), "codex-account-unsupported");
     }
 
     #[tokio::test]

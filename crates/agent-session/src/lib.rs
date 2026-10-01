@@ -35,6 +35,7 @@ mod retitle_v3;
 mod send_submit;
 mod serve;
 mod serve_config;
+mod session_account;
 mod usage;
 
 /// Unstable engine surface for the `nils-main-agent` workspace crate.
@@ -339,6 +340,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Send(args) => run_send(&context, args),
         Command::Glance(args) => run_glance(&context, args),
         Command::Resume(args) => run_resume(&context, args),
+        Command::Account(args) => session_account::run_account(&context, args),
         Command::Activity(args) => run_activity(&context, args),
         Command::WorkContext(args) => coordination::run_work_context(&context, args),
         Command::Broker(args) => coordination::run_broker(&context, args),
@@ -396,6 +398,10 @@ fn coordination_command_name(command: &Command) -> Option<&'static str> {
             cli::MetadataCommand::Attach(_) => "metadata-attach",
             cli::MetadataCommand::Show(_) => "metadata-show",
         }),
+        Command::Account(args) => Some(match &args.command {
+            cli::AccountCommand::Show(_) => "account-show",
+            cli::AccountCommand::Switch(_) => "account-switch",
+        }),
         _ => None,
     }
 }
@@ -433,6 +439,8 @@ fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("message", "reminder") => Some("message-reminder"),
             ("metadata", "attach") => Some("metadata-attach"),
             ("metadata", "show") => Some("metadata-show"),
+            ("account", "show") => Some("account-show"),
+            ("account", "switch") => Some("account-switch"),
             _ => None,
         }
     })
@@ -450,6 +458,10 @@ fn command_format(command: &Command) -> OutputFormat {
         Command::Send(args) => args.format,
         Command::Glance(args) => args.format,
         Command::Resume(args) => args.format,
+        Command::Account(args) => match &args.command {
+            cli::AccountCommand::Show(args) => args.format,
+            cli::AccountCommand::Switch(args) => args.format,
+        },
         Command::Activity(args) => match &args.command {
             cli::ActivityCommand::Event(args) => args.format,
             cli::ActivityCommand::Status(args) => args.format,
