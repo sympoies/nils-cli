@@ -213,6 +213,33 @@ agent-session lineage adopt <CHILD> --clear [--if-revision N]
 - The result (`cli.agent-session.lineage-adopt.v1`) carries `session_id`, the
   unchanged `lineage`, the new `lineage_adoption`, and `effective_parent`.
 
+## Closing a parent
+
+A parent closes its own children before it reports done. `delete` and archive
+enforce it:
+
+- `agent-session delete <ID>`, `DELETE /sessions/{id}`, and
+  `POST /sessions/{id}/archive` fail with `session-has-live-children` (data exit
+  class; HTTP 409) while any session in this state directory, live or stopped,
+  has the closing session as its effective parent. `details.children` lists
+  them as `{machine, session_id, session_created_at}` and `details.scope` is
+  `local`. Nothing is closed.
+- `delete --orphan-children`, `?orphan_children=true`, or the archive body's
+  `orphan_children: true` closes the session anyway. The result's
+  `children` member, `{"scope": "local", "orphaned": [...]}`, records the
+  children the caller acknowledged orphaning; it is present, with an empty
+  `orphaned`, on every guarded delete or archive.
+- A child matches on `(session_id, session_created_at)` of its effective
+  parent. The machine label is not compared, because local children name their
+  parent with the label of whichever process started them.
+- The check is `local`: children on other machines (started with
+  `start --via-console --machine`) are not seen. A global check through the
+  board relay follows when board records carry lineage.
+- There is no cascade: closing children is a multi-target destructive action
+  and stays explicit.
+- Main Agent cleanup and orchestration group archive close their own workers
+  and are not guarded.
+
 ## `work`
 
 ```json
@@ -308,3 +335,4 @@ start and create results) carries the stored `lineage`, `work`, and
 | `lineage-adopt-forbidden` | data | A managed session names a steward other than itself, or clears one. |
 | `work-revision-conflict` | data | `work set --if-revision` does not match. |
 | `work-set-forbidden` | data | A managed session sets another session's work. |
+| `session-has-live-children` | data / 409 | A delete or archive of a session that local sessions name as their effective parent, without `--orphan-children`. |

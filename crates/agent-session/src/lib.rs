@@ -1052,10 +1052,12 @@ fn valid_sha256(value: &str) -> bool {
 }
 
 fn run_delete(context: &CliContext, args: cli::DeleteArgs) -> i32 {
-    match delete_session(
+    match delete_session_guarding_children(
         context,
+        &board::machine_identity(None, context),
         &args.id,
         resolve_tmux_bin(args.tmux_bin.as_deref()),
+        args.orphan_children,
     ) {
         Ok(result) => {
             render_single_success(DELETE_COMMAND, args.format, &result, render_delete_text)
@@ -1858,6 +1860,10 @@ pub(crate) struct DshHistoryResumeArgs {
 
 #[derive(Debug, Serialize)]
 pub struct DeleteResult {
+    /// The children check of a user delete or archive
+    /// (`session-lineage-work-v1`); absent on internal cleanup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<lineage::ChildrenCheck>,
     id: String,
     tmux_session: String,
     killed: bool,
@@ -13263,6 +13269,21 @@ pub fn delete_session(
     delete_session_for_terminal_assignment(context, id, tmux_bin, None)
 }
 
+/// A user delete: refused while the session has children on this machine,
+/// unless `orphan_children` acknowledges orphaning them.
+pub(crate) fn delete_session_guarding_children(
+    context: &CliContext,
+    machine: &str,
+    id: &str,
+    tmux_bin: PathBuf,
+    orphan_children: bool,
+) -> Result<DeleteResult, CliError> {
+    let children = lineage::guard_children(context, machine, id, orphan_children)?;
+    let mut result = delete_session(context, id, tmux_bin)?;
+    result.children = Some(children);
+    Ok(result)
+}
+
 fn delete_session_with_expected_incarnation_and_prepare<T, F>(
     context: &CliContext,
     id: &str,
@@ -13651,6 +13672,7 @@ fn finish_session_delete(
     let cleanup_pending = commit_session_directory_delete(context, &record.id, &session_dir)?;
     board::record_close(context, closed);
     Ok(DeleteResult {
+        children: None,
         id: record.id,
         tmux_session: record.tmux_session,
         killed: true,
@@ -18993,11 +19015,19 @@ fn render_doctor_text(result: &activity::DoctorResult) -> String {
 }
 
 fn render_delete_text(result: &DeleteResult) -> String {
-    format!(
+    let mut text = format!(
         "deleted {} (tmux stopped: {})\n",
         result.id,
         if result.killed { "yes" } else { "no" }
-    )
+    );
+    for child in result
+        .children
+        .iter()
+        .flat_map(|children| &children.orphaned)
+    {
+        text.push_str(&format!("orphaned child: {}\n", child.session_id));
+    }
+    text
 }
 
 fn local_attach_command(tmux_session: &str) -> String {
@@ -25474,6 +25504,7 @@ exit 42
     #[test]
     fn delete_text_describes_verified_stop_instead_of_a_kill_command() {
         let result = DeleteResult {
+            children: None,
             id: "stopped-session".to_string(),
             tmux_session: "hs-codex-stopped-session".to_string(),
             killed: true,

@@ -3,6 +3,7 @@
 //! inherits its program and issues.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
@@ -608,4 +609,71 @@ fn work_set_replaces_named_dimensions_under_a_revision_fence() {
         assert_eq!(output.code, 64, "{args:?}: stdout={}", output.stdout_text());
         assert_eq!(error_code(&output), "work-ref-invalid", "{args:?}");
     }
+}
+
+#[test]
+fn delete_refuses_a_session_whose_effective_children_remain() {
+    let fixture = Fixture::new();
+    fixture.started("guard-parent", &[], None);
+    let parent = fixture.record("guard-parent");
+    let launch = parent["runtime"]["launch_id"].as_str().unwrap().to_string();
+    fixture.started("guard-child", &[], Some(("guard-parent", launch.as_str())));
+    fixture.started("guard-steward", &[], None);
+    let child_ref = session_ref(&fixture.record("guard-child"), false);
+    // Delete without a live runtime: each record proves its runtime never
+    // launched, and tmux reports no such session.
+    let gone_tmux = fixture.root.join("gone-tmux");
+    fs::write(
+        &gone_tmux,
+        "#!/bin/sh\ncase \"$1\" in\n  display-message|has-session) echo \"can't find session: gone\" >&2; exit 1 ;;\n  *) exit 42 ;;\nesac\n",
+    )
+    .expect("gone tmux");
+    fs::set_permissions(&gone_tmux, fs::Permissions::from_mode(0o755)).expect("gone tmux mode");
+    for id in ["guard-parent", "guard-child", "guard-steward"] {
+        let path = Path::new(&fixture.state)
+            .join("sessions")
+            .join(id)
+            .join("session.json");
+        let mut record = fixture.record(id);
+        record["tmux_runtime_never_launched"] = record["runtime"]["launch_id"].clone();
+        fs::write(&path, serde_json::to_vec(&record).expect("record")).expect("write record");
+    }
+    let gone_tmux = gone_tmux.to_string_lossy().to_string();
+    let delete = |id: &str, extra: &[&str]| {
+        let mut args = vec!["delete", id, "--tmux-bin", gone_tmux.as_str()];
+        args.extend_from_slice(extra);
+        fixture.operator(&args)
+    };
+
+    let output = delete("guard-parent", &[]);
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(error_code(&output), "session-has-live-children");
+    assert_eq!(
+        output.stdout_json()["error"]["details"],
+        json!({"children": [child_ref], "scope": "local"})
+    );
+    assert!(
+        Path::new(&fixture.state)
+            .join("sessions/guard-parent")
+            .exists()
+    );
+
+    // After a steward adopts the child, the steward is the one guarded.
+    let output = fixture.operator(&["lineage", "adopt", "guard-child", "--by", "guard-steward"]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let output = delete("guard-steward", &[]);
+    assert_eq!(error_code(&output), "session-has-live-children");
+    let output = delete("guard-parent", &[]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["children"],
+        json!({"scope": "local", "orphaned": []})
+    );
+
+    let output = delete("guard-steward", &["--orphan-children"]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["children"],
+        json!({"scope": "local", "orphaned": [child_ref]})
+    );
 }

@@ -69,11 +69,11 @@ use crate::{
     BINARY, CliContext, CliError, DshHistoryResumeArgs, ProviderResumeImportArgs, SessionRecord,
     SessionRegistryFence, SessionTitleState, SessionTitleStateInput, SessionView,
     StartFailureDisposition, WorkdirSearchOptions, archive_session_with_expected_incarnation,
-    canonicalize_structured_title_pair, cleanup_session_delete_tombstones, delete_session,
-    glance_session, load_session_record, non_empty_env, prepare_session_attachment,
-    profile_unavailable, repo_remote_url_from_cwd, resolve_tmux_bin, resume_session_by_id,
-    search_workdirs, send_auto_resume_input, send_input_serialized, session_clipboard_buffer,
-    session_dir, session_status, start_dsh_history_resume_session, start_provider_resume_session,
+    canonicalize_structured_title_pair, cleanup_session_delete_tombstones, glance_session,
+    load_session_record, non_empty_env, prepare_session_attachment, profile_unavailable,
+    repo_remote_url_from_cwd, resolve_tmux_bin, resume_session_by_id, search_workdirs,
+    send_auto_resume_input, send_input_serialized, session_clipboard_buffer, session_dir,
+    session_status, start_dsh_history_resume_session, start_provider_resume_session,
     update_session_title_if_revision,
 };
 
@@ -2558,7 +2558,8 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "provider-session-already-running"
         | "history-session-live"
         | "agent-blocked"
-        | "send-submit-stuck" => StatusCode::CONFLICT,
+        | "send-submit-stuck"
+        | "session-has-live-children" => StatusCode::CONFLICT,
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
         "retitle-v3-objective-unavailable" => StatusCode::UNPROCESSABLE_ENTITY,
         "board-cursor-expired" => StatusCode::GONE,
@@ -3582,6 +3583,16 @@ struct ArchiveBody {
     /// Star the archived session as it lands in history. Older clients omit it.
     #[serde(default)]
     starred: bool,
+    /// Archive even though the session still has children on this machine.
+    #[serde(default)]
+    orphan_children: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteQuery {
+    #[serde(default)]
+    orphan_children: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -9688,14 +9699,33 @@ async fn delete_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
+    query: Result<Query<DeleteQuery>, QueryRejection>,
 ) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
     }
+    let Ok(Query(query)) = query else {
+        return envelope_err(CliError::usage(
+            "invalid-query",
+            "delete accepts only orphan_children=true|false",
+            None,
+        ));
+    };
     let context = state.context.clone();
     let tmux = state.tmux_bin.clone();
     let delete_id = id.clone();
-    match tokio::task::spawn_blocking(move || delete_session(&context, &delete_id, tmux)).await {
+    let machine = state.machine.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::delete_session_guarding_children(
+            &context,
+            &machine,
+            &delete_id,
+            tmux,
+            query.orphan_children,
+        )
+    })
+    .await
+    {
         Ok(Ok(result)) => {
             cleanup_deleted_session_registries(&state, &result.registry_fence).await;
             envelope_ok(json!({ "machine": state.machine, "deleted": result }))
@@ -9730,12 +9760,15 @@ async fn archive_handler(
     let response_machine = machine.clone();
     let starred = body.starred;
     match tokio::task::spawn_blocking(move || {
-        let (archive, deleted) = archive_session_with_expected_incarnation(
+        let children =
+            crate::lineage::guard_children(&context, &machine, &id, body.orphan_children)?;
+        let (archive, mut deleted) = archive_session_with_expected_incarnation(
             &context,
             &id,
             tmux,
             &body.expected_session_incarnation,
         )?;
+        deleted.children = Some(children);
         // The session is already archived and gone; a star that cannot be stored
         // is reported as unstarred rather than failing the archive after the fact.
         let starred_at = starred
@@ -30938,6 +30971,98 @@ esac
         assert!(
             !calls.lines().any(|line| line.starts_with("kill-session")),
             "a definitively unlaunched runtime must not invoke kill-session: {calls}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_and_archive_refuse_a_session_with_children_unless_orphaned() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tmux = executable(
+            &tmp.path().join("children-guard-tmux"),
+            "#!/usr/bin/env sh\ncase \"$1\" in\n  display-message|has-session) printf \"%s\\n\" \"can't find session: gone\" >&2; exit 1 ;;\n  *) exit 42 ;;\nesac\n",
+        );
+        for id in ["guard-parent", "guard-child"] {
+            seed_session_with_runtime(tmp.path(), id, "codex", &format!("hs-codex-{id}"));
+            let record_path = tmp.path().join("sessions").join(id).join("session.json");
+            let mut record: Value =
+                serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+            record["tmux_runtime_never_launched"] = record["runtime"]["launch_id"].clone();
+            if id == "guard-child" {
+                let parent = json!({
+                    "machine": "elsewhere",
+                    "session_id": "guard-parent",
+                    "session_created_at": "2000-01-01T00:00:00Z",
+                });
+                record["lineage"] = json!({
+                    "schema_version": "agent-session.session-lineage.v1",
+                    "parent": parent,
+                    "root": parent,
+                    "depth": 1,
+                    "starter": {"kind": "session", "via": "cli"},
+                    "budget": null,
+                });
+            }
+            std::fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        }
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        let delete = |uri: &str| {
+            Request::builder()
+                .method("DELETE")
+                .uri(uri)
+                .header("authorization", format!("Bearer {TOKEN}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let child = json!({
+            "machine": MACHINE,
+            "session_id": "guard-child",
+            "session_created_at": "2000-01-01T00:00:00Z",
+        });
+
+        let (status, body) = call(router(st.clone()), delete("/sessions/guard-parent")).await;
+        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+        assert_eq!(body["error"]["code"], "session-has-live-children");
+        assert_eq!(
+            body["error"]["details"],
+            json!({"children": [child], "scope": "local"})
+        );
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions/guard-parent/archive",
+                Some(TOKEN),
+                json!({"expected_session_incarnation": "launch-guard-parent"}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+        assert_eq!(body["error"]["code"], "session-has-live-children");
+        assert!(tmp.path().join("sessions/guard-parent").exists());
+
+        let (status, body) = call(
+            router(st.clone()),
+            delete("/sessions/guard-parent?orphan_children=yes"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
+
+        let (status, body) = call(
+            router(st.clone()),
+            delete("/sessions/guard-parent?orphan_children=true"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(
+            body["data"]["deleted"]["children"],
+            json!({"scope": "local", "orphaned": [child]})
+        );
+        assert!(!tmp.path().join("sessions/guard-parent").exists());
+
+        let (status, body) = call(router(st), delete("/sessions/guard-child")).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(
+            body["data"]["deleted"]["children"],
+            json!({"scope": "local", "orphaned": []})
         );
     }
 
