@@ -2156,10 +2156,11 @@ pub(crate) fn operator_reconcile_provider_turn_locked(
         ));
     }
     if document.operator_provider_turn_receipts.len() >= MAX_OPERATOR_PROVIDER_TURN_RECEIPTS {
-        return Err(CliError::data(
-            "quota-exceeded",
+        return Err(crate::coordination::quota_exceeded(
             "provider turn reconciliation idempotency receipt quota exceeded",
-            None,
+            "provider-turn-receipts",
+            document.operator_provider_turn_receipts.len(),
+            MAX_OPERATOR_PROVIDER_TURN_RECEIPTS,
         ));
     }
     if document.state.revision != input.activity_revision {

@@ -183,10 +183,11 @@ impl LockedRegistry {
         }
         let bytes = serde_json::to_vec_pretty(&self.registry).map_err(|_| store_corrupt())?;
         if bytes.len() as u64 > MAX_REGISTRY_BYTES {
-            return Err(CliError::data(
-                "quota-exceeded",
+            return Err(quota_exceeded(
                 "coordination registry byte limit exceeded",
-                None,
+                "registry-bytes",
+                bytes.len(),
+                MAX_REGISTRY_BYTES as usize,
             ));
         }
         write_atomic(&self.path, &bytes, SECRET_FILE_MODE).map_err(|_| store_unavailable())
@@ -1043,10 +1044,11 @@ fn acquire_claim_mutation_fence_owner(
             .take(MAX_CLAIM_MUTATION_OPERATION_FILES.saturating_add(1))
             .count();
         if count.saturating_add(2) > MAX_CLAIM_MUTATION_OPERATION_FILES {
-            return Err(CliError::data(
-                "quota-exceeded",
+            return Err(quota_exceeded(
                 "claim-mutation fence operation file limit exceeded",
-                None,
+                "claim-fence-operation-files",
+                count.saturating_add(2),
+                MAX_CLAIM_MUTATION_OPERATION_FILES,
             ));
         }
     }
@@ -1153,10 +1155,11 @@ fn persist_claim_mutation_fence_sidecar(
                 .take(MAX_CLAIM_MUTATION_FENCE_FILES.saturating_add(1))
                 .count();
             if count >= MAX_CLAIM_MUTATION_FENCE_FILES {
-                return Err(CliError::data(
-                    "quota-exceeded",
+                return Err(quota_exceeded(
                     "claim-mutation fence sidecar limit exceeded",
-                    None,
+                    "claim-fence-files",
+                    count,
+                    MAX_CLAIM_MUTATION_FENCE_FILES,
                 ));
             }
         }
@@ -1253,10 +1256,11 @@ pub fn sweep_inactive_claim_mutation_fence_orphans(context: &CliContext) -> Resu
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| store_unavailable())?;
     if entries.len() > MAX_CLAIM_MUTATION_OPERATION_FILES {
-        return Err(CliError::data(
-            "quota-exceeded",
+        return Err(quota_exceeded(
             "claim-mutation fence operation file limit exceeded",
-            None,
+            "claim-fence-operation-files",
+            entries.len(),
+            MAX_CLAIM_MUTATION_OPERATION_FILES,
         ));
     }
     for entry in entries {
@@ -3039,20 +3043,30 @@ pub(crate) fn store_receipt(
     now: i64,
 ) -> Result<(), CliError> {
     let receipt_key = receipt_key(&principal, &incarnation, &operation, &key);
-    if !registry.receipts.contains_key(&receipt_key)
-        && (registry.receipts.len() >= MAX_RECEIPTS_GLOBAL
-            || registry
-                .receipts
-                .values()
-                .filter(|receipt| receipt.principal == principal)
-                .count()
-                >= MAX_RECEIPTS_PER_PRINCIPAL)
-    {
-        return Err(CliError::data(
-            "quota-exceeded",
-            "coordination idempotency receipt quota exceeded",
-            None,
-        ));
+    if !registry.receipts.contains_key(&receipt_key) {
+        let refuse = |quota, count, limit| {
+            Err(quota_exceeded(
+                "coordination idempotency receipt quota exceeded",
+                quota,
+                count,
+                limit,
+            ))
+        };
+        if registry.receipts.len() >= MAX_RECEIPTS_GLOBAL {
+            return refuse("receipts", registry.receipts.len(), MAX_RECEIPTS_GLOBAL);
+        }
+        let principal_receipts = registry
+            .receipts
+            .values()
+            .filter(|receipt| receipt.principal == principal)
+            .count();
+        if principal_receipts >= MAX_RECEIPTS_PER_PRINCIPAL {
+            return refuse(
+                "principal-receipts",
+                principal_receipts,
+                MAX_RECEIPTS_PER_PRINCIPAL,
+            );
+        }
     }
     let candidate = IdempotencyReceipt {
         principal,
@@ -3071,10 +3085,11 @@ pub(crate) fn store_receipt(
     if retained_bytes.saturating_add(candidate_receipt_bytes(&candidate))
         > MAX_RECEIPT_BYTES_PER_PRINCIPAL
     {
-        return Err(CliError::data(
-            "quota-exceeded",
+        return Err(quota_exceeded(
             "coordination idempotency receipt byte budget exceeded",
-            None,
+            "principal-receipt-bytes",
+            retained_bytes.saturating_add(candidate_receipt_bytes(&candidate)) as usize,
+            MAX_RECEIPT_BYTES_PER_PRINCIPAL as usize,
         ));
     }
     registry.receipts.insert(receipt_key, candidate);
@@ -3277,6 +3292,38 @@ fn store_unavailable() -> CliError {
         "coordination store is unavailable",
         None,
     )
+}
+
+/// `quota-exceeded` with content-free details naming the exhausted quota, its
+/// count and limit, and the evaluating host. `side` is `local` until a
+/// federation boundary relabels it `source` or `destination`.
+pub(crate) fn quota_exceeded(message: &str, quota: &str, count: usize, limit: usize) -> CliError {
+    let host = crate::non_empty_env("AGENT_SESSION_MACHINE")
+        .or_else(|| crate::non_empty_env("AGENT_SESSION_HOST"))
+        .or_else(crate::short_hostname)
+        .unwrap_or_else(|| "unknown".to_string());
+    CliError::data(
+        "quota-exceeded",
+        format!("{message} ({quota} {count}/{limit})"),
+        Some(serde_json::json!({
+            "quota": quota,
+            "count": count,
+            "limit": limit,
+            "host": host,
+            "side": "local",
+        })),
+    )
+}
+
+/// Relabels a quota refusal with the federation host and side that evaluated it.
+pub(crate) fn quota_origin(mut error: CliError, host: &str, side: &str) -> CliError {
+    if error.code() == "quota-exceeded"
+        && let Some(Value::Object(details)) = error.details_mut()
+    {
+        details.insert("host".into(), host.into());
+        details.insert("side".into(), side.into());
+    }
+    error
 }
 
 pub(crate) fn public_summary(context: &CliContext, session_id: &str) -> CoordinationSummary {

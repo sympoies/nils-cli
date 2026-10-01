@@ -1200,13 +1200,27 @@ CLI envelope for CLI callers): `message_id`, `state`, `sender`, `recipient`,
 `attempts`, `reason`, and optional `receipt`. States are `queued`, `delivered`,
 `rejected`, or `delivery-unknown`. Network errors retry five seconds after the
 request finishes until expiry. Due entries are selected by their retry deadline,
-so a repeatedly timed-out entry cannot starve later messages. The worker wakes
+so a repeatedly timed-out entry cannot starve later messages. A retryable
+transport failure (`remote-messaging-unavailable`, `coordination-unavailable`)
+also defers every other already-attempted queued envelope for the same
+destination machine to the same retry deadline, so an offline machine costs one
+probe per retry interval and cannot delay due envelopes for other machines. A
+fresh envelope still gets its own first attempt. The worker wakes
 on enqueue or the next pending deadline and sleeps indefinitely when no entries
 remain queued. No registry, journal or session lock spans network I/O.
 A source restart preserves the original envelope and
 recipient incarnation. Retries with the same idempotency key and content return
-the original identity without rediscovery; changed content is rejected. The
-outbox retains up to 256 envelopes and rejects at capacity. Entries are retained
+the original identity without rediscovery; changed content is rejected. Only
+queued (undelivered) envelopes carry bodies and count against the pending caps:
+512 per destination machine and 2048 in total. Once an entry is terminal
+(`delivered`, `rejected` or `delivery-unknown`) every journal write compacts it
+into a body-free retained record (message ID, sender, recipient, idempotency
+key, request digest, state, attempts, reason, expiry, and the receipt's
+`persisted_at_epoch`, from which the accepted receipt is rebuilt). Replay,
+reply replay and delivery status read queued and retained entries alike.
+Queued plus retained identities are bounded to 16384, and a submit that would
+leave less than 256 KiB of the journal byte budget is refused. Each bound
+refuses at capacity and never evicts a live identity; identities are retained
 until 24 hours after expiry. Expiry without a confirmed receipt remains unknown,
 including the case where the receiver saved the message but its response was lost.
 An admission rejection on the first attempt is `rejected`; after any prior
@@ -1224,7 +1238,10 @@ and maximum-depth (16) checks.
 
 Federation never changes the local coordination registry schema or session runtime.
 Source envelopes live in the private `coordination/federation-journal.json`,
-schema `agent-session.federation-journal.v1`, bounded to 8 MiB and 256 envelopes.
+schema `agent-session.federation-journal.v2` (`remote_outbox` plus `retained`),
+bounded to 32 MiB, 2048 queued envelopes and 16384 identities. A v1 journal is read
+and rewritten as v2 on the next write; releases that only know v1 fail closed on
+a v2 journal.
 A dedicated private `coordination/federation-journal.lock` serializes journal
 reads/writes with the same bounded, owner-checked file locking rules as the registry.
 Authorization uses session then registry then journal lock order. Journal-only
@@ -1236,6 +1253,22 @@ Remote and local ingress share the existing mailbox admission rules, including
 30 messages per pair per minute, a burst of 10 per second, the recipient mailbox
 limits and the 68 MiB global body quota. Refusal returns typed `rate-limited` or
 `quota-exceeded` before inbox persistence.
+
+Every `quota-exceeded` error carries content-free `details`: `quota` (for
+example `federation-pending-destination`, `federation-pending`,
+`federation-retained-ids`, `federation-journal-bytes`, `recipient-messages`,
+`recipient-bytes`, `registry-message-bytes`, `registry-bytes`, `cursors`,
+`recipient-cursors`, `receipts`, `principal-receipts`,
+`principal-receipt-bytes`, `completion-events`, `claim-fence-files`,
+`claim-fence-operation-files`, `provider-turn-receipts`), the current `count`,
+the `limit`, the evaluating `host`, and `side`: `source` for the sending host's
+federation outbox, `destination` for remote admission, otherwise `local`.
+`count` is the value that admitting the request would reach. Source federation
+refusals add `destination_machine`, `pending`, `pending_to_destination`,
+`delivered` and `retained`. The message ends with `(<quota> <count>/<limit>)`. The CLI reports its local daemon's
+refusals with that daemon's own code, message and details; only refusals that
+came back through the relay are described as "remote mailbox request was
+rejected", keeping just these quota fields from the relayed details.
 
 Destination inbox, notification and deduplication receipt share one existing
 registry commit. Authoritative sender identity is the existing
