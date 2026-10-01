@@ -238,7 +238,10 @@ enforce it:
 - There is no cascade: closing children is a multi-target destructive action
   and stays explicit.
 - Main Agent cleanup and orchestration group archive close their own workers
-  and are not guarded.
+  and are not guarded. Neither are the serve maintenance recovery actions
+  (`retry_delete`, `terminate_runtime_then_delete`, `remove_console_record`):
+  they finish a close that already started or remove a record whose runtime
+  cannot be stopped, and refusing them would strand that recovery.
 
 ## `work`
 

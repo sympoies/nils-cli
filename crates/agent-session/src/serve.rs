@@ -30981,17 +30981,24 @@ esac
             &tmp.path().join("children-guard-tmux"),
             "#!/usr/bin/env sh\ncase \"$1\" in\n  display-message|has-session) printf \"%s\\n\" \"can't find session: gone\" >&2; exit 1 ;;\n  *) exit 42 ;;\nesac\n",
         );
-        for id in ["guard-parent", "guard-child"] {
+        // guard-stale names a parent with the same id but an earlier creation
+        // time, so it is not a child of the current guard-parent.
+        for id in ["guard-parent", "guard-child", "guard-stale"] {
             seed_session_with_runtime(tmp.path(), id, "codex", &format!("hs-codex-{id}"));
             let record_path = tmp.path().join("sessions").join(id).join("session.json");
             let mut record: Value =
                 serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
             record["tmux_runtime_never_launched"] = record["runtime"]["launch_id"].clone();
-            if id == "guard-child" {
+            if id != "guard-parent" {
+                let created_at = if id == "guard-child" {
+                    "2000-01-01T00:00:00Z"
+                } else {
+                    "1999-01-01T00:00:00Z"
+                };
                 let parent = json!({
                     "machine": "elsewhere",
                     "session_id": "guard-parent",
-                    "session_created_at": "2000-01-01T00:00:00Z",
+                    "session_created_at": created_at,
                 });
                 record["lineage"] = json!({
                     "schema_version": "agent-session.session-lineage.v1",
@@ -31058,12 +31065,67 @@ esac
         );
         assert!(!tmp.path().join("sessions/guard-parent").exists());
 
-        let (status, body) = call(router(st), delete("/sessions/guard-child")).await;
+        let (status, body) = call(router(st.clone()), delete("/sessions/guard-child")).await;
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert_eq!(
             body["data"]["deleted"]["children"],
             json!({"scope": "local", "orphaned": []})
         );
+
+        // Archive takes the same override in its body and reports it.
+        seed_resumable_session(
+            tmp.path(),
+            "guard-archive",
+            "codex",
+            "hs-codex-guard-archive",
+            tmp.path(),
+            &["resume", "guard-archive-provider-id"],
+        );
+        seed_session_with_runtime(
+            tmp.path(),
+            "guard-archive-child",
+            "codex",
+            "hs-codex-guard-archive-child",
+        );
+        let child_path = tmp.path().join("sessions/guard-archive-child/session.json");
+        let mut record: Value =
+            serde_json::from_slice(&std::fs::read(&child_path).unwrap()).unwrap();
+        let parent = json!({
+            "machine": MACHINE,
+            "session_id": "guard-archive",
+            "session_created_at": "2000-01-01T00:00:00Z",
+        });
+        record["lineage"] = json!({
+            "schema_version": "agent-session.session-lineage.v1",
+            "parent": parent,
+            "root": parent,
+            "depth": 1,
+            "starter": {"kind": "session", "via": "cli"},
+            "budget": null,
+        });
+        std::fs::write(&child_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        let (status, body) = call(
+            router(st),
+            post_json(
+                "/sessions/guard-archive/archive",
+                Some(TOKEN),
+                json!({
+                    "expected_session_incarnation": "never-launched-fixture",
+                    "orphan_children": true,
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(
+            body["data"]["deleted"]["children"],
+            json!({"scope": "local", "orphaned": [{
+                "machine": MACHINE,
+                "session_id": "guard-archive-child",
+                "session_created_at": "2000-01-01T00:00:00Z",
+            }]})
+        );
+        assert!(!tmp.path().join("sessions/guard-archive").exists());
     }
 
     #[tokio::test]
