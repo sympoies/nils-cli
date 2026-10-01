@@ -33,6 +33,23 @@ pub(crate) fn git_status_success(args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+/// Cache `refs/remotes/<remote>/HEAD` when it is missing, as `git remote
+/// set-head <remote> --auto` would. A fresh `gh repo create` clone has no cached
+/// remote HEAD, and every reader of the default branch then fails closed.
+///
+/// Best effort: the call contacts the remote, so an unreachable or unconfigured
+/// remote leaves the cache unset and callers keep their existing fallbacks.
+pub(crate) fn ensure_remote_head_cached(remote: &str) {
+    let head_ref = format!("refs/remotes/{remote}/HEAD");
+    if git_status_success(&["symbolic-ref", "--quiet", &head_ref]) {
+        return;
+    }
+    if !git_status_success(&["config", "--get", &format!("remote.{remote}.url")]) {
+        return;
+    }
+    let _ = git_status_success(&["remote", "set-head", remote, "--auto"]);
+}
+
 pub(crate) fn git_status_code(args: &[&str]) -> Option<i32> {
     common_git::run_status_quiet(args)
         .ok()

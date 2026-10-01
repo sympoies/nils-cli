@@ -595,3 +595,64 @@ fn worktree_add_does_not_adopt_the_base_ref_as_upstream() {
         String::from_utf8_lossy(&upstream.stdout).trim()
     );
 }
+
+#[test]
+fn worktree_add_caches_a_missing_remote_head_before_resolving_the_base() {
+    let harness = GitCliHarness::new();
+    let repo = init_repo();
+    let remote = init_bare_remote();
+    let agent_home = tempfile::TempDir::new().expect("agent home");
+
+    let remote_path = remote.path().to_string_lossy().to_string();
+    git(repo.path(), &["remote", "add", "origin", &remote_path]);
+    git(repo.path(), &["push", "-u", "origin", "main"]);
+    // A bare fixture remote keeps whatever `init.defaultBranch` the host uses.
+    git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    let cached = git_output(
+        repo.path(),
+        &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
+    );
+    assert!(
+        !cached.status.success(),
+        "fixture starts without origin/HEAD"
+    );
+
+    let add = run_with_agent_home(
+        &harness,
+        repo.path(),
+        agent_home.path(),
+        &["worktree", "add", "topic-sethead", "--format", "json"],
+    );
+    assert_eq!(add.code, 0, "stderr: {}", add.stderr_text());
+    assert_eq!(parse_json(&add)["data"]["base_ref"], "origin/main");
+
+    let cached = git_output(
+        repo.path(),
+        &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
+    );
+    assert!(
+        cached.status.success(),
+        "worktree add must cache the remote HEAD it found missing"
+    );
+}
+
+#[test]
+fn worktree_add_survives_an_unreachable_remote_when_head_is_missing() {
+    let harness = GitCliHarness::new();
+    let repo = init_repo();
+    let agent_home = tempfile::TempDir::new().expect("agent home");
+
+    git(
+        repo.path(),
+        &["remote", "add", "origin", "/nonexistent/remote.git"],
+    );
+
+    let add = run_with_agent_home(
+        &harness,
+        repo.path(),
+        agent_home.path(),
+        &["worktree", "add", "topic-offline", "--format", "json"],
+    );
+    assert_eq!(add.code, 0, "stderr: {}", add.stderr_text());
+    assert_eq!(parse_json(&add)["data"]["base_ref"], "main");
+}

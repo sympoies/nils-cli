@@ -201,7 +201,11 @@ fn resolve_remote_identity(git: &Git, branch: &str) -> Result<RemoteState, Strin
             "--short",
             cached_default_ref.as_str(),
         ])
-        .map_err(|_| "authoritative cached default branch cannot be resolved".to_string())?;
+        .map_err(|_| {
+            format!(
+                "authoritative cached default branch cannot be resolved; run `git remote set-head {remote_name} --auto` to cache it"
+            )
+        })?;
     if cached_default != upstream {
         return Err(format!(
             "checked-out branch '{branch}' is not the authoritative cached default branch"
