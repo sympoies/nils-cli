@@ -935,7 +935,7 @@ fn receive_admitted(
     let recipient_incarnation = broker.incarnation.clone();
     let now_millis = super::mailbox::now_epoch_millis();
     super::mailbox::admit_message(
-        &locked.registry,
+        &mut locked.registry,
         &encode_sender(&envelope.from),
         &recipient.id,
         envelope.body.len(),
@@ -1444,7 +1444,7 @@ mod tests {
         locked.registry.messages[0].body_bytes = super::super::MAX_REGISTRY_BYTES as usize;
         assert_eq!(
             super::super::mailbox::admit_message(
-                &locked.registry,
+                &mut locked.registry,
                 "other-sender",
                 "recipient",
                 1,
