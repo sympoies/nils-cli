@@ -198,6 +198,7 @@ mod tests {
             extra: BTreeMap::new(),
             lineage: None,
             work: None,
+            lineage_adoption: None,
             resume_sidecar_extra: BTreeMap::new(),
         }
     }

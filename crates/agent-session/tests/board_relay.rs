@@ -1093,6 +1093,133 @@ fn console_start_sends_the_child_lineage_and_resolved_work() {
 }
 
 #[test]
+fn a_managed_session_sets_only_its_own_work_and_adopts_only_for_itself() {
+    let fixture = Fixture::new();
+    let session_dir = fixture.state_dir.join("sessions");
+    let mut child: Value = serde_json::from_slice(
+        &fs::read(session_dir.join(SESSION).join("session.json")).expect("record"),
+    )
+    .expect("record json");
+    child["id"] = json!("20300101-000000-child");
+    child["tmux_session"] = json!("agent-child");
+    child["runtime"]["tmux_session"] = json!("agent-child");
+    child["runtime"]["launch_id"] = json!("child-incarnation");
+    private_dir(&session_dir.join("20300101-000000-child"));
+    private_file(
+        &session_dir.join("20300101-000000-child/session.json"),
+        &serde_json::to_vec(&child).expect("child"),
+    );
+    let code = |output: &CmdOutput| output.stdout_json()["error"]["code"].clone();
+
+    let output = fixture.run(
+        "work",
+        &[
+            "set",
+            SESSION,
+            "--issue",
+            "sympoies/nils-cli#2032",
+            "--if-revision",
+            "0",
+            "--format",
+            "json",
+        ],
+        true,
+    );
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    assert_eq!(output.stdout_json()["data"]["work"]["revision"], 1);
+    let output = fixture.run(
+        "work",
+        &[
+            "set",
+            "20300101-000000-child",
+            "--issue",
+            "sympoies/nils-cli#2032",
+            "--if-revision",
+            "0",
+            "--format",
+            "json",
+        ],
+        true,
+    );
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(code(&output), "work-set-forbidden");
+
+    let output = fixture.run(
+        "lineage",
+        &[
+            "adopt",
+            "20300101-000000-child",
+            "--by",
+            SESSION,
+            "--format",
+            "json",
+        ],
+        true,
+    );
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["lineage_adoption"]["adopted_by"],
+        json!({
+            "machine": MACHINE,
+            "session_id": SESSION,
+            "session_created_at": "2030-01-01T00:00:00Z",
+            "session_incarnation": INCARNATION,
+        })
+    );
+    for args in [
+        vec![
+            "adopt",
+            SESSION,
+            "--by",
+            "20300101-000000-child",
+            "--format",
+            "json",
+        ],
+        vec![
+            "adopt",
+            "20300101-000000-child",
+            "--clear",
+            "--format",
+            "json",
+        ],
+        vec![
+            "adopt",
+            "20300101-000000-child",
+            "--by",
+            SESSION,
+            "--by-machine",
+            "other-host",
+            "--by-created-at",
+            "2030-01-01T00:00:00Z",
+            "--format",
+            "json",
+        ],
+    ] {
+        let output = fixture.run("lineage", &args, true);
+        assert_eq!(output.code, 65, "{args:?}: stdout={}", output.stdout_text());
+        assert_eq!(code(&output), "lineage-adopt-forbidden", "{args:?}");
+    }
+
+    // Without its capability a managed session is refused, not an operator.
+    fs::remove_file(&fixture.capability_file).expect("remove capability");
+    let output = fixture.run(
+        "work",
+        &[
+            "set",
+            SESSION,
+            "--clear-issues",
+            "--if-revision",
+            "1",
+            "--format",
+            "json",
+        ],
+        true,
+    );
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(code(&output), "coordination-unauthorized");
+}
+
+#[test]
 fn console_start_forwards_ownership_refusals_with_fixed_classes() {
     let fixture = Fixture::new();
     let aggregator = Aggregator::start();

@@ -97,6 +97,10 @@ pub enum Command {
     Message(MessageArgs),
     /// Attach and inspect bounded public metadata for one managed session.
     Metadata(MetadataArgs),
+    /// Name a later steward for a session (session lineage v1).
+    Lineage(LineageArgs),
+    /// Change a session's program and issue references (session lineage v1).
+    Work(WorkArgs),
     /// Serve the control plane (HTTP) and PTY attach (WebSocket) over loopback.
     Serve(ServeArgs),
     /// Internal metadata-only bridge for a managed Codex remote TUI.
@@ -941,6 +945,106 @@ pub struct MetadataShowArgs {
     /// Return only the exact public metadata label.
     #[arg(long, value_name = "LABEL")]
     pub label: Option<String>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct LineageArgs {
+    #[command(subcommand)]
+    pub command: LineageCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LineageCommand {
+    /// Record a later steward for a session; its original parent is kept.
+    Adopt(LineageAdoptArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct LineageAdoptArgs {
+    /// Session to adopt.
+    #[arg(value_name = "CHILD")]
+    pub child: String,
+
+    /// The steward session. Inside a managed session it must be that session.
+    #[arg(long, value_name = "SESSION", required_unless_present = "clear")]
+    pub by: Option<String>,
+
+    /// The steward's machine, for a steward on another machine. Requires
+    /// --by-created-at.
+    #[arg(long, value_name = "MACHINE", requires_all = ["by", "by_created_at"])]
+    pub by_machine: Option<String>,
+
+    /// The steward's creation time, for a steward on another machine.
+    /// Requires --by-machine.
+    #[arg(long, value_name = "TIMESTAMP", requires_all = ["by", "by_machine"])]
+    pub by_created_at: Option<String>,
+
+    /// Remove the steward; the original parent is effective again.
+    #[arg(long, conflicts_with = "by")]
+    pub clear: bool,
+
+    /// Expected current adoption revision (0 when never adopted).
+    #[arg(long)]
+    pub if_revision: Option<u64>,
+
+    /// Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub capability_file: Option<PathBuf>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkArgs {
+    #[command(subcommand)]
+    pub command: WorkCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkCommand {
+    /// Replace the program or issues of a session, fenced by its revision.
+    Set(WorkSetArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct WorkSetArgs {
+    /// Session id. Inside a managed session it must be that session.
+    #[arg(value_name = "ID")]
+    pub id: String,
+
+    /// Program tracker issue as OWNER/REPO#N.
+    #[arg(long, value_name = "OWNER/REPO#N", conflicts_with = "clear_program")]
+    pub program: Option<String>,
+
+    /// Issue as OWNER/REPO#N. Repeatable, at most 4; replaces the issues.
+    #[arg(
+        long = "issue",
+        value_name = "OWNER/REPO#N",
+        conflicts_with = "clear_issues"
+    )]
+    pub issues: Vec<String>,
+
+    /// Remove the program.
+    #[arg(long)]
+    pub clear_program: bool,
+
+    /// Remove every issue.
+    #[arg(long)]
+    pub clear_issues: bool,
+
+    /// Expected current work revision (0 when the session has no work).
+    #[arg(long)]
+    pub if_revision: u64,
+
+    /// Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub capability_file: Option<PathBuf>,
 
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]

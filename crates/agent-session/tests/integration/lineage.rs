@@ -336,3 +336,276 @@ fn start_rejects_free_text_and_too_many_work_references() {
         );
     }
 }
+
+impl Fixture {
+    /// An operator command (no managed session in the environment).
+    fn operator(&self, args: &[&str]) -> CmdOutput {
+        let mut argv = vec!["--state-dir", self.state.as_str()];
+        argv.extend_from_slice(args);
+        argv.extend_from_slice(&["--format", "json"]);
+        let options = CmdOptions::new()
+            .with_cwd(&self.root)
+            .without_ambient_managed_session_env()
+            .with_env_remove_many(&["AGENT_SESSION_HOST"])
+            .with_envs(&[("AGENT_SESSION_MACHINE", MACHINE)]);
+        run_resolved("agent-session", &argv, &options)
+    }
+}
+
+fn error_code(output: &CmdOutput) -> Value {
+    output.stdout_json()["error"]["code"].clone()
+}
+
+#[test]
+fn lineage_adopt_records_a_steward_and_keeps_the_original_parent() {
+    let fixture = Fixture::new();
+    fixture.started("adopt-parent", &[], None);
+    let parent = fixture.record("adopt-parent");
+    let launch = parent["runtime"]["launch_id"].as_str().unwrap().to_string();
+    fixture.started("adopt-child", &[], Some(("adopt-parent", launch.as_str())));
+    fixture.started("adopt-steward", &[], None);
+    let steward = fixture.record("adopt-steward");
+    let lineage_before = fixture.record("adopt-child")["lineage"].clone();
+
+    let output = fixture.operator(&["lineage", "adopt", "adopt-child", "--by", "adopt-steward"]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let body = output.stdout_json();
+    assert_eq!(body["schema_version"], "cli.agent-session.lineage-adopt.v1");
+    let mut steward_ref = session_ref(&steward, true);
+    assert_eq!(body["data"]["lineage_adoption"]["adopted_by"], steward_ref);
+    assert_eq!(body["data"]["lineage_adoption"]["revision"], 1);
+    assert_eq!(body["data"]["effective_parent"], steward_ref);
+    let child = fixture.record("adopt-child");
+    assert_eq!(child["lineage"], lineage_before);
+    assert_eq!(child["lineage_adoption"]["adopted_by"], steward_ref);
+
+    // The adoption revision fences concurrent stewards.
+    let output = fixture.operator(&[
+        "lineage",
+        "adopt",
+        "adopt-child",
+        "--by",
+        "adopt-parent",
+        "--if-revision",
+        "0",
+    ]);
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(error_code(&output), "lineage-revision-conflict");
+    assert_eq!(
+        output.stdout_json()["error"]["details"]["current_revision"],
+        1
+    );
+
+    // The list view carries the adoption; a never-adopted session has none.
+    let output = fixture.operator(&["list"]);
+    let list = output.stdout_json();
+    let sessions = list["data"].as_array().expect("sessions");
+    let view = |id: &str| {
+        sessions
+            .iter()
+            .find(|session| session["id"] == id)
+            .unwrap_or_else(|| panic!("{id} listed"))
+            .clone()
+    };
+    assert_eq!(
+        view("adopt-child")["lineage_adoption"],
+        child["lineage_adoption"]
+    );
+    assert!(view("adopt-steward").get("lineage_adoption").is_none());
+
+    // A steward on another machine is named by its full identity: machine and
+    // creation time together.
+    for args in [
+        vec![
+            "lineage",
+            "adopt",
+            "adopt-child",
+            "--by",
+            "remote-steward",
+            "--by-machine",
+            "far-host",
+        ],
+        vec![
+            "lineage",
+            "adopt",
+            "adopt-child",
+            "--by",
+            "adopt-steward",
+            "--by-created-at",
+            "2026-10-01T00:00:00Z",
+        ],
+    ] {
+        let output = fixture.operator(&args);
+        assert_eq!(output.code, 64, "{args:?}: stdout={}", output.stdout_text());
+    }
+    let output = fixture.operator(&[
+        "lineage",
+        "adopt",
+        "adopt-child",
+        "--by",
+        "remote-steward",
+        "--by-machine",
+        "far-host",
+        "--by-created-at",
+        "2026-10-01T00:00:00Z",
+        "--if-revision",
+        "1",
+    ]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    steward_ref = json!({
+        "machine": "far-host",
+        "session_id": "remote-steward",
+        "session_created_at": "2026-10-01T00:00:00Z",
+    });
+    assert_eq!(
+        output.stdout_json()["data"]["lineage_adoption"]["adopted_by"],
+        steward_ref
+    );
+
+    // Clearing the steward makes the original parent effective again.
+    let output = fixture.operator(&["lineage", "adopt", "adopt-child", "--clear"]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let data = &output.stdout_json()["data"];
+    assert_eq!(data["lineage_adoption"]["adopted_by"], Value::Null);
+    assert_eq!(data["lineage_adoption"]["revision"], 3);
+    assert_eq!(data["effective_parent"], session_ref(&parent, true));
+
+    let output = fixture.operator(&["lineage", "adopt", "adopt-child", "--by", "adopt-child"]);
+    assert_eq!(output.code, 64, "stdout={}", output.stdout_text());
+    assert_eq!(error_code(&output), "lineage-invalid");
+
+    // A parent cannot be adopted by its own child: that would be a loop.
+    let parent_before = fixture.record("adopt-parent");
+    let output = fixture.operator(&["lineage", "adopt", "adopt-parent", "--by", "adopt-child"]);
+    assert_eq!(output.code, 64, "stdout={}", output.stdout_text());
+    assert_eq!(error_code(&output), "lineage-invalid");
+    assert_eq!(fixture.record("adopt-parent"), parent_before);
+    // Nor through a steward: the child's steward cannot be adopted by it.
+    let output = fixture.operator(&["lineage", "adopt", "adopt-child", "--by", "adopt-steward"]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let output = fixture.operator(&["lineage", "adopt", "adopt-steward", "--by", "adopt-child"]);
+    assert_eq!(error_code(&output), "lineage-invalid");
+}
+
+#[test]
+fn work_set_replaces_named_dimensions_under_a_revision_fence() {
+    let fixture = Fixture::new();
+    fixture.started("work-target", &[], None);
+
+    let output = fixture.operator(&[
+        "work",
+        "set",
+        "work-target",
+        "--program",
+        "serenvia/laoda#44",
+        "--if-revision",
+        "0",
+    ]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let body = output.stdout_json();
+    assert_eq!(body["schema_version"], "cli.agent-session.work-set.v1");
+    assert_eq!(
+        body["data"]["work"],
+        json!({
+            "program": github("serenvia/laoda", 44),
+            "issues": [],
+            "inherited": false,
+            "revision": 1,
+        })
+    );
+
+    let output = fixture.operator(&[
+        "work",
+        "set",
+        "work-target",
+        "--issue",
+        "sympoies/nils-cli#2032",
+        "--if-revision",
+        "0",
+    ]);
+    assert_eq!(output.code, 65, "stdout={}", output.stdout_text());
+    assert_eq!(error_code(&output), "work-revision-conflict");
+
+    let output = fixture.operator(&[
+        "work",
+        "set",
+        "work-target",
+        "--issue",
+        "sympoies/nils-cli#2032",
+        "--issue",
+        "sympoies/nils-cli#2033",
+        "--if-revision",
+        "1",
+    ]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    assert_eq!(
+        fixture.record("work-target")["work"],
+        json!({
+            "program": github("serenvia/laoda", 44),
+            "issues": [github("sympoies/nils-cli", 2032), github("sympoies/nils-cli", 2033)],
+            "inherited": false,
+            "revision": 2,
+        })
+    );
+
+    let output = fixture.operator(&[
+        "work",
+        "set",
+        "work-target",
+        "--clear-program",
+        "--if-revision",
+        "2",
+    ]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let work = &output.stdout_json()["data"]["work"];
+    assert_eq!(
+        (&work["program"], work["revision"].as_u64()),
+        (&Value::Null, Some(3))
+    );
+
+    // Emptied work stays, so its revision keeps fencing later updates.
+    let output = fixture.operator(&[
+        "work",
+        "set",
+        "work-target",
+        "--clear-issues",
+        "--if-revision",
+        "3",
+    ]);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    assert_eq!(
+        fixture.record("work-target")["work"],
+        json!({"program": null, "issues": [], "inherited": false, "revision": 4})
+    );
+    let output = fixture.operator(&[
+        "work",
+        "set",
+        "work-target",
+        "--program",
+        "serenvia/laoda#44",
+        "--if-revision",
+        "0",
+    ]);
+    assert_eq!(error_code(&output), "work-revision-conflict");
+    assert_eq!(
+        output.stdout_json()["error"]["details"]["current_revision"],
+        4
+    );
+
+    for args in [
+        vec!["work", "set", "work-target", "--if-revision", "4"],
+        vec![
+            "work",
+            "set",
+            "work-target",
+            "--issue",
+            "free text",
+            "--if-revision",
+            "4",
+        ],
+    ] {
+        let output = fixture.operator(&args);
+        assert_eq!(output.code, 64, "{args:?}: stdout={}", output.stdout_text());
+        assert_eq!(error_code(&output), "work-ref-invalid", "{args:?}");
+    }
+}

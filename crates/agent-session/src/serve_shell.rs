@@ -480,6 +480,7 @@ fn terminal_record(shell: &ShellRecord) -> crate::SessionRecord {
         )]),
         lineage: None,
         work: None,
+        lineage_adoption: None,
         resume_sidecar_extra: BTreeMap::new(),
     }
 }

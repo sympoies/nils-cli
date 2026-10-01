@@ -37619,6 +37619,7 @@ esac
             extra: std::collections::BTreeMap::new(),
             lineage: None,
             work: None,
+            lineage_adoption: None,
             resume_sidecar_extra: std::collections::BTreeMap::new(),
         }
     }
