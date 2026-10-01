@@ -32,6 +32,7 @@ mod provider_history;
 pub mod provider_prompt;
 mod retitle;
 mod retitle_v3;
+mod send_submit;
 mod serve;
 mod serve_config;
 mod usage;
@@ -1822,6 +1823,10 @@ struct SendResult {
     tmux_session: String,
     sent_text: bool,
     keys: Vec<String>,
+    /// Present when the send typed text and pressed exactly `enter`: what the
+    /// pane showed after the submit. A stuck prompt is an error instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    submission: Option<send_submit::SubmitReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -9241,19 +9246,9 @@ fn await_pane_drawn_before_paste(tmux_bin: &Path, target: &str, deadline: Durati
 /// start reacted to a paste. `None` when tmux cannot answer, which must not be
 /// read as "unchanged".
 fn capture_pane_digest(tmux_bin: &Path, target: &str) -> Option<u64> {
-    let mut command = ProcessCommand::new(tmux_bin);
-    command.arg("capture-pane").arg("-p").arg("-t").arg(target);
-    let output = run_output_with_timeout_and_cap(
-        command,
-        PANE_OBSERVATION_COMMAND_TIMEOUT,
-        PANE_OBSERVATION_MAX_OUTPUT_BYTES,
-    )
-    .ok()?;
-    if !output.status.success() {
-        return None;
-    }
+    let pane = capture_visible_pane(tmux_bin, target)?;
     let mut hasher = DefaultHasher::new();
-    output.stdout.hash(&mut hasher);
+    pane.hash(&mut hasher);
     Some(hasher.finish())
 }
 
@@ -9308,8 +9303,12 @@ fn load_and_paste_buffer(
     run_status(load, "tmux load-buffer").map_err(PromptPasteFailure::BeforeDelivery)?;
 
     let mut paste = ProcessCommand::new(tmux_bin);
+    // `-p` wraps the paste in bracketed-paste markers when the provider asked
+    // for them, so its line breaks stay inside one prompt instead of each
+    // reaching the TUI as Enter.
     paste
         .arg("paste-buffer")
+        .arg("-p")
         .arg("-b")
         .arg(buffer_name)
         .arg("-d")
@@ -9408,16 +9407,53 @@ fn send_to_session(context: &CliContext, args: cli::SendArgs) -> Result<SendResu
         &record.id,
         &Timestamp::now().to_string(),
     )?;
+    // Typed text followed by exactly one Enter is a prompt submission. Its
+    // Enter is pressed by the confirmation loop, which reads the composer back
+    // and retries a swallowed Enter, so the caller learns whether the prompt
+    // left the composer instead of assuming it did.
+    let submits_prompt = carries_literal_text(text.as_deref()) && args.keys == [SpecialKey::Enter];
+    let keys_after_paste: &[SpecialKey] = if submits_prompt { &[] } else { &args.keys };
+    let hold_started = Instant::now();
     send_input_unlocked(
         context,
         &record,
         text.as_deref(),
-        &args.keys,
+        keys_after_paste,
         &tmux_bin,
         Some(&mut manual_input),
+        PasteMode::Bracketed,
     )?;
+    let submission = if submits_prompt {
+        thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);
+        Some(confirm_prompt_submission(
+            context,
+            &record,
+            text.as_deref().unwrap_or_default(),
+            &tmux_bin,
+            &mut manual_input,
+            hold_started,
+        )?)
+    } else {
+        None
+    };
     record.updated_at = Zoned::now().timestamp().to_string();
     write_session_record(context, &record)?;
+    if let Some(report) = submission
+        && report.outcome == send_submit::SubmitOutcome::Stuck
+    {
+        return Err(CliError::runtime(
+            "send-submit-stuck",
+            format!(
+                "the text is still in the session's input box after {} enter presses: {}",
+                report.enter_presses, record.id
+            ),
+            Some(json!({
+                "id": record.id,
+                "outcome": report.outcome,
+                "enter_presses": report.enter_presses,
+            })),
+        ));
+    }
     Ok(SendResult {
         id: record.id.clone(),
         tmux_session: record.tmux_session.clone(),
@@ -9427,7 +9463,65 @@ fn send_to_session(context: &CliContext, args: cli::SendArgs) -> Result<SendResu
             .iter()
             .map(|key| key.as_str().to_string())
             .collect(),
+        submission,
     })
+}
+
+/// Press the submitting Enter for pasted `text` and confirm from the pane that
+/// it left the composer. Only Claude Code and Codex composers are recognized;
+/// any other provider gets the single Enter and an `unverified` outcome.
+fn confirm_prompt_submission(
+    context: &CliContext,
+    record: &SessionRecord,
+    text: &str,
+    tmux_bin: &Path,
+    manual_input: &mut ManualInputSection,
+    hold_started: Instant,
+) -> Result<send_submit::SubmitReport, CliError> {
+    let target = format!("{}:0.0", record.tmux_session);
+    let mut press_enter = || {
+        manual_input.arm(context, record)?;
+        send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
+    };
+    let Some(probe) = send_submit::probe(text) else {
+        press_enter()?;
+        return Ok(send_submit::SubmitReport {
+            outcome: send_submit::SubmitOutcome::Unverified,
+            enter_presses: 1,
+        });
+    };
+    send_submit::submit_and_confirm(
+        &record.agent,
+        &probe,
+        hold_started,
+        |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
+        || {
+            activity::state_for_view(context, record)
+                .is_none_or(|turn| turn.phase != activity::TurnPhase::NeedsInput)
+        },
+        press_enter,
+    )
+}
+
+/// The visible pane text, or `None` when tmux cannot answer.
+fn capture_visible_pane(tmux_bin: &Path, target: &str) -> Option<String> {
+    capture_visible_pane_with_timeout(tmux_bin, target, PANE_OBSERVATION_COMMAND_TIMEOUT)
+}
+
+fn capture_visible_pane_with_timeout(
+    tmux_bin: &Path,
+    target: &str,
+    timeout: Duration,
+) -> Option<String> {
+    let mut command = ProcessCommand::new(tmux_bin);
+    command.arg("capture-pane").arg("-p").arg("-t").arg(target);
+    let output =
+        run_output_with_timeout_and_cap(command, timeout, PANE_OBSERVATION_MAX_OUTPUT_BYTES)
+            .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Claude Code exposes no control socket, so its structured prompt submission
@@ -9709,6 +9803,7 @@ fn send_input_serialized_with_title_guard(
         keys,
         tmux_bin,
         Some(&mut manual_input),
+        PasteMode::Raw,
     )
 }
 
@@ -9738,6 +9833,7 @@ pub(crate) fn send_auto_resume_input(
         &[SpecialKey::Enter],
         tmux_bin,
         None,
+        PasteMode::Raw,
     )
 }
 
@@ -9776,6 +9872,17 @@ impl Drop for ManualInputSection {
     }
 }
 
+/// How literal text reaches the pane. A `send` prompt is pasted with
+/// bracketed-paste markers so its line breaks stay inside one prompt. The other
+/// input paths keep the raw paste: the web terminal forwards keystrokes that
+/// must still act as typing, and the notification, auto-resume, and `/rename`
+/// texts are single lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PasteMode {
+    Bracketed,
+    Raw,
+}
+
 fn send_input_unlocked(
     context: &CliContext,
     record: &SessionRecord,
@@ -9783,6 +9890,7 @@ fn send_input_unlocked(
     keys: &[SpecialKey],
     tmux_bin: &Path,
     mut manual_input: Option<&mut ManualInputSection>,
+    paste_mode: PasteMode,
 ) -> Result<(), CliError> {
     let target = format!("{}:0.0", record.tmux_session);
     let mut pasted_literal_text = false;
@@ -9803,6 +9911,7 @@ fn send_input_unlocked(
                 &target,
                 &temp,
                 PANE_INPUT_COMMAND_TIMEOUT,
+                paste_mode,
             );
             let _ = fs::remove_file(&temp);
             result?;
@@ -9852,14 +9961,18 @@ fn load_and_paste_buffer_with_timeout(
     target: &str,
     file: &Path,
     timeout: Duration,
+    paste_mode: PasteMode,
 ) -> Result<(), CliError> {
     let mut load = ProcessCommand::new(tmux_bin);
     load.arg("load-buffer").arg("-b").arg(buffer_name).arg(file);
     run_status_with_timeout(load, "tmux load-buffer", timeout)?;
 
     let mut paste = ProcessCommand::new(tmux_bin);
+    paste.arg("paste-buffer");
+    if paste_mode == PasteMode::Bracketed {
+        paste.arg("-p");
+    }
     paste
-        .arg("paste-buffer")
         .arg("-b")
         .arg(buffer_name)
         .arg("-d")
@@ -18672,7 +18785,15 @@ fn render_send_text(result: &SendResult) -> String {
     } else {
         parts.join(" + ")
     };
-    format!("sent {detail} to {}\n", result.id)
+    match result.submission {
+        Some(report) => format!(
+            "sent {detail} to {} ({}, {} enter)\n",
+            result.id,
+            report.outcome.as_str(),
+            report.enter_presses
+        ),
+        None => format!("sent {detail} to {}\n", result.id),
+    }
 }
 
 fn render_glance_text(result: &GlanceResult) -> String {

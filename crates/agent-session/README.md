@@ -319,7 +319,17 @@ or stale source authority cannot mutate after the initial check.
 
 `send` pushes input to a live session: literal text (`--text` / `--text-stdin`) and/or repeatable named keys
 (`--key enter|escape|backspace|c-c|up|down|left|shift-left|right|tab`), so codex/claude approval prompts and terminal editing
-remain usable from a phone.
+remain usable from a phone. Text is pasted with bracketed-paste markers (`tmux paste-buffer -p`), so a multi-line message
+stays one prompt with its line breaks. `--text`/`--text-stdin` followed by exactly `--key enter` is a prompt submission:
+`send` reads the pane back and reports `data.submission = { outcome, enter_presses }`. `submitted` means the text left the
+Claude Code or Codex composer, and `queued` means Claude Code queued it behind a running turn ("Press up to edit queued
+messages"). When the text is still in the composer, `send` presses Enter once more, unless the
+session is `needs_input` or the pane shows a dialog. If the text is still there after that, `send` fails with
+`send-submit-stuck` (`error.details.outcome = "stuck"`) and leaves the text in place. The text has already reached the
+pane, so do not resend it: `glance` the session or clear the composer first. `unverified` means the pane could not
+prove either way: another provider, an unrecognized layout, a dialog, or a first line that looks like a numbered
+choice (`1. …`). Text without `--key enter`, or with other keys, only
+types; `--key` alone presses keys as before.
 `glance` returns the recent pane tail plus live status as a JSON contract for dashboard tiles (cheaper than a full attach).
 `resume` recreates a missing tmux runtime only when the session has exact provider resume metadata; it never resumes the
 latest provider conversation implicitly. Runtime metadata is persisted before launch so hooks see the new generation,

@@ -4926,6 +4926,7 @@ fn start_creates_session_state_without_printing_prompt() {
         calls.iter().any(|call| call
             == &vec![
                 "paste-buffer".to_string(),
+                "-p".to_string(),
                 "-b".to_string(),
                 format!("{id}-prompt"),
                 "-d".to_string(),
@@ -12196,15 +12197,16 @@ fn send_delivers_text_and_keys_without_leaking_and_bumps_updated_at() {
     assert!(
         calls.iter().any(|call| {
             call.first().is_some_and(|arg| arg == "paste-buffer")
-                && call.get(1).is_some_and(|arg| arg == "-b")
+                && call.get(1).is_some_and(|arg| arg == "-p")
+                && call.get(2).is_some_and(|arg| arg == "-b")
                 && call
-                    .get(2)
+                    .get(3)
                     .is_some_and(|arg| arg.starts_with("steer-send-"))
-                && call.get(3).is_some_and(|arg| arg == "-d")
-                && call.get(4).is_some_and(|arg| arg == "-t")
-                && call.get(5).is_some_and(|arg| arg == "hs-codex-steer:0.0")
+                && call.get(4).is_some_and(|arg| arg == "-d")
+                && call.get(5).is_some_and(|arg| arg == "-t")
+                && call.get(6).is_some_and(|arg| arg == "hs-codex-steer:0.0")
         }),
-        "missing unique paste-buffer -d call: {calls:?}"
+        "missing unique bracketed paste-buffer -d call: {calls:?}"
     );
     assert!(
         calls.iter().any(|call| call
@@ -12833,4 +12835,459 @@ fn glance_strips_trailing_blank_pane_padding() {
         .expect("tail")
         .to_string();
     assert_eq!(tail, "top-line\nsecond-line\n", "tail={tail:?}");
+}
+
+/// A provider-shaped TUI for real-tmux `send` tests. It enables bracketed paste
+/// exactly like Claude Code and Codex, treats a raw CR as Enter, keeps pasted
+/// line breaks inside one prompt, and draws the composer layout the provider
+/// would draw. `behavior` scripts the provider's handling of Enter:
+/// `normal` submits, `swallow-first` drops the first Enter (the Claude Code
+/// failure behind #2009), `never` drops every Enter, and `busy` queues the
+/// prompt the way a working Claude Code session does.
+const FAKE_COMPOSER_TUI: &str = r#"
+import json, os, sys, termios, tty
+
+layout, behavior, log_path = sys.argv[1], sys.argv[2], sys.argv[3]
+fd = sys.stdin.fileno()
+tty.setraw(fd)
+out = sys.stdout
+transcript, composer, queued, enters = [], "", False, 0
+
+def lines_of(text, first, rest):
+    parts = text.split("\n")
+    return [first + parts[0]] + [rest + part for part in parts[1:]]
+
+def render():
+    rows = []
+    for prompt in transcript:
+        rows += lines_of(prompt, "❯ " if layout == "claude" else "› ", "  ")
+        rows.append("")
+    if layout == "claude":
+        rows.append("─" * 60)
+        if queued:
+            rows.append("❯ Press up to edit queued messages")
+        else:
+            rows += lines_of(composer, "❯ ", "  ")
+        rows.append("─" * 60)
+        rows.append("  [fake] │ scratch")
+        rows.append("  ⏵⏵ bypass permissions on (shift+tab to cycle)")
+    else:
+        rows += lines_of(composer or "Ask Codex to do anything", "› ", "  ")
+        rows.append("")
+        rows.append("  fake-model · Context 100% left")
+    out.write("\x1b[2J\x1b[H" + "\r\n".join(rows))
+    out.flush()
+
+def enter():
+    global composer, queued, enters
+    enters += 1
+    if behavior == "never" or (behavior == "swallow-first" and enters == 1):
+        return
+    if not composer:
+        return
+    with open(log_path, "a", encoding="utf-8") as log:
+        log.write(json.dumps({"text": composer}) + "\n")
+    if behavior == "busy":
+        queued = True
+    else:
+        transcript.append(composer)
+    composer = ""
+
+out.write("\x1b[?2004h")
+render()
+pending, in_paste = b"", False
+while True:
+    chunk = os.read(fd, 4096)
+    if not chunk:
+        break
+    pending += chunk
+    while pending:
+        if pending.startswith(b"\x1b[200~"):
+            in_paste, pending = True, pending[6:]
+            continue
+        if pending.startswith(b"\x1b[201~"):
+            in_paste, pending = False, pending[6:]
+            continue
+        if pending[:1] == b"\x1b" and len(pending) < 6:
+            break
+        lead = pending[0]
+        width = 1 if lead < 0x80 else 2 if lead >> 5 == 6 else 3 if lead >> 4 == 14 else 4
+        if len(pending) < width:
+            break
+        char, pending = pending[:width].decode("utf-8", "replace"), pending[width:]
+        if char in "\r\n":
+            if in_paste:
+                composer += "\n"
+            else:
+                enter()
+        elif char >= " ":
+            composer += char
+    render()
+"#;
+
+/// A private tmux server (its own `-L` socket, no user config) for one test.
+struct RealTmuxServer {
+    wrapper: PathBuf,
+}
+
+impl RealTmuxServer {
+    fn start(dir: &Path) -> Option<Self> {
+        for tool in ["tmux", "python3"] {
+            let present = Command::new("sh")
+                .arg("-c")
+                .arg(format!("command -v {tool}"))
+                .stdout(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if !present {
+                eprintln!("skipping real-tmux send test: {tool} is unavailable");
+                return None;
+            }
+        }
+        let wrapper = dir.join("real-tmux");
+        let socket = format!(
+            "nils-send-{}-{}",
+            std::process::id(),
+            dir.file_name()?.to_string_lossy()
+        );
+        write_executable(
+            &wrapper,
+            &format!("#!/bin/sh\nexec tmux -f /dev/null -L '{socket}' \"$@\"\n"),
+        );
+        // A sibling test forking while the script was open for writing makes
+        // exec fail with ETXTBSY until that child execs. Run it once, retrying,
+        // so neither this test nor agent-session hits that window later.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match Command::new(&wrapper)
+                .arg("-V")
+                .stdout(Stdio::null())
+                .status()
+            {
+                Ok(_) => break,
+                Err(error)
+                    if error.kind() == io::ErrorKind::ExecutableFileBusy
+                        && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("run tmux wrapper: {error}"),
+            }
+        }
+        Some(Self { wrapper })
+    }
+
+    fn launch(&self, dir: &Path, name: &str, layout: &str, behavior: &str) -> PathBuf {
+        let script = dir.join("fake-composer.py");
+        fs::write(&script, FAKE_COMPOSER_TUI).expect("write fake composer");
+        let log = dir.join(format!("{name}.submissions"));
+        let status = Command::new(&self.wrapper)
+            .args([
+                "new-session",
+                "-d",
+                "-s",
+                name,
+                "-x",
+                "100",
+                "-y",
+                "40",
+                "--",
+            ])
+            .arg("python3")
+            .arg(&script)
+            .args([layout, behavior])
+            .arg(&log)
+            .status()
+            .expect("start tmux session");
+        assert!(status.success(), "tmux new-session failed");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !self.pane(name).contains("100% left") && !self.pane(name).contains("\u{2500}") {
+            assert!(
+                Instant::now() < deadline,
+                "fake composer never drew: {}",
+                self.pane(name)
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+        log
+    }
+
+    fn pane(&self, name: &str) -> String {
+        let output = Command::new(&self.wrapper)
+            .args(["capture-pane", "-p", "-t", name])
+            .output()
+            .expect("capture pane");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+}
+
+impl Drop for RealTmuxServer {
+    fn drop(&mut self) {
+        let _ = Command::new(&self.wrapper)
+            .arg("kill-server")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+fn submissions(log: &Path) -> Vec<String> {
+    fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<Value>(line).expect("submission line")["text"]
+                .as_str()
+                .expect("submission text")
+                .to_string()
+        })
+        .collect()
+}
+
+fn real_tmux_send(tmp: &Path, server: &RealTmuxServer, id: &str, text: &str) -> CmdOutput {
+    let state_dir = tmp.join("state");
+    let state_arg = state_dir.to_string_lossy().to_string();
+    let tmux_arg = server.wrapper.to_string_lossy().to_string();
+    run_with_stdin(
+        tmp,
+        &[
+            "--state-dir",
+            &state_arg,
+            "send",
+            id,
+            "--text-stdin",
+            "--key",
+            "enter",
+            "--tmux-bin",
+            &tmux_arg,
+            "--format",
+            "json",
+        ],
+        &[],
+        text,
+    )
+}
+
+#[test]
+fn send_submits_multiline_text_once_through_real_tmux_claude_and_codex() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let Some(server) = RealTmuxServer::start(tmp.path()) else {
+        return;
+    };
+    let state_dir = tmp.path().join("state");
+    let cases = [
+        (
+            "claude",
+            "ascii",
+            "Monitoring alert: disk high\n/data is 91% full\nthreshold 90%",
+        ),
+        (
+            "claude",
+            "cjk",
+            "老大的指示：\n先看一下 board\n然後回報結果",
+        ),
+        (
+            "codex",
+            "ascii",
+            "Steer: first line\nsecond line\nthird line",
+        ),
+        // A one-letter reply must not be mistaken for the placeholder of the
+        // empty composer it leaves behind.
+        ("codex", "short", "y"),
+        ("claude", "short", "y"),
+    ];
+    for (agent, label, text) in cases {
+        let id = format!("{agent}-{label}");
+        let tmux_name = format!("hs-{id}");
+        write_session_record(&state_dir, &id, agent, &tmux_name);
+        let log = server.launch(tmp.path(), &tmux_name, agent, "normal");
+
+        let output = real_tmux_send(tmp.path(), &server, &id, text);
+
+        assert_eq!(
+            output.code,
+            0,
+            "{id}: stdout={} stderr={}",
+            output.stdout_text(),
+            output.stderr_text()
+        );
+        let value = output.stdout_json();
+        let result = data(&value);
+        assert_eq!(
+            result["submission"]["outcome"], "submitted",
+            "{id}: {value}"
+        );
+        assert_eq!(result["submission"]["enter_presses"], 1, "{id}: {value}");
+        assert_eq!(
+            submissions(&log),
+            vec![text.to_string()],
+            "{id}: the prompt must be submitted once with its line breaks: {}",
+            server.pane(&tmux_name)
+        );
+        if text.len() > 1 {
+            assert_no_secret(&output, text.lines().next().unwrap());
+        }
+    }
+}
+
+#[test]
+fn send_retries_a_swallowed_enter_through_real_tmux() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let Some(server) = RealTmuxServer::start(tmp.path()) else {
+        return;
+    };
+    let state_dir = tmp.path().join("state");
+    let long_line = format!(
+        "Long single line {}",
+        "filler words to make this long ".repeat(26)
+    );
+    for (agent, text) in [
+        ("claude", "first line\nsecond line".to_string()),
+        ("claude", long_line),
+        ("codex", "first line\nsecond line".to_string()),
+        (
+            "codex",
+            "Release notes\n\nbody one\nbody two\nbody three\nbody four".to_string(),
+        ),
+    ] {
+        let id = format!("{agent}-swallow-{}", text.len());
+        let tmux_name = format!("hs-{id}");
+        write_session_record(&state_dir, &id, agent, &tmux_name);
+        let log = server.launch(tmp.path(), &tmux_name, agent, "swallow-first");
+
+        let output = real_tmux_send(tmp.path(), &server, &id, &text);
+
+        assert_eq!(
+            output.code,
+            0,
+            "{id}: stdout={} stderr={}",
+            output.stdout_text(),
+            output.stderr_text()
+        );
+        let value = output.stdout_json();
+        assert_eq!(
+            data(&value)["submission"]["outcome"],
+            "submitted",
+            "{id}: {value}"
+        );
+        assert_eq!(
+            data(&value)["submission"]["enter_presses"],
+            2,
+            "{id}: {value}"
+        );
+        assert_eq!(submissions(&log), vec![text.clone()], "{id}");
+    }
+}
+
+#[test]
+fn send_reports_a_prompt_queued_behind_a_busy_claude_turn() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let Some(server) = RealTmuxServer::start(tmp.path()) else {
+        return;
+    };
+    let state_dir = tmp.path().join("state");
+    write_session_record(&state_dir, "busy", "claude", "hs-busy");
+    let log = server.launch(tmp.path(), "hs-busy", "claude", "busy");
+
+    let output = real_tmux_send(tmp.path(), &server, "busy", "second message\nwhile busy");
+
+    assert_eq!(
+        output.code,
+        0,
+        "stdout={} stderr={}",
+        output.stdout_text(),
+        output.stderr_text()
+    );
+    let value = output.stdout_json();
+    assert_eq!(data(&value)["submission"]["outcome"], "queued", "{value}");
+    assert_eq!(data(&value)["submission"]["enter_presses"], 1, "{value}");
+    assert_eq!(
+        submissions(&log),
+        vec!["second message\nwhile busy".to_string()]
+    );
+}
+
+#[test]
+fn send_fails_when_the_prompt_stays_in_the_composer_through_real_tmux() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let Some(server) = RealTmuxServer::start(tmp.path()) else {
+        return;
+    };
+    let state_dir = tmp.path().join("state");
+    write_session_record(&state_dir, "stuck", "claude", "hs-stuck");
+    let log = server.launch(tmp.path(), "hs-stuck", "claude", "never");
+
+    let output = real_tmux_send(
+        tmp.path(),
+        &server,
+        "stuck",
+        "this never leaves\nthe composer",
+    );
+
+    assert_ne!(output.code, 0, "a stuck prompt must fail the send");
+    let value = output.stdout_json();
+    assert_eq!(value["ok"], false, "{value}");
+    assert_eq!(value["error"]["code"], "send-submit-stuck", "{value}");
+    assert_eq!(value["error"]["details"]["outcome"], "stuck", "{value}");
+    assert_eq!(value["error"]["details"]["enter_presses"], 2, "{value}");
+    assert_no_secret(&output, "this never leaves");
+    assert!(submissions(&log).is_empty());
+    assert!(
+        server.pane("hs-stuck").contains("this never leaves"),
+        "the text is left in place for the operator: {}",
+        server.pane("hs-stuck")
+    );
+}
+
+#[test]
+fn send_text_without_enter_and_keys_only_skip_submission_through_real_tmux() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let Some(server) = RealTmuxServer::start(tmp.path()) else {
+        return;
+    };
+    let state_dir = tmp.path().join("state");
+    let state_arg = state_dir.to_string_lossy().to_string();
+    let tmux_arg = server.wrapper.to_string_lossy().to_string();
+    write_session_record(&state_dir, "draft", "claude", "hs-draft");
+    let log = server.launch(tmp.path(), "hs-draft", "claude", "normal");
+
+    let typed = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "send",
+            "draft",
+            "--text",
+            "draft line one",
+            "--tmux-bin",
+            &tmux_arg,
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    assert_eq!(typed.code, 0, "stderr={}", typed.stderr_text());
+    assert!(data(&typed.stdout_json()).get("submission").is_none());
+    assert!(submissions(&log).is_empty(), "--text alone only types");
+
+    let pressed = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "send",
+            "draft",
+            "--key",
+            "enter",
+            "--tmux-bin",
+            &tmux_arg,
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    assert_eq!(pressed.code, 0, "stderr={}", pressed.stderr_text());
+    assert!(data(&pressed.stdout_json()).get("submission").is_none());
+    assert_eq!(submissions(&log), vec!["draft line one".to_string()]);
 }
