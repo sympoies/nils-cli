@@ -111,6 +111,7 @@ pub(crate) struct DshRuntimeLiveness {
 /// worker agent's lifecycle. The record carries `runtime.kind = "dsh_external"`
 /// (derived from the agent kind at creation) and the absolute liveness sidecar
 /// path, so later status and evidence probes need no CLI context.
+#[allow(clippy::too_many_arguments)]
 pub fn create_external_worker_record(
     context: &CliContext,
     cwd: &std::path::Path,
