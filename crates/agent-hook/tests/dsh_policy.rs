@@ -4961,3 +4961,91 @@ esac
         );
     }
 }
+
+// sympoies/nils-cli#2015: the remaining command-dependent DSH groups admit
+// the read-only test shells #2001 taught the Git guards.
+const READ_ONLY_TEST_SHELLS: &[&str] = &[
+    "[[ -e a ]] && echo ok",
+    "if [[ -e \"$f\" ]]; then echo ok; fi",
+    "[ -e a ] && echo ok",
+    "test -e a && echo ok",
+    "while [[ -n \"$x\" ]]; do echo \"$x\"; x=; done",
+];
+
+#[test]
+fn remaining_command_groups_admit_read_only_test_shells_and_keep_negatives() {
+    let mut mismatches = Vec::new();
+    for (group, blocked) in [
+        (
+            "block-project-memory-write",
+            vec![
+                "[[ -e a ]] && printf x > ~/.codex/memories/project_state.md",
+                "printf x > .config/agent-memory/project_notes.md",
+            ],
+        ),
+        (
+            "mcp-secret-scan",
+            vec![
+                "[[ -e a ]] && printf '{}' > .mcp.json",
+                "printf '{}' > .cursor/mcp.json",
+            ],
+        ),
+        (
+            "portable-paths-scan",
+            vec![
+                "[[ -e a ]] && printf '%s\\n' /Users/someone/project >> notes.md",
+                "printf '%s\\n' /Users/someone/project >> README.md",
+            ],
+        ),
+        (
+            "semantic-commit-body-gate",
+            vec![
+                "semantic-commit commit --type feat --subject 'change behavior'",
+                "[[ -e a ]] && semantic-commit commit --type feat --subject 'change behavior'",
+                // A flag consumed as an option value does not make a dry run.
+                "semantic-commit commit --trailer --dry-run --type feat --subject 'change behavior'",
+            ],
+        ),
+    ] {
+        let fixture = Fixture::new(&policy(group, "dsh"));
+        mismatches.extend(disposition_mismatches(
+            &fixture,
+            group,
+            READ_ONLY_TEST_SHELLS,
+            "allow",
+            &[],
+        ));
+        mismatches.extend(disposition_mismatches(
+            &fixture,
+            group,
+            &blocked,
+            "block",
+            &[],
+        ));
+    }
+    let fixture = Fixture::new(&policy("memory-write-principle-reminder", "dsh"));
+    mismatches.extend(disposition_mismatches(
+        &fixture,
+        "memory-write-principle-reminder",
+        READ_ONLY_TEST_SHELLS,
+        "allow",
+        &[],
+    ));
+
+    // Help, dry-run, and validate-only forms author nothing.
+    let fixture = Fixture::new(&policy("semantic-commit-body-gate", "dsh"));
+    mismatches.extend(disposition_mismatches(
+        &fixture,
+        "semantic-commit-body-gate",
+        &[
+            "semantic-commit commit --help",
+            "semantic-commit commit -h",
+            "semantic-commit commit --dry-run --type feat --subject 'change behavior'",
+            "semantic-commit commit --validate-only --message 'feat: change behavior'",
+            "semantic-commit fixup --help",
+        ],
+        "allow",
+        &[],
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}

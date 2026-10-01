@@ -864,6 +864,9 @@ fn shell_write_targets(invocations: &[Invocation]) -> ShellWriteTargets {
                 }
             }
             "diff" => modeled_diff_targets(words, &mut targets),
+            // `[[`, `[`, and a zsh `$+name[key]` presence test only evaluate
+            // their operands; a redirection on them is modeled above.
+            _ if literal_test_command_word(&words[0]) => {}
             "cat" | "printf" | "echo" | "head" | "tail" | "grep" | "rg" | "ls" | "stat"
             | "test" | "[" | "cmp" | "sha256sum" | "shasum" | "md5sum" | "file" | "readlink"
             | "realpath" | "pwd" | "wc" | "cut" | "tr" | "true" | "false" | "bash" | "sh"
@@ -4068,6 +4071,7 @@ fn semantic_body_missing(invocations: &[Invocation]) -> bool {
                 words.get(1).map(String::as_str),
                 Some("commit" | "fixup" | "squash")
             )
+            || !semantic_commit_authors(words)
         {
             return false;
         }
