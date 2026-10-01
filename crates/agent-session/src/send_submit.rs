@@ -32,6 +32,9 @@ const MAX_ENTER_PRESSES: u32 = 2;
 pub(crate) const HOLD_BUDGET: Duration = Duration::from_millis(4000);
 /// Longest single pane read; a read never runs past the hold budget either.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(1);
+/// Shortest time a pane read is given. With less left in the budget the loop
+/// stops instead of starting a read that a slow host could not finish.
+const MIN_CAPTURE_TIME: Duration = Duration::from_millis(300);
 /// Consecutive unrecognized polls after the text was seen before the loop stops
 /// waiting: a dialog has replaced the composer, and nothing will be pressed.
 const UNRECOGNIZED_POLLS_AFTER_PENDING: u32 = 2;
@@ -263,9 +266,11 @@ pub(crate) fn submit_and_confirm(
         return Ok(report(SubmitOutcome::Unverified, presses));
     }
     let mut unrecognized_polls = 0;
+    // The verdict at the end of the budget rests on the last pane tmux actually
+    // returned; a read that timed out proves nothing about the composer.
     let mut last_view = Composer::Unrecognized;
     loop {
-        if remaining() <= POLL_INTERVAL {
+        if remaining() <= POLL_INTERVAL + MIN_CAPTURE_TIME {
             let outcome = if last_view == Composer::Pending {
                 SubmitOutcome::Stuck
             } else {
@@ -274,7 +279,10 @@ pub(crate) fn submit_and_confirm(
             return Ok(report(outcome, presses));
         }
         thread::sleep(POLL_INTERVAL);
-        let current = view(observe(remaining().min(CAPTURE_TIMEOUT)));
+        let Some(pane) = observe(remaining().min(CAPTURE_TIMEOUT)) else {
+            continue;
+        };
+        let current = classify(agent, &pane, probe);
         last_view = current;
         unrecognized_polls = if current == Composer::Unrecognized {
             unrecognized_polls + 1
@@ -674,6 +682,25 @@ mod tests {
             "held for {:?}",
             hold_started.elapsed()
         );
+    }
+
+    #[test]
+    fn pane_reads_that_time_out_do_not_turn_a_stuck_prompt_unverified() {
+        let reads = RefCell::new(0u32);
+        let result = submit_and_confirm(
+            "claude",
+            &probe_of("[Monitoring] REPRO A1: Disk usage high"),
+            Instant::now(),
+            |_| {
+                let mut reads = reads.borrow_mut();
+                *reads += 1;
+                // A slow host answers the first reads and then times out.
+                (*reads <= 4).then(|| CLAUDE_PENDING.to_string())
+            },
+            || true,
+            || Ok(()),
+        );
+        assert_eq!(result.unwrap().outcome, SubmitOutcome::Stuck);
     }
 
     #[test]
