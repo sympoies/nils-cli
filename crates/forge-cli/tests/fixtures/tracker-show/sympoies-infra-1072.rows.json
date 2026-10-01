@@ -1,0 +1,172 @@
+[
+  {
+    "id": "T1",
+    "title": "repo-scoped private CI runner family (shared template, declarations, start-hook allowlist, capacity gate)",
+    "reference": "#1073",
+    "done": true,
+    "after": [],
+    "notes": "PR #1103",
+    "phase": "Phase 1: runner family",
+    "line": 4
+  },
+  {
+    "id": "T2",
+    "title": "example-org/agent-capabilities: #1080; depends on T1",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/agent-capabilities#78",
+    "phase": "Phase 2: Linux-only repositories, highest volume first",
+    "line": 7
+  },
+  {
+    "id": "T3",
+    "title": "example-org/m4-infra: #1076; depends on T1",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/m4-infra#28",
+    "phase": "Phase 2: Linux-only repositories, highest volume first",
+    "line": 8
+  },
+  {
+    "id": "T4",
+    "title": "example-org/serenvia-shell: #1078; depends on T1",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/serenvia-shell#136",
+    "phase": "Phase 2: Linux-only repositories, highest volume first",
+    "line": 9
+  },
+  {
+    "id": "T5",
+    "title": "example-org/c8-infra: #1077; depends on T1",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/c8-infra#46",
+    "phase": "Phase 2: Linux-only repositories, highest volume first",
+    "line": 10
+  },
+  {
+    "id": "T6",
+    "title": "example-org/fleet-infra: #1079; depends on T1",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/fleet-infra#48",
+    "phase": "Phase 2: Linux-only repositories, highest volume first",
+    "line": 11
+  },
+  {
+    "id": "T7",
+    "title": "example-org/dsh-bots release: #1081; depends on T1",
+    "reference": null,
+    "done": false,
+    "after": [],
+    "notes": "admission #1115 deployed, workflow example-org/dsh-bots#66 merged; awaiting the first `v*` tag run",
+    "phase": "Phase 2: Linux-only repositories, highest volume first",
+    "line": 12
+  },
+  {
+    "id": "T8",
+    "title": "sympoies/dsh-workbench-acceptance: #1083; depends on T1",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR sympoies/dsh-workbench-acceptance#9",
+    "phase": "Phase 2: Linux-only repositories, highest volume first",
+    "line": 13
+  },
+  {
+    "id": "T9",
+    "title": "example-org/dsh-notify Linux CI and release: #1084; depends on T1",
+    "reference": null,
+    "done": false,
+    "after": [],
+    "notes": "Linux CI done; release admission #1115 deployed, workflow example-org/dsh-notify#16 merged; awaiting the first `v*` tag run",
+    "phase": "Phase 2: Linux-only repositories, highest volume first",
+    "line": 14
+  },
+  {
+    "id": "T10",
+    "title": "example-org/m5u-infra: #1085; depends on T1",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/m5u-infra#3",
+    "phase": "Phase 2: Linux-only repositories, highest volume first",
+    "line": 15
+  },
+  {
+    "id": "T11",
+    "title": "example-org/dsh-workbench `ci.yml`: #1086; depends on T1",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/dsh-workbench#32; Docker plane",
+    "phase": "Phase 2: Linux-only repositories, highest volume first",
+    "line": 16
+  },
+  {
+    "id": "T12",
+    "title": "egress enforced outside the container, then the Docker-capable variant: #1074; depends on T1",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR #1117",
+    "phase": "Phase 3: Docker-capable jobs",
+    "line": 19
+  },
+  {
+    "id": "T13",
+    "title": "example-org/agent-runtime-personal: #1082; depends on T12",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/agent-runtime-personal#18",
+    "phase": "Phase 3: Docker-capable jobs",
+    "line": 20
+  },
+  {
+    "id": "T14",
+    "title": "example-org/foraver: #1087; depends on T12",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/foraver#20",
+    "phase": "Phase 3: Docker-capable jobs",
+    "line": 21
+  },
+  {
+    "id": "T15",
+    "title": "example-org/dsh-workbench `publish-image.yml`: #1086; depends on T12",
+    "reference": null,
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/dsh-workbench#32",
+    "phase": "Phase 3: Docker-capable jobs",
+    "line": 22
+  },
+  {
+    "id": "T16",
+    "title": "macOS decision (user, via laoda)",
+    "reference": "#1075",
+    "done": true,
+    "after": [],
+    "notes": "PR example-org/dsh-notify#15",
+    "phase": "Phase 4: macOS and follow-ups",
+    "line": 25
+  },
+  {
+    "id": "T17",
+    "title": "Actions hygiene follow-ups",
+    "reference": "#1088",
+    "done": true,
+    "after": [],
+    "notes": "workflow hygiene in 7 PRs plus example-org/agent-console#650; remaining items are watch-only",
+    "phase": "Phase 4: macOS and follow-ups",
+    "line": 26
+  }
+]

@@ -1,0 +1,129 @@
+[
+  {
+    "id": "P1",
+    "title": "Retire plan-issue skills and tier codes; adopt named work modes",
+    "reference": "#308",
+    "done": true,
+    "after": [],
+    "notes": "PR #318",
+    "phase": "Phase 1: must-sync before DSH is the primary harness",
+    "line": 5
+  },
+  {
+    "id": "N1",
+    "title": "Adopt nils-cli 1.31.3+ for finish-line and mailbox fixes",
+    "reference": "#307",
+    "done": true,
+    "after": [],
+    "notes": "PR #319",
+    "phase": "Phase 1: must-sync before DSH is the primary harness",
+    "line": 6
+  },
+  {
+    "id": "G1",
+    "title": "Port agent-runtime-kit read-only guard fixes to DSH policy",
+    "reference": "#309",
+    "done": true,
+    "after": [],
+    "notes": "PR #324",
+    "phase": "Phase 1: must-sync before DSH is the primary harness",
+    "line": 7
+  },
+  {
+    "id": "C1",
+    "title": "Package home-scoped delivery and task policies for DSH sessions",
+    "reference": "#310",
+    "done": true,
+    "after": [],
+    "notes": "PR #320",
+    "phase": "Phase 1: must-sync before DSH is the primary harness",
+    "line": 8
+  },
+  {
+    "id": "S1",
+    "title": "Bring session board, mailbox checkpoints, peer replies to DSH",
+    "reference": "#311",
+    "done": false,
+    "after": [
+      "N1",
+      "C1"
+    ],
+    "notes": null,
+    "phase": "Phase 1: must-sync before DSH is the primary harness",
+    "line": 9
+  },
+  {
+    "id": "K1",
+    "title": "Re-baseline agent-runtime-kit alignment and detect future drift",
+    "reference": "#312",
+    "done": false,
+    "after": [
+      "P1",
+      "N1",
+      "G1",
+      "C1",
+      "S1"
+    ],
+    "notes": null,
+    "phase": "Phase 1: must-sync before DSH is the primary harness",
+    "line": 10
+  },
+  {
+    "id": "R1",
+    "title": "Retire the three reminder rules agent-runtime-kit removed",
+    "reference": "#313",
+    "done": false,
+    "after": [],
+    "notes": null,
+    "phase": "Phase 2: should-sync",
+    "line": 14
+  },
+  {
+    "id": "W1",
+    "title": "Check DSH workers for coordination-guard PR-head and orphan defects",
+    "reference": "#314",
+    "done": false,
+    "after": [
+      "N1"
+    ],
+    "notes": null,
+    "phase": "Phase 2: should-sync",
+    "line": 15
+  },
+  {
+    "id": "D1",
+    "title": "Delegate deliver-pr review recovery to forge-cli",
+    "reference": "#315",
+    "done": false,
+    "after": [
+      "P1"
+    ],
+    "notes": null,
+    "phase": "Phase 2: should-sync",
+    "line": 16
+  },
+  {
+    "id": "M1",
+    "title": "Add outcome routing and program waves to DSH Main Agent Mode",
+    "reference": "#316",
+    "done": false,
+    "after": [
+      "P1"
+    ],
+    "notes": null,
+    "phase": "Phase 2: should-sync",
+    "line": 17
+  },
+  {
+    "id": "X1",
+    "title": "Retire heuristic-inbox and stale skill content",
+    "reference": "#317",
+    "done": false,
+    "after": [
+      "P1"
+    ],
+    "notes": null,
+    "phase": "Phase 2: should-sync",
+    "line": 18
+  }
+]

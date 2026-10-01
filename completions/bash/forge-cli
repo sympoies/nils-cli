@@ -184,6 +184,9 @@ _forge__cli() {
             forge__cli__help__issue__tracker,lint)
                 cmd="forge__cli__help__issue__tracker__lint"
                 ;;
+            forge__cli__help__issue__tracker,show)
+                cmd="forge__cli__help__issue__tracker__show"
+                ;;
             forge__cli__help__issue__tracker,tick)
                 cmd="forge__cli__help__issue__tracker__tick"
                 ;;
@@ -412,6 +415,9 @@ _forge__cli() {
             forge__cli__issue__help__tracker,lint)
                 cmd="forge__cli__issue__help__tracker__lint"
                 ;;
+            forge__cli__issue__help__tracker,show)
+                cmd="forge__cli__issue__help__tracker__show"
+                ;;
             forge__cli__issue__help__tracker,tick)
                 cmd="forge__cli__issue__help__tracker__tick"
                 ;;
@@ -424,6 +430,9 @@ _forge__cli() {
             forge__cli__issue__tracker,lint)
                 cmd="forge__cli__issue__tracker__lint"
                 ;;
+            forge__cli__issue__tracker,show)
+                cmd="forge__cli__issue__tracker__show"
+                ;;
             forge__cli__issue__tracker,tick)
                 cmd="forge__cli__issue__tracker__tick"
                 ;;
@@ -435,6 +444,9 @@ _forge__cli() {
                 ;;
             forge__cli__issue__tracker__help,lint)
                 cmd="forge__cli__issue__tracker__help__lint"
+                ;;
+            forge__cli__issue__tracker__help,show)
+                cmd="forge__cli__issue__tracker__help__show"
                 ;;
             forge__cli__issue__tracker__help,tick)
                 cmd="forge__cli__issue__tracker__help__tick"
@@ -1638,7 +1650,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__issue__tracker)
-            opts="lint graph tick"
+            opts="lint graph tick show"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1666,6 +1678,20 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__issue__tracker__lint)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__help__issue__tracker__show)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -3150,7 +3176,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__issue__help__tracker)
-            opts="lint graph tick"
+            opts="lint graph tick show"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3178,6 +3204,20 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__issue__help__tracker__lint)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__issue__help__tracker__show)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -3316,7 +3356,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__issue__tracker)
-            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help lint graph tick help"
+            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help lint graph tick show help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3396,7 +3436,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__issue__tracker__help)
-            opts="lint graph tick help"
+            opts="lint graph tick show help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3451,6 +3491,20 @@ _forge__cli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        forge__cli__issue__tracker__help__show)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         forge__cli__issue__tracker__help__tick)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
@@ -3476,6 +3530,44 @@ _forge__cli() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --remote)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --provider)
+                    COMPREPLY=($(compgen -W "github gitlab local" -- "${cur}"))
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --store-root)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__issue__tracker__show)
+            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0

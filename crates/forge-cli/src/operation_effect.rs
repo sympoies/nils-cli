@@ -165,6 +165,7 @@ fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<&'static st
                     ProviderEffect::NetworkWrite,
                     Vec::new(),
                 ),
+                IssueTrackerCommand::Show(_) => tracker_read("issue.tracker.show", read, false),
                 IssueTrackerCommand::Tick(_) => (
                     "issue.tracker.tick",
                     mutation,
@@ -358,6 +359,11 @@ mod tests {
         assert_network_read(
             &["issue", "tracker", "graph", "7"],
             "issue.tracker.graph",
+            &["provider"],
+        );
+        assert_network_read(
+            &["issue", "tracker", "show", "owner/repo#7"],
+            "issue.tracker.show",
             &["provider"],
         );
 
