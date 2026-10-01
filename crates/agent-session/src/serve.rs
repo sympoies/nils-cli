@@ -277,6 +277,9 @@ fn default_session_collector() -> SessionCollector {
     Arc::new(|context, tmux_bin| crate::list_sessions_for_serve(context, Some(tmux_bin)))
 }
 
+/// Retired base agent that launch profiles may still name; it loads as `dsh`.
+const DEPRECATED_HERMES_PROFILE_AGENT: &str = "hermes";
+
 #[derive(Clone, Debug)]
 struct AgentLaunchProfiles {
     entries: Vec<AgentLaunchProfile>,
@@ -413,10 +416,23 @@ impl AgentLaunchProfiles {
         let Some(raw) = non_empty_env("AGENT_SESSION_LAUNCH_PROFILES") else {
             return Ok(Self::default());
         };
-        Self::from_json(&raw)
+        let (profiles, deprecated_hermes_ids) = Self::parse(&raw)?;
+        for id in deprecated_hermes_ids {
+            eprintln!(
+                "warning: deprecated-launch-profile-agent: launch profile {id} uses base agent \
+                 `hermes`, which now launches as `dsh`; change the profile to `dsh`"
+            );
+        }
+        Ok(profiles)
     }
 
     fn from_json(raw: &str) -> Result<Self, CliError> {
+        Self::parse(raw).map(|(profiles, _)| profiles)
+    }
+
+    /// Parses launch profiles and also returns the ids of profiles that still
+    /// name the retired `hermes` base agent, which load as `dsh`.
+    fn parse(raw: &str) -> Result<(Self, Vec<String>), CliError> {
         let configs: Vec<AgentLaunchProfileConfig> = serde_json::from_str(raw).map_err(|_| {
             invalid_agent_launch_profiles("launch profiles must be a valid JSON array")
         })?;
@@ -426,6 +442,7 @@ impl AgentLaunchProfiles {
             ));
         }
         let mut entries = Vec::with_capacity(configs.len());
+        let mut deprecated_hermes_ids = Vec::new();
         for config in configs {
             if !valid_agent_profile_id(&config.id) {
                 return Err(invalid_agent_launch_profiles(
@@ -446,10 +463,19 @@ impl AgentLaunchProfiles {
                     "launch profile labels must contain 1-64 safe characters",
                 ));
             }
-            let Some(agent) = AgentKind::from_name(&config.agent) else {
-                return Err(invalid_agent_launch_profiles(
-                    "launch profiles must reference a supported base agent",
-                ));
+            // Deprecated: `hermes` was the base agent of DSH launch profiles
+            // before the dsh kind could launch them. Remove the alias once no
+            // host launcher emits it.
+            let agent = if config.agent == DEPRECATED_HERMES_PROFILE_AGENT {
+                deprecated_hermes_ids.push(config.id.clone());
+                AgentKind::Dsh
+            } else {
+                let Some(agent) = AgentKind::from_name(&config.agent) else {
+                    return Err(invalid_agent_launch_profiles(
+                        "launch profiles must reference a supported base agent",
+                    ));
+                };
+                agent
             };
             if !config.agent_bin.is_absolute() {
                 return Err(invalid_agent_launch_profiles(
@@ -508,13 +534,16 @@ impl AgentLaunchProfiles {
                 dsh_history: config.dsh_history,
             });
         }
-        Ok(Self {
-            entries,
-            readiness_probe: Arc::new((
-                StdMutex::new(AgentLaunchProfileReadiness::default()),
-                std::sync::Condvar::new(),
-            )),
-        })
+        Ok((
+            Self {
+                entries,
+                readiness_probe: Arc::new((
+                    StdMutex::new(AgentLaunchProfileReadiness::default()),
+                    std::sync::Condvar::new(),
+                )),
+            },
+            deprecated_hermes_ids,
+        ))
     }
 
     fn get(&self, id: &str) -> Option<&AgentLaunchProfile> {
@@ -14227,20 +14256,67 @@ mod tests {
     }
 
     #[test]
-    fn launch_profiles_reject_the_retired_hermes_base_agent() {
+    fn launch_profiles_load_the_deprecated_hermes_base_agent_as_dsh() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launcher = executable(&tmp.path().join("launcher"), "#!/bin/sh\nexit 0\n");
-        let error = AgentLaunchProfiles::from_json(
-            &json!([{
-                "id": "dsh-workbench",
-                "label": "DSH",
-                "agent": "hermes",
-                "agent_bin": launcher,
-            }])
+        let (profiles, deprecated) = AgentLaunchProfiles::parse(
+            &json!([
+                { "id": "dsh-workbench", "label": "DSH", "agent": "hermes", "agent_bin": launcher },
+                { "id": "codex", "label": "Codex", "agent": "codex", "agent_bin": launcher },
+            ])
             .to_string(),
         )
-        .expect_err("hermes is no longer a supported base agent");
-        assert_eq!(error.code(), "invalid-agent-launch-profiles");
+        .expect("a hermes profile still loads");
+        assert_eq!(deprecated, vec!["dsh-workbench".to_string()]);
+        let profile = profiles.get("dsh-workbench").expect("aliased profile");
+        assert_eq!(profile.agent, AgentKind::Dsh);
+        assert_eq!(profile.summary().agent, "dsh");
+        assert_eq!(
+            validate_launch_profiles_json(
+                &json!([{ "id": "dsh-tui", "label": "DSH", "agent": "hermes", "agent_bin": launcher }])
+                    .to_string()
+            )
+            .expect("serve config validation accepts the alias"),
+            vec!["dsh-tui".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn deprecated_hermes_profile_launches_as_a_dsh_pane() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir(&cwd).unwrap();
+        let launcher = executable(&tmp.path().join("dsh-launcher"), "#!/bin/sh\nexit 0\n");
+        let profiles = AgentLaunchProfiles::from_json(
+            &json!([{ "id":"dsh-workbench", "label":"DSH", "agent":"hermes", "agent_bin": launcher }])
+                .to_string(),
+        )
+        .unwrap();
+        let log = tmp.path().join("tmux.log");
+        let tmux = resume_tmux(tmp.path(), &log);
+        let mut st = state(tmp.path(), Some(TOKEN), tmux);
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
+
+        let (status, body) = call(
+            router(st),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({
+                    "agent":"dsh", "agent_profile":"dsh-workbench", "id":"aliased-dsh", "cwd":cwd
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["session"]["agent"], "dsh");
+        assert_eq!(body["data"]["session"]["agent_profile"], "dsh-workbench");
+        assert_ne!(
+            body["data"]["session"]["runtime"]["kind"],
+            crate::dsh_external::DSH_RUNTIME_KIND
+        );
+        let calls = fs::read_to_string(log).unwrap();
+        assert!(!calls.contains(" chat"), "calls={calls}");
     }
 
     #[test]

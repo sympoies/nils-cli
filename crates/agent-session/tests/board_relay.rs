@@ -1397,14 +1397,7 @@ fn console_start_selects_the_account_for_its_agent_and_the_launch_profile() {
 
     let requests = aggregator.seen().len();
     let output = fixture.start_via_console(
-        &[
-            "--agent",
-            "hermes",
-            "--account",
-            "spare",
-            "--format",
-            "json",
-        ],
+        &["--agent", "dsh", "--account", "spare", "--format", "json"],
         true,
     );
     assert_eq!(output.code, 64, "stdout={}", output.stdout_text());

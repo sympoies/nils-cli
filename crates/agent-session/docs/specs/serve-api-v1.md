@@ -1338,6 +1338,10 @@ advertise it as a managed copy action. Set
 `auto_resume_supported` only when the profile has authoritative usage semantics
 for its provider; the default is fail-closed `false`.
 
+The retired base agent `hermes` is a deprecated alias: such a profile loads
+and is advertised as `dsh`, and serve warns at startup. The alias will be
+removed in a later release.
+
 A profile with base agent `dsh` may add
 `"dsh_history":{"command":"/absolute/dsh-runtime-kit-history","root":"/absolute/dsh-sessions","compression":"zstd"}`.
 `command` and `root` must be absolute and `compression` is `zstd` (the default)
