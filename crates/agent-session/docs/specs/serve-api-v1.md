@@ -160,6 +160,16 @@ from base agent `hermes` and invokes the profile with exactly
 `--resume <provider-session-id>`. The response contains the normal newly
 created managed `session` projection.
 
+A conversation keeps one managed identity across archive and resume. Archive
+records the managed session id and structured title state beside the title.
+History resume reuses that archived session id when no session directory holds
+it, so peers that address the conversation by id keep reaching it, and restores
+the archived title and title state. An archive written before the session id
+was recorded, or an id another session now holds, falls back to a newly
+allocated id. When a live managed record already owns the conversation, resume
+launches nothing and returns `history-session-live` with that session's `id` in
+the error details, so one conversation never runs under two session ids.
+
 For a fresh `POST /sessions` using the server-owned `dsh-tui` profile with
 `dsh_history.resume=exact-id`, agent-session allocates the DSH UUID before
 creating the managed record. It stores the exact provider identity and canonical
@@ -182,7 +192,8 @@ profile returns `history-resume-not-supported`, and unavailable provider
 history or profile readiness fails without launching a runtime.
 
 The history-resume boundary uses this bounded status mapping: 404
-`history-session-not-found`; 409 `provider-session-already-running`; 422
+`history-session-not-found`; 409 `provider-session-already-running` or
+`history-session-live`; 422
 `history-resume-not-supported` or `history-resume-identity-mismatch`; 503
 `history-resume-profile-unavailable` or `dsh-history-unavailable`; and 500
 `history-read-failed`. Errors raised after trusted launch admission retain the
