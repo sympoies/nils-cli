@@ -5049,3 +5049,65 @@ fn remaining_command_groups_admit_read_only_test_shells_and_keep_negatives() {
     ));
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+/// A word before a literal operational flag that can expand into, or is, a
+/// value-taking option swallows the flag in semantic-commit's own parser, so
+/// the invocation still authors a commit.
+const SEMANTIC_COMMIT_SWALLOWED_FLAGS: &[&str] = &[
+    "semantic-commit commit --type feat --subject 'change behavior' $(printf %s --message-out) --help",
+    "semantic-commit commit --type feat $(printf %s --subject) --help",
+    "semantic-commit commit --type feat --subject 'change behavior' $OUT --dry-run",
+    "semantic-commit commit $F --help",
+    "semantic-commit commit \"$@\" --help",
+    "semantic-commit commit ${=F} --validate-only",
+    "semantic-commit commit --message --help",
+    "semantic-commit commit -m --help",
+    "semantic-commit commit --message $M --help",
+    "semantic-commit commit --unknown-option --dry-run --type feat --subject 'change behavior'",
+];
+
+#[test]
+fn semantic_commit_operational_flags_cannot_be_swallowed_by_a_preceding_word() {
+    let body_gate = Fixture::new(&policy("semantic-commit-body-gate", "dsh"));
+    let mut mismatches = disposition_mismatches(
+        &body_gate,
+        "semantic-commit-body-gate",
+        SEMANTIC_COMMIT_SWALLOWED_FLAGS,
+        "block",
+        &[],
+    );
+    mismatches.extend(disposition_mismatches(
+        &body_gate,
+        "semantic-commit-body-gate",
+        &[
+            "semantic-commit commit --help",
+            "semantic-commit commit --dry-run",
+            "semantic-commit commit --validate-only",
+            "semantic-commit commit --quiet --json --help",
+        ],
+        "allow",
+        &[],
+    ));
+
+    let delivery = Fixture::new(&policy("block-unsafe-default-delivery", "dsh"));
+    init_default_tracking_repository(&delivery, "main");
+    mismatches.extend(disposition_mismatches(
+        &delivery,
+        "block-unsafe-default-delivery",
+        SEMANTIC_COMMIT_SWALLOWED_FLAGS,
+        "block",
+        &[],
+    ));
+    mismatches.extend(disposition_mismatches(
+        &delivery,
+        "block-unsafe-default-delivery",
+        &[
+            "semantic-commit commit --help",
+            "semantic-commit commit --dry-run --message 'fix: x'",
+            "semantic-commit commit --validate-only --message 'fix: x'",
+        ],
+        "allow",
+        &[],
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
