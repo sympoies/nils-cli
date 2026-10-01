@@ -12,15 +12,26 @@ use super::{
 };
 use crate::{CliContext, CliError};
 
-const JOURNAL_VERSION: &str = "agent-session.federation-journal.v1";
+const JOURNAL_VERSION: &str = "agent-session.federation-journal.v2";
+const LEGACY_JOURNAL_VERSION: &str = "agent-session.federation-journal.v1";
 const JOURNAL_FILE: &str = "federation-journal.json";
-const MAX_JOURNAL_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
+/// Submit leaves this much room so drain's retry bookkeeping always fits.
+const JOURNAL_HEADROOM_BYTES: u64 = 256 * 1024;
 const RECEIVE_PRINCIPAL: &str = "remote:receive";
 const RECEIVE_INCARNATION: &str = "v1";
 const RECEIVE_OPERATION: &str = "remote-message-receive";
 const ENVELOPE_VERSION: &str = "agent-session.remote-message.v1";
 const DELIVERY_VERSION: &str = "agent-session.remote-delivery.v1";
-const MAX_OUTBOX: usize = 256;
+/// Queued (undelivered) envelopes for one destination machine. Each carries its
+/// body, so an asleep or offline destination is bounded without blocking others.
+const MAX_PENDING_PER_DESTINATION: usize = 512;
+/// Queued envelopes across all destinations.
+const MAX_PENDING: usize = 2048;
+/// Every retained source identity: queued envelopes plus body-free terminal records.
+const MAX_RETAINED_IDS: usize = 16384;
+/// Retry interval; an unavailable destination backs off its attempted envelopes together.
+const RETRY_SECS: i64 = 5;
 
 #[derive(Clone)]
 pub(crate) struct Config {
@@ -100,12 +111,123 @@ pub(crate) struct Outbox {
     pub receipt: Option<Value>,
     pub reason: Option<String>,
 }
+impl Outbox {
+    fn identity(&self) -> Retained {
+        Retained {
+            message_id: self.envelope.message_id.clone(),
+            sender: self.envelope.from.clone(),
+            recipient: self.envelope.to.clone(),
+            expires_at_epoch: self.envelope.expires_at_epoch,
+            request_digest: self.request_digest.clone(),
+            idempotency_key: self.idempotency_key.clone(),
+            state: self.state.clone(),
+            attempts: self.attempts,
+            reason: self.reason.clone(),
+            persisted_at_epoch: self
+                .receipt
+                .as_ref()
+                .and_then(|receipt| receipt["persisted_at_epoch"].as_i64()),
+        }
+    }
+}
+/// Body-free record of a terminal (never retried) outbox entry. It keeps what
+/// idempotent replay, reply replay and delivery status read, so terminal
+/// envelopes stop occupying the pending caps. It is always smaller than the
+/// entry it replaces: a delivered receipt is rebuilt from `persisted_at_epoch`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Retained {
+    message_id: String,
+    sender: Address,
+    recipient: Address,
+    expires_at_epoch: i64,
+    request_digest: String,
+    idempotency_key: String,
+    state: String,
+    attempts: u64,
+    reason: Option<String>,
+    persisted_at_epoch: Option<i64>,
+}
+impl Retained {
+    /// The receipt drain accepted: exactly these fields, checked against this
+    /// message ID and recipient.
+    fn receipt(&self) -> Option<Value> {
+        self.persisted_at_epoch.map(|persisted| {
+            json!({"schema_version":DELIVERY_VERSION,"message_id":self.message_id,"state":"delivered","recipient":self.recipient,"persisted_at_epoch":persisted})
+        })
+    }
+}
 // Independent source state; existing registry writers never deserialize or rewrite it.
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Journal {
     schema_version: String,
     remote_outbox: Vec<Outbox>,
+    #[serde(default)]
+    retained: Vec<Retained>,
+}
+impl Journal {
+    /// Moves terminal entries to body-free records, keeping the identity total,
+    /// and drops identities 24 hours after expiry, never earlier.
+    fn compact(&mut self, now: i64) {
+        let (queued, terminal) = std::mem::take(&mut self.remote_outbox)
+            .into_iter()
+            .partition(|item| item.state == "queued");
+        self.remote_outbox = queued;
+        self.retained.extend(terminal.iter().map(Outbox::identity));
+        self.remote_outbox
+            .retain(|i| i.envelope.expires_at_epoch.saturating_add(86400) > now);
+        self.retained
+            .retain(|i| i.expires_at_epoch.saturating_add(86400) > now);
+    }
+    fn find(&self, mut matches: impl FnMut(&Retained) -> bool) -> Option<Retained> {
+        self.remote_outbox
+            .iter()
+            .map(Outbox::identity)
+            .chain(self.retained.iter().cloned())
+            .find(|item| matches(item))
+    }
+    /// Source-side `quota-exceeded` with pending and delivered counts.
+    fn quota(
+        &self,
+        (message, quota, count, limit): (&str, &str, usize, usize),
+        host: &str,
+        destination: &str,
+    ) -> CliError {
+        let mut error = super::quota_origin(
+            super::quota_exceeded(message, quota, count, limit),
+            host,
+            "source",
+        );
+        if let Some(Value::Object(details)) = error.details_mut() {
+            let pending_to_destination = self
+                .remote_outbox
+                .iter()
+                .filter(|item| item.envelope.to.machine == destination)
+                .count();
+            let delivered = self
+                .retained
+                .iter()
+                .filter(|item| item.state == "delivered")
+                .count();
+            details.insert("destination_machine".into(), destination.into());
+            details.insert("pending".into(), self.remote_outbox.len().into());
+            details.insert(
+                "pending_to_destination".into(),
+                pending_to_destination.into(),
+            );
+            details.insert("delivered".into(), delivered.into());
+            details.insert("retained".into(), self.retained.len().into());
+        }
+        error
+    }
+    fn find_key(&self, session: &str, incarnation: &str, key: &str) -> Option<Retained> {
+        self.find(|item| {
+            item.sender.session_id == session
+                && item.sender.session_incarnation == incarnation
+                && item.idempotency_key == key
+        })
+    }
 }
 struct LockedJournal {
     _lock: std::fs::File,
@@ -124,7 +246,14 @@ fn read_journal(context: &CliContext) -> Result<Journal, CliError> {
     match super::read_private_file(&path, MAX_JOURNAL_BYTES) {
         Ok(bytes) => {
             let journal: Journal = serde_json::from_slice(&bytes).map_err(|_| journal_error())?;
-            if journal.schema_version != JOURNAL_VERSION || journal.remote_outbox.len() > MAX_OUTBOX
+            let supported = match journal.schema_version.as_str() {
+                JOURNAL_VERSION => true,
+                LEGACY_JOURNAL_VERSION => journal.retained.is_empty(),
+                _ => false,
+            };
+            if !supported
+                || journal.remote_outbox.len() > MAX_PENDING
+                || journal.remote_outbox.len() + journal.retained.len() > MAX_RETAINED_IDS
             {
                 return Err(journal_error());
             }
@@ -148,12 +277,20 @@ fn lock_journal(context: &CliContext) -> Result<LockedJournal, CliError> {
     })
 }
 impl LockedJournal {
-    fn save(&self) -> Result<(), CliError> {
-        let bytes = serde_json::to_vec(&self.registry).map_err(|_| journal_error())?;
+    fn save(&mut self) -> Result<(), CliError> {
+        let bytes = self.encode()?;
         if bytes.len() as u64 > MAX_JOURNAL_BYTES {
             return Err(journal_error());
         }
-        write_atomic(&self.path, &bytes, SECRET_FILE_MODE).map_err(|_| journal_error())
+        self.write(&bytes)
+    }
+    fn encode(&mut self) -> Result<Vec<u8>, CliError> {
+        self.registry.schema_version = JOURNAL_VERSION.into();
+        self.registry.compact(now_epoch());
+        serde_json::to_vec(&self.registry).map_err(|_| journal_error())
+    }
+    fn write(&self, bytes: &[u8]) -> Result<(), CliError> {
+        write_atomic(&self.path, bytes, SECRET_FILE_MODE).map_err(|_| journal_error())
     }
 }
 // Colon is forbidden by validate_id. Old facades preserve this existing string
@@ -211,45 +348,96 @@ fn invalid() -> CliError {
         None,
     )
 }
-fn response_json(response: reqwest::blocking::Response) -> Result<Value, CliError> {
+/// Who answered an HTTP request: the federation relay (a remote host) or this
+/// host's own daemon, whose refusals are local and keep their own diagnostics.
+#[derive(Clone, Copy)]
+enum Responder {
+    Relay,
+    LocalDaemon,
+}
+fn response_json(
+    response: reqwest::blocking::Response,
+    responder: Responder,
+) -> Result<Value, CliError> {
     let status = response.status();
     let bytes = response.bytes().map_err(|_| unavailable())?;
     if bytes.len() > 1024 * 1024 {
         return Err(unavailable());
     }
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
-    if !status.is_success() {
-        let code = value
-            .pointer("/error/code")
-            .and_then(Value::as_str)
-            .unwrap_or("remote-messaging-unavailable");
-        let code = match code {
-            "unauthorized"
-            | "ownership-unknown"
-            | "origin-forbidden"
-            | "principal-forbidden"
-            | "machine-forbidden"
-            | "federation-disabled"
-            | "coordination-unauthorized"
-            | "ownership-not-found"
-            | "ownership-mismatch"
-            | "session-incarnation-conflict"
-            | "message-not-found"
-            | "remote-messaging-unsupported"
-            | "remote-message-invalid"
-            | "quota-exceeded"
-            | "rate-limited"
-            | "idempotency-key-conflict"
-            | "message-expired" => code,
-            _ => "remote-messaging-unavailable",
-        };
-        return Err(CliError::data(
-            code,
-            "remote mailbox request was rejected",
-            None,
-        ));
+    if status.is_success() {
+        return Ok(value);
     }
-    Ok(value)
+    Err(match responder {
+        Responder::Relay => relay_error(&value),
+        Responder::LocalDaemon => local_daemon_error(&value),
+    })
+}
+fn local_daemon_error(value: &Value) -> CliError {
+    let text = |pointer| {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty() && text.len() <= 512)
+    };
+    let Some(code) = text("/error/code").filter(|code| {
+        code.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    }) else {
+        return unavailable();
+    };
+    let details = value
+        .pointer("/error/details")
+        .filter(|details| details.is_object())
+        .cloned();
+    CliError::data(
+        code,
+        text("/error/message").unwrap_or("local agent-session daemon rejected the request"),
+        details,
+    )
+}
+/// Relay refusals keep only allowlisted codes and the content-free quota fields.
+fn relay_error(value: &Value) -> CliError {
+    let code = value
+        .pointer("/error/code")
+        .and_then(Value::as_str)
+        .unwrap_or("remote-messaging-unavailable");
+    let code = match code {
+        "unauthorized"
+        | "ownership-unknown"
+        | "origin-forbidden"
+        | "principal-forbidden"
+        | "machine-forbidden"
+        | "federation-disabled"
+        | "coordination-unauthorized"
+        | "ownership-not-found"
+        | "ownership-mismatch"
+        | "session-incarnation-conflict"
+        | "message-not-found"
+        | "remote-messaging-unsupported"
+        | "remote-message-invalid"
+        | "quota-exceeded"
+        | "rate-limited"
+        | "idempotency-key-conflict"
+        | "message-expired" => code,
+        _ => "remote-messaging-unavailable",
+    };
+    let details = (code == "quota-exceeded")
+        .then(|| value.pointer("/error/details").and_then(Value::as_object))
+        .flatten()
+        .map(|details| {
+            ["quota", "count", "limit", "host", "side"]
+                .into_iter()
+                .filter_map(|key| {
+                    let field = details.get(key)?;
+                    (field.is_u64() || field.as_str().is_some_and(|text| text.len() <= 128))
+                        .then(|| (key.to_string(), field.clone()))
+                })
+                .collect::<serde_json::Map<_, _>>()
+        })
+        .filter(|kept| !kept.is_empty())
+        .map(Value::Object);
+    CliError::data(code, "remote mailbox request was rejected", details)
 }
 pub(crate) fn peers(
     context: &CliContext,
@@ -268,7 +456,7 @@ pub(crate) fn peers(
         .bearer_auth(&config.token)
         .send()
         .map_err(|_| unavailable())?;
-    let value = response_json(response)?;
+    let value = response_json(response, Responder::Relay)?;
     if value["schema_version"] != "agent-session.remote-peers.v1" || !value["peers"].is_array() {
         return Err(unavailable());
     }
@@ -295,11 +483,11 @@ pub(crate) fn submit(
     // Replay before discovery: a retry must retain its original destination incarnation.
     {
         let locked = lock_journal(context)?;
-        if let Some(item) = locked.registry.remote_outbox.iter().find(|item| {
-            item.envelope.from.session_id == session
-                && item.envelope.from.session_incarnation == source_incarnation
-                && item.idempotency_key == args.idempotency_key
-        }) {
+        if let Some(item) =
+            locked
+                .registry
+                .find_key(session, &source_incarnation, &args.idempotency_key)
+        {
             if item.request_digest != digest {
                 return Err(CliError::data(
                     "idempotency-key-conflict",
@@ -307,7 +495,7 @@ pub(crate) fn submit(
                     None,
                 ));
             }
-            return Ok(projection(item));
+            return Ok(projection(&item));
         }
     }
     let (destination, reply_depth) = if let Some(parent_id) = args.reply_to.as_deref() {
@@ -441,11 +629,11 @@ pub(crate) fn submit(
     }
     let _registry_guard = locked;
     let mut locked = lock_journal(context)?;
-    if let Some(item) = locked.registry.remote_outbox.iter().find(|item| {
-        item.envelope.from.session_id == session
-            && item.envelope.from.session_incarnation == source_incarnation
-            && item.idempotency_key == args.idempotency_key
-    }) {
+    if let Some(item) =
+        locked
+            .registry
+            .find_key(session, &source_incarnation, &args.idempotency_key)
+    {
         if item.request_digest != digest {
             return Err(CliError::data(
                 "idempotency-key-conflict",
@@ -453,19 +641,45 @@ pub(crate) fn submit(
                 None,
             ));
         }
-        return Ok(projection(item));
+        return Ok(projection(&item));
     }
     // Expired entries retain an explicit unknown result; bounded capacity rejects, never evicts live IDs.
-    locked
-        .registry
+    locked.registry.compact(now);
+    let destination = envelope.to.machine.clone();
+    let journal = &locked.registry;
+    let pending = journal.remote_outbox.len();
+    let pending_to_destination = journal
         .remote_outbox
-        .retain(|i| i.envelope.expires_at_epoch.saturating_add(86400) > now);
-    if locked.registry.remote_outbox.len() >= MAX_OUTBOX {
-        return Err(CliError::data(
-            "quota-exceeded",
-            "remote outbox is full",
-            None,
-        ));
+        .iter()
+        .filter(|item| item.envelope.to.machine == destination)
+        .count();
+    let identities = pending + journal.retained.len();
+    let refusal = if pending_to_destination >= MAX_PENDING_PER_DESTINATION {
+        Some((
+            "local federation outbox has too many undelivered messages for this destination",
+            "federation-pending-destination",
+            pending_to_destination,
+            MAX_PENDING_PER_DESTINATION,
+        ))
+    } else if pending >= MAX_PENDING {
+        Some((
+            "local federation outbox has too many undelivered messages",
+            "federation-pending",
+            pending,
+            MAX_PENDING,
+        ))
+    } else if identities >= MAX_RETAINED_IDS {
+        Some((
+            "local federation outbox retained-ID limit reached",
+            "federation-retained-ids",
+            identities,
+            MAX_RETAINED_IDS,
+        ))
+    } else {
+        None
+    };
+    if let Some(refusal) = refusal {
+        return Err(journal.quota(refusal, &config.machine, &destination));
     }
     let item = Outbox {
         envelope,
@@ -477,13 +691,28 @@ pub(crate) fn submit(
         receipt: None,
         reason: None,
     };
-    let outcome = projection(&item);
+    let outcome = projection(&item.identity());
     locked.registry.remote_outbox.push(item);
-    locked.save()?;
+    let bytes = locked.encode()?;
+    let budget = MAX_JOURNAL_BYTES - JOURNAL_HEADROOM_BYTES;
+    if bytes.len() as u64 > budget {
+        locked.registry.remote_outbox.pop();
+        return Err(locked.registry.quota(
+            (
+                "local federation journal byte budget reached",
+                "federation-journal-bytes",
+                bytes.len(),
+                budget as usize,
+            ),
+            &config.machine,
+            &destination,
+        ));
+    }
+    locked.write(&bytes)?;
     Ok(outcome)
 }
-fn projection(item: &Outbox) -> Value {
-    json!({"schema_version":DELIVERY_VERSION,"message_id":item.envelope.message_id,"state":item.state,"sender":item.envelope.from,"recipient":item.envelope.to,"attempts":item.attempts,"reason":item.reason,"receipt":item.receipt})
+fn projection(item: &Retained) -> Value {
+    json!({"schema_version":DELIVERY_VERSION,"message_id":item.message_id,"state":item.state,"sender":item.sender,"recipient":item.recipient,"attempts":item.attempts,"reason":item.reason,"receipt":item.receipt()})
 }
 pub(crate) fn delivery(
     context: &CliContext,
@@ -495,15 +724,13 @@ pub(crate) fn delivery(
     let locked = lock_journal(context)?;
     let item = locked
         .registry
-        .remote_outbox
-        .iter()
         .find(|i| {
-            i.envelope.message_id == id
-                && i.envelope.from.session_id == session
-                && i.envelope.from.session_incarnation == current
+            i.message_id == id
+                && i.sender.session_id == session
+                && i.sender.session_incarnation == current
         })
         .ok_or_else(|| CliError::data("message-not-found", "delivery does not exist", None))?;
-    Ok(projection(item))
+    Ok(projection(&item))
 }
 pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>, CliError> {
     let items = {
@@ -537,7 +764,7 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
                 .json(&item.envelope)
                 .send()
                 .map_err(|_| unavailable())
-                .and_then(response_json)
+                .and_then(|response| response_json(response, Responder::Relay))
         };
         let mut locked = lock_journal(context)?;
         let Some(current) = locked
@@ -549,7 +776,14 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
             continue;
         };
         current.attempts = current.attempts.saturating_add(1);
-        current.next_attempt_epoch = now_epoch().saturating_add(5);
+        current.next_attempt_epoch = now_epoch().saturating_add(RETRY_SECS);
+        let unreachable = matches!(
+            &result,
+            Err(error) if matches!(
+                error.code(),
+                "remote-messaging-unavailable" | "coordination-unavailable"
+            )
+        );
         match result {
             Ok(receipt)
                 if receipt["schema_version"] == DELIVERY_VERSION
@@ -584,6 +818,19 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
                 }
             }
         }
+        if unreachable {
+            // Envelopes that already failed share one probe per retry interval
+            // to an unavailable destination session, so it cannot delay other
+            // sessions or machines. A fresh envelope gets its own first attempt.
+            let retry_at = now_epoch().saturating_add(RETRY_SECS);
+            for other in locked.registry.remote_outbox.iter_mut().filter(|other| {
+                other.state == "queued"
+                    && other.attempts > 0
+                    && other.envelope.to == item.envelope.to
+            }) {
+                other.next_attempt_epoch = other.next_attempt_epoch.max(retry_at);
+            }
+        }
         locked.save()?;
     }
     let locked = lock_journal(context)?;
@@ -595,7 +842,16 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
         .map(|i| i.next_attempt_epoch.min(i.envelope.expires_at_epoch))
         .min())
 }
+/// Destination admission. Quota refusals name this host as the destination.
 pub(crate) fn receive(
+    context: &CliContext,
+    machine: &str,
+    envelope: Envelope,
+) -> Result<Value, CliError> {
+    receive_admitted(context, machine, envelope)
+        .map_err(|error| super::quota_origin(error, machine, "destination"))
+}
+fn receive_admitted(
     context: &CliContext,
     machine: &str,
     envelope: Envelope,
@@ -810,6 +1066,7 @@ fn local_request(
             .bearer_auth(token.trim())
             .send()
             .map_err(|_| unavailable())?,
+        Responder::LocalDaemon,
     )
 }
 pub(crate) fn cli_send(
@@ -881,16 +1138,15 @@ pub(crate) fn reply_replay(
     body: &str,
 ) -> Result<Option<Value>, CliError> {
     let journal = lock_journal(context)?;
-    let Some(item) = journal.registry.remote_outbox.iter().find(|item| {
-        item.envelope.from.session_id == session
-            && item.envelope.from.session_incarnation == incarnation
-            && item.idempotency_key == args.idempotency_key
-    }) else {
+    let Some(item) = journal
+        .registry
+        .find_key(session, incarnation, &args.idempotency_key)
+    else {
         return Ok(None);
     };
     let submission = Submit {
-        to_machine: item.envelope.to.machine.clone(),
-        to_session: item.envelope.to.session_id.clone(),
+        to_machine: item.recipient.machine.clone(),
+        to_session: item.recipient.session_id.clone(),
         body: body.into(),
         idempotency_key: args.idempotency_key.clone(),
         reply_to: Some(args.message.clone()),
@@ -905,7 +1161,7 @@ pub(crate) fn reply_replay(
             None,
         ));
     }
-    Ok(Some(projection(item)))
+    Ok(Some(projection(&item)))
 }
 
 fn receive_replay(
@@ -1086,9 +1342,10 @@ mod tests {
             drain(&context, &config).unwrap();
             server.join().unwrap();
             let locked = lock_journal(&context).unwrap();
-            assert_eq!(locked.registry.remote_outbox[0].state, expected);
+            assert!(locked.registry.remote_outbox.is_empty());
+            assert_eq!(locked.registry.retained[0].state, expected);
             assert_eq!(
-                locked.registry.remote_outbox[0].reason.as_deref(),
+                locked.registry.retained[0].reason.as_deref(),
                 Some("session-incarnation-conflict")
             );
         }
@@ -1195,8 +1452,9 @@ mod tests {
                 super::super::mailbox::now_epoch_millis()
             )
             .unwrap_err()
-            .code(),
-            "quota-exceeded"
+            .details()
+            .map(|details| (details["quota"].clone(), details["side"].clone())),
+            Some((json!("registry-message-bytes"), json!("local")))
         );
     }
     #[test]
@@ -1594,5 +1852,289 @@ mod tests {
         assert_eq!(fs::read(path).expect("journal retained"), bytes);
         super::super::ensure_recovery_registry_schema(&context)
             .expect("existing reader still available");
+    }
+    fn own_outbox(key: &str, state: &str) -> Outbox {
+        let mut message = envelope();
+        message.from = Address {
+            machine: "destination".into(),
+            session_id: "recipient".into(),
+            session_incarnation: "recipient-incarnation".into(),
+        };
+        message.to.machine = "source".into();
+        message.expires_at_epoch = now_epoch() + 86400;
+        let delivered = state == "delivered";
+        Outbox {
+            receipt: delivered.then(|| json!({"schema_version":DELIVERY_VERSION,"message_id":message.message_id,"state":"delivered","recipient":message.to,"persisted_at_epoch":now_epoch()})),
+            envelope: message,
+            request_digest: format!("digest-{key}"),
+            idempotency_key: key.into(),
+            state: state.into(),
+            attempts: u64::from(delivered),
+            next_attempt_epoch: now_epoch(),
+            reason: None,
+        }
+    }
+    fn write_v1_journal(context: &CliContext, outbox: &[Outbox]) {
+        write_atomic(
+            &context.state_dir.join("coordination").join(JOURNAL_FILE),
+            &serde_json::to_vec(&json!({"schema_version":"agent-session.federation-journal.v1","remote_outbox":outbox})).unwrap(),
+            SECRET_FILE_MODE,
+        )
+        .unwrap();
+    }
+    /// Receives a remote parent so a reply can be submitted without discovery.
+    fn reply_args(context: &CliContext, key: &str) -> Submit {
+        let parent = envelope();
+        let parent_id = parent.message_id.clone();
+        receive(context, "destination", parent).unwrap();
+        Submit {
+            to_machine: "source".into(),
+            to_session: "recipient".into(),
+            body: "bounded reply".into(),
+            idempotency_key: key.into(),
+            reply_to: Some(parent_id),
+            expires_in: None,
+            reply_revision: Some(1),
+        }
+    }
+    #[test]
+    fn delivered_outbox_entries_do_not_block_new_sends() {
+        let (_temp, context) = fixture();
+        let delivered: Vec<_> = (0..256)
+            .map(|n| own_outbox(&format!("delivered-key-{n:04}"), "delivered"))
+            .collect();
+        write_v1_journal(&context, &delivered);
+        let sent = submit(
+            &context,
+            &config(),
+            "recipient",
+            TOKEN,
+            reply_args(&context, "new-key-0001"),
+        )
+        .expect("delivered envelopes must not block a new send");
+        assert_eq!(sent["state"], "queued");
+        // Compaction keeps replay, delivery status and conflict detection.
+        let first = &delivered[0];
+        let status = delivery(&context, "recipient", TOKEN, &first.envelope.message_id)
+            .expect("compacted delivery status");
+        assert_eq!(status, projection(&first.identity()));
+        let path = context.state_dir.join("coordination").join(JOURNAL_FILE);
+        let journal = String::from_utf8(fs::read(&path).unwrap()).unwrap();
+        assert!(
+            !journal.contains("bounded fixture body"),
+            "terminal bodies are dropped from the journal"
+        );
+        let mut replay = reply_args(&context, "delivered-key-0000");
+        replay.reply_to = None;
+        assert_eq!(
+            submit(&context, &config(), "recipient", TOKEN, replay)
+                .unwrap_err()
+                .code(),
+            "idempotency-key-conflict",
+            "a compacted key still refuses changed content"
+        );
+    }
+    fn own_queued(machine: &str, keys: std::ops::Range<usize>) -> Vec<Outbox> {
+        keys.map(|n| {
+            let mut item = own_outbox(&format!("{machine}-key-{n:04}"), "queued");
+            item.envelope.to.machine = machine.into();
+            item
+        })
+        .collect()
+    }
+    #[test]
+    fn pending_quota_is_per_destination_and_names_source_counts() {
+        let (_temp, context) = fixture();
+        let mut locked = lock_journal(&context).unwrap();
+        locked.registry.remote_outbox = own_queued("asleep", 0..MAX_PENDING_PER_DESTINATION);
+        locked.registry.retained = vec![own_outbox("delivered-key", "delivered").identity()];
+        locked.save().unwrap();
+        drop(locked);
+        submit(
+            &context,
+            &config(),
+            "recipient",
+            TOKEN,
+            reply_args(&context, "unrelated-key-0001"),
+        )
+        .expect("an asleep destination must not block other destinations");
+        let mut locked = lock_journal(&context).unwrap();
+        let more = own_queued("source", 1..MAX_PENDING_PER_DESTINATION);
+        locked.registry.remote_outbox.extend(more);
+        locked.save().unwrap();
+        drop(locked);
+        let error = submit(
+            &context,
+            &config(),
+            "recipient",
+            TOKEN,
+            reply_args(&context, "new-key-0001"),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "quota-exceeded");
+        assert_eq!(
+            error.message(),
+            "local federation outbox has too many undelivered messages for this destination (federation-pending-destination 512/512)"
+        );
+        assert_eq!(
+            error.details(),
+            Some(&json!({
+                "quota": "federation-pending-destination",
+                "count": 512,
+                "limit": 512,
+                "host": "destination",
+                "side": "source",
+                "destination_machine": "source",
+                "pending": 1024,
+                "pending_to_destination": 512,
+                "delivered": 1,
+                "retained": 1,
+            }))
+        );
+    }
+    #[test]
+    fn retained_identity_quota_bounds_compacted_records_separately() {
+        let (_temp, context) = fixture();
+        let args = reply_args(&context, "new-key-0001");
+        let mut locked = lock_journal(&context).unwrap();
+        locked.registry.retained = (0..MAX_RETAINED_IDS)
+            .map(|n| own_outbox(&format!("retained-key-{n:05}"), "delivered").identity())
+            .collect();
+        locked.save().unwrap();
+        drop(locked);
+        let error = submit(&context, &config(), "recipient", TOKEN, args).unwrap_err();
+        assert_eq!(
+            error.message(),
+            "local federation outbox retained-ID limit reached (federation-retained-ids 16384/16384)"
+        );
+        assert_eq!(error.details().unwrap()["quota"], "federation-retained-ids");
+        assert_eq!(error.details().unwrap()["delivered"], 16384);
+        assert_eq!(error.details().unwrap()["pending"], 0);
+        // The retained-ID cap fits well inside the journal budget.
+        let path = context.state_dir.join("coordination").join(JOURNAL_FILE);
+        assert!(fs::metadata(path).unwrap().len() < MAX_JOURNAL_BYTES / 2);
+    }
+    #[test]
+    fn journal_byte_budget_refuses_with_quota_before_write() {
+        let (_temp, context) = fixture();
+        let args = reply_args(&context, "new-key-0001");
+        let mut locked = lock_journal(&context).unwrap();
+        // Synthetic oversized bodies reach the byte budget below the count caps.
+        locked.registry.remote_outbox = own_queued("source", 0..2);
+        for item in &mut locked.registry.remote_outbox {
+            item.envelope.body = "x".repeat((MAX_JOURNAL_BYTES as usize - 64 * 1024) / 2);
+        }
+        locked.save().unwrap();
+        drop(locked);
+        let path = context.state_dir.join("coordination").join(JOURNAL_FILE);
+        let before = fs::read(&path).unwrap();
+        let error = submit(&context, &config(), "recipient", TOKEN, args).unwrap_err();
+        assert_eq!(
+            error.details().unwrap()["quota"],
+            "federation-journal-bytes"
+        );
+        assert_eq!(error.details().unwrap()["side"], "source");
+        assert_eq!(error.details().unwrap()["pending"], 2);
+        assert!(fs::read(&path).unwrap() == before, "refusal must not write");
+    }
+    #[test]
+    fn unreachable_destination_backs_off_only_its_own_envelopes() {
+        let (_temp, context) = fixture();
+        let mut locked = lock_journal(&context).unwrap();
+        locked.registry.remote_outbox = own_queued("asleep", 0..2);
+        locked
+            .registry
+            .remote_outbox
+            .extend(own_queued("awake", 0..1));
+        // A healthy session on the same machine as the unavailable one.
+        let mut healthy = own_queued("asleep", 2..3);
+        healthy[0].envelope.to.session_id = "healthy".into();
+        locked.registry.remote_outbox.extend(healthy);
+        let due = locked.registry.remote_outbox[0].next_attempt_epoch;
+        for item in &mut locked.registry.remote_outbox {
+            item.attempts = 1;
+        }
+        locked.registry.remote_outbox[2].next_attempt_epoch = due + 1000;
+        locked.save().unwrap();
+        drop(locked);
+        // Port 1 refuses the connection: a retryable transport failure.
+        drain(&context, &config()).unwrap();
+        let locked = lock_journal(&context).unwrap();
+        let outbox = &locked.registry.remote_outbox;
+        assert_eq!(
+            outbox[0].reason.as_deref(),
+            Some("remote-messaging-unavailable")
+        );
+        assert_eq!(outbox[1].attempts, 1, "only one probe per destination");
+        assert!(
+            outbox[1].next_attempt_epoch > due,
+            "same destination backs off"
+        );
+        assert_eq!(
+            outbox[2].next_attempt_epoch,
+            due + 1000,
+            "other machine is untouched"
+        );
+        assert_eq!(
+            outbox[3].next_attempt_epoch, due,
+            "another session on the same machine stays due"
+        );
+    }
+    #[test]
+    fn destination_mailbox_quota_names_recipient_quota_and_destination_host() {
+        let (_temp, context) = fixture();
+        receive(&context, "destination", envelope()).unwrap();
+        let mut locked = lock_registry(&context).unwrap();
+        let stored = locked.registry.messages[0].clone();
+        for _ in 1..256 {
+            locked
+                .registry
+                .messages
+                .push(super::super::mailbox::StoredMessage {
+                    message_id: uuid::Uuid::new_v4().to_string(),
+                    created_at_epoch: stored.created_at_epoch - 3600,
+                    created_at_epoch_millis: 0,
+                    ..stored.clone()
+                });
+        }
+        locked.save().unwrap();
+        drop(locked);
+        let error = receive(&context, "destination", envelope()).unwrap_err();
+        assert_eq!(error.code(), "quota-exceeded");
+        assert_eq!(
+            error.details(),
+            Some(
+                &json!({"quota":"recipient-messages","count":256,"limit":256,"host":"destination","side":"destination"})
+            )
+        );
+    }
+    #[test]
+    fn local_daemon_refusal_keeps_diagnostics_and_relay_keeps_only_quota_fields() {
+        let refusal = json!({"ok":false,"error":{"code":"quota-exceeded","message":"federation outbox has too many undelivered messages","details":{"quota":"federation-pending","count":256,"limit":256,"host":"sympoies","side":"source"}}});
+        let local = local_daemon_error(&refusal);
+        assert_eq!(local.code(), "quota-exceeded");
+        assert_eq!(
+            local.message(),
+            "federation outbox has too many undelivered messages"
+        );
+        assert_eq!(local.details(), refusal.pointer("/error/details"));
+        let mut remote = refusal.clone();
+        remote["error"]["details"]["body"] = json!("private body");
+        remote["error"]["details"]["side"] = json!("destination");
+        let relayed = relay_error(&remote);
+        assert_eq!(relayed.message(), "remote mailbox request was rejected");
+        assert_eq!(
+            relayed.details(),
+            Some(
+                &json!({"quota":"federation-pending","count":256,"limit":256,"host":"sympoies","side":"destination"})
+            )
+        );
+        let unknown = json!({"error":{"code":"internal-failure","details":{"quota":"x"}}});
+        assert_eq!(relay_error(&unknown).code(), "remote-messaging-unavailable");
+        assert_eq!(relay_error(&unknown).details(), None);
+        assert_eq!(
+            local_daemon_error(&json!({"error":{"code":"Bad Code"}})).code(),
+            "remote-messaging-unavailable"
+        );
     }
 }

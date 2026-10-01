@@ -34,6 +34,7 @@ use super::{
 const CLAIM_TTL_SECS: i64 = 30 * 60;
 const OPERATION_TTL_SECS: i64 = 30 * 60;
 const OPERATION_LEASE_VERSION: &str = "agent-session.operation-lease.v1";
+const MAX_SESSION_COMPLETION_EVENTS: usize = 256;
 
 #[derive(Clone, Debug)]
 pub struct AcquiredClaim {
@@ -1594,18 +1595,18 @@ pub(crate) fn complete(
         ));
     }
     if pending.is_none() {
-        if locked
+        let queued = locked
             .registry
             .completion_events
             .iter()
             .filter(|event| event.session_id == record.id)
-            .count()
-            >= 256
-        {
-            return Err(CliError::data(
-                "quota-exceeded",
+            .count();
+        if queued >= MAX_SESSION_COMPLETION_EVENTS {
+            return Err(super::quota_exceeded(
                 "operation completion queue quota exceeded",
-                None,
+                "completion-events",
+                queued,
+                MAX_SESSION_COMPLETION_EVENTS,
             ));
         }
         locked.registry.completion_events.push(CompletionEvent {
