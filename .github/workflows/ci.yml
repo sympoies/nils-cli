@@ -9,14 +9,14 @@ on:
   # branch before landing the pull request.
   merge_group:
 
-# A newer push to a pull request supersedes its older CI run, and a newer main
-# commit supersedes the main run still in progress: the newer run validates
-# everything the older one would have. Cancel the old run instead of letting it
-# hold runners through a burst of merges. A release PR whose base run was
-# cancelled falls back to full PR CI. Merge-group runs are never grouped.
+# A newer push to a pull request supersedes its older CI run. A main push run
+# is never cancelled while it is in progress, so every main commit that starts
+# CI gets a full verdict instead of a red "cancelled" mark; a newer push may
+# still replace a main run that is only pending. Merge-group runs are never
+# grouped.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && 'main-push' || github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:

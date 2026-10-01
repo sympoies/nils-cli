@@ -75,8 +75,8 @@ assert_not_contains .github/workflows/release.yml "tool: cross" \
   "release workflow does not install cross"
 assert_not_contains .github/workflows/release.yml "cross build" \
   "release workflow does not invoke cross"
-assert_contains .github/workflows/ci.yml "cancel-in-progress: \${{ github.event_name == 'pull_request' || github.event_name == 'push' }}" \
-  "CI cancels superseded pull request runs and superseded main push runs"
+assert_contains .github/workflows/ci.yml "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" \
+  "CI cancels only superseded pull request runs, never a main push run in progress"
 assert_contains .github/workflows/ci.yml "(github.event_name == 'push' && 'main-push' || github.run_id) }}" \
   "main push runs share one group while merge-group runs never share one"
 assert_contains .github/workflows/ci.yml "  merge_group:" \
