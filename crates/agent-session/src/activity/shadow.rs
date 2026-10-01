@@ -147,7 +147,7 @@ fn sampler_permit() -> Option<SamplerPermit> {
 
 fn reserve_sampler(counter: &AtomicUsize, limit: usize) -> bool {
     counter
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |active| {
             (active < limit).then_some(active + 1)
         })
         .is_ok()
