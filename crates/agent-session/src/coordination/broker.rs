@@ -1431,6 +1431,79 @@ fn heartbeat_fresh_with_clock(
     )
 }
 
+/// Seeds for tests outside this module that exercise a stopped runtime's
+/// coordination incarnation.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) mod test_support {
+    use super::*;
+    use serde_json::json;
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::process::CommandExt;
+
+    /// A process group that has exited and been reaped.
+    pub(crate) fn exited_process_group() -> libc::pid_t {
+        let mut exited = std::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .process_group(0)
+            .spawn()
+            .expect("spawn");
+        let group = exited.id() as libc::pid_t;
+        exited.wait().expect("reap");
+        group
+    }
+
+    /// Runtime identity evidence for `process_group` in this pid namespace.
+    pub(crate) fn process_group_identity(process_group: libc::pid_t) -> Value {
+        let namespace = fs::metadata("/proc/self/ns/pid").expect("pid namespace");
+        let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id").expect("boot id");
+        json!({
+            "session_id": "$1",
+            "pane_id": "%1",
+            "pane_pid": process_group,
+            "process_group_id": process_group,
+            "pid_namespace": {
+                "device": namespace.dev(),
+                "inode": namespace.ino(),
+                "boot_id": boot_id.trim(),
+            },
+        })
+    }
+
+    /// A ready broker for `incarnation` with a fresh heartbeat, as a running
+    /// launch leaves it the moment its runtime is killed.
+    pub(crate) fn seed_live_broker(
+        context: &CliContext,
+        session_id: &str,
+        incarnation: &str,
+        runtime_identity: Value,
+    ) {
+        let mut locked = lock_registry(context).expect("registry");
+        locked.registry.brokers.insert(
+            session_id.to_string(),
+            super::super::BrokerRecord {
+                session_id: session_id.to_string(),
+                incarnation: incarnation.to_string(),
+                coordination_mode: Default::default(),
+                capability_digest: "digest".to_string(),
+                generation: 1,
+                state: "ready".to_string(),
+                heartbeat_at: String::new(),
+                heartbeat_epoch: now_epoch(),
+                runtime_identity: Some(runtime_identity),
+                runtime_identity_digest: String::new(),
+                lost_since_epoch: None,
+                binary_version: None,
+            },
+        );
+        locked.save().expect("seed broker");
+        drop(locked);
+        let heartbeat = super::super::heartbeat_path(&context.state_dir, session_id);
+        fs::create_dir_all(heartbeat.parent().unwrap()).unwrap();
+        fs::write(&heartbeat, format!("{incarnation}:{}\n", now_epoch())).unwrap();
+        fs::set_permissions(&heartbeat, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1685,73 +1758,25 @@ mod tests {
             }
         }))
         .expect("record");
-        {
-            let mut locked = lock_registry(context).expect("registry");
-            locked.registry.brokers.insert(
-                "session".to_string(),
-                super::super::BrokerRecord {
-                    session_id: "session".to_string(),
-                    incarnation: "old".to_string(),
-                    coordination_mode: Default::default(),
-                    capability_digest: "digest".to_string(),
-                    generation: 1,
-                    state: "ready".to_string(),
-                    heartbeat_at: String::new(),
-                    heartbeat_epoch: now_epoch(),
-                    runtime_identity: Some(runtime_identity),
-                    runtime_identity_digest: String::new(),
-                    lost_since_epoch: None,
-                    binary_version: None,
-                },
-            );
-            locked.save().expect("seed broker");
-        }
-        let heartbeat = super::super::heartbeat_path(&context.state_dir, "session");
-        fs::create_dir_all(heartbeat.parent().unwrap()).unwrap();
-        fs::write(&heartbeat, format!("old:{}\n", now_epoch())).unwrap();
-        fs::set_permissions(&heartbeat, fs::Permissions::from_mode(0o600)).unwrap();
+        test_support::seed_live_broker(context, "session", "old", runtime_identity);
         record
     }
 
     /// A verified stop kills the heartbeat writer with the runtime, but its last
     /// beat stays fresh for the freshness window and would refuse the session's
     /// own resume as "the prior coordination incarnation is still live".
-    /// Runtime identity evidence for `process_group` in this pid namespace.
-    #[cfg(target_os = "linux")]
-    fn process_group_identity(process_group: libc::pid_t) -> Value {
-        use std::os::unix::fs::MetadataExt;
-        let namespace = fs::metadata("/proc/self/ns/pid").expect("pid namespace");
-        let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id").expect("boot id");
-        json!({
-            "session_id": "$1",
-            "pane_id": "%1",
-            "pane_pid": process_group,
-            "process_group_id": process_group,
-            "pid_namespace": {
-                "device": namespace.dev(),
-                "inode": namespace.ino(),
-                "boot_id": boot_id.trim(),
-            },
-        })
-    }
-
     #[cfg(target_os = "linux")]
     #[test]
     fn retire_after_verified_stop_expires_only_a_proven_stopped_incarnation() {
-        use std::os::unix::process::CommandExt;
         let temporary = tempfile::TempDir::new().expect("temporary state");
         let context = CliContext {
             state_dir: temporary.path().join("state"),
             host: None,
         };
-        let mut exited = std::process::Command::new("sh")
-            .args(["-c", "exit 0"])
-            .process_group(0)
-            .spawn()
-            .expect("spawn");
-        let dead_group = exited.id() as libc::pid_t;
-        exited.wait().expect("reap");
-        let record = seed_retirable_broker(&context, process_group_identity(dead_group));
+        let record = seed_retirable_broker(
+            &context,
+            test_support::process_group_identity(test_support::exited_process_group()),
+        );
         assert!(heartbeat_fresh(&context, "session", "old", 0));
 
         retire_after_verified_stop(&context, &record).expect("retire");
@@ -1766,7 +1791,8 @@ mod tests {
 
         // A runtime that is still running keeps its liveness evidence.
         let own_group = unsafe { libc::getpgrp() };
-        let record = seed_retirable_broker(&context, process_group_identity(own_group));
+        let record =
+            seed_retirable_broker(&context, test_support::process_group_identity(own_group));
         retire_after_verified_stop(&context, &record).expect("retire is a no-op");
         assert!(heartbeat_fresh(&context, "session", "old", 0));
     }

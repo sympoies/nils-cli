@@ -29650,6 +29650,67 @@ esac
         assert!(crate::claude_account::has_queued_next(&persisted));
     }
 
+    /// The killed runtime's broker still has a fresh heartbeat when the switch
+    /// resumes. Without retiring that incarnation first, the resume is refused
+    /// as "the prior coordination incarnation is still live" and the session is
+    /// left stopped (sympoies/nils-cli#2040).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn claude_switch_resume_retires_the_stopped_incarnation_before_resuming() {
+        use crate::coordination::broker::test_support;
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let broker = claude_broker_fixture(&lock, tmp.path());
+        seed_bound_claude_session(tmp.path(), "claude-retire", &cwd, "alpha");
+        let log = tmp.path().join("tmux.log");
+        // Like the real held launch, start the new heartbeat only once the
+        // broker gate opens, so the old incarnation's beat is still the one on
+        // disk when the resume provisions coordination.
+        let tmux = resume_tmux(tmp.path(), &log);
+        let script = fs::read_to_string(&tmux).unwrap().replace(
+            r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then"#,
+            r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then gate="$(dirname "$heartbeat")/broker-provisioned"; (i=0; while [ ! -f "$gate" ] && [ "$i" -lt 1000 ]; do i=$((i + 1)); sleep 0.01; done; printf '%s:%s\n' "$incarnation" "$(date +%s)" > "$heartbeat"; chmod 600 "$heartbeat") >/dev/null 2>&1 & fi; if false; then"#,
+        );
+        assert!(script.contains("broker-provisioned"));
+        fs::write(&tmux, script).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let mut record = load_session_record(&context, "claude-retire").unwrap();
+        crate::claude_account::queue_next(&mut record, "beta").unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        test_support::seed_live_broker(
+            &context,
+            "claude-retire",
+            "never-launched-fixture",
+            test_support::process_group_identity(test_support::exited_process_group()),
+        );
+
+        let (session_incarnation, view) =
+            crate::session_account::resume_after_switch_stop(&context, "claude-retire", &tmux)
+                .expect("the switch resumes under the queued account");
+
+        assert!(
+            session_incarnation
+                .as_deref()
+                .is_some_and(|incarnation| incarnation != "never-launched-fixture"),
+            "{session_incarnation:?}"
+        );
+        let view = view.unwrap();
+        assert_eq!(view.selected_account.as_deref(), Some("beta"));
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(
+            calls.contains(&format!(
+                "CLAUDE_CONFIG_DIR={}",
+                broker.config_dir("beta").display()
+            )),
+            "{calls:?}"
+        );
+    }
+
     /// `agent-session account switch` on a Codex session has no in-process
     /// control connection, so it takes the serve route's durable queue path:
     /// the account is bound for the next prompt, applied by the daemon's control
