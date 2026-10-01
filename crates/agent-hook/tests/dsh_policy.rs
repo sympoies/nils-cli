@@ -4679,6 +4679,13 @@ fn hidden_command_forms(inner: &str) -> Vec<String> {
         // zsh precommand modifiers run the command they precede.
         format!("noglob {inner}"),
         format!("nocorrect {inner}"),
+        // An assignment after a precommand modifier or reserved word is a
+        // prefix of the command that follows it (sympoies/nils-cli#2006).
+        format!("nocorrect x=1 {inner}"),
+        format!("noglob x=1 {inner}"),
+        format!("! x=1 {inner}"),
+        format!("time x=1 {inner}"),
+        format!("nocorrect GIT_DIR=.git {inner}"),
     ]
 }
 
@@ -4698,6 +4705,9 @@ fn heredoc_delimiters_and_zsh_short_forms_cannot_hide_a_direct_commit() {
             "cat <<E\"O\"F\n$(git commit -m y)\nEOF\ngit status",
             "if [[ -e \"$f\" ]]; then git status; fi",
             "while [[ -n x ]]; do git status; done",
+            "nocorrect git status",
+            "! git diff --quiet",
+            "time git status",
         ],
         "allow",
         &[],
@@ -4711,13 +4721,24 @@ fn heredoc_delimiters_and_zsh_short_forms_cannot_hide_a_default_push() {
     init_default_tracking_repository(&fixture, "main");
     let blocked = hidden_command_forms("git push origin main");
     let blocked = blocked.iter().map(String::as_str).collect::<Vec<_>>();
-    let mismatches = disposition_mismatches(
+    let mut mismatches = disposition_mismatches(
         &fixture,
         "block-unsafe-default-delivery",
         &blocked,
         "block",
         &[],
     );
+    mismatches.extend(disposition_mismatches(
+        &fixture,
+        "block-unsafe-default-delivery",
+        &[
+            "nocorrect git status",
+            "! git diff --quiet",
+            "time git status",
+        ],
+        "allow",
+        &[],
+    ));
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
