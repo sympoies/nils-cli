@@ -10,7 +10,9 @@
 # mirror rule in claude-kit's docs/dispatcher-commands.md.
 #
 # All args forward unchanged to the skill script; behaviour is identical
-# whether you reach it via /release or via the skill directly.
+# whether you reach it via /release or via the skill directly. The script only
+# prepares the version-bump commit: it never tags, pushes, or publishes. The
+# sympoies-infra release broker owns those steps.
 #
 set -euo pipefail
 

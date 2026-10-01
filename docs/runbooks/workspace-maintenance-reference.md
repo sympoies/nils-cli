@@ -443,7 +443,7 @@ version-bump transform the broker consumes.
 `.github/workflows/prepare-private-release.yml` is a narrower preparation-only
 entrypoint for the private infrastructure orchestrator. It runs the same
 canonical version preparation and locked workspace check on a GitHub-hosted
-runner, but uses `--skip-push` and uploads only a patch plus a checksum-bound
+runner, and uploads only a patch plus a checksum-bound
 manifest. It has read-only repository permissions, accepts no credentials, and
 does not create a branch, PR, tag, or release. The private orchestrator must
 bind the artifact to the workflow run's immutable `headSha`, independently
