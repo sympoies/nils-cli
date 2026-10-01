@@ -20,6 +20,8 @@ mod auth;
 mod auth_accounts;
 #[path = "integration/auth_profiles.rs"]
 mod auth_profiles;
+#[path = "integration/auth_reset_rate_limits.rs"]
+mod auth_reset_rate_limits;
 #[path = "integration/completion_contract.rs"]
 mod completion_contract;
 #[path = "integration/completion_flags_contract.rs"]

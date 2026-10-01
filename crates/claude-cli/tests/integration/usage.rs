@@ -90,6 +90,14 @@ fn usage_oauth_classifies_past_due_billing_without_forwarding_provider_body() {
     assert_eq!(payload["result"]["reason_code"], "billing_past_due");
     assert!(!stdout(&output).contains("overdue invoice"));
     assert!(!stdout(&output).contains("secret-token-billing"));
+    // Only `diag rate-limits` sends the Claude Code status query and agent.
+    let requests = server.take_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].query, None);
+    assert_eq!(
+        requests[0].header_value("user-agent").as_deref(),
+        Some("claude-code/2.1.0")
+    );
 }
 
 #[test]

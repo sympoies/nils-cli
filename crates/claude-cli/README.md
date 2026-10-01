@@ -32,6 +32,9 @@ claude-cli auth remote pull --ssh <host> (--name <name>|--current) --access-only
                             [--format text|json]
 claude-cli auth remote pull --ssh <host> --all --into <accounts-dir> --access-only
                             [--keychain auto|required|off] [--format text|json]
+claude-cli auth reset-rate-limits --program <juniper_tide|cedar_ember>
+                                  [--request-id <uuid>] [-y|--yes]
+                                  [--format text|json] <profile>
 claude-cli config show
 claude-cli config set <key> <value>
 claude-cli diag rate-limits [<profile>] [--all] [--format text|json] [--one-line]
@@ -150,6 +153,32 @@ wrapper overrides are configured.
 
 Auth status drops email, organization identity, token, credential path, and
 unknown upstream fields.
+
+### Limit resets
+
+`auth reset-rate-limits --program <juniper_tide|cedar_ember> <profile>`
+redeems at most one Claude limit reset for a stored profile:
+`juniper_tide` is the weekly reset of the 5-hour session limit, offered only
+at that limit, and `cedar_ember` uses the next granted reset.
+
+- Non-interactive and JSON runs require `--yes` and a canonical lowercase
+  UUID `--request-id`; reuse the same id when retrying after an unknown
+  result. Without `--yes` an interactive run asks for confirmation first.
+- The stored token is never refreshed; an expired token fails before any
+  request. The command re-reads the usage status the way `diag rate-limits`
+  does and reports `unavailable` without posting when the program cannot be
+  used. Otherwise it sends one `POST /api/organizations/<org>/reset_rate_limits`
+  and never retries it. For `cedar_ember` the grant id comes from that status
+  read.
+- `--format json` emits `claude-cli.auth.reset-rate-limits.v1` with
+  `program`, `outcome` (`reset`, `already_used`, `not_limited`, `cooldown`,
+  `ineligible`, `unavailable`), `posted`, `reason`, `resets_left`,
+  `next_available_at`, `cooldown_until`, and `weekly_resets_at`. Every outcome
+  exits `0`; an expired or rejected sign-in exits `2`, and a provider failure
+  exits `3` (`error.details.retryable` says whether to retry with the same id).
+- Output never contains tokens, organization or account uuids, grant ids, the
+  request id, or the profile path. See the
+  [reset contract](docs/specs/claude-cli-auth-reset-rate-limits-json-contract-v1.md).
 
 ### Token authority and access-only replicas
 
@@ -344,8 +373,14 @@ collector reads both.
   Claude Code uses). With `CLAUDE_RATE_LIMITS_DEFAULT_ALL_ENABLED=true`, a
   text run with no target and no `--cached` reads every profile as `--all`
   does; JSON output and named profiles are unchanged.
-- Each target sends its stored access token once to the OAuth usage endpoint.
-  `five_hour` becomes the `5h` window (300 minutes) and `seven_day` the
+- Each target sends its stored access token once to the OAuth usage endpoint,
+  with Claude Code's status query (`?at_wall=1&skip_spend=1`, appended after
+  any query an endpoint override already has) and
+  `User-Agent: claude-cli/<Claude Code version> (external, cli)`. The version
+  is `CLAUDE_RATE_LIMITS_CLAUDE_CODE_VERSION` when it is `MAJOR.MINOR.PATCH`,
+  else the leading version of `claude --version` (once per run, three-second
+  deadline), else `2.1.284`; `CLAUDE_PROMPT_SEGMENT_USER_AGENT` overrides the
+  whole header. `five_hour` becomes the `5h` window (300 minutes) and `seven_day` the
   `Weekly` window (10080 minutes). Tokens are never refreshed, rewritten, or
   printed. An expired token reports `auth_expired` without a request. HTTP
   `401`, `403`, and `429` map to `auth_expired`, `permission_denied`, and
@@ -355,6 +390,12 @@ collector reads both.
   `ok`, `source`, `reason_code`, `summary`, `windows`, `error`) and exit `1`
   when any result failed, which is a result without `windows`. A single target
   exits `1` on failure.
+- Each network result also carries `limit_resets`: the normalized
+  `juniper_tide` and `cedar_ember` reset status, each `null` when the upstream
+  block is missing or malformed. A malformed block never fails the result.
+  Cached and cache-fallback results omit `limit_resets`. The shape is in the
+  [JSON contract](docs/specs/claude-cli-json-contract-v1.md#diag-rate-limits-limit-resets);
+  grant ids stay host-local.
 - Text output prints the shared accounts table for `--all` and `--async`, and
   `--one-line` prints `5h:<n>% W:<n>% <reset>`. `--async` queries profiles
   concurrently (`--jobs`, default 5) and falls back to the last cached values
@@ -405,6 +446,13 @@ collector reads both.
   `diag rate-limits --cached` freshness.
 - `CLAUDE_RATE_LIMITS_DEFAULT_ALL_ENABLED`: default `diag rate-limits` to
   `--all` when no target is provided (default: `false`).
+- `CLAUDE_RATE_LIMITS_CLAUDE_CODE_VERSION`: Claude Code version for the
+  `diag rate-limits` and `auth reset-rate-limits` User-Agent; default: detected
+  from `claude --version`, else `2.1.284`.
+- `CLAUDE_RATE_LIMITS_API_BASE_URL`: `auth reset-rate-limits` API base;
+  default: the usage endpoint's origin.
+- `CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS`: reset POST timeout; default
+  `25`, at most `120`.
 - `CLAUDE_PROMPT_SEGMENT_REFRESH_MIN_SECONDS`: detached refresh cooldown;
   default `60`.
 - `CLAUDE_PROMPT_SEGMENT_EXE`: detached self-refresh executable override.
@@ -437,6 +485,9 @@ collector reads both.
 
 - `0`: success, help, or no prompt output needed.
 - `1`: operational false/failed state, including unauthenticated status.
+- `2`: ambiguous profile target, no current default, or a reset sign-in that
+  must be renewed.
+- `3`: `auth reset-rate-limits` provider failure.
 - `64`: usage or argument error.
 - `65`: invalid input data, invalid structured commit output, or unresolved
   resume session.
@@ -446,4 +497,5 @@ collector reads both.
 
 - [Docs index](docs/README.md)
 - [JSON contracts](docs/specs/claude-cli-json-contract-v1.md)
+- [Reset rate-limits contract](docs/specs/claude-cli-auth-reset-rate-limits-json-contract-v1.md)
 - [Usage consumer runbook](docs/runbooks/usage-consumer.md)

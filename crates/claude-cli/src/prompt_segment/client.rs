@@ -59,13 +59,18 @@ pub fn fetch_usage(access_token: &str) -> Result<String, UsageFetchError> {
 
 /// Sends one `GET` to the OAuth usage endpoint with `access_token`.
 pub(crate) fn request_usage(access_token: &str) -> Result<String, RequestFailure> {
-    let endpoint = resolve_endpoint(shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_ENDPOINT"));
-    let max_time_seconds = env_u64("CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS", 5);
-    let user_agent = shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_USER_AGENT")
-        .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
-    let anthropic_beta = shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_ANTHROPIC_BETA")
-        .unwrap_or_else(|| DEFAULT_ANTHROPIC_BETA.to_string());
+    request_usage_with(access_token, None, DEFAULT_USER_AGENT)
+}
 
+/// Sends one `GET` to the OAuth usage endpoint with `query` appended and
+/// `default_user_agent` unless `CLAUDE_PROMPT_SEGMENT_USER_AGENT` overrides it.
+pub(crate) fn request_usage_with(
+    access_token: &str,
+    query: Option<&str>,
+    default_user_agent: &str,
+) -> Result<String, RequestFailure> {
+    let endpoint = with_query(&usage_endpoint(), query);
+    let max_time_seconds = env_u64("CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS", 5);
     let client = Client::builder()
         .timeout(Duration::from_secs(max_time_seconds))
         .build()
@@ -74,8 +79,8 @@ pub(crate) fn request_usage(access_token: &str) -> Result<String, RequestFailure
     let resp = client
         .get(&endpoint)
         .header("Authorization", format!("Bearer {access_token}"))
-        .header("anthropic-beta", anthropic_beta)
-        .header("User-Agent", user_agent)
+        .header("anthropic-beta", anthropic_beta())
+        .header("User-Agent", user_agent(default_user_agent))
         .header("Accept", "application/json")
         .send()
         .map_err(|error| RequestFailure::Transport {
@@ -89,6 +94,34 @@ pub(crate) fn request_usage(access_token: &str) -> Result<String, RequestFailure
     }
 
     Ok(body)
+}
+
+/// The OAuth usage endpoint: `CLAUDE_PROMPT_SEGMENT_ENDPOINT` or the default.
+pub(crate) fn usage_endpoint() -> String {
+    resolve_endpoint(shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_ENDPOINT"))
+}
+
+pub(crate) fn anthropic_beta() -> String {
+    shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_ANTHROPIC_BETA")
+        .unwrap_or_else(|| DEFAULT_ANTHROPIC_BETA.to_string())
+}
+
+/// `CLAUDE_PROMPT_SEGMENT_USER_AGENT`, else `default`.
+pub(crate) fn user_agent(default: &str) -> String {
+    shared_env::env_non_empty("CLAUDE_PROMPT_SEGMENT_USER_AGENT")
+        .unwrap_or_else(|| default.to_string())
+}
+
+/// Appends `query` to `endpoint`, after any query the endpoint already has.
+fn with_query(endpoint: &str, query: Option<&str>) -> String {
+    match query {
+        None | Some("") => endpoint.to_string(),
+        Some(query) if endpoint.ends_with('?') || endpoint.ends_with('&') => {
+            format!("{endpoint}{query}")
+        }
+        Some(query) if endpoint.contains('?') => format!("{endpoint}&{query}"),
+        Some(query) => format!("{endpoint}?{query}"),
+    }
 }
 
 fn resolve_endpoint(configured: Option<String>) -> String {
@@ -105,7 +138,7 @@ fn env_u64(key: &str, default: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_ENDPOINT, resolve_endpoint};
+    use super::{DEFAULT_ENDPOINT, resolve_endpoint, with_query};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -114,6 +147,24 @@ mod tests {
             resolve_endpoint(Some("http://127.0.0.1:9/usage".to_string())),
             "http://127.0.0.1:9/usage"
         );
+    }
+
+    #[test]
+    fn status_query_is_appended_after_any_existing_query() {
+        let query = Some("at_wall=1&skip_spend=1");
+        assert_eq!(
+            with_query("https://h/api/oauth/usage", query),
+            "https://h/api/oauth/usage?at_wall=1&skip_spend=1"
+        );
+        assert_eq!(
+            with_query("https://h/usage?x=1", query),
+            "https://h/usage?x=1&at_wall=1&skip_spend=1"
+        );
+        assert_eq!(
+            with_query("https://h/usage?", query),
+            "https://h/usage?at_wall=1&skip_spend=1"
+        );
+        assert_eq!(with_query("https://h/usage", None), "https://h/usage");
     }
 
     #[test]

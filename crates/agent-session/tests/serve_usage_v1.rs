@@ -1,4 +1,5 @@
-//! `GET /usage/v1` and `POST /codex/reset/v1` (sympoies/nils-cli#1821).
+//! `GET /usage/v1`, `POST /codex/reset/v1` (sympoies/nils-cli#1821), and
+//! `POST /claude/reset/v1` (serenvia/agent-console#651).
 //!
 //! Both routes replace deployment-side helper services that a console edge
 //! proxies to today, so the acceptance bar is response-shape compatibility with
@@ -14,6 +15,9 @@
 //!   top-level `schema_version` of `agent-console.codex-rate-limit-reset.v1`
 //!   plus an `outcome` (and optional `windows_reset`) at the root or under
 //!   `result`.
+//! - Claude reset: the edge posts exactly `{account, program, idempotency_key}`
+//!   and requires `agent-console.claude-limit-reset.v1` with the outcome
+//!   fields at the root (`tests/fixtures/usage-v1/edge-claude-reset.json`).
 //!
 //! Provider CLIs are stubbed on `PATH`. Every fixture is synthetic; the stubs
 //! seed `SECRET-MARKER` strings that must never reach a response.
@@ -34,8 +38,9 @@ const MACHINE: &str = "usage-host";
 const RESET_KEY: &str = "0b5f4c1e-8d2a-4c7b-9e3f-2a1b0c9d8e7f";
 const OTHER_KEY: &str = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
 
-const USAGE_ENV: [&str; 3] = [
+const USAGE_ENV: [&str; 4] = [
     "AGENT_SESSION_CODEX_RESET_ACCOUNTS",
+    "AGENT_SESSION_CLAUDE_RESET_ACCOUNTS",
     "AGENT_SESSION_USAGE_V1_REFRESH_SECONDS",
     "AGENT_SESSION_MACHINE",
 ];
@@ -72,7 +77,10 @@ impl Stubs {
                 "codex-cli",
                 &[("diag", "codex-diag"), ("account", "codex-reset")][..],
             ),
-            ("claude-cli", &[("usage", "claude-usage")][..]),
+            (
+                "claude-cli",
+                &[("usage", "claude-usage"), ("auth", "claude-reset")][..],
+            ),
         ] {
             let mut script = format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\ncase \"$1\" in\n",
@@ -98,6 +106,7 @@ impl Stubs {
             0,
         );
         stubs.answer("codex-reset", &fixture("codex-reset-cli.json"), 0);
+        stubs.answer("claude-reset", &fixture("claude-reset-cli.json"), 0);
         stubs
     }
 
@@ -719,4 +728,279 @@ fn a_reset_answers_within_its_budget_when_the_refresh_is_slow() {
         alpha["note"],
         "Refreshing Codex usage; showing the last completed result."
     );
+}
+
+fn claude_reset_serve(tmp: &tempfile::TempDir, stubs: &Stubs) -> Serve {
+    Serve::spawn(
+        tmp.path(),
+        stubs,
+        &[("AGENT_SESSION_CLAUDE_RESET_ACCOUNTS", "alpha, charlie")],
+    )
+}
+
+fn claude_request(account: &str, program: &str, key: &str) -> Value {
+    json!({ "account": account, "program": program, "idempotency_key": key })
+}
+
+#[test]
+fn claude_reset_is_disabled_without_an_allowlist() {
+    let (tmp, stubs) = setup();
+    let serve = Serve::spawn(
+        tmp.path(),
+        &stubs,
+        &[("AGENT_SESSION_CODEX_RESET_ACCOUNTS", "alpha")],
+    );
+
+    let (status, body) = serve.post(
+        "/claude/reset/v1",
+        Some(TOKEN),
+        &claude_request("alpha", "cedar_ember", RESET_KEY),
+    );
+    assert_eq!(status, 503, "{body}");
+    assert!(body.contains("claude-reset-not-configured"), "{body}");
+    assert!(stubs.calls("claude-cli", "auth").is_empty());
+}
+
+#[test]
+fn claude_reset_rejects_unauthorized_unlisted_and_malformed_requests() {
+    let (tmp, stubs) = setup();
+    let serve = claude_reset_serve(&tmp, &stubs);
+    let valid = claude_request("alpha", "juniper_tide", RESET_KEY);
+
+    let (status, _) = serve.post("/claude/reset/v1", None, &valid);
+    assert_eq!(status, 401);
+    let (status, _) = serve.post("/claude/reset/v1", Some("wrong-token"), &valid);
+    assert_eq!(status, 401);
+
+    for (body, expected) in [
+        (
+            json!({ "account": "alpha", "idempotency_key": RESET_KEY }),
+            422,
+        ),
+        (claude_request("alpha", "free_lunch", RESET_KEY), 422),
+        (claude_request("alpha", "JUNIPER_TIDE", RESET_KEY), 422),
+        (claude_request("alpha", "juniper_tide", "not-a-uuid"), 422),
+        (
+            claude_request("alpha", "juniper_tide", &RESET_KEY.to_uppercase()),
+            422,
+        ),
+        (claude_request("../alpha", "juniper_tide", RESET_KEY), 422),
+        (
+            json!({ "account": "alpha", "program": "juniper_tide", "idempotency_key": RESET_KEY, "extra": 1 }),
+            422,
+        ),
+        (
+            json!({ "account": "alpha", "program": 1, "idempotency_key": RESET_KEY }),
+            422,
+        ),
+        (claude_request("bravo", "juniper_tide", RESET_KEY), 403),
+    ] {
+        let (status, text) = serve.post("/claude/reset/v1", Some(TOKEN), &body);
+        assert_eq!(status, expected, "{body} -> {text}");
+        assert_no_secret(&text);
+    }
+    assert!(stubs.calls("claude-cli", "auth").is_empty());
+}
+
+#[test]
+fn claude_reset_redeems_once_and_replays_the_recorded_outcome() {
+    let (tmp, stubs) = setup();
+    let serve = claude_reset_serve(&tmp, &stubs);
+    serve.usage("/usage/v1");
+    assert_eq!(stubs.calls("claude-cli", "usage").len(), 1);
+    let request = claude_request("alpha", "cedar_ember", RESET_KEY);
+
+    let (status, text) = serve.post("/claude/reset/v1", Some(TOKEN), &request);
+    assert_eq!(status, 200, "{text}");
+    assert_no_secret(&text);
+    let body: Value = serde_json::from_str(&text).expect("reset json");
+    assert_eq!(body, fixture("edge-claude-reset.json"));
+    assert_eq!(
+        stubs.calls("claude-cli", "auth"),
+        vec![format!(
+            "auth reset-rate-limits --yes --program cedar_ember --request-id {RESET_KEY} --format json alpha"
+        )]
+    );
+    // A recorded reset refreshes the Claude usage slot.
+    stubs.wait_for_calls("claude-cli", "usage", 2);
+
+    // Same key, account, and program: replay without a second redemption.
+    let (status, text) = serve.post("/claude/reset/v1", Some(TOKEN), &request);
+    assert_eq!(status, 200, "{text}");
+    let replay: Value = serde_json::from_str(&text).expect("replay json");
+    let mut expected = fixture("edge-claude-reset.json");
+    expected["replayed"] = json!(true);
+    assert_eq!(replay, expected);
+    assert_eq!(stubs.calls("claude-cli", "auth").len(), 1);
+
+    // The same key for another program or account is a conflict.
+    for other in [
+        claude_request("alpha", "juniper_tide", RESET_KEY),
+        claude_request("charlie", "cedar_ember", RESET_KEY),
+    ] {
+        let (status, text) = serve.post("/claude/reset/v1", Some(TOKEN), &other);
+        assert_eq!(status, 409, "{text}");
+        assert!(text.contains("idempotency-key-reused"), "{text}");
+    }
+    assert_eq!(stubs.calls("claude-cli", "auth").len(), 1);
+
+    // Codex and Claude keep separate replay records.
+    let (status, text) = serve.post(
+        "/codex/reset/v1",
+        Some(TOKEN),
+        &json!({ "account": "alpha", "idempotency_key": RESET_KEY }),
+    );
+    assert_eq!(status, 503, "{text}");
+}
+
+#[test]
+fn claude_reset_reports_an_unavailable_program_without_posting() {
+    let (tmp, stubs) = setup();
+    let serve = claude_reset_serve(&tmp, &stubs);
+    stubs.answer(
+        "claude-reset",
+        &json!({
+            "schema_version": "claude-cli.auth.reset-rate-limits.v1",
+            "command": "auth reset-rate-limits",
+            "ok": true,
+            "result": {
+                "provider": "claude", "program": "juniper_tide", "outcome": "unavailable",
+                "posted": false, "reason": "not_at_wall", "resets_left": null,
+                "next_available_at": null, "cooldown_until": null, "weekly_resets_at": null
+            }
+        }),
+        0,
+    );
+
+    let (status, text) = serve.post(
+        "/claude/reset/v1",
+        Some(TOKEN),
+        &claude_request("charlie", "juniper_tide", OTHER_KEY),
+    );
+    assert_eq!(status, 200, "{text}");
+    let body: Value = serde_json::from_str(&text).expect("reset json");
+    assert_eq!(
+        body,
+        json!({
+            "schema_version": "agent-console.claude-limit-reset.v1",
+            "program": "juniper_tide",
+            "outcome": "unavailable",
+            "posted": false,
+            "reason": "not_at_wall",
+            "resets_left": null,
+            "next_available_at": null,
+            "cooldown_until": null,
+            "weekly_resets_at": null,
+            "replayed": false,
+            "machine": MACHINE
+        })
+    );
+}
+
+#[test]
+fn claude_reset_failure_surfaces_a_safe_cli_code_and_is_not_recorded() {
+    let (tmp, stubs) = setup();
+    let serve = claude_reset_serve(&tmp, &stubs);
+    let request = claude_request("alpha", "cedar_ember", OTHER_KEY);
+
+    for (cli_code, reason, retryable, expected_code) in [
+        (
+            "provider-unavailable",
+            Some("rate_limited"),
+            true,
+            Some("provider-unavailable"),
+        ),
+        (
+            "claude-auth-required",
+            Some("auth_expired"),
+            false,
+            Some("claude-auth-required"),
+        ),
+        ("SECRET-MARKER-code", None, false, None),
+    ] {
+        stubs.answer(
+            "claude-reset",
+            &json!({
+                "schema_version": "claude-cli.auth.reset-rate-limits.v1",
+                "command": "auth reset-rate-limits",
+                "ok": false,
+                "error": {
+                    "code": cli_code,
+                    "message": "failed for /srv/SECRET-MARKER/alpha.json",
+                    "details": { "retryable": retryable, "reason_code": reason }
+                }
+            }),
+            3,
+        );
+        let (status, text) = serve.post("/claude/reset/v1", Some(TOKEN), &request);
+        assert_eq!(status, 502, "{text}");
+        assert_no_secret(&text);
+        let body: Value = serde_json::from_str(&text).expect("error json");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"]["code"], "claude-reset-failed");
+        match expected_code {
+            Some(code) => assert_eq!(
+                body["error"]["details"],
+                json!({ "cli_code": code, "reason_code": reason, "retryable": retryable })
+            ),
+            None => assert!(body["error"].get("details").is_none(), "{body}"),
+        }
+    }
+
+    for invalid in [
+        json!({ "ok": true, "result": { "outcome": "reset" } }),
+        {
+            let mut body = fixture("claude-reset-cli.json");
+            body["result"]["outcome"] = json!("consumed");
+            body
+        },
+        {
+            let mut body = fixture("claude-reset-cli.json");
+            body["result"]["program"] = json!("juniper_tide");
+            body
+        },
+        {
+            let mut body = fixture("claude-reset-cli.json");
+            body["result"]["reason"] = json!("Free Text SECRET-MARKER");
+            body
+        },
+    ] {
+        stubs.answer("claude-reset", &invalid, 0);
+        let (status, text) = serve.post("/claude/reset/v1", Some(TOKEN), &request);
+        assert_eq!(status, 502, "{text}");
+        assert!(text.contains("claude-reset-invalid-response"), "{text}");
+        assert_no_secret(&text);
+    }
+
+    // Nothing failed was recorded, so the same key still runs.
+    stubs.answer("claude-reset", &fixture("claude-reset-cli.json"), 0);
+    let (status, text) = serve.post("/claude/reset/v1", Some(TOKEN), &request);
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(stubs.calls("claude-cli", "auth").len(), 8);
+}
+
+#[test]
+fn a_disconnected_claude_reset_still_finishes_and_is_replayed() {
+    let (tmp, stubs) = setup();
+    let serve = claude_reset_serve(&tmp, &stubs);
+    fs::write(stubs.dir.join("claude-reset.delay"), "2").expect("delay");
+    let request = claude_request("alpha", "cedar_ember", RESET_KEY);
+
+    let impatient = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(300))
+        .build()
+        .expect("client");
+    assert!(
+        serve
+            .post_with(impatient, "/claude/reset/v1", Some(TOKEN), &request)
+            .is_err(),
+        "the first request should time out while the reset runs"
+    );
+
+    let (status, text) = serve.post("/claude/reset/v1", Some(TOKEN), &request);
+    assert_eq!(status, 200, "{text}");
+    let body: Value = serde_json::from_str(&text).expect("reset json");
+    assert_eq!(body["replayed"], true);
+    assert_eq!(body["outcome"], "reset");
+    assert_eq!(stubs.calls("claude-cli", "auth").len(), 1);
 }

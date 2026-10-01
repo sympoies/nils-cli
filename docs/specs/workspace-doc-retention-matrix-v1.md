@@ -91,6 +91,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/api-websocket/docs/specs/websocket-cli-contract-v1.md`
 - `crates/api-websocket/docs/specs/websocket-request-schema-v1.md`
 - `crates/claude-cli/docs/runbooks/usage-consumer.md`
+- `crates/claude-cli/docs/specs/claude-cli-auth-reset-rate-limits-json-contract-v1.md`
 - `crates/claude-cli/docs/specs/claude-cli-json-contract-v1.md`
 - `crates/codex-cli/docs/runbooks/json-consumers.md`
 - `crates/codex-cli/docs/specs/codex-cli-account-reset-rate-limits-json-contract-v1.md`

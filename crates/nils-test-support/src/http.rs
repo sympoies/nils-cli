@@ -10,6 +10,8 @@ use std::time::Duration;
 pub struct RecordedRequest {
     pub method: String,
     pub path: String,
+    /// The raw query string after `?`, when the request target had one.
+    pub query: Option<String>,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
@@ -181,7 +183,7 @@ fn read_request(stream: &mut TcpStream) -> io::Result<RecordedRequest> {
         }
     }
 
-    let (method, path, headers, rest) = parse_headers_and_rest(&buffer);
+    let (method, path, query, headers, rest) = parse_headers_and_rest(&buffer);
 
     if header_value(&headers, "expect")
         .is_some_and(|v| v.to_ascii_lowercase().contains("100-continue"))
@@ -208,12 +210,21 @@ fn read_request(stream: &mut TcpStream) -> io::Result<RecordedRequest> {
     Ok(RecordedRequest {
         method,
         path,
+        query,
         headers,
         body,
     })
 }
 
-fn parse_headers_and_rest(buffer: &[u8]) -> (String, String, Vec<(String, String)>, Vec<u8>) {
+type ParsedHead = (
+    String,
+    String,
+    Option<String>,
+    Vec<(String, String)>,
+    Vec<u8>,
+);
+
+fn parse_headers_and_rest(buffer: &[u8]) -> ParsedHead {
     let mut headers_end = None;
     for i in 0..buffer.len().saturating_sub(3) {
         if &buffer[i..i + 4] == b"\r\n\r\n" {
@@ -229,7 +240,10 @@ fn parse_headers_and_rest(buffer: &[u8]) -> (String, String, Vec<(String, String
     let mut parts = first.split_whitespace();
     let method = parts.next().unwrap_or("GET").to_string();
     let target = parts.next().unwrap_or("/");
-    let path = target.split('?').next().unwrap_or("/").to_string();
+    let (path, query) = match target.split_once('?') {
+        Some((path, query)) => (path.to_string(), Some(query.to_string())),
+        None => (target.to_string(), None),
+    };
 
     let mut headers = Vec::new();
     for line in lines {
@@ -250,7 +264,7 @@ fn parse_headers_and_rest(buffer: &[u8]) -> (String, String, Vec<(String, String
         Vec::new()
     };
 
-    (method, path, headers, rest)
+    (method, path, query, headers, rest)
 }
 
 fn header_value(headers: &[(String, String)], key: &str) -> Option<String> {

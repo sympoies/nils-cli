@@ -11,6 +11,10 @@ This specification extends
 - the `claude-cli auth` profile commands listed under
   [Auth profiles](#auth-profiles)
 - `claude-cli agent doctor --format json`
+- the `limit_resets` field of `claude-cli diag rate-limits --format json`
+
+`claude-cli auth reset-rate-limits` has its own contract,
+[`claude-cli-auth-reset-rate-limits-json-contract-v1.md`](claude-cli-auth-reset-rate-limits-json-contract-v1.md).
 
 Text remains the default. JSON is opt-in and is emitted to stdout as one
 versioned envelope.
@@ -24,6 +28,8 @@ versioned envelope.
 | `auth status` | `claude-cli.auth.v1` | `result` or `error` |
 | `auth save`, `auth use`, `auth remove`, `auth current`, `auth refresh`, `auth auto-refresh`, `auth remote pull` | `claude-cli.auth.v1` | `result` or `error` |
 | `agent doctor` | `claude-cli.agent.doctor.v1` | `result` |
+| `diag rate-limits` | `claude-cli.diag.rate-limits.v1` | `result`, `results`, or `error` |
+| `auth reset-rate-limits` | `claude-cli.auth.reset-rate-limits.v1` | `result` or `error` |
 
 Every envelope contains `schema_version`, `command`, and `ok`. Additive fields
 are compatible within v1. Renaming, removing, or changing the meaning of
@@ -170,6 +176,71 @@ owner-only, replaced atomically under the accounts lock), the file the host
 account broker reads, and removes a stale `.current` when the authority reports
 none.
 
+## Diag rate-limits limit resets
+
+`diag rate-limits` emits the shared `diag rate-limits` result shape that
+`codex-cli diag rate-limits` also emits. Each Claude result read from the
+network additionally carries `limit_resets`, the normalized status of the two
+Claude limit-reset programs. Results from `--cached` or a cache fallback, and
+failed results, omit it. A network body without either program reports both
+as `null`, so absence always means the value was not read.
+
+```json
+{
+  "juniper_tide": {
+    "available": false,
+    "eligible": false,
+    "ineligible_reason": "not_at_wall",
+    "arm": null,
+    "resets_per_week": 1,
+    "next_available_at": null,
+    "weekly_resets_at": null
+  },
+  "cedar_ember": {
+    "available": true,
+    "eligible": true,
+    "ineligible_reason": null,
+    "at_limit": true,
+    "exhausted": ["five_hour"],
+    "next_grant_id": "grant_a",
+    "grants": [
+      {
+        "id": "grant_a",
+        "label": "Welcome reset",
+        "resets_left": 2,
+        "resets_total": 2,
+        "starts_at": 1788220800,
+        "ends_at": 1791763200,
+        "clears": ["five_hour", "seven_day"],
+        "paused": false,
+        "usable_now": true,
+        "use_requires_limit": true
+      }
+    ],
+    "cooldown_until": null,
+    "weekly_resets_at": 1791334800
+  }
+}
+```
+
+- A program is `null` when the upstream block is missing, `null`, or not an
+  object. A malformed block never fails the usage result.
+- `juniper_tide.available` is `eligible && available && arm != "control"`.
+- `cedar_ember.grants` keeps at most 16 grants. A grant whose `id` does not
+  match `^[a-z0-9_-]{1,40}$` or whose `resets_left` is not a non-negative
+  integer is dropped. `next_grant_id` is kept only when it names a kept grant.
+  `available` is `eligible` and that grant has `resets_left > 0` and is not
+  paused. `use_requires_limit` defaults to `true`.
+- `ineligible_reason` and `arm` are `null` or a bounded token
+  (`^[a-z0-9_]{1,40}$`); any other string becomes `unknown`. `exhausted` and
+  `clears` keep only bounded tokens. `label` is `null` unless it is at most 80
+  characters without control characters.
+- Every timestamp is `null` or epoch seconds converted from the upstream
+  ISO-8601 string. Upstream `event_props`, `percent_used`, and `blocking` are
+  dropped.
+- Grant ids are host-local identifiers. A consumer that forwards
+  `limit_resets` off the host must drop `next_grant_id` and each grant `id`.
+
 ## Agent doctor
 
 Stable result fields are `ready`, `commit_profile`,
@@ -215,6 +286,8 @@ false. Ready exits `0`; unavailable exits `1`.
 - Never emit tokens, API keys, raw credential JSON, authorization headers,
   upstream error bodies, or terminal transcripts.
 - Auth status additionally excludes personal and organization identity.
+- `diag rate-limits` and `auth reset-rate-limits` never emit organization
+  uuids or upstream `event_props`.
 - Agent doctor excludes upstream diagnostic stdout/stderr, settings paths,
   environment values, and model output because it does not make a model call.
 - Usage `--debug` emits only source classifications and elapsed milliseconds:
