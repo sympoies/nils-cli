@@ -328,6 +328,9 @@ fn dispatch(cli: Cli) -> i32 {
         }
     };
 
+    if matches!(cli.command, Command::Account(_) | Command::Resume(_)) {
+        account_broker::adopt_serve_brokers(&context.state_dir);
+    }
     match cli.command {
         Command::Start(args) => run_start(&context, *args),
         Command::Run(args) => run_one_shot(&context, args),

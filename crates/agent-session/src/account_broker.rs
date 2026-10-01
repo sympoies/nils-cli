@@ -13,6 +13,7 @@
 use std::env;
 use std::io::Read;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -285,6 +286,108 @@ pub(crate) fn parse_argv(raw: Option<String>) -> Result<Option<Vec<String>>, Bro
         return Err(BrokerArgvError::Invalid);
     }
     Ok(Some(argv))
+}
+
+/// Where serve records its effective broker argv, relative to the state dir.
+const SERVE_BROKERS_RECORD: &str = "serve/account-brokers.json";
+const SERVE_BROKERS_SCHEMA: &str = "agent-session.serve-account-brokers.v1";
+const MAX_SERVE_BROKERS_BYTES: u64 = 64 * 1024;
+
+fn serve_broker_clients() -> [&'static BrokerClient; 2] {
+    [
+        &crate::codex_account::BROKER,
+        &crate::claude_account::BROKER,
+    ]
+}
+
+/// Record serve's effective broker argv in the owner-private state dir, or
+/// retract it when serve has none. serve resolves brokers from its own
+/// environment and `--config`, which owner-run CLI commands do not inherit.
+pub(crate) fn publish_serve_brokers(state_dir: &Path) -> std::io::Result<()> {
+    let record = state_dir.join(SERVE_BROKERS_RECORD);
+    let brokers: serde_json::Map<String, Value> = serve_broker_clients()
+        .into_iter()
+        .filter_map(|client| {
+            let argv = client.argv().ok().flatten()?;
+            Some((client.env.to_string(), Value::from(argv)))
+        })
+        .collect();
+    if brokers.is_empty() {
+        return match std::fs::remove_file(&record) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        };
+    }
+    let document = serde_json::json!({
+        "schema_version": SERVE_BROKERS_SCHEMA,
+        "brokers": brokers,
+    });
+    nils_common::fs::write_atomic(&record, document.to_string().as_bytes(), 0o600)
+        .map_err(std::io::Error::other)
+}
+
+/// For an owner-run CLI command, adopt the broker argv serve recorded for
+/// each provider this process's environment leaves unset. The caller's own
+/// environment always wins, and a record that is not a private, owner-owned
+/// file with valid argv is ignored, leaving the provider unconfigured.
+pub(crate) fn adopt_serve_brokers(state_dir: &Path) {
+    let unset: Vec<&BrokerClient> = serve_broker_clients()
+        .into_iter()
+        .filter(|client| {
+            env::var(client.env)
+                .ok()
+                .is_none_or(|value| value.trim().is_empty())
+        })
+        .collect();
+    if unset.is_empty() {
+        return;
+    }
+    let Some(brokers) = read_serve_brokers(&state_dir.join(SERVE_BROKERS_RECORD)) else {
+        return;
+    };
+    for client in unset {
+        let Some(argv) = brokers
+            .get(client.env)
+            .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok())
+            .filter(|argv| valid_argv(argv))
+        else {
+            continue;
+        };
+        let Ok(encoded) = serde_json::to_string(&argv) else {
+            continue;
+        };
+        // SAFETY: CLI commands adopt brokers on the main thread before they
+        // start any helper thread, so nothing reads the environment concurrently.
+        unsafe { env::set_var(client.env, encoded) };
+    }
+}
+
+fn read_serve_brokers(path: &Path) -> Option<serde_json::Map<String, Value>> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file()
+        || metadata.len() > MAX_SERVE_BROKERS_BYTES
+        || metadata.mode() & 0o077 != 0
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.nlink() != 1
+    {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(MAX_SERVE_BROKERS_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let document: Value = serde_json::from_slice(&bytes).ok()?;
+    if document.get("schema_version").and_then(Value::as_str) != Some(SERVE_BROKERS_SCHEMA) {
+        return None;
+    }
+    document.get("brokers")?.as_object().cloned()
 }
 
 /// Count and per-argument bounds shared by every broker configuration source
@@ -584,6 +687,63 @@ printf '%s\n' '{}'
                 "select --provider claude --strategy current_default --format json",
             ]
         );
+    }
+
+    /// Owner-run CLI commands do not inherit serve's environment, so they adopt
+    /// the broker argv serve recorded in the private state dir, but only for a
+    /// provider their own environment leaves unset (sympoies/nils-cli#2040).
+    #[test]
+    fn cli_adopts_the_serve_recorded_broker_only_where_its_environment_is_unset() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = tmp.path().join("state");
+        let claude_argv = r#"["/opt/brokers/claude-broker","--host","sym"]"#;
+        let codex_argv = r#"["/opt/brokers/codex-broker"]"#;
+        let record = state.join("serve/account-brokers.json");
+        {
+            let _claude = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER", claude_argv);
+            let _codex = EnvGuard::set(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER", codex_argv);
+            publish_serve_brokers(&state).unwrap();
+        }
+        assert_eq!(
+            fs::metadata(&record).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        {
+            let _claude = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
+            let _codex = EnvGuard::set(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER", r#"["/own"]"#);
+            adopt_serve_brokers(&state);
+            assert_eq!(
+                crate::claude_account::BROKER.argv().unwrap(),
+                Some(vec![
+                    "/opt/brokers/claude-broker".to_string(),
+                    "--host".to_string(),
+                    "sym".to_string()
+                ])
+            );
+            assert_eq!(
+                crate::codex_account::BROKER.argv().unwrap(),
+                Some(vec!["/own".to_string()]),
+                "the caller's own broker always wins"
+            );
+        }
+
+        // A record anyone else could have written is never adopted.
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o620)).unwrap();
+        {
+            let _claude = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
+            adopt_serve_brokers(&state);
+            assert!(!crate::claude_account::BROKER.is_configured());
+        }
+
+        // A serve without brokers retracts the record.
+        {
+            let _claude = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
+            let _codex = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+            publish_serve_brokers(&state).unwrap();
+            assert!(!record.exists());
+        }
     }
 
     #[test]

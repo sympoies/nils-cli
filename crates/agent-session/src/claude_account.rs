@@ -374,6 +374,14 @@ pub(crate) fn has_queued_next(record: &SessionRecord) -> bool {
     matches!(decode_next(record), Decoded::Valid(_))
 }
 
+/// The account queued for the session's next launch, if any.
+pub(crate) fn queued_next_account(record: &SessionRecord) -> Option<String> {
+    match decode_next(record) {
+        Decoded::Valid(next) => Some(next.account),
+        Decoded::Absent | Decoded::Invalid => None,
+    }
+}
+
 /// Materializes the queued next account before a running session is stopped
 /// for it, so a broker refusal or an unsafe directory never costs the user a
 /// running session. The refusal is typed and carries the broker's code.

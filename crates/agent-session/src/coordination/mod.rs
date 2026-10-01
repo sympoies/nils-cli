@@ -2015,6 +2015,13 @@ pub(crate) fn revoke(context: &CliContext, record: &SessionRecord) -> Result<(),
     broker::revoke(context, record)
 }
 
+pub(crate) fn retire_after_verified_stop(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<(), CliError> {
+    broker::retire_after_verified_stop(context, record)
+}
+
 pub(crate) fn forget_revoked_failed_launch(
     context: &CliContext,
     record: &SessionRecord,

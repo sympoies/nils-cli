@@ -963,6 +963,14 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
     {
         return code;
     }
+    // Owner-run CLI commands (`account`, `resume`) do not inherit this
+    // environment; record the effective brokers where they can adopt them.
+    if let Err(err) = crate::account_broker::publish_serve_brokers(&context.state_dir) {
+        eprintln!(
+            "warning: account brokers could not be recorded for CLI commands: {}",
+            err.kind()
+        );
+    }
     let bind: SocketAddr = match args.bind.parse() {
         Ok(addr) => addr,
         Err(err) => {
@@ -7376,6 +7384,7 @@ async fn claude_account_switch_handler(
             &account,
             &expected_session_incarnation,
             &tmux_bin,
+            true,
         )
     })
     .await
@@ -29563,6 +29572,21 @@ esac
             before_refusal["claude_account_next"]
         );
 
+        // Run from inside the session's own tmux session, an idle switch must
+        // not stop the runtime that hosts the caller: it only queues.
+        {
+            let _inside = EnvGuard::set(&lock, "AGENT_SESSION_ID", "claude-cli");
+            let queued = switch("beta", None).unwrap();
+            assert_eq!(queued["claude_account"]["selected_account"], "alpha");
+            assert_eq!(queued["claude_account"]["next"]["account"], "beta");
+            let calls = fs::read_to_string(&log).unwrap();
+            assert!(
+                !calls.contains("kill-session") && !calls.contains("if-shell"),
+                "a switch from inside the session must never stop it: {calls:?}"
+            );
+            assert_eq!(launches(), 1);
+        }
+
         // Idle: preflight once, then the same verified stop as the serve route.
         // As there, this fixture pane has no dedicated control group, so the
         // stop refuses and the intent stays queued for the next resume.
@@ -29578,6 +29602,51 @@ esac
             "the idle switch preflights the next account once, before the stop"
         );
         let persisted = load_session_record(&st.context, "claude-cli").unwrap();
+        assert!(crate::claude_account::has_queued_next(&persisted));
+    }
+
+    /// Once a switch has stopped the runtime, a failed resume must say the
+    /// session is stopped with the account queued and how to recover, instead
+    /// of surfacing the bare resume error (sympoies/nils-cli#2040).
+    #[test]
+    fn claude_switch_resume_failure_reports_the_stopped_session_and_queued_account() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let _broker = claude_broker_fixture(&lock, tmp.path());
+        seed_bound_claude_session(tmp.path(), "claude-stranded", &cwd, "alpha");
+        let tmux = executable(
+            &tmp.path().join("tmux-launch-fails"),
+            "#!/bin/sh\ncase \"$1\" in\n  has-session) printf '%s\\n' \"can't find session: fixture\" >&2; exit 1 ;;\n  new-session) printf '%s\\n' 'launch failed' >&2; exit 1 ;;\n  *) exit 0 ;;\nesac\n",
+        );
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let mut record = load_session_record(&context, "claude-stranded").unwrap();
+        crate::claude_account::queue_next(&mut record, "beta").unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+
+        let error =
+            crate::session_account::resume_after_switch_stop(&context, "claude-stranded", &tmux)
+                .unwrap_err();
+
+        assert_eq!(error.code(), "claude-account-switch-resume-failed");
+        let details = error.details().unwrap();
+        assert_eq!(details["id"], "claude-stranded");
+        assert_eq!(details["session_state"], "stopped");
+        assert_eq!(details["next_account"], "beta");
+        assert!(
+            details["cause"]
+                .as_str()
+                .is_some_and(|cause| !cause.is_empty())
+        );
+        assert_eq!(
+            details["recovery"], "agent-session resume claude-stranded",
+            "{details}"
+        );
+        let persisted = load_session_record(&context, "claude-stranded").unwrap();
         assert!(crate::claude_account::has_queued_next(&persisted));
     }
 

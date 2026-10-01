@@ -81,8 +81,18 @@ pub(crate) fn switch(
         .or(current)
         .unwrap_or_default();
     if record.agent == AgentKind::Claude.as_str() {
-        let (session_incarnation, view) =
-            claude_switch_locked(context, &record.id, account, &expected, tmux_bin)?;
+        // Restarting the runtime that hosts this very process would kill the
+        // switch between its stop and its resume, so from inside the session
+        // the switch only queues.
+        let inside_session = std::env::var("AGENT_SESSION_ID").is_ok_and(|id| id == record.id);
+        let (session_incarnation, view) = claude_switch_locked(
+            context,
+            &record.id,
+            account,
+            &expected,
+            tmux_bin,
+            !inside_session,
+        )?;
         let mut result = session_account(&record, session_incarnation);
         result.claude_account = view;
         return Ok(result);
@@ -97,13 +107,15 @@ pub(crate) fn switch(
 /// Claude has no live credential swap, so a switch is a durable next-account
 /// intent applied by a restart plus `--resume` in the new account directory.
 /// The restart happens now only when the running session is idle; otherwise
-/// (busy, stopped, or unknown) the intent stays queued for the next resume.
+/// (busy, stopped, unknown, or `may_restart` false) the intent stays queued for
+/// the next resume.
 pub(crate) fn claude_switch_locked(
     context: &CliContext,
     id: &str,
     account: &str,
     expected_session_incarnation: &str,
     tmux_bin: &Path,
+    may_restart: bool,
 ) -> Result<(Option<String>, Option<ClaudeAccountView>), CliError> {
     let _record_lock = crate::acquire_session_record_lock(context, id)?;
     let mut record = load_session_record(context, id)?;
@@ -116,7 +128,8 @@ pub(crate) fn claude_switch_locked(
         ));
     }
     crate::claude_account::queue_next(&mut record, account)?;
-    let idle = crate::claude_account::has_queued_next(&record)
+    let idle = may_restart
+        && crate::claude_account::has_queued_next(&record)
         && crate::session_status(context, tmux_bin, &record) == "running"
         && crate::activity::state_for_view(context, &record)
             .is_some_and(|activity| activity.phase == crate::activity::TurnPhase::Waiting);
@@ -134,8 +147,43 @@ pub(crate) fn claude_switch_locked(
     }
     crate::auto_resume::cancel_for_account_switch_locked(context, id, &now)?;
     crate::stop_session_runtime_locked(context, &mut record, tmux_bin)?;
+    resume_after_switch_stop(context, id, tmux_bin)
+}
+
+/// Resume a session the switch just verified stopped, under its queued
+/// account. The caller holds the session record lock.
+///
+/// The stopped runtime's coordination incarnation is retired first; otherwise
+/// its last heartbeat refuses the resume as a live prior incarnation. Should
+/// the resume still fail, the error says the session is stopped with the
+/// account queued and how to recover, instead of the bare resume error.
+pub(crate) fn resume_after_switch_stop(
+    context: &CliContext,
+    id: &str,
+    tmux_bin: &Path,
+) -> Result<(Option<String>, Option<ClaudeAccountView>), CliError> {
     let stopped = load_session_record(context, id)?;
-    let outcome = crate::resume_session_locked(context, stopped, tmux_bin)?;
+    let next_account = crate::claude_account::queued_next_account(&stopped);
+    let resumed = crate::coordination::retire_after_verified_stop(context, &stopped)
+        .and_then(|()| crate::resume_session_locked(context, stopped, tmux_bin));
+    let outcome = resumed.map_err(|cause| {
+        let recovery = format!("agent-session resume {id}");
+        CliError::data(
+            "claude-account-switch-resume-failed",
+            "the account switch stopped the session but could not resume it; \
+             the session is stopped with the next account queued",
+            Some(json!({
+                "id": id,
+                "session_state": "stopped",
+                "next_account": next_account,
+                "cause": cause.code(),
+                "recovery": recovery,
+            })),
+        )
+        .with_hint(format!(
+            "run `{recovery}` (or POST /sessions/{id}/resume) to resume under the queued account"
+        ))
+    })?;
     let resumed = load_session_record(context, id)?;
     Ok((
         outcome.session_incarnation,

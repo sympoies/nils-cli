@@ -493,8 +493,16 @@ failures keep serve's typed codes (`claude-account-switch-refused`,
 `<provider>-account-session-incarnation-conflict`,
 `<provider>-account-unknown`, `<provider>-account-unsupported`).
 `account show <id>` returns the current account and any queued `next` one.
-Switching needs the provider's account broker variable in the caller's
-environment; without it, `show` reports the account as unsupported.
+Both commands, and `resume`, use the provider's account broker variable from
+the caller's environment, or else the brokers serve recorded in the private
+state dir at startup; with neither, `show` reports the account as unsupported.
+Run from inside the session's own tmux session, a Claude switch only queues.
+After stopping, the switch retires the stopped runtime's coordination
+incarnation before resuming. If the resume still fails, it returns
+`claude-account-switch-resume-failed` with the `agent-session resume <id>`
+recovery command; the session is stopped with the account queued. A Codex
+switch needs a running serve daemon to apply; re-selecting the current account
+cancels a queued switch.
 
 ## Output contract
 

@@ -487,6 +487,40 @@ pub(crate) fn revoke(context: &CliContext, record: &SessionRecord) -> Result<(),
     revoke_locked(context, record, false)
 }
 
+/// Retire the coordination incarnation of a runtime the caller just verified
+/// stopped, as its launch wrapper's `broker stop` would have had it exited on
+/// its own. The heartbeat writer dies with that runtime, but its last beat stays
+/// fresh for the freshness window and would refuse the session's own resume as
+/// a live prior incarnation, so it is expired too. The heartbeat is touched only
+/// while the registry still proves this exact incarnation's runtime stopped.
+pub(crate) fn retire_after_verified_stop(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<(), CliError> {
+    let incarnation = incarnation(record)?;
+    revoke(context, record)?;
+    let locked = lock_registry(context)?;
+    let proven_stopped = locked
+        .registry
+        .brokers
+        .get(&record.id)
+        .filter(|broker| broker.incarnation == incarnation)
+        .and_then(|broker| broker.runtime_identity.as_ref())
+        .is_some_and(|identity| {
+            crate::coordination_runtime_status_for_identity(identity)
+                == crate::CoordinationRuntimeStatus::Stopped
+        });
+    if proven_stopped && heartbeat_fresh(context, &record.id, &incarnation, 0) {
+        match fs::remove_file(super::heartbeat_path(&context.state_dir, &record.id)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(unavailable()),
+        }
+    }
+    drop(locked);
+    Ok(())
+}
+
 pub(crate) fn forget_revoked_failed_launch(
     context: &CliContext,
     record: &SessionRecord,
@@ -1626,6 +1660,115 @@ mod tests {
         remove_advisory_state_for_incarnation(&mut registry, "session", "replacement");
         assert!(!registry.advisory_acknowledgements.contains_key("session"));
         assert!(!registry.advisory_observations.contains_key("session"));
+    }
+
+    #[cfg(target_os = "linux")]
+    fn seed_retirable_broker(context: &CliContext, runtime_identity: Value) -> SessionRecord {
+        let record: SessionRecord = serde_json::from_value(json!({
+            "schema_version": crate::SESSION_DOCUMENT_VERSION,
+            "id": "session",
+            "agent": "claude",
+            "mode": "interactive",
+            "title": "Switching",
+            "cwd": "/srv/outside-home",
+            "tmux_session": "agent-session",
+            "prompt_file": null,
+            "log_file": null,
+            "created_at": "2030-01-01T00:00:00Z",
+            "updated_at": "2030-01-01T00:00:00Z",
+            "runtime": {
+                "kind": "tmux",
+                "tmux_session": "agent-session",
+                "generation": 1,
+                "started_at": "2030-01-01T00:00:00Z",
+                "launch_id": "old"
+            }
+        }))
+        .expect("record");
+        {
+            let mut locked = lock_registry(context).expect("registry");
+            locked.registry.brokers.insert(
+                "session".to_string(),
+                super::super::BrokerRecord {
+                    session_id: "session".to_string(),
+                    incarnation: "old".to_string(),
+                    coordination_mode: Default::default(),
+                    capability_digest: "digest".to_string(),
+                    generation: 1,
+                    state: "ready".to_string(),
+                    heartbeat_at: String::new(),
+                    heartbeat_epoch: now_epoch(),
+                    runtime_identity: Some(runtime_identity),
+                    runtime_identity_digest: String::new(),
+                    lost_since_epoch: None,
+                    binary_version: None,
+                },
+            );
+            locked.save().expect("seed broker");
+        }
+        let heartbeat = super::super::heartbeat_path(&context.state_dir, "session");
+        fs::create_dir_all(heartbeat.parent().unwrap()).unwrap();
+        fs::write(&heartbeat, format!("old:{}\n", now_epoch())).unwrap();
+        fs::set_permissions(&heartbeat, fs::Permissions::from_mode(0o600)).unwrap();
+        record
+    }
+
+    /// A verified stop kills the heartbeat writer with the runtime, but its last
+    /// beat stays fresh for the freshness window and would refuse the session's
+    /// own resume as "the prior coordination incarnation is still live".
+    /// Runtime identity evidence for `process_group` in this pid namespace.
+    #[cfg(target_os = "linux")]
+    fn process_group_identity(process_group: libc::pid_t) -> Value {
+        use std::os::unix::fs::MetadataExt;
+        let namespace = fs::metadata("/proc/self/ns/pid").expect("pid namespace");
+        let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id").expect("boot id");
+        json!({
+            "session_id": "$1",
+            "pane_id": "%1",
+            "pane_pid": process_group,
+            "process_group_id": process_group,
+            "pid_namespace": {
+                "device": namespace.dev(),
+                "inode": namespace.ino(),
+                "boot_id": boot_id.trim(),
+            },
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn retire_after_verified_stop_expires_only_a_proven_stopped_incarnation() {
+        use std::os::unix::process::CommandExt;
+        let temporary = tempfile::TempDir::new().expect("temporary state");
+        let context = CliContext {
+            state_dir: temporary.path().join("state"),
+            host: None,
+        };
+        let mut exited = std::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .process_group(0)
+            .spawn()
+            .expect("spawn");
+        let dead_group = exited.id() as libc::pid_t;
+        exited.wait().expect("reap");
+        let record = seed_retirable_broker(&context, process_group_identity(dead_group));
+        assert!(heartbeat_fresh(&context, "session", "old", 0));
+
+        retire_after_verified_stop(&context, &record).expect("retire");
+
+        assert!(
+            !heartbeat_fresh(&context, "session", "old", 0),
+            "a proven-stopped incarnation must not keep refusing the resume"
+        );
+        let locked = lock_registry(&context).expect("registry");
+        assert_eq!(locked.registry.brokers["session"].state, "stopped");
+        drop(locked);
+
+        // A runtime that is still running keeps its liveness evidence.
+        let own_group = unsafe { libc::getpgrp() };
+        let record = seed_retirable_broker(&context, process_group_identity(own_group));
+        retire_after_verified_stop(&context, &record).expect("retire is a no-op");
+        assert!(heartbeat_fresh(&context, "session", "old", 0));
     }
 
     #[test]
