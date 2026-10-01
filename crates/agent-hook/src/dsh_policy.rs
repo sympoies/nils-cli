@@ -4075,7 +4075,15 @@ fn semantic_body_missing(invocations: &[Invocation]) -> bool {
         {
             return false;
         }
-        if semantic_options_ambiguous(words) || message_file_option(words) {
+        // An authoring invocation that still names an operational flag had
+        // that flag swallowed into an option value; its body is not the one
+        // the author wrote.
+        if semantic_options_ambiguous(words)
+            || message_file_option(words)
+            || without_redirections(&words[2..])
+                .iter()
+                .any(|word| matches!(*word, "-h" | "--help" | "--dry-run" | "--validate-only"))
+        {
             return true;
         }
         let message = option(words, &["--message", "-m"]).map(str::to_string);
@@ -4700,10 +4708,14 @@ const SEMANTIC_COMMIT_FLAGS: &[&str] = &[
 /// into a value-taking option (or into nothing, shifting a value position),
 /// and an unknown option may take a value; either can swallow the flag in
 /// semantic-commit's own parser, so the invocation is treated as authoring.
+/// Redirections are removed first, as the shell removes them before
+/// semantic-commit sees its arguments, so a redirection never fills a value
+/// slot (sympoies/nils-cli#2017).
 fn semantic_commit_authors(words: &[String]) -> bool {
-    let mut index = 2;
+    let words = without_redirections(words.get(2..).unwrap_or_default());
+    let mut index = 0;
     while index < words.len() {
-        let token = words[index].as_str();
+        let token = words[index];
         if dynamic(token) {
             return true;
         }
