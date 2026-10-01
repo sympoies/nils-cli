@@ -11546,6 +11546,23 @@ fn main_agent_worker_start_binds_broker_to_same_release_agent_session_sibling() 
         &[&checkout],
     );
     assert_eq!(started.code, 0, "stderr={}", started.stderr_text());
+    // The worker records the Run owner as its parent
+    // (session-lineage-work-v1, "Main Agent workers").
+    let worker: serde_json::Value = serde_json::from_slice(
+        &fs::read(state_dir.join("sessions/worker-facade-broker/session.json"))
+            .expect("worker record"),
+    )
+    .expect("worker record json");
+    assert_eq!(worker["lineage"]["parent"]["session_id"], "main-one");
+    assert_eq!(
+        worker["lineage"]["parent"]["session_incarnation"],
+        "main-incarnation-one"
+    );
+    assert_eq!(worker["lineage"]["depth"], 1);
+    assert_eq!(
+        worker["lineage"]["starter"],
+        json!({"kind": "main-agent", "via": "cli"})
+    );
 
     let main_agent = crate::main_agent_bin();
     let expected_broker = bin::resolve("agent-session");

@@ -5406,6 +5406,7 @@ async fn history_resume_handler(
                             .graceful_shutdown
                             .map(|mode| mode.as_str().to_string()),
                         codex_usage_account: profile.codex_usage_account.clone(),
+                        initial_lineage: create_body_lineage(&machine, None, None)?,
                     },
                 )
             }
@@ -5451,7 +5452,7 @@ async fn history_resume_handler(
                         codex_usage_account: profile
                             .and_then(|profile| profile.codex_usage_account.clone()),
                         agent_args: Vec::new(),
-                        initial_lineage: Some(create_body_lineage(&machine, None, None)?),
+                        initial_lineage: create_body_lineage(&machine, None, None)?,
                         format: nils_common::cli_contract::OutputFormat::Json,
                     },
                 )
@@ -6679,7 +6680,7 @@ async fn create_handler(
                 .as_ref()
                 .and_then(|profile| profile.codex_usage_account.clone()),
             agent_args: body.agent_args,
-            initial_lineage: Some(initial_lineage),
+            initial_lineage,
             format: nils_common::cli_contract::OutputFormat::Json,
         };
         return match tokio::task::spawn_blocking(move || {
@@ -22623,6 +22624,7 @@ esac
         assert_eq!(status, StatusCode::OK, "body={body}");
         let expected_lineage = json!({
             "schema_version": "agent-session.session-lineage.v1",
+            "machine": MACHINE,
             "parent": parent,
             "root": root,
             "depth": 2,
@@ -22653,6 +22655,7 @@ esac
             session["lineage"],
             json!({
                 "schema_version": "agent-session.session-lineage.v1",
+                "machine": MACHINE,
                 "parent": null,
                 "root": {
                     "machine": MACHINE,

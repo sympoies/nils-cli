@@ -35,6 +35,10 @@ A session is identified across machines by
   way the board and `list` resolve it: `serve --machine`, then
   `AGENT_SESSION_MACHINE`, then `--host` / `AGENT_SESSION_HOST`, then the short
   hostname. On a console start it is the caller daemon's federation machine.
+- A start inside a managed session labels the parent reference and the child
+  with the parent's own `lineage.machine`, the label the parent's creator used,
+  even when `serve --machine` differs from the hostname. Only a parent without
+  lineage falls back to the starting process's label.
 - A `parent` reference may also carry `session_incarnation`, the parent
   runtime's `launch_id` when the child was started. It is kept for audit only
   and never takes part in a match, so a parent that restarts or switches
@@ -48,6 +52,7 @@ Written once when the record is created; it does not change afterwards.
 ```json
 "lineage": {
   "schema_version": "agent-session.session-lineage.v1",
+  "machine": "c8",
   "parent": {"machine": "sympoies", "session_id": "85a7…", "session_created_at": "…", "session_incarnation": "…"},
   "root":   {"machine": "sympoies", "session_id": "3f1c…", "session_created_at": "…"},
   "depth": 2,
@@ -58,6 +63,7 @@ Written once when the record is created; it does not change afterwards.
 
 | Field | Meaning |
 | --- | --- |
+| `machine` | The label of the machine this session runs on, as its creator resolved it. |
 | `parent` | The session that started this one, or `null` for a root. |
 | `root` | The topmost ancestor. A root names itself. |
 | `depth` | `0` for a root, otherwise the parent's depth plus one; at most 64. |
@@ -159,7 +165,7 @@ the aggregator's own dispatcher mark stays the only parent link.
 
 `main-agent worker start` records the Run owner session as the worker's parent
 with `starter {"kind": "main-agent", "via": "cli"}` and the owner's work
-inherited. A worker whose owner cannot be recorded (for example a chain already
+inherited, for tmux workers and DSH external workers alike. A worker whose owner cannot be recorded (for example a chain already
 64 deep) still starts, without lineage.
 
 ## `work`

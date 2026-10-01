@@ -119,8 +119,9 @@ pub fn create_external_worker_record(
     coordination_mode: crate::cli::CoordinationMode,
     title: Option<&str>,
     create_guard: Option<&mut dyn FnMut() -> Result<(), CliError>>,
+    initial_lineage: Option<crate::InitialLineage>,
 ) -> Result<SessionRecord, CliError> {
-    let mut created = crate::create_record_with_guard(
+    let mut created = crate::create_record_with_lineage(
         crate::RecordRequest {
             context,
             agent: crate::cli::AgentKind::Dsh,
@@ -139,6 +140,7 @@ pub fn create_external_worker_record(
             agent_bin: None,
         },
         create_guard,
+        initial_lineage,
     )?;
     created.record.extra.insert(
         LIVENESS_PATH_KEY.to_string(),

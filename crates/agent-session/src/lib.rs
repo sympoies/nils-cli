@@ -1807,8 +1807,7 @@ pub(crate) struct ProviderResumeImportArgs {
     pub(crate) profile_graceful_shutdown: Option<String>,
     pub(crate) codex_usage_account: Option<String>,
     pub(crate) agent_args: Vec<String>,
-    /// Default: an operator root started over HTTP on this daemon.
-    pub(crate) initial_lineage: Option<InitialLineage>,
+    pub(crate) initial_lineage: InitialLineage,
     pub(crate) format: OutputFormat,
 }
 
@@ -1826,6 +1825,7 @@ pub(crate) struct DshHistoryResumeArgs {
     pub(crate) profile_auto_resume_supported: bool,
     pub(crate) profile_graceful_shutdown: Option<String>,
     pub(crate) codex_usage_account: Option<String>,
+    pub(crate) initial_lineage: InitialLineage,
 }
 
 #[derive(Debug, Serialize)]
@@ -2818,7 +2818,7 @@ pub(crate) fn start_dsh_history_resume_session(
         profile_graceful_shutdown: args.profile_graceful_shutdown,
         codex_usage_account: args.codex_usage_account,
         agent_args: Vec::new(),
-        initial_lineage: None,
+        initial_lineage: args.initial_lineage,
         format: OutputFormat::Json,
     };
     start_resolved_provider_resume_session(context, start_args, cwd, provider_resume)
@@ -2832,14 +2832,7 @@ fn start_resolved_provider_resume_session(
 ) -> Result<StartView, CliError> {
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
-    let initial_lineage = args.initial_lineage.unwrap_or_else(|| InitialLineage {
-        seed: lineage::LineageSeed::root(
-            &board::machine_identity(None, context),
-            lineage::STARTER_OPERATOR,
-            lineage::VIA_HTTP,
-        ),
-        work: None,
-    });
+    let initial_lineage = args.initial_lineage;
     let mut created = create_record_with_lineage(
         RecordRequest {
             context,
@@ -3221,6 +3214,7 @@ fn create_record(request: RecordRequest<'_>) -> Result<CreatedRecord, CliError> 
     create_record_with_guard(request, None)
 }
 
+#[cfg(test)]
 fn create_record_with_guard(
     request: RecordRequest<'_>,
     create_guard: Option<&mut dyn FnMut() -> Result<(), CliError>>,
@@ -11060,6 +11054,7 @@ fn add_runtime_tmux_environment(
     ] {
         command.arg("-e").arg(value);
     }
+
     if let (Some(agent), Some(config_dir)) = (
         AgentKind::from_name(&record.agent),
         session_effective_provider_config_dir(record),

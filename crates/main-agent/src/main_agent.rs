@@ -5219,6 +5219,9 @@ fn finish_external_worker_start(
                 launch_input.launch.coordination_mode,
                 launch_input.launch.title.as_deref(),
                 Some(&mut create_guard),
+                agent_session::lineage::main_agent_worker(context, record)
+                    .ok()
+                    .map(|(seed, work)| agent_session::InitialLineage { seed, work }),
             );
             match created {
                 Ok(worker) => worker,

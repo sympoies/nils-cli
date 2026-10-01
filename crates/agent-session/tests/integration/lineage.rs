@@ -45,10 +45,23 @@ impl Fixture {
     /// `agent-session start` with `args`, as the managed session `caller`
     /// (`(AGENT_SESSION_ID, AGENT_SESSION_RUNTIME_ID)`) or from a plain shell.
     fn start(&self, id: &str, args: &[&str], caller: Option<(&str, &str)>) -> CmdOutput {
+        let mut start_args = vec!["--paste-delay-ms", "0"];
+        start_args.extend_from_slice(args);
+        self.launch("start", id, &start_args, caller)
+    }
+
+    /// `agent-session <command>` (`start` or `run`) for session `id`.
+    fn launch(
+        &self,
+        command: &str,
+        id: &str,
+        args: &[&str],
+        caller: Option<(&str, &str)>,
+    ) -> CmdOutput {
         let mut argv = vec![
             "--state-dir",
             &self.state,
-            "start",
+            command,
             "--agent",
             "codex",
             "--id",
@@ -59,8 +72,6 @@ impl Fixture {
             &self.tmux,
             "--agent-bin",
             &self.codex,
-            "--paste-delay-ms",
-            "0",
             "--format",
             "json",
         ];
@@ -131,6 +142,7 @@ fn start_records_the_calling_session_as_parent_and_inherits_its_work() {
         root["lineage"],
         json!({
             "schema_version": "agent-session.session-lineage.v1",
+            "machine": MACHINE,
             "parent": null,
             "root": session_ref(&root, false),
             "depth": 0,
@@ -161,6 +173,7 @@ fn start_records_the_calling_session_as_parent_and_inherits_its_work() {
         child["lineage"],
         json!({
             "schema_version": "agent-session.session-lineage.v1",
+            "machine": MACHINE,
             "parent": session_ref(&root, true),
             "root": session_ref(&root, false),
             "depth": 1,
@@ -219,6 +232,57 @@ fn start_records_the_calling_session_as_parent_and_inherits_its_work() {
     let no_work = fixture.record("lineage-no-work");
     assert_eq!(no_work["lineage"]["depth"], 2);
     assert!(no_work.get("work").is_none(), "{no_work}");
+}
+
+#[test]
+fn run_records_the_calling_session_as_parent_like_start() {
+    let fixture = Fixture::new();
+    fixture.started("run-parent", &["--issue", "sympoies/nils-cli#2032"], None);
+    let parent = fixture.record("run-parent");
+    let launch = parent["runtime"]["launch_id"].as_str().unwrap().to_string();
+    let output = fixture.launch(
+        "run",
+        "run-child",
+        &["--prompt", "one-shot task"],
+        Some(("run-parent", launch.as_str())),
+    );
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let child = fixture.record("run-child");
+    assert_eq!(child["lineage"]["parent"], session_ref(&parent, true));
+    assert_eq!(child["lineage"]["root"], session_ref(&parent, false));
+    assert_eq!(child["lineage"]["depth"], 1);
+    assert_eq!(
+        child["lineage"]["starter"],
+        json!({"kind": "session", "via": "cli"})
+    );
+    assert_eq!(
+        child["work"],
+        json!({
+            "program": null,
+            "issues": [github("sympoies/nils-cli", 2032)],
+            "inherited": true,
+            "revision": 1,
+        })
+    );
+}
+
+#[test]
+fn a_child_reuses_the_machine_label_its_parent_was_created_under() {
+    // A daemon started with `serve --machine m4` on a host named otherwise
+    // labels its sessions m4; a start inside one keeps that label.
+    let fixture = Fixture::new();
+    fixture.started("label-parent", &[], None);
+    let path = Path::new(&fixture.state).join("sessions/label-parent/session.json");
+    let mut parent = fixture.record("label-parent");
+    parent["lineage"]["machine"] = json!("daemon-label");
+    parent["lineage"]["root"]["machine"] = json!("daemon-label");
+    fs::write(&path, serde_json::to_vec(&parent).expect("record")).expect("write record");
+    let launch = parent["runtime"]["launch_id"].as_str().unwrap().to_string();
+    fixture.started("label-child", &[], Some(("label-parent", launch.as_str())));
+    let child = fixture.record("label-child");
+    assert_eq!(child["lineage"]["machine"], "daemon-label");
+    assert_eq!(child["lineage"]["parent"]["machine"], "daemon-label");
+    assert_eq!(child["lineage"]["root"]["machine"], "daemon-label");
 }
 
 #[test]

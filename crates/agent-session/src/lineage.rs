@@ -73,6 +73,10 @@ pub struct Starter {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct SessionLineage {
     pub schema_version: String,
+    /// The label of the machine this session runs on, as the process that
+    /// created it resolved it. A child started inside this session reuses it.
+    #[serde(default)]
+    pub machine: String,
     pub parent: Option<SessionRef>,
     pub root: SessionRef,
     pub depth: u32,
@@ -375,6 +379,7 @@ impl LineageSeed {
         };
         SessionLineage {
             schema_version: LINEAGE_SCHEMA.to_string(),
+            machine: self.machine.clone(),
             parent,
             root,
             depth,
@@ -544,9 +549,22 @@ pub(crate) fn resolve_cli_start(
     if runtime.is_none() || runtime.as_deref() != launch_id(&parent) {
         return unresolved("does not match AGENT_SESSION_RUNTIME_ID");
     }
+    let machine = own_machine(context, &parent);
     let seed = LineageSeed::child_of(&machine, &machine, &parent, STARTER_SESSION, VIA_CLI)?;
     let work = work.resolve(parent.work.as_ref());
     Ok((crate::InitialLineage { seed, work }, None))
+}
+
+/// The label `record` was created under, so a child on the same machine names
+/// its parent, and itself, the way the parent's creator did; this process's
+/// own label for a record without lineage.
+fn own_machine(context: &CliContext, record: &SessionRecord) -> String {
+    record
+        .lineage
+        .as_ref()
+        .map(|lineage| lineage.machine.clone())
+        .filter(|machine| !machine.is_empty())
+        .unwrap_or_else(|| crate::board::machine_identity(None, context))
 }
 
 /// Lineage and work for a Main Agent worker started by `owner`.
@@ -554,7 +572,7 @@ pub fn main_agent_worker(
     context: &CliContext,
     owner: &SessionRecord,
 ) -> Result<(LineageSeed, Option<SessionWork>), CliError> {
-    let machine = crate::board::machine_identity(None, context);
+    let machine = own_machine(context, owner);
     let seed = LineageSeed::child_of(&machine, &machine, owner, STARTER_MAIN_AGENT, VIA_CLI)?;
     let work = WorkRequest {
         inherit: true,
@@ -753,6 +771,7 @@ mod tests {
             json!(lineage),
             json!({
                 "schema_version": LINEAGE_SCHEMA,
+                "machine": machine,
                 "parent": parent,
                 "root": owner_ref,
                 "depth": 1,
@@ -765,6 +784,46 @@ mod tests {
             (work.program, work.issues, work.inherited, work.revision),
             (Some(issue("a/b", 1)), Vec::new(), true, 1)
         );
+    }
+
+    #[test]
+    fn a_child_may_be_64_deep_but_not_deeper() {
+        let mut parent: SessionRecord = serde_json::from_value(json!({
+            "schema_version": "agent-session.session.v1",
+            "id": "deep-parent",
+            "agent": "codex",
+            "mode": "interactive",
+            "title": null,
+            "cwd": "/w",
+            "tmux_session": "hs-codex-deep-parent",
+            "prompt_file": null,
+            "log_file": null,
+            "created_at": "2026-10-01T00:00:00Z",
+            "updated_at": "2026-10-01T00:00:00Z"
+        }))
+        .unwrap();
+        let root = SessionRef {
+            machine: "h".to_string(),
+            session_id: "root".to_string(),
+            session_created_at: "2026-10-01T00:00:00Z".to_string(),
+            session_incarnation: None,
+        };
+        let mut lineage = LineageSeed::root("h", STARTER_OPERATOR, VIA_CLI)
+            .finalize("deep-parent", "2026-10-01T00:00:00Z");
+        lineage.root = root;
+        lineage.depth = MAX_DEPTH - 1;
+        parent.lineage = Some(lineage.clone());
+        let seed = LineageSeed::child_of("h", "h", &parent, STARTER_SESSION, VIA_CLI).unwrap();
+        assert_eq!(
+            seed.finalize("child", "2026-10-01T01:00:00Z").depth,
+            MAX_DEPTH
+        );
+        lineage.depth = MAX_DEPTH;
+        parent.lineage = Some(lineage);
+        let error = LineageSeed::child_of("h", "h", &parent, STARTER_SESSION, VIA_CLI)
+            .unwrap_err()
+            .into_inner();
+        assert_eq!(error.code, LINEAGE_DEPTH_EXCEEDED);
     }
 
     #[test]
@@ -798,6 +857,7 @@ mod tests {
             json!(lineage),
             json!({
                 "schema_version": LINEAGE_SCHEMA,
+                "machine": "c8",
                 "parent": null,
                 "root": {"machine": "c8", "session_id": "child", "session_created_at": "2026-10-01T01:00:00Z"},
                 "depth": 0,
