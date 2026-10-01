@@ -889,7 +889,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 _arguments "${_arguments_options[@]}" : \
 '--timeout=[Total budget before declaring \`checks_timeout\` (default \`30m\`)]:TIMEOUT:_default' \
 '--interval=[Pause between polls (default \`20s\`)]:INTERVAL:_default' \
-'--required-only=[Restrict the gating decision to required checks (default \`true\`)]::REQUIRED_ONLY:(true false)' \
+'--required-only=[Restrict the gating decision to required checks (default \`true\`). On GitHub, a head with visible checks but no required ones gates on the visible checks]::REQUIRED_ONLY:(true false)' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \

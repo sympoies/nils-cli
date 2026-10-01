@@ -984,7 +984,10 @@ operations:
       for a project that configures none. On GitHub, after 60s with nothing
       reported, a repository whose actions/workflows listing has
       total_count 0 fails early with checks_not_registered instead of
-      polling out the budget. Emits a single envelope at the end.
+      polling out the budget. On GitHub, a required-only snapshot with no
+      required checks but visible rows gates on every visible row, so a
+      queued or in-progress visible check stays pending. Emits a single
+      envelope at the end.
       Maps results to exit code:
         all success         -> SUCCESS 0
         any failure         -> RUNTIME 1, error.kind=checks_failed
@@ -1529,9 +1532,9 @@ macros:
       # provider view must then match the local SHA before adoption.
       - { step: adopt,              op: pr.view,   when: "open PR exists for head branch" }
       - { step: create,             op: pr.create, when: "no open PR exists for head branch" }
-      # GitHub delivery starts required-only. When that snapshot reports zero
-      # required checks but retains visible rows, the macro re-gates those rows
-      # as all-checks and polls only if pending, using the same timeout budget.
+      # GitHub delivery waits required-only. When a snapshot reports zero
+      # required checks but retains visible rows, pr.wait-checks gates on
+      # those rows, so a queued or running visible check stays pending.
       # A fully empty check set no longer succeeds: wait_checks treats it as
       # non-terminal and, once the budget expires, fails DATA 65 with
       # checks_not_registered (lock-down rule 8). This applies on GitLab too,

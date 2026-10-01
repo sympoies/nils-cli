@@ -246,6 +246,7 @@ fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
 
     loop {
         let snapshot = pr_checks::snapshot(runner, global, ctx, snapshot_args)?;
+        let snapshot = gate_visible_checks_when_none_required(ctx, snapshot_args, snapshot);
         let snapshot = with_duration(snapshot, ms_between(start, clock.now()));
         ever_saw_a_check =
             ever_saw_a_check || !crate::ops::required_check_gate::nothing_was_checked(&snapshot);
@@ -290,6 +291,27 @@ fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
         }
         clock.sleep(sleep_for);
     }
+}
+
+/// GitHub can run CI on a head while reporting no branch-protection-required
+/// checks. "Every required check passed" is then vacuous over the empty set, so
+/// a required-only wait gates on the visible checks instead: a queued or
+/// running visible check stays pending and a failed one fails the wait.
+fn gate_visible_checks_when_none_required(
+    ctx: &ProviderContext,
+    snapshot_args: &PrChecksArgs,
+    snapshot: PrChecksPayload,
+) -> PrChecksPayload {
+    if !snapshot_args.required_only
+        || ctx.provider != Provider::GitHub
+        || snapshot.required_count != 0
+        || snapshot.checks.is_empty()
+    {
+        return snapshot;
+    }
+    let mut visible = pr_checks::aggregate(ctx, snapshot.checks, false, snapshot.duration_ms);
+    visible.warnings = snapshot.warnings;
+    visible
 }
 
 /// True only when GitHub positively reports `total_count: 0` Actions workflows
@@ -633,6 +655,37 @@ mod tests {
         let s2 = pr_checks::snapshot(&runner, &global, &ctx, &args).unwrap();
         assert_eq!(s2.state, "success");
         assert!(is_terminal(&s2, CheckPresence::Required));
+    }
+
+    /// Only GitHub reports CI it does not classify as required; a required-only
+    /// GitLab or local snapshot keeps its own gating set.
+    #[test]
+    fn visible_checks_gate_only_github_snapshots_without_required_checks() {
+        let queued = pr_checks::CheckItem {
+            name: "ci".into(),
+            state: "pending",
+            url: None,
+            conclusion: None,
+            workflow: None,
+            required: false,
+            started_at: None,
+            completed_at: None,
+        };
+        let args = PrChecksArgs {
+            id: "1".into(),
+            required_only: true,
+        };
+        for provider in [Provider::GitHub, Provider::GitLab, Provider::Local] {
+            let ctx = make_ctx(provider);
+            let snapshot = pr_checks::aggregate(&ctx, vec![queued.clone()], true, None);
+            let gated = gate_visible_checks_when_none_required(&ctx, &args, snapshot);
+            let expected = if provider == Provider::GitHub {
+                ("pending", 1)
+            } else {
+                ("success", 0)
+            };
+            assert_eq!((gated.state, gated.pending.len()), expected, "{provider:?}");
+        }
     }
 
     /// An empty gating set is the provider saying "I have not registered any

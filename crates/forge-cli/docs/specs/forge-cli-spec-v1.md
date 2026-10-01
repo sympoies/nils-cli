@@ -486,7 +486,11 @@ distinctions that cannot be proven offline.
 - Behaviour: polls the backend until every required check is in a
   terminal state (`success`, `failure`, `cancelled`, `skipped`,
   `neutral`). `--required-only=true` ignores non-required checks for
-  the gating decision but still reports them in `data.checks`. On
+  the gating decision but still reports them in `data.checks`. On GitHub,
+  when the head reports visible check rows but no required ones (a
+  repository without branch-protection required checks), every visible row
+  gates instead: a queued or in-progress row keeps the wait pending, and a
+  failed row fails it. On
   GitHub, required-check classification comes from an explicit
   `gh pr checks --required` call; the JSON field set is
   `name,state,bucket,workflow,link,startedAt,completedAt,description`
@@ -1457,13 +1461,10 @@ label errors are returned before provider access in every mode.
 4. `pr create --draft` — atom; validates branch / title / body. Only
    runs when the lookup found nothing.
 5. `pr wait-checks` — atom; blocks until terminal within one cumulative
-   `--timeout` budget. Delivery keeps the explicit atom's required-only
-   behavior, but on GitHub a successful required-only snapshot with zero
-   required checks and visible check rows is re-gated against all visible
-   checks. A terminal retained snapshot needs no extra provider request;
-   pending visible checks continue polling in all-check mode with only the
-   remaining timeout. Failed visible checks block delivery. A genuinely empty
-   check set completes immediately. GitLab behavior is unchanged.
+   `--timeout` budget. Delivery uses the atom's required-only wait, so on
+   GitHub a head with zero required checks and visible check rows is gated
+   on all visible checks: pending visible checks keep it polling and failed
+   visible checks block delivery. GitLab behavior is unchanged.
 6. `pr ready` — atom; only if previous step is `success`.
 7. `pr merge` — atom; honours `--method`, repo override, and the same resolved
    review-convergence policy as a direct merge. `--no-merge` performs no

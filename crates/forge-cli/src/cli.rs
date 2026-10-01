@@ -1341,7 +1341,9 @@ pub struct PrWaitChecksArgs {
     /// Actions workflows.
     #[arg(long = "allow-no-checks", action = ArgAction::SetTrue)]
     pub allow_no_checks: bool,
-    /// Restrict the gating decision to required checks (default `true`).
+    /// Restrict the gating decision to required checks (default `true`). On
+    /// GitHub, a head with visible checks but no required ones gates on the
+    /// visible checks.
     #[arg(
         long = "required-only",
         action = ArgAction::Set,

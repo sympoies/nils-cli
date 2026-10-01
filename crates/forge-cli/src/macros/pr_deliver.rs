@@ -387,7 +387,6 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
     // 4. pr.wait-checks — a `[checks] none = true` declaration on the base
     //    branch stands in for `--allow-no-checks`; the merge step resolves the
     //    same source and records its reason.
-    let wait_started = clock.now();
     let allow_no_checks = args.allow_no_checks
         || pr_merge::declared_no_checks_reason_on_base(
             workdir,
@@ -403,49 +402,9 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
         required_only: true,
         allow_no_checks,
     };
-    let wait_outcome = match pr_wait_checks::compute(runner, clock, global, ctx, &wait_args) {
-        Ok(WaitOutcome::Success(snapshot))
-            if should_gate_visible_checks(ctx.provider, &snapshot) =>
-        {
-            // GitHub can expose CI while reporting no branch-protection-required
-            // checks. Delivery must still converge those visible checks before
-            // it can ready or merge the PR. Keep the explicit wait-checks atom's
-            // required-only semantics unchanged and apply this fallback only to
-            // the delivery macro.
-            //
-            // A *fully* empty check set no longer arrives here as a success:
-            // `poll_until_terminal_or_timeout` treats an empty gating set as
-            // non-terminal and expires it as `NotRegistered`, so the case this
-            // branch used to hand through silently is now gated upstream.
-            let visible_snapshot =
-                pr_checks::aggregate(ctx, snapshot.checks.clone(), false, snapshot.duration_ms);
-            if visible_snapshot.pending.is_empty() {
-                if visible_snapshot.state == "success" {
-                    Ok(WaitOutcome::Success(visible_snapshot))
-                } else {
-                    Ok(WaitOutcome::Failed(visible_snapshot))
-                }
-            } else {
-                let elapsed = clock.now().saturating_duration_since(wait_started);
-                let remaining = remaining_wait_budget(args.timeout, elapsed);
-                if remaining.is_zero() {
-                    Ok(WaitOutcome::TimedOut(with_total_duration(
-                        visible_snapshot,
-                        elapsed,
-                    )))
-                } else {
-                    let all_checks_args = PrWaitChecksArgs {
-                        required_only: false,
-                        timeout: remaining,
-                        ..wait_args.clone()
-                    };
-                    pr_wait_checks::compute(runner, clock, global, ctx, &all_checks_args)
-                        .map(|outcome| add_duration_prefix(outcome, elapsed))
-                }
-            }
-        }
-        outcome => outcome,
-    };
+    // On GitHub the wait itself gates visible checks when the repository
+    // reports no required ones, so delivery takes its outcome as-is.
+    let wait_outcome = pr_wait_checks::compute(runner, clock, global, ctx, &wait_args);
     match wait_outcome {
         Ok(WaitOutcome::Success(snapshot)) => {
             steps.push(Step {
@@ -729,46 +688,6 @@ fn build_merge_args(
         allow_merge_freeze_reason: None,
         queue_timeout: None,
     }
-}
-
-fn should_gate_visible_checks(provider: Provider, snapshot: &pr_checks::PrChecksPayload) -> bool {
-    provider == Provider::GitHub && snapshot.required_count == 0 && !snapshot.checks.is_empty()
-}
-
-fn remaining_wait_budget(
-    timeout: std::time::Duration,
-    elapsed: std::time::Duration,
-) -> std::time::Duration {
-    timeout.saturating_sub(elapsed)
-}
-
-fn add_duration_prefix(outcome: WaitOutcome, prefix: std::time::Duration) -> WaitOutcome {
-    match outcome {
-        WaitOutcome::Success(snapshot) => {
-            WaitOutcome::Success(with_total_duration(snapshot, prefix))
-        }
-        WaitOutcome::Failed(snapshot) => WaitOutcome::Failed(with_total_duration(snapshot, prefix)),
-        WaitOutcome::NotRegistered(snapshot, cause) => {
-            WaitOutcome::NotRegistered(with_total_duration(snapshot, prefix), cause)
-        }
-        WaitOutcome::TimedOut(snapshot) => {
-            WaitOutcome::TimedOut(with_total_duration(snapshot, prefix))
-        }
-    }
-}
-
-fn with_total_duration(
-    mut snapshot: pr_checks::PrChecksPayload,
-    prefix: std::time::Duration,
-) -> pr_checks::PrChecksPayload {
-    let prefix_ms = u64::try_from(prefix.as_millis()).unwrap_or(u64::MAX);
-    snapshot.duration_ms = Some(
-        snapshot
-            .duration_ms
-            .unwrap_or_default()
-            .saturating_add(prefix_ms),
-    );
-    snapshot
 }
 
 /// Run the post-merge closeout and build its `data.steps[]` entry.
@@ -1289,7 +1208,6 @@ fn to_value<T: Serialize>(value: &T) -> Value {
 mod tests {
     use super::*;
     use crate::cli::{MergeMethodFlag, PrKindFlag};
-    use crate::ops::pr_checks::{CheckItem, PrChecksPayload};
     use crate::provider::DetectionSource;
     use nils_test_support::fixtures::SubjectBoundEvidenceFixture;
     use pretty_assertions::assert_eq;
@@ -1301,75 +1219,6 @@ mod tests {
             source: DetectionSource::Flag,
             repo: None,
         }
-    }
-
-    fn visible_snapshot(context: &ProviderContext) -> PrChecksPayload {
-        pr_checks::aggregate(
-            context,
-            vec![CheckItem {
-                name: "ci".into(),
-                state: "success",
-                url: None,
-                conclusion: Some("success".into()),
-                workflow: None,
-                required: false,
-                started_at: None,
-                completed_at: None,
-            }],
-            true,
-            Some(7),
-        )
-    }
-
-    #[test]
-    fn visible_check_fallback_is_github_only() {
-        let github = ctx();
-        let mut gitlab = ctx();
-        gitlab.provider = Provider::GitLab;
-        let mut local = ctx();
-        local.provider = Provider::Local;
-
-        assert!(should_gate_visible_checks(
-            Provider::GitHub,
-            &visible_snapshot(&github)
-        ));
-        assert!(!should_gate_visible_checks(
-            Provider::GitLab,
-            &visible_snapshot(&gitlab)
-        ));
-        assert!(!should_gate_visible_checks(
-            Provider::Local,
-            &visible_snapshot(&local)
-        ));
-        assert!(!should_gate_visible_checks(
-            Provider::GitHub,
-            &pr_checks::aggregate(&github, Vec::new(), true, None)
-        ));
-    }
-
-    #[test]
-    fn fallback_uses_only_remaining_wait_budget() {
-        assert_eq!(
-            remaining_wait_budget(
-                std::time::Duration::from_secs(30),
-                std::time::Duration::from_secs(12),
-            ),
-            std::time::Duration::from_secs(18)
-        );
-        assert_eq!(
-            remaining_wait_budget(
-                std::time::Duration::from_secs(30),
-                std::time::Duration::from_secs(31),
-            ),
-            std::time::Duration::ZERO
-        );
-    }
-
-    #[test]
-    fn fallback_duration_includes_required_only_phase() {
-        let snapshot = visible_snapshot(&ctx());
-        let snapshot = with_total_duration(snapshot, std::time::Duration::from_millis(13));
-        assert_eq!(snapshot.duration_ms, Some(20));
     }
 
     #[test]
