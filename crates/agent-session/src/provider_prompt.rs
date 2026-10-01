@@ -2649,6 +2649,8 @@ mod tests {
             agent_args: Vec::new(),
             agent_bin: None,
             extra: BTreeMap::new(),
+            lineage: None,
+            work: None,
             resume_sidecar_extra: BTreeMap::new(),
         }
     }

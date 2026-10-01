@@ -20,6 +20,8 @@ mod diagnose;
 #[doc(hidden)]
 pub mod dsh_external;
 mod group_lifecycle;
+#[doc(hidden)]
+pub mod lineage;
 mod maintenance;
 #[doc(hidden)]
 pub mod metadata;
@@ -575,10 +577,25 @@ pub fn render_clap_message(err: &clap::Error) -> String {
         .unwrap_or_else(|| "command-line parse failed".to_string())
 }
 
-fn run_start(context: &CliContext, args: cli::StartArgs) -> i32 {
+fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     let format = args.format;
+    let work = match lineage::WorkRequest::from_flags(
+        args.program.as_deref(),
+        &args.issues,
+        args.no_inherit_work,
+    ) {
+        Ok(work) => work,
+        Err(err) => {
+            let command = if args.via_console {
+                CONSOLE_START_COMMAND
+            } else {
+                START_COMMAND
+            };
+            return render_error(command, format, err);
+        }
+    };
     if args.via_console {
-        return match start_via_console(context, args) {
+        return match start_via_console(context, args, &work) {
             Ok(result) => render_single_success(
                 CONSOLE_START_COMMAND,
                 format,
@@ -588,6 +605,15 @@ fn run_start(context: &CliContext, args: cli::StartArgs) -> i32 {
             Err(err) => render_error(CONSOLE_START_COMMAND, format, err),
         };
     }
+    let (initial_lineage, warning) =
+        match lineage::resolve_cli_start(context, args.no_parent, &work) {
+            Ok(resolved) => resolved,
+            Err(err) => return render_error(START_COMMAND, format, err),
+        };
+    if let Some(warning) = warning {
+        eprintln!("warning: {warning}");
+    }
+    args.initial_lineage = Some(initial_lineage);
     match start_session(
         context,
         args,
@@ -606,7 +632,11 @@ fn run_start(context: &CliContext, args: cli::StartArgs) -> i32 {
 
 /// `start --via-console`: the create body Agent Console accepts, sent through
 /// the local daemon. The session id is assigned by Agent Console.
-fn start_via_console(context: &CliContext, args: cli::StartArgs) -> Result<Value, CliError> {
+fn start_via_console(
+    context: &CliContext,
+    args: cli::StartArgs,
+    work: &lineage::WorkRequest,
+) -> Result<Value, CliError> {
     let cwd = absolute_path(args.cwd.as_deref().unwrap_or(Path::new(".")))?;
     let mut session = json!({ "agent": args.agent.as_str(), "cwd": cwd.to_string_lossy() });
     if let Some(title) = &args.title {
@@ -636,7 +666,17 @@ fn start_via_console(context: &CliContext, args: cli::StartArgs) -> Result<Value
         };
         session[field] = json!(account);
     }
-    coordination::console_start::cli_start(context, None, args.machine.as_deref(), session)
+    let lineage = coordination::console_start::ChildLineage {
+        no_parent: args.no_parent,
+        work: work.clone(),
+    };
+    coordination::console_start::cli_start(
+        context,
+        None,
+        args.machine.as_deref(),
+        session,
+        &lineage,
+    )
 }
 
 fn render_console_started_text(result: &Value) -> String {
@@ -1062,6 +1102,12 @@ pub struct SessionRecord {
     pub agent_args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_bin: Option<String>,
+    /// Who started this session (`session-lineage-work-v1`); written once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<lineage::SessionLineage>,
+    /// Program and issue references (`session-lineage-work-v1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<lineage::SessionWork>,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
     #[serde(skip)]
@@ -1746,6 +1792,12 @@ pub struct SessionView {
     coordination: coordination::CoordinationSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     orchestration: Option<orchestration::SessionOrchestrationProjection>,
+    /// Additive `session-lineage-work-v1` projections; absent on records
+    /// created before lineage existed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lineage: Option<lineage::SessionLineage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    work: Option<lineage::SessionWork>,
 }
 
 #[derive(Debug)]
@@ -1770,6 +1822,7 @@ pub(crate) struct ProviderResumeImportArgs {
     pub(crate) profile_graceful_shutdown: Option<String>,
     pub(crate) codex_usage_account: Option<String>,
     pub(crate) agent_args: Vec<String>,
+    pub(crate) initial_lineage: InitialLineage,
     pub(crate) format: OutputFormat,
 }
 
@@ -1787,6 +1840,7 @@ pub(crate) struct DshHistoryResumeArgs {
     pub(crate) profile_auto_resume_supported: bool,
     pub(crate) profile_graceful_shutdown: Option<String>,
     pub(crate) codex_usage_account: Option<String>,
+    pub(crate) initial_lineage: InitialLineage,
 }
 
 #[derive(Debug, Serialize)]
@@ -2190,7 +2244,7 @@ fn start_session_inner(
     let launch_started_at = SystemTime::now();
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
-    let mut created = create_record_with_guard(
+    let mut created = create_record_with_lineage(
         RecordRequest {
             context,
             agent: args.agent,
@@ -2207,6 +2261,7 @@ fn start_session_inner(
             agent_bin: Some(display_path(&agent_bin)),
         },
         create_guard,
+        args.initial_lineage,
     )?;
     persist_initial_profile_context(
         context,
@@ -2566,21 +2621,33 @@ fn start_run_session(context: &CliContext, args: cli::RunArgs) -> Result<StartVi
             )
         })?;
     let log_file = Some("output.log");
-    let mut created = create_record(RecordRequest {
-        context,
-        agent: args.agent,
-        mode: "run",
-        coordination_mode: args.coordination_mode,
-        title: args.title.as_deref(),
-        title_state: None,
-        explicit_id: args.id.as_deref(),
-        cwd: &cwd,
-        prompt: Some(&prompt),
-        log_file_name: log_file,
-        provider_resume: None,
-        agent_args: args.agent_args.clone(),
-        agent_bin: None,
-    })?;
+    let inherit = lineage::WorkRequest {
+        inherit: true,
+        ..lineage::WorkRequest::default()
+    };
+    let (initial_lineage, warning) = lineage::resolve_cli_start(context, false, &inherit)?;
+    if let Some(warning) = warning {
+        eprintln!("warning: {warning}");
+    }
+    let mut created = create_record_with_lineage(
+        RecordRequest {
+            context,
+            agent: args.agent,
+            mode: "run",
+            coordination_mode: args.coordination_mode,
+            title: args.title.as_deref(),
+            title_state: None,
+            explicit_id: args.id.as_deref(),
+            cwd: &cwd,
+            prompt: Some(&prompt),
+            log_file_name: log_file,
+            provider_resume: None,
+            agent_args: args.agent_args.clone(),
+            agent_bin: None,
+        },
+        None,
+        Some(initial_lineage),
+    )?;
 
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
@@ -2766,6 +2833,7 @@ pub(crate) fn start_dsh_history_resume_session(
         profile_graceful_shutdown: args.profile_graceful_shutdown,
         codex_usage_account: args.codex_usage_account,
         agent_args: Vec::new(),
+        initial_lineage: args.initial_lineage,
         format: OutputFormat::Json,
     };
     start_resolved_provider_resume_session(context, start_args, cwd, provider_resume)
@@ -2779,21 +2847,26 @@ fn start_resolved_provider_resume_session(
 ) -> Result<StartView, CliError> {
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
-    let mut created = create_record(RecordRequest {
-        context,
-        agent: args.agent,
-        mode: "interactive",
-        coordination_mode: args.coordination_mode,
-        title: args.title.as_deref(),
-        title_state: args.title_state,
-        explicit_id: args.id.as_deref(),
-        cwd: &cwd,
-        prompt: None,
-        log_file_name: None,
-        provider_resume: Some(provider_resume.clone()),
-        agent_args: args.agent_args,
-        agent_bin: Some(display_path(&agent_bin)),
-    })?;
+    let initial_lineage = args.initial_lineage;
+    let mut created = create_record_with_lineage(
+        RecordRequest {
+            context,
+            agent: args.agent,
+            mode: "interactive",
+            coordination_mode: args.coordination_mode,
+            title: args.title.as_deref(),
+            title_state: args.title_state,
+            explicit_id: args.id.as_deref(),
+            cwd: &cwd,
+            prompt: None,
+            log_file_name: None,
+            provider_resume: Some(provider_resume.clone()),
+            agent_args: args.agent_args,
+            agent_bin: Some(display_path(&agent_bin)),
+        },
+        None,
+        Some(initial_lineage),
+    )?;
 
     persist_initial_profile_context(
         context,
@@ -3151,13 +3224,31 @@ struct RecordRequest<'a> {
     agent_bin: Option<String>,
 }
 
+#[cfg(test)]
 fn create_record(request: RecordRequest<'_>) -> Result<CreatedRecord, CliError> {
     create_record_with_guard(request, None)
 }
 
+#[cfg(test)]
 fn create_record_with_guard(
     request: RecordRequest<'_>,
+    create_guard: Option<&mut dyn FnMut() -> Result<(), CliError>>,
+) -> Result<CreatedRecord, CliError> {
+    create_record_with_lineage(request, create_guard, None)
+}
+
+/// The lineage and work a new record is created with
+/// (`session-lineage-work-v1`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct InitialLineage {
+    pub seed: lineage::LineageSeed,
+    pub work: Option<lineage::SessionWork>,
+}
+
+fn create_record_with_lineage(
+    request: RecordRequest<'_>,
     mut create_guard: Option<&mut dyn FnMut() -> Result<(), CliError>>,
+    initial_lineage: Option<InitialLineage>,
 ) -> Result<CreatedRecord, CliError> {
     let now = Zoned::now();
     let timestamp = now.strftime("%Y%m%d-%H%M%S").to_string();
@@ -3261,8 +3352,14 @@ fn create_record_with_guard(
         agent_args: request.agent_args,
         agent_bin: request.agent_bin,
         extra: BTreeMap::new(),
+        lineage: None,
+        work: None,
         resume_sidecar_extra: BTreeMap::new(),
     };
+    if let Some(initial) = initial_lineage {
+        record.lineage = Some(initial.seed.finalize(&record.id, &record.created_at));
+        record.work = initial.work;
+    }
     if request.mode == "interactive" {
         store_startup_projection(&mut record, &starting_projection(&iso, "record"));
     }
@@ -10972,6 +11069,7 @@ fn add_runtime_tmux_environment(
     ] {
         command.arg("-e").arg(value);
     }
+
     if let (Some(agent), Some(config_dir)) = (
         AgentKind::from_name(&record.agent),
         session_effective_provider_config_dir(record),
@@ -12743,6 +12841,8 @@ fn session_view_from_parts(
         orchestration: orchestration::session_projection(context, record)
             .ok()
             .flatten(),
+        lineage: record.lineage.clone(),
+        work: record.work.clone(),
     }
 }
 

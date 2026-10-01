@@ -721,6 +721,12 @@ recorded in `sympoies/nils-cli#1409`.
   app-server transport so account and auto-resume controls remain available; unsupported or explicitly raw Codex runtimes retain
   the standalone resume fallback. In resume-id mode, omit `cwd`, `prompt`,
   and `agent_args`; invalid, missing, ambiguous, or unsupported provider ids return structured errors.
+  Either mode may add `lineage` (who started the session) and `work` (its
+  program and issue references), validated and stored as
+  [Session lineage and work v1](session-lineage-work-v1.md#serve-create)
+  defines (`lineage-invalid`, `lineage-depth-exceeded`, `work-ref-invalid`,
+  all HTTP 400). Without `lineage` the session is an operator root over HTTP.
+  The response's `session` echoes both.
   For a serve-managed Codex session, including provider imports, `agent-session` probes bounded
   `codex --version` and `codex app-server --help` process groups. App-server
   transport requires Codex `>= 0.144.1` and advertised Unix `--listen` support.

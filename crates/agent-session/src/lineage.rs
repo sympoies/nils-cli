@@ -1,0 +1,910 @@
+//! Session lineage and work references (`session-lineage-work-v1`).
+//!
+//! `lineage` records which session started this one. It is written once when
+//! the record is created and is descriptive only: it never authorizes
+//! anything. `work` names the program and issues a session works on; a child
+//! inherits its parent's by default.
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+use crate::{CliContext, CliError, SessionRecord};
+
+pub(crate) const LINEAGE_SCHEMA: &str = "agent-session.session-lineage.v1";
+/// The deepest chain a record may claim. A deeper start fails instead of
+/// storing a depth readers cannot trust.
+pub(crate) const MAX_DEPTH: u32 = 64;
+pub(crate) const MAX_ISSUES: usize = 4;
+const MAX_MACHINE_BYTES: usize = 64;
+const MAX_INCARNATION_BYTES: usize = 128;
+const MAX_TIMESTAMP_BYTES: usize = 64;
+
+pub(crate) const STARTER_SESSION: &str = "session";
+pub(crate) const STARTER_CONSOLE: &str = "console";
+pub(crate) const STARTER_OPERATOR: &str = "operator";
+pub(crate) const STARTER_MAIN_AGENT: &str = "main-agent";
+pub(crate) const VIA_CLI: &str = "cli";
+pub(crate) const VIA_CONSOLE: &str = "console";
+pub(crate) const VIA_HTTP: &str = "http";
+
+const LINEAGE_INVALID: &str = "lineage-invalid";
+const LINEAGE_DEPTH_EXCEEDED: &str = "lineage-depth-exceeded";
+const WORK_REF_INVALID: &str = "work-ref-invalid";
+
+/// One session, as `(machine, session_id, session_created_at)`. The
+/// incarnation is kept on a parent for audit only; it never takes part in a
+/// match, so a parent that restarts keeps its children.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SessionRef {
+    pub machine: String,
+    pub session_id: String,
+    pub session_created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_incarnation: Option<String>,
+}
+
+impl SessionRef {
+    fn of(machine: &str, record: &SessionRecord) -> Self {
+        Self {
+            machine: machine.to_string(),
+            session_id: record.id.clone(),
+            session_created_at: record.created_at.clone(),
+            session_incarnation: launch_id(record).map(str::to_string),
+        }
+    }
+
+    fn without_incarnation(&self) -> Self {
+        Self {
+            session_incarnation: None,
+            ..self.clone()
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Starter {
+    pub kind: String,
+    pub via: String,
+}
+
+/// The stored `lineage` object of `agent-session.session.v1`.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct SessionLineage {
+    pub schema_version: String,
+    /// The label of the machine this session runs on, as the process that
+    /// created it resolved it. A child started inside this session reuses it.
+    #[serde(default)]
+    pub machine: String,
+    pub parent: Option<SessionRef>,
+    pub root: SessionRef,
+    pub depth: u32,
+    pub starter: Starter,
+    /// Reserved for the subtree budget of `session-admission-v1`.
+    #[serde(default)]
+    pub budget: Option<Value>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// One public provider reference: `[provider:]owner/repo#N`.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WorkRef {
+    pub provider: String,
+    pub repository: String,
+    pub number: u64,
+}
+
+impl WorkRef {
+    pub(crate) fn parse(value: &str) -> Result<Self, CliError> {
+        let invalid = || {
+            CliError::usage(
+                WORK_REF_INVALID,
+                "a work reference must be owner/repo#N, optionally prefixed by github: or gitlab:",
+                Some(json!({ "reference": bounded(value) })),
+            )
+        };
+        if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_graphic()) {
+            return Err(invalid());
+        }
+        let (provider, rest) = match value.split_once(':') {
+            Some((provider, rest)) => (provider, rest),
+            None => ("github", value),
+        };
+        let (repository, number) = rest.split_once('#').ok_or_else(invalid)?;
+        if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        let number = number.parse::<u64>().map_err(|_| invalid())?;
+        Self {
+            provider: provider.to_string(),
+            repository: repository.to_string(),
+            number,
+        }
+        .canonical()
+        .map_err(|_| invalid())
+    }
+
+    fn canonical(self) -> Result<Self, CliError> {
+        let provider = self.provider.trim().to_ascii_lowercase();
+        if provider != "github" && provider != "gitlab" {
+            return Err(work_invalid(
+                "work reference provider must be github or gitlab",
+            ));
+        }
+        if self.number == 0 {
+            return Err(work_invalid("work reference number must be positive"));
+        }
+        let repository = crate::coordination::context::canonical_repository(self.repository)
+            .map_err(|_| work_invalid("work reference repository must be owner/name"))?;
+        Ok(Self {
+            provider,
+            repository,
+            number: self.number,
+        })
+    }
+}
+
+/// The stored `work` object of `agent-session.session.v1`.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct SessionWork {
+    pub program: Option<WorkRef>,
+    #[serde(default)]
+    pub issues: Vec<WorkRef>,
+    #[serde(default)]
+    pub inherited: bool,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// What a start asked for explicitly. `None` leaves that dimension to
+/// inheritance; `inherit: false` drops whatever was not given.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkRequest {
+    pub program: Option<WorkRef>,
+    pub issues: Option<Vec<WorkRef>>,
+    pub inherit: bool,
+}
+
+impl WorkRequest {
+    /// From `start --program/--issue/--no-inherit-work`.
+    pub(crate) fn from_flags(
+        program: Option<&str>,
+        issues: &[String],
+        no_inherit: bool,
+    ) -> Result<Self, CliError> {
+        let program = program.map(WorkRef::parse).transpose()?;
+        let issues = if issues.is_empty() {
+            None
+        } else {
+            Some(canonical_issues(
+                issues
+                    .iter()
+                    .map(|issue| WorkRef::parse(issue))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )?)
+        };
+        Ok(Self {
+            program,
+            issues,
+            inherit: !no_inherit,
+        })
+    }
+
+    /// The resolved `work` of a new session whose parent has `parent`.
+    pub(crate) fn resolve(&self, parent: Option<&SessionWork>) -> Option<SessionWork> {
+        let inherited_from = parent.filter(|_| self.inherit);
+        let program = self
+            .program
+            .clone()
+            .or_else(|| inherited_from.and_then(|work| work.program.clone()));
+        let issues = self.issues.clone().unwrap_or_else(|| {
+            inherited_from
+                .map(|work| work.issues.clone())
+                .unwrap_or_default()
+        });
+        if program.is_none() && issues.is_empty() {
+            return None;
+        }
+        Some(SessionWork {
+            program,
+            issues,
+            inherited: self.program.is_none() && self.issues.is_none(),
+            revision: 1,
+            extra: BTreeMap::new(),
+        })
+    }
+
+    /// The `work` member of a console start request.
+    pub(crate) fn to_request_json(&self) -> Option<Value> {
+        (self.program.is_some() || self.issues.is_some() || !self.inherit).then(|| {
+            let mut value = json!({ "inherit": self.inherit });
+            if let Some(program) = &self.program {
+                value["program"] = json!(program);
+            }
+            if let Some(issues) = &self.issues {
+                value["issues"] = json!(issues);
+            }
+            value
+        })
+    }
+
+    /// The `work` member of a console start request, validated.
+    pub(crate) fn from_request_json(value: &Value) -> Result<Self, CliError> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            #[serde(default)]
+            program: Option<WorkRef>,
+            #[serde(default)]
+            issues: Option<Vec<WorkRef>>,
+            #[serde(default = "inherit_default")]
+            inherit: bool,
+        }
+        fn inherit_default() -> bool {
+            true
+        }
+        let input: Input = serde_json::from_value(value.clone())
+            .map_err(|_| work_invalid("work must be {program, issues, inherit}"))?;
+        Ok(Self {
+            program: input.program.map(WorkRef::canonical).transpose()?,
+            issues: input.issues.map(canonical_issues).transpose()?,
+            inherit: input.inherit,
+        })
+    }
+}
+
+fn canonical_issues(issues: Vec<WorkRef>) -> Result<Vec<WorkRef>, CliError> {
+    let mut issues = issues
+        .into_iter()
+        .map(WorkRef::canonical)
+        .collect::<Result<Vec<_>, _>>()?;
+    issues.sort();
+    issues.dedup();
+    if issues.len() > MAX_ISSUES {
+        return Err(work_invalid("a session names at most 4 issues"));
+    }
+    Ok(issues)
+}
+
+/// Validate a `work` object a create body supplies. An empty one is no work.
+pub(crate) fn work_from_create_body(value: &Value) -> Result<Option<SessionWork>, CliError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        #[serde(default)]
+        program: Option<WorkRef>,
+        #[serde(default)]
+        issues: Vec<WorkRef>,
+        #[serde(default)]
+        inherited: bool,
+    }
+    let input: Input = serde_json::from_value(value.clone())
+        .map_err(|_| work_invalid("work must be {program, issues, inherited}"))?;
+    let program = input.program.map(WorkRef::canonical).transpose()?;
+    let issues = canonical_issues(input.issues)?;
+    if program.is_none() && issues.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(SessionWork {
+        program,
+        issues,
+        inherited: input.inherited,
+        revision: 1,
+        extra: BTreeMap::new(),
+    }))
+}
+
+/// Everything about a new session's lineage that is known before its id and
+/// creation time are.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LineageSeed {
+    /// The label of the machine the new session runs on.
+    machine: String,
+    parent: Option<ParentLink>,
+    starter: Starter,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ParentLink {
+    parent: SessionRef,
+    root: SessionRef,
+    depth: u32,
+}
+
+impl LineageSeed {
+    /// A new root: no parent, and the session is its own root.
+    pub(crate) fn root(machine: &str, kind: &str, via: &str) -> Self {
+        Self {
+            machine: machine.to_string(),
+            parent: None,
+            starter: Starter {
+                kind: kind.to_string(),
+                via: via.to_string(),
+            },
+        }
+    }
+
+    /// A child of `parent`, which runs on `parent_machine`.
+    pub(crate) fn child_of(
+        machine: &str,
+        parent_machine: &str,
+        parent: &SessionRecord,
+        kind: &str,
+        via: &str,
+    ) -> Result<Self, CliError> {
+        let parent_ref = SessionRef::of(parent_machine, parent);
+        let (root, depth) = match &parent.lineage {
+            Some(lineage) => (lineage.root.without_incarnation(), lineage.depth + 1),
+            None => (parent_ref.without_incarnation(), 1),
+        };
+        if depth > MAX_DEPTH {
+            return Err(CliError::usage(
+                LINEAGE_DEPTH_EXCEEDED,
+                format!("a session lineage is at most {MAX_DEPTH} deep"),
+                Some(json!({ "parent": parent.id, "depth": depth })),
+            ));
+        }
+        Ok(Self {
+            machine: machine.to_string(),
+            parent: Some(ParentLink {
+                parent: parent_ref,
+                root,
+                depth,
+            }),
+            starter: Starter {
+                kind: kind.to_string(),
+                via: via.to_string(),
+            },
+        })
+    }
+
+    /// The stored lineage of the new record `id` created at `created_at`.
+    pub(crate) fn finalize(&self, id: &str, created_at: &str) -> SessionLineage {
+        let (parent, root, depth) = match &self.parent {
+            Some(link) => (Some(link.parent.clone()), link.root.clone(), link.depth),
+            None => (
+                None,
+                SessionRef {
+                    machine: self.machine.clone(),
+                    session_id: id.to_string(),
+                    session_created_at: created_at.to_string(),
+                    session_incarnation: None,
+                },
+                0,
+            ),
+        };
+        SessionLineage {
+            schema_version: LINEAGE_SCHEMA.to_string(),
+            machine: self.machine.clone(),
+            parent,
+            root,
+            depth,
+            starter: self.starter.clone(),
+            budget: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    /// The `lineage` a console start sends to the target daemon. A root has
+    /// no `root` yet: the target daemon names the session itself.
+    pub(crate) fn to_create_json(&self) -> Value {
+        let (parent, root, depth) = match &self.parent {
+            Some(link) => (json!(link.parent), json!(link.root), link.depth),
+            None => (Value::Null, Value::Null, 0),
+        };
+        json!({
+            "schema_version": LINEAGE_SCHEMA,
+            "parent": parent,
+            "root": root,
+            "depth": depth,
+            "starter": self.starter,
+        })
+    }
+
+    /// Validate the `lineage` of a create body for a session on `machine`.
+    pub(crate) fn from_create_json(machine: &str, value: &Value) -> Result<Self, CliError> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RefInput {
+            machine: String,
+            session_id: String,
+            session_created_at: String,
+            #[serde(default)]
+            session_incarnation: Option<String>,
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct StarterInput {
+            kind: String,
+            via: String,
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            #[serde(default)]
+            schema_version: Option<String>,
+            #[serde(default)]
+            parent: Option<RefInput>,
+            #[serde(default)]
+            root: Option<RefInput>,
+            depth: u32,
+            starter: StarterInput,
+        }
+        fn checked(input: RefInput, keep_incarnation: bool) -> Result<SessionRef, CliError> {
+            let machine_ok = !input.machine.is_empty()
+                && input.machine.len() <= MAX_MACHINE_BYTES
+                && input.machine.chars().all(|ch| ch.is_ascii_graphic());
+            let time_ok = input.session_created_at.len() <= MAX_TIMESTAMP_BYTES
+                && input.session_created_at.parse::<jiff::Timestamp>().is_ok();
+            let incarnation_ok = input.session_incarnation.as_deref().is_none_or(|value| {
+                !value.is_empty()
+                    && value.len() <= MAX_INCARNATION_BYTES
+                    && value.chars().all(|ch| ch.is_ascii_graphic())
+            });
+            if !machine_ok
+                || !time_ok
+                || !incarnation_ok
+                || crate::validate_id(&input.session_id).is_err()
+            {
+                return Err(lineage_invalid("a lineage session reference is invalid"));
+            }
+            Ok(SessionRef {
+                machine: input.machine,
+                session_id: input.session_id,
+                session_created_at: input.session_created_at,
+                session_incarnation: input.session_incarnation.filter(|_| keep_incarnation),
+            })
+        }
+        let input: Input = serde_json::from_value(value.clone()).map_err(|_| {
+            lineage_invalid("lineage must be {schema_version, parent, root, depth, starter}")
+        })?;
+        if input
+            .schema_version
+            .as_deref()
+            .is_some_and(|version| version != LINEAGE_SCHEMA)
+        {
+            return Err(lineage_invalid("unsupported lineage schema_version"));
+        }
+        let parented = matches!(
+            input.starter.kind.as_str(),
+            STARTER_SESSION | STARTER_MAIN_AGENT
+        );
+        let known_kind = parented
+            || matches!(
+                input.starter.kind.as_str(),
+                STARTER_CONSOLE | STARTER_OPERATOR
+            );
+        let known_via = matches!(input.starter.via.as_str(), VIA_CLI | VIA_CONSOLE | VIA_HTTP);
+        if !known_kind || !known_via {
+            return Err(lineage_invalid("unknown lineage starter kind or via"));
+        }
+        let starter = Starter {
+            kind: input.starter.kind,
+            via: input.starter.via,
+        };
+        let parent = match (input.parent, input.root) {
+            (None, None) if input.depth == 0 && !parented => None,
+            (Some(parent), Some(root)) if input.depth >= 1 && parented => {
+                if input.depth > MAX_DEPTH {
+                    return Err(CliError::usage(
+                        LINEAGE_DEPTH_EXCEEDED,
+                        format!("a session lineage is at most {MAX_DEPTH} deep"),
+                        Some(json!({ "depth": input.depth })),
+                    ));
+                }
+                Some(ParentLink {
+                    parent: checked(parent, true)?,
+                    root: checked(root, false)?,
+                    depth: input.depth,
+                })
+            }
+            _ => {
+                return Err(lineage_invalid(
+                    "a session or main-agent start names its parent and root with depth 1 or more; a console or operator start names neither, with depth 0",
+                ));
+            }
+        };
+        Ok(Self {
+            machine: machine.to_string(),
+            parent,
+            starter,
+        })
+    }
+}
+
+/// Lineage and work for a plain CLI start or run. Inside a managed session
+/// (`AGENT_SESSION_ID`), the caller is the parent when it resolves in this
+/// state directory and `AGENT_SESSION_RUNTIME_ID` names its current runtime;
+/// otherwise the new session is an operator root and the warning says why.
+pub(crate) fn resolve_cli_start(
+    context: &CliContext,
+    no_parent: bool,
+    work: &WorkRequest,
+) -> Result<(crate::InitialLineage, Option<String>), CliError> {
+    let machine = crate::board::machine_identity(None, context);
+    let root = || crate::InitialLineage {
+        seed: LineageSeed::root(&machine, STARTER_OPERATOR, VIA_CLI),
+        work: work.resolve(None),
+    };
+    let caller = crate::non_empty_env("AGENT_SESSION_ID");
+    let Some(caller) = caller.filter(|_| !no_parent) else {
+        return Ok((root(), None));
+    };
+    let unresolved = |reason: &str| {
+        Ok((
+            root(),
+            Some(format!(
+                "AGENT_SESSION_ID {caller} {reason}; starting a new root session without a parent"
+            )),
+        ))
+    };
+    let Ok(parent) = crate::load_session_record(context, &caller) else {
+        return unresolved("does not resolve in this state directory");
+    };
+    let runtime = crate::non_empty_env("AGENT_SESSION_RUNTIME_ID");
+    if runtime.is_none() || runtime.as_deref() != launch_id(&parent) {
+        return unresolved("does not match AGENT_SESSION_RUNTIME_ID");
+    }
+    let machine = own_machine(context, &parent);
+    let seed = LineageSeed::child_of(&machine, &machine, &parent, STARTER_SESSION, VIA_CLI)?;
+    let work = work.resolve(parent.work.as_ref());
+    Ok((crate::InitialLineage { seed, work }, None))
+}
+
+/// The label `record` was created under, so a child on the same machine names
+/// its parent, and itself, the way the parent's creator did; this process's
+/// own label for a record without lineage.
+fn own_machine(context: &CliContext, record: &SessionRecord) -> String {
+    record
+        .lineage
+        .as_ref()
+        .map(|lineage| lineage.machine.clone())
+        .filter(|machine| !machine.is_empty())
+        .unwrap_or_else(|| crate::board::machine_identity(None, context))
+}
+
+/// Lineage and work for a Main Agent worker started by `owner`.
+pub fn main_agent_worker(
+    context: &CliContext,
+    owner: &SessionRecord,
+) -> Result<(LineageSeed, Option<SessionWork>), CliError> {
+    let machine = own_machine(context, owner);
+    let seed = LineageSeed::child_of(&machine, &machine, owner, STARTER_MAIN_AGENT, VIA_CLI)?;
+    let work = WorkRequest {
+        inherit: true,
+        ..WorkRequest::default()
+    }
+    .resolve(owner.work.as_ref());
+    Ok((seed, work))
+}
+
+fn launch_id(record: &SessionRecord) -> Option<&str> {
+    record
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.launch_id.trim())
+        .filter(|launch_id| !launch_id.is_empty())
+}
+
+fn lineage_invalid(message: &str) -> CliError {
+    CliError::usage(LINEAGE_INVALID, message, None)
+}
+
+fn work_invalid(message: &str) -> CliError {
+    CliError::usage(WORK_REF_INVALID, message, None)
+}
+
+fn bounded(value: &str) -> String {
+    value.chars().take(128).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn issue(repository: &str, number: u64) -> WorkRef {
+        WorkRef {
+            provider: "github".to_string(),
+            repository: repository.to_string(),
+            number,
+        }
+    }
+
+    fn work(program: Option<WorkRef>, issues: Vec<WorkRef>) -> SessionWork {
+        SessionWork {
+            program,
+            issues,
+            inherited: false,
+            revision: 3,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn work_refs_parse_only_the_public_grammar() {
+        assert_eq!(
+            WorkRef::parse("Sympoies/Nils-CLI#2032").unwrap(),
+            issue("sympoies/nils-cli", 2032)
+        );
+        assert_eq!(
+            WorkRef::parse("gitlab:group/repo#7").unwrap(),
+            WorkRef {
+                provider: "gitlab".to_string(),
+                repository: "group/repo".to_string(),
+                number: 7,
+            }
+        );
+        for value in [
+            "",
+            "fix the thing",
+            "owner/repo",
+            "owner/repo#",
+            "owner/repo#0",
+            "owner/repo#-1",
+            "owner/repo#+1",
+            "owner/repo#1x",
+            "owner#1",
+            "a/b/c#1",
+            "bitbucket:owner/repo#1",
+            "owner/repo #1",
+        ] {
+            let error = WorkRef::parse(value).expect_err(value).into_inner();
+            assert_eq!(error.code, WORK_REF_INVALID, "{value}");
+        }
+    }
+
+    #[test]
+    fn work_inherits_each_dimension_unless_given_or_opted_out() {
+        let parent = work(
+            Some(issue("serenvia/laoda", 44)),
+            vec![issue("sympoies/nils-cli", 2032)],
+        );
+        let inherit = WorkRequest::from_flags(None, &[], false).unwrap();
+        let resolved = inherit.resolve(Some(&parent)).unwrap();
+        assert_eq!(
+            (
+                resolved.program.clone(),
+                resolved.issues.clone(),
+                resolved.inherited,
+                resolved.revision
+            ),
+            (parent.program.clone(), parent.issues.clone(), true, 1)
+        );
+
+        let issues_only =
+            WorkRequest::from_flags(None, &["sympoies/nils-cli#9".to_string()], false).unwrap();
+        let resolved = issues_only.resolve(Some(&parent)).unwrap();
+        assert_eq!(
+            (resolved.program, resolved.issues, resolved.inherited),
+            (
+                parent.program.clone(),
+                vec![issue("sympoies/nils-cli", 9)],
+                false
+            )
+        );
+
+        let opted_out = WorkRequest::from_flags(None, &[], true).unwrap();
+        assert_eq!(opted_out.resolve(Some(&parent)), None);
+        assert_eq!(inherit.resolve(None), None);
+
+        let program_only = WorkRequest::from_flags(Some("serenvia/laoda#45"), &[], true).unwrap();
+        let resolved = program_only.resolve(Some(&parent)).unwrap();
+        assert_eq!(
+            (resolved.program, resolved.issues, resolved.inherited),
+            (Some(issue("serenvia/laoda", 45)), Vec::new(), false)
+        );
+    }
+
+    #[test]
+    fn work_names_at_most_four_distinct_issues() {
+        let four = ["a/b#1", "a/b#2", "a/b#3", "a/b#4", "A/B#4"].map(str::to_string);
+        let request = WorkRequest::from_flags(None, &four, false).unwrap();
+        assert_eq!(request.issues.unwrap().len(), 4);
+        let five = ["a/b#1", "a/b#2", "a/b#3", "a/b#4", "a/b#5"].map(str::to_string);
+        let error = WorkRequest::from_flags(None, &five, false)
+            .unwrap_err()
+            .into_inner();
+        assert_eq!(error.code, WORK_REF_INVALID);
+    }
+
+    #[test]
+    fn console_work_requests_round_trip() {
+        let request = WorkRequest::from_flags(Some("a/b#1"), &["c/d#2".to_string()], true).unwrap();
+        let value = request.to_request_json().unwrap();
+        assert_eq!(WorkRequest::from_request_json(&value).unwrap(), request);
+        let default = WorkRequest::from_flags(None, &[], false).unwrap();
+        assert_eq!(default.to_request_json(), None);
+        for value in [
+            json!({"program": "a/b#1"}),
+            json!({"issues": [{"provider": "github", "repository": "a/b", "number": 0}]}),
+            json!({"inherit": true, "extra": 1}),
+        ] {
+            assert!(WorkRequest::from_request_json(&value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn main_agent_workers_are_children_of_their_owner_and_inherit_its_work() {
+        let context = CliContext {
+            state_dir: std::path::PathBuf::from("/nonexistent"),
+            host: Some("lineage-host".to_string()),
+        };
+        let machine = crate::board::machine_identity(None, &context);
+        let owner: SessionRecord = serde_json::from_value(json!({
+            "schema_version": "agent-session.session.v1",
+            "id": "main-owner",
+            "agent": "codex",
+            "mode": "interactive",
+            "title": null,
+            "cwd": "/w",
+            "tmux_session": "hs-codex-main-owner",
+            "prompt_file": null,
+            "log_file": null,
+            "created_at": "2026-10-01T00:00:00Z",
+            "updated_at": "2026-10-01T00:00:00Z",
+            "runtime": {
+                "kind": "tmux",
+                "tmux_session": "hs-codex-main-owner",
+                "generation": 2,
+                "started_at": "2026-10-01T00:00:00Z",
+                "launch_id": "owner-launch"
+            },
+            "work": {"program": {"provider": "github", "repository": "a/b", "number": 1},
+                     "issues": [], "inherited": false, "revision": 4}
+        }))
+        .unwrap();
+        let (seed, work) = main_agent_worker(&context, &owner).unwrap();
+        let lineage = seed.finalize("worker", "2026-10-01T01:00:00Z");
+        let owner_ref = json!({
+            "machine": machine,
+            "session_id": "main-owner",
+            "session_created_at": "2026-10-01T00:00:00Z",
+        });
+        let mut parent = owner_ref.clone();
+        parent["session_incarnation"] = json!("owner-launch");
+        assert_eq!(
+            json!(lineage),
+            json!({
+                "schema_version": LINEAGE_SCHEMA,
+                "machine": machine,
+                "parent": parent,
+                "root": owner_ref,
+                "depth": 1,
+                "starter": {"kind": "main-agent", "via": "cli"},
+                "budget": null,
+            })
+        );
+        let work = work.unwrap();
+        assert_eq!(
+            (work.program, work.issues, work.inherited, work.revision),
+            (Some(issue("a/b", 1)), Vec::new(), true, 1)
+        );
+    }
+
+    #[test]
+    fn a_child_may_be_64_deep_but_not_deeper() {
+        let mut parent: SessionRecord = serde_json::from_value(json!({
+            "schema_version": "agent-session.session.v1",
+            "id": "deep-parent",
+            "agent": "codex",
+            "mode": "interactive",
+            "title": null,
+            "cwd": "/w",
+            "tmux_session": "hs-codex-deep-parent",
+            "prompt_file": null,
+            "log_file": null,
+            "created_at": "2026-10-01T00:00:00Z",
+            "updated_at": "2026-10-01T00:00:00Z"
+        }))
+        .unwrap();
+        let root = SessionRef {
+            machine: "h".to_string(),
+            session_id: "root".to_string(),
+            session_created_at: "2026-10-01T00:00:00Z".to_string(),
+            session_incarnation: None,
+        };
+        let mut lineage = LineageSeed::root("h", STARTER_OPERATOR, VIA_CLI)
+            .finalize("deep-parent", "2026-10-01T00:00:00Z");
+        lineage.root = root;
+        lineage.depth = MAX_DEPTH - 1;
+        parent.lineage = Some(lineage.clone());
+        let seed = LineageSeed::child_of("h", "h", &parent, STARTER_SESSION, VIA_CLI).unwrap();
+        assert_eq!(
+            seed.finalize("child", "2026-10-01T01:00:00Z").depth,
+            MAX_DEPTH
+        );
+        lineage.depth = MAX_DEPTH;
+        parent.lineage = Some(lineage);
+        let error = LineageSeed::child_of("h", "h", &parent, STARTER_SESSION, VIA_CLI)
+            .unwrap_err()
+            .into_inner();
+        assert_eq!(error.code, LINEAGE_DEPTH_EXCEEDED);
+    }
+
+    #[test]
+    fn create_body_lineage_round_trips_and_rejects_inconsistent_shapes() {
+        let parent = SessionRef {
+            machine: "sympoies".to_string(),
+            session_id: "85a7379c-0bfc-4675-bab9-31ed8dcfce92".to_string(),
+            session_created_at: "2026-10-01T00:00:00Z".to_string(),
+            session_incarnation: Some("launch-1".to_string()),
+        };
+        let seed = LineageSeed {
+            machine: "c8".to_string(),
+            parent: Some(ParentLink {
+                parent: parent.clone(),
+                root: parent.without_incarnation(),
+                depth: 1,
+            }),
+            starter: Starter {
+                kind: STARTER_SESSION.to_string(),
+                via: VIA_CONSOLE.to_string(),
+            },
+        };
+        let value = seed.to_create_json();
+        assert_eq!(LineageSeed::from_create_json("c8", &value).unwrap(), seed);
+
+        let root = LineageSeed::root("c8", STARTER_CONSOLE, VIA_CONSOLE);
+        let lineage = LineageSeed::from_create_json("c8", &root.to_create_json())
+            .unwrap()
+            .finalize("child", "2026-10-01T01:00:00Z");
+        assert_eq!(
+            json!(lineage),
+            json!({
+                "schema_version": LINEAGE_SCHEMA,
+                "machine": "c8",
+                "parent": null,
+                "root": {"machine": "c8", "session_id": "child", "session_created_at": "2026-10-01T01:00:00Z"},
+                "depth": 0,
+                "starter": {"kind": "console", "via": "console"},
+                "budget": null,
+            })
+        );
+
+        let mut cases = Vec::new();
+        let mut no_root = value.clone();
+        no_root["root"] = Value::Null;
+        cases.push(no_root);
+        let mut depth_zero = value.clone();
+        depth_zero["depth"] = json!(0);
+        cases.push(depth_zero);
+        let mut operator_with_parent = value.clone();
+        operator_with_parent["starter"]["kind"] = json!("operator");
+        cases.push(operator_with_parent);
+        let mut unknown_kind = value.clone();
+        unknown_kind["starter"]["kind"] = json!("robot");
+        cases.push(unknown_kind);
+        let mut bad_id = value.clone();
+        bad_id["parent"]["session_id"] = json!("../escape");
+        cases.push(bad_id);
+        let mut bad_time = value.clone();
+        bad_time["parent"]["session_created_at"] = json!("yesterday");
+        cases.push(bad_time);
+        let mut extra = value.clone();
+        extra["owner"] = json!("someone");
+        cases.push(extra);
+        let mut schema = value.clone();
+        schema["schema_version"] = json!("agent-session.session-lineage.v2");
+        cases.push(schema);
+        let mut session_root = root.to_create_json();
+        session_root["starter"]["kind"] = json!("session");
+        cases.push(session_root);
+        for case in cases {
+            let error = LineageSeed::from_create_json("c8", &case)
+                .expect_err(&case.to_string())
+                .into_inner();
+            assert_eq!(error.code, LINEAGE_INVALID, "{case}");
+        }
+        let mut deep = value.clone();
+        deep["depth"] = json!(MAX_DEPTH + 1);
+        let error = LineageSeed::from_create_json("c8", &deep)
+            .unwrap_err()
+            .into_inner();
+        assert_eq!(error.code, LINEAGE_DEPTH_EXCEEDED);
+    }
+}

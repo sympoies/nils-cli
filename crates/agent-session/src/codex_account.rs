@@ -1797,6 +1797,8 @@ mod tests {
             agent_args: Vec::new(),
             agent_bin: None,
             extra: BTreeMap::from([(BINDING_KEY.to_string(), value)]),
+            lineage: None,
+            work: None,
             resume_sidecar_extra: BTreeMap::new(),
         }
     }

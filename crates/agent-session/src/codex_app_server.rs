@@ -5539,6 +5539,8 @@ mod tests {
             agent_args: Vec::new(),
             agent_bin: None,
             extra: BTreeMap::new(),
+            lineage: None,
+            work: None,
             resume_sidecar_extra: BTreeMap::new(),
         }
     }
@@ -12736,6 +12738,8 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             agent_args: Vec::new(),
             agent_bin: None,
             extra: BTreeMap::new(),
+            lineage: None,
+            work: None,
             resume_sidecar_extra: BTreeMap::new(),
         };
         crate::write_session_record(&context, &record).unwrap();

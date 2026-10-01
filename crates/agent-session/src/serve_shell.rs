@@ -478,6 +478,8 @@ fn terminal_record(shell: &ShellRecord) -> crate::SessionRecord {
             "emergency_shell".into(),
             serde_json::to_value(shell).expect("serializable shell identity"),
         )]),
+        lineage: None,
+        work: None,
         resume_sidecar_extra: BTreeMap::new(),
     }
 }

@@ -58,6 +58,25 @@ fn private_dir(path: &Path) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).expect("dir mode");
 }
 
+/// The `lineage` the daemon adds for a child of the fixture session
+/// (`docs/specs/session-lineage-work-v1.md`, "Console starts").
+fn child_lineage() -> Value {
+    let caller = json!({
+        "machine": MACHINE,
+        "session_id": SESSION,
+        "session_created_at": "2030-01-01T00:00:00Z",
+    });
+    let mut parent = caller.clone();
+    parent["session_incarnation"] = json!(INCARNATION);
+    json!({
+        "schema_version": "agent-session.session-lineage.v1",
+        "parent": parent,
+        "root": caller,
+        "depth": 1,
+        "starter": {"kind": "session", "via": "console"},
+    })
+}
+
 fn private_file(path: &Path, bytes: &[u8]) {
     fs::write(path, bytes).expect("private file");
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).expect("file mode");
@@ -939,7 +958,8 @@ fn console_start_creates_the_child_through_the_aggregator_as_the_calling_session
             "machine": "host-b",
             "session": {
                 "agent": "claude", "cwd": "/work/repo", "title": "Child task",
-                "prompt": "do the thing", "agent_args": ["--verbose"]
+                "prompt": "do the thing", "agent_args": ["--verbose"],
+                "lineage": child_lineage()
             }
         }))
     );
@@ -963,6 +983,113 @@ fn console_start_creates_the_child_through_the_aggregator_as_the_calling_session
             .map(|body| body.get("machine").is_none()),
         Some(true)
     );
+}
+
+#[test]
+fn console_start_sends_the_child_lineage_and_resolved_work() {
+    let fixture = Fixture::new();
+    let record_path = fixture
+        .state_dir
+        .join("sessions")
+        .join(SESSION)
+        .join("session.json");
+    let mut record: Value =
+        serde_json::from_slice(&fs::read(&record_path).expect("record")).expect("record json");
+    let root = json!({
+        "machine": "sympoies",
+        "session_id": "laoda-root",
+        "session_created_at": "2029-12-31T00:00:00Z",
+    });
+    record["lineage"] = json!({
+        "schema_version": "agent-session.session-lineage.v1",
+        "parent": root,
+        "root": root,
+        "depth": 1,
+        "starter": {"kind": "session", "via": "console"},
+        "budget": null,
+    });
+    let program = json!({"provider": "github", "repository": "serenvia/laoda", "number": 44});
+    let issue = json!({"provider": "github", "repository": "sympoies/nils-cli", "number": 2032});
+    record["work"] =
+        json!({"program": program, "issues": [issue], "inherited": false, "revision": 2});
+    private_file(&record_path, &serde_json::to_vec(&record).expect("record"));
+    let aggregator = Aggregator::start();
+    let _serve = fixture.serve(&[], Some(&aggregator));
+    let created = json!({"ok": true, "data": {"session": {"id": "child", "agent": "claude"}}});
+    let parent = json!({
+        "machine": MACHINE,
+        "session_id": SESSION,
+        "session_created_at": "2030-01-01T00:00:00Z",
+        "session_incarnation": INCARNATION,
+    });
+    let session_of = |seen: &[Seen]| {
+        seen.last()
+            .and_then(|seen| seen.body.clone())
+            .expect("body")["session"]
+            .clone()
+    };
+
+    // The child keeps the caller's root one level deeper and inherits work.
+    aggregator.reply_json(201, &created);
+    let output = fixture.start_via_console(&["--agent", "claude", "--cwd", "/w"], true);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let session = session_of(&aggregator.seen());
+    assert_eq!(
+        session["lineage"],
+        json!({
+            "schema_version": "agent-session.session-lineage.v1",
+            "parent": parent,
+            "root": root,
+            "depth": 2,
+            "starter": {"kind": "session", "via": "console"},
+        })
+    );
+    assert_eq!(
+        session["work"],
+        json!({"program": program, "issues": [issue], "inherited": true})
+    );
+
+    // An explicit issue replaces only the issues.
+    aggregator.reply_json(201, &created);
+    let output = fixture.start_via_console(
+        &[
+            "--agent",
+            "claude",
+            "--cwd",
+            "/w",
+            "--issue",
+            "sympoies/nils-cli#2040",
+        ],
+        true,
+    );
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let session = session_of(&aggregator.seen());
+    assert_eq!(
+        session["work"],
+        json!({
+            "program": program,
+            "issues": [{"provider": "github", "repository": "sympoies/nils-cli", "number": 2040}],
+            "inherited": false
+        })
+    );
+
+    // --no-parent asks for a new root: no parent, and no inherited work.
+    aggregator.reply_json(201, &created);
+    let output =
+        fixture.start_via_console(&["--agent", "claude", "--cwd", "/w", "--no-parent"], true);
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let session = session_of(&aggregator.seen());
+    assert_eq!(
+        session["lineage"],
+        json!({
+            "schema_version": "agent-session.session-lineage.v1",
+            "parent": null,
+            "root": null,
+            "depth": 0,
+            "starter": {"kind": "operator", "via": "console"},
+        })
+    );
+    assert!(session.get("work").is_none(), "{session}");
 }
 
 #[test]
@@ -1074,6 +1201,8 @@ fn console_start_route_requires_the_current_session_capability_and_a_known_body(
     for invalid in [
         json!({"session": {"agent": "claude"}, "principal": "someone-else"}),
         json!({"machine": "host-b"}),
+        json!({"session": {"agent": "claude"}, "no_parent": "yes"}),
+        json!({"session": {"agent": "claude"}, "work": {"issues": ["free text"]}}),
     ] {
         let (status, body) = post(CAPABILITY, invalid);
         assert_eq!(
@@ -1113,7 +1242,7 @@ fn console_start_selects_the_account_for_its_agent_and_the_launch_profile() {
             .expect("body")["session"];
         assert_eq!(
             session,
-            &json!({"agent": agent, "cwd": "/w", field: "spare"})
+            &json!({"agent": agent, "cwd": "/w", field: "spare", "lineage": child_lineage()})
         );
     }
     aggregator.reply_json(201, &created);
