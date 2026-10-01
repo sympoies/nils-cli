@@ -33237,7 +33237,7 @@ exit 0
             }
             FixturePidfdFault::ErrnoTimes { errno, remaining } => {
                 if remaining
-                    .fetch_update(
+                    .try_update(
                         std::sync::atomic::Ordering::AcqRel,
                         std::sync::atomic::Ordering::Acquire,
                         |value| value.checked_sub(1),
