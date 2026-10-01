@@ -433,12 +433,12 @@ Release tarballs include:
 - `completions/zsh/` and `completions/bash/`
 - `README.md`, `LICENSE`, `THIRD_PARTY_LICENSES.md`, and `THIRD_PARTY_NOTICES.md`
 
-Use the repo-owned release skill for the normal bump, tag, GitHub Release, tap,
-and local Homebrew verification flow:
-
-```bash
-.agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh --version X.Y.Z
-```
+Releases run through the private sympoies-infra release broker: tagging, the
+GitHub Release, the tap update, and fleet convergence are not done by hand from
+this repository. Use the `project-release-nils-cli` skill in
+`serenvia/sympoies-infra` to release. The repo-owned
+`.agents/skills/project-bump-version-tag-release` skill documents only the
+version-bump transform the broker consumes.
 
 `.github/workflows/prepare-private-release.yml` is a narrower preparation-only
 entrypoint for the private infrastructure orchestrator. It runs the same

@@ -1688,7 +1688,6 @@ test_source_release_wait_default_covers_full_ci() {
   [[ -n "$release_default" ]] || fail "source release wait default is missing"
   ((release_default >= 3600)) ||
     fail "source release wait default must be at least 3600 seconds (got: $release_default)"
-  assert_contains "${skill_root}/SKILL.md" 'NILS_CLI_RELEASE_WAIT_SECONDS.*default 3600'
   assert_contains "$entrypoint" 'resume after release.yml succeeds with:'
   assert_contains "$entrypoint" 'release_resume_args=.*--from-tap'
 
