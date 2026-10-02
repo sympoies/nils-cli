@@ -11109,6 +11109,16 @@ fn add_runtime_tmux_environment(
             command.arg("-e").arg(assignment);
         }
     }
+    if AgentKind::from_name(&record.agent) == Some(AgentKind::Claude) {
+        // Managed panes are attached as plain terminals whose scrollback the
+        // client owns, so Claude stays on its main-screen renderer just as
+        // Codex gets --no-alt-screen. Without this, Claude Code picks its
+        // alt-screen renderer on fresh installs or rollout gates, and touch
+        // scrolling becomes a wheel round trip into its virtual viewport.
+        command
+            .arg("-e")
+            .arg("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1");
+    }
     if let Some(path) = env::var_os("PATH") {
         // A long-lived tmux server keeps the environment from when that server
         // started. Pin each new session to the current daemon PATH so provider
