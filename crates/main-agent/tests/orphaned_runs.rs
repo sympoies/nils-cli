@@ -23,14 +23,10 @@ struct Output {
 }
 
 fn main_agent(state_dir: &Path, args: &[&str]) -> Output {
-    let output = Command::new(bin::resolve("main-agent"))
-        .arg("--state-dir")
-        .arg(state_dir)
-        .args(args)
-        .env_remove("AGENT_SESSION_CAPABILITY_FILE")
-        .env_remove("AGENT_SESSION_CHECKPOINT_FILE")
-        .output()
-        .expect("run main-agent");
+    let mut command = Command::new(bin::resolve("main-agent"));
+    command.arg("--state-dir").arg(state_dir).args(args);
+    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+    let output = command.output().expect("run main-agent");
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     let json = serde_json::from_str(&stdout).unwrap_or_else(|_| {
         panic!(

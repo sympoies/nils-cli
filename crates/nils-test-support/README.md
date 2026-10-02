@@ -37,10 +37,14 @@ Stale-test cleanup sequencing is frozen in
   - `cmd`: run binaries with captured output (`CmdOutput`) and flexible options (`CmdOptions`), including resolved workspace-binary helpers
     (`run_resolved*`)
   - `CmdOptions::with_env_remove_many`: remove multiple env vars in one call for deterministic harness setup
-  - `CmdOptions::without_ambient_managed_session_env`: drop the `cmd::MANAGED_SESSION_ENV` set a managed
-    `agent-session` pane pins, so a suite run inside one does not inherit overrides that outrank `PATH`
-    and the fixture layout. Removals are applied before values, so a later `with_env` for the same key
-    still reaches the child
+    - `CmdOptions::without_ambient_managed_session_env`: drop every ambient `AGENT_SESSION_*`
+     variable (and `AGENT_HOOK_BIN`) a managed `agent-session` pane pins, so a suite run inside
+     one does not inherit overrides that outrank `PATH` and the fixture layout. Removal is by
+     prefix, not the fixed `cmd::MANAGED_SESSION_ENV` list, because a pane can export more
+     (e.g. `AGENT_SESSION_LAUNCH_PROFILES`). Removals are applied before values, so a later
+     `with_env` for the same key still reaches the child
+    - `cmd::strip_ambient_managed_session_env`: the same prefix-based removal for a direct
+     `std::process::Command` that a test builds by hand
   - `cmd::path_with_prepend_excluding_program`: construct a PATH that prepends stubs while filtering one real binary
 - Workspace binaries
   - `bin`: `resolve` finds `CARGO_BIN_EXE_*` or falls back to `target/<profile>/<name>`, panicking when neither

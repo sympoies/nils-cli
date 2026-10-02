@@ -206,10 +206,8 @@ impl Serve {
             .stderr(Stdio::from(
                 fs::File::create(&stderr_path).expect("serve stderr"),
             ));
-        for key in nils_test_support::cmd::MANAGED_SESSION_ENV
-            .iter()
-            .chain(USAGE_ENV.iter())
-        {
+        nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+        for key in USAGE_ENV {
             command.env_remove(key);
         }
         command.envs(env.iter().copied());
