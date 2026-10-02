@@ -621,7 +621,10 @@ fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     if let Some(warning) = warning {
         eprintln!("warning: {warning}");
     }
-    args.initial_lineage = Some(initial_lineage);
+    args.initial_lineage = Some(crate::InitialLineage {
+        role: args.role.clone(),
+        ..initial_lineage
+    });
     match start_session(
         context,
         args,
@@ -677,6 +680,7 @@ fn start_via_console(
     let lineage = coordination::console_start::ChildLineage {
         no_parent: args.no_parent,
         work: work.clone(),
+        role: args.role.clone(),
     };
     coordination::console_start::cli_start(
         context,
@@ -1121,6 +1125,9 @@ pub struct SessionRecord {
     /// A later steward (`lineage adopt`); `lineage` itself never changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lineage_adoption: Option<lineage::LineageAdoption>,
+    /// `coordinator` when the session was started as one; written once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
     #[serde(skip)]
@@ -1813,6 +1820,9 @@ pub struct SessionView {
     work: Option<lineage::SessionWork>,
     #[serde(skip_serializing_if = "Option::is_none")]
     lineage_adoption: Option<lineage::LineageAdoption>,
+    /// `coordinator`, or absent (null) for any other session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<String>,
 }
 
 #[derive(Debug)]
@@ -3263,6 +3273,8 @@ fn create_record_with_guard(
 pub struct InitialLineage {
     pub seed: lineage::LineageSeed,
     pub work: Option<lineage::SessionWork>,
+    /// `coordinator` for a session started with `--role coordinator`.
+    pub role: Option<String>,
 }
 
 fn create_record_with_lineage(
@@ -3377,11 +3389,13 @@ fn create_record_with_lineage(
         lineage: None,
         work: None,
         lineage_adoption: None,
+        role: None,
         resume_sidecar_extra: BTreeMap::new(),
     };
     if let Some(initial) = initial_lineage {
         record.lineage = Some(initial.seed.finalize(&record.id, &record.created_at));
         record.work = initial.work;
+        record.role = initial.role;
     }
     if request.mode == "interactive" {
         store_startup_projection(&mut record, &starting_projection(&iso, "record"));
@@ -12867,6 +12881,7 @@ fn session_view_from_parts(
         lineage: record.lineage.clone(),
         work: record.work.clone(),
         lineage_adoption: record.lineage_adoption.clone(),
+        role: record.role.clone(),
     }
 }
 

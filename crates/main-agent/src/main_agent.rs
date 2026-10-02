@@ -4305,7 +4305,11 @@ fn run_worker_start_single_input(
                 // recorded as its parent still starts.
                 initial_lineage: agent_session::lineage::main_agent_worker(context, &record)
                     .ok()
-                    .map(|(seed, work)| agent_session::InitialLineage { seed, work }),
+                    .map(|(seed, work)| agent_session::InitialLineage {
+                        seed,
+                        work,
+                        role: None,
+                    }),
                 agent,
                 cwd: Some(PathBuf::from(&launch_input.launch.cwd)),
                 title: launch_input.launch.title.clone(),
@@ -4323,6 +4327,7 @@ fn run_worker_start_single_input(
                 account: None,
                 agent_profile: None,
                 no_parent: false,
+                role: None,
                 program: None,
                 issues: Vec::new(),
                 no_inherit_work: false,
@@ -5221,7 +5226,11 @@ fn finish_external_worker_start(
                 Some(&mut create_guard),
                 agent_session::lineage::main_agent_worker(context, record)
                     .ok()
-                    .map(|(seed, work)| agent_session::InitialLineage { seed, work }),
+                    .map(|(seed, work)| agent_session::InitialLineage {
+                        seed,
+                        work,
+                        role: None,
+                    }),
             );
             match created {
                 Ok(worker) => worker,
@@ -25089,6 +25098,7 @@ mod tests {
             lineage: None,
             work: None,
             lineage_adoption: None,
+            role: None,
             resume_sidecar_extra: std::collections::BTreeMap::new(),
         }
     }

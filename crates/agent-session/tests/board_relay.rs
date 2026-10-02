@@ -1088,6 +1088,26 @@ fn console_start_sends_the_child_lineage_and_resolved_work() {
         })
     );
     assert!(session.get("work").is_none(), "{session}");
+    assert!(session.get("role").is_none(), "{session}");
+
+    // --role coordinator is relayed as `session.role`.
+    aggregator.reply_json(201, &created);
+    let output = fixture.start_via_console(
+        &[
+            "--agent",
+            "claude",
+            "--cwd",
+            "/w",
+            "--no-parent",
+            "--role",
+            "coordinator",
+        ],
+        true,
+    );
+    assert_eq!(output.code, 0, "stdout={}", output.stdout_text());
+    let session = session_of(&aggregator.seen());
+    assert_eq!(session["role"], "coordinator");
+    assert_eq!(session["lineage"]["parent"], Value::Null);
 }
 
 #[test]

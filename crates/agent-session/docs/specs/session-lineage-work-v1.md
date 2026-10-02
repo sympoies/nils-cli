@@ -11,7 +11,7 @@
   optional typed fields of `sessions/<id>/session.json`, so older readers keep
   them through the record's unknown-key passthrough, and a record created
   before this contract has neither.
-- Design: sympoies/nils-cli#2032, sections 1 and 2.
+- Design: sympoies/nils-cli#2032, sections 1 and 2, and its role amendment.
 
 Every managed session records **who started it** (`lineage`) and **which
 program and issues it works on** (`work`). Readers such as `agent-session
@@ -321,11 +321,36 @@ agent-session work set <ID> [--program R | --clear-program] [--issue R]... [--cl
 collision claim; `work` is the session's durable statement of what it belongs
 to.
 
+## `role`
+
+`SessionRecord.role` is `"coordinator"` or absent (null). It marks a session
+the operator or its tooling treats as a coordinator, by explicit statement
+rather than by inference from the repository name or tree position. Any
+number of sessions may hold it at once, for example during a handoff overlap.
+
+- Written once at start; it never changes and is never inherited: a child of a
+  coordinator has no role unless it is started with one.
+- `agent-session start --role coordinator` (the only accepted value) sets it.
+  It is independent of `--no-parent`: a successor coordinator is started with
+  `--no-parent --role coordinator`, and its predecessor's live children are
+  moved with `lineage adopt --by <successor>`.
+- A console start sends `role` as a top-level request key (`machine`,
+  `no_parent`, `work`, `role`, `session`) and the daemon relays it as
+  `session.role`, next to `session.lineage`. A `role` the caller put in
+  `session` itself is replaced. The aggregator forwards it in the target
+  daemon's `POST /sessions` body.
+- `POST /sessions` accepts an optional `role`, stored verbatim after
+  validation. Any value other than `"coordinator"` fails with HTTP 400
+  `role-invalid` before anything is created. The create response's `session`
+  echoes it.
+- `role` is descriptive, like lineage: it authorizes nothing.
+
 ## Read surfaces
 
 The session view (`agent-session list --format json`, `GET /sessions`, and the
-start and create results) carries the stored `lineage`, `work`, and
-`lineage_adoption` objects unchanged. Each is absent on records that have none.
+start and create results) carries the stored `lineage`, `work`,
+`lineage_adoption`, and `role` unchanged. Each is absent on records that have
+none; readers treat an absent `role` as null.
 
 ## Failure codes
 
@@ -333,6 +358,7 @@ start and create results) carries the stored `lineage`, `work`, and
 | --- | --- | --- |
 | `work-ref-invalid` | usage / 400 | A reference outside the grammar, more than 4 issues, or an invalid `work` object. |
 | `lineage-invalid` | usage / 400 | A create body `lineage` with an invalid shape. |
+| `role-invalid` | usage / 400 | A `role` other than `coordinator`. |
 | `lineage-depth-exceeded` | usage / 400 | A start deeper than 64. |
 | `lineage-revision-conflict` | data | `lineage adopt --if-revision` does not match. |
 | `lineage-adopt-forbidden` | data | A managed session names a steward other than itself, or clears one. |

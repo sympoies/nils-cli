@@ -31,6 +31,9 @@ pub(crate) const VIA_CLI: &str = "cli";
 pub(crate) const VIA_CONSOLE: &str = "console";
 pub(crate) const VIA_HTTP: &str = "http";
 
+/// The only explicit session role.
+pub(crate) const ROLE_COORDINATOR: &str = "coordinator";
+const ROLE_INVALID: &str = "role-invalid";
 const LINEAGE_INVALID: &str = "lineage-invalid";
 const LINEAGE_DEPTH_EXCEEDED: &str = "lineage-depth-exceeded";
 const WORK_REF_INVALID: &str = "work-ref-invalid";
@@ -279,6 +282,19 @@ fn canonical_issues(issues: Vec<WorkRef>) -> Result<Vec<WorkRef>, CliError> {
     Ok(issues)
 }
 
+/// Validate the `role` of a create body or console start. `null` is no role.
+pub(crate) fn role_from_request(value: Option<&str>) -> Result<Option<String>, CliError> {
+    match value {
+        None => Ok(None),
+        Some(ROLE_COORDINATOR) => Ok(Some(ROLE_COORDINATOR.to_string())),
+        Some(_) => Err(CliError::usage(
+            ROLE_INVALID,
+            "role must be \"coordinator\"",
+            None,
+        )),
+    }
+}
+
 /// Validate a `work` object a create body supplies. An empty one is no work.
 pub(crate) fn work_from_create_body(value: &Value) -> Result<Option<SessionWork>, CliError> {
     #[derive(Deserialize)]
@@ -521,6 +537,7 @@ pub(crate) fn resolve_cli_start(
     let root = || crate::InitialLineage {
         seed: LineageSeed::root(&machine, STARTER_OPERATOR, VIA_CLI),
         work: work.resolve(None),
+        role: None,
     };
     let caller = crate::non_empty_env("AGENT_SESSION_ID");
     let Some(caller) = caller.filter(|_| !no_parent) else {
@@ -544,7 +561,14 @@ pub(crate) fn resolve_cli_start(
     let machine = own_machine(context, &parent);
     let seed = LineageSeed::child_of(&machine, &machine, &parent, STARTER_SESSION, VIA_CLI)?;
     let work = work.resolve(parent.work.as_ref());
-    Ok((crate::InitialLineage { seed, work }, None))
+    Ok((
+        crate::InitialLineage {
+            seed,
+            work,
+            role: None,
+        },
+        None,
+    ))
 }
 
 /// The label `record` was created under, so a child on the same machine names

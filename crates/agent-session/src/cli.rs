@@ -285,6 +285,11 @@ pub struct StartArgs {
     #[arg(long)]
     pub no_parent: bool,
 
+    /// Mark this session as a coordinator. Stored once at start and never
+    /// inherited by its children.
+    #[arg(long, value_name = "ROLE", value_parser = ["coordinator"])]
+    pub role: Option<String>,
+
     /// Work-mode program tracker issue this session belongs to, as
     /// OWNER/REPO#N. Replaces the inherited program.
     #[arg(long, value_name = "OWNER/REPO#N")]
