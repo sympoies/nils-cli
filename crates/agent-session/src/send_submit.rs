@@ -164,18 +164,37 @@ pub(crate) fn classify(agent: &str, pane: &str, probe: &Probe) -> Composer {
     }
 }
 
-/// Claude Code draws its input box between the last two horizontal rules and
-/// starts it with `❯`. A permission or trust dialog replaces the box, so no
-/// such region exists while one is open.
-fn claude_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a str])> {
-    let rules: Vec<usize> = lines
+fn claude_rules(lines: &[&str]) -> Vec<usize> {
+    lines
         .iter()
         .enumerate()
         .filter(|(_, line)| {
             line.trim_start().starts_with('─') && line.chars().filter(|ch| *ch == '─').count() >= 10
         })
         .map(|(index, _)| index)
-        .collect();
+        .collect()
+}
+
+/// Whether a Claude pane shows the sent text accepted into its queue: the
+/// composer shows the queued hint and the queued messages above it include the
+/// start of the text. The hint alone also appears for an earlier message.
+pub(crate) fn claude_queue_holds(pane: &str, probe: &Probe) -> bool {
+    if classify("claude", pane, probe) != Composer::Queued {
+        return false;
+    }
+    let lines: Vec<&str> = pane.lines().map(str::trim_end).collect();
+    let rules = claude_rules(&lines);
+    let [.., top, _] = rules[..] else {
+        return false;
+    };
+    compact(&lines[..top].join("\n")).contains(&probe.head)
+}
+
+/// Claude Code draws its input box between the last two horizontal rules and
+/// starts it with `❯`. A permission or trust dialog replaces the box, so no
+/// such region exists while one is open.
+fn claude_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a str])> {
+    let rules = claude_rules(lines);
     let [.., top, bottom] = rules[..] else {
         return None;
     };
@@ -710,6 +729,22 @@ mod tests {
         assert_eq!(result.unwrap().outcome, SubmitOutcome::Unverified);
         assert_eq!(pressed, 1);
         assert!(started.elapsed() >= RETRY_AFTER);
+    }
+
+    #[test]
+    fn a_queue_holds_only_the_text_listed_above_the_composer() {
+        assert!(claude_queue_holds(
+            CLAUDE_QUEUED,
+            &probe_of("Second queued message.")
+        ));
+        assert!(!claude_queue_holds(
+            CLAUDE_QUEUED,
+            &probe_of("A different prompt")
+        ));
+        assert!(!claude_queue_holds(
+            CLAUDE_PENDING,
+            &probe_of("Second queued message.")
+        ));
     }
 
     #[test]

@@ -24452,6 +24452,34 @@ esac
     }
 
     #[tokio::test]
+    async fn claude_structured_prompt_is_unknown_when_the_queue_lists_another_message() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launch_id = seed_claude_prompt_session(tmp.path(), "claude-queue-other");
+        let st = state(
+            tmp.path(),
+            Some(TOKEN),
+            minimal_tmux_showing(tmp.path(), QUEUED_CLAUDE_PANE),
+        );
+        let record = load_session_record(&st.context, "claude-queue-other").unwrap();
+        crate::activity::activate_runtime(&st.context, &record).unwrap();
+
+        let (status, body) = response_parts(
+            submit_claude_structured_prompt(
+                &st,
+                &record,
+                &launch_id,
+                Some(&launch_id),
+                "A prompt the queue never received",
+                Duration::from_millis(200),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "body={body}");
+        assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
+    }
+
+    #[tokio::test]
     async fn claude_structured_prompt_ignores_progress_on_an_existing_turn() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launch_id = seed_claude_prompt_session(tmp.path(), "claude-in-flight");
