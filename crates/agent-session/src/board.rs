@@ -26,6 +26,9 @@ pub(crate) use view::run;
 
 pub(crate) const BOARD_SCHEMA: &str = "agent-session.board.v1";
 pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";
+/// Additive capabilities of the v1 envelopes. A reader feature-detects from
+/// this list, never from the presence of a record field.
+pub(crate) const EXTENSIONS: [&str; 2] = ["lineage.v1", "work.v1"];
 /// `AGENT_SESSION_BOARD=1` enables the daemon board routes, like `--board`.
 pub(crate) const BOARD_ENV: &str = "AGENT_SESSION_BOARD";
 
@@ -122,6 +125,7 @@ fn snapshot_with(
         "record_schema": RECORD_SCHEMA,
         "machine": machine,
         "generated_at": jiff::Timestamp::now().to_string(),
+        "extensions": EXTENSIONS,
         "ledger_cursor": ledger_cursor,
         "records": records,
         "skipped_count": skipped_count,
@@ -279,7 +283,92 @@ pub(crate) fn project_record(
         "closed_at": null,
         "close_reason": null,
         "summary": null,
+        "role": nullable("role"),
+        "lineage": project_lineage(view),
+        "work": project_work(view),
     }))
+}
+
+/// A session reference as `{machine, session_id, session_created_at}`; the
+/// incarnation is never part of a board reference. `null` when any member is
+/// missing or mistyped.
+fn project_session_ref(value: Option<&Value>) -> Value {
+    let Some(reference) = value.and_then(Value::as_object) else {
+        return Value::Null;
+    };
+    let member = |key: &str| {
+        reference
+            .get(key)
+            .filter(|value| value.is_string())
+            .cloned()
+    };
+    match (
+        member("machine"),
+        member("session_id"),
+        member("session_created_at"),
+    ) {
+        (Some(machine), Some(session_id), Some(session_created_at)) => json!({
+            "machine": machine,
+            "session_id": session_id,
+            "session_created_at": session_created_at,
+        }),
+        _ => Value::Null,
+    }
+}
+
+/// `lineage` of a board record: the stored lineage plus `effective_parent`
+/// (the adopting steward when there is one, otherwise `parent`). `null` for a
+/// session without lineage.
+fn project_lineage(view: &Map<String, Value>) -> Value {
+    let Some(lineage) = view.get("lineage").and_then(Value::as_object) else {
+        return Value::Null;
+    };
+    let root = project_session_ref(lineage.get("root"));
+    let (Some(depth), Some(starter), false) = (
+        lineage.get("depth").filter(|depth| depth.is_u64()),
+        lineage.get("starter").and_then(Value::as_object),
+        root.is_null(),
+    ) else {
+        return Value::Null;
+    };
+    let text = |key: &str| {
+        starter
+            .get(key)
+            .filter(|value| value.is_string())
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let parent = project_session_ref(lineage.get("parent"));
+    let adopted = project_session_ref(
+        view.get("lineage_adoption")
+            .and_then(|adoption| adoption.get("adopted_by")),
+    );
+    let effective_parent = if adopted.is_null() {
+        parent.clone()
+    } else {
+        adopted
+    };
+    json!({
+        "parent": parent,
+        "effective_parent": effective_parent,
+        "root": root,
+        "depth": depth,
+        "starter": {"kind": text("kind"), "via": text("via")},
+        "budget": lineage.get("budget").cloned().unwrap_or(Value::Null),
+    })
+}
+
+/// `work` of a board record: program, issues and whether they were inherited.
+/// `null` for a session without work references.
+fn project_work(view: &Map<String, Value>) -> Value {
+    let Some(work) = view.get("work").and_then(Value::as_object) else {
+        return Value::Null;
+    };
+    json!({
+        "program": work.get("program").filter(|value| value.is_object()).cloned().unwrap_or(Value::Null),
+        "issues": work.get("issues").filter(|value| value.is_array()).cloned().unwrap_or_else(|| json!([])),
+        "inherited": work.get("inherited").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 /// Allowlisted `turn_state` subset; unknown upstream fields are dropped.
@@ -346,16 +435,18 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    const RECORD_KEYS: [&str; 18] = [
+    const RECORD_KEYS: [&str; 21] = [
         "agent_profile",
         "close_reason",
         "closed_at",
         "created_at",
         "cwd",
+        "lineage",
         "machine",
         "messaging_supported",
         "provider",
         "repo_name",
+        "role",
         "runtime_status",
         "session_id",
         "session_incarnation",
@@ -365,6 +456,7 @@ mod tests {
         "title_state",
         "turn_state",
         "updated_at",
+        "work",
     ];
 
     /// A serialized `SessionView` with every excluded field populated.
@@ -482,9 +574,128 @@ mod tests {
                 "updated_at": "2030-01-01T00:04:00Z",
                 "closed_at": null,
                 "close_reason": null,
-                "summary": null
+                "summary": null,
+                "role": null,
+                "lineage": null,
+                "work": null
             })
         );
+    }
+
+    fn session_ref(id: &str) -> Value {
+        json!({"machine": "host-a", "session_id": id, "session_created_at": "2030-01-01T00:00:00Z"})
+    }
+
+    /// `full_view` of a grandchild adopted by a steward, with work.
+    fn lineage_view() -> Value {
+        let mut view = full_view();
+        view["role"] = json!("coordinator");
+        view["lineage"] = json!({
+            "schema_version": "agent-session.session-lineage.v1",
+            "machine": "host-a",
+            "parent": {
+                "machine": "host-a",
+                "session_id": "parent",
+                "session_created_at": "2030-01-01T00:00:00Z",
+                "session_incarnation": "parent-launch"
+            },
+            "root": session_ref("root"),
+            "depth": 2,
+            "starter": {"kind": "session", "via": "console"},
+            "budget": null
+        });
+        view["work"] = json!({
+            "program": {"provider": "github", "repository": "o/laoda", "number": 44},
+            "issues": [{"provider": "github", "repository": "o/nils-cli", "number": 2032}],
+            "inherited": true,
+            "revision": 3
+        });
+        view
+    }
+
+    #[test]
+    fn lineage_work_and_role_are_projected_without_incarnations() {
+        let record = project_record(&lineage_view(), "host-a", None, false).expect("record");
+        assert_eq!(keys(&record), RECORD_KEYS.to_vec());
+        assert_eq!(record["role"], "coordinator");
+        assert_eq!(
+            record["lineage"],
+            json!({
+                "parent": session_ref("parent"),
+                "effective_parent": session_ref("parent"),
+                "root": session_ref("root"),
+                "depth": 2,
+                "starter": {"kind": "session", "via": "console"},
+                "budget": null
+            })
+        );
+        assert_eq!(
+            record["work"],
+            json!({
+                "program": {"provider": "github", "repository": "o/laoda", "number": 44},
+                "issues": [{"provider": "github", "repository": "o/nils-cli", "number": 2032}],
+                "inherited": true
+            })
+        );
+    }
+
+    #[test]
+    fn the_spec_lineage_example_round_trips() {
+        let example = spec_example("A session with lineage and work looks like this");
+        let mut view = lineage_view();
+        view["work"]["program"] = example["work"]["program"].clone();
+        view["work"]["issues"] = example["work"]["issues"].clone();
+        let record = project_record(&view, "host-a", None, false).expect("record");
+        for key in ["role", "lineage", "work"] {
+            assert_eq!(record[key], example[key], "{key}");
+        }
+    }
+
+    #[test]
+    fn the_effective_parent_is_the_adopting_steward() {
+        let mut view = lineage_view();
+        view["lineage_adoption"] = json!({
+            "adopted_by": {
+                "machine": "host-b",
+                "session_id": "steward",
+                "session_created_at": "2030-02-02T00:00:00Z",
+                "session_incarnation": "steward-launch"
+            },
+            "revision": 1,
+            "updated_at": "2030-02-02T00:00:00Z"
+        });
+        let record = project_record(&view, "host-a", None, false).expect("record");
+        assert_eq!(record["lineage"]["parent"], session_ref("parent"));
+        assert_eq!(
+            record["lineage"]["effective_parent"],
+            json!({"machine": "host-b", "session_id": "steward", "session_created_at": "2030-02-02T00:00:00Z"})
+        );
+        // A cleared adoption falls back to the parent.
+        view["lineage_adoption"]["adopted_by"] = Value::Null;
+        let record = project_record(&view, "host-a", None, false).expect("record");
+        assert_eq!(record["lineage"]["effective_parent"], session_ref("parent"));
+    }
+
+    #[test]
+    fn a_root_session_has_null_parents_and_a_malformed_lineage_is_null() {
+        let mut view = lineage_view();
+        view["lineage"]["parent"] = Value::Null;
+        view["lineage"]["depth"] = json!(0);
+        let record = project_record(&view, "host-a", None, false).expect("record");
+        assert_eq!(record["lineage"]["parent"], Value::Null);
+        assert_eq!(record["lineage"]["effective_parent"], Value::Null);
+        assert_eq!(record["lineage"]["depth"], 0);
+
+        for mutate in [
+            (|view: &mut Value| view["lineage"]["depth"] = json!("2")) as fn(&mut Value),
+            |view| view["lineage"]["root"] = Value::Null,
+            |view| view["lineage"]["starter"] = json!("session"),
+        ] {
+            let mut view = lineage_view();
+            mutate(&mut view);
+            let record = project_record(&view, "host-a", None, false).expect("record");
+            assert_eq!(record["lineage"], Value::Null);
+        }
     }
 
     /// The first JSON example after `heading` in the normative spec.
@@ -673,6 +884,63 @@ mod tests {
         assert_eq!(closed["session_incarnation"], "live-incarnation");
         assert_eq!(closed["cwd"], Value::Null);
         assert_eq!(closed["updated_at"], "2030-01-01T00:04:00Z");
+    }
+
+    #[test]
+    fn a_closed_record_keeps_its_lineage_work_and_role() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let mut record = stored_session(&context, "closing-child");
+        record.role = Some("coordinator".to_string());
+        record.lineage = serde_json::from_value(json!({
+            "schema_version": "agent-session.session-lineage.v1",
+            "machine": "host-a",
+            "parent": session_ref("root"),
+            "root": session_ref("root"),
+            "depth": 1,
+            "starter": {"kind": "session", "via": "cli"},
+            "budget": null
+        }))
+        .expect("lineage");
+        record.work = serde_json::from_value(json!({
+            "program": null,
+            "issues": [{"provider": "github", "repository": "o/r", "number": 1}],
+            "inherited": false,
+            "revision": 1
+        }))
+        .expect("work");
+        let closed = closed_record(&context, &record, CloseReason::Deleted).expect("closed");
+        assert_eq!(closed["role"], "coordinator");
+        assert_eq!(closed["lineage"]["root"], session_ref("root"));
+        assert_eq!(closed["lineage"]["effective_parent"], session_ref("root"));
+        assert_eq!(
+            closed["work"],
+            json!({
+                "program": null,
+                "issues": [{"provider": "github", "repository": "o/r", "number": 1}],
+                "inherited": false
+            })
+        );
+        // The ledger serves it with the rest; an entry closed before these
+        // members existed reads back with nulls.
+        record_close(&context, Some(closed));
+        let mut legacy = project_record(&full_view(), "", None, false).expect("legacy");
+        legacy.as_object_mut().expect("object").remove("role");
+        legacy.as_object_mut().expect("object").remove("lineage");
+        legacy.as_object_mut().expect("object").remove("work");
+        legacy["state"] = json!("closed");
+        legacy["session_id"] = json!("legacy");
+        ledger::append(&context, legacy).expect("append legacy");
+        let read = super::closed(&context, None, "host-a").expect("closed");
+        assert_eq!(read["extensions"], json!(EXTENSIONS));
+        let entries = read["entries"].as_array().expect("entries");
+        assert_eq!(entries[0]["record"]["role"], "coordinator");
+        for key in ["role", "lineage", "work"] {
+            assert_eq!(entries[1]["record"][key], Value::Null, "{key}");
+        }
     }
 
     #[test]

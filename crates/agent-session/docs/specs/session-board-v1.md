@@ -111,15 +111,42 @@ Every board surface carries records with this shape. The record has no
   "updated_at": "2030-01-01T00:04:00Z",
   "closed_at": null,
   "close_reason": null,
-  "summary": null
+  "summary": null,
+  "role": null,
+  "lineage": null,
+  "work": null
 }
 ```
 
 Timestamps are RFC 3339 UTC strings, as in `SessionView`. Every field is
-always present; an unavailable value is `null`, never omitted. The only
-optional member is the aggregator annotation `console_owner` described in
-[Aggregator annotations](#aggregator-annotations), which is not a board-record
-field.
+always present; an unavailable value is `null`, never omitted. The optional
+members are the aggregator annotations `console_owner`, `orphaned`, and
+`subtree` described in [Aggregator annotations](#aggregator-annotations),
+which are not board-record fields.
+
+`role`, `lineage`, and `work` are additive `lineage.v1` and `work.v1`
+extensions (see [Extensions](#extensions)). Each is `null` when the session
+has none, or when the record comes from a daemon or ledger entry that predates
+the extension. A session with lineage and work looks like this:
+
+```json
+{
+  "role": "coordinator",
+  "lineage": {
+    "parent": {"machine": "host-a", "session_id": "parent", "session_created_at": "2030-01-01T00:00:00Z"},
+    "effective_parent": {"machine": "host-a", "session_id": "parent", "session_created_at": "2030-01-01T00:00:00Z"},
+    "root": {"machine": "host-a", "session_id": "root", "session_created_at": "2030-01-01T00:00:00Z"},
+    "depth": 2,
+    "starter": {"kind": "session", "via": "console"},
+    "budget": null
+  },
+  "work": {
+    "program": {"provider": "github", "repository": "owner/program", "number": 44},
+    "issues": [{"provider": "github", "repository": "owner/repo", "number": 2032}],
+    "inherited": true
+  }
+}
+```
 
 ### Field sources
 
@@ -152,13 +179,18 @@ field.
 | Lifecycle | `updated_at` | string | `SessionView.updated_at`; on a closed record, the last value before close. |
 | Lifecycle | `closed_at` | string or null | New. The ledger append time for `deleted` or `archived`; the aggregator's first confirmed absence for `vanished`. `null` unless `state` is `closed`. |
 | Lifecycle | `close_reason` | string or null | New. `deleted`, `archived`, `exited`, or `vanished`. See [Close reasons](#close-reasons). `null` unless `state` is `closed`. |
+| Role | `role` | string or null | `SessionView.role`: `coordinator`, or `null`. See [session-lineage-work-v1](session-lineage-work-v1.md#role). |
+| Lineage | `lineage` | object or null | `SessionView.lineage` and `SessionView.lineage_adoption`, projected to `{parent, effective_parent, root, depth, starter, budget}`; `null` for a session started before lineage existed. References are `{machine, session_id, session_created_at}` and never carry an incarnation. `parent` is `null` for a root; `effective_parent` is the adopting steward when `lineage adopt` named one, otherwise `parent`; `root` is the session itself for a root; `depth` is 0 for a root; `starter` is `{kind, via}`; `budget` is the stored subtree budget, or `null`. See [session-lineage-work-v1](session-lineage-work-v1.md#lineage). |
+| Work | `work` | object or null | `SessionView.work`, projected to `{program, issues, inherited}` (provider references `{provider, repository, number}`); `null` for a session with no program or issue. The revision is not exposed. See [session-lineage-work-v1](session-lineage-work-v1.md#work). |
 | Reserved | `summary` | string or null | Reserved for the `agent-session.work-context.v1` `summary` (at most 240 UTF-8 bytes). v1 producers always emit `null`; v1 consumers accept a string or `null` and must not depend on it. |
 
 Any `SessionView` field not in this table is excluded, in particular
 `last_prompt`, transcripts, pane content, `attach_command`,
 `ssh_attach_command`, `tmux_session`, `prompt_file`, `log_file`, provider
 resume identity, Codex account data, work-context scopes and claims, mailbox
-counts, capabilities, and orchestration projections. Unknown upstream
+counts, capabilities, and orchestration projections. The bounded `role`,
+`lineage`, and `work` objects above replace none of these: they name
+sessions and public provider references only. Unknown upstream
 `turn_state` fields are dropped, not passed through.
 
 ### Lifecycle states
@@ -227,6 +259,23 @@ the aggregated value has the exact `agent-session.remote-peers.v1` meaning. The
 value describes whether the target can receive, never whether the caller may
 send; a cross-principal send is still rejected by the relay ownership checks.
 
+## Extensions
+
+The v1 envelopes (`agent-session.board.v1`, `agent-session.board-closed.v1`,
+and `agent-session.board-view.v1`) carry `extensions`, an array of strings
+naming the additive capabilities the producer supports:
+
+| Extension | Adds |
+| --- | --- |
+| `lineage.v1` | Record `role` and `lineage`; aggregator annotations `orphaned` and `subtree`; the `root` query filter. |
+| `work.v1` | Record `work`. |
+
+A reader feature-detects from this list, never from the presence of a record
+field, and ignores strings it does not know. A producer that predates an
+extension omits the list, and its records carry no such field; a reader then
+treats the field as `null`. Adding an extension never changes the schema
+strings, so a deployed reader that requires the exact v1 strings keeps working.
+
 ## Daemon local snapshot
 
 `GET /board/v1` returns the daemon's local `live` and `stopped` records.
@@ -242,6 +291,7 @@ send; a cross-principal send is still rejected by the relay ownership checks.
   "schema_version": "agent-session.board.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
+  "extensions": ["lineage.v1", "work.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "ledger_cursor": "opaque",
   "records": [],
@@ -332,6 +382,10 @@ Pruning runs on every append and read. Eviction is safe here, unlike
 coordination receipts, because a consumer that missed evicted entries is told
 so by `board-cursor-expired`.
 
+Closed records keep `role`, `lineage`, and `work`, so a tree view can show
+recently closed children. A ledger entry written before those members existed
+is served with them as `null`.
+
 ### Read
 
 `GET /board/closed/v1?since=<cursor>` returns retained entries with `seq`
@@ -344,6 +398,7 @@ result in `data.board_closed`:
   "schema_version": "agent-session.board-closed.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
+  "extensions": ["lineage.v1", "work.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "entries": [{"cursor": "opaque", "record": {}}],
   "next_cursor": "opaque"
@@ -380,7 +435,7 @@ On `board-cursor-expired` the consumer discards its cursor and resynchronizes:
 
 ## Relay route
 
-`GET /sessions/{id}/board/v1?state=&since=&repo=&machine=` forwards a board
+`GET /sessions/{id}/board/v1?state=&since=&repo=&machine=&root=` forwards a board
 query from a managed session to the aggregator.
 
 - Authority: the current local session capability in
@@ -390,7 +445,7 @@ query from a managed session to the aggregator.
 - Configuration: the existing federation values `AGENT_SESSION_RELAY_URL` and
   `AGENT_SESSION_RELAY_TOKEN`. The daemon calls
   `GET {AGENT_SESSION_RELAY_URL}/api/coordination/board/v1` with the relay
-  token as bearer, forwarding the four filters unchanged and adding
+  token as bearer, forwarding the five filters unchanged and adding
   `source_session_id` and `source_incarnation`, as peer discovery does. The
   board adds **no new secret**: the ingress token keeps its existing meaning
   and is not used by board routes, and the existing rule that the operator
@@ -471,6 +526,7 @@ session, as described in [Principal scope](#principal-scope).
 | `since` | duration `<n><unit>`, unit `m`, `h`, `d`, `w`, or `mo` (31 days) | the configured retention | Keeps `stopped` rows by `updated_at` and `closed` rows by `closed_at` within the window. `live` rows are always kept. |
 | `repo` | string | none | Exact, case-sensitive match on `repo_name`. |
 | `machine` | string | none | Exact match on `machine`. |
+| `root` | session id | none | Only the session tree of that root: the record whose `session_id` is the id, and every record whose `lineage.root.session_id` is the id. Needs `lineage.v1`. |
 
 `since` is capped by the aggregator's configured retention. The default
 retention is `3d`, and a deployment may configure `7d`, `2w`, or `1mo`
@@ -492,6 +548,7 @@ bearer is HTTP 401 or 403.
 {
   "schema_version": "agent-session.board-view.v1",
   "record_schema": "agent-session.board-record.v1",
+  "extensions": ["lineage.v1", "work.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "retention": "3d",
   "effective_since": "2029-12-29T00:05:00Z",
@@ -544,6 +601,22 @@ board-record field:
 
 Whether an aggregator populates it is the aggregator's choice.
 
+With `lineage.v1` an aggregator view, and CLI local mode for its one machine,
+may add two more annotations:
+
+- `orphaned` (bool): `true` on a non-closed record whose `lineage.effective_parent`
+  is a closed record, or is absent from every live machine, so the tree still
+  groups it under its `root` after an intermediate session disappears. A
+  record with no effective parent is not orphaned. Children keep their `root`.
+  CLI local mode sees one machine, so it judges only a parent that is closed
+  or named with that machine's label; a parent on another machine is never
+  reported as missing from here.
+- `subtree` (`{live, stopped}`): on a record that is its own root, the number
+  of other non-closed records whose `lineage.root` is it.
+
+Both are display-only and never authorize anything. Like `console_owner`, a
+daemon never emits them; the relay route passes them through unchanged.
+
 ### Principal scope
 
 The aggregator stores every record from every configured machine, whoever
@@ -583,7 +656,7 @@ and CLI never call that route.
 ## CLI
 
 ```text
-agent-session board [--state live|stopped|closed|all] [--since <dur>] [--repo <name>] [--machine <name>] [--format text|json]
+agent-session board [--state live|stopped|closed|all] [--since <dur>] [--repo <name>] [--machine <name>] [--root <session-id>] [--format text|json]
 ```
 
 Filters have the meanings in [Query](#query). `--state` defaults to `all`;

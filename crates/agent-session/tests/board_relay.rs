@@ -813,6 +813,20 @@ fn relay_route_requires_the_current_session_capability_and_known_filters() {
         aggregator.seen()[0].query()[0],
         ("state".into(), "closed".into())
     );
+
+    // The root filter is forwarded to the aggregator like the others.
+    aggregator.reply_json(200, &view());
+    let (status, body) = serve.get(
+        &format!("{route}?state=all&root=root-session"),
+        Some(CAPABILITY),
+    );
+    assert_eq!(status, 200, "{body}");
+    let seen = aggregator.seen();
+    let query = seen.last().expect("request").query();
+    assert!(
+        query.contains(&("root".into(), "root-session".into())),
+        "{query:?}"
+    );
 }
 
 #[test]

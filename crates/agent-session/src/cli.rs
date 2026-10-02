@@ -387,6 +387,11 @@ pub struct BoardArgs {
     #[arg(long, value_name = "NAME")]
     pub machine: Option<String>,
 
+    /// Only the session tree of this root session id: the root itself and
+    /// every session whose lineage names it as root.
+    #[arg(long, value_name = "SESSION_ID")]
+    pub root: Option<String>,
+
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
