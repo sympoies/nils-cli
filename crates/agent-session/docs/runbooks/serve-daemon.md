@@ -157,6 +157,43 @@ The server owns executable paths, provider configuration roots, readiness
 commands, and auto-resume capability. Clients select only advertised safe IDs
 and cannot override those private fields.
 
+### Codex session configuration
+
+Managed Codex sessions start a session-owned `codex app-server` child and a
+visible TUI connected through a private proxy with `--remote`. The two
+processes inherit the same configuration root. Explicit `agent_args`
+configuration flags now reach both processes: `-c key=value`, `--config
+key=value`, their attached forms (`-ckey=value`, `--config=key=value`), and
+`--enable` / `--disable` feature flags. Codex parses the TOML values and applies
+its normal precedence and managed requirements. Arguments after `--` remain
+literal TUI input.
+
+For example, a create request can supply
+`"agent_args": ["-c", "model_auto_compact_token_limit=40000"]`. The server
+resolves that session's compaction limit without editing a shared config file.
+Other explicit configuration, including `model_context_window`,
+`model_provider`, and dotted `model_providers` entries, follows the same path.
+Runtime recreation reapplies the stored arguments; a default session receives
+no overrides from a neighboring session. Existing live runtimes keep their
+startup configuration until recreated.
+
+The remote TUI forwards model/provider, service tier, approval/sandbox choices,
+and selected reasoning, permission, environment, and feature settings through
+the thread API. It does not forward every local setting: in Codex 0.160.0,
+compaction limits and context windows require the server configuration above.
+The protocol accepts a per-thread `config` map, but the launcher uses native
+server flags to preserve Codex's parser and the existing child lifecycle.
+
+Codex TUI `--profile` selects a configuration profile for the TUI; it does not
+select that profile for the app-server. Use explicit `-c` values for
+server-resolved settings. An agent-session launch profile can instead select a
+server-owned configuration root for both processes. Console clients must
+preserve `agent_args` in the create request: a client that discards arguments
+when selecting a launch profile must put the settings in that profile's
+configuration root or launcher.
+Plain local CLI starts that use the raw TUI already apply `-c` directly;
+`start --via-console` uses the managed path described here.
+
 ## Use the control plane
 
 The main endpoint groups are:
