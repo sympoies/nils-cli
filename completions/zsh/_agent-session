@@ -50,6 +50,7 @@ off\:"Disable agent-session collision warnings and admission"))' \
 '--machine=[Target machine for --via-console, as Agent Console names it. Defaults to this daemon'\''s machine]:MACHINE:_default' \
 '--account=[Account for --via-console, as the target daemon'\''s account broker names it\: a Codex account for --agent codex or a Claude account for --agent claude]:NAME:_default' \
 '--agent-profile=[Launch profile for --via-console, as the target daemon advertises it. A profile owns its launch command, so Agent Console ignores --agent-arg with it]:ID:_default' \
+'--role=[Mark this session as a coordinator. Stored once at start and never inherited by its children]:ROLE:(coordinator)' \
 '--program=[Work-mode program tracker issue this session belongs to, as OWNER/REPO#N. Replaces the inherited program]:OWNER/REPO#N:_default' \
 '*--issue=[Issue this session works on, as OWNER/REPO#N. Repeatable, at most 4; replaces the inherited issues]:OWNER/REPO#N:_default' \
 '--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
