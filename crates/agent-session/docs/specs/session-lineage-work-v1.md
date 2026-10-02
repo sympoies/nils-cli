@@ -340,9 +340,9 @@ number of sessions may hold it at once, for example during a handoff overlap.
   `session` itself is replaced. The aggregator forwards it in the target
   daemon's `POST /sessions` body.
 - `POST /sessions` accepts an optional `role`, stored verbatim after
-  validation. Any value other than `"coordinator"` fails with HTTP 400
-  `role-invalid` before anything is created. The create response's `session`
-  echoes it.
+  validation. Any string other than `"coordinator"` fails with HTTP 400
+  `role-invalid` before anything is created; a `role` that is not a string is
+  refused by request parsing. The create response's `session` echoes it.
 - `role` is descriptive, like lineage: it authorizes nothing.
 
 ## Read surfaces
