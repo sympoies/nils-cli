@@ -73,7 +73,9 @@ through folding; keep that comment intact.
 even if the writer setting is unset. Fragment search results carry their real
 `pending/...md` path (also in the JSON match's optional `path` field), and
 `--month` includes fragments when that month's file does not yet exist.
-`index` adds a separate `## Pending` link list; authors need not run it after
+`index` adds a separate `## Pending` link list, marked with a
+`devlog-pending-index` HTML comment so an existing month-layout repository
+keeps its own `Pending` prose intact when no fragments exist. Authors need not run it after
 `new`, so parallel PRs can leave shared files untouched. `check` accepts that
 pending list being absent or not yet refreshed.
 
@@ -109,7 +111,9 @@ pending. Month entries sort by date descending, then slug ascending; existing
 entries without an identity comment use their date and exact title as identity
 and their title as the ordering tie-breaker. Prose before the first entry and
 entry bodies survive. Duplicate identities or incompatible content are refused
-before any file is written. Files that would be rewritten must be regular
+before any file is written. Source fragments remain until all required month
+and index writes succeed, so a retry after an index-write failure finishes the
+same fold without duplicating already-copied identities. Files that would be rewritten must be regular
 files, and malformed fragments or unresolved conflicts are refused.
 
 The same content and cutoff date produce identical files in independent

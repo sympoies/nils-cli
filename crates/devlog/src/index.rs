@@ -96,11 +96,8 @@ pub fn sync(devlog: &Devlog) -> Result<IndexUpdate, DevlogError> {
         });
     }
 
-    let mut updated = replace_months_section(&contents, &scan.months);
     let pending = crate::fragments::pending_index(devlog)?;
-    if !pending.is_empty() || updated.lines().any(|line| line == "## Pending") {
-        updated = replace_section(&updated, "## Pending", &pending);
-    }
+    let updated = render_index(&contents, &scan.months, &pending);
     let changed = updated != contents;
     if changed {
         std::fs::write(&path, &updated).map_err(|source| DevlogError::Io {
@@ -112,6 +109,22 @@ pub fn sync(devlog: &Devlog) -> Result<IndexUpdate, DevlogError> {
     let mut months = scan.months;
     months.sort_by(|a, b| b.cmp(a));
     Ok(IndexUpdate { changed, months })
+}
+
+/// Plan generated sections without changing repository-authored sections.
+/// The marker distinguishes a generated Pending section from ordinary prose.
+pub(crate) fn render_index(contents: &str, months: &[Month], pending: &str) -> String {
+    const MARKER: &str = "<!-- devlog-pending-index -->";
+    let mut updated = replace_months_section(contents, months);
+    if !pending.is_empty() || contents.lines().any(|line| line == MARKER) {
+        let rendered = if pending.is_empty() {
+            MARKER.to_string()
+        } else {
+            format!("{MARKER}\n\n{pending}")
+        };
+        updated = replace_section(&updated, "## Pending", &rendered);
+    }
+    updated
 }
 
 /// Byte range of the `## Months` section body, and the offset just past its

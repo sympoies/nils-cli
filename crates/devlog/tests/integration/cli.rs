@@ -62,7 +62,9 @@ fn git(root: &Path, args: &[&str]) {
 
 fn run_in(root: &Path, args: &[&str]) -> CmdOutput {
     let binary = bin::resolve("devlog");
-    let options = CmdOptions::new().with_cwd(root);
+    let options = CmdOptions::new()
+        .with_cwd(root)
+        .with_env_remove("DEVLOG_LAYOUT");
     run_with(&binary, args, &options)
 }
 

@@ -201,10 +201,11 @@ pub fn fold(devlog: &Devlog, today: EntryDate) -> Result<FoldReport, DevlogError
             "fold requires a regular index file",
         ));
     }
-    std::fs::read_to_string(devlog.index_path()).map_err(|source| DevlogError::Io {
-        path: devlog.index_path(),
-        source,
-    })?;
+    let index_contents =
+        std::fs::read_to_string(devlog.index_path()).map_err(|source| DevlogError::Io {
+            path: devlog.index_path(),
+            source,
+        })?;
     let fragments: Vec<_> = paths(devlog)?
         .iter()
         .map(|p| load(p))
@@ -247,9 +248,24 @@ pub fn fold(devlog: &Devlog, today: EntryDate) -> Result<FoldReport, DevlogError
             doc.add(fragment.entry.clone(), &path)?;
         }
     }
+    let mut months = devlog.months()?.months;
+    months.extend(documents.keys().copied());
+    months.sort();
+    months.dedup();
+    let pending = render_pending(fragments.iter().filter(|f| f.entry.date >= today));
+    let updated_index = crate::index::render_index(&index_contents, &months, &pending);
+    let index_updated = updated_index != index_contents;
     for (month, doc) in &documents {
         let path = devlog.month_path(*month);
         std::fs::write(&path, doc.render()).map_err(|source| DevlogError::Io { path, source })?;
+    }
+    // Keep every source until both destinations exist. If a write fails, retry
+    // recognizes an already-copied identity and finishes the same fold.
+    if index_updated {
+        std::fs::write(devlog.index_path(), &updated_index).map_err(|source| DevlogError::Io {
+            path: devlog.index_path(),
+            source,
+        })?;
     }
     for fragment in &selected {
         std::fs::remove_file(&fragment.path).map_err(|source| DevlogError::Io {
@@ -257,11 +273,10 @@ pub fn fold(devlog: &Devlog, today: EntryDate) -> Result<FoldReport, DevlogError
             source,
         })?;
     }
-    let update = crate::index::sync(devlog)?;
     Ok(FoldReport {
         folded: selected.len(),
         months: documents.keys().map(ToString::to_string).collect(),
-        index_updated: update.changed,
+        index_updated,
     })
 }
 
@@ -282,8 +297,17 @@ pub(crate) fn immutability(
     devlog: &Devlog,
     base: Option<&str>,
 ) -> Result<Vec<Problem>, DevlogError> {
-    let dir = devlog.dir().strip_prefix(devlog.repo_root()).ok();
-    let Some(dir) = dir else {
+    // Compare physical paths without changing the established --dir display
+    // behavior. Relative directories are resolved against the caller's cwd.
+    let root = std::fs::canonicalize(devlog.repo_root()).map_err(|source| DevlogError::Io {
+        path: devlog.repo_root().to_path_buf(),
+        source,
+    })?;
+    let directory = std::fs::canonicalize(devlog.dir()).map_err(|source| DevlogError::Io {
+        path: devlog.dir().to_path_buf(),
+        source,
+    })?;
+    let Some(dir) = directory.strip_prefix(&root).ok() else {
         return Ok(Vec::new());
     }; // External logs have no baseline in this repository.
     let pending = dir.join("pending").to_string_lossy().replace('\\', "/");
@@ -363,19 +387,23 @@ pub(crate) fn pending_index(devlog: &Devlog) -> Result<String, DevlogError> {
         .iter()
         .map(|p| load(p))
         .collect::<Result<_, _>>()?;
-    let mut fragments = fragments;
+    Ok(render_pending(fragments.iter()))
+}
+
+fn render_pending<'a>(fragments: impl Iterator<Item = &'a Fragment>) -> String {
+    let mut fragments: Vec<_> = fragments.collect();
     fragments.sort_by(|a, b| {
         b.entry
             .date
             .cmp(&a.entry.date)
             .then(a.entry.slug.cmp(&b.entry.slug))
     });
-    Ok(fragments
+    fragments
         .iter()
         .map(|fragment| {
             let name = fragment.path.file_name().unwrap().to_string_lossy();
             format!("- [{}](pending/{name})", fragment.entry.identity)
         })
         .collect::<Vec<_>>()
-        .join("\n"))
+        .join("\n")
 }

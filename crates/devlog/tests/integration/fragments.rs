@@ -387,3 +387,130 @@ fn check_detects_deletion_of_the_entire_pending_directory_and_supports_explicit_
     assert_eq!(out.status.code(), Some(65));
     assert!(String::from_utf8_lossy(&out.stdout).contains("fragment-deleted"));
 }
+
+#[test]
+fn default_index_preserves_repository_pending_prose_byte_for_byte() {
+    let repo = Repo::new();
+    let out = run(
+        &repo.root,
+        false,
+        &["new", "--title", "Month entry", "--date", "2020-04-20"],
+    );
+    assert!(out.status.success());
+    let index = repo.read("README.md").trim_end().to_string()
+        + "\n\n## Pending\n\n- Repository planning prose.\n\n## Notes\n\nKeep these notes.\n";
+    std::fs::write(repo.root.join("docs/devlog/README.md"), &index).unwrap();
+    let out = run(&repo.root, false, &["index"]);
+    assert!(out.status.success());
+    assert_eq!(repo.read("README.md"), index);
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "index already current: 1 months\n"
+    );
+    let out = run(&repo.root, false, &["check"]);
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "docs/devlog: 1 months, 1 entries\nok: no structural problems\n"
+    );
+    let out = run(&repo.root, false, &["search", "Month entry"]);
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "2020-04.md:3:## 2020-04-20 - Month entry\n"
+    );
+}
+#[test]
+fn relative_dir_check_enforces_the_default_branch_baseline() {
+    let repo = Repo::new();
+    new(&repo.root, "Immutable", "2020-04-20", "immutable");
+    commit(&repo.root, "Baseline fragment");
+    git(&repo.root, &["checkout", "-qb", "change"]);
+    let path = repo
+        .root
+        .join("docs/devlog/pending/2020-04-20-immutable.md");
+    let original = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(path, original.replace("Shipped.", "Edited.")).unwrap();
+    let out = run(
+        &repo.root,
+        true,
+        &["--dir", "docs/devlog", "check", "--base", "main"],
+    );
+    assert_eq!(out.status.code(), Some(65));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("fragment-modified"));
+}
+#[test]
+fn git_driver_unions_two_branches_adding_the_first_month_file() {
+    let repo = Repo::new();
+    std::fs::write(
+        repo.root.join(".gitattributes"),
+        "docs/devlog/????-??.md merge=devlog\n",
+    )
+    .unwrap();
+    let binary = bin::resolve("devlog").canonicalize().unwrap();
+    git(
+        &repo.root,
+        &[
+            "config",
+            "merge.devlog.driver",
+            &format!("'{}' merge %O %A %B", binary.display()),
+        ],
+    );
+    commit(&repo.root, "Configure driver");
+    for branch in ["alpha", "beta"] {
+        git(&repo.root, &["checkout", "-qb", branch, "main"]);
+        new(&repo.root, "Same title", "2020-04-20", branch);
+        success(&repo.root, &["fold"]);
+        commit(&repo.root, "First month entry");
+    }
+    git(&repo.root, &["checkout", "-q", "alpha"]);
+    git(&repo.root, &["merge", "--no-edit", "beta"]);
+    let month = repo.read("2020-04.md");
+    for slug in ["alpha", "beta"] {
+        assert_eq!(
+            month
+                .matches(&format!("<!-- devlog-id: 2020-04-20-{slug} -->"))
+                .count(),
+            1
+        );
+    }
+    assert_eq!(month.matches("- Shipped.").count(), 2);
+    assert!(month.find("-alpha -->").unwrap() < month.find("-beta -->").unwrap());
+    success(&repo.root, &["check"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_fold_index_update_keeps_fragments_for_a_convergent_retry() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    new(&repo.root, "Recoverable", "2020-04-20", "recoverable");
+    let index = repo.root.join("docs/devlog/README.md");
+    std::fs::set_permissions(&index, std::fs::Permissions::from_mode(0o444)).unwrap();
+    // A privileged runner can write a read-only file; this permission-based
+    // failure scenario exists only when the filesystem enforces its mode.
+    if std::fs::OpenOptions::new().write(true).open(&index).is_ok() {
+        std::fs::set_permissions(&index, std::fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
+    let out = run(&repo.root, true, &["fold"]);
+    std::fs::set_permissions(&index, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(!out.status.success());
+    assert!(
+        repo.root
+            .join("docs/devlog/pending/2020-04-20-recoverable.md")
+            .exists(),
+        "failed index update must retain the source fragment"
+    );
+    success(&repo.root, &["fold"]);
+    assert_eq!(
+        repo.read("2020-04.md").matches("- Recoverable\n").count(),
+        1
+    );
+    assert!(repo.read("README.md").contains("- [2020-04](2020-04.md)"));
+    assert!(
+        !repo
+            .root
+            .join("docs/devlog/pending/2020-04-20-recoverable.md")
+            .exists()
+    );
+    success(&repo.root, &["check"]);
+}
