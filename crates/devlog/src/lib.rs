@@ -12,3 +12,7 @@ pub mod model;
 pub mod search;
 
 pub use model::{Devlog, DevlogError, EntryDate, Month};
+
+mod document;
+pub mod fragments;
+pub mod merge;

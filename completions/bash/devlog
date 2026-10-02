@@ -25,11 +25,17 @@ _devlog() {
             devlog,fix)
                 cmd="devlog__fix"
                 ;;
+            devlog,fold)
+                cmd="devlog__fold"
+                ;;
             devlog,help)
                 cmd="devlog__help"
                 ;;
             devlog,index)
                 cmd="devlog__index"
+                ;;
+            devlog,merge)
+                cmd="devlog__merge"
                 ;;
             devlog,new)
                 cmd="devlog__new"
@@ -46,11 +52,17 @@ _devlog() {
             devlog__help,fix)
                 cmd="devlog__help__fix"
                 ;;
+            devlog__help,fold)
+                cmd="devlog__help__fold"
+                ;;
             devlog__help,help)
                 cmd="devlog__help__help"
                 ;;
             devlog__help,index)
                 cmd="devlog__help__index"
+                ;;
+            devlog__help,merge)
+                cmd="devlog__help__merge"
                 ;;
             devlog__help,new)
                 cmd="devlog__help__new"
@@ -65,7 +77,7 @@ _devlog() {
 
     case "${cmd}" in
         devlog)
-            opts="-h -V --format --dir --help --version new search check fix index completion help"
+            opts="-h -V --format --dir --help --version new search check fold merge fix index completion help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -87,12 +99,16 @@ _devlog() {
             return 0
             ;;
         devlog__check)
-            opts="-h --format --dir --help"
+            opts="-h --base --format --dir --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --base)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
@@ -152,8 +168,30 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        devlog__fold)
+            opts="-h --format --dir --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --dir)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         devlog__help)
-            opts="new search check fix index completion help"
+            opts="new search check fold merge fix index completion help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -208,6 +246,20 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        devlog__help__fold)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         devlog__help__help)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
@@ -223,6 +275,20 @@ _devlog() {
             return 0
             ;;
         devlog__help__index)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        devlog__help__merge)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -286,14 +352,40 @@ _devlog() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        devlog__merge)
+            opts="-h --format --dir --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --dir)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         devlog__new)
-            opts="-h --title --date --result --why --evidence --link --follow-up --format --dir --help"
+            opts="-h --title --slug --date --result --why --evidence --link --follow-up --format --dir --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
                 --title)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --slug)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

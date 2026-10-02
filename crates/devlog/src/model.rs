@@ -338,6 +338,12 @@ pub enum DevlogError {
         source: std::io::Error,
     },
     NotAGitWorkTree,
+    InvalidLayout,
+    InvalidContent {
+        path: PathBuf,
+        detail: String,
+    },
+    BaselineUnavailable,
 }
 
 /// Line prefixes git writes into a file it could not merge.
@@ -494,6 +500,9 @@ impl DevlogError {
             Self::ConflictMarkers { .. } => "conflict-markers",
             Self::Io { .. } => "io-error",
             Self::NotAGitWorkTree => "not-a-git-work-tree",
+            Self::InvalidLayout => "invalid-layout",
+            Self::InvalidContent { .. } => "invalid-content",
+            Self::BaselineUnavailable => "baseline-unavailable",
         }
     }
 }
@@ -533,6 +542,12 @@ impl fmt::Display for DevlogError {
             Self::Io { path, source } => {
                 write!(f, "{}: {source}", path.display())
             }
+            Self::InvalidLayout => write!(f, "DEVLOG_LAYOUT must be months or fragments"),
+            Self::InvalidContent { path, detail } => write!(f, "{}: {detail}", path.display()),
+            Self::BaselineUnavailable => write!(
+                f,
+                "cannot resolve the default branch; fetch it or pass check --base <ref>"
+            ),
             Self::NotAGitWorkTree => {
                 write!(f, "must run inside a git work tree")
             }

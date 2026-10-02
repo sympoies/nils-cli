@@ -34,6 +34,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
             (new)
 _arguments "${_arguments_options[@]}" : \
 '--title=[Entry title, rendered after the date in the entry heading]:TITLE:_default' \
+'--slug=[Stable unique fragment slug (fragment layout only; defaults to a unique suffix)]:SLUG:_default' \
 '--date=[Entry date (defaults to today)]:YYYY-MM-DD:_default' \
 '*--result=[A \`Result\` bullet (repeatable)]:TEXT:_default' \
 '*--why=[A \`Why / context\` bullet (repeatable)]:TEXT:_default' \
@@ -60,11 +61,33 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (check)
 _arguments "${_arguments_options[@]}" : \
+'--base=[Default-branch ref for fragment immutability (auto-detected when omitted)]:BASE:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--dir=[Devlog directory. Defaults to detecting docs/devlog or docs/source/devlog]:DIR:_files' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(fold)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--dir=[Devlog directory. Defaults to detecting docs/devlog or docs/source/devlog]:DIR:_files' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(merge)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--dir=[Devlog directory. Defaults to detecting docs/devlog or docs/source/devlog]:DIR:_files' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':base:_files' \
+':ours:_files' \
+':theirs:_files' \
 && ret=0
 ;;
 (fix)
@@ -119,6 +142,14 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(fold)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(merge)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (fix)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -150,6 +181,8 @@ _devlog_commands() {
 'new:Add an entry to its month file, creating the file and index link when absent' \
 'search:Search entries for a literal, case-insensitive term' \
 'check:Report structural problems\: month filenames, index drift, entry shape, ordering' \
+'fold:Fold pending entries dated before today into deterministically sorted month files' \
+'merge:Three-way Git merge driver\: base, ours (overwritten), theirs' \
 'fix:Repair the structural problems that have one correct repair, and report the rest' \
 'index:Rewrite the README month index from the tracked month files' \
 'completion:Export shell completion script' \
@@ -172,12 +205,19 @@ _devlog__subcmd__fix_commands() {
     local commands; commands=()
     _describe -t commands 'devlog fix commands' commands "$@"
 }
+(( $+functions[_devlog__subcmd__fold_commands] )) ||
+_devlog__subcmd__fold_commands() {
+    local commands; commands=()
+    _describe -t commands 'devlog fold commands' commands "$@"
+}
 (( $+functions[_devlog__subcmd__help_commands] )) ||
 _devlog__subcmd__help_commands() {
     local commands; commands=(
 'new:Add an entry to its month file, creating the file and index link when absent' \
 'search:Search entries for a literal, case-insensitive term' \
 'check:Report structural problems\: month filenames, index drift, entry shape, ordering' \
+'fold:Fold pending entries dated before today into deterministically sorted month files' \
+'merge:Three-way Git merge driver\: base, ours (overwritten), theirs' \
 'fix:Repair the structural problems that have one correct repair, and report the rest' \
 'index:Rewrite the README month index from the tracked month files' \
 'completion:Export shell completion script' \
@@ -200,6 +240,11 @@ _devlog__subcmd__help__subcmd__fix_commands() {
     local commands; commands=()
     _describe -t commands 'devlog help fix commands' commands "$@"
 }
+(( $+functions[_devlog__subcmd__help__subcmd__fold_commands] )) ||
+_devlog__subcmd__help__subcmd__fold_commands() {
+    local commands; commands=()
+    _describe -t commands 'devlog help fold commands' commands "$@"
+}
 (( $+functions[_devlog__subcmd__help__subcmd__help_commands] )) ||
 _devlog__subcmd__help__subcmd__help_commands() {
     local commands; commands=()
@@ -209,6 +254,11 @@ _devlog__subcmd__help__subcmd__help_commands() {
 _devlog__subcmd__help__subcmd__index_commands() {
     local commands; commands=()
     _describe -t commands 'devlog help index commands' commands "$@"
+}
+(( $+functions[_devlog__subcmd__help__subcmd__merge_commands] )) ||
+_devlog__subcmd__help__subcmd__merge_commands() {
+    local commands; commands=()
+    _describe -t commands 'devlog help merge commands' commands "$@"
 }
 (( $+functions[_devlog__subcmd__help__subcmd__new_commands] )) ||
 _devlog__subcmd__help__subcmd__new_commands() {
@@ -224,6 +274,11 @@ _devlog__subcmd__help__subcmd__search_commands() {
 _devlog__subcmd__index_commands() {
     local commands; commands=()
     _describe -t commands 'devlog index commands' commands "$@"
+}
+(( $+functions[_devlog__subcmd__merge_commands] )) ||
+_devlog__subcmd__merge_commands() {
+    local commands; commands=()
+    _describe -t commands 'devlog merge commands' commands "$@"
 }
 (( $+functions[_devlog__subcmd__new_commands] )) ||
 _devlog__subcmd__new_commands() {
