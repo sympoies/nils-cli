@@ -311,12 +311,12 @@ enum Refresh {
 
 // --- provider CLI runner -------------------------------------------------------
 
-struct HelperOutput {
-    status: Option<i32>,
-    stdout: Vec<u8>,
+pub(crate) struct HelperOutput {
+    pub(crate) status: Option<i32>,
+    pub(crate) stdout: Vec<u8>,
 }
 
-enum HelperError {
+pub(crate) enum HelperError {
     Spawn,
     Timeout,
     TooLarge,
@@ -324,7 +324,7 @@ enum HelperError {
 
 /// Run a provider CLI with a closed stdin, a deadline, and bounded stdout. On
 /// the deadline the whole process group is killed; stderr is discarded.
-fn run_helper(
+pub(crate) fn run_helper(
     program: &str,
     args: &[&str],
     envs: &[(&str, String)],

@@ -139,6 +139,17 @@ impl WorkRef {
         .map_err(|_| invalid())
     }
 
+    /// The reference as `[gitlab:]owner/repo#N`, the grammar `parse` accepts;
+    /// GitHub, the default provider, has no prefix.
+    pub(crate) fn display(&self) -> String {
+        let prefix = if self.provider == "github" {
+            String::new()
+        } else {
+            format!("{}:", self.provider)
+        };
+        format!("{prefix}{}#{}", self.repository, self.number)
+    }
+
     fn canonical(self) -> Result<Self, CliError> {
         let provider = self.provider.trim().to_ascii_lowercase();
         if provider != "github" && provider != "gitlab" {

@@ -17,10 +17,12 @@ use serde_json::{Map, Value, json};
 use crate::{CliContext, CliError, SessionRecord, SessionView};
 
 mod ledger;
+mod programs;
 mod relay;
 mod view;
 
 pub(crate) use ledger::{CloseReason, cursor_invalid};
+pub(crate) use programs::ProgramCache;
 pub(crate) use relay::relay_route;
 pub(crate) use view::run;
 
@@ -29,6 +31,8 @@ pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";
 /// Additive capabilities of the v1 envelopes. A reader feature-detects from
 /// this list, never from the presence of a record field.
 pub(crate) const EXTENSIONS: [&str; 2] = ["lineage.v1", "work.v1"];
+/// What the daemon snapshot names: the extensions plus the programs route.
+const DAEMON_EXTENSIONS: [&str; 3] = ["lineage.v1", "work.v1", "programs.v1"];
 /// `AGENT_SESSION_BOARD=1` enables the daemon board routes, like `--board`.
 pub(crate) const BOARD_ENV: &str = "AGENT_SESSION_BOARD";
 
@@ -125,7 +129,7 @@ fn snapshot_with(
         "record_schema": RECORD_SCHEMA,
         "machine": machine,
         "generated_at": jiff::Timestamp::now().to_string(),
-        "extensions": EXTENSIONS,
+        "extensions": DAEMON_EXTENSIONS,
         "ledger_cursor": ledger_cursor,
         "records": records,
         "skipped_count": skipped_count,
