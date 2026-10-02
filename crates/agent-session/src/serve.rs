@@ -3450,7 +3450,7 @@ struct CreateBody {
     work: Option<Value>,
     /// `session-lineage-work-v1`: `coordinator`, stored verbatim.
     #[serde(default)]
-    role: Option<String>,
+    role: Option<Value>,
 }
 
 /// The lineage and work a create body states, validated for a session on
@@ -3459,7 +3459,7 @@ fn create_body_lineage(
     machine: &str,
     lineage: Option<&Value>,
     work: Option<&Value>,
-    role: Option<&str>,
+    role: Option<&Value>,
 ) -> Result<crate::InitialLineage, CliError> {
     let seed = match lineage.filter(|value| !value.is_null()) {
         Some(value) => crate::lineage::LineageSeed::from_create_json(machine, value)?,
@@ -3473,7 +3473,7 @@ fn create_body_lineage(
         Some(value) => crate::lineage::work_from_create_body(value)?,
         None => None,
     };
-    let role = crate::lineage::role_from_request(role)?;
+    let role = crate::lineage::role_from_create_body(role)?;
     crate::lineage::require_root_for_role(role.as_deref(), seed.has_parent())?;
     Ok(crate::InitialLineage { seed, work, role })
 }
@@ -6684,7 +6684,7 @@ async fn create_handler(
         &state.machine,
         body.lineage.as_ref(),
         body.work.as_ref(),
-        body.role.as_deref(),
+        body.role.as_ref(),
     ) {
         Ok(initial_lineage) => initial_lineage,
         Err(err) => return envelope_err(err),
@@ -22766,6 +22766,7 @@ esac
 
         for (id, extra, code) in [
             ("bad-role", json!({"role": "boss"}), "role-invalid"),
+            ("bad-role-type", json!({"role": 7}), "role-invalid"),
             (
                 "bad-lineage",
                 json!({"lineage": {"parent": parent, "root": null, "depth": 1,

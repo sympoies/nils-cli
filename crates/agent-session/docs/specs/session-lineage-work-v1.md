@@ -346,9 +346,8 @@ number of sessions may hold it at once, for example during a handoff overlap.
   daemon's `POST /sessions` body.
 - `POST /sessions` accepts an optional `role`, stored verbatim after
   validation, and only with a root lineage (none, or `parent: null`); a
-  parented lineage fails with `role-requires-root`. Any string other than `"coordinator"` fails with HTTP 400
-  `role-invalid` before anything is created; a `role` that is not a string is
-  refused by request parsing. The create response's `session` echoes it.
+  parented lineage fails with `role-requires-root`. Any value other than `"coordinator"` or `null` fails with HTTP 400
+  `role-invalid` before anything is created. The create response's `session` echoes it.
 - `role` is descriptive, like lineage: it authorizes nothing.
 
 ## Read surfaces

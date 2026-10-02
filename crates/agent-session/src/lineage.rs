@@ -296,6 +296,15 @@ pub(crate) fn role_from_request(value: Option<&str>) -> Result<Option<String>, C
     }
 }
 
+/// Validate the raw `role` of a create body: absent or `null` is no role, and
+/// anything but the string `coordinator` is `role-invalid`.
+pub(crate) fn role_from_create_body(value: Option<&Value>) -> Result<Option<String>, CliError> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => role_from_request(Some(value.as_str().unwrap_or_default())),
+    }
+}
+
 /// A coordinator is a root: it may not be started with a parent.
 pub(crate) fn require_root_for_role(role: Option<&str>, has_parent: bool) -> Result<(), CliError> {
     if role.is_some() && has_parent {
