@@ -677,3 +677,78 @@ fn delete_refuses_a_session_whose_effective_children_remain() {
         json!({"scope": "local", "orphaned": [child_ref]})
     );
 }
+
+#[test]
+fn start_role_marks_a_coordinator_and_is_never_inherited() {
+    let fixture = Fixture::new();
+    let view = fixture.started("role-coordinator", &["--role", "coordinator"], None);
+    assert_eq!(view["role"], "coordinator");
+    let coordinator = fixture.record("role-coordinator");
+    assert_eq!(coordinator["role"], "coordinator");
+
+    // A plain start has no role, and a child of a coordinator does not
+    // inherit it.
+    let launch = coordinator["runtime"]["launch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    fixture.started(
+        "role-child",
+        &[],
+        Some(("role-coordinator", launch.as_str())),
+    );
+    let child = fixture.record("role-child");
+    assert!(child.get("role").is_none(), "{child}");
+    assert_eq!(child["lineage"]["depth"], 1);
+
+    // A coordinator may also be started with a parent: succession starts one
+    // with --no-parent --role coordinator.
+    fixture.started(
+        "role-successor",
+        &["--no-parent", "--role", "coordinator"],
+        Some(("role-coordinator", launch.as_str())),
+    );
+    let successor = fixture.record("role-successor");
+    assert_eq!(successor["role"], "coordinator");
+    assert_eq!(successor["lineage"]["parent"], Value::Null);
+
+    // list exposes the role.
+    let output = run_resolved(
+        "agent-session",
+        &["--state-dir", &fixture.state, "list", "--format", "json"],
+        &CmdOptions::new()
+            .with_cwd(&fixture.root)
+            .without_ambient_managed_session_env()
+            .with_envs(&[("AGENT_SESSION_MACHINE", MACHINE)]),
+    );
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let listed = output.stdout_json();
+    let sessions = listed["data"].as_array().expect("sessions");
+    let role_of = |id: &str| {
+        sessions
+            .iter()
+            .find(|session| session["id"] == id)
+            .map(|session| session["role"].clone())
+            .expect("listed session")
+    };
+    assert_eq!(role_of("role-coordinator"), "coordinator");
+    assert_eq!(role_of("role-child"), Value::Null);
+
+    // A coordinator is a root: inside a managed session it needs --no-parent.
+    let output = fixture.start(
+        "role-parented",
+        &["--role", "coordinator"],
+        Some(("role-coordinator", launch.as_str())),
+    );
+    assert_eq!(output.code, 64, "stderr={}", output.stderr_text());
+    assert_eq!(output.stdout_json()["error"]["code"], "role-requires-root");
+    assert!(
+        !Path::new(&fixture.state)
+            .join("sessions/role-parented")
+            .exists()
+    );
+
+    // Only `coordinator` exists.
+    let output = fixture.start("role-bad", &["--role", "boss"], None);
+    assert_eq!(output.code, 64, "stderr={}", output.stderr_text());
+}

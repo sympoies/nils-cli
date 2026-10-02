@@ -3448,6 +3448,9 @@ struct CreateBody {
     /// `session-lineage-work-v1`: resolved program and issue references.
     #[serde(default)]
     work: Option<Value>,
+    /// `session-lineage-work-v1`: `coordinator`, stored verbatim.
+    #[serde(default)]
+    role: Option<Value>,
 }
 
 /// The lineage and work a create body states, validated for a session on
@@ -3456,6 +3459,7 @@ fn create_body_lineage(
     machine: &str,
     lineage: Option<&Value>,
     work: Option<&Value>,
+    role: Option<&Value>,
 ) -> Result<crate::InitialLineage, CliError> {
     let seed = match lineage.filter(|value| !value.is_null()) {
         Some(value) => crate::lineage::LineageSeed::from_create_json(machine, value)?,
@@ -3469,7 +3473,9 @@ fn create_body_lineage(
         Some(value) => crate::lineage::work_from_create_body(value)?,
         None => None,
     };
-    Ok(crate::InitialLineage { seed, work })
+    let role = crate::lineage::role_from_create_body(role)?;
+    crate::lineage::require_root_for_role(role.as_deref(), seed.has_parent())?;
+    Ok(crate::InitialLineage { seed, work, role })
 }
 
 #[derive(Debug, Default)]
@@ -5458,7 +5464,7 @@ async fn history_resume_handler(
                             .graceful_shutdown
                             .map(|mode| mode.as_str().to_string()),
                         codex_usage_account: profile.codex_usage_account.clone(),
-                        initial_lineage: create_body_lineage(&machine, None, None)?,
+                        initial_lineage: create_body_lineage(&machine, None, None, None)?,
                     },
                 )
             }
@@ -5504,7 +5510,7 @@ async fn history_resume_handler(
                         codex_usage_account: profile
                             .and_then(|profile| profile.codex_usage_account.clone()),
                         agent_args: Vec::new(),
-                        initial_lineage: create_body_lineage(&machine, None, None)?,
+                        initial_lineage: create_body_lineage(&machine, None, None, None)?,
                         format: nils_common::cli_contract::OutputFormat::Json,
                     },
                 )
@@ -6674,11 +6680,15 @@ async fn create_handler(
     ) {
         return envelope_err(err);
     }
-    let initial_lineage =
-        match create_body_lineage(&state.machine, body.lineage.as_ref(), body.work.as_ref()) {
-            Ok(initial_lineage) => initial_lineage,
-            Err(err) => return envelope_err(err),
-        };
+    let initial_lineage = match create_body_lineage(
+        &state.machine,
+        body.lineage.as_ref(),
+        body.work.as_ref(),
+        body.role.as_ref(),
+    ) {
+        Ok(initial_lineage) => initial_lineage,
+        Err(err) => return envelope_err(err),
+    };
     if let Some(provider_resume_id) = body.provider_resume_id {
         if body.cwd.is_some() {
             return envelope_err(CliError::usage(
@@ -6834,6 +6844,7 @@ async fn create_handler(
         account: None,
         agent_profile: None,
         no_parent: false,
+        role: None,
         program: None,
         issues: Vec::new(),
         no_inherit_work: false,
@@ -22701,8 +22712,61 @@ esac
             })
         );
         assert!(session.get("work").is_none(), "{session}");
+        assert!(session.get("role").is_none(), "{session}");
+
+        // An explicit coordinator role is stored verbatim and echoed; any
+        // other value is refused before a record exists.
+        let (status, body) = call(
+            router(st.clone()),
+            create("lineage-coordinator", json!({"role": "coordinator"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["session"]["role"], "coordinator");
+        let record: Value = serde_json::from_slice(
+            &fs::read(tmp.path().join("sessions/lineage-coordinator/session.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["role"], "coordinator");
+
+        // A coordinator is a root: a parented lineage is refused.
+        let (status, body) = call(
+            router(st.clone()),
+            create(
+                "role-parented",
+                json!({
+                    "role": "coordinator",
+                    "lineage": {
+                        "parent": parent,
+                        "root": root,
+                        "depth": 1,
+                        "starter": {"kind": "session", "via": "console"}
+                    }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
+        assert_eq!(body["error"]["code"], "role-requires-root");
+        assert!(!tmp.path().join("sessions/role-parented").exists());
+        // A root lineage with the role is fine.
+        let (status, body) = call(
+            router(st.clone()),
+            create(
+                "role-root-lineage",
+                json!({
+                    "role": "coordinator",
+                    "lineage": {"depth": 0, "starter": {"kind": "operator", "via": "console"}}
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["session"]["role"], "coordinator");
 
         for (id, extra, code) in [
+            ("bad-role", json!({"role": "boss"}), "role-invalid"),
+            ("bad-role-type", json!({"role": 7}), "role-invalid"),
             (
                 "bad-lineage",
                 json!({"lineage": {"parent": parent, "root": null, "depth": 1,
@@ -37872,6 +37936,7 @@ esac
             lineage: None,
             work: None,
             lineage_adoption: None,
+            role: None,
             resume_sidecar_extra: std::collections::BTreeMap::new(),
         }
     }

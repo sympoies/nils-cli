@@ -1766,6 +1766,7 @@ mod tests {
             lineage: None,
             work: None,
             lineage_adoption: None,
+            role: None,
             resume_sidecar_extra: BTreeMap::new(),
         };
         crate::write_session_record(&context, &record).unwrap();

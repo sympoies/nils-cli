@@ -44,7 +44,7 @@ fn unavailable(message: &str) -> CliError {
 fn invalid() -> CliError {
     CliError::usage(
         INVALID_CODE,
-        "a console start takes only `machine`, `no_parent`, `work`, and a `session` object",
+        "a console start takes only `machine`, `no_parent`, `work`, `role`, and a `session` object",
         None,
     )
 }
@@ -55,12 +55,14 @@ fn invalid() -> CliError {
 pub(crate) struct ChildLineage {
     pub(crate) no_parent: bool,
     pub(crate) work: WorkRequest,
+    pub(crate) role: Option<String>,
 }
 
 impl Default for ChildLineage {
     fn default() -> Self {
         Self {
             no_parent: false,
+            role: None,
             work: WorkRequest {
                 inherit: true,
                 ..WorkRequest::default()
@@ -115,7 +117,13 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
         .unwrap_or(UNAVAILABLE_CODE);
     let message = bounded_line(message).unwrap_or("the console start request failed");
     match code {
-        INVALID_CODE | "invalid-request" => CliError::usage(code, message, None),
+        INVALID_CODE
+        | "invalid-request"
+        | "role-invalid"
+        | "role-requires-root"
+        | "lineage-invalid"
+        | "lineage-parent-mismatch"
+        | "work-ref-invalid" => CliError::usage(code, message, None),
         "coordination-unauthorized"
         | "session-incarnation-conflict"
         | "ownership-unknown"
@@ -124,14 +132,16 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
     }
 }
 
-/// The request body: optional `machine`, `no_parent`, and `work`, and a
+/// The request body: optional `machine`, `no_parent`, `work`, and `role`, and a
 /// required `session` object.
 fn checked_request(body: &Value) -> Option<(Option<&str>, ChildLineage, &Map<String, Value>)> {
     let request = body.as_object()?;
-    if request
-        .keys()
-        .any(|key| !matches!(key.as_str(), "machine" | "session" | "no_parent" | "work"))
-    {
+    if request.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "machine" | "session" | "no_parent" | "work" | "role"
+        )
+    }) {
         return None;
     }
     let machine = match request.get("machine") {
@@ -146,6 +156,10 @@ fn checked_request(body: &Value) -> Option<(Option<&str>, ChildLineage, &Map<Str
     match request.get("work") {
         None | Some(Value::Null) => {}
         Some(value) => child.work = WorkRequest::from_request_json(value).ok()?,
+    }
+    match request.get("role") {
+        None | Some(Value::Null) => {}
+        Some(value) => child.role = lineage::role_from_request(Some(value.as_str()?)).ok()?,
     }
     Some((machine, child, request.get("session")?.as_object()?))
 }
@@ -162,6 +176,7 @@ fn child_session(
     let mut session = session.clone();
     session.remove("lineage");
     session.remove("work");
+    session.remove("role");
     let (seed, work) = if request.no_parent {
         let seed = LineageSeed::root(
             relay_machine,
@@ -186,6 +201,9 @@ fn child_session(
             json!({ "program": work.program, "issues": work.issues, "inherited": work.inherited }),
         );
     }
+    if let Some(role) = &request.role {
+        session.insert("role".to_string(), json!(role));
+    }
     Ok(session)
 }
 
@@ -205,6 +223,7 @@ pub(crate) fn relay_route(
         return Err(disabled());
     };
     let (machine, lineage, child) = checked_request(body).ok_or_else(invalid)?;
+    lineage::require_root_for_role(lineage.role.as_deref(), !lineage.no_parent)?;
     let child = child_session(&config.machine, &caller, &lineage, child)?;
     let mut request = json!({
         "source_session_id": session,
@@ -277,6 +296,9 @@ pub(crate) fn cli_start(
     if let Some(work) = lineage.work.to_request_json() {
         request["work"] = work;
     }
+    if let Some(role) = &lineage.role {
+        request["role"] = json!(role);
+    }
     let response = client()?
         .post(url)
         .bearer_auth(&token)
@@ -326,6 +348,7 @@ mod tests {
             lineage,
             ChildLineage {
                 no_parent: true,
+                role: None,
                 work: WorkRequest::from_flags(None, &["a/b#1".to_string()], true).unwrap(),
             }
         );
@@ -336,6 +359,8 @@ mod tests {
             json!({"machine": "c8"}),
             json!({"session": "claude"}),
             json!({"session": session, "no_parent": "yes"}),
+            json!({"session": session, "role": "boss"}),
+            json!({"session": session, "role": 7}),
             json!({"session": session, "work": {"program": "a/b#1"}}),
             json!([]),
         ] {
@@ -356,6 +381,16 @@ mod tests {
                 (code, "refused", 65),
                 "{code}"
             );
+        }
+        for code in [
+            "role-invalid",
+            "role-requires-root",
+            "lineage-invalid",
+            "lineage-parent-mismatch",
+            "work-ref-invalid",
+        ] {
+            let error = forwarded(Some(code), &json!("refused")).into_inner();
+            assert_eq!((error.code.as_str(), error.exit_code), (code, 64), "{code}");
         }
         let error = forwarded(Some("invalid-request"), &json!(null)).into_inner();
         assert_eq!(

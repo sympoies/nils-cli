@@ -31,6 +31,10 @@ pub(crate) const VIA_CLI: &str = "cli";
 pub(crate) const VIA_CONSOLE: &str = "console";
 pub(crate) const VIA_HTTP: &str = "http";
 
+/// The only explicit session role.
+pub(crate) const ROLE_COORDINATOR: &str = "coordinator";
+const ROLE_INVALID: &str = "role-invalid";
+const ROLE_REQUIRES_ROOT: &str = "role-requires-root";
 const LINEAGE_INVALID: &str = "lineage-invalid";
 const LINEAGE_DEPTH_EXCEEDED: &str = "lineage-depth-exceeded";
 const WORK_REF_INVALID: &str = "work-ref-invalid";
@@ -279,6 +283,40 @@ fn canonical_issues(issues: Vec<WorkRef>) -> Result<Vec<WorkRef>, CliError> {
     Ok(issues)
 }
 
+/// Validate the `role` of a create body or console start. `null` is no role.
+pub(crate) fn role_from_request(value: Option<&str>) -> Result<Option<String>, CliError> {
+    match value {
+        None => Ok(None),
+        Some(ROLE_COORDINATOR) => Ok(Some(ROLE_COORDINATOR.to_string())),
+        Some(_) => Err(CliError::usage(
+            ROLE_INVALID,
+            "role must be \"coordinator\"",
+            None,
+        )),
+    }
+}
+
+/// Validate the raw `role` of a create body: absent or `null` is no role, and
+/// anything but the string `coordinator` is `role-invalid`.
+pub(crate) fn role_from_create_body(value: Option<&Value>) -> Result<Option<String>, CliError> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => role_from_request(Some(value.as_str().unwrap_or_default())),
+    }
+}
+
+/// A coordinator is a root: it may not be started with a parent.
+pub(crate) fn require_root_for_role(role: Option<&str>, has_parent: bool) -> Result<(), CliError> {
+    if role.is_some() && has_parent {
+        return Err(CliError::usage(
+            ROLE_REQUIRES_ROOT,
+            "role coordinator needs a root start: use --no-parent, or a start with no parent",
+            None,
+        ));
+    }
+    Ok(())
+}
+
 /// Validate a `work` object a create body supplies. An empty one is no work.
 pub(crate) fn work_from_create_body(value: &Value) -> Result<Option<SessionWork>, CliError> {
     #[derive(Deserialize)]
@@ -335,6 +373,11 @@ impl LineageSeed {
                 via: via.to_string(),
             },
         }
+    }
+
+    /// Whether the new session has a parent.
+    pub(crate) fn has_parent(&self) -> bool {
+        self.parent.is_some()
     }
 
     /// A child of `parent`, which runs on `parent_machine`.
@@ -521,6 +564,7 @@ pub(crate) fn resolve_cli_start(
     let root = || crate::InitialLineage {
         seed: LineageSeed::root(&machine, STARTER_OPERATOR, VIA_CLI),
         work: work.resolve(None),
+        role: None,
     };
     let caller = crate::non_empty_env("AGENT_SESSION_ID");
     let Some(caller) = caller.filter(|_| !no_parent) else {
@@ -544,7 +588,14 @@ pub(crate) fn resolve_cli_start(
     let machine = own_machine(context, &parent);
     let seed = LineageSeed::child_of(&machine, &machine, &parent, STARTER_SESSION, VIA_CLI)?;
     let work = work.resolve(parent.work.as_ref());
-    Ok((crate::InitialLineage { seed, work }, None))
+    Ok((
+        crate::InitialLineage {
+            seed,
+            work,
+            role: None,
+        },
+        None,
+    ))
 }
 
 /// The label `record` was created under, so a child on the same machine names
