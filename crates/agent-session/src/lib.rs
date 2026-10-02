@@ -10079,18 +10079,42 @@ fn load_and_paste_buffer_with_timeout(
     load.arg("load-buffer").arg("-b").arg(buffer_name).arg(file);
     run_status_with_timeout(load, "tmux load-buffer", timeout)?;
 
-    let mut paste = ProcessCommand::new(tmux_bin);
-    paste.arg("paste-buffer");
-    if paste_mode == PasteMode::Bracketed {
-        paste.arg("-p");
-    }
-    paste
-        .arg("-b")
-        .arg(buffer_name)
-        .arg("-d")
-        .arg("-t")
-        .arg(target);
-    if let Err(err) = run_status_with_timeout(paste, "tmux paste-buffer", timeout) {
+    let paste = |raw_bytes: bool| {
+        let mut paste = ProcessCommand::new(tmux_bin);
+        paste.arg("paste-buffer");
+        if paste_mode == PasteMode::Bracketed {
+            paste.arg("-p");
+        }
+        // tmux 3.7 passes paste buffers through vis(3) unless `-S` is given,
+        // so forwarded terminal input (a mouse report, Alt-key, or Esc) would
+        // reach the pane as literal `^[` text.
+        if raw_bytes {
+            paste.arg("-S");
+        }
+        paste
+            .arg("-b")
+            .arg(buffer_name)
+            .arg("-d")
+            .arg("-t")
+            .arg(target);
+        paste
+    };
+    let label = "tmux paste-buffer";
+    let result = if paste_mode == PasteMode::Raw {
+        match run_output_with_timeout(paste(true), timeout) {
+            // tmux before 3.7 has no `-S` and does not sanitize pastes.
+            Ok(output)
+                if !output.status.success()
+                    && String::from_utf8_lossy(&output.stderr).contains("unknown flag -S") =>
+            {
+                run_status_with_timeout(paste(false), label, timeout)
+            }
+            output => exit_status_result(output.map(|output| output.status), label),
+        }
+    } else {
+        run_status_with_timeout(paste(false), label, timeout)
+    };
+    if let Err(err) = result {
         delete_tmux_buffer(tmux_bin, buffer_name);
         return Err(err);
     }
@@ -17800,7 +17824,14 @@ fn run_status_with_timeout(
     label: &str,
     timeout: Duration,
 ) -> Result<(), CliError> {
-    let status = run_exit_status_with_timeout(command, timeout).map_err(|err| {
+    exit_status_result(run_exit_status_with_timeout(command, timeout), label)
+}
+
+fn exit_status_result(
+    status: io::Result<std::process::ExitStatus>,
+    label: &str,
+) -> Result<(), CliError> {
+    let status = status.map_err(|err| {
         let code = if err.kind() == io::ErrorKind::TimedOut {
             "command-timeout"
         } else {
@@ -26137,6 +26168,81 @@ exit 42
         assert_eq!(super::post_paste_settle_delay(true, false), None);
         assert_eq!(super::post_paste_settle_delay(false, true), None);
         assert_eq!(super::post_paste_settle_delay(false, false), None);
+    }
+
+    /// Rejects `-S` the way tmux before 3.7 does.
+    const REJECTS_S: &str = "case \" $* \" in *\" -S \"*) echo 'command paste-buffer: unknown flag -S' >&2; exit 1 ;; esac\n";
+
+    /// Paste through a tmux stub that logs each paste-buffer call, then runs
+    /// `stub_tail` before exiting successfully.
+    fn paste_buffer_calls(
+        paste_mode: super::PasteMode,
+        stub_tail: &str,
+    ) -> (Result<(), super::CliError>, Vec<String>) {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let calls = tmp.path().join("calls");
+        let tmux = tmp.path().join("tmux");
+        std::fs::write(
+            &tmux,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = paste-buffer ] || exit 0\nprintf '%s\\n' \"$*\" >> {}\n{stub_tail}exit 0\n",
+                calls.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let result = super::load_and_paste_buffer_with_timeout(
+            &tmux,
+            "buf",
+            "target",
+            &tmp.path().join("input"),
+            std::time::Duration::from_secs(5),
+            paste_mode,
+        );
+        let calls = std::fs::read_to_string(&calls)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        (result, calls)
+    }
+
+    #[test]
+    fn raw_paste_keeps_control_bytes_on_tmux_3_7() {
+        // tmux 3.7 passes paste buffers through vis(3) unless `-S` is given,
+        // which typed a forwarded mouse report as literal `^[[<64;14;19M`.
+        let (result, calls) = paste_buffer_calls(super::PasteMode::Raw, "");
+        result.unwrap();
+        assert_eq!(calls, vec!["paste-buffer -S -b buf -d -t target"]);
+    }
+
+    #[test]
+    fn raw_paste_falls_back_when_tmux_rejects_s() {
+        let (result, calls) = paste_buffer_calls(super::PasteMode::Raw, REJECTS_S);
+        result.unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                "paste-buffer -S -b buf -d -t target",
+                "paste-buffer -b buf -d -t target"
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_paste_failure_without_unknown_flag_does_not_retry() {
+        let (result, calls) =
+            paste_buffer_calls(super::PasteMode::Raw, "echo 'no buffer buf' >&2; exit 1\n");
+        assert_eq!(result.unwrap_err().code(), "command-failed");
+        assert_eq!(calls, vec!["paste-buffer -S -b buf -d -t target"]);
+    }
+
+    #[test]
+    fn bracketed_paste_keeps_tmux_sanitizing() {
+        let (result, calls) = paste_buffer_calls(super::PasteMode::Bracketed, "");
+        result.unwrap();
+        assert_eq!(calls, vec!["paste-buffer -p -b buf -d -t target"]);
     }
 }
 

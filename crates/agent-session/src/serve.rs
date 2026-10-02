@@ -28177,7 +28177,7 @@ esac
 
         let calls = std::fs::read_to_string(&calls_log).unwrap();
         assert!(
-            calls.contains("paste-buffer -b steer-send"),
+            calls.contains("paste-buffer -S -b steer-send"),
             "a live Claude rename must paste into the pane: {calls:?}"
         );
         assert!(
