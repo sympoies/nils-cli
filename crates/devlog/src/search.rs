@@ -10,6 +10,9 @@ pub struct Match {
     pub month: String,
     pub line_number: usize,
     pub line: String,
+    /// Present for a fragment; absent for month files to preserve the v1 output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// An unresolved merge conflict observed while searching a month file.
@@ -49,13 +52,24 @@ pub fn search(
     term: &str,
     month: Option<Month>,
 ) -> Result<SearchReport, DevlogError> {
+    let fragments = crate::fragments::paths(devlog)?
+        .iter()
+        .map(|path| crate::fragments::load(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let fragments: Vec<_> = fragments
+        .iter()
+        .filter(|fragment| month.is_none_or(|month| fragment.entry.date.month() == month))
+        .collect();
     let months = match month {
         Some(month) => {
             let path = devlog.month_path(month);
-            if !path.is_file() {
+            if path.is_file() {
+                vec![month]
+            } else if !fragments.is_empty() {
+                vec![]
+            } else {
                 return Err(DevlogError::MissingMonthFile { path });
             }
-            vec![month]
         }
         None => devlog.months()?.months,
     };
@@ -82,14 +96,37 @@ pub fn search(
                     month: month.to_string(),
                     line_number: index + 1,
                     line: line.to_string(),
+                    path: None,
                 });
             }
         }
     }
 
+    let mut searched: std::collections::BTreeSet<_> = months.iter().copied().collect();
+    for fragment in fragments {
+        searched.insert(fragment.entry.date.month());
+        let contents =
+            std::fs::read_to_string(&fragment.path).map_err(|source| DevlogError::Io {
+                path: fragment.path.clone(),
+                source,
+            })?;
+        for (index, line) in contents.lines().enumerate() {
+            if line.to_lowercase().contains(&needle) {
+                matches.push(Match {
+                    month: fragment.entry.date.month().to_string(),
+                    line_number: index + 1,
+                    line: line.to_string(),
+                    path: Some(format!(
+                        "pending/{}",
+                        fragment.path.file_name().unwrap().to_string_lossy()
+                    )),
+                });
+            }
+        }
+    }
     Ok(SearchReport {
         term: term.to_string(),
-        months_searched: months.len(),
+        months_searched: searched.len(),
         matches,
         conflicts,
     })

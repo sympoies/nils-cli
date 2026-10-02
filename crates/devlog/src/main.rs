@@ -40,6 +40,9 @@ enum Command {
         /// Entry title, rendered after the date in the entry heading.
         #[arg(long)]
         title: String,
+        /// Stable unique fragment slug (fragment layout only; defaults to a unique suffix).
+        #[arg(long)]
+        slug: Option<String>,
         /// Entry date (defaults to today).
         #[arg(long, value_name = "YYYY-MM-DD")]
         date: Option<String>,
@@ -68,7 +71,19 @@ enum Command {
         month: Option<String>,
     },
     /// Report structural problems: month filenames, index drift, entry shape, ordering.
-    Check,
+    Check {
+        /// Default-branch ref for fragment immutability (auto-detected when omitted).
+        #[arg(long)]
+        base: Option<String>,
+    },
+    /// Fold pending entries dated before today into deterministically sorted month files.
+    Fold,
+    /// Three-way Git merge driver: base, ours (overwritten), theirs.
+    Merge {
+        base: PathBuf,
+        ours: PathBuf,
+        theirs: PathBuf,
+    },
     /// Repair the structural problems that have one correct repair, and report the rest.
     Fix,
     /// Rewrite the README month index from the tracked month files.
@@ -114,6 +129,17 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
         return Ok(exit::SUCCESS);
     }
 
+    if let Command::Merge { base, ours, theirs } = &cli.command {
+        nils_devlog::merge::merge(base, ours, theirs)?;
+        emit(
+            format,
+            "merge",
+            1,
+            &serde_json::json!({"merged": true}),
+            |_| {},
+        );
+        return Ok(exit::SUCCESS);
+    }
     let repo_root = repo_root()?;
     let devlog = match &cli.dir {
         Some(dir) => Devlog::at(&repo_root, dir)?,
@@ -123,6 +149,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
     match &cli.command {
         Command::New {
             title,
+            slug,
             date,
             results,
             why,
@@ -143,24 +170,33 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
                 links: links.clone(),
                 follow_ups: follow_ups.clone(),
             };
-            // Both files this command writes are checked before either is
-            // touched. Letting the month file be written and the index then
-            // refuse would leave a half-finished operation behind a message
-            // that says nothing was written, and a retry after resolving the
-            // conflict would insert the entry a second time.
-            nils_devlog::index::assert_resolved(&devlog)?;
-            let insertion = nils_devlog::entry::insert(&devlog, &entry, date)?;
-            // A new month file is invisible until the index links it, so the
-            // two mutations are one operation rather than two commands the
-            // caller has to remember to pair.
-            let index = nils_devlog::index::sync(&devlog)?;
-
-            let payload = NewPayload {
-                month: insertion.month.to_string(),
-                date: insertion.date.to_string(),
-                path: format!("{}/{}.md", devlog.relative_dir(), insertion.month),
-                created_month_file: insertion.created_month_file,
-                index_updated: index.changed,
+            let payload = if nils_devlog::fragments::enabled()? {
+                let path = nils_devlog::fragments::write(&devlog, &entry, date, slug.as_deref())?;
+                NewPayload {
+                    month: date.month().to_string(),
+                    date: date.to_string(),
+                    path: devlog.relative(&path),
+                    created_month_file: false,
+                    index_updated: false,
+                }
+            } else {
+                if slug.is_some() {
+                    return Err(DevlogError::InvalidContent {
+                        path: devlog.dir().to_path_buf(),
+                        detail: "--slug requires DEVLOG_LAYOUT=fragments".to_string(),
+                    });
+                }
+                // Preflight both files before inserting a month entry.
+                nils_devlog::index::assert_resolved(&devlog)?;
+                let insertion = nils_devlog::entry::insert(&devlog, &entry, date)?;
+                let index = nils_devlog::index::sync(&devlog)?;
+                NewPayload {
+                    month: insertion.month.to_string(),
+                    date: insertion.date.to_string(),
+                    path: format!("{}/{}.md", devlog.relative_dir(), insertion.month),
+                    created_month_file: insertion.created_month_file,
+                    index_updated: index.changed,
+                }
             };
             emit(format, "new", 1, &payload, |payload| {
                 println!("added {} to {}", payload.date, payload.path);
@@ -184,7 +220,11 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
                 .collect::<Vec<_>>();
             let render = |report: &SearchReport| {
                 for entry in &report.matches {
-                    println!("{}.md:{}:{}", entry.month, entry.line_number, entry.line);
+                    let path = entry
+                        .path
+                        .clone()
+                        .unwrap_or_else(|| format!("{}.md", entry.month));
+                    println!("{path}:{}:{}", entry.line_number, entry.line);
                 }
                 for conflict in &report.conflicts {
                     eprintln!("{}", conflict.warning());
@@ -209,8 +249,18 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
                 Ok(exit::RUNTIME)
             }
         }
-        Command::Check => {
-            let report = nils_devlog::check::check(&devlog)?;
+        Command::Fold => {
+            let report = nils_devlog::fragments::fold(&devlog, EntryDate::today()?)?;
+            emit(format, "fold", 1, &report, |report| {
+                println!("folded {} fragment(s)", report.folded);
+                if report.index_updated {
+                    println!("updated {}/README.md", devlog.relative_dir());
+                }
+            });
+            Ok(exit::SUCCESS)
+        }
+        Command::Check { base } => {
+            let report = nils_devlog::check::check_with_base(&devlog, base.as_deref())?;
             if report.ok() {
                 emit(format, "check", 1, &report, print_check);
                 Ok(exit::SUCCESS)
@@ -262,7 +312,9 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
             });
             Ok(exit::SUCCESS)
         }
-        Command::Completion { .. } => unreachable!("handled before devlog resolution"),
+        Command::Merge { .. } | Command::Completion { .. } => {
+            unreachable!("handled before devlog resolution")
+        }
     }
 }
 
@@ -462,14 +514,17 @@ fn emit_error(format: OutputFormat, err: &DevlogError) -> i32 {
 
 fn exit_code_for(err: &DevlogError) -> i32 {
     match err {
-        DevlogError::InvalidMonth { .. } | DevlogError::InvalidDate { .. } => exit::USAGE,
+        DevlogError::InvalidMonth { .. }
+        | DevlogError::InvalidDate { .. }
+        | DevlogError::InvalidLayout => exit::USAGE,
         DevlogError::NotFound { .. }
         | DevlogError::NotADirectory { .. }
         | DevlogError::NotAGitWorkTree => exit::UNAVAILABLE,
         DevlogError::MissingMonthFile { .. } | DevlogError::MissingHeading { .. } => exit::RUNTIME,
         // The file on disk is unusable input, which is the same class `check`
         // reports its structural problems under.
-        DevlogError::ConflictMarkers { .. } => exit::DATA,
+        DevlogError::ConflictMarkers { .. } | DevlogError::InvalidContent { .. } => exit::DATA,
+        DevlogError::BaselineUnavailable => exit::UNAVAILABLE,
         DevlogError::Io { .. } => exit::SOFTWARE,
     }
 }

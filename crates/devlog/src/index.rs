@@ -96,7 +96,11 @@ pub fn sync(devlog: &Devlog) -> Result<IndexUpdate, DevlogError> {
         });
     }
 
-    let updated = replace_months_section(&contents, &scan.months);
+    let mut updated = replace_months_section(&contents, &scan.months);
+    let pending = crate::fragments::pending_index(devlog)?;
+    if !pending.is_empty() || updated.lines().any(|line| line == "## Pending") {
+        updated = replace_section(&updated, "## Pending", &pending);
+    }
     let changed = updated != contents;
     if changed {
         std::fs::write(&path, &updated).map_err(|source| DevlogError::Io {
@@ -118,14 +122,14 @@ pub fn sync(devlog: &Devlog) -> Result<IndexUpdate, DevlogError> {
 /// heading that ends the file without a trailing newline. `listed_months`
 /// anchors on line starts, so matching the same way keeps `index` and `check`
 /// from disagreeing about the same file.
-fn months_section(index: &str) -> Option<(usize, usize)> {
+fn section(index: &str, heading: &str) -> Option<(usize, usize)> {
     let mut offset = 0usize;
     let mut heading_end: Option<usize> = None;
 
     for line in index.split_inclusive('\n') {
         let trimmed = line.trim_end_matches(['\n', '\r']);
         if heading_end.is_none() {
-            if trimmed == MONTHS_HEADING {
+            if trimmed == heading {
                 heading_end = Some(offset + line.len());
             }
         } else if trimmed.starts_with("## ") {
@@ -138,15 +142,18 @@ fn months_section(index: &str) -> Option<(usize, usize)> {
 }
 
 fn replace_months_section(index: &str, months: &[Month]) -> String {
-    let rendered = render_months(months);
-    let Some((body_start, body_end)) = months_section(index) else {
+    replace_section(index, MONTHS_HEADING, &render_months(months))
+}
+
+fn replace_section(index: &str, heading: &str, rendered: &str) -> String {
+    let Some((body_start, body_end)) = section(index, heading) else {
         // No section yet: append one rather than failing, so a log created by
         // hand can be brought under the contract by running `devlog index`.
         let mut out = index.trim_end().to_string();
         out.push_str("\n\n");
-        out.push_str(MONTHS_HEADING);
+        out.push_str(heading);
         out.push_str("\n\n");
-        out.push_str(&rendered);
+        out.push_str(rendered);
         out.push('\n');
         return out;
     };
@@ -159,7 +166,7 @@ fn replace_months_section(index: &str, months: &[Month]) -> String {
         out.push('\n');
     }
     out.push('\n');
-    out.push_str(&rendered);
+    out.push_str(rendered);
     out.push('\n');
 
     let remainder = index[body_end..].trim_start_matches('\n');
