@@ -611,7 +611,8 @@ may add two more annotations:
   CLI local mode sees one machine, so it judges only a parent that is closed
   or named with that machine's label; a parent on another machine is never
   reported as missing from here.
-- `subtree` (`{live, stopped}`): on a record that is its own root, the number
+- `subtree` (`{live, stopped}`): on a record that is its own root, or a
+  session without lineage that other records name as their root, the number
   of other non-closed records whose `lineage.root` is it.
 
 Both are display-only and never authorize anything. Like `console_owner`, a

@@ -364,9 +364,23 @@ fn project_work(view: &Map<String, Value>) -> Value {
     let Some(work) = view.get("work").and_then(Value::as_object) else {
         return Value::Null;
     };
+    let program = work
+        .get("program")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let issues = work
+        .get("issues")
+        .filter(|value| value.is_array())
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    // A cleared `work set` leaves an empty object: that is no work.
+    if program.is_null() && issues.as_array().is_some_and(Vec::is_empty) {
+        return Value::Null;
+    }
     json!({
-        "program": work.get("program").filter(|value| value.is_object()).cloned().unwrap_or(Value::Null),
-        "issues": work.get("issues").filter(|value| value.is_array()).cloned().unwrap_or_else(|| json!([])),
+        "program": program,
+        "issues": issues,
         "inherited": work.get("inherited").and_then(Value::as_bool).unwrap_or(false),
     })
 }
@@ -637,6 +651,14 @@ mod tests {
                 "inherited": true
             })
         );
+    }
+
+    #[test]
+    fn work_cleared_by_work_set_is_null() {
+        let mut view = lineage_view();
+        view["work"] = json!({"program": null, "issues": [], "inherited": false, "revision": 2});
+        let record = project_record(&view, "host-a", None, false).expect("record");
+        assert_eq!(record["work"], Value::Null);
     }
 
     #[test]

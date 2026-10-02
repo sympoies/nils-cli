@@ -332,7 +332,16 @@ fn annotate_lineage(records: &mut [Value], machine: &str) {
         .iter()
         .map(|record| {
             let id = record["session_id"].as_str()?;
-            (record["lineage"]["root"]["session_id"].as_str() == Some(id)).then(|| {
+            // A session started before lineage existed is the root of the
+            // children that name it, so it counts as a root when any do.
+            let is_root = match record["lineage"]["root"]["session_id"].as_str() {
+                Some(root) => root == id,
+                None => records.iter().any(|other| {
+                    other["session_id"].as_str() != Some(id)
+                        && other["lineage"]["root"]["session_id"].as_str() == Some(id)
+                }),
+            };
+            is_root.then(|| {
                 let count = |state: &str| {
                     records
                         .iter()
@@ -567,6 +576,9 @@ mod tests {
             ),
             // A record that never had a parent is not orphaned.
             tree_record("fresh-root", "live", None, "fresh-root", "m"),
+            // A session from before lineage existed that children name as root.
+            json!({"machine": "m", "session_id": "legacy", "created_at": "2030-01-01T00:00:00Z", "state": "live", "lineage": null}),
+            tree_record("legacy-child", "live", Some("legacy"), "legacy", "m"),
         ];
         // "remote-child" names a parent on machine n; this view is machine m.
         records[6]["machine"] = json!("m");
@@ -593,13 +605,17 @@ mod tests {
                 ("lost", true),
                 ("remote-child", false),
                 ("fresh-root", false),
+                ("legacy", false),
+                ("legacy-child", false),
             ]
         );
         // Only a record that is its own root carries a subtree, counting the
         // other non-closed members of its tree.
         assert_eq!(records[0]["subtree"], json!({"live": 3, "stopped": 1}));
         assert_eq!(records[7]["subtree"], json!({"live": 0, "stopped": 0}));
-        for index in [1, 2, 3, 4, 5, 6] {
+        assert_eq!(records[8]["subtree"], json!({"live": 1, "stopped": 0}));
+        assert_eq!(records[8]["orphaned"], false);
+        for index in [1, 2, 3, 4, 5, 6, 9] {
             assert!(records[index].get("subtree").is_none(), "{index}");
         }
     }
