@@ -28,10 +28,13 @@ const OUTPUT_LIMIT: u64 = 1024 * 1024;
 const MAX_PROGRAMS: usize = 16;
 const MAX_ROWS: usize = 500;
 
-/// One program read: the served object, minus `stale`.
+/// One program's last read. A failed read is remembered too, so a failing
+/// `forge-cli` is retried once per TTL and not once per request.
 struct Cached {
-    fetched: Instant,
-    body: Value,
+    attempted: Instant,
+    /// The last good read, minus `stale`; `None` when none ever succeeded.
+    body: Option<Value>,
+    /// Whether the last attempt failed and `body` is an older copy.
     stale: bool,
 }
 
@@ -69,7 +72,7 @@ impl ProgramCache {
         let is_fresh = |entries: &BTreeMap<String, Cached>, reference: &str| {
             entries
                 .get(reference)
-                .is_some_and(|cached| !cached.stale && cached.fetched.elapsed() < self.ttl)
+                .is_some_and(|cached| cached.attempted.elapsed() < self.ttl)
         };
         let any_stale = {
             let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
@@ -89,23 +92,20 @@ impl ProgramCache {
                 }
                 let read = self.read_tracker(reference, work_ref);
                 let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-                match read {
-                    Some(body) => {
-                        entries.insert(
-                            reference.clone(),
-                            Cached {
-                                fetched: Instant::now(),
-                                body,
-                                stale: false,
-                            },
-                        );
-                    }
-                    None => {
-                        if let Some(cached) = entries.get_mut(reference) {
-                            cached.stale = true;
-                        }
-                    }
-                }
+                let previous = entries.remove(reference).and_then(|cached| cached.body);
+                let cached = match read {
+                    Some(body) => Cached {
+                        attempted: Instant::now(),
+                        body: Some(body),
+                        stale: false,
+                    },
+                    None => Cached {
+                        attempted: Instant::now(),
+                        body: previous,
+                        stale: true,
+                    },
+                };
+                entries.insert(reference.clone(), cached);
             }
         }
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
@@ -113,10 +113,10 @@ impl ProgramCache {
         let programs: Vec<Value> = wanted
             .keys()
             .filter_map(|reference| entries.get(reference))
-            .map(|cached| {
-                let mut program = cached.body.clone();
+            .filter_map(|cached| {
+                let mut program = cached.body.clone()?;
                 program["stale"] = json!(cached.stale);
-                program
+                Some(program)
             })
             .collect();
         Ok(json!({
@@ -214,9 +214,10 @@ fn program_refs(context: &CliContext) -> BTreeMap<String, WorkRef> {
             continue;
         };
         programs.insert(program.display(), program);
-        if programs.len() >= MAX_PROGRAMS {
-            break;
-        }
+    }
+    // The first MAX_PROGRAMS by reference, whatever the session ids are.
+    while programs.len() > MAX_PROGRAMS {
+        programs.pop_last();
     }
     programs
 }
@@ -253,14 +254,15 @@ mod tests {
     }
 
     /// A `forge-cli` stand-in: it counts its calls in `calls`, answers a
-    /// tracker titled after its target, and fails while `fail` exists.
+    /// tracker titled after its target, and fails after counting while `fail`
+    /// exists.
     fn fake_forge(dir: &std::path::Path) -> String {
         use std::os::unix::fs::PermissionsExt;
         let path = dir.join("forge-cli");
         std::fs::write(
             &path,
             format!(
-                "#!/bin/sh\n[ -e {dir}/fail ] && exit 1\necho \"$@\" >> {dir}/calls\n\
+                "#!/bin/sh\necho \"$@\" >> {dir}/calls\n[ -e {dir}/fail ] && exit 1\n\
                  for last; do :; done; target=$(echo \"$@\" | sed 's/.*show \\([^ ]*\\) .*/\\1/')\n\
                  printf '{{\"schema_version\":\"{TRACKER_SCHEMA}\",\"ok\":true,\"data\":{{\"title\":\"%s\",\"state\":\"open\",\"url\":\"https://example.test/%s\",\"rows\":[{{\"id\":\"A1\",\"title\":\"Lane\",\"reference\":null,\"done\":false,\"phase\":null,\"after\":[],\"notes\":null}}]}}}}' \"$target\" \"$target\"\n",
                 dir = dir.display()
@@ -291,6 +293,7 @@ mod tests {
         session_with_program(&context, "c", Some(github("o/other", 7)));
         session_with_program(&context, "no-work", None);
         let forge = fake_forge(tmp.path());
+        let forge_path = forge.clone();
 
         let cache = ProgramCache::new(forge.clone(), Duration::from_secs(3600));
         let first = cache.snapshot(&context, "host-a").expect("snapshot");
@@ -327,6 +330,19 @@ mod tests {
         assert_eq!(programs.len(), 2);
         assert!(programs.iter().all(|program| program["stale"] == true));
         assert_eq!(programs[1]["rows"][0]["id"], "A1");
+
+        // A forge that keeps failing is tried once per TTL, not per request.
+        let failing = ProgramCache::new(forge_path, Duration::from_secs(3600));
+        let before = calls(tmp.path()).len();
+        for _ in 0..3 {
+            let served = failing.snapshot(&context, "host-a").expect("failing");
+            assert_eq!(served["programs"], json!([]));
+        }
+        assert_eq!(
+            calls(tmp.path()).len(),
+            before + 2,
+            "one attempt per program"
+        );
 
         // A program no session names any more is dropped; one that never
         // read successfully is omitted.

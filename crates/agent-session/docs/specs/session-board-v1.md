@@ -357,7 +357,8 @@ with the result in `data.board_programs`:
   binary named by `AGENT_SESSION_FORGE_CLI_BIN`, otherwise `forge-cli` on
   `PATH`) lazily when the route is read. A copy younger than five minutes is
   served without a read, concurrent reads share one refresh, and the last good
-  copy is kept with `stale: true` when a refresh fails. A program that was
+  copy is kept with `stale: true` when a refresh fails. A failed read counts
+  as an attempt: it is not tried again before the five minutes pass. A program that was
   never read successfully is omitted, never guessed. Program refs and the
   tracker's public title, state, and rows are the only data served.
 - The route answers `board-disabled` (HTTP 404) while the board is disabled.
