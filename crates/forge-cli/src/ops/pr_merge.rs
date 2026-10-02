@@ -130,6 +130,8 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         remote_url_lookup,
     )?;
 
+    super::pr_review_handoff::ensure_provider(&ctx)?;
+
     // Load layered config (global ~/.config/forge-cli + per-repo
     // .forge-cli.toml) so the method default + delete_branch default flow from
     // either layer when no explicit flag is set. `repo_delete_branch` keeps the
@@ -146,6 +148,18 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     ensure_review_convergence_provider(ctx.provider, &policy)?;
 
     if global.dry_run {
+        if std::env::var("AGENT_REVIEWER_SESSION").is_ok_and(|v| !v.is_empty()) {
+            let view = pr_view::compute(runner, &ctx, args.id)?;
+            let head = view.head_sha.as_deref().ok_or_else(|| {
+                ForgeError::validation(
+                    schema_err(),
+                    "awaiting_designated_review",
+                    "assigned merge requires a provider head",
+                    None,
+                )
+            })?;
+            pr_review_loop::ensure_merge_ready(runner, &ctx, &view.url, args.id, head, true)?;
+        }
         let call = build_dry_run_merge_call(&ctx, args.id, method, delete_branch);
         let payload = DryRunPayload::new(ctx.provider, &call).with_review_convergence(&policy);
         return Ok(emit_success(
@@ -391,6 +405,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
     workdir: &std::path::Path,
     settings: ResolvedMergeSettings<'_>,
 ) -> Result<PrMergePayload, ForgeError> {
+    super::pr_review_handoff::ensure_provider(ctx)?;
     if global.dry_run {
         return Err(ForgeError::software(
             schema_err(),

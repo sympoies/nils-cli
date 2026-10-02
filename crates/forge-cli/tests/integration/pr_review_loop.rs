@@ -885,3 +885,47 @@ fn observe_help_documents_both_findings_file_shapes_and_the_combined_outcome() {
         );
     }
 }
+
+#[test]
+fn designated_assignment_cannot_observe_without_explicit_handoff() {
+    let head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let stub = StubEnv::new();
+    let script = gh_stub_with_empty_ledger(&stub, head);
+    let findings = stub.tempdir.path().join("clean.json");
+    fs::write(&findings, "[]").unwrap();
+    let stub = stub
+        .gh_stub(&script)
+        .env("AGENT_REVIEWER_SESSION", "reviewer-session")
+        .env("AGENT_SESSION_ID", "worker-session");
+    let output = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "--dry-run",
+            "pr",
+            "review-loop",
+            "observe",
+            "7",
+            "--expected-head",
+            head,
+            "--auto-state",
+            "--findings-file",
+            findings.to_str().unwrap(),
+        ],
+    );
+    let envelope = parse_envelope(&output.stdout);
+    assert_eq!(
+        envelope["data"]["preflight_ok"], false,
+        "assigned delivery must stop until explicit reviewer handoff exists"
+    );
+    assert!(
+        !fs::read_to_string(stub.tempdir.path().join("gh-args.log"))
+            .unwrap()
+            .contains("--method POST")
+    );
+}

@@ -193,6 +193,8 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
     let mut merged = false;
     let mut merge_sha: Option<String> = None;
 
+    crate::ops::pr_review_handoff::ensure_provider(ctx)?;
+
     // 1. auth.status
     let auth_payload = match auth_status::compute(runner, global, git_remote_url) {
         Ok(p) => p,
@@ -538,6 +540,35 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
             current_view.head_sha.as_deref(),
             current_view.head_repository.as_deref(),
         ) {
+            return Ok(emit_chain_failure(
+                steps,
+                args,
+                ctx,
+                Some((pr_number, pr_url)),
+                &err,
+                format,
+            ));
+        }
+    }
+
+    // Assigned deliveries cannot report readiness from a mailbox verdict.
+    // Preserve the unassigned path, including its provider read sequence.
+    if std::env::var("AGENT_REVIEWER_SESSION").is_ok_and(|v| !v.is_empty()) {
+        let admission = pr_view::compute(runner, ctx, pr_number).and_then(|view| {
+            let head = view.head_sha.as_deref().ok_or_else(|| {
+                ForgeError::validation(
+                    schema_version_for(BINARY, "pr.review-handoff", 1),
+                    "awaiting_designated_review",
+                    "awaiting designated review: provider head is missing",
+                    None,
+                )
+            })?;
+            super::super::ops::pr_review_loop::ensure_merge_ready(
+                runner, ctx, &view.url, pr_number, head, true,
+            )
+            .map(|_| ())
+        });
+        if let Err(err) = admission {
             return Ok(emit_chain_failure(
                 steps,
                 args,

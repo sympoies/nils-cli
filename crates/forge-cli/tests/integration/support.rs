@@ -13,6 +13,7 @@ use std::process::{Command, Stdio};
 use tempfile::TempDir;
 
 const SCRUBBED_ENV: &[&str] = &[
+    "AGENT_REVIEWER_SESSION",
     "FORGE_CLI_GIT_BIN",
     "FORGE_CLI_GIT_CAPTURE_LIMIT_BYTES",
     "FORGE_CLI_GIT_TIMEOUT_MS",

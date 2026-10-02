@@ -183,8 +183,15 @@ pub struct ReviewLoopTransition {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ReviewStatePayload {
-    ReviewRunReceipt { receipt: ReviewRunReceipt },
-    ReviewLoop { state: ReviewLoopState },
+    ReviewRunReceipt {
+        receipt: ReviewRunReceipt,
+    },
+    ReviewLoop {
+        state: ReviewLoopState,
+    },
+    ReviewHandoff {
+        handoff: super::pr_review_handoff::ReviewHandoff,
+    },
 }
 
 impl ReviewStatePayload {
@@ -193,6 +200,7 @@ impl ReviewStatePayload {
         match self {
             Self::ReviewRunReceipt { .. } => "review-run-receipt",
             Self::ReviewLoop { .. } => "review-loop",
+            Self::ReviewHandoff { .. } => "review-handoff",
         }
     }
 }
@@ -462,6 +470,9 @@ pub fn parse_chain<'a>(
                 Some(format!("record_digest={}", record.record_digest)),
             ));
         }
+        if let ReviewStatePayload::ReviewHandoff { handoff } = &record.payload {
+            super::pr_review_handoff::validate_handoff(handoff)?;
+        }
         if let ReviewStatePayload::ReviewLoop { state } = &record.payload {
             validate_review_loop_state(state)?;
             let stopped_head_matches = state
@@ -579,7 +590,8 @@ pub fn latest_review_loop_state(chain: &ReviewStateChain) -> Option<&ReviewLoopS
         .rev()
         .find_map(|record| match &record.payload {
             ReviewStatePayload::ReviewLoop { state } => Some(state),
-            ReviewStatePayload::ReviewRunReceipt { .. } => None,
+            ReviewStatePayload::ReviewRunReceipt { .. }
+            | ReviewStatePayload::ReviewHandoff { .. } => None,
         })
 }
 

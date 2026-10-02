@@ -422,6 +422,7 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     ensure_expected_head(view.head_sha.as_deref(), &args.expected_head)?;
     let state_view =
         pr_review::read_review_loop_state_view(runner, &ctx, &repository, view.number)?;
+    super::pr_review_handoff::ensure_observation(&state_view.chain, &args.expected_head)?;
     if let Some(observed) = preflight_tip.as_ref().filter(|_| args.auto_state)
         && observed.as_deref() != state_view.chain.tip_digest.as_deref()
     {
@@ -751,6 +752,15 @@ pub fn ensure_merge_ready<R: BackendRunner>(
         )
     })?;
     let state_view = pr_review::read_review_loop_state_view(runner, ctx, &repository, number)?;
+    super::pr_review_handoff::ensure_published(
+        runner,
+        ctx,
+        number,
+        pr_url,
+        expected_head,
+        &state_view.chain,
+        state_view.handoff_created_at.as_deref(),
+    )?;
     let Some(state) = review_state::latest_review_loop_state(&state_view.chain) else {
         if require_ledger {
             return Err(ForgeError::validation(
@@ -1389,6 +1399,15 @@ fn evaluate_observe<R: BackendRunner>(
             match pr_review::read_review_loop_state_view(runner, ctx, &repository, view.number) {
                 Ok(state_view) => {
                     verdicts.push(RuleVerdict::from_result("review_state_chain", Ok(())));
+                    if super::pr_review_handoff::is_assigned(&state_view.chain) {
+                        verdicts.push(RuleVerdict::from_result(
+                            "designated_review_writer",
+                            super::pr_review_handoff::ensure_observation(
+                                &state_view.chain,
+                                &args.expected_head,
+                            ),
+                        ));
+                    }
                     observed_tip = state_view.chain.tip_digest.clone();
                     verdicts.push(RuleVerdict::from_result(
                         "expected_state_tip",

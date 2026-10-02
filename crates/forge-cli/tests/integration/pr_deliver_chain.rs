@@ -2969,3 +2969,52 @@ fn pr_deliver_without_method_lets_a_merge_commit_queue_decide() {
         "the direct merge API must not be used"
     );
 }
+
+#[test]
+fn assigned_no_merge_delivery_stops_before_ready_or_self_review() {
+    let tempdir = make_git_repo();
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let gh_path = write_full_chain_stub(&stub);
+    let stub = stub
+        .env("FORGE_CLI_GH_BIN", gh_path.to_string_lossy())
+        .env("AGENT_REVIEWER_SESSION", "reviewer-session")
+        .env("AGENT_SESSION_ID", "worker-session");
+    let out = run_in_repo(
+        &stub,
+        &repo_path,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "deliver",
+            "--kind",
+            "feature",
+            "--title",
+            "feat: sample feature",
+            "--body",
+            "## Summary\n\nFeature.\n\n## Test plan\n\nVerified.\n",
+            "--head",
+            "feat/sample",
+            "--base",
+            "main",
+            "--timeout",
+            "5s",
+            "--no-merge",
+        ],
+    );
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+    assert!(out.stdout.contains("awaiting_designated_review"));
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["pr"]["merged"], false);
+    assert_eq!(envelope["data"]["pr"]["number"], 123);
+    assert!(
+        !envelope["data"]["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["step"] == "ready" || s["step"] == "merge")
+    );
+}

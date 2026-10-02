@@ -718,6 +718,64 @@ distinctions that cannot be proven offline.
   `pending_review_identity_mismatch`, `pending_review_pr_mismatch`, or
   `pending_review_not_found` with no mutation.
 
+### `pr review-handoff assign` / `inspect` / `check` / `return`
+
+The designated-review route is opt-in through `AGENT_REVIEWER_SESSION` or an
+explicit `assign` operation. No assignment preserves the existing self-run
+workflow, output envelopes, ledger bytes, and provider call sequence. This
+route requires GitHub's trusted provider ledger; other providers fail closed
+when assigned.
+
+- `assign <id> --reviewer-session <session-id>[@machine] --review-author <login>
+  --base-sha <sha> --expected-head <sha> --expected-state <digest|none>` records
+  an explicit handover in the existing `forge-cli.review-state.v1` chain. The
+  initiating worker/coordinator and designated reviewer must be different
+  sessions. Only opaque session digests, the configured public native-review
+  author, and commit SHAs reach the provider. Machine addresses stay private.
+- `inspect <id>` reads the handoff, provider head, and ledger tip. `check <id>
+  --expected-head <sha>` requires a reviewer-owned closed observation after
+  the handover and a canonical published native report for that same head.
+  The latest review by the appointed author must be `COMMENTED` or `APPROVED`,
+  have a `pass` or `follow-up-pass` verdict, and postdate handover. A report in
+  the same timestamp second as handover fails closed; publish after that
+  boundary. Long summaries use a bounded, identity/head-verified native-body
+  read-back. Earlier passes cannot override a later blocked report.
+- `return <id> --expected-head <sha> --expected-state <digest> --reason
+  <reviewer-unreachable|reviewer-closed|reviewer-declined|reviewer-timeout>`
+  records the worker/coordinator's observed mailbox/liveness failure. Session
+  transport and bounded waits remain the parent workflow's responsibility;
+  this CLI neither polls mailboxes nor guesses liveness. Returned control
+  fails with `designated_reviewer_unavailable`, never self-review. Only the
+  original handover coordinator may return or explicitly reassign ownership.
+- `assign` and `return` require the retained exact ledger tip, including
+  `none` at genesis; they never fetch and replace the caller's expected tip.
+  Every operation emits `cli.forge-cli.pr.review-handoff.v1` with `number`,
+  `url`, `head_sha`, `state_tip_digest`, `handoff`, and `status`. `--dry-run`
+  does the same read-only admission and reports prospective assignment/return
+  without a provider write; its tip remains the observed durable tip.
+
+For assigned calls, keep `AGENT_REVIEWER_SESSION` bound in the worker and
+reviewer environments. `AGENT_SESSION_ID` fences the invoking session; it is
+routing metadata, not provider authorization. `pr review-loop observe` and
+native review publication reject a competing writer, including one that
+refreshes the ledger tip. The final append rechecks ownership and tip. A
+repair pushed before the first designated observation is rejected as
+`review_repair_unobserved`; record findings at the handed-over head first.
+Reassignment starts a new ownership interval and requires a fresh owned
+observation, even when an older self-run ledger was clean at the same head.
+
+Live assigned `pr deliver`, including `--no-merge`, returns
+`awaiting_designated_review` after creating/adopting the PR and checking CI,
+before ready/merge. Its failure envelope retains the PR URL/number for the
+handoff. It proceeds only after publication and ledger admission. A delivery
+`--dry-run` remains a local command preview and is not review-readiness proof;
+use `review-handoff check` for that proof. Assigned `pr merge` preview and live
+merge use the same gate. Live merge also detects the persisted handoff when
+the assignment environment is absent and rechecks publication/ledger before
+the final provider head CAS. Mailbox `pass`, stale publication, missing
+handoff, open findings, and unavailable reviewers cannot satisfy admission.
+All existing checks, convergence, threads, tasks, and head gates still apply.
+
 ### `pr review-loop inspect` / `observe` / `extend` / `validate`
 
 - These GitHub-only commands make the repair/re-review loop resumable from the
