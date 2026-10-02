@@ -34,6 +34,7 @@ pub(crate) const VIA_HTTP: &str = "http";
 /// The only explicit session role.
 pub(crate) const ROLE_COORDINATOR: &str = "coordinator";
 const ROLE_INVALID: &str = "role-invalid";
+const ROLE_REQUIRES_ROOT: &str = "role-requires-root";
 const LINEAGE_INVALID: &str = "lineage-invalid";
 const LINEAGE_DEPTH_EXCEEDED: &str = "lineage-depth-exceeded";
 const WORK_REF_INVALID: &str = "work-ref-invalid";
@@ -295,6 +296,18 @@ pub(crate) fn role_from_request(value: Option<&str>) -> Result<Option<String>, C
     }
 }
 
+/// A coordinator is a root: it may not be started with a parent.
+pub(crate) fn require_root_for_role(role: Option<&str>, has_parent: bool) -> Result<(), CliError> {
+    if role.is_some() && has_parent {
+        return Err(CliError::usage(
+            ROLE_REQUIRES_ROOT,
+            "role coordinator needs a root start: use --no-parent, or a start with no parent",
+            None,
+        ));
+    }
+    Ok(())
+}
+
 /// Validate a `work` object a create body supplies. An empty one is no work.
 pub(crate) fn work_from_create_body(value: &Value) -> Result<Option<SessionWork>, CliError> {
     #[derive(Deserialize)]
@@ -351,6 +364,11 @@ impl LineageSeed {
                 via: via.to_string(),
             },
         }
+    }
+
+    /// Whether the new session has a parent.
+    pub(crate) fn has_parent(&self) -> bool {
+        self.parent.is_some()
     }
 
     /// A child of `parent`, which runs on `parent_machine`.

@@ -3474,6 +3474,7 @@ fn create_body_lineage(
         None => None,
     };
     let role = crate::lineage::role_from_request(role)?;
+    crate::lineage::require_root_for_role(role.as_deref(), seed.has_parent())?;
     Ok(crate::InitialLineage { seed, work, role })
 }
 
@@ -22727,6 +22728,41 @@ esac
         )
         .unwrap();
         assert_eq!(record["role"], "coordinator");
+
+        // A coordinator is a root: a parented lineage is refused.
+        let (status, body) = call(
+            router(st.clone()),
+            create(
+                "role-parented",
+                json!({
+                    "role": "coordinator",
+                    "lineage": {
+                        "parent": parent,
+                        "root": root,
+                        "depth": 1,
+                        "starter": {"kind": "session", "via": "console"}
+                    }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
+        assert_eq!(body["error"]["code"], "role-requires-root");
+        assert!(!tmp.path().join("sessions/role-parented").exists());
+        // A root lineage with the role is fine.
+        let (status, body) = call(
+            router(st.clone()),
+            create(
+                "role-root-lineage",
+                json!({
+                    "role": "coordinator",
+                    "lineage": {"depth": 0, "starter": {"kind": "operator", "via": "console"}}
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["session"]["role"], "coordinator");
 
         for (id, extra, code) in [
             ("bad-role", json!({"role": "boss"}), "role-invalid"),

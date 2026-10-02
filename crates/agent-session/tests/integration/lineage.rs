@@ -734,6 +734,20 @@ fn start_role_marks_a_coordinator_and_is_never_inherited() {
     assert_eq!(role_of("role-coordinator"), "coordinator");
     assert_eq!(role_of("role-child"), Value::Null);
 
+    // A coordinator is a root: inside a managed session it needs --no-parent.
+    let output = fixture.start(
+        "role-parented",
+        &["--role", "coordinator"],
+        Some(("role-coordinator", launch.as_str())),
+    );
+    assert_eq!(output.code, 64, "stderr={}", output.stderr_text());
+    assert_eq!(output.stdout_json()["error"]["code"], "role-requires-root");
+    assert!(
+        !Path::new(&fixture.state)
+            .join("sessions/role-parented")
+            .exists()
+    );
+
     // Only `coordinator` exists.
     let output = fixture.start("role-bad", &["--role", "boss"], None);
     assert_eq!(output.code, 64, "stderr={}", output.stderr_text());

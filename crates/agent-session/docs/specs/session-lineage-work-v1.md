@@ -331,16 +331,22 @@ number of sessions may hold it at once, for example during a handoff overlap.
 - Written once at start; it never changes and is never inherited: a child of a
   coordinator has no role unless it is started with one.
 - `agent-session start --role coordinator` (the only accepted value) sets it.
-  It is independent of `--no-parent`: a successor coordinator is started with
-  `--no-parent --role coordinator`, and its predecessor's live children are
-  moved with `lineage adopt --by <successor>`.
+  A coordinator is a root: the role is accepted only on a start with no
+  parent. Inside a managed session that means `--no-parent`; a successor
+  coordinator is started with `--no-parent --role coordinator`, and its
+  predecessor's live children are moved with `lineage adopt --by <successor>`.
+  Without `--no-parent` inside a managed session the start fails with
+  `role-requires-root` before anything is created, on `start` and on
+  `start --via-console`.
 - A console start sends `role` as a top-level request key (`machine`,
   `no_parent`, `work`, `role`, `session`) and the daemon relays it as
-  `session.role`, next to `session.lineage`. A `role` the caller put in
+  `session.role`, next to `session.lineage`; the daemon route refuses a `role`
+  without `no_parent: true` with `role-requires-root`. A `role` the caller put in
   `session` itself is replaced. The aggregator forwards it in the target
   daemon's `POST /sessions` body.
 - `POST /sessions` accepts an optional `role`, stored verbatim after
-  validation. Any string other than `"coordinator"` fails with HTTP 400
+  validation, and only with a root lineage (none, or `parent: null`); a
+  parented lineage fails with `role-requires-root`. Any string other than `"coordinator"` fails with HTTP 400
   `role-invalid` before anything is created; a `role` that is not a string is
   refused by request parsing. The create response's `session` echoes it.
 - `role` is descriptive, like lineage: it authorizes nothing.
@@ -359,6 +365,8 @@ none; readers treat an absent `role` as null.
 | `work-ref-invalid` | usage / 400 | A reference outside the grammar, more than 4 issues, or an invalid `work` object. |
 | `lineage-invalid` | usage / 400 | A create body `lineage` with an invalid shape. |
 | `role-invalid` | usage / 400 | A `role` other than `coordinator`. |
+| `role-requires-root` | usage / 400 | A `role` on a start that has a parent. |
+| `lineage-parent-mismatch` | usage / 400 | The console edge found `lineage.parent` differing from the relaying session. `console_start` forwards it, with `role-invalid`, `lineage-invalid` and `work-ref-invalid`, as a usage error. |
 | `lineage-depth-exceeded` | usage / 400 | A start deeper than 64. |
 | `lineage-revision-conflict` | data | `lineage adopt --if-revision` does not match. |
 | `lineage-adopt-forbidden` | data | A managed session names a steward other than itself, or clears one. |

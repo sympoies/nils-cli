@@ -603,6 +603,9 @@ fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
         }
     };
     if args.via_console {
+        if let Err(err) = lineage::require_root_for_role(args.role.as_deref(), !args.no_parent) {
+            return render_error(CONSOLE_START_COMMAND, format, err);
+        }
         return match start_via_console(context, args, &work) {
             Ok(result) => render_single_success(
                 CONSOLE_START_COMMAND,
@@ -620,6 +623,11 @@ fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
         };
     if let Some(warning) = warning {
         eprintln!("warning: {warning}");
+    }
+    if let Err(err) =
+        lineage::require_root_for_role(args.role.as_deref(), initial_lineage.seed.has_parent())
+    {
+        return render_error(START_COMMAND, format, err);
     }
     args.initial_lineage = Some(crate::InitialLineage {
         role: args.role.clone(),

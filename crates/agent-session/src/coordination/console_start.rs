@@ -117,7 +117,13 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
         .unwrap_or(UNAVAILABLE_CODE);
     let message = bounded_line(message).unwrap_or("the console start request failed");
     match code {
-        INVALID_CODE | "invalid-request" => CliError::usage(code, message, None),
+        INVALID_CODE
+        | "invalid-request"
+        | "role-invalid"
+        | "role-requires-root"
+        | "lineage-invalid"
+        | "lineage-parent-mismatch"
+        | "work-ref-invalid" => CliError::usage(code, message, None),
         "coordination-unauthorized"
         | "session-incarnation-conflict"
         | "ownership-unknown"
@@ -217,6 +223,7 @@ pub(crate) fn relay_route(
         return Err(disabled());
     };
     let (machine, lineage, child) = checked_request(body).ok_or_else(invalid)?;
+    lineage::require_root_for_role(lineage.role.as_deref(), !lineage.no_parent)?;
     let child = child_session(&config.machine, &caller, &lineage, child)?;
     let mut request = json!({
         "source_session_id": session,
@@ -374,6 +381,16 @@ mod tests {
                 (code, "refused", 65),
                 "{code}"
             );
+        }
+        for code in [
+            "role-invalid",
+            "role-requires-root",
+            "lineage-invalid",
+            "lineage-parent-mismatch",
+            "work-ref-invalid",
+        ] {
+            let error = forwarded(Some(code), &json!("refused")).into_inner();
+            assert_eq!((error.code.as_str(), error.exit_code), (code, 64), "{code}");
         }
         let error = forwarded(Some("invalid-request"), &json!(null)).into_inner();
         assert_eq!(
