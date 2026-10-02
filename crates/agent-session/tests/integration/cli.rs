@@ -7012,6 +7012,64 @@ exit 42
 }
 
 #[test]
+fn start_pins_claude_to_main_screen_renderer() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let cwd = tmp.path().join("repo");
+    fs::create_dir_all(&cwd).expect("repo dir");
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let claude_bin = fake_agent(tmp.path(), "claude");
+
+    let state_arg = state_dir.to_string_lossy().to_string();
+    let cwd_arg = cwd.to_string_lossy().to_string();
+    let tmux_arg = tmux_bin.to_string_lossy().to_string();
+    let claude_arg = claude_bin.to_string_lossy().to_string();
+    let tmux_log_arg = tmux_log.to_string_lossy().to_string();
+    let output = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "start",
+            "--agent",
+            "claude",
+            "--cwd",
+            &cwd_arg,
+            "--id",
+            "claude-renderer",
+            "--tmux-bin",
+            &tmux_arg,
+            "--agent-bin",
+            &claude_arg,
+            "--paste-delay-ms",
+            "0",
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log_arg)],
+    );
+
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let calls = tmux_calls(&tmux_log);
+    let new_session = calls
+        .iter()
+        .find(|call| call.first().is_some_and(|arg| arg == "new-session"))
+        .expect("new-session call");
+    let command_start = new_session
+        .iter()
+        .position(|arg| arg == "--")
+        .expect("tmux command separator");
+    // Claude Code otherwise picks its alt-screen renderer on fresh installs or
+    // rollout gates; managed panes must stay on the main screen like Codex.
+    assert!(
+        new_session[..command_start]
+            .windows(2)
+            .any(|args| args == ["-e", "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1"]),
+        "managed Claude panes must pin the main-screen renderer: {new_session:?}"
+    );
+}
+
+#[test]
 fn start_rejects_claude_resume_identity_agent_args() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
@@ -10057,6 +10115,12 @@ fn standalone_resume_pins_profile_provider_config_root() {
                 &format!("CLAUDE_CONFIG_DIR={}", profile_config.display())
             ]),
         "standalone resume must pin the durable profile root: {new_session:?}"
+    );
+    assert!(
+        new_session
+            .windows(2)
+            .any(|args| args == ["-e", "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1"]),
+        "resumed Claude panes must keep the main-screen renderer: {new_session:?}"
     );
     assert!(
         new_session
