@@ -609,7 +609,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__board)
-            opts="-h --state --since --repo --machine --format --state-dir --host --help"
+            opts="-h --state --since --repo --machine --root --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -628,6 +628,10 @@ _agent__session() {
                     return 0
                     ;;
                 --machine)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --root)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

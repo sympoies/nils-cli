@@ -16,7 +16,7 @@ use crate::coordination::remote::{self, Config};
 use crate::{CliContext, CliError};
 
 /// The query parameters the route forwards unchanged.
-const FILTERS: [&str; 4] = ["state", "since", "repo", "machine"];
+const FILTERS: [&str; 5] = ["state", "since", "repo", "machine", "root"];
 /// At most 1024 records per view, with headroom for long titles.
 const MAX_BODY_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_MESSAGE_BYTES: usize = 256;
@@ -109,11 +109,13 @@ fn checked_view(value: Value) -> Option<Value> {
     .then_some(value)
 }
 
-/// The four filters from the route's raw query. An unknown or repeated
+/// The five filters from the route's raw query. An unknown or repeated
 /// parameter is `board-query-invalid`; values are the aggregator's to judge.
 fn parse_filters(raw_query: Option<&str>) -> Result<Vec<(String, String)>, CliError> {
     let invalid = || {
-        super::view::query_invalid("the board relay accepts only state, since, repo, and machine")
+        super::view::query_invalid(
+            "the board relay accepts only state, since, repo, machine, and root",
+        )
     };
     let mut url = reqwest::Url::parse("http://board.invalid/").map_err(|_| invalid())?;
     url.set_query(raw_query);
@@ -279,14 +281,16 @@ mod tests {
 
     #[test]
     fn filters_admit_each_known_parameter_once() {
-        let filters = parse_filters(Some("state=live&since=3d&repo=a%20b&machine=m")).expect("ok");
+        let filters =
+            parse_filters(Some("state=live&since=3d&repo=a%20b&machine=m&root=r1")).expect("ok");
         assert_eq!(
             filters,
             [
                 ("state", "live"),
                 ("since", "3d"),
                 ("repo", "a b"),
-                ("machine", "m")
+                ("machine", "m"),
+                ("root", "r1")
             ]
             .map(|(key, value)| (key.to_string(), value.to_string()))
         );

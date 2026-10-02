@@ -361,6 +361,10 @@ pub(crate) fn read_since(
                 let mut record = entry.record.clone();
                 if let Some(object) = record.as_object_mut() {
                     object.insert("machine".to_string(), Value::String(machine.to_string()));
+                    // An entry closed before these members existed has none.
+                    for key in ["role", "lineage", "work"] {
+                        object.entry(key).or_insert(Value::Null);
+                    }
                 }
                 json!({ "cursor": cursor(&ledger.ledger_id, entry.seq), "record": record })
             })
@@ -373,6 +377,7 @@ pub(crate) fn read_since(
             json!({
                 "schema_version": CLOSED_SCHEMA,
                 "record_schema": super::RECORD_SCHEMA,
+                "extensions": super::EXTENSIONS,
                 "machine": machine,
                 "generated_at": jiff::Timestamp::now().to_string(),
                 "entries": entries,

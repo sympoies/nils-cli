@@ -344,6 +344,7 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
         assert_eq!(board["schema_version"], "agent-session.board.v1");
         assert_eq!(board["record_schema"], "agent-session.board-record.v1");
         assert_eq!(board["machine"], MACHINE);
+        assert_eq!(board["extensions"], json!(["lineage.v1", "work.v1"]));
         assert!(board["generated_at"].as_str().is_some(), "{board}");
         assert_eq!(board["skipped_count"], 1, "{board}");
         let records = board["records"].as_array().expect("records");
@@ -378,6 +379,9 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
                 "closed_at": null,
                 "close_reason": null,
                 "summary": null,
+                "role": null,
+                "lineage": null,
+                "work": null,
             })
         );
         assert!(
@@ -508,6 +512,9 @@ fn a_cli_delete_with_the_board_disabled_is_served_as_one_closed_record() {
             "closed_at": record["closed_at"],
             "close_reason": "deleted",
             "summary": null,
+            "role": null,
+            "lineage": null,
+            "work": null,
         })
     );
 
@@ -847,5 +854,164 @@ fn board_local_mode_text_output_is_one_line_per_record() {
             "closed  board-host  20300101-000000-d  closed-repo  -  -  Title 20300101-000000-d",
         ],
         "{text}"
+    );
+}
+
+fn session_ref(id: &str) -> Value {
+    json!({
+        "machine": MACHINE,
+        "session_id": id,
+        "session_created_at": "2030-01-01T00:00:00Z",
+    })
+}
+
+/// Give the stored record `id` a lineage under `parent` in the tree of `root`.
+fn set_lineage(fixture: &Fixture, id: &str, parent: Option<&str>, root: &str, role: Option<&str>) {
+    let path = fixture
+        .state_dir
+        .join("sessions")
+        .join(id)
+        .join("session.json");
+    let mut record: Value =
+        serde_json::from_slice(&fs::read(&path).expect("record")).expect("json");
+    record["lineage"] = json!({
+        "schema_version": "agent-session.session-lineage.v1",
+        "machine": MACHINE,
+        "parent": parent.map(session_ref),
+        "root": session_ref(root),
+        "depth": u32::from(parent.is_some()),
+        "starter": {"kind": if parent.is_some() { "session" } else { "operator" }, "via": "cli"},
+        "budget": null,
+    });
+    if let Some(role) = role {
+        record["role"] = json!(role);
+    }
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&record).expect("record json"),
+    )
+    .expect("record");
+}
+
+#[test]
+fn the_board_carries_role_lineage_work_and_the_tree_filter() {
+    let fixture = fixture();
+    let cwd = fixture.home.join("Project/board-repo");
+    for id in ["tree-root", "tree-child", "tree-orphan", "tree-gone"] {
+        write_never_launched_record(&fixture.state_dir, id, &cwd);
+    }
+    set_lineage(
+        &fixture,
+        "tree-root",
+        None,
+        "tree-root",
+        Some("coordinator"),
+    );
+    set_lineage(&fixture, "tree-child", Some("tree-root"), "tree-root", None);
+    set_lineage(&fixture, "tree-gone", Some("tree-root"), "tree-root", None);
+    set_lineage(
+        &fixture,
+        "tree-orphan",
+        Some("tree-gone"),
+        "tree-root",
+        None,
+    );
+    // The orphan's parent closes; the orphan keeps its root.
+    let state = fixture.state_dir.to_string_lossy().to_string();
+    let tmux = fake_tmux(&fixture.root).to_string_lossy().to_string();
+    let home = fixture.home.to_string_lossy().to_string();
+    let deleted = run(
+        &fixture.root,
+        &[
+            "--state-dir",
+            &state,
+            "delete",
+            "tree-gone",
+            "--orphan-children",
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_TMUX_BIN", tmux.as_str()),
+            ("HOME", home.as_str()),
+        ],
+    );
+    assert_eq!(deleted.code, 0, "stderr={}", deleted.stderr_text());
+
+    let output = cli_board(&fixture, &["--format", "json", "--root", "tree-root"]);
+    assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
+    let board = output.stdout_json()["data"]["board"].clone();
+    assert_eq!(board["extensions"], json!(["lineage.v1", "work.v1"]));
+    let records = board["records"].as_array().expect("records");
+    let record = |id: &str| {
+        records
+            .iter()
+            .find(|record| record["session_id"] == id)
+            .unwrap_or_else(|| panic!("{id} on the board: {board}"))
+    };
+    assert_eq!(records.len(), 4, "{board}");
+    assert_eq!(record("tree-root")["role"], "coordinator");
+    assert_eq!(record("tree-root")["lineage"]["parent"], Value::Null);
+    assert_eq!(
+        record("tree-root")["subtree"],
+        json!({"live": 0, "stopped": 2})
+    );
+    assert_eq!(
+        record("tree-child")["lineage"]["parent"],
+        session_ref("tree-root")
+    );
+    assert_eq!(record("tree-child")["role"], Value::Null);
+    assert_eq!(record("tree-child")["work"], Value::Null);
+    assert_eq!(
+        record("tree-orphan")["lineage"]["root"],
+        session_ref("tree-root")
+    );
+    assert_eq!(record("tree-orphan")["orphaned"], true);
+    assert_eq!(record("tree-child")["orphaned"], false);
+    // The closed parent keeps its lineage in the ledger entry.
+    assert_eq!(record("tree-gone")["state"], "closed");
+    assert_eq!(record("tree-gone")["lineage"]["depth"], 1);
+    assert_eq!(record("tree-gone")["orphaned"], false);
+
+    // Records outside the tree are not selected.
+    let output = cli_board(
+        &fixture,
+        &["--format", "json", "--root", "20300101-000000-b"],
+    );
+    assert_eq!(board_ids(&output), vec!["20300101-000000-b"]);
+    let output = cli_board(&fixture, &["--format", "json", "--root", "nobody"]);
+    assert_eq!(board_ids(&output), Vec::<String>::new());
+
+    // The daemon snapshot carries the same members and its envelope names
+    // the extensions.
+    let serve = Serve::spawn(
+        &fixture.root,
+        &fixture.state_dir,
+        &fixture.home,
+        &["--board"],
+        &[],
+    );
+    let auth = format!("Bearer {TOKEN}");
+    let (status, body) = serve.get("/board/v1", &[("Authorization", auth.as_str())]);
+    assert_eq!(status, 200, "{body}");
+    let snapshot = &body["data"]["board"];
+    assert_eq!(snapshot["extensions"], json!(["lineage.v1", "work.v1"]));
+    let root = snapshot["records"]
+        .as_array()
+        .expect("records")
+        .iter()
+        .find(|record| record["session_id"] == "tree-root")
+        .expect("root record");
+    assert_eq!(root["role"], "coordinator");
+    assert_eq!(root["lineage"]["root"], session_ref("tree-root"));
+    assert!(
+        root.get("orphaned").is_none(),
+        "daemons never annotate: {root}"
+    );
+    let (status, body) = serve.get("/board/closed/v1", &[("Authorization", auth.as_str())]);
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        body["data"]["board_closed"]["extensions"],
+        json!(["lineage.v1", "work.v1"])
     );
 }

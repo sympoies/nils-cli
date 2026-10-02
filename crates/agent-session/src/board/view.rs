@@ -61,6 +61,7 @@ struct Query {
     since_seconds: Option<i64>,
     repo: Option<String>,
     machine: Option<String>,
+    root: Option<String>,
 }
 
 pub(super) fn query_invalid(message: &str) -> CliError {
@@ -97,6 +98,7 @@ fn parse_query(args: &BoardArgs) -> Result<Query, CliError> {
             .transpose()?,
         repo: args.repo.clone(),
         machine: args.machine.clone(),
+        root: args.root.clone(),
     })
 }
 
@@ -121,6 +123,7 @@ fn select_mode(
             ("since", &args.since),
             ("repo", &args.repo),
             ("machine", &args.machine),
+            ("root", &args.root),
         ] {
             if let Some(value) = value {
                 filters.push((key, value.as_str()));
@@ -225,9 +228,10 @@ fn local_view(context: &CliContext, query: &Query) -> Result<Value, CliError> {
         .flatten()
         .map(|entry| entry["record"].clone());
 
-    let mut records: Vec<Value> = open_records
+    let mut every_record: Vec<Value> = open_records.into_iter().chain(closed_records).collect();
+    annotate_lineage(&mut every_record, &machine);
+    let mut records: Vec<Value> = every_record
         .into_iter()
-        .chain(closed_records)
         .filter(|record| {
             query
                 .state
@@ -250,6 +254,12 @@ fn local_view(context: &CliContext, query: &Query) -> Result<Value, CliError> {
                 .as_deref()
                 .is_none_or(|name| record["machine"].as_str() == Some(name))
         })
+        .filter(|record| {
+            query
+                .root
+                .as_deref()
+                .is_none_or(|root| in_tree_of(record, root))
+        })
         .collect();
     records.sort_by(compare_records);
     let truncated = records.len() > MAX_RECORDS;
@@ -262,6 +272,7 @@ fn local_view(context: &CliContext, query: &Query) -> Result<Value, CliError> {
     Ok(json!({
         "schema_version": VIEW_SCHEMA,
         "record_schema": super::RECORD_SCHEMA,
+        "extensions": super::EXTENSIONS,
         "generated_at": generated_at,
         "retention": LOCAL_RETENTION,
         "effective_since": effective_since,
@@ -274,6 +285,85 @@ fn local_view(context: &CliContext, query: &Query) -> Result<Value, CliError> {
         "records": records,
         "truncated": truncated,
     }))
+}
+
+/// Whether `record` belongs to the session tree of `root`: it is the root
+/// itself, or its lineage names `root` as its root.
+fn in_tree_of(record: &Value, root: &str) -> bool {
+    record["session_id"].as_str() == Some(root)
+        || record["lineage"]["root"]["session_id"].as_str() == Some(root)
+}
+
+fn same_session(reference: &Value, record: &Value) -> bool {
+    reference["session_id"] == record["session_id"]
+        && reference["session_created_at"] == record["created_at"]
+}
+
+/// Aggregator annotations for one machine's records
+/// (`session-board-v1`, "Aggregator annotations"): `orphaned` on every record,
+/// true for a non-closed record whose effective parent is closed or no longer
+/// on this machine, and `subtree {live, stopped}` on a root record, counting
+/// the other non-closed records of its tree. A parent on another machine can
+/// not be judged from one machine, so it never makes a record orphaned.
+fn annotate_lineage(records: &mut [Value], machine: &str) {
+    let orphaned: Vec<bool> = records
+        .iter()
+        .map(|record| {
+            if record["state"] == "closed" {
+                return false;
+            }
+            let parent = &record["lineage"]["effective_parent"];
+            if !parent.is_object() {
+                return false;
+            }
+            let held = |closed: bool| {
+                records.iter().any(|other| {
+                    (other["state"] == "closed") == closed && same_session(parent, other)
+                })
+            };
+            if held(false) {
+                false
+            } else {
+                held(true) || parent["machine"].as_str() == Some(machine)
+            }
+        })
+        .collect();
+    let subtrees: Vec<Option<Value>> = records
+        .iter()
+        .map(|record| {
+            let id = record["session_id"].as_str()?;
+            // A session started before lineage existed is the root of the
+            // children that name it, so it counts as a root when any do.
+            let is_root = match record["lineage"]["root"]["session_id"].as_str() {
+                Some(root) => root == id,
+                None => records.iter().any(|other| {
+                    other["session_id"].as_str() != Some(id)
+                        && other["lineage"]["root"]["session_id"].as_str() == Some(id)
+                }),
+            };
+            is_root.then(|| {
+                let count = |state: &str| {
+                    records
+                        .iter()
+                        .filter(|other| {
+                            other["state"] == state
+                                && other["session_id"].as_str() != Some(id)
+                                && other["lineage"]["root"]["session_id"].as_str() == Some(id)
+                        })
+                        .count()
+                };
+                json!({"live": count("live"), "stopped": count("stopped")})
+            })
+        })
+        .collect();
+    for ((record, orphaned), subtree) in records.iter_mut().zip(orphaned).zip(subtrees) {
+        if let Some(object) = record.as_object_mut() {
+            object.insert("orphaned".to_string(), json!(orphaned));
+            if let Some(subtree) = subtree {
+                object.insert("subtree".to_string(), subtree);
+            }
+        }
+    }
 }
 
 fn truncate(text: &str, width: usize) -> String {
@@ -420,6 +510,121 @@ fn render_text(data: &Value, caller: Option<&Caller>, local_machine: &str) -> St
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    fn tree_record(
+        id: &str,
+        state: &str,
+        parent: Option<&str>,
+        root: &str,
+        machine: &str,
+    ) -> Value {
+        let reference = |id: &str| json!({"machine": machine, "session_id": id, "session_created_at": "2030-01-01T00:00:00Z"});
+        json!({
+            "machine": machine,
+            "session_id": id,
+            "created_at": "2030-01-01T00:00:00Z",
+            "state": state,
+            "lineage": {
+                "parent": parent.map(reference),
+                "effective_parent": parent.map(reference),
+                "root": reference(root),
+                "depth": u32::from(parent.is_some()),
+                "starter": {"kind": "operator", "via": "cli"},
+                "budget": null,
+            },
+        })
+    }
+
+    #[test]
+    fn a_tree_view_selects_the_root_and_its_descendants() {
+        let records = [
+            tree_record("root", "live", None, "root", "m"),
+            tree_record("child", "stopped", Some("root"), "root", "m"),
+            tree_record("grandchild", "closed", Some("child"), "root", "m"),
+            tree_record("other", "live", None, "other", "m"),
+        ];
+        let tree: Vec<&str> = records
+            .iter()
+            .filter(|record| in_tree_of(record, "root"))
+            .map(|record| record["session_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(tree, vec!["root", "child", "grandchild"]);
+        // A session without lineage is its own tree only.
+        let preexisting = json!({"session_id": "preexisting", "lineage": null});
+        assert!(in_tree_of(&preexisting, "preexisting"));
+        assert!(!in_tree_of(&preexisting, "root"));
+    }
+
+    #[test]
+    fn orphans_and_subtrees_are_annotated_for_one_machine() {
+        let mut records = vec![
+            tree_record("root", "live", None, "root", "m"),
+            tree_record("kept", "live", Some("root"), "root", "m"),
+            tree_record("stopped-child", "stopped", Some("root"), "root", "m"),
+            // Its parent closed, so it is orphaned but keeps its root.
+            tree_record("closed-parent", "closed", Some("root"), "root", "m"),
+            tree_record("orphan", "live", Some("closed-parent"), "root", "m"),
+            // Its parent is gone from this machine's records altogether.
+            tree_record("lost", "live", Some("gone"), "root", "m"),
+            // A parent on another machine cannot be judged from here.
+            tree_record(
+                "remote-child",
+                "live",
+                Some("elsewhere"),
+                "elsewhere-root",
+                "n",
+            ),
+            // A record that never had a parent is not orphaned.
+            tree_record("fresh-root", "live", None, "fresh-root", "m"),
+            // A session from before lineage existed that children name as root.
+            json!({"machine": "m", "session_id": "preexisting", "created_at": "2030-01-01T00:00:00Z", "state": "live", "lineage": null}),
+            tree_record(
+                "preexisting-child",
+                "live",
+                Some("preexisting"),
+                "preexisting",
+                "m",
+            ),
+        ];
+        // "remote-child" names a parent on machine n; this view is machine m.
+        records[6]["machine"] = json!("m");
+        annotate_lineage(&mut records, "m");
+        let orphaned: Vec<(&str, bool)> = records
+            .iter()
+            .map(|record| {
+                (
+                    record["session_id"].as_str().unwrap(),
+                    record["orphaned"]
+                        .as_bool()
+                        .expect("orphaned is always set"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            orphaned,
+            vec![
+                ("root", false),
+                ("kept", false),
+                ("stopped-child", false),
+                ("closed-parent", false),
+                ("orphan", true),
+                ("lost", true),
+                ("remote-child", false),
+                ("fresh-root", false),
+                ("preexisting", false),
+                ("preexisting-child", false),
+            ]
+        );
+        // Only a record that is its own root carries a subtree, counting the
+        // other non-closed members of its tree.
+        assert_eq!(records[0]["subtree"], json!({"live": 3, "stopped": 1}));
+        assert_eq!(records[7]["subtree"], json!({"live": 0, "stopped": 0}));
+        assert_eq!(records[8]["subtree"], json!({"live": 1, "stopped": 0}));
+        assert_eq!(records[8]["orphaned"], false);
+        for index in [1, 2, 3, 4, 5, 6, 9] {
+            assert!(records[index].get("subtree").is_none(), "{index}");
+        }
+    }
 
     #[test]
     fn durations_accept_exactly_the_documented_units() {
