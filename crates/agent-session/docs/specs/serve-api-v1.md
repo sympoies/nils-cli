@@ -16,6 +16,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /healthz` | Open | This specification |
 | `GET /board/v1` | Bearer; only with `serve --board` or `AGENT_SESSION_BOARD=1` | [Session board v1](session-board-v1.md#daemon-local-snapshot) |
 | `GET /board/closed/v1` | Bearer; only with `serve --board` or `AGENT_SESSION_BOARD=1` | [Session board v1](session-board-v1.md#closed-session-ledger) |
+| `GET /board/programs/v1` | Bearer; only with `serve --board` or `AGENT_SESSION_BOARD=1` | [Session board v1](session-board-v1.md#programs) |
 | `GET /shells/{owner}` | Bearer | [Emergency shells](#emergency-shells) |
 | `POST /shells/{owner}` | Bearer | [Emergency shells](#emergency-shells) |
 | `DELETE /shells/{owner}` | Bearer + incarnation body | [Emergency shells](#emergency-shells) |

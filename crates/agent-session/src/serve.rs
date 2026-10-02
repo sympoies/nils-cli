@@ -218,6 +218,8 @@ struct ServeState {
     remote_outbox_wake: Arc<tokio::sync::Notify>,
     /// `GET /usage/v1`, `POST /codex/reset/v1`, and `POST /claude/reset/v1` (`usage.rs`).
     provider_usage: Arc<crate::usage::UsageService>,
+    /// `GET /board/programs/v1` (`board/programs.rs`).
+    board_programs: Arc<crate::board::ProgramCache>,
 }
 
 #[derive(Default)]
@@ -1134,6 +1136,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             coordination_notification_wake: Arc::new(tokio::sync::Notify::new()),
             remote_outbox_wake: Arc::new(tokio::sync::Notify::new()),
             provider_usage: Arc::new(crate::usage::UsageService::from_environment()),
+            board_programs: Arc::new(crate::board::ProgramCache::from_environment()),
         });
         let listener = match bind_listener_and_start_delete_tombstone_cleanup(context, bind).await {
             Ok(listener) => listener,
@@ -1223,6 +1226,7 @@ fn router(state: Arc<ServeState>) -> Router {
         .route("/shells/{owner}/attach", get(shell::attach))
         .route("/healthz", get(healthz))
         .route("/board/v1", get(board_snapshot_handler))
+        .route("/board/programs/v1", get(board_programs_handler))
         .route("/board/closed/v1", get(board_closed_handler))
         .route("/sessions/{id}/board/v1", get(board_relay_handler))
         .route(
@@ -5145,6 +5149,34 @@ async fn board_snapshot_handler(
     .await
     {
         Ok(Ok(board)) => envelope_ok(json!({ "machine": state.machine, "board": board })),
+        Ok(Err(err)) => envelope_err(err),
+        Err(_) => join_err(),
+    }
+}
+
+/// `GET /board/programs/v1`: the program lanes of this machine's sessions;
+/// the cache lives in `board/programs.rs`.
+async fn board_programs_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+) -> Response {
+    if !state.board {
+        return status_json(
+            StatusCode::NOT_FOUND,
+            crate::board::DISABLED_CODE,
+            crate::board::DISABLED_MESSAGE,
+        );
+    }
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    let machine = state.machine.clone();
+    let programs = state.board_programs.clone();
+    match tokio::task::spawn_blocking(move || programs.snapshot(&context, &machine)).await {
+        Ok(Ok(programs)) => {
+            envelope_ok(json!({ "machine": state.machine, "board_programs": programs }))
+        }
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
     }
@@ -16789,6 +16821,7 @@ mod tests {
             coordination_notification_wake: Arc::new(tokio::sync::Notify::new()),
             remote_outbox_wake: Arc::new(tokio::sync::Notify::new()),
             provider_usage: Arc::new(crate::usage::UsageService::from_environment()),
+            board_programs: Arc::new(crate::board::ProgramCache::from_environment()),
         })
     }
 
