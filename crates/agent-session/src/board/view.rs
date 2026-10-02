@@ -550,9 +550,9 @@ mod tests {
             .collect();
         assert_eq!(tree, vec!["root", "child", "grandchild"]);
         // A session without lineage is its own tree only.
-        let legacy = json!({"session_id": "legacy", "lineage": null});
-        assert!(in_tree_of(&legacy, "legacy"));
-        assert!(!in_tree_of(&legacy, "root"));
+        let preexisting = json!({"session_id": "preexisting", "lineage": null});
+        assert!(in_tree_of(&preexisting, "preexisting"));
+        assert!(!in_tree_of(&preexisting, "root"));
     }
 
     #[test]
@@ -577,8 +577,14 @@ mod tests {
             // A record that never had a parent is not orphaned.
             tree_record("fresh-root", "live", None, "fresh-root", "m"),
             // A session from before lineage existed that children name as root.
-            json!({"machine": "m", "session_id": "legacy", "created_at": "2030-01-01T00:00:00Z", "state": "live", "lineage": null}),
-            tree_record("legacy-child", "live", Some("legacy"), "legacy", "m"),
+            json!({"machine": "m", "session_id": "preexisting", "created_at": "2030-01-01T00:00:00Z", "state": "live", "lineage": null}),
+            tree_record(
+                "preexisting-child",
+                "live",
+                Some("preexisting"),
+                "preexisting",
+                "m",
+            ),
         ];
         // "remote-child" names a parent on machine n; this view is machine m.
         records[6]["machine"] = json!("m");
@@ -605,8 +611,8 @@ mod tests {
                 ("lost", true),
                 ("remote-child", false),
                 ("fresh-root", false),
-                ("legacy", false),
-                ("legacy-child", false),
+                ("preexisting", false),
+                ("preexisting-child", false),
             ]
         );
         // Only a record that is its own root carries a subtree, counting the

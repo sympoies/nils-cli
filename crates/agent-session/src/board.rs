@@ -949,13 +949,16 @@ mod tests {
         // The ledger serves it with the rest; an entry closed before these
         // members existed reads back with nulls.
         record_close(&context, Some(closed));
-        let mut legacy = project_record(&full_view(), "", None, false).expect("legacy");
-        legacy.as_object_mut().expect("object").remove("role");
-        legacy.as_object_mut().expect("object").remove("lineage");
-        legacy.as_object_mut().expect("object").remove("work");
-        legacy["state"] = json!("closed");
-        legacy["session_id"] = json!("legacy");
-        ledger::append(&context, legacy).expect("append legacy");
+        let mut preexisting = project_record(&full_view(), "", None, false).expect("preexisting");
+        preexisting.as_object_mut().expect("object").remove("role");
+        preexisting
+            .as_object_mut()
+            .expect("object")
+            .remove("lineage");
+        preexisting.as_object_mut().expect("object").remove("work");
+        preexisting["state"] = json!("closed");
+        preexisting["session_id"] = json!("preexisting");
+        ledger::append(&context, preexisting).expect("append preexisting");
         let read = super::closed(&context, None, "host-a").expect("closed");
         assert_eq!(read["extensions"], json!(EXTENSIONS));
         let entries = read["entries"].as_array().expect("entries");
