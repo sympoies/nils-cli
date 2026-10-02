@@ -7720,9 +7720,10 @@ async fn submit_structured_prompt_handler_with_fence(
 }
 
 /// Submit one structured prompt to a Claude session and report `submitted` only
-/// once Claude's own `UserPromptSubmit` hook has produced a new turn. A tmux
-/// write that the provider never acknowledged is reported as an unknown
-/// outcome, never as a submission.
+/// once Claude's own `UserPromptSubmit` hook has produced a new turn, or the
+/// pane shows the prompt queued behind a running turn (`queued: true`). A tmux
+/// write that is neither is reported as an unknown outcome, never as a
+/// submission.
 async fn submit_claude_structured_prompt(
     state: &Arc<ServeState>,
     record: &SessionRecord,
@@ -7793,6 +7794,29 @@ async fn submit_claude_structured_prompt(
             break;
         }
         tokio::time::sleep(CLAUDE_STRUCTURED_PROMPT_ACK_POLL_INTERVAL).await;
+    }
+    // A prompt sent mid-turn starts no turn until the running one ends, but
+    // Claude Code shows it queued; that is a delivery, not an unknown outcome.
+    let queued = {
+        let record = record.clone();
+        let text = text.to_string();
+        let tmux_bin = state.tmux_bin.clone();
+        match tokio::task::spawn_blocking(move || {
+            crate::claude_prompt_queued(&record, &text, &tmux_bin)
+        })
+        .await
+        {
+            Ok(queued) => queued,
+            Err(_) => return join_err(),
+        }
+    };
+    if queued {
+        return envelope_ok(json!({
+            "machine": state.machine,
+            "submitted": true,
+            "queued": true,
+            "session_incarnation": session_incarnation,
+        }));
     }
     status_json(
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -24409,6 +24433,7 @@ esac
         acknowledger.await.unwrap();
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert_eq!(body["data"]["submitted"], true);
+        assert!(body["data"].get("queued").is_none());
         assert_eq!(body["data"]["session_incarnation"], launch_id);
     }
 
@@ -24435,6 +24460,87 @@ esac
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "body={body}");
         assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
         assert!(body.pointer("/data/submitted").is_none());
+    }
+
+    /// A tmux stub whose pane shows `pane` for every `capture-pane`.
+    fn minimal_tmux_showing(dir: &Path, pane: &str) -> PathBuf {
+        let bin = minimal_tmux(dir);
+        let shown = dir.join("shown-pane");
+        std::fs::write(&shown, pane).unwrap();
+        let script = std::fs::read_to_string(&bin).unwrap();
+        let script = script.replace(
+            "capture-pane) printf 'pane\\n'; exit 0 ;;",
+            &format!("capture-pane) cat '{}'; exit 0 ;;", shown.display()),
+        );
+        std::fs::write(&bin, script).unwrap();
+        bin
+    }
+
+    const QUEUED_CLAUDE_PANE: &str = "  Second queued message.
+  ctrl+x ctrl+s to send now
+· Galloping… (running PreToolUse hook · 4s)
+────────────────────────────────────────
+❯\u{a0}Press up to edit queued messages
+────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+";
+
+    #[tokio::test]
+    async fn claude_structured_prompt_queued_behind_a_running_turn_reports_submitted_and_queued() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launch_id = seed_claude_prompt_session(tmp.path(), "claude-queued");
+        let st = state(
+            tmp.path(),
+            Some(TOKEN),
+            minimal_tmux_showing(tmp.path(), QUEUED_CLAUDE_PANE),
+        );
+        let record = load_session_record(&st.context, "claude-queued").unwrap();
+        crate::activity::activate_runtime(&st.context, &record).unwrap();
+
+        let (status, body) = response_parts(
+            submit_claude_structured_prompt(
+                &st,
+                &record,
+                &launch_id,
+                Some(&launch_id),
+                "Second queued message.",
+                Duration::from_millis(200),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(body["data"]["submitted"], true);
+        assert_eq!(body["data"]["queued"], true);
+        assert_eq!(body["data"]["session_incarnation"], launch_id);
+    }
+
+    #[tokio::test]
+    async fn claude_structured_prompt_is_unknown_when_the_queue_lists_another_message() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launch_id = seed_claude_prompt_session(tmp.path(), "claude-queue-other");
+        let st = state(
+            tmp.path(),
+            Some(TOKEN),
+            minimal_tmux_showing(tmp.path(), QUEUED_CLAUDE_PANE),
+        );
+        let record = load_session_record(&st.context, "claude-queue-other").unwrap();
+        crate::activity::activate_runtime(&st.context, &record).unwrap();
+
+        let (status, body) = response_parts(
+            submit_claude_structured_prompt(
+                &st,
+                &record,
+                &launch_id,
+                Some(&launch_id),
+                "A prompt the queue never received",
+                Duration::from_millis(200),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "body={body}");
+        assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
     }
 
     #[tokio::test]

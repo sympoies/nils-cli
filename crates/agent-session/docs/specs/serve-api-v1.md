@@ -629,6 +629,10 @@ recorded in `sympoies/nils-cli#1409`.
   `session-incarnation-conflict` without submitting. Success returns `submitted: true` plus the locked
   `session_incarnation`, while the provider turn id remains private. These mutations never send multiline text through
   terminal keys; unsupported or not-yet-ready sessions fail closed.
+  On a Claude (pane-delivered) runtime, success means Claude's `UserPromptSubmit` hook started a new turn within the
+  acknowledgement wait, or the pane lists the prompt among its queued messages behind a running turn; the queued case adds
+  `queued: true` and the prompt runs as the next turn, so the client MUST NOT resend it. A new turn omits `queued`.
+  When neither is observed the route answers 500 `structured-prompt-outcome-unknown`.
   For an already resumed Codex runtime whose terminal path reports local
   JSON-RPC `-32001` busy, the error alone does not prove rejection before
   provider acceptance: the same response can be emitted while an earlier

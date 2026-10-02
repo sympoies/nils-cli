@@ -245,7 +245,8 @@ submit the continuation through the fenced route exactly once:
 ```
 
 Send that body to `POST /sessions/SESSION_ID/prompt/v2`. Success returns
-`submitted: true` and the same incarnation. A `409
+`submitted: true` and the same incarnation; a Claude prompt queued behind a
+running turn also returns `queued: true` and must not be resent. A `409
 session-incarnation-conflict` means the runtime was replaced; refresh the
 session list and decide against the new incarnation instead of removing the
 fence. Any outcome-unknown transport failure requires observation before a
