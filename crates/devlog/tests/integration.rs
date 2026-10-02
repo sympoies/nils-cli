@@ -5,5 +5,7 @@
 
 #[path = "integration/cli.rs"]
 mod cli;
+#[path = "integration/fragments.rs"]
+mod fragments;
 #[path = "integration/model.rs"]
 mod model;

@@ -27,12 +27,136 @@ satisfy all five by construction.
 
 | Command | Purpose |
 | --- | --- |
-| `devlog new` | Add an entry, creating the month file and index link when absent. |
-| `devlog search <term>` | Literal, case-insensitive search across month files. |
-| `devlog check` | Report structural problems. |
+| `devlog new` | Add a month entry, or an isolated fragment when enabled. |
+| `devlog search <term>` | Literal, case-insensitive search across month files and pending fragments. |
+| `devlog check` | Report structural problems and default-branch fragment edits or deletions. |
 | `devlog fix` | Repair the structural problems that have one correct repair. |
-| `devlog index` | Rewrite the README month index from the tracked month files. |
+| `devlog index` | Rewrite the README month index and pending-fragment links. |
+| `devlog fold` | Move fragments dated before today into deterministic month files. |
+| `devlog merge <base> <ours> <theirs>` | Union month entries for a local Git merge driver, overwriting ours. |
 | `devlog completion <bash\|zsh>` | Export the shell completion script. |
+
+### Enabling fragment layout in a repository
+
+The default month layout keeps its existing file and output bytes. Enable the
+fragment writer by exporting this setting in the repository's development
+shell or automation environment:
+
+```bash
+export DEVLOG_LAYOUT=fragments
+```
+
+`DEVLOG_LAYOUT=months`, an empty value, or an unset variable selects the month
+writer. Other values are rejected. There is no repository config file; apply
+this environment setting to every author and the repository's CI check job.
+Existing month files require no conversion.
+
+Initialize the log directory with a `README.md` containing a `## Months`
+section, then run `devlog index`. With the setting enabled, `devlog new` writes
+only `pending/YYYY-MM-DD-slug.md` under the log directory. It never modifies
+the month file or README, including for the first entry of a new month. The
+default slug includes a unique suffix, so separate changes with the same title
+remain separate entries. For a stable change identifier, pass `--slug` with
+lowercase ASCII letters, digits and hyphens (up to 180 bytes):
+
+```bash
+devlog new --title "Improve log tooling" --slug improve-log-tooling \
+  --result "Added isolated entries." --why "Parallel changes share no file." \
+  --evidence "Git integration tests passed."
+```
+
+Choose a different slug for each change on the same date. An existing fragment
+is never overwritten. The entry's HTML `devlog-id` comment carries its identity
+through folding; keep that comment intact.
+
+`search`, `check` and `index` read pending fragments alongside month entries,
+even if the writer setting is unset. Fragment search results carry their real
+`pending/...md` path (also in the JSON match's optional `path` field), and
+`--month` includes fragments when that month's file does not yet exist.
+`index` adds a separate `## Pending` link list, marked with a
+`devlog-pending-index` HTML comment so an existing month-layout repository
+keeps its own `Pending` prose intact when no fragments exist. Authors need not run it after
+`new`, so parallel PRs can leave shared files untouched. `check` accepts that
+pending list being absent or not yet refreshed.
+
+Run `devlog check` in CI with the fragment setting enabled. Fragments present
+on the default branch are immutable: edits report `fragment-modified`, and
+deletions report `fragment-deleted` unless the unchanged entry, including its
+identity, is present exactly once in its month file. Fold first; corrections
+belong in the month file after the fold has landed. `fix` repairs month files
+and the index; it does not edit fragments.
+
+The default-branch baseline is the local `origin/HEAD` remote-tracking ref,
+then local `main` or `master`. Fetch the default branch in CI before checking;
+for a custom branch name or a shallow checkout, pass an available ref explicitly:
+
+```bash
+devlog check --base origin/main
+```
+
+An unborn repository has no baseline entries. A repository with fragments and
+commits but no resolvable baseline fails with `baseline-unavailable` (exit 69);
+`--base` must name a readable ref. A month-only log with the switch unset keeps
+its existing structural checks.
+
+### `devlog fold`
+
+```bash
+devlog fold
+```
+
+Fold moves entries dated strictly before today (in the system time zone) into
+`YYYY-MM.md` and deletes those fragments. Today's and future entries remain
+pending. Month entries sort by date descending, then slug ascending; existing
+entries without an identity comment use their date and exact title as identity
+and their title as the ordering tie-breaker. Prose before the first entry and
+entry bodies survive. Duplicate identities or incompatible content are refused
+before any file is written. Source fragments remain until all required month
+and index writes succeed, so a retry after an index-write failure finishes the
+same fold without duplicating already-copied identities. Files that would be rewritten must be regular
+files, and malformed fragments or unresolved conflicts are refused.
+
+The same content and cutoff date produce identical files in independent
+clones. A second fold is a no-op; with no eligible fragments it writes nothing,
+including the index. JSON output uses `cli.devlog.fold.v1` and reports `folded`,
+`months` and `index_updated`.
+
+Assign folding to one owner, typically a scheduled CI job on the default
+branch. That job supplies `DEVLOG_LAYOUT=fragments`, fetches the current default
+branch, runs `devlog fold` and `devlog check`, and commits only if there is a
+diff. Use the repository's protected-branch and signing workflow to publish the
+result, or open a PR. If the default branch moves before delivery, refetch and
+rerun the fold against the new content. Keep the CLI and check environment in
+sync across development and CI.
+
+### Optional local merge driver
+
+Repositories that fold on branches can configure a local merge driver:
+
+```bash
+git config merge.devlog.name "Deterministic devlog entry union"
+git config merge.devlog.driver 'devlog merge %O %A %B'
+```
+
+Commit a `.gitattributes` rule matching only month files, adjusting the log
+location as needed:
+
+```gitattributes
+docs/devlog/????-??.md merge=devlog
+```
+
+`merge` reads the ancestor, ours and theirs, unions entries by identity, then
+re-sorts them and overwrites ours. It works without log discovery or the layout
+setting. One-sided corrections are retained; incompatible edits to the same
+identity or to the month preamble fail (exit 65) without overwriting ours, so
+Git can report a conflict for a maintainer to resolve. Shared entries appear
+once, while different fragment slugs remain distinct even with the same title.
+The command emits no text on success; JSON uses `cli.devlog.merge.v1`.
+
+Git configuration is local to each clone: `.gitattributes` alone does not
+install the driver. Hosted web merges and merge queues do not run custom
+merge drivers. Use isolated fragments and a single fold owner to avoid those
+conflicts; the driver helps local merges and rebases only.
 
 ### Devlog location
 

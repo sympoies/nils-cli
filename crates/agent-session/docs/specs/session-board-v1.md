@@ -269,6 +269,7 @@ naming the additive capabilities the producer supports:
 | --- | --- |
 | `lineage.v1` | Record `role` and `lineage`; aggregator annotations `orphaned` and `subtree`; the `root` query filter. |
 | `work.v1` | Record `work`. |
+| `programs.v1` | The daemon route `GET /board/programs/v1` and the aggregator view `programs` member. Named by the daemon snapshot only. |
 
 A reader feature-detects from this list, never from the presence of a record
 field, and ignores strings it does not know. A producer that predates an
@@ -291,7 +292,7 @@ strings, so a deployed reader that requires the exact v1 strings keeps working.
   "schema_version": "agent-session.board.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
-  "extensions": ["lineage.v1", "work.v1"],
+  "extensions": ["lineage.v1", "work.v1", "programs.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "ledger_cursor": "opaque",
   "records": [],
@@ -312,6 +313,61 @@ cursor that is behind would skip entries. When the ledger head cannot be read
 A record whose projection fails (corrupt or unreadable) is omitted and counted
 in `skipped_count`; it is never guessed. The aggregator treats a snapshot with
 `skipped_count > 0` as incomplete for [Vanished records](#vanished-records).
+
+## Programs
+
+A session's `work.program` names a work-mode tracker issue. The daemon serves
+the lanes of every program that a session on this machine names, so a board can
+group sessions by lane without reading the forge itself.
+
+`GET /board/programs/v1` has the authority and envelope of `GET /board/v1`,
+with the result in `data.board_programs`:
+
+```json
+{
+  "schema_version": "agent-session.board-programs.v1",
+  "machine": "host-a",
+  "generated_at": "2030-01-01T00:05:00Z",
+  "programs": [
+    {
+      "ref": "owner/program#44",
+      "url": "https://github.com/owner/program/issues/44",
+      "title": "Program tracker",
+      "state": "open",
+      "fetched_at": "2030-01-01T00:04:00Z",
+      "stale": false,
+      "rows": [
+        {"id": "A1", "title": "First lane", "reference": "owner/repo#2032", "done": false, "phase": "Phase 1", "after": [], "notes": null},
+        {"id": "G1", "title": "Release gate", "reference": null, "done": false, "phase": null, "after": ["A1"], "notes": null}
+      ]
+    }
+  ]
+}
+```
+
+- `ref` is the program in the `owner/repo#N` grammar, with a `gitlab:` prefix
+  for GitLab. `programs` lists the distinct programs named by this machine's
+  sessions, sorted by `ref`, at most 16.
+- A row is a lane when `reference` is set: its sessions are those whose
+  `work.issues` contain that reference. A row without a reference is a gate.
+  `after` lists the ids of the rows it waits for, and `done` is the tracker's
+  tick. Rows come from `forge-cli issue tracker show`, which owns the tracker
+  grammar; row findings are not served.
+- The daemon reads each program through `forge-cli issue tracker show` (the
+  binary named by `AGENT_SESSION_FORGE_CLI_BIN`, otherwise `forge-cli` on
+  `PATH`) lazily when the route is read. A copy younger than five minutes is
+  served without a read, concurrent reads share one refresh, and the last good
+  copy is kept with `stale: true` when a refresh fails. A failed read counts
+  as an attempt: it is not tried again before the five minutes pass. One
+  refresh pass reads for at most 20 seconds in total, each read for at most 10;
+  programs it does not reach keep their cached copy, marked `stale: true`. A program that was
+  never read successfully is omitted, never guessed. Program refs and the
+  tracker's public title, state, and rows are the only data served.
+- The route answers `board-disabled` (HTTP 404) while the board is disabled.
+
+An aggregator merges the programs of every machine by `ref`, keeping the newest
+`fetched_at`, and adds them to its view as `programs`, restricted to the
+programs that records visible to the principal name in `work.program`.
 
 ## Closed-session ledger
 
@@ -573,6 +629,9 @@ bearer is HTTP 401 or 403.
   newest first, then by `machine` and `session_id` ascending.
 - At most 1024 records are returned; `truncated: true` reports that more
   matched.
+- A view whose `extensions` name `programs.v1` also carries `programs`, the
+  merged [Programs](#programs) list; a view without the extension has no
+  `programs` member.
 - `retention` is the aggregator's configured retention (`3d`, `7d`, `2w`, or
   `1mo`). `effective_since` is the start of the window actually applied.
   `since_capped` is `true` exactly when the requested `since` was longer than
@@ -726,6 +785,7 @@ in coordination v1.
 | `agent-session.board-record.v1` | Named in `record_schema` of every envelope below |
 | `agent-session.board.v1` | `data.board` of `GET /board/v1` |
 | `agent-session.board-closed.v1` | `data.board_closed` of `GET /board/closed/v1` |
+| `agent-session.board-programs.v1` | `data.board_programs` of `GET /board/programs/v1` |
 | `agent-session.board-closed-ledger.v1` | Private ledger file only; never served |
 | `agent-session.board-view.v1` | Aggregator query, relay route (raw), and CLI `data.board` |
 | `cli.agent-session.board.v1` | CLI JSON envelope |

@@ -8666,7 +8666,7 @@ fn start_interactive_tmux(
         command
             .arg("sh")
             .arg("-c")
-            .arg(codex_app_server::launch_script())
+            .arg(codex_app_server::launch_script(agent_args))
             .arg("agent-session-codex-app-server")
             .arg(socket)
             .arg(proxy)

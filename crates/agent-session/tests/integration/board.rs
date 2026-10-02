@@ -344,7 +344,10 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
         assert_eq!(board["schema_version"], "agent-session.board.v1");
         assert_eq!(board["record_schema"], "agent-session.board-record.v1");
         assert_eq!(board["machine"], MACHINE);
-        assert_eq!(board["extensions"], json!(["lineage.v1", "work.v1"]));
+        assert_eq!(
+            board["extensions"],
+            json!(["lineage.v1", "work.v1", "programs.v1"])
+        );
         assert!(board["generated_at"].as_str().is_some(), "{board}");
         assert_eq!(board["skipped_count"], 1, "{board}");
         let records = board["records"].as_array().expect("records");
@@ -995,7 +998,10 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
     let (status, body) = serve.get("/board/v1", &[("Authorization", auth.as_str())]);
     assert_eq!(status, 200, "{body}");
     let snapshot = &body["data"]["board"];
-    assert_eq!(snapshot["extensions"], json!(["lineage.v1", "work.v1"]));
+    assert_eq!(
+        snapshot["extensions"],
+        json!(["lineage.v1", "work.v1", "programs.v1"])
+    );
     let root = snapshot["records"]
         .as_array()
         .expect("records")
@@ -1013,5 +1019,90 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
     assert_eq!(
         body["data"]["board_closed"]["extensions"],
         json!(["lineage.v1", "work.v1"])
+    );
+}
+
+fn fake_forge_cli(root: &Path) -> PathBuf {
+    let bin = root.join("forge-cli");
+    fs::write(
+        &bin,
+        "#!/bin/sh\n\
+         case \"$*\" in\n\
+         *\"show o/program#44 \"*) ;;\n\
+         *) exit 1 ;;\n\
+         esac\n\
+         printf '%s' '{\"schema_version\":\"cli.forge-cli.issue.tracker.show.v1\",\"ok\":true,\"data\":{\"title\":\"Program tracker\",\"state\":\"open\",\"url\":\"https://example.test/o/program/issues/44\",\"rows\":[{\"id\":\"A1\",\"title\":\"Lane\",\"reference\":\"o/repo#1\",\"done\":false,\"phase\":null,\"after\":[],\"notes\":null,\"line\":3}]}}'\n",
+    )
+    .expect("fake forge-cli");
+    fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).expect("fake forge-cli mode");
+    bin
+}
+
+#[test]
+fn the_programs_route_serves_the_lanes_of_the_programs_sessions_name() {
+    let fixture = fixture();
+    let cwd = fixture.home.join("Project/board-repo");
+    for id in ["with-program", "with-unreadable-program"] {
+        write_never_launched_record(&fixture.state_dir, id, &cwd);
+        let path = fixture
+            .state_dir
+            .join("sessions")
+            .join(id)
+            .join("session.json");
+        let mut record: Value =
+            serde_json::from_slice(&fs::read(&path).expect("record")).expect("json");
+        let repository = if id == "with-program" {
+            "o/program"
+        } else {
+            "o/unreadable"
+        };
+        record["work"] = json!({
+            "program": {"provider": "github", "repository": repository, "number": 44},
+            "issues": [],
+            "inherited": false,
+            "revision": 1
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&record).expect("json")).expect("record");
+    }
+    let forge = fake_forge_cli(&fixture.root);
+
+    // Disabled: board-disabled before authentication.
+    let disabled = Serve::spawn(&fixture.root, &fixture.state_dir, &fixture.home, &[], &[]);
+    let (status, body) = disabled.get("/board/programs/v1", &[]);
+    assert_eq!(status, 404, "{body}");
+    assert_eq!(body["error"]["code"], "board-disabled");
+    drop(disabled);
+
+    let serve = Serve::spawn(
+        &fixture.root,
+        &fixture.state_dir,
+        &fixture.home,
+        &["--board"],
+        &[("AGENT_SESSION_FORGE_CLI_BIN", &forge.to_string_lossy())],
+    );
+    let (status, body) = serve.get("/board/programs/v1", &[]);
+    assert_eq!(status, 401, "{body}");
+    let (status, body) = serve.get_operator("/board/programs/v1");
+    assert_eq!(status, 200, "{body}");
+    let programs = &body["data"]["board_programs"];
+    assert_eq!(
+        programs["schema_version"],
+        "agent-session.board-programs.v1"
+    );
+    assert_eq!(body["data"]["machine"], MACHINE);
+    assert_eq!(programs["machine"], MACHINE);
+    let list = programs["programs"].as_array().expect("programs");
+    // The program the tracker cannot read is omitted, not guessed.
+    assert_eq!(list.len(), 1, "{programs}");
+    assert_eq!(list[0]["ref"], "o/program#44");
+    assert_eq!(list[0]["title"], "Program tracker");
+    assert_eq!(list[0]["state"], "open");
+    assert_eq!(list[0]["stale"], false);
+    assert_eq!(
+        list[0]["rows"],
+        json!([{
+            "id": "A1", "title": "Lane", "reference": "o/repo#1", "done": false,
+            "phase": null, "after": [], "notes": null
+        }])
     );
 }

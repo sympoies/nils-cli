@@ -38,6 +38,10 @@ impl CheckReport {
 }
 
 pub fn check(devlog: &Devlog) -> Result<CheckReport, DevlogError> {
+    check_with_base(devlog, None)
+}
+
+pub fn check_with_base(devlog: &Devlog, base: Option<&str>) -> Result<CheckReport, DevlogError> {
     let scan = devlog.months()?;
     let mut problems = Vec::new();
     let mut entry_count = 0usize;
@@ -61,6 +65,21 @@ pub fn check(devlog: &Devlog) -> Result<CheckReport, DevlogError> {
         problems.extend(month_problems);
     }
 
+    let fragment_paths = crate::fragments::paths(devlog)?;
+    for path in fragment_paths {
+        match crate::fragments::load(&path) {
+            Ok(_) => entry_count += 1,
+            Err(err) => problems.push(Problem {
+                kind: "invalid-fragment",
+                path: relative(devlog, &path),
+                detail: err.to_string(),
+            }),
+        }
+    }
+    // Existing month-only logs require neither a Git baseline nor extra reads.
+    if crate::fragments::enabled()? || base.is_some() || devlog.dir().join("pending").exists() {
+        problems.extend(crate::fragments::immutability(devlog, base)?);
+    }
     problems.extend(check_index(devlog, &scan.months)?);
 
     Ok(CheckReport {
@@ -79,6 +98,15 @@ fn check_month(
 ) -> Vec<Problem> {
     let path = devlog.month_path(month);
     let relative = relative(devlog, &path);
+    check_contents(month, contents, relative, entry_count)
+}
+
+pub(crate) fn check_contents(
+    month: Month,
+    contents: &str,
+    relative: String,
+    entry_count: &mut usize,
+) -> Vec<Problem> {
     let mut problems = Vec::new();
 
     // Report a conflict and stop parsing this file. Both sides of an
