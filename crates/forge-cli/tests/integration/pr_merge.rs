@@ -2562,6 +2562,8 @@ fn assigned_live_merge_refuses_before_backend_without_published_review() {
         base_sha: head.into(),
         assigned_head: head.into(),
         returned_reason: None,
+        assignment_generation: 1,
+        surrendered: false,
     };
     let record = ReviewStateRecord::new(
         "acme/widgets",

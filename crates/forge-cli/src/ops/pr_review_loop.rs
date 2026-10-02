@@ -40,6 +40,8 @@ pub struct PrReviewLoopPayload {
     /// shares the appended comment, so `appended: false` always means the outcome
     /// was not posted (the ledger was already current).
     pub outcome_posted: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored_stale_records: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -436,7 +438,7 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         resolved_expected_state(&args, state_view.chain.tip_digest.as_deref()),
     )?;
     let previous = review_state::latest_review_loop_state(&state_view.chain);
-    let transition =
+    let mut transition =
         match review_state::observe_review_loop(previous, &args.expected_head, &observations) {
             Ok(transition) => transition,
             Err(error) if review_state::stop_budget_field(error.kind()).is_some() => {
@@ -494,6 +496,8 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             Err(error) => return Err(error),
         };
 
+    transition.changed |= super::pr_review_handoff::latest(&state_view.chain).is_some()
+        && super::pr_review_handoff::owned_state(&state_view.chain).is_none();
     if !transition.changed {
         // The ledger is already current, so there is nothing to append and no
         // comment to carry an outcome. Posting the outcome on its own here would
@@ -1331,6 +1335,7 @@ fn emit_state(
             state,
             appended,
             outcome_posted,
+            ignored_stale_records: chain.ignored_stale_records,
         },
         format,
         |payload| {
@@ -1431,7 +1436,14 @@ fn evaluate_observe<R: BackendRunner>(
                             // unconditional verdict would wrongly fail the
                             // preflight of a legitimate no-op observation.
                             match transition {
-                                Ok(transition) => {
+                                Ok(mut transition) => {
+                                    transition.changed |=
+                                        super::pr_review_handoff::latest(&state_view.chain)
+                                            .is_some()
+                                            && super::pr_review_handoff::owned_state(
+                                                &state_view.chain,
+                                            )
+                                            .is_none();
                                     would_append = Some(transition.changed);
                                     verdicts.push(RuleVerdict::from_result(
                                         "observation_transition",
@@ -1608,6 +1620,9 @@ fn plan_state_comment(
         chain.records.len() as u64,
         chain.tip_digest.clone(),
         review_state::ReviewStatePayload::ReviewLoop { state },
+    )?
+    .with_assignment_generation(
+        super::pr_review_handoff::latest(chain).map(|h| h.assignment_generation),
     )?;
     let body = review_state::render_state_comment_body(&record, outcome_body)?;
     Ok(PlannedStateComment {

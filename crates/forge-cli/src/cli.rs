@@ -1005,13 +1005,28 @@ pub enum PrReviewHandoffCommand {
     Inspect(PrReviewHandoffInspectArgs),
     /// Require a published current-head passing review and closed ledger.
     Check(PrReviewHandoffCheckArgs),
-    /// Return unavailable review to its coordinator; never enable self-review.
-    Return(PrReviewHandoffReturnArgs),
+    /// Reviewer-owned surrender of the current assignment generation.
+    Surrender(PrReviewHandoffSurrenderArgs),
+    /// Explicit coordinator revocation with a required reason and fresh generation.
+    Recover(PrReviewHandoffReturnArgs),
 }
 
 #[derive(Args, Debug, Clone)]
 pub struct PrReviewHandoffInspectArgs {
     pub id: u64,
+    #[arg(long)]
+    pub expected_head: Option<String>,
+    #[arg(long)]
+    pub review_author: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct PrReviewHandoffSurrenderArgs {
+    pub id: u64,
+    #[arg(long)]
+    pub expected_head: String,
+    #[arg(long)]
+    pub expected_state: String,
 }
 
 #[derive(Args, Debug, Clone)]

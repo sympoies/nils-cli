@@ -853,6 +853,8 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (inspect)
 _arguments "${_arguments_options[@]}" : \
+'--expected-head=[]:EXPECTED_HEAD:_default' \
+'--review-author=[]:REVIEW_AUTHOR:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
@@ -882,7 +884,24 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id:_default' \
 && ret=0
 ;;
-(return)
+(surrender)
+_arguments "${_arguments_options[@]}" : \
+'--expected-head=[]:EXPECTED_HEAD:_default' \
+'--expected-state=[]:EXPECTED_STATE:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id:_default' \
+&& ret=0
+;;
+(recover)
 _arguments "${_arguments_options[@]}" : \
 '--expected-head=[]:EXPECTED_HEAD:_default' \
 '--expected-state=[]:EXPECTED_STATE:_default' \
@@ -924,7 +943,11 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
-(return)
+(surrender)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(recover)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1256,7 +1279,11 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
-(return)
+(surrender)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(recover)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -2713,7 +2740,11 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
-(return)
+(surrender)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(recover)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3490,7 +3521,8 @@ _forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff_commands() {
 'assign:Persist or explicitly reassign review ownership with head/tip CAS' \
 'inspect:Read the persisted handoff without revealing mailbox addresses' \
 'check:Require a published current-head passing review and closed ledger' \
-'return:Return unavailable review to its coordinator; never enable self-review' \
+'surrender:Reviewer-owned surrender of the current assignment generation' \
+'recover:Explicit coordinator revocation with a required reason and fresh generation' \
     )
     _describe -t commands 'forge-cli help pr review-handoff commands' commands "$@"
 }
@@ -3509,10 +3541,15 @@ _forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__inspect_co
     local commands; commands=()
     _describe -t commands 'forge-cli help pr review-handoff inspect commands' commands "$@"
 }
-(( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__return_commands] )) ||
-_forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__return_commands() {
+(( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__recover_commands] )) ||
+_forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__recover_commands() {
     local commands; commands=()
-    _describe -t commands 'forge-cli help pr review-handoff return commands' commands "$@"
+    _describe -t commands 'forge-cli help pr review-handoff recover commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__surrender_commands] )) ||
+_forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__surrender_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help pr review-handoff surrender commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__review-loop_commands] )) ||
 _forge-cli__subcmd__help__subcmd__pr__subcmd__review-loop_commands() {
@@ -4198,7 +4235,8 @@ _forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff_commands() {
 'assign:Persist or explicitly reassign review ownership with head/tip CAS' \
 'inspect:Read the persisted handoff without revealing mailbox addresses' \
 'check:Require a published current-head passing review and closed ledger' \
-'return:Return unavailable review to its coordinator; never enable self-review' \
+'surrender:Reviewer-owned surrender of the current assignment generation' \
+'recover:Explicit coordinator revocation with a required reason and fresh generation' \
     )
     _describe -t commands 'forge-cli pr help review-handoff commands' commands "$@"
 }
@@ -4217,10 +4255,15 @@ _forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__inspect_co
     local commands; commands=()
     _describe -t commands 'forge-cli pr help review-handoff inspect commands' commands "$@"
 }
-(( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__return_commands] )) ||
-_forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__return_commands() {
+(( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__recover_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__recover_commands() {
     local commands; commands=()
-    _describe -t commands 'forge-cli pr help review-handoff return commands' commands "$@"
+    _describe -t commands 'forge-cli pr help review-handoff recover commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__surrender_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__surrender_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr help review-handoff surrender commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__review-loop_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__help__subcmd__review-loop_commands() {
@@ -4427,7 +4470,8 @@ _forge-cli__subcmd__pr__subcmd__review-handoff_commands() {
 'assign:Persist or explicitly reassign review ownership with head/tip CAS' \
 'inspect:Read the persisted handoff without revealing mailbox addresses' \
 'check:Require a published current-head passing review and closed ledger' \
-'return:Return unavailable review to its coordinator; never enable self-review' \
+'surrender:Reviewer-owned surrender of the current assignment generation' \
+'recover:Explicit coordinator revocation with a required reason and fresh generation' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli pr review-handoff commands' commands "$@"
@@ -4448,7 +4492,8 @@ _forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help_commands() {
 'assign:Persist or explicitly reassign review ownership with head/tip CAS' \
 'inspect:Read the persisted handoff without revealing mailbox addresses' \
 'check:Require a published current-head passing review and closed ledger' \
-'return:Return unavailable review to its coordinator; never enable self-review' \
+'surrender:Reviewer-owned surrender of the current assignment generation' \
+'recover:Explicit coordinator revocation with a required reason and fresh generation' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli pr review-handoff help commands' commands "$@"
@@ -4473,20 +4518,30 @@ _forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help__subcmd__inspect_co
     local commands; commands=()
     _describe -t commands 'forge-cli pr review-handoff help inspect commands' commands "$@"
 }
-(( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help__subcmd__return_commands] )) ||
-_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help__subcmd__return_commands() {
+(( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help__subcmd__recover_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help__subcmd__recover_commands() {
     local commands; commands=()
-    _describe -t commands 'forge-cli pr review-handoff help return commands' commands "$@"
+    _describe -t commands 'forge-cli pr review-handoff help recover commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help__subcmd__surrender_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help__subcmd__surrender_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr review-handoff help surrender commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__inspect_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__inspect_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli pr review-handoff inspect commands' commands "$@"
 }
-(( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__return_commands] )) ||
-_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__return_commands() {
+(( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__recover_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__recover_commands() {
     local commands; commands=()
-    _describe -t commands 'forge-cli pr review-handoff return commands' commands "$@"
+    _describe -t commands 'forge-cli pr review-handoff recover commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__surrender_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__surrender_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr review-handoff surrender commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr__subcmd__review-loop_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__review-loop_commands() {

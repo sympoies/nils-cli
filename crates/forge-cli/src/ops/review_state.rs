@@ -214,6 +214,8 @@ pub struct ReviewStateRecord {
     pub generation: u64,
     pub previous_digest: Option<String>,
     pub payload: ReviewStatePayload,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment_generation: Option<u64>,
     pub record_digest: String,
 }
 
@@ -226,12 +228,15 @@ struct ReviewStatePreimage<'a> {
     generation: u64,
     previous_digest: &'a Option<String>,
     payload: &'a ReviewStatePayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assignment_generation: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewStateChain {
     pub records: Vec<ReviewStateRecord>,
     pub tip_digest: Option<String>,
+    pub ignored_stale_records: Vec<String>,
 }
 
 impl ReviewStateRecord {
@@ -243,6 +248,10 @@ impl ReviewStateRecord {
         previous_digest: Option<String>,
         payload: ReviewStatePayload,
     ) -> Result<Self, ForgeError> {
+        let assignment_generation = match &payload {
+            ReviewStatePayload::ReviewHandoff { handoff } => Some(handoff.assignment_generation),
+            _ => None,
+        };
         let mut record = Self {
             schema: REVIEW_STATE_SCHEMA.to_string(),
             repository: repository.into(),
@@ -251,10 +260,20 @@ impl ReviewStateRecord {
             generation,
             previous_digest,
             payload,
+            assignment_generation,
             record_digest: String::new(),
         };
         record.record_digest = record.compute_digest()?;
         Ok(record)
+    }
+
+    pub fn with_assignment_generation(
+        mut self,
+        generation: Option<u64>,
+    ) -> Result<Self, ForgeError> {
+        self.assignment_generation = generation;
+        self.record_digest = self.compute_digest()?;
+        Ok(self)
     }
 
     pub fn compute_digest(&self) -> Result<String, ForgeError> {
@@ -266,6 +285,7 @@ impl ReviewStateRecord {
             generation: self.generation,
             previous_digest: &self.previous_digest,
             payload: &self.payload,
+            assignment_generation: self.assignment_generation,
         };
         let bytes = serde_json::to_vec(&preimage).map_err(|error| {
             ForgeError::software(
@@ -457,6 +477,7 @@ pub fn parse_chain<'a>(
         return Ok(ReviewStateChain {
             records,
             tip_digest: None,
+            ignored_stale_records: Vec::new(),
         });
     }
 
@@ -504,7 +525,9 @@ pub fn parse_chain<'a>(
             .or_default()
             .insert(record.record_digest.clone());
     }
-    if children.values().any(|digests| digests.len() > 1) {
+    if records.iter().all(|r| r.assignment_generation.is_none())
+        && children.values().any(|digests| digests.len() > 1)
+    {
         return Err(state_conflict(
             "review-state chain contains competing generations",
             None,
@@ -519,6 +542,7 @@ pub fn parse_chain<'a>(
     }
 
     let mut ordered = Vec::with_capacity(records.len());
+    let mut ignored_stale_records = BTreeSet::new();
     let mut current = roots.iter().next().cloned();
     while let Some(digest) = current {
         let record = by_digest.get(&digest).ok_or_else(|| {
@@ -537,12 +561,130 @@ pub fn parse_chain<'a>(
                 )),
             ));
         }
+        // Ordinary records must remain in the active assignment generation.
+        let active = ordered
+            .iter()
+            .rev()
+            .find_map(|r: &ReviewStateRecord| match &r.payload {
+                ReviewStatePayload::ReviewHandoff { handoff } => Some(handoff),
+                _ => None,
+            });
+        match (&record.payload, active) {
+            (ReviewStatePayload::ReviewHandoff { handoff }, Some(old)) => {
+                let same = handoff.assignment_generation == old.assignment_generation;
+                let next = handoff.assignment_generation
+                    == old
+                        .assignment_generation
+                        .checked_add(1)
+                        .ok_or_else(|| state_conflict("assignment generation overflow", None))?;
+                if handoff.coordinator_digest != old.coordinator_digest
+                    || (!same && !next)
+                    || (same
+                        && (!handoff.surrendered
+                            || old.surrendered
+                            || old.returned_reason.is_some()
+                            || handoff.reviewer_digest != old.reviewer_digest
+                            || handoff.returned_reason.is_some()))
+                    || (next
+                        && handoff.returned_reason.is_none()
+                        && !old.surrendered
+                        && old.returned_reason.is_none())
+                    || record.assignment_generation != Some(handoff.assignment_generation)
+                {
+                    return Err(state_conflict(
+                        "invalid designated ownership transition",
+                        None,
+                    ));
+                }
+            }
+            (ReviewStatePayload::ReviewHandoff { handoff }, None) => {
+                if handoff.assignment_generation != 1
+                    || handoff.surrendered
+                    || handoff.returned_reason.is_some()
+                    || record.assignment_generation != Some(1)
+                {
+                    return Err(state_conflict("invalid initial designated ownership", None));
+                }
+            }
+            (_, Some(handoff)) => {
+                if record.assignment_generation != Some(handoff.assignment_generation)
+                    || handoff.surrendered
+                    || handoff.returned_reason.is_some()
+                {
+                    return Err(state_conflict(
+                        "stale designated assignment generation",
+                        None,
+                    ));
+                }
+            }
+            (_, None) if record.assignment_generation.is_some() => {
+                return Err(state_conflict(
+                    "assignment generation without an owner",
+                    None,
+                ));
+            }
+            _ => (),
+        }
         ordered.push((*record).clone());
-        current = children
-            .get(&Some(digest))
-            .and_then(|children| children.iter().next().cloned());
+        let candidates = children
+            .get(&Some(digest.clone()))
+            .cloned()
+            .unwrap_or_default();
+        if candidates.len() <= 1 {
+            current = candidates.iter().next().cloned();
+            continue;
+        }
+        let active = ordered
+            .iter()
+            .rev()
+            .find_map(|r| match &r.payload {
+                ReviewStatePayload::ReviewHandoff { handoff } => Some(handoff),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                state_conflict("review-state chain contains competing generations", None)
+            })?;
+        let next_generation = active
+            .assignment_generation
+            .checked_add(1)
+            .ok_or_else(|| state_conflict("assignment generation overflow", None))?;
+        let winners: Vec<_> = candidates
+            .iter()
+            .filter(|key| {
+                matches!(&by_digest[*key].payload, ReviewStatePayload::ReviewHandoff { handoff }
+                if handoff.assignment_generation == next_generation
+                    && handoff.coordinator_digest == active.coordinator_digest
+                    && handoff.returned_reason.is_some()
+                    && by_digest[*key].assignment_generation == Some(next_generation))
+            })
+            .collect();
+        if winners.len() != 1
+            || candidates.iter().any(|key| {
+                key != winners[0]
+                    && by_digest[key].assignment_generation != Some(active.assignment_generation)
+            })
+        {
+            return Err(state_conflict(
+                "review-state chain contains competing generations",
+                None,
+            ));
+        }
+        let winner = winners[0].clone();
+        let mut stale: Vec<_> = candidates
+            .into_iter()
+            .filter(|key| key != &winner)
+            .collect();
+        while let Some(key) = stale.pop() {
+            if !ignored_stale_records.insert(key.clone()) {
+                continue;
+            }
+            if let Some(descendants) = children.get(&Some(key)) {
+                stale.extend(descendants.iter().cloned());
+            }
+        }
+        current = Some(winner);
     }
-    if ordered.len() != by_digest.len() {
+    if ordered.len() + ignored_stale_records.len() != by_digest.len() {
         return Err(state_conflict(
             "review-state chain contains unreachable records",
             Some(format!(
@@ -556,6 +698,7 @@ pub fn parse_chain<'a>(
     Ok(ReviewStateChain {
         records: ordered,
         tip_digest,
+        ignored_stale_records: ignored_stale_records.into_iter().collect(),
     })
 }
 

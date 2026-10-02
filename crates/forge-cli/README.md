@@ -501,8 +501,8 @@ GitHub's eventually-consistent auto-close, not a workaround for a broken link.
   connection, so `closing_issue_refs` is always empty there.
 - Pass `--no-issue-closeout` to skip the step entirely.
 
-Designated-review delivery uses `pr review-handoff assign|inspect|check|return`.
+Designated-review delivery uses `pr review-handoff assign|inspect|check|surrender|recover`.
 It requires a current-head published review and a reviewer-owned closed ledger;
 mailbox verdicts never replace provider evidence. See the
-[handoff contract](docs/specs/forge-cli-spec-v1.md#pr-review-handoff-assign--inspect--check--return)
-for assignment, writer fencing, coordinator return, and privacy boundaries.
+[handoff contract](docs/specs/forge-cli-spec-v1.md#pr-review-handoff-assign--inspect--check--surrender--recover)
+for assignment, writer fencing, generation-bound surrender/recovery, and privacy boundaries.

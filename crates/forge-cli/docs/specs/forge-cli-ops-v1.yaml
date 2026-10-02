@@ -19,6 +19,10 @@ schema_prefix: cli.forge-cli
 # Shared validation catalog. Each op picks the subset it enforces.
 # ---------------------------------------------------------------------------
 validations_catalog:
+  designated_review_handoff:
+    rule: "Exact provider base/head and retained tip; active reviewer/author and assignment generation; reviewer-owned surrender or explicit reasoned coordinator recovery; complete trusted chain and expected-PR canonical passing publication"
+    error_kind: review_assignment_invalid | review_assignment_missing | review_assignment_conflict | review_assignment_generation_conflict | review_state_conflict | review_writer_conflict | review_handover_required | review_scope_changed | awaiting_designated_review | designated_reviewer_unavailable | review_repair_unobserved | designated_review_provider_unsupported
+    exit: DATA | UNAVAILABLE
   branch_name:
     rule: "^(feat|fix)/[a-z0-9][a-z0-9-]{1,63}$"
     error_kind: branch_name_invalid
@@ -749,7 +753,7 @@ operations:
     schema_version: cli.forge-cli.pr.review-handoff.v1
     summary: "Explicit designated-review ownership and published-current-head admission"
     inputs:
-      - { name: subcommand, type: enum, values: [assign, inspect, check, return], required: true }
+      - { name: subcommand, type: enum, values: [assign, inspect, check, surrender, recover], required: true }
       - { name: id, type: u64, required: true }
       - { name: --expected-head, type: string, required: conditional }
       - { name: --expected-state, type: string, required: conditional }
@@ -761,20 +765,23 @@ operations:
       offline: false
       repo_resolution: "--repo owner/name or recognised GitHub remote"
     validations:
-      - review_assignment_invalid
-      - review_assignment_conflict
-      - review_state_conflict
-      - review_writer_conflict
-      - awaiting_designated_review
-      - designated_reviewer_unavailable
-      - review_repair_unobserved
-      - designated_review_provider_unsupported
+      - designated_review_handoff
     backends:
       github:
         argv: ["gh", "api", "graphql"]
-        note: "Trusted complete provider-state/native-review reads; assign/return append through the existing head/tip-CAS ledger owner. Never publishes raw session or machine selectors."
-    outputs:
-      json_fields: [provider, number, url, head_sha, state_tip_digest, handoff, status]
+        note: "Trusted complete provider-state/native-review reads; assign/surrender/recover append through the existing head/tip-CAS ledger owner. Never publishes raw session or machine selectors."
+    output:
+      data:
+        provider: enum<github>
+        number: integer
+        url: string
+        head_sha: string
+        base_sha: string
+        state_tip_digest: string|null
+        handoff_digest: string|null
+        handoff: object|null
+        status: string
+        ignored_stale_records: array<string> # omitted when empty
 
   - id: pr.review-loop.inspect
     schema_version: cli.forge-cli.pr.review-loop.inspect.v1

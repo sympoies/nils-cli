@@ -726,26 +726,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         ));
     }
 
-    if std::env::var("AGENT_REVIEWER_SESSION").is_ok_and(|v| !v.is_empty()) {
-        if ctx.provider != Provider::GitHub {
-            return Err(ForgeError::validation(
-                schema_err(),
-                "designated_review_provider_unsupported",
-                "designated review requires the GitHub provider ledger",
-                None,
-            ));
-        }
-        let repository = github_owner_name(&ctx).map(|(o, n)| format!("{o}/{n}"))?;
-        let chain = read_review_state_chain(runner, &ctx, &repository, id)?;
-        super::pr_review_handoff::ensure_writer(&chain)?;
-    }
-
-    // GitHub posts review outcomes through the issue-comments API, which accepts
-    // both issues and pull requests (every PR is an issue, but not every issue
-    // is a PR). Verify `<id>` is actually a pull request first, so a typo'd or
-    // non-PR number can't silently post a review outcome onto an unrelated
-    // issue. GitLab's `glab mr note` already fails on a non-MR id, so this guard
-    // is GitHub-only.
+    super::pr_review_handoff::ensure_provider(&ctx)?;
     if ctx.provider == Provider::GitHub {
         ensure_github_pull_request(
             runner,
@@ -757,6 +738,9 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                 None
             },
         )?;
+        let repository = github_owner_name(&ctx).map(|(o, n)| format!("{o}/{n}"))?;
+        let chain = read_review_state_chain(runner, &ctx, &repository, id)?;
+        super::pr_review_handoff::ensure_writer(&chain)?;
         if let (Some(review_id), Some(native_review_url), Some(native_review_author)) = (
             native_review_id,
             native_review_url.as_deref(),
@@ -2053,6 +2037,23 @@ fn ensure_review_run_receipt<R: BackendRunner>(
     if receipt_is_recorded(&state.chain, receipt)? {
         return Ok(());
     }
+    if super::pr_review_handoff::is_assigned(&state.chain) {
+        append_review_state_payload(
+            runner,
+            ctx,
+            ReviewStateAppend {
+                repository,
+                number,
+                expected_head: &receipt.expected_head,
+                expected_tip: state.chain.tip_digest.as_deref(),
+                payload: review_state::ReviewStatePayload::ReviewRunReceipt {
+                    receipt: receipt.clone(),
+                },
+                visible_outcome: None,
+            },
+        )?;
+        return Ok(());
+    }
     let record = review_state::ReviewStateRecord::new(
         repository,
         number,
@@ -2280,23 +2281,17 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
             )),
         ));
     }
-    if let review_state::ReviewStatePayload::ReviewHandoff { handoff } = &payload
-        && super::pr_review_handoff::latest(&before.chain)
-            .is_some_and(|h| h.coordinator_digest != handoff.coordinator_digest)
-    {
-        return Err(ForgeError::validation(
-            schema_err(),
-            "review_writer_conflict",
-            "handoff coordinator changed before append",
-            None,
-        ));
-    }
-    if !matches!(
-        payload,
-        review_state::ReviewStatePayload::ReviewHandoff { .. }
-    ) {
+    if let review_state::ReviewStatePayload::ReviewHandoff { handoff } = &payload {
+        super::pr_review_handoff::ensure_handoff_append(&before.chain, handoff)?;
+    } else {
         super::pr_review_handoff::ensure_writer(&before.chain)?;
     }
+    let assignment_generation = match &payload {
+        review_state::ReviewStatePayload::ReviewHandoff { handoff } => {
+            Some(handoff.assignment_generation)
+        }
+        _ => super::pr_review_handoff::latest(&before.chain).map(|h| h.assignment_generation),
+    };
     let record = review_state::ReviewStateRecord::new(
         repository,
         number,
@@ -2304,7 +2299,8 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
         before.chain.records.len() as u64,
         before.chain.tip_digest.clone(),
         payload,
-    )?;
+    )?
+    .with_assignment_generation(assignment_generation)?;
     let marker = record.marker()?;
     let body = review_state::render_state_comment_body(&record, visible_outcome)?;
     let append_result = runner.run(&build_issue_comment_call(ctx, number, &body));

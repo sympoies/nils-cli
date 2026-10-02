@@ -549,26 +549,11 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
                 format,
             ));
         }
-    }
-
-    // Assigned deliveries cannot report readiness from a mailbox verdict.
-    // Preserve the unassigned path, including its provider read sequence.
-    if std::env::var("AGENT_REVIEWER_SESSION").is_ok_and(|v| !v.is_empty()) {
-        let admission = pr_view::compute(runner, ctx, pr_number).and_then(|view| {
-            let head = view.head_sha.as_deref().ok_or_else(|| {
-                ForgeError::validation(
-                    schema_version_for(BINARY, "pr.review-handoff", 1),
-                    "awaiting_designated_review",
-                    "awaiting designated review: provider head is missing",
-                    None,
-                )
-            })?;
-            super::super::ops::pr_review_loop::ensure_merge_ready(
-                runner, ctx, &view.url, pr_number, head, true,
-            )
-            .map(|_| ())
-        });
-        if let Err(err) = admission {
+        // Discover persisted ownership even after a restarted session loses its
+        // assignment environment; keep unassigned delivery outcomes unchanged.
+        if let Err(err) =
+            super::super::ops::pr_review_handoff::ensure_delivery_ready(runner, ctx, &current_view)
+        {
             return Ok(emit_chain_failure(
                 steps,
                 args,
