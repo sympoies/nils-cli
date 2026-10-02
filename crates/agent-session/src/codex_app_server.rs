@@ -600,7 +600,36 @@ const STARTUP_DIAGNOSTIC_COLLECTOR_SCRIPT: &str = r#"collect_startup_diagnostic(
   fi
 }"#;
 
-pub(crate) fn launch_script() -> String {
+/// The remote TUI forwards only a subset of its configuration to thread/start.
+/// Give the already session-owned server the explicit configuration flags too,
+/// leaving TOML parsing and override precedence to Codex itself. Stop at `--`
+/// so option-shaped prompt text stays literal.
+fn app_server_config_args(agent_args: &[String]) -> Vec<&str> {
+    let mut config = Vec::new();
+    let mut args = agent_args.iter().map(String::as_str);
+    while let Some(arg) = args.next() {
+        match arg {
+            "--" => break,
+            "-c" | "--config" | "--enable" | "--disable" => {
+                config.push(arg);
+                if let Some(value) = args.next() {
+                    config.push(value);
+                }
+            }
+            _ if arg.starts_with("--config=")
+                || arg.starts_with("--enable=")
+                || arg.starts_with("--disable=")
+                || arg.starts_with("-c") =>
+            {
+                config.push(arg)
+            }
+            _ => {}
+        }
+    }
+    config
+}
+
+pub(crate) fn launch_script(agent_args: &[String]) -> String {
     [
         r#"socket=$1
 proxy=$2
@@ -638,7 +667,7 @@ fi
 (umask 077; collect_startup_diagnostic < "$startup_diagnostic_pipe") &
 diagnostic_pid=$!
 rm -f -- "$socket" "$proxy" "$attached"
-"$agent" app-server --listen "unix://$socket" </dev/null >/dev/null 2>"$startup_diagnostic_pipe" &
+"$agent" app-server --listen "unix://$socket" __SESSION_CONFIG_ARGS__ </dev/null >/dev/null 2>"$startup_diagnostic_pipe" &
 server=$!
 proxy_pid=
 provider_stderr_pid=
@@ -756,6 +785,10 @@ exit "$status"
 "#,
     ]
     .concat()
+    .replace(
+        "__SESSION_CONFIG_ARGS__",
+        &shell_words::join(app_server_config_args(agent_args)),
+    )
 }
 
 pub(crate) fn runtime_is_supported(record: &SessionRecord) -> bool {
@@ -6068,8 +6101,139 @@ exit 1
     }
 
     #[test]
+    fn launch_applies_session_config_to_server_without_changing_tui_arguments() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let helper = tmp.path().join("fake-provider");
+        fs::write(
+            &helper,
+            r#"#!/bin/sh
+if [ "$1" = app-server ]; then
+  printf '%s\n' "$@" > "$FAKE_SERVER_ARGS"
+  exec sleep 60
+fi
+case " $* " in
+  *" codex-app-server-proxy "*)
+    : > "$FAKE_PROXY_READY"
+    exec sleep 60
+    ;;
+esac
+printf '%s\n' "$@" > "$FAKE_TUI_ARGS"
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+        let overrides = [
+            "-c",
+            "model_auto_compact_token_limit=40000",
+            "--config=model_context_window=100000",
+            "-cmodel_auto_compact_token_limit=45000",
+            "--config",
+            "model_auto_compact_token_limit=40000",
+            "--enable",
+            "example_feature",
+            "--disable=other_feature",
+            "-c",
+            "model_providers.example.name=\"a'b; $(touch injected); `id`\"",
+        ];
+        // A fresh default session must not inherit its predecessor's overrides;
+        // recreating a configured runtime must apply them again.
+        for (index, config) in [overrides.as_slice(), &[], overrides.as_slice()]
+            .into_iter()
+            .enumerate()
+        {
+            let state = tmp.path().join(format!("state-{index}"));
+            let id = "configured-session";
+            fs::create_dir_all(state.join("sessions").join(id)).unwrap();
+            let socket = tmp.path().join(format!("server-{index}.sock"));
+            let proxy = socket.with_extension("proxy");
+            let server_args = state.join("server.args");
+            let tui_args = state.join("tui.args");
+            let proxy_ready = state.join("proxy.ready");
+            let stop = Arc::new(AtomicBool::new(false));
+            let bind = |marker: PathBuf, path: PathBuf| {
+                let stop = Arc::clone(&stop);
+                thread::spawn(move || {
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while !marker.is_file()
+                        && !stop.load(Ordering::Relaxed)
+                        && Instant::now() < deadline
+                    {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let _listener = std::os::unix::net::UnixListener::bind(path).unwrap();
+                    while !stop.load(Ordering::Relaxed) {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                })
+            };
+            let server = bind(server_args.clone(), socket.clone());
+            let proxy_server = bind(proxy_ready.clone(), proxy.clone());
+            let args = config
+                .iter()
+                .copied()
+                .chain([
+                    "--model",
+                    "example-model",
+                    "--",
+                    "--config=prompt-is-literal",
+                ])
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            let mut command = Command::new("/bin/sh");
+            command
+                .arg("-c")
+                .arg(launch_script(&args))
+                .arg("launch-config-test")
+                .arg(&socket)
+                .arg(&proxy)
+                .arg(socket.with_extension("thread"))
+                .arg(socket.with_extension("attached"))
+                .arg(&helper)
+                .arg(&state)
+                .arg(id)
+                .arg(&helper)
+                .arg(tmp.path())
+                .args(&args)
+                .env("FAKE_SERVER_ARGS", &server_args)
+                .env("FAKE_TUI_ARGS", &tui_args)
+                .env("FAKE_PROXY_READY", &proxy_ready)
+                .current_dir(tmp.path());
+            let output = crate::run_output_with_timeout(command, Duration::from_secs(10));
+            stop.store(true, Ordering::Relaxed);
+            server.join().unwrap();
+            proxy_server.join().unwrap();
+            assert!(output.unwrap().status.success());
+            let captured = fs::read_to_string(server_args).unwrap();
+            let actual = captured.lines().collect::<Vec<_>>();
+            assert_eq!(
+                &actual[3..],
+                config,
+                "server must receive literal ordered overrides"
+            );
+            let mut expected_tui = vec![
+                "-c".to_string(),
+                "check_for_update_on_startup=false".to_string(),
+                "--remote".to_string(),
+                format!("unix://{}", proxy.display()),
+            ];
+            expected_tui.extend(args);
+            assert_eq!(
+                fs::read_to_string(tui_args)
+                    .unwrap()
+                    .lines()
+                    .collect::<Vec<_>>(),
+                expected_tui
+            );
+            assert!(!tmp.path().join("injected").exists());
+        }
+    }
+
+    #[test]
     fn launch_routes_the_visible_tui_through_the_private_proxy() {
-        let script = launch_script();
+        let script = launch_script(&[]);
         assert!(script.contains("codex-app-server-proxy"));
         assert!(script.contains("--remote \"unix://$proxy\""));
         assert!(!script.contains("--remote \"unix://$socket\""));
@@ -6295,7 +6459,7 @@ exit "$FAKE_PROVIDER_EXIT"
             let mut command = Command::new("/bin/sh");
             command
                 .arg("-c")
-                .arg(launch_script())
+                .arg(launch_script(&[]))
                 .arg("agent-session-launch-test")
                 .arg(&socket)
                 .arg(&proxy)
@@ -6393,7 +6557,7 @@ exit "$FAKE_PROVIDER_EXIT"
 
     #[test]
     fn managed_codex_client_launch_disables_startup_update_check_without_owning_base_arguments() {
-        let script = launch_script();
+        let script = launch_script(&[]);
         assert!(script.contains(
             "\"$agent\" -c check_for_update_on_startup=false --remote \"unix://$proxy\" \"$@\" 9>&-"
         ));

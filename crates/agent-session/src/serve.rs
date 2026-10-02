@@ -21963,7 +21963,8 @@ esac
                 json!({
                     "agent": "codex",
                     "id": "managed-codex",
-                    "cwd": cwd.to_string_lossy()
+                    "cwd": cwd.to_string_lossy(),
+                    "agent_args": ["-c", "model_auto_compact_token_limit=40000"]
                 }),
             ),
         )
@@ -21984,6 +21985,10 @@ esac
         )
         .unwrap();
         assert_eq!(record["startup"], session["startup"]);
+        assert_eq!(
+            record["agent_args"],
+            json!(["-c", "model_auto_compact_token_limit=40000"])
+        );
         assert_eq!(record["runtime"]["kind"], codex_app_server::RUNTIME_KIND);
         assert_eq!(
             record["runtime"]["codex_app_server_protocol"],
@@ -21996,6 +22001,10 @@ esac
         let calls = fs::read_to_string(log).unwrap();
         assert!(calls.contains("agent-session-codex-app-server"));
         assert!(calls.contains("app-server --listen"));
+        assert!(calls.contains(&format!(
+            "\"$agent\" app-server --listen \"unix://$socket\" -c {}",
+            shell_words::quote("model_auto_compact_token_limit=40000")
+        )));
         assert!(
             calls.contains("AGENT_SESSION_ATTENTION_AUTHORITY=hook"),
             "Codex 0.145.0 must keep hook attention authority: {calls:?}"
