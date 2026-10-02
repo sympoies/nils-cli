@@ -10099,29 +10099,20 @@ fn load_and_paste_buffer_with_timeout(
             .arg(target);
         paste
     };
-    let raw = paste_mode == PasteMode::Raw;
-    let result = match run_output_with_timeout(paste(raw), timeout) {
-        Ok(output) if output.status.success() => Ok(()),
-        // tmux before 3.7 has no `-S` and does not sanitize pastes.
-        Ok(output)
-            if raw && String::from_utf8_lossy(&output.stderr).contains("unknown flag -S") =>
-        {
-            run_status_with_timeout(paste(false), "tmux paste-buffer", timeout)
+    let label = "tmux paste-buffer";
+    let result = if paste_mode == PasteMode::Raw {
+        match run_output_with_timeout(paste(true), timeout) {
+            // tmux before 3.7 has no `-S` and does not sanitize pastes.
+            Ok(output)
+                if !output.status.success()
+                    && String::from_utf8_lossy(&output.stderr).contains("unknown flag -S") =>
+            {
+                run_status_with_timeout(paste(false), label, timeout)
+            }
+            output => exit_status_result(output.map(|output| output.status), label),
         }
-        Ok(output) => Err(CliError::runtime(
-            "command-failed",
-            format!("tmux paste-buffer failed with status {}", output.status),
-            None,
-        )),
-        Err(err) => Err(CliError::runtime(
-            if err.kind() == io::ErrorKind::TimedOut {
-                "command-timeout"
-            } else {
-                "command-wait-failed"
-            },
-            format!("failed to run tmux paste-buffer: {err}"),
-            None,
-        )),
+    } else {
+        run_status_with_timeout(paste(false), label, timeout)
     };
     if let Err(err) = result {
         delete_tmux_buffer(tmux_bin, buffer_name);
@@ -17833,7 +17824,14 @@ fn run_status_with_timeout(
     label: &str,
     timeout: Duration,
 ) -> Result<(), CliError> {
-    let status = run_exit_status_with_timeout(command, timeout).map_err(|err| {
+    exit_status_result(run_exit_status_with_timeout(command, timeout), label)
+}
+
+fn exit_status_result(
+    status: io::Result<std::process::ExitStatus>,
+    label: &str,
+) -> Result<(), CliError> {
+    let status = status.map_err(|err| {
         let code = if err.kind() == io::ErrorKind::TimedOut {
             "command-timeout"
         } else {
@@ -26172,57 +26170,59 @@ exit 42
         assert_eq!(super::post_paste_settle_delay(false, false), None);
     }
 
-    /// Paste through a tmux stub that logs each paste-buffer call. With
-    /// `rejects_s` it fails `-S` the way tmux before 3.7 does.
-    fn paste_buffer_calls(paste_mode: super::PasteMode, rejects_s: bool) -> Vec<String> {
+    /// Rejects `-S` the way tmux before 3.7 does.
+    const REJECTS_S: &str = "case \" $* \" in *\" -S \"*) echo 'command paste-buffer: unknown flag -S' >&2; exit 1 ;; esac\n";
+
+    /// Paste through a tmux stub that logs each paste-buffer call, then runs
+    /// `stub_tail` before exiting successfully.
+    fn paste_buffer_calls(
+        paste_mode: super::PasteMode,
+        stub_tail: &str,
+    ) -> (Result<(), super::CliError>, Vec<String>) {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         let calls = tmp.path().join("calls");
         let tmux = tmp.path().join("tmux");
-        let reject = if rejects_s {
-            "case \" $* \" in *\" -S \"*) echo 'command paste-buffer: unknown flag -S' >&2; exit 1 ;; esac\n"
-        } else {
-            ""
-        };
         std::fs::write(
             &tmux,
             format!(
-                "#!/bin/sh\n[ \"$1\" = paste-buffer ] || exit 0\nprintf '%s\\n' \"$*\" >> {}\n{reject}exit 0\n",
+                "#!/bin/sh\n[ \"$1\" = paste-buffer ] || exit 0\nprintf '%s\\n' \"$*\" >> {}\n{stub_tail}exit 0\n",
                 calls.display()
             ),
         )
         .unwrap();
         std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
-        super::load_and_paste_buffer_with_timeout(
+        let result = super::load_and_paste_buffer_with_timeout(
             &tmux,
             "buf",
             "target",
             &tmp.path().join("input"),
             std::time::Duration::from_secs(5),
             paste_mode,
-        )
-        .unwrap();
-        std::fs::read_to_string(&calls)
+        );
+        let calls = std::fs::read_to_string(&calls)
             .unwrap()
             .lines()
             .map(str::to_string)
-            .collect()
+            .collect();
+        (result, calls)
     }
 
     #[test]
     fn raw_paste_keeps_control_bytes_on_tmux_3_7() {
         // tmux 3.7 passes paste buffers through vis(3) unless `-S` is given,
         // which typed a forwarded mouse report as literal `^[[<64;14;19M`.
-        assert_eq!(
-            paste_buffer_calls(super::PasteMode::Raw, false),
-            vec!["paste-buffer -S -b buf -d -t target"]
-        );
+        let (result, calls) = paste_buffer_calls(super::PasteMode::Raw, "");
+        result.unwrap();
+        assert_eq!(calls, vec!["paste-buffer -S -b buf -d -t target"]);
     }
 
     #[test]
     fn raw_paste_falls_back_when_tmux_rejects_s() {
+        let (result, calls) = paste_buffer_calls(super::PasteMode::Raw, REJECTS_S);
+        result.unwrap();
         assert_eq!(
-            paste_buffer_calls(super::PasteMode::Raw, true),
+            calls,
             vec![
                 "paste-buffer -S -b buf -d -t target",
                 "paste-buffer -b buf -d -t target"
@@ -26231,11 +26231,18 @@ exit 42
     }
 
     #[test]
+    fn raw_paste_failure_without_unknown_flag_does_not_retry() {
+        let (result, calls) =
+            paste_buffer_calls(super::PasteMode::Raw, "echo 'no buffer buf' >&2; exit 1\n");
+        assert_eq!(result.unwrap_err().code(), "command-failed");
+        assert_eq!(calls, vec!["paste-buffer -S -b buf -d -t target"]);
+    }
+
+    #[test]
     fn bracketed_paste_keeps_tmux_sanitizing() {
-        assert_eq!(
-            paste_buffer_calls(super::PasteMode::Bracketed, false),
-            vec!["paste-buffer -p -b buf -d -t target"]
-        );
+        let (result, calls) = paste_buffer_calls(super::PasteMode::Bracketed, "");
+        result.unwrap();
+        assert_eq!(calls, vec!["paste-buffer -p -b buf -d -t target"]);
     }
 }
 
