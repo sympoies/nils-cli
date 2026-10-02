@@ -23364,26 +23364,30 @@ fn provider_stop_canary_fence_blocks_http_resume_before_authority_provisioning()
     let address = listener.local_addr().expect("HTTP address");
     drop(listener);
     let token = "provider-stop-canary-http-test-token";
+    let mut command = Command::new(bin::resolve("agent-session"));
+    command
+        .current_dir(&fixture.checkout)
+        .args([
+            "serve",
+            "--bind",
+            &address.to_string(),
+            "--state-dir",
+            fixture.state_dir.to_str().expect("state dir"),
+            "--token",
+            token,
+            "--tmux-bin",
+            fixture.tmux_bin.to_str().expect("tmux bin"),
+        ])
+        .env("AGENT_SESSION_FAKE_TMUX_ABSENT", "1");
+    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
     let mut server = KillChild(Some(
-        Command::new(bin::resolve("agent-session"))
-            .current_dir(&fixture.checkout)
-            .args([
-                "serve",
-                "--bind",
-                &address.to_string(),
-                "--state-dir",
-                fixture.state_dir.to_str().expect("state dir"),
-                "--token",
-                token,
-                "--tmux-bin",
-                fixture.tmux_bin.to_str().expect("tmux bin"),
-            ])
-            .env("AGENT_SESSION_FAKE_TMUX_ABSENT", "1")
+        command
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn HTTP server"),
     ));
+
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match TcpStream::connect(address) {
@@ -28366,26 +28370,30 @@ fn reconcile_stopped_quarantine_blocks_http_resume_before_authority_provisioning
     let address = listener.local_addr().expect("HTTP address");
     drop(listener);
     let token = "postclaim-http-test-token";
+    let mut command = Command::new(bin::resolve("agent-session"));
+    command
+        .current_dir(&fixture.checkout)
+        .args([
+            "serve",
+            "--bind",
+            &address.to_string(),
+            "--state-dir",
+            fixture.state_dir.to_str().expect("state dir"),
+            "--token",
+            token,
+            "--tmux-bin",
+            fixture.tmux_bin.to_str().expect("tmux bin"),
+        ])
+        .env("AGENT_SESSION_FAKE_TMUX_ABSENT", "1");
+    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
     let mut server = KillChild(Some(
-        Command::new(bin::resolve("agent-session"))
-            .current_dir(&fixture.checkout)
-            .args([
-                "serve",
-                "--bind",
-                &address.to_string(),
-                "--state-dir",
-                fixture.state_dir.to_str().expect("state dir"),
-                "--token",
-                token,
-                "--tmux-bin",
-                fixture.tmux_bin.to_str().expect("tmux bin"),
-            ])
-            .env("AGENT_SESSION_FAKE_TMUX_ABSENT", "1")
+        command
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn HTTP server"),
     ));
+
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match TcpStream::connect(address) {

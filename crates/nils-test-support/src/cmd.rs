@@ -142,15 +142,24 @@ impl CmdOptions {
         self
     }
 
-    /// Drop every [`MANAGED_SESSION_ENV`] variable the caller inherited, so the
-    /// process under test sees only the managed-session inputs the test chose.
+    /// Drop every ambient `AGENT_SESSION_*` variable (and `AGENT_HOOK_BIN`) the
+    /// caller inherited, so the process under test sees only the managed-session
+    /// inputs the test chose.
+    ///
+    /// A managed session can export more `AGENT_SESSION_*` variables than the
+    /// fixed [`MANAGED_SESSION_ENV`] list - for example
+    /// `AGENT_SESSION_LAUNCH_PROFILES` or `AGENT_SESSION_TMUX_SCOPE` - so removal
+    /// is by prefix rather than a closed set; a leak otherwise lets the child read
+    /// the caller's launch profiles and state instead of the fixture's
+    /// (sympoies/nils-cli#2059).
     ///
     /// This does not take anything away from a test that wants one of them:
     /// `run_impl_os` applies removals before values, so a later `with_env` for
     /// the same key still reaches the child. Callers that build a value
     /// conditionally can therefore apply this first and decide afterwards.
     pub fn without_ambient_managed_session_env(self) -> Self {
-        self.with_env_remove_many(&MANAGED_SESSION_ENV)
+        self.with_env_remove_prefix("AGENT_SESSION_")
+            .with_env_remove("AGENT_HOOK_BIN")
     }
 
     pub fn with_path_prepend(self, dir: &Path) -> Self {
@@ -204,6 +213,28 @@ impl CmdOptions {
     pub fn inherit_stdin(mut self) -> Self {
         self.stdin_null = false;
         self
+    }
+}
+
+/// Remove every ambient `AGENT_SESSION_*` variable (and `AGENT_HOOK_BIN`) from a
+/// child command, so a process spawned inside a managed session inherits only the
+/// environment the test explicitly set.
+///
+/// A managed session can export more `AGENT_SESSION_*` variables than the fixed
+/// [`MANAGED_SESSION_ENV`] list - for example `AGENT_SESSION_LAUNCH_PROFILES` or
+/// `AGENT_SESSION_TMUX_SCOPE` - so removal is by prefix rather than a closed set.
+/// A leak otherwise lets the child read the caller's launch profiles and state
+/// instead of the fixture's (sympoies/nils-cli#2059).
+///
+/// This drops only the ambient variables; callers still apply their own fixture
+/// `env` values afterwards, which outrank the removal.
+pub fn strip_ambient_managed_session_env(command: &mut Command) {
+    for (key, _) in std::env::vars_os() {
+        let key = key.to_string_lossy();
+        let key = key.as_ref();
+        if key.starts_with("AGENT_SESSION_") || key == "AGENT_HOOK_BIN" {
+            command.env_remove(key);
+        }
     }
 }
 

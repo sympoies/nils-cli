@@ -5,10 +5,14 @@ use std::process::Command;
 fn two_root_http_federation_acceptance() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/remote-mailbox-acceptance.mjs");
-    let output = Command::new("node")
-        .arg(fixture)
+    let agent_session_bin = nils_test_support::bin::resolve("agent-session");
+    let mut command = Command::new("node");
+    command
+        .arg(&fixture)
         .arg("--agent-session-bin")
-        .arg(nils_test_support::bin::resolve("agent-session"))
+        .arg(&agent_session_bin);
+    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+    let output = command
         .output()
         .expect("Node >=18 is required for the installed-artifact HTTP fixture");
     assert!(

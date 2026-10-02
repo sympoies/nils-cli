@@ -1088,9 +1088,7 @@ fn isolated_serve_command(root: &Path, state_dir: &Path, addr: std::net::SocketA
         .env("AGENT_SESSION_FAKE_TMUX_LIST_WINDOWS", "")
         .stdin(Stdio::null())
         .stdout(Stdio::null());
-    for key in nils_test_support::cmd::MANAGED_SESSION_ENV {
-        command.env_remove(key);
-    }
+    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
     command
 }
 
