@@ -22,10 +22,16 @@ const TRACKER_SCHEMA: &str = "cli.forge-cli.issue.tracker.show.v1";
 pub(crate) const FORGE_CLI_ENV: &str = "AGENT_SESSION_FORGE_CLI_BIN";
 /// A copy younger than this is served without a refresh.
 const TTL: Duration = Duration::from_secs(5 * 60);
-const HELPER_TIMEOUT: Duration = Duration::from_secs(20);
+const HELPER_TIMEOUT: Duration = Duration::from_secs(10);
+/// One refresh pass reads for at most this long in total; programs it does
+/// not reach keep their cached copy, marked stale, and are tried first by the
+/// next read.
+const REFRESH_BUDGET: Duration = Duration::from_secs(20);
 const OUTPUT_LIMIT: u64 = 1024 * 1024;
 /// At most this many programs per snapshot, in reference order.
 const MAX_PROGRAMS: usize = 16;
+/// A read needs at least this much of the budget left to start.
+const MIN_READ: Duration = Duration::from_millis(500);
 const MAX_ROWS: usize = 500;
 
 /// One program's last read. A failed read is remembered too, so a failing
@@ -42,6 +48,7 @@ struct Cached {
 pub(crate) struct ProgramCache {
     forge_cli: String,
     ttl: Duration,
+    budget: Duration,
     entries: Mutex<BTreeMap<String, Cached>>,
     /// Held while refreshing, so concurrent reads share one refresh.
     refresh: Mutex<()>,
@@ -59,6 +66,7 @@ impl ProgramCache {
         Self {
             forge_cli,
             ttl,
+            budget: REFRESH_BUDGET,
             entries: Mutex::new(BTreeMap::new()),
             refresh: Mutex::new(()),
         }
@@ -82,6 +90,7 @@ impl ProgramCache {
         };
         if any_stale {
             let _refreshing = self.refresh.lock().unwrap_or_else(|e| e.into_inner());
+            let deadline = Instant::now() + self.budget;
             for (reference, work_ref) in &wanted {
                 let fresh = {
                     let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
@@ -90,7 +99,15 @@ impl ProgramCache {
                 if fresh {
                     continue;
                 }
-                let read = self.read_tracker(reference, work_ref);
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining < MIN_READ {
+                    let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(cached) = entries.get_mut(reference) {
+                        cached.stale = true;
+                    }
+                    continue;
+                }
+                let read = self.read_tracker(reference, work_ref, remaining.min(HELPER_TIMEOUT));
                 let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
                 let previous = entries.remove(reference).and_then(|cached| cached.body);
                 let cached = match read {
@@ -130,7 +147,12 @@ impl ProgramCache {
     /// One tracker read as the served program object, or `None` on any
     /// failure: the helper cannot run, times out, or answers anything other
     /// than a tracker.
-    fn read_tracker(&self, reference: &str, work_ref: &WorkRef) -> Option<Value> {
+    fn read_tracker(
+        &self,
+        reference: &str,
+        work_ref: &WorkRef,
+        timeout: Duration,
+    ) -> Option<Value> {
         let target = format!("{}#{}", work_ref.repository, work_ref.number);
         let output = run_helper(
             &self.forge_cli,
@@ -145,7 +167,7 @@ impl ProgramCache {
                 "json",
             ],
             &[],
-            HELPER_TIMEOUT,
+            timeout,
             OUTPUT_LIMIT,
         )
         .ok()?;
@@ -330,6 +352,24 @@ mod tests {
         assert_eq!(programs.len(), 2);
         assert!(programs.iter().all(|program| program["stale"] == true));
         assert_eq!(programs[1]["rows"][0]["id"], "A1");
+
+        // A pass whose budget is spent skips the programs it does not reach
+        // and serves their cached copies as stale.
+        std::fs::remove_file(tmp.path().join("fail")).expect("clear fail flag");
+        let mut spent = ProgramCache::new(forge_path.clone(), Duration::ZERO);
+        spent.snapshot(&context, "host-a").expect("warm");
+        spent.budget = Duration::ZERO;
+        let before = calls(tmp.path()).len();
+        let served = spent.snapshot(&context, "host-a").expect("spent");
+        assert_eq!(
+            calls(tmp.path()).len(),
+            before,
+            "no read starts without budget"
+        );
+        let programs = served["programs"].as_array().expect("programs");
+        assert_eq!(programs.len(), 2);
+        assert!(programs.iter().all(|program| program["stale"] == true));
+        std::fs::write(tmp.path().join("fail"), b"").expect("fail flag");
 
         // A forge that keeps failing is tried once per TTL, not per request.
         let failing = ProgramCache::new(forge_path, Duration::from_secs(3600));

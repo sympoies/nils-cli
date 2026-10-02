@@ -358,7 +358,9 @@ with the result in `data.board_programs`:
   `PATH`) lazily when the route is read. A copy younger than five minutes is
   served without a read, concurrent reads share one refresh, and the last good
   copy is kept with `stale: true` when a refresh fails. A failed read counts
-  as an attempt: it is not tried again before the five minutes pass. A program that was
+  as an attempt: it is not tried again before the five minutes pass. One
+  refresh pass reads for at most 20 seconds in total, each read for at most 10;
+  programs it does not reach keep their cached copy, marked `stale: true`. A program that was
   never read successfully is omitted, never guessed. Program refs and the
   tracker's public title, state, and rows are the only data served.
 - The route answers `board-disabled` (HTTP 404) while the board is disabled.
