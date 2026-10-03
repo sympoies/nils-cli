@@ -14743,6 +14743,7 @@ pub(crate) mod tmux_probe_fixture {
     #[derive(Clone, Copy)]
     pub(crate) enum Probe {
         Stopped,
+        #[cfg(target_os = "linux")]
         IdentityUnavailable,
     }
 
@@ -14771,6 +14772,7 @@ pub(crate) mod tmux_probe_fixture {
     pub(super) fn read(path: &Path) -> Option<Result<TmuxRuntimeProbe, SessionTerminationFailure>> {
         PROBES.lock().unwrap().get(path).map(|probe| match probe {
             Probe::Stopped => Ok(TmuxRuntimeProbe::Stopped),
+            #[cfg(target_os = "linux")]
             Probe::IdentityUnavailable => {
                 Err(SessionTerminationFailure::RuntimeIdentityUnavailable)
             }
