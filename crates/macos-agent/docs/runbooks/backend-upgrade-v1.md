@@ -35,7 +35,7 @@ candidate_bin="$candidate_target_dir/release/macos-agent"
 The candidate lock authorizes the exact v4.4.0 predecessor. Before installing
 v4.6.0, confirm that the current receipt is still v4.4.0. `backend verify`
 establishes the stable CLI from that authenticated receipt when migrating a
-legacy version-specific CLI layout, and restarts one owned app. It does not
+version-specific CLI layout, and restarts one owned app. It does not
 install the candidate. Changed stable files are refused.
 
 Inspect the designated requirements at the two stable paths with

@@ -212,7 +212,7 @@ fn upgrade_acceptance_legacy_cli_migration_is_explicit_and_dry_run_is_read_only(
     );
     assert_eq!(installed.code, 0, "{}", installed.stderr_text());
     let stable = root.join("stable/peekaboo");
-    fs::remove_file(&stable).expect("simulate the legacy version-specific CLI layout");
+    fs::remove_file(&stable).expect("simulate the version-specific CLI layout");
     let receipt = fs::read(root.join("receipts/current.json")).expect("receipt");
     for dry_run in [true, false] {
         let mut args = vec!["--format", "json", "backend", "install", "--strict"];
@@ -269,7 +269,7 @@ fn upgrade_acceptance_verify_migrates_the_accepted_predecessor_without_selecting
     );
     assert_eq!(installed.code, 0, "{}", installed.stderr_text());
     let receipt = fs::read(root.join("receipts/current.json")).expect("accepted receipt");
-    fs::remove_file(root.join("stable/peekaboo")).expect("legacy CLI layout");
+    fs::remove_file(root.join("stable/peekaboo")).expect("version-specific CLI layout");
     let verified = run_backend(
         &harness,
         cwd.path(),

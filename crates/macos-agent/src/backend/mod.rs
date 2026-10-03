@@ -671,7 +671,7 @@ fn verify_unlocked(
         release_contract_for_receipt(lock, &receipt)?;
     if !stable_cli_matches(paths, &receipt)? {
         return Err(backend_error(
-            "the stable CLI is missing or changed; run backend verify to migrate a legacy layout; changed files are never overwritten",
+            "the stable CLI is missing or changed; run backend verify to migrate a version-specific layout; changed files are never overwritten",
         ));
     }
     verify_signature(&paths.stable_cli(), active_cli_asset, false, strict)?;

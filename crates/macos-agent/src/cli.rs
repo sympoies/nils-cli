@@ -98,7 +98,7 @@ pub enum BackendCommand {
     Install(BackendMutationArgs),
     /// Report the current and previous receipts without exposing local paths.
     Status(BackendStatusArgs),
-    /// Verify the active assets, migrate a legacy CLI path, and restart the owned app.
+    /// Verify the active assets, migrate a version-specific CLI path, and restart the owned app.
     Verify(BackendVerifyArgs),
     /// Atomically select the verified previous receipt.
     Rollback(BackendMutationArgs),
