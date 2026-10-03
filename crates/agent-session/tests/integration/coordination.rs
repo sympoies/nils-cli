@@ -11595,6 +11595,68 @@ fn main_agent_worker_start_binds_broker_to_same_release_agent_session_sibling() 
     );
 }
 
+fn wait_for_descendant_pid(path: &Path, deadline: Instant) -> u32 {
+    wait_for_descendant_pid_with(path, deadline, || {})
+}
+
+fn wait_for_descendant_pid_with(
+    path: &Path,
+    deadline: Instant,
+    mut incomplete: impl FnMut(),
+) -> u32 {
+    loop {
+        if let Ok(contents) = fs::read_to_string(path)
+            && contents.ends_with('\n')
+            && let Ok(pid) = contents.trim().parse::<u32>()
+            && pid > 0
+        {
+            return pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the provider did not publish a complete descendant identity"
+        );
+        incomplete();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn descendant_pid_reader_waits_for_complete_publication_and_enforces_deadline() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let pid_file = tmp.path().join("descendant.pid");
+    fs::write(&pid_file, "").unwrap();
+    let (observed_tx, observed_rx) = std::sync::mpsc::channel();
+    let (publish_tx, publish_rx) = std::sync::mpsc::channel();
+    let reader_path = pid_file.clone();
+    let reader = std::thread::spawn(move || {
+        wait_for_descendant_pid_with(
+            &reader_path,
+            Instant::now() + Duration::from_secs(5),
+            || {
+                observed_tx.send(()).unwrap();
+                publish_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            },
+        )
+    });
+    // Pause publication after truncation and again after a partial numeric
+    // write. The reader explicitly acknowledges each incomplete observation.
+    observed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    fs::write(&pid_file, "12").unwrap();
+    publish_tx.send(()).unwrap();
+    observed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    fs::write(&pid_file, "12345\n").unwrap();
+    publish_tx.send(()).unwrap();
+    assert_eq!(reader.join().unwrap(), 12345);
+    for contents in ["", "12", "invalid\n", "0\n"] {
+        fs::write(&pid_file, contents).unwrap();
+        assert!(
+            std::panic::catch_unwind(|| wait_for_descendant_pid(&pid_file, Instant::now()))
+                .is_err()
+        );
+    }
+}
+
 #[test]
 #[cfg(target_os = "linux")]
 fn main_agent_worker_start_emits_and_executes_exact_compiled_canary_supervisor() {
@@ -12280,11 +12342,7 @@ fn main_agent_worker_start_emits_and_executes_exact_compiled_canary_supervisor()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    let delayed_descendant_pid = fs::read_to_string(&descendant_pid_file)
-        .expect("canary descendant pid")
-        .trim()
-        .parse::<u32>()
-        .expect("canary descendant numeric pid");
+    let delayed_descendant_pid = wait_for_descendant_pid(&descendant_pid_file, deadline);
     delayed_binding_supervisor
         .kill()
         .expect("stop delayed-binding supervisor");
@@ -12386,11 +12444,7 @@ fn main_agent_worker_start_emits_and_executes_exact_compiled_canary_supervisor()
     .expect("canary ready json")["child_pid"]
         .as_u64()
         .expect("provider child pid") as u32;
-    let descendant_pid = fs::read_to_string(&descendant_pid_file)
-        .expect("provider descendant pid")
-        .trim()
-        .parse::<u32>()
-        .expect("provider descendant numeric pid");
+    let descendant_pid = wait_for_descendant_pid(&descendant_pid_file, deadline);
     let control_address = provider_stop_canary_control_address_for_test(
         &state_dir,
         "worker-canary-supervisor",
@@ -12488,11 +12542,7 @@ fn main_agent_worker_start_emits_and_executes_exact_compiled_canary_supervisor()
     .expect("guardian-crash ready json")["child_pid"]
         .as_u64()
         .expect("guardian-crash provider child pid") as u32;
-    let guardian_descendant_pid = fs::read_to_string(&descendant_pid_file)
-        .expect("guardian-crash descendant pid")
-        .trim()
-        .parse::<u32>()
-        .expect("guardian-crash descendant numeric pid");
+    let guardian_descendant_pid = wait_for_descendant_pid(&descendant_pid_file, deadline);
     let guardian_child_cgroup = fs::read_to_string(format!("/proc/{guardian_child_pid}/cgroup"))
         .expect("guardian-crash child cgroup")
         .lines()
@@ -12872,11 +12922,7 @@ fn main_agent_canary_startup_admits_only_authenticated_guardian_status() {
             .expect("ready json")["child_pid"]
             .as_u64()
             .expect("child pid") as u32;
-    let descendant_pid = fs::read_to_string(&descendant_pid_file)
-        .expect("descendant pid")
-        .trim()
-        .parse::<u32>()
-        .expect("numeric descendant pid");
+    let descendant_pid = wait_for_descendant_pid(&descendant_pid_file, deadline);
     // SAFETY: this test owns the exact supervisor process group.
     assert_eq!(
         unsafe { libc::kill(-(supervisor_pid as libc::pid_t), libc::SIGKILL) },
@@ -21258,11 +21304,7 @@ fn provider_stop_canary_supervisor_admits_stalled_scope_empty_turn_and_releases(
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    let descendant_pid = fs::read_to_string(&descendant_pid_file)
-        .expect("normal-stop descendant pid")
-        .trim()
-        .parse::<u32>()
-        .expect("normal-stop descendant numeric pid");
+    let descendant_pid = wait_for_descendant_pid(&descendant_pid_file, deadline);
     assert_eq!(
         fs::read_to_string(&containment_file)
             .expect("provider containment result")
@@ -22066,11 +22108,7 @@ fn provider_stop_canary_spontaneous_leader_exit_seals_detached_descendants() {
         serde_json::from_slice(&fs::read(&ready_path).expect("ready marker"))
             .expect("ready marker json");
     let child_pid = ready["child_pid"].as_u64().expect("provider child pid") as u32;
-    let descendant_pid = fs::read_to_string(&descendant_pid_file)
-        .expect("leader-exit descendant pid")
-        .trim()
-        .parse::<u32>()
-        .expect("leader-exit descendant numeric pid");
+    let descendant_pid = wait_for_descendant_pid(&descendant_pid_file, deadline);
     let status = supervisor.wait().expect("wait leader-exit supervisor");
     assert!(status.success(), "leader-exit supervisor status={status}");
     let deadline = Instant::now() + Duration::from_secs(2);
