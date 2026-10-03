@@ -289,7 +289,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
         ],
         &[
             ("CODEX_AUTH_REMOTE_SSH", "auth-host"),
-            ("CODEX_AUTH_REMOTE_NAME", "gamania"),
+            ("CODEX_AUTH_REMOTE_NAME", "acct1"),
             ("CODEX_AUTH_REMOTE_REFRESH", "true"),
             ("REMOTE_AUTH_PAYLOAD", &remote_payload),
             ("SSH_ARGS_FILE", args_file.to_str().expect("args path")),
@@ -301,7 +301,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
 
     let captured_args = fs::read_to_string(&args_file).expect("read ssh args");
     assert!(captured_args.contains("--name sym"));
-    assert!(!captured_args.contains("--name gamania"));
+    assert!(!captured_args.contains("--name acct1"));
     assert!(captured_args.contains("--refresh"));
 
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json envelope");

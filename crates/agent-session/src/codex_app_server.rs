@@ -5883,7 +5883,7 @@ mod tests {
         let mut record = record_with_runtime("selected-auto", &runtime_dir.join("placeholder"));
         record.runtime.as_mut().unwrap().kind = "tmux".to_string();
         record.runtime.as_mut().unwrap().extra.clear();
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
 
         let err = configure_runtime(&context, &agent, &mut record, true).unwrap_err();
         assert_eq!(err.code(), "codex-app-server-capability-unavailable");
@@ -7006,7 +7006,7 @@ exit "$FAKE_PROVIDER_EXIT"
 calls=$1
 shift
 printf '%s\n' "$*" >> "$calls"
-printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","access_token":"refreshed-fixture-token","chatgpt_account_id":"workspace-refreshed","plan":"team"}'
+printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","access_token":"refreshed-fixture-token","chatgpt_account_id":"workspace-refreshed","plan":"team"}'
 "#,
         )
         .unwrap();
@@ -7022,14 +7022,14 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             host: None,
         };
         let mut record = record_with_runtime("refresh-success", &tmp.path().join("server.sock"));
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         crate::codex_account::finish_binding(
             &context,
             &record.id,
             "runtime-refresh-success",
-            "gamania",
+            "acct1",
             1,
             Ok(()),
         )
@@ -7047,7 +7047,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
                         "previousAccountId": "workspace-old"
                     }
                 }),
-                Some((&context, &record, "gamania")),
+                Some((&context, &record, "acct1")),
             )
             .await
             .unwrap()
@@ -7071,7 +7071,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         assert!(!session_json.contains("refreshed-fixture-token"));
         assert_eq!(
             fs::read_to_string(calls).unwrap().trim(),
-            "resolve --account gamania --force-refresh --format json"
+            "resolve --account acct1 --force-refresh --format json"
         );
     }
 
@@ -7089,14 +7089,14 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             host: None,
         };
         let mut record = record_with_runtime("refresh-failure", &tmp.path().join("server.sock"));
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         crate::codex_account::finish_binding(
             &context,
             &record.id,
             "runtime-refresh-failure",
-            "gamania",
+            "acct1",
             1,
             Ok(()),
         )
@@ -7109,7 +7109,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
                 "method": "account/chatgptAuthTokens/refresh",
                 "params": { "reason": "unauthorized" }
             }),
-            Some((&context, &record, "gamania")),
+            Some((&context, &record, "acct1")),
         )
         .await
         .unwrap_err();
@@ -7127,7 +7127,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         fs::write(
             &broker,
             r#"#!/bin/sh
-printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","access_token":"retry-fixture-token","chatgpt_account_id":"workspace-retry"}'
+printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","access_token":"retry-fixture-token","chatgpt_account_id":"workspace-retry"}'
 "#,
         )
         .unwrap();
@@ -7140,7 +7140,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
                     "method": "account/chatgptAuthTokens/refresh",
                     "params": { "reason": "unauthorized" }
                 }),
-                Some((&context, &record, "gamania")),
+                Some((&context, &record, "acct1")),
             )
             .await
             .unwrap()
@@ -7160,7 +7160,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         fs::write(
             &broker,
             r#"#!/bin/sh
-printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","access_token":"send-failure-fixture-token","chatgpt_account_id":"workspace-send-failure"}'
+printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","access_token":"send-failure-fixture-token","chatgpt_account_id":"workspace-send-failure"}'
 "#,
         )
         .unwrap();
@@ -7173,14 +7173,14 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         };
         let mut record =
             record_with_runtime("refresh-send-failure", &tmp.path().join("server.sock"));
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         crate::codex_account::finish_binding(
             &context,
             &record.id,
             "runtime-refresh-send-failure",
-            "gamania",
+            "acct1",
             1,
             Ok(()),
         )
@@ -7193,7 +7193,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
                 "method": "account/chatgptAuthTokens/refresh",
                 "params": { "reason": "unauthorized" }
             }),
-            Some((&context, &record, "gamania")),
+            Some((&context, &record, "acct1")),
         )
         .await
         .unwrap_err();
@@ -7203,7 +7203,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         let view = crate::codex_account::view_for_record(&persisted);
         assert_eq!(view.state, "bound");
         assert_eq!(view.revision, 2);
-        assert_eq!(view.selected_account.as_deref(), Some("gamania"));
+        assert_eq!(view.selected_account.as_deref(), Some("acct1"));
         assert_eq!(
             view.applied_runtime_id.as_deref(),
             Some("runtime-refresh-send-failure")
@@ -9746,7 +9746,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         let broker = tmp.path().join("broker");
         fs::write(
             &broker,
-            "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"gamania\",\"access_token\":\"token-gamania\",\"chatgpt_account_id\":\"workspace-gamania\",\"plan\":\"team\"}'\n",
+            "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"acct1\",\"access_token\":\"token-acct1\",\"chatgpt_account_id\":\"workspace-acct1\",\"plan\":\"team\"}'\n",
         )
         .unwrap();
         fs::set_permissions(&broker, fs::Permissions::from_mode(0o700)).unwrap();
@@ -9762,7 +9762,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             host: None,
         };
         let mut record = record_with_runtime("auth-reconnect", &socket_path);
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         bind_thread(&record, "raw-thread-auth").unwrap();
@@ -9774,8 +9774,8 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             assert_eq!(receive_json(&mut socket).await["method"], "initialized");
             let login = receive_json(&mut socket).await;
             assert_eq!(login["method"], "account/login/start");
-            assert_eq!(login["params"]["accessToken"], "token-gamania");
-            assert_eq!(login["params"]["chatgptAccountId"], "workspace-gamania");
+            assert_eq!(login["params"]["accessToken"], "token-acct1");
+            assert_eq!(login["params"]["chatgptAccountId"], "workspace-acct1");
             respond(&mut socket, &login, json!({ "type": "chatgptAuthTokens" })).await;
             let loaded = receive_json(&mut socket).await;
             assert_eq!(loaded["method"], "thread/loaded/list");
@@ -9838,7 +9838,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         let persisted = crate::load_session_record(&context, &record.id).unwrap();
         let view = crate::codex_account::view_for_record(&persisted);
         assert_eq!(view.state, "bound");
-        assert_eq!(view.selected_account.as_deref(), Some("gamania"));
+        assert_eq!(view.selected_account.as_deref(), Some("acct1"));
         drop(handle);
         control.abort();
         let _ = control.await;
@@ -10395,7 +10395,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$account" in
-  gamania|sym) ;;
+  acct1|sym) ;;
   *) exit 2 ;;
 esac
 printf '%s\n' "$account" >> "$calls"
@@ -10420,7 +10420,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             host: None,
         };
         let mut record = record_with_runtime("apply-next", &socket_path);
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         crate::activity::activate_runtime(&context, &record).unwrap();
@@ -10450,7 +10450,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             assert_eq!(receive_json(&mut socket).await["method"], "initialized");
             let first_login = receive_json(&mut socket).await;
             assert_eq!(first_login["method"], "account/login/start");
-            assert_eq!(first_login["params"]["accessToken"], "token-gamania");
+            assert_eq!(first_login["params"]["accessToken"], "token-acct1");
             respond(
                 &mut socket,
                 &first_login,
@@ -10706,7 +10706,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         );
         assert_eq!(
             fs::read_to_string(&broker_calls).unwrap(),
-            "gamania\nsym\n",
+            "acct1\nsym\n",
             "the real fake broker resolves exactly the initial and requested account once"
         );
         drop(handle);
@@ -10785,7 +10785,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         let broker = tmp.path().join("broker");
         fs::write(
             &broker,
-            "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"gamania\",\"access_token\":\"token-gamania\",\"chatgpt_account_id\":\"workspace-gamania\",\"plan\":\"team\"}'\n",
+            "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"acct1\",\"access_token\":\"token-acct1\",\"chatgpt_account_id\":\"workspace-acct1\",\"plan\":\"team\"}'\n",
         )
         .unwrap();
         fs::set_permissions(&broker, fs::Permissions::from_mode(0o700)).unwrap();
@@ -10801,14 +10801,14 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             host: None,
         };
         let mut record = record_with_runtime("failed-reconnect", &socket_path);
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         crate::codex_account::finish_binding(
             &context,
             &record.id,
             "runtime-failed-reconnect",
-            "gamania",
+            "acct1",
             1,
             Err("apply_failed"),
         )
@@ -10868,11 +10868,11 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             &context,
             &record.id,
             "runtime-failed-reconnect",
-            "gamania",
+            "acct1",
         )
         .unwrap();
         assert_eq!(revision, 2);
-        let view = handle.bind_account("gamania", revision).await.unwrap();
+        let view = handle.bind_account("acct1", revision).await.unwrap();
         assert_eq!(view.state, "bound");
         assert_eq!(
             view.applied_runtime_id.as_deref(),
@@ -11158,7 +11158,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             host: None,
         };
         let mut proxy_record = record_with_runtime("managed-manual", &upstream);
-        crate::codex_account::set_initial_binding(&mut proxy_record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut proxy_record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &proxy_record.id)).unwrap();
         crate::write_session_record(&context, &proxy_record).unwrap();
         crate::activity::activate_runtime(&context, &proxy_record).unwrap();
@@ -11166,7 +11166,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             &context,
             &proxy_record.id,
             &proxy_record.runtime.as_ref().unwrap().launch_id,
-            "gamania",
+            "acct1",
             1,
             Ok(()),
         )
@@ -11225,7 +11225,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$account" in
-  gamania|sym) ;;
+  acct1|sym) ;;
   *) exit 2 ;;
 esac
 printf '%s\n' "$account" >> "$calls"
@@ -11250,14 +11250,14 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             host: None,
         };
         let mut record = record_with_runtime("automatic-failover", &socket_path);
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         crate::codex_account::finish_binding(
             &context,
             &record.id,
             "runtime-automatic-failover",
-            "gamania",
+            "acct1",
             1,
             Ok(()),
         )
@@ -11381,7 +11381,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             host: None,
         };
         let mut record = record_with_runtime("managed-raw", &upstream);
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         crate::activity::activate_runtime(&context, &record).unwrap();
@@ -11389,7 +11389,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             &context,
             &record.id,
             &record.runtime.as_ref().unwrap().launch_id,
-            "gamania",
+            "acct1",
             1,
             Ok(()),
         )
@@ -11459,7 +11459,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             host: None,
         };
         let mut record = record_with_runtime("managed-thread-only", &upstream);
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         crate::activity::activate_runtime(&context, &record).unwrap();
@@ -11467,7 +11467,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             &context,
             &record.id,
             &record.runtime.as_ref().unwrap().launch_id,
-            "gamania",
+            "acct1",
             1,
             Ok(()),
         )
@@ -11547,7 +11547,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             &context,
             &record.id,
             &record.runtime.as_ref().unwrap().launch_id,
-            "poies",
+            "acct2",
         )
         .unwrap();
     }
@@ -12141,7 +12141,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             host: None,
         };
         let mut record = record_with_runtime("fresh-start", &upstream);
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         crate::write_session_record(&context, &record).unwrap();
         crate::activity::activate_runtime(&context, &record).unwrap();
@@ -12149,7 +12149,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             &context,
             &record.id,
             &record.runtime.as_ref().unwrap().launch_id,
-            "gamania",
+            "acct1",
             1,
             Ok(()),
         )
@@ -12674,7 +12674,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             host: None,
         };
         let mut record = record_with_runtime("broker-bound-auth", &socket);
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
 
         for method in [
             "account/login/start",

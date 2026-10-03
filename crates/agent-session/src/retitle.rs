@@ -4584,7 +4584,7 @@ mod tests {
         let broker = tmp.path().join("broker");
         std::fs::write(
             &broker,
-            "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"gamania\",\"plan\":\"team\"}'\n",
+            "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"acct1\",\"plan\":\"team\"}'\n",
         )
         .unwrap();
         std::fs::set_permissions(&broker, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -4605,7 +4605,7 @@ mod tests {
 
         let readiness = RetitleService::from_environment().readiness();
         assert_eq!(readiness.status, "ready");
-        assert_eq!(readiness.account.as_deref(), Some("gamania"));
+        assert_eq!(readiness.account.as_deref(), Some("acct1"));
         assert_eq!(readiness.plan.as_deref(), Some("team"));
     }
 
@@ -4625,10 +4625,10 @@ shift
 if [ "$stage" = "$1" ]; then sleep 3; fi
 case "$1" in
   select)
-    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","plan":"team"}'
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","plan":"team"}'
     ;;
   resolve)
-    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture","plan":"team"}'
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture","plan":"team"}'
     ;;
   *) exit 2 ;;
 esac

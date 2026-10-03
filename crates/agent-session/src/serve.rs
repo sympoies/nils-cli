@@ -25440,7 +25440,7 @@ esac
     async fn codex_account_switch_routes_the_nickname_to_the_exact_runtime_control() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = codex_listing_broker(&lock, tmp.path(), &["gamania", "sym"]);
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "sym"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "account-switch").unwrap();
@@ -25479,7 +25479,7 @@ esac
             else {
                 panic!("account switch did not reach the Codex control plane");
             };
-            assert_eq!(account, "gamania");
+            assert_eq!(account, "acct1");
             assert_eq!(revision, 1);
             response
                 .send(Ok(crate::codex_account::CodexAccountView {
@@ -25502,13 +25502,13 @@ esac
             put_json(
                 "/sessions/account-switch/account",
                 Some(TOKEN),
-                json!({ "account": "gamania", "expected_session_incarnation": launch_id }),
+                json!({ "account": "acct1", "expected_session_incarnation": launch_id }),
             ),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert_eq!(body["data"]["codex_account"]["state"], "bound");
-        assert_eq!(body["data"]["codex_account"]["selected_account"], "gamania");
+        assert_eq!(body["data"]["codex_account"]["selected_account"], "acct1");
         assert_eq!(body["data"]["codex_account"]["revision"], 1);
         responder.await.unwrap();
     }
@@ -25517,17 +25517,17 @@ esac
     async fn codex_account_switch_queues_during_a_working_turn_without_control_dispatch() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = codex_listing_broker(&lock, tmp.path(), &["gamania", "sym"]);
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "sym"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-queued");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let mut record = load_session_record(&st.context, "account-switch-queued").unwrap();
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         crate::write_session_record(&st.context, &record).unwrap();
         crate::codex_account::finish_binding(
             &st.context,
             &record.id,
             &launch_id,
-            "gamania",
+            "acct1",
             1,
             Ok(()),
         )
@@ -25565,7 +25565,7 @@ esac
         )
         .await;
         assert_eq!(status, StatusCode::OK, "body={body}");
-        assert_eq!(body["data"]["codex_account"]["selected_account"], "gamania");
+        assert_eq!(body["data"]["codex_account"]["selected_account"], "acct1");
         assert_eq!(body["data"]["codex_account"]["next"]["account"], "sym");
         assert_eq!(body["data"]["codex_account"]["next"]["state"], "queued");
         assert!(matches!(
@@ -25575,7 +25575,7 @@ esac
 
         let persisted = load_session_record(&st.context, &record.id).unwrap();
         let view = crate::codex_account::view_for_record(&persisted);
-        assert_eq!(view.selected_account.as_deref(), Some("gamania"));
+        assert_eq!(view.selected_account.as_deref(), Some("acct1"));
         assert_eq!(view.next.unwrap().account.as_deref(), Some("sym"));
     }
 
@@ -25584,18 +25584,18 @@ esac
         let lock = GlobalStateLock::new();
         let _no_claude = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
-        // The broker lists `sym` but not the bound `gamania`.
+        // The broker lists `sym` but not the bound `acct1`.
         let listing = codex_listing_broker(&lock, tmp.path(), &["sym"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-reselect");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let mut record = load_session_record(&st.context, "account-switch-reselect").unwrap();
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         crate::write_session_record(&st.context, &record).unwrap();
         crate::codex_account::finish_binding(
             &st.context,
             &record.id,
             &launch_id,
-            "gamania",
+            "acct1",
             1,
             Ok(()),
         )
@@ -25649,9 +25649,9 @@ esac
             "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
             &serde_json::to_string(&vec![failing.to_string_lossy().into_owned()]).unwrap(),
         );
-        let (status, body) = call(router(st.clone()), switch("gamania")).await;
+        let (status, body) = call(router(st.clone()), switch("acct1")).await;
         assert_eq!(status, StatusCode::OK, "body={body}");
-        assert_eq!(body["data"]["codex_account"]["selected_account"], "gamania");
+        assert_eq!(body["data"]["codex_account"]["selected_account"], "acct1");
         assert!(
             body["data"]["codex_account"].get("next").is_none(),
             "re-selecting the bound account cancels the queued intent: {body}"
@@ -25673,7 +25673,7 @@ esac
     async fn codex_account_switch_queues_an_unbound_session_during_a_working_turn() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = codex_listing_broker(&lock, tmp.path(), &["gamania", "sym"]);
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "sym"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "unbound-account-switch-queued");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "unbound-account-switch-queued").unwrap();
@@ -25747,7 +25747,7 @@ esac
     async fn codex_account_switch_refuses_an_account_the_broker_does_not_list() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = codex_listing_broker(&lock, tmp.path(), &["gamania"]);
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-unknown");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "account-switch-unknown").unwrap();
@@ -25789,7 +25789,7 @@ esac
     async fn codex_account_switch_serializes_full_id_and_prefix_as_one_transaction() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = codex_listing_broker(&lock, tmp.path(), &["gamania", "sym"]);
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "sym"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-serialized");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "account-switch-serialized").unwrap();
@@ -25826,7 +25826,7 @@ esac
                 "/sessions/account-switch-serialized/account",
                 Some(TOKEN),
                 json!({
-                    "account": "gamania",
+                    "account": "acct1",
                     "expected_session_incarnation": first_launch_id
                 }),
             ),
@@ -25841,7 +25841,7 @@ esac
         else {
             panic!("first switch sent an unexpected control command");
         };
-        assert_eq!(first_account, "gamania");
+        assert_eq!(first_account, "acct1");
         assert_eq!(first_revision, 1);
 
         let second_launch_id = launch_id.clone();
@@ -25925,7 +25925,7 @@ esac
         crate::codex_account::finish_binding(&st.context, &record.id, &launch_id, "sym", 1, Ok(()))
             .unwrap();
 
-        let response = wait_for_account_binding(&st, &record.id, &launch_id, "gamania", 1)
+        let response = wait_for_account_binding(&st, &record.id, &launch_id, "acct1", 1)
             .await
             .unwrap_err();
         assert_eq!(response.status(), StatusCode::CONFLICT);
@@ -25936,7 +25936,7 @@ esac
             &record.id,
             &launch_id,
             StructuredPromptGuards {
-                expected_binding: Some(("gamania", 1)),
+                expected_binding: Some(("acct1", 1)),
                 ..Default::default()
             },
             &handle,
@@ -26027,17 +26027,10 @@ esac
             host: None,
         };
         let mut record = load_session_record(&context, "account-auto-resume").unwrap();
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         crate::write_session_record(&context, &record).unwrap();
-        crate::codex_account::finish_binding(
-            &context,
-            &record.id,
-            &launch_id,
-            "gamania",
-            1,
-            Ok(()),
-        )
-        .unwrap();
+        crate::codex_account::finish_binding(&context, &record.id, &launch_id, "acct1", 1, Ok(()))
+            .unwrap();
         record = load_session_record(&context, &record.id).unwrap();
         crate::activity::activate_runtime(&context, &record).unwrap();
         auto_resume::set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
@@ -29256,7 +29249,7 @@ esac
             put_json(
                 "/sessions/steer/account",
                 None,
-                json!({ "account": "gamania" }),
+                json!({ "account": "acct1" }),
             ),
         )
         .await;
@@ -29909,7 +29902,7 @@ esac
         fs::write(
             &broker,
             r#"#!/bin/sh
-printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts":[{"account":"gamania","label":"Gamania","plan":"team"}],"selection_strategies":["current_default","next_with_capacity","future_strategy"]}'
+printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts":[{"account":"acct1","label":"Acct1","plan":"team"}],"selection_strategies":["current_default","next_with_capacity","future_strategy"]}'
 "#,
         )
         .unwrap();
@@ -29927,8 +29920,8 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts"
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert_eq!(body["data"]["machine"], MACHINE);
         assert_eq!(body["data"]["provider"], "codex");
-        assert_eq!(body["data"]["accounts"][0]["account"], "gamania");
-        assert_eq!(body["data"]["accounts"][0]["label"], "Gamania");
+        assert_eq!(body["data"]["accounts"][0]["account"], "acct1");
+        assert_eq!(body["data"]["accounts"][0]["label"], "Acct1");
         assert_eq!(
             body["data"]["selection_strategies"],
             json!(["current_default", "next_with_capacity"])
@@ -30413,7 +30406,7 @@ esac
         assert_eq!(body["data"]["capabilities"]["claude_account_switch"], true);
         assert_eq!(body["data"]["capabilities"]["codex_account_switch"], false);
 
-        let _codex_broker = codex_listing_broker(&lock, tmp.path(), &["gamania"]);
+        let _codex_broker = codex_listing_broker(&lock, tmp.path(), &["acct1"]);
         let (status, body) = call(router(st), get("/sessions")).await;
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert_eq!(body["data"]["capabilities"]["codex_account_switch"], true);
@@ -31132,7 +31125,7 @@ esac
     async fn account_cli_codex_switch_binds_for_the_next_prompt() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let broker = codex_listing_broker(&lock, tmp.path(), &["gamania", "sym"]);
+        let broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "sym"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "codex-cli");
         let tmux = minimal_tmux(tmp.path());
         let context = CliContext {
@@ -31140,17 +31133,10 @@ esac
             host: None,
         };
         let mut record = load_session_record(&context, "codex-cli").unwrap();
-        crate::codex_account::set_initial_binding(&mut record, Some("gamania")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("acct1")).unwrap();
         crate::write_session_record(&context, &record).unwrap();
-        crate::codex_account::finish_binding(
-            &context,
-            &record.id,
-            &launch_id,
-            "gamania",
-            1,
-            Ok(()),
-        )
-        .unwrap();
+        crate::codex_account::finish_binding(&context, &record.id, &launch_id, "acct1", 1, Ok(()))
+            .unwrap();
         let switch = |account: &str, expected: Option<&str>| {
             crate::session_account::switch(&context, "codex-cli", account, expected, &tmux)
                 .map(|result| serde_json::to_value(result).unwrap())
@@ -31161,7 +31147,7 @@ esac
                 .unwrap();
         assert_eq!(shown["agent"], "codex");
         assert_eq!(shown["session_incarnation"], launch_id.as_str());
-        assert_eq!(shown["codex_account"]["selected_account"], "gamania");
+        assert_eq!(shown["codex_account"]["selected_account"], "acct1");
         assert!(shown.get("claude_account").is_none(), "{shown}");
 
         let stale = switch("sym", Some("stale-incarnation")).unwrap_err();
@@ -31171,7 +31157,7 @@ esac
 
         let bound = switch("sym", None).unwrap();
         assert_eq!(bound["session_incarnation"], launch_id.as_str());
-        assert_eq!(bound["codex_account"]["selected_account"], "gamania");
+        assert_eq!(bound["codex_account"]["selected_account"], "acct1");
         assert_eq!(bound["codex_account"]["next"]["account"], "sym");
         assert_eq!(bound["codex_account"]["next"]["state"], "queued");
         let persisted = load_session_record(&context, "codex-cli").unwrap();
@@ -31188,7 +31174,7 @@ esac
         );
 
         // Re-selecting the bound account cancels the queued switch, as in serve.
-        let cancelled = switch("gamania", Some(&launch_id)).unwrap();
+        let cancelled = switch("acct1", Some(&launch_id)).unwrap();
         assert!(
             cancelled["codex_account"].get("next").is_none(),
             "{cancelled}"
