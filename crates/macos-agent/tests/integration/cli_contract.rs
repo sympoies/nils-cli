@@ -399,3 +399,56 @@ fn write_executable(path: &std::path::Path, body: &str) {
     fs::write(path, body).expect("write executable");
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod executable");
 }
+
+#[test]
+fn capture_permission_failure_names_the_cli_authority_instead_of_a_locked_session() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let fake = cwd.path().join("peekaboo-permission");
+    write_executable(
+        &fake,
+        r#"#!/bin/sh
+case " $* " in
+  *" permissions status "*)
+    echo '{"success":true,"data":{"source":"local","permissions":[{"name":"Screen Recording","isRequired":true,"isGranted":false},{"name":"Accessibility","isRequired":true,"isGranted":true}]}}'
+    exit 0 ;;
+esac
+echo '{"success":false,"error":{"code":"CAPTURE_FAILED","message":"GUI session locked"}}'
+echo 'GUI session locked' >&2
+exit 1
+"#,
+    );
+    let out_dir = cwd.path().join("journal");
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "exec",
+            "--runtime",
+            "daemon",
+            "--out-dir",
+            out_dir.to_str().expect("journal"),
+            "--",
+            "see",
+            "--json",
+        ],
+        harness.cmd_options(cwd.path()).with_env(
+            "NILS_MACOS_AGENT_PEEKABOO_BIN",
+            fake.to_str().expect("fixture"),
+        ),
+    );
+    pretty_assertions::assert_eq!(out.code, 77, "{}", out.stderr_text());
+    let result = out.stdout_json();
+    let diagnostic = result["result"]["upstream"]["diagnostic"]
+        .as_str()
+        .expect("diagnostic");
+    assert!(diagnostic.contains("Screen Recording"), "{diagnostic}");
+    assert!(diagnostic.contains("Peekaboo CLI"), "{diagnostic}");
+    assert!(!diagnostic.contains("GUI session locked"), "{diagnostic}");
+    assert!(
+        fs::read_to_string(out_dir.join("steps.jsonl"))
+            .expect("journal")
+            .contains("\"failure_class\":\"permission\"")
+    );
+}
