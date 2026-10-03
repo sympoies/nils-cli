@@ -86,14 +86,32 @@ where
     }) {
         return Err("network-capable Git operations are forbidden".to_string());
     }
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(root)
-        .args(args)
+        .args(&args)
         .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
+        .env("PAGER", "cat");
+    let refs: Vec<_> = args
+        .iter()
+        .map(|a| {
+            a.as_ref()
+                .to_str()
+                .ok_or_else(|| "identity_target_invalid".to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    let identity = nils_common::forge_identity::prepare_git(&mut command, Some(root), &refs)
+        .map_err(|e| e.to_string())?;
+    let mut output = command
         .output()
         .map_err(|error| format!("failed to launch git: {error}"))?;
+    if let Some(identity) = identity {
+        identity.redact_output(&mut output);
+        identity
+            .finish(output.status.success(), None)
+            .map_err(|e| e.to_string())?;
+    }
     if output.status.success() {
         Ok(output)
     } else {

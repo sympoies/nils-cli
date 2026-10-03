@@ -4,6 +4,7 @@
 
 ## Specs
 
+- [`Forge identity policy v1`](specs/forge-identity-policy-v1.md): shared configurable principal selection, execution refusal, and audit contract.
 - [`markdown Helpers Contract v1`](specs/markdown-helpers-contract-v1.md): shared markdown payload
   validation and table-cell canonicalization contract.
 

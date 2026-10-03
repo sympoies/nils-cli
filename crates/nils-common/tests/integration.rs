@@ -5,6 +5,8 @@
 
 #[path = "integration/cli_contract.rs"]
 mod cli_contract;
+#[path = "integration/forge_identity.rs"]
+mod forge_identity;
 #[path = "integration/markdown_table_canonicalization.rs"]
 mod markdown_table_canonicalization;
 #[path = "integration/provider_runtime_contract.rs"]

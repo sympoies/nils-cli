@@ -3,8 +3,9 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Output};
+use std::process::{Command, ExitStatus, Output, Stdio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitContextError {
@@ -458,7 +459,29 @@ fn run_output_inner(
     args: &[&str],
     env: &[process::ProcessEnvPair<'_>],
 ) -> io::Result<Output> {
-    process::run_output_with("git", args, cwd, env).map(|output| output.into_std_output())
+    let (mut command, auth) = identity_command(cwd, args, env)?;
+    let mut output = command.output()?;
+    if let Some(auth) = auth {
+        auth.redact_output(&mut output);
+        let object = if output.status.success()
+            && auth.selection.operation == crate::forge_identity::Operation::Commit
+        {
+            let mut probe = Command::new("git");
+            if let Some(cwd) = cwd {
+                probe.current_dir(cwd);
+            }
+            probe
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        } else {
+            None
+        };
+        auth.finish(output.status.success(), object.as_deref())?;
+    }
+    Ok(output)
 }
 
 fn run_status_quiet_inner(
@@ -466,7 +489,15 @@ fn run_status_quiet_inner(
     args: &[&str],
     env: &[process::ProcessEnvPair<'_>],
 ) -> io::Result<ExitStatus> {
-    process::run_status_quiet_with("git", args, cwd, env)
+    let (mut command, auth) = identity_command(cwd, args, env)?;
+    let status = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    if let Some(auth) = auth {
+        auth.finish(status.success(), None)?;
+    }
+    Ok(status)
 }
 
 fn run_status_inherit_inner(
@@ -474,7 +505,31 @@ fn run_status_inherit_inner(
     args: &[&str],
     env: &[process::ProcessEnvPair<'_>],
 ) -> io::Result<ExitStatus> {
-    process::run_status_inherit_with("git", args, cwd, env)
+    let (mut command, auth) = identity_command(cwd, args, env)?;
+    if let Some(auth) = auth {
+        let mut output = command.output()?;
+        auth.redact_output(&mut output);
+        auth.finish(output.status.success(), None)?;
+        io::stdout().write_all(&output.stdout)?;
+        io::stderr().write_all(&output.stderr)?;
+        Ok(output.status)
+    } else {
+        command.status()
+    }
+}
+
+fn identity_command(
+    cwd: Option<&Path>,
+    args: &[&str],
+    env: &[process::ProcessEnvPair<'_>],
+) -> io::Result<(Command, Option<crate::forge_identity::Authorization>)> {
+    let mut command = Command::new("git");
+    command.args(args).envs(env.iter().copied());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let auth = crate::forge_identity::prepare_git(&mut command, cwd, args)?;
+    Ok((command, auth))
 }
 
 fn require_context(cwd: Option<&Path>, probe_args: &[&str]) -> Result<(), GitContextError> {

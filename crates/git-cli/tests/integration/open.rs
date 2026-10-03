@@ -201,3 +201,61 @@ exit 126
     assert_eq!(output.stdout_text(), "");
     assert_eq!(output.stderr_text(), "open: permission denied\n");
 }
+
+#[test]
+fn open_pr_identity_missing_credential_refuses_without_browser_or_account_fallback() {
+    use pretty_assertions::assert_eq;
+    let repo = init_repo();
+    let config = tempfile::tempdir().unwrap();
+    let stubs = StubBinDir::new();
+    let dir = config.path().join("forge-cli");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(
+        dir.join("identity.toml"),
+        include_str!("../../../nils-common/tests/fixtures/identity/policy.toml"),
+    )
+    .unwrap();
+    git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:sandbox/widget.git",
+        ],
+    );
+    git(repo.path(), &["config", "branch.main.remote", "origin"]);
+    git(
+        repo.path(),
+        &["config", "branch.main.merge", "refs/heads/main"],
+    );
+    stubs.write_exe(
+        "gh",
+        "#!/bin/sh\necho unexpected-credential-fallback >&2\nexit 99\n",
+    );
+    stubs.write_exe(
+        "open",
+        "#!/bin/sh\necho unexpected-browser-fallback >&2\nexit 99\n",
+    );
+    let output = std::process::Command::new(nils_test_support::bin::resolve("git-cli"))
+        .current_dir(repo.path())
+        .args(["open", "pr"])
+        .env("XDG_CONFIG_HOME", config.path())
+        .env("XDG_STATE_HOME", config.path().join("state"))
+        .env("FORGE_IDENTITY_PRINCIPAL", "contributor")
+        .env_remove("FIXTURE_ACCOUNT_A_CREDENTIAL")
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                stubs.path().display(),
+                std::env::var("PATH").unwrap()
+            ),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("identity_credential_missing"), "{stderr}");
+    assert!(!stderr.contains("unexpected-"));
+}

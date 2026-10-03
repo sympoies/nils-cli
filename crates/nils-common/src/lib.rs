@@ -30,6 +30,7 @@ pub mod default_branch_receipt;
 pub mod diag_output;
 pub mod env;
 pub mod execution_effect;
+pub mod forge_identity;
 pub mod fs;
 pub mod git;
 pub mod markdown;

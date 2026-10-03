@@ -12,7 +12,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use clap::builder::{PossibleValue, TypedValueParser};
-use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use nils_common::cli_contract::{OutputFormat, emit_parse_error, exit, schema_version_for};
 
@@ -40,6 +40,9 @@ pub struct Cli {
     /// Git remote whose URL feeds provider detection (default: `origin`).
     #[arg(long, global = true, default_value = "origin")]
     pub remote: String,
+    /// Preserve whether the launcher supplied a remote override.
+    #[arg(skip)]
+    pub remote_explicit: bool,
 
     /// Override auto-detected provider.
     #[arg(long, global = true, value_parser = ProviderValueParser)]
@@ -240,6 +243,8 @@ pub enum Command {
     Search(SearchArgs),
     /// Repository helpers.
     Repo(RepoArgs),
+    /// Explain or verify context-based forge identity selection.
+    Identity(IdentityArgs),
     /// Backend authentication helpers.
     Auth(AuthArgs),
     /// Describe the effect of one exact typed forge-cli invocation.
@@ -247,6 +252,45 @@ pub enum Command {
     OperationEffect(OperationEffectArgs),
     /// Emit shell-completion scripts.
     Completion(CompletionArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct IdentityArgs {
+    #[command(subcommand)]
+    pub command: IdentityCommand,
+}
+#[derive(Subcommand, Debug)]
+pub enum IdentityCommand {
+    /// Explain selection without reading credentials or contacting the forge.
+    Explain {
+        #[arg(long, value_enum, default_value = "api-read")]
+        operation: IdentityOperation,
+    },
+    /// Verify the selected credential actor and local signing key.
+    Doctor {
+        #[arg(long, value_enum, default_value = "api-read")]
+        operation: IdentityOperation,
+    },
+}
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum IdentityOperation {
+    ApiRead,
+    ApiWrite,
+    GitRead,
+    GitPush,
+    Commit,
+}
+impl IdentityOperation {
+    pub fn operation(self) -> nils_common::forge_identity::Operation {
+        use nils_common::forge_identity::Operation as O;
+        match self {
+            Self::ApiRead => O::ApiRead,
+            Self::ApiWrite => O::ApiWrite,
+            Self::GitRead => O::GitRead,
+            Self::GitPush => O::GitPush,
+            Self::Commit => O::Commit,
+        }
+    }
 }
 
 #[derive(Args, Debug)]
@@ -2356,6 +2400,21 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
 
     let global: GlobalFlags = (&cli).into();
     let format = global.output_format();
+    let _identity_scope = match crate::identity::scope(&cli, &global) {
+        Ok(scope) => scope,
+        Err(error) => {
+            if let Err(audit) = nils_common::forge_identity::audit_refusal(error.kind()) {
+                return ForgeError::validation(
+                    schema_version_for(BINARY, "identity", 1),
+                    audit.code,
+                    audit.to_string(),
+                    None,
+                )
+                .emit(format);
+            }
+            return error.emit(format);
+        }
+    };
 
     if let Some(Command::OperationEffect(args)) = &cli.command {
         return crate::operation_effect::run(args.command.clone(), format);
@@ -2383,6 +2442,9 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
     }
 
     let result = match cli.command {
+        Some(Command::Identity(args)) => {
+            crate::identity::run(&global, args.command, format, cli.remote_explicit)
+        }
         Some(Command::Provider(ProviderArgs {
             command: Some(ProviderCommand::Add(args)),
         })) => {
@@ -2671,7 +2733,16 @@ pub(crate) fn parse_or_exit(args: Vec<OsString>) -> Result<Cli, i32> {
     argv.push(OsString::from("forge-cli"));
     argv.extend(args);
 
-    match Cli::try_parse_from(argv.iter()) {
+    let parsed = Cli::command()
+        .try_get_matches_from(argv.iter())
+        .and_then(|matches| {
+            let explicit =
+                matches.value_source("remote") == Some(clap::parser::ValueSource::CommandLine);
+            let mut cli = Cli::from_arg_matches(&matches)?;
+            cli.remote_explicit = explicit;
+            Ok(cli)
+        });
+    match parsed {
         Ok(cli) => Ok(cli),
         Err(err) => {
             use clap::error::ErrorKind;

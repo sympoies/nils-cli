@@ -25,10 +25,12 @@ Workspace-level keep/delete ownership decisions are tracked in
 - Exit-code mapping and command-level failure policy.
 - CLI-specific command composition and UX defaults.
 - Product/business/domain flows that only make sense in one crate.
-- GitHub adapters and `gh` command orchestration (for example issue/PR write workflows).
+- GitHub issue/PR command orchestration. Cross-CLI identity credential verification is owned by `forge_identity`.
 
 ## Modules and purpose
 
+- `forge_identity`: optional strict user policy, shared principal/profile resolution, credential actor verification, process-local
+  Git identity, and private metadata audit; [contract](docs/specs/forge-identity-policy-v1.md).
 - `env`: truthy parsing helpers, env-presence checks, `NO_COLOR` and prompt-segment color toggles, duration parsing, and trimmed non-empty
   env lookup.
 - `shell`: POSIX single-quote escaping (with selectable escape style) and ANSI stripping modes.

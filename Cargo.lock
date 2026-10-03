@@ -2464,6 +2464,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

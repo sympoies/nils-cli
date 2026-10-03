@@ -14,6 +14,7 @@ pub mod envelope;
 pub mod error;
 mod forgejo;
 pub mod glab_version;
+mod identity;
 pub mod local;
 pub mod macros;
 mod operation_effect;

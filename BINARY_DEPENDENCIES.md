@@ -38,6 +38,7 @@ These tools are required for common command paths. Each row is anchored to at le
 | `lipo`, `codesign`, `spctl` | Architecture, exact signing-identity, CLI notarization assessment, and mandatory app Gatekeeper/notary verification for the locked Peekaboo v4.4.0 backend; the exact v4.2.2 and v3.9.3 tuples are recognized only to authenticate an in-place upgrade | Required on macOS for strict install/verify/doctor | Preinstalled with macOS/Xcode command-line tools |
 | `open` | Launch the stable, adapter-owned Peekaboo app runtime | Required for `macos-agent --runtime app` | Preinstalled on macOS |
 | `gh` | `git-cli open *` GitHub helpers, `forge-cli` GitHub backend | Required for GitHub-facing flows | `brew install gh` |
+| `gpg` | Policy-enabled shared Git commits and `forge-cli identity doctor` | Required only for configured OpenPGP signing; missing or unmatched secret signing keys refuse | Install GnuPG through the platform package manager |
 | `glab` | `forge-cli` GitLab backend, including `glab api` for MR checks/wait/merge and inbox reads | Required for GitLab-facing `forge-cli` flows | `brew install glab` |
 | `direnv` | `agent-run exec` project environment activation for applicable `.envrc` / `.env` files | Required when a project env file applies and `--direnv` is not `off` | `brew install direnv` |
 

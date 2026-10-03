@@ -307,6 +307,7 @@ impl BackendRunner for ProcessRunner {
         call: &BackendCall,
         timeout: Option<Duration>,
     ) -> Result<BackendOutput, ForgeError> {
+        let started = Instant::now();
         let exe = call.program.executable();
         let mut cmd = Command::new(&exe);
         cmd.env_remove("GH_HOST").env_remove("GITLAB_HOST");
@@ -316,7 +317,22 @@ impl BackendRunner for ProcessRunner {
         for arg in &call.argv {
             cmd.arg(arg);
         }
-        let output = match output_with_timeout(&mut cmd, timeout) {
+        let deadline = timeout.and_then(|duration| started.checked_add(duration));
+        let identity = crate::identity::prepare_api(call, &mut cmd, deadline)?;
+        let remaining = if identity.is_some() {
+            timeout.map(|duration| duration.saturating_sub(started.elapsed()))
+        } else {
+            timeout
+        };
+        if remaining.is_some_and(|duration| duration.is_zero()) && identity.is_some() {
+            return Err(ForgeError::unavailable(
+                schema(),
+                "backend_timeout",
+                "identity preparation consumed the backend deadline",
+                None,
+            ));
+        }
+        let mut output = match output_with_timeout(&mut cmd, remaining) {
             Ok(out) => out,
             Err(ProcessOutputError::Io(err)) => {
                 let kind = err.kind();
@@ -337,7 +353,13 @@ impl BackendRunner for ProcessRunner {
                     Some(err.to_string()),
                 ));
             }
-            Err(ProcessOutputError::Timeout { timeout, output }) => {
+            Err(ProcessOutputError::Timeout {
+                timeout,
+                mut output,
+            }) => {
+                if let Some(identity) = &identity {
+                    identity.redact_output(&mut output);
+                }
                 let stderr_full = String::from_utf8_lossy(&output.stderr).into_owned();
                 let stderr = redact_and_tail(&stderr_full);
                 return Err(ForgeError::unavailable(
@@ -354,8 +376,11 @@ impl BackendRunner for ProcessRunner {
             Err(ProcessOutputError::OutputLimit {
                 stream,
                 limit,
-                output,
+                mut output,
             }) => {
+                if let Some(identity) = &identity {
+                    identity.redact_output(&mut output);
+                }
                 let stderr_full = String::from_utf8_lossy(&output.stderr).into_owned();
                 let stderr = redact_and_tail(&stderr_full);
                 return Err(ForgeError::unavailable(
@@ -371,6 +396,12 @@ impl BackendRunner for ProcessRunner {
             }
         };
 
+        if let Some(identity) = identity {
+            identity.redact_output(&mut output);
+            identity
+                .finish(output.status.success(), None)
+                .map_err(|e| ForgeError::validation(schema(), e.code, e.to_string(), None))?;
+        }
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr_full = String::from_utf8_lossy(&output.stderr).into_owned();
         let stderr = redact_and_tail(&stderr_full);

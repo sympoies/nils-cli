@@ -253,6 +253,18 @@ fn open_pr(args: &[String]) -> i32 {
         return open_url(&url, "🧷 Opened");
     }
 
+    if collab.provider == Provider::Github {
+        match nils_common::forge_identity::load() {
+            Ok(Some(policy)) => {
+                return open_pr_with_identity(&policy, &ctx, &collab);
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                return 1;
+            }
+            Ok(None) => {}
+        }
+    }
     if collab.provider == Provider::Github
         && process::cmd_exists("gh")
         && try_open_pr_with_gh(&ctx, &collab)
@@ -549,6 +561,59 @@ fn open_blame(args: &[String]) -> i32 {
 
     let url = blame_url(ctx.provider, &ctx.base_url, &reference, &path);
     open_url(&url, "🕵️ Opened")
+}
+
+fn open_pr_with_identity(
+    policy: &nils_common::forge_identity::LoadedPolicy,
+    ctx: &OpenContext,
+    collab: &CollabContext,
+) -> i32 {
+    use nils_common::forge_identity::{Operation, Target, managed_path};
+    let result = (|| {
+        let remote = nils_common::git::parse_git_remote_url(&format!("{}.git", collab.base_url))
+            .ok_or(nils_common::forge_identity::Error::new(
+                "identity_target_unknown",
+            ))?;
+        let target = Target::new(&remote.host, &remote.path)?;
+        let path = managed_path(None)?;
+        let identity = policy.authorize(
+            &target,
+            Some(&path),
+            Operation::ApiRead,
+            std::ffi::OsStr::new("gh"),
+        )?;
+        let mut command = std::process::Command::new("gh");
+        command.args([
+            "pr",
+            "view",
+            "--web",
+            "--repo",
+            &format!("{}/{}", target.host, target.repo),
+            &ctx.remote_branch,
+        ]);
+        identity.apply_api(&mut command);
+        let mut output = command
+            .output()
+            .map_err(|_| nils_common::forge_identity::Error::new("identity_actor_unavailable"))?;
+        identity.redact_output(&mut output);
+        identity.finish(output.status.success(), None)?;
+        Ok::<_, nils_common::forge_identity::Error>(output)
+    })();
+    match result {
+        Ok(output) if output.status.success() => {
+            println!("🧷 Opened PR via gh");
+            0
+        }
+        Ok(output) => {
+            emit_output(&output);
+            exit_code(&output)
+        }
+        Err(error) => {
+            let _ = nils_common::forge_identity::audit_refusal(error.code);
+            eprintln!("{error}");
+            1
+        }
+    }
 }
 
 fn try_open_pr_with_gh(ctx: &OpenContext, collab: &CollabContext) -> bool {
@@ -981,7 +1046,7 @@ fn print_usage() {
 }
 
 fn run_git_output(args: &[&str]) -> Option<Output> {
-    match run_output("git", args) {
+    match nils_common::git::run_output(args).map_err(|err| err.to_string()) {
         Ok(output) => Some(output),
         Err(err) => {
             eprintln!("{err}");
