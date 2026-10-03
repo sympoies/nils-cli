@@ -656,7 +656,7 @@ pub(crate) fn ensure_proxy_input_allowed(record: &SessionRecord) -> Result<(), C
         DecodedNext::Absent => {}
         DecodedNext::Valid(_) | DecodedNext::Invalid => return Err(next_pending_error(record)),
     }
-    ensure_applied_runtime_input_allowed(record, false)
+    ensure_applied_runtime_input_allowed(record)
 }
 
 /// Report whether the durable next-account intent is still being applied.
@@ -675,15 +675,14 @@ pub(crate) fn proxy_next_account_is_pending(record: &SessionRecord) -> bool {
 /// Validate the account currently bound to the live runtime without treating a
 /// queued next-account intent as a reason to reject terminal input. The
 /// app-server proxy remains the structured boundary that fences `turn/start`;
-/// this lets an active turn continue to receive `turn/steer`.
+/// this lets an active turn continue to receive `turn/steer`. Same-host
+/// operators need only the durable binding applied to this exact runtime;
+/// broker authority is required when creating or changing the binding.
 pub(crate) fn ensure_terminal_input_allowed(record: &SessionRecord) -> Result<(), CliError> {
-    ensure_applied_runtime_input_allowed(record, true)
+    ensure_applied_runtime_input_allowed(record)
 }
 
-fn ensure_applied_runtime_input_allowed(
-    record: &SessionRecord,
-    require_broker: bool,
-) -> Result<(), CliError> {
+fn ensure_applied_runtime_input_allowed(record: &SessionRecord) -> Result<(), CliError> {
     let binding = match decode_binding(record) {
         DecodedBinding::Absent => return Ok(()),
         DecodedBinding::Invalid => return Err(not_bound_error(record, None)),
@@ -696,7 +695,6 @@ fn ensure_applied_runtime_input_allowed(
         .unwrap_or_default();
     if binding.state == "bound"
         && binding.applied_runtime_id.as_deref() == Some(launch_id)
-        && (!require_broker || broker_is_configured())
         && crate::codex_app_server::runtime_is_supported(record)
     {
         return Ok(());
@@ -1872,18 +1870,13 @@ mod tests {
     }
 
     #[test]
-    fn bound_input_never_falls_back_when_the_broker_disappears() {
+    fn bound_input_uses_current_runtime_without_caller_broker() {
         let lock = GlobalStateLock::new();
         let _broker = EnvGuard::set(&lock, BROKER_ENV, "");
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, mut record) = persist_record(&tmp, valid_binding("bound"));
 
-        assert_eq!(
-            authorize_input_locked(&context, &mut record)
-                .unwrap_err()
-                .code(),
-            "codex-account-not-bound"
-        );
+        authorize_input_locked(&context, &mut record).unwrap();
     }
 
     #[test]
@@ -1893,10 +1886,7 @@ mod tests {
         let record = record_with_binding_value(valid_binding("bound"));
 
         assert!(ensure_proxy_input_allowed(&record).is_ok());
-        assert_eq!(
-            ensure_input_allowed(&record).unwrap_err().code(),
-            "codex-account-not-bound"
-        );
+        assert!(ensure_input_allowed(&record).is_ok());
 
         let mut replaced = record.clone();
         replaced.runtime.as_mut().unwrap().launch_id = "replacement-runtime".to_string();
@@ -1910,7 +1900,7 @@ mod tests {
             NEXT_KEY.to_string(),
             json!({
                 "schema_version": NEXT_SCHEMA_VERSION,
-                "account": "sym",
+                "account": "beta",
                 "revision": 8,
                 "intent_id": "intent-queued",
                 "state": "queued",
