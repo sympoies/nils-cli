@@ -1014,8 +1014,10 @@ pub enum PrReviewHandoffCommand {
 #[derive(Args, Debug, Clone)]
 pub struct PrReviewHandoffInspectArgs {
     pub id: u64,
+    /// Exact provider head SHA for this handoff operation.
     #[arg(long)]
     pub expected_head: Option<String>,
+    /// Expected public native review author of an existing assignment.
     #[arg(long)]
     pub review_author: Option<String>,
 }
@@ -1023,8 +1025,10 @@ pub struct PrReviewHandoffInspectArgs {
 #[derive(Args, Debug, Clone)]
 pub struct PrReviewHandoffSurrenderArgs {
     pub id: u64,
+    /// Exact provider head SHA for this handoff operation.
     #[arg(long)]
     pub expected_head: String,
+    /// Exact retained provider ledger tip for the ownership transition.
     #[arg(long)]
     pub expected_state: String,
 }
@@ -1032,6 +1036,7 @@ pub struct PrReviewHandoffSurrenderArgs {
 #[derive(Args, Debug, Clone)]
 pub struct PrReviewHandoffCheckArgs {
     pub id: u64,
+    /// Exact provider head SHA for this handoff operation.
     #[arg(long)]
     pub expected_head: String,
 }
@@ -1045,8 +1050,10 @@ pub struct PrReviewHandoffAssignArgs {
     /// Expected public author of the native governed or portable review.
     #[arg(long)]
     pub review_author: String,
+    /// Exact provider base SHA captured for the assignment.
     #[arg(long)]
     pub base_sha: String,
+    /// Exact provider head SHA for this handoff operation.
     #[arg(long)]
     pub expected_head: String,
     /// Exact ledger tip, or none for genesis. Required even for reassignment.
@@ -1057,8 +1064,10 @@ pub struct PrReviewHandoffAssignArgs {
 #[derive(Args, Debug, Clone)]
 pub struct PrReviewHandoffReturnArgs {
     pub id: u64,
+    /// Exact provider head SHA for this handoff operation.
     #[arg(long)]
     pub expected_head: String,
+    /// Exact retained provider ledger tip for the ownership transition.
     #[arg(long)]
     pub expected_state: String,
     /// Bounded role-based reason; mailbox details stay private.

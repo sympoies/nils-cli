@@ -835,8 +835,8 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 _arguments "${_arguments_options[@]}" : \
 '--reviewer-session=[Private session selector; only its session digest is published]:REVIEWER_SESSION:_default' \
 '--review-author=[Expected public author of the native governed or portable review]:REVIEW_AUTHOR:_default' \
-'--base-sha=[]:BASE_SHA:_default' \
-'--expected-head=[]:EXPECTED_HEAD:_default' \
+'--base-sha=[Exact provider base SHA captured for the assignment]:BASE_SHA:_default' \
+'--expected-head=[Exact provider head SHA for this handoff operation]:EXPECTED_HEAD:_default' \
 '--expected-state=[Exact ledger tip, or none for genesis. Required even for reassignment]:EXPECTED_STATE:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
@@ -853,8 +853,8 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (inspect)
 _arguments "${_arguments_options[@]}" : \
-'--expected-head=[]:EXPECTED_HEAD:_default' \
-'--review-author=[]:REVIEW_AUTHOR:_default' \
+'--expected-head=[Exact provider head SHA for this handoff operation]:EXPECTED_HEAD:_default' \
+'--review-author=[Expected public native review author of an existing assignment]:REVIEW_AUTHOR:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
@@ -870,7 +870,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (check)
 _arguments "${_arguments_options[@]}" : \
-'--expected-head=[]:EXPECTED_HEAD:_default' \
+'--expected-head=[Exact provider head SHA for this handoff operation]:EXPECTED_HEAD:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
@@ -886,8 +886,8 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (surrender)
 _arguments "${_arguments_options[@]}" : \
-'--expected-head=[]:EXPECTED_HEAD:_default' \
-'--expected-state=[]:EXPECTED_STATE:_default' \
+'--expected-head=[Exact provider head SHA for this handoff operation]:EXPECTED_HEAD:_default' \
+'--expected-state=[Exact retained provider ledger tip for the ownership transition]:EXPECTED_STATE:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
@@ -903,8 +903,8 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (recover)
 _arguments "${_arguments_options[@]}" : \
-'--expected-head=[]:EXPECTED_HEAD:_default' \
-'--expected-state=[]:EXPECTED_STATE:_default' \
+'--expected-head=[Exact provider head SHA for this handoff operation]:EXPECTED_HEAD:_default' \
+'--expected-state=[Exact retained provider ledger tip for the ownership transition]:EXPECTED_STATE:_default' \
 '--reason=[Bounded role-based reason; mailbox details stay private]:REASON:(reviewer-unreachable reviewer-closed reviewer-declined reviewer-timeout)' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
