@@ -60,6 +60,13 @@ out of scope for this governance inventory; flag it as a follow-up.
 | --- | --- | --- | --- | --- |
 | `warm` | `Cache cargo`, `Build (release)` | `Swatinem/rust-cache` + the release build command | keep | Runs daily, on dispatch, and when the workflow itself changes on `main`. For each `release.yml` target it runs `cargo build --release --workspace --locked --target <target>`, saving the dependency cache under `release-<target>`. On an exact cache hit it skips the build. It does not trigger on `Cargo.lock`, because every release bump rewrites it, and warming then would start two macOS jobs beside the release. The restore key omits the lockfile hash, so the cache stays mostly warm across dependency bumps. |
 
+### `.github/workflows/peekaboo-release-check.yml`
+
+| Job | Step | Canonical owner | Decision | Notes |
+| --- | --- | --- | --- | --- |
+| `check` | `Check stable official releases` | `.github/scripts/peekaboo-release-check.cjs` | keep | Daily/manual, serialized default-branch discovery. Summary and JSON retain last-checked/current/newest/candidate status. Upserts one candidate issue per tag across all issue states without changing the accepted lock. |
+| `check` | `Test release discovery fixtures` | `scripts/ci/tests/peekaboo-release-check.test.cjs` | keep | Also run by the full required-checks entrypoint; tests stable filtering, repeat/closed candidates, failures and workflow routing without network/provider writes. |
+
 ### `.github/workflows/publish-crates.yml`
 
 | Job | Step | Canonical owner | Decision | Notes |

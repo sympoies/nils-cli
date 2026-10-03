@@ -1,0 +1,46 @@
+name: Peekaboo release check
+
+on:
+  schedule:
+    - cron: "43 3 * * *"
+  workflow_dispatch:
+
+# Serialize discovery and issue upserts, including manual runs.
+concurrency:
+  group: peekaboo-release-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    # Only trusted default-branch code receives issue write permission.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Test release discovery fixtures
+        run: node scripts/ci/tests/peekaboo-release-check.test.cjs
+
+      - name: Check stable official releases
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { runReleaseCheck } = require("./.github/scripts/peekaboo-release-check.cjs");
+            await runReleaseCheck({ github, context, core });
+
+      - name: Retain check result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: peekaboo-release-check
+          path: peekaboo-release-check.json
+          if-no-files-found: warn
+          retention-days: 30
