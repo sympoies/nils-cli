@@ -95,7 +95,12 @@ impl GitRunner for ProcessGitRunner {
             &refs,
             started.checked_add(settings.timeout),
         )
-        .map_err(|e| ForgeError::validation(schema_error(), e.code, e.to_string(), None))?;
+        .map_err(|e| match e.code {
+            "identity_probe_timeout" | "identity_probe_output_limit" => {
+                ForgeError::unavailable(schema_error(), e.code, e.to_string(), None)
+            }
+            _ => ForgeError::validation(schema_error(), e.code, e.to_string(), None),
+        })?;
         let remaining = if identity.is_some() {
             settings.timeout.saturating_sub(started.elapsed())
         } else {
@@ -1215,18 +1220,37 @@ mod tests {
         let _secret = EnvGuard::set(&lock, "FIXTURE_ACCOUNT_A_CREDENTIAL", CANARY);
         let executable = bins.path().join("bounded-git");
         let _exe = EnvGuard::set(&lock, ENV_GIT_BIN, executable.to_str().unwrap());
-        let _timeout = EnvGuard::set(&lock, ENV_GIT_TIMEOUT_MS, "75");
-        for (body, expected) in [
+        let executed = home.path().join("executed");
+        let _executed = EnvGuard::set(&lock, "FIXTURE_GIT_EXECUTED", executed.to_str().unwrap());
+        for (body, probe, timeout, expected, executed_expected) in [
             (
-                "#!/bin/sh\nprintf '%s' \"$FORGE_IDENTITY_TOKEN\" >&2\nsleep 1\n",
+                "#!/bin/sh\nprintf 'executed' > \"$FIXTURE_GIT_EXECUTED\"; printf '%s' \"$FORGE_IDENTITY_TOKEN\" >&2; sleep 3\n",
+                "#!/bin/sh\nprintf '{\"login\":\"account-a\"}'\n",
+                "2000",
                 "git_timeout",
+                true,
             ),
             (
-                "#!/bin/sh\nwhile :; do printf '%s' \"$FORGE_IDENTITY_TOKEN\" >&2; done\n",
+                "#!/bin/sh\nprintf 'executed' > \"$FIXTURE_GIT_EXECUTED\"; while :; do printf '%s' \"$FORGE_IDENTITY_TOKEN\" >&2; done\n",
+                "#!/bin/sh\nprintf '{\"login\":\"account-a\"}'\n",
+                "2000",
                 "git_output_limit",
+                true,
+            ),
+            (
+                "#!/bin/sh\nprintf 'executed' > \"$FIXTURE_GIT_EXECUTED\"\n",
+                "#!/bin/sh\nprintf '%s' \"$GH_TOKEN\" >&2; sleep 2; printf '{\"login\":\"account-a\"}'\n",
+                "75",
+                "identity_probe_timeout",
+                false,
             ),
         ] {
+            if executed.exists() {
+                fs::remove_file(&executed).unwrap();
+            }
             bins.write_exe("bounded-git", body);
+            bins.write_exe("gh", probe);
+            let _timeout = EnvGuard::set(&lock, ENV_GIT_TIMEOUT_MS, timeout);
             let _limit = EnvGuard::set(&lock, ENV_GIT_CAPTURE_LIMIT_BYTES, "256");
             let error = ProcessGitRunner
                 .run(
@@ -1234,16 +1258,26 @@ mod tests {
                     &os_args(&["ls-remote", "https://github.com/sandbox/widget.git"]),
                 )
                 .unwrap_err();
+            assert!(!format!("{error:?}").contains(CANARY));
             match error {
                 ForgeError::BackendUnavailable { kind, detail, .. } => {
                     pretty_assertions::assert_eq!(kind, expected);
-                    let detail = detail.unwrap();
-                    assert!(detail.contains("[REDACTED]"));
-                    assert!(!detail.contains(CANARY));
+                    if executed_expected {
+                        let detail = detail.unwrap();
+                        assert!(detail.contains("[REDACTED]"));
+                        assert!(!detail.contains(CANARY));
+                    } else {
+                        assert!(detail.is_none());
+                    }
+                    pretty_assertions::assert_eq!(executed.exists(), executed_expected);
                 }
                 other => panic!("unexpected bounded error: {other:?}"),
             }
         }
+        let audit =
+            fs::read_to_string(home.path().join("state/forge-cli/identity-audit.jsonl")).unwrap();
+        assert!(audit.contains("identity_probe_timeout"));
+        assert!(!audit.contains(CANARY));
     }
 
     struct TimeoutRecordingRunner {
