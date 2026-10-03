@@ -348,11 +348,11 @@ pub(crate) fn ensure_published<R: BackendRunner>(
     let review = reviews
         .current_head_reviews
         .iter()
-        .filter(|r| r.author.eq_ignore_ascii_case(&handoff.review_author) && r.commit_sha == head)
+        .filter(|r| matches_designated_author(r, &handoff.review_author) && r.commit_sha == head)
         .max_by_key(|r| (&r.submitted_at, r.database_id));
     let passing = if let Some(r) = review {
-        let body = if r.summary_truncated {
-            read_complete_report(runner, ctx, number, r)?
+        let body = if r.summary_truncated || r.author_type.as_deref() == Some("Bot") {
+            read_complete_report(runner, ctx, number, r, &handoff.review_author)?
         } else {
             r.summary.clone()
         };
@@ -391,11 +391,35 @@ pub(crate) fn ensure_published<R: BackendRunner>(
     Ok(())
 }
 
+/// A bare login names a user; the REST `[bot]` suffix names an App account.
+/// App accounts require a typed Bot with a stable node id for either login form.
+/// The exact REST review read-back must bind that node to the expected login.
+fn matches_designated_author(review: &pr_reviews::NativeReviewSummary, expected: &str) -> bool {
+    let expected_bot = expected.to_ascii_lowercase().ends_with("[bot]");
+    if review
+        .author_type
+        .as_deref()
+        .is_some_and(|kind| (kind == "Bot") != expected_bot)
+    {
+        return false;
+    }
+    if expected_bot {
+        return review.author_type.as_deref() == Some("Bot")
+            && review.author_node_id.is_some()
+            && (review.author.eq_ignore_ascii_case(expected)
+                || review
+                    .author
+                    .eq_ignore_ascii_case(&expected[..expected.len() - 5]));
+    }
+    review.author.eq_ignore_ascii_case(expected)
+}
+
 fn read_complete_report<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
     number: u64,
     selected: &pr_reviews::NativeReviewSummary,
+    expected_author: &str,
 ) -> Result<String, ForgeError> {
     let id = selected
         .database_id
@@ -411,12 +435,32 @@ fn read_complete_report<R: BackendRunner>(
             "native report read-back is invalid",
         )
     })?;
+    let bot = selected.author_type.as_deref() == Some("Bot");
+    let rest_author = &value["user"];
+    let same_node = selected
+        .author_node_id
+        .as_deref()
+        .is_some_and(|node| rest_author["node_id"].as_str() == Some(node));
+    let identity_matches = if bot {
+        selected.author_type.as_deref() == Some("Bot")
+            && rest_author["type"].as_str() == Some("Bot")
+            && same_node
+    } else {
+        // A retained stable identity must agree with the REST read-back.
+        selected.author_node_id.is_none() || same_node
+    };
     if value["id"].as_u64() != Some(id)
         || value["html_url"].as_str() != Some(selected.url.as_str())
         || value["commit_id"].as_str() != Some(selected.commit_sha.as_str())
-        || !value["user"]["login"]
+        || !rest_author["login"]
             .as_str()
-            .is_some_and(|v| v.eq_ignore_ascii_case(&selected.author))
+            .is_some_and(|v| v.eq_ignore_ascii_case(expected_author))
+        || !identity_matches
+        || selected.author_type.as_deref().is_some_and(|kind| {
+            rest_author["type"]
+                .as_str()
+                .is_some_and(|rest| rest != kind)
+        })
         || value["state"].as_str() != Some(selected.state.as_str())
     {
         return Err(fail(

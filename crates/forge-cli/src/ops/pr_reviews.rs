@@ -26,7 +26,7 @@ pub(crate) const MAX_PENDING_REVIEW_BODY_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_PENDING_REVIEW_COMMENTS: u64 = 1_000;
 pub(crate) const MAX_PENDING_REVIEW_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
-const GITHUB_REVIEWS_QUERY: &str = "query($owner: String!, $name: String!, $pr: Int!, $after: String) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $pr) { headRefOid reviews(first: 100, after: $after) { nodes { id databaseId url author { login } state commit { oid } submittedAt body viewerDidAuthor } pageInfo { hasNextPage endCursor } } } } }";
+const GITHUB_REVIEWS_QUERY: &str = "query($owner: String!, $name: String!, $pr: Int!, $after: String) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $pr) { headRefOid reviews(first: 100, after: $after) { nodes { id databaseId url author { login __typename ... on Node { id } } state commit { oid } submittedAt body viewerDidAuthor } pageInfo { hasNextPage endCursor } } } } }";
 const GITHUB_PENDING_REVIEWS_QUERY: &str = "query($owner: String!, $name: String!, $pr: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { headRefOid reviews(first: 100, after: $after, states: [PENDING]) { nodes { id url author { login } state commit { oid } body viewerDidAuthor viewerCanDelete } pageInfo { hasNextPage endCursor } } } } }";
 const GITHUB_PENDING_REVIEW_TARGET_QUERY: &str = "query($review: ID!) { node(id: $review) { ... on PullRequestReview { id url author { login } state commit { oid } body viewerDidAuthor viewerCanDelete comments(first: 1) { totalCount } pullRequest { number url headRefOid } } } }";
 const GITHUB_PENDING_REVIEW_SNAPSHOT_QUERY: &str = "query($review: ID!, $after: String) { node(id: $review) { ... on PullRequestReview { id url author { login } state commit { oid } body viewerDidAuthor viewerCanDelete comments(first: 100, after: $after) { totalCount nodes { id url author { login } body createdAt path diffHunk line originalLine startLine originalStartLine subjectType } pageInfo { hasNextPage endCursor } } pullRequest { number url headRefOid } } } }";
@@ -56,6 +56,11 @@ pub struct NativeReviewSummary {
     pub database_id: Option<u64>,
     pub url: String,
     pub author: String,
+    // Provider identity retained for admission/read-back, without changing the CLI payload.
+    #[serde(skip)]
+    pub(crate) author_node_id: Option<String>,
+    #[serde(skip)]
+    pub(crate) author_type: Option<String>,
     pub state: String,
     pub commit_sha: String,
     pub submitted_at: String,
@@ -790,6 +795,8 @@ fn parse_github_review_page(output: &BackendSuccess) -> Result<ReviewPage, Forge
             database_id,
             url,
             author,
+            author_node_id: optional_string(node, "/author/id"),
+            author_type: optional_string(node, "/author/__typename"),
             state,
             commit_sha,
             submitted_at: required_string(node, "/submittedAt", "review.submittedAt")?,
