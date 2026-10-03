@@ -756,6 +756,7 @@ fn authorize_input_locked_with(
     };
     if binding_is_present(record) {
         ensure_allowed(record)?;
+        return record_input_fence_locked(context, record);
     }
     if !crate::codex_app_server::runtime_is_supported(record) || !broker_is_configured() {
         return Ok(());
@@ -1877,6 +1878,36 @@ mod tests {
         let (context, mut record) = persist_record(&tmp, valid_binding("bound"));
 
         authorize_input_locked(&context, &mut record).unwrap();
+    }
+
+    #[test]
+    fn broker_free_terminal_input_fences_immediate_account_switch() {
+        let lock = GlobalStateLock::new();
+        let without_broker = EnvGuard::set(&lock, BROKER_ENV, "");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut binding = valid_binding("bound");
+        binding["selected_account"] = json!("alpha");
+        let (context, mut record) = persist_record(&tmp, binding);
+        mark_waiting(&context, &record);
+        assert_eq!(
+            crate::activity::state_for_view(&context, &record)
+                .unwrap()
+                .phase,
+            crate::activity::TurnPhase::Waiting
+        );
+
+        let record_lock = acquire_session_record_lock(&context, &record.id).unwrap();
+        authorize_terminal_input_locked(&context, &mut record).unwrap();
+        drop(record_lock);
+        // The daemon regains broker authority before turn/started is observed.
+        drop(without_broker);
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
+        assert_eq!(
+            begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "beta")
+                .unwrap_err()
+                .code(),
+            "codex-account-session-busy"
+        );
     }
 
     #[test]
