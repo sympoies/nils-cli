@@ -14732,12 +14732,62 @@ impl TmuxTerminationState {
     }
 }
 
+// HTTP delete tests exercise response/state handling rather than subprocess
+// scheduling or host process identity. Key overrides by the unique fixture
+// executable so concurrent tests and spawn_blocking threads remain isolated.
+#[cfg(test)]
+pub(crate) mod tmux_probe_fixture {
+    use super::*;
+    use std::sync::{LazyLock, Mutex};
+
+    #[derive(Clone, Copy)]
+    pub(crate) enum Probe {
+        Stopped,
+        IdentityUnavailable,
+    }
+
+    static PROBES: LazyLock<Mutex<std::collections::HashMap<PathBuf, Probe>>> =
+        LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+    pub(crate) struct Guard(PathBuf);
+
+    pub(crate) fn install(path: &Path, probe: Probe) -> Guard {
+        assert!(
+            PROBES
+                .lock()
+                .unwrap()
+                .insert(path.to_path_buf(), probe)
+                .is_none()
+        );
+        Guard(path.to_path_buf())
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            PROBES.lock().unwrap().remove(&self.0);
+        }
+    }
+
+    pub(super) fn read(path: &Path) -> Option<Result<TmuxRuntimeProbe, SessionTerminationFailure>> {
+        PROBES.lock().unwrap().get(path).map(|probe| match probe {
+            Probe::Stopped => Ok(TmuxRuntimeProbe::Stopped),
+            Probe::IdentityUnavailable => {
+                Err(SessionTerminationFailure::RuntimeIdentityUnavailable)
+            }
+        })
+    }
+}
+
 fn capture_tmux_runtime_identity(
     context: &CliContext,
     record: &SessionRecord,
     tmux_bin: &Path,
     timeout: Duration,
 ) -> Result<TmuxRuntimeProbe, SessionTerminationFailure> {
+    #[cfg(test)]
+    if let Some(probe) = tmux_probe_fixture::read(tmux_bin) {
+        return probe;
+    }
     let launch_id = record
         .runtime
         .as_ref()

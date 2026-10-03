@@ -31107,9 +31107,18 @@ esac
             let id = format!("failed-delete-{agent}");
             let tmux_session = format!("hs-{agent}-failed-delete");
             seed_session_with_runtime(tmp.path(), &id, agent, &tmux_session);
+            #[cfg(not(target_os = "linux"))]
             let pane = TestProcessGroup::spawn();
             let calls = tmp.path().join(format!("failed-delete-{agent}.calls"));
+            #[cfg(not(target_os = "linux"))]
             let tmux = failing_delete_tmux(tmp.path(), tmp.path(), &id, pane.pid(), &calls);
+            #[cfg(target_os = "linux")]
+            let tmux = tmp.path().join(format!("unavailable-probe-{agent}"));
+            #[cfg(target_os = "linux")]
+            let _probe = crate::tmux_probe_fixture::install(
+                &tmux,
+                crate::tmux_probe_fixture::Probe::IdentityUnavailable,
+            );
             let session_dir = tmp.path().join("sessions").join(&id);
             let runtime_metadata = session_dir.join("provider-runtime.json");
             std::fs::write(&runtime_metadata, format!("runtime metadata for {agent}")).unwrap();
@@ -31208,6 +31217,9 @@ esac
                 shell_words::quote(&calls.to_string_lossy())
             ),
         );
+
+        let _probe =
+            crate::tmux_probe_fixture::install(&tmux, crate::tmux_probe_fixture::Probe::Stopped);
 
         for agent in ["codex", "claude"] {
             let id = format!("never-launched-delete-{agent}");
