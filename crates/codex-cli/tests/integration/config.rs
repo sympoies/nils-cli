@@ -50,7 +50,7 @@ fn config_show_prints_effective_values() {
             ("CODEX_AUTO_REFRESH_ENABLED", "true"),
             ("CODEX_AUTO_REFRESH_MIN_DAYS", "9"),
             ("CODEX_AUTH_REMOTE_SSH", "g14"),
-            ("CODEX_AUTH_REMOTE_NAME", "gamania"),
+            ("CODEX_AUTH_REMOTE_NAME", "acct1"),
             ("CODEX_AUTH_REMOTE_REFRESH", "false"),
         ],
     );
@@ -67,7 +67,7 @@ fn config_show_prints_effective_values() {
     assert!(out.contains("CODEX_AUTO_REFRESH_ENABLED=true\n"));
     assert!(out.contains("CODEX_AUTO_REFRESH_MIN_DAYS=9\n"));
     assert!(out.contains("CODEX_AUTH_REMOTE_SSH=g14\n"));
-    assert!(out.contains("CODEX_AUTH_REMOTE_NAME=gamania\n"));
+    assert!(out.contains("CODEX_AUTH_REMOTE_NAME=acct1\n"));
     assert!(out.contains("CODEX_AUTH_REMOTE_REFRESH=false\n"));
 }
 
@@ -189,9 +189,9 @@ fn config_set_remote_ssh_prints_export() {
 
 #[test]
 fn config_set_remote_name_prints_export() {
-    let output = run(&["config", "set", "remote-name", "gamania"], &[]);
+    let output = run(&["config", "set", "remote-name", "acct1"], &[]);
     assert_exit(&output, 0);
-    assert_eq!(stdout(&output), "export CODEX_AUTH_REMOTE_NAME='gamania'\n");
+    assert_eq!(stdout(&output), "export CODEX_AUTH_REMOTE_NAME='acct1'\n");
 }
 
 #[test]
