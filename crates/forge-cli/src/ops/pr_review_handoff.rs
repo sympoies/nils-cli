@@ -351,8 +351,7 @@ pub(crate) fn ensure_published<R: BackendRunner>(
         .filter(|r| matches_designated_author(r, &handoff.review_author) && r.commit_sha == head)
         .max_by_key(|r| (&r.submitted_at, r.database_id));
     let passing = if let Some(r) = review {
-        let body = if r.summary_truncated || !r.author.eq_ignore_ascii_case(&handoff.review_author)
-        {
+        let body = if r.summary_truncated || r.author_type.as_deref() == Some("Bot") {
             read_complete_report(runner, ctx, number, r, &handoff.review_author)?
         } else {
             r.summary.clone()
@@ -393,8 +392,8 @@ pub(crate) fn ensure_published<R: BackendRunner>(
 }
 
 /// A bare login names a user; the REST `[bot]` suffix names an App account.
-/// Only a typed Bot with a stable node id may be considered an API alias.
-/// Its exact REST review read-back must still bind that node to the expected login.
+/// App accounts require a typed Bot with a stable node id for either login form.
+/// The exact REST review read-back must bind that node to the expected login.
 fn matches_designated_author(review: &pr_reviews::NativeReviewSummary, expected: &str) -> bool {
     let expected_bot = expected.to_ascii_lowercase().ends_with("[bot]");
     if review
@@ -404,15 +403,15 @@ fn matches_designated_author(review: &pr_reviews::NativeReviewSummary, expected:
     {
         return false;
     }
-    if review.author.eq_ignore_ascii_case(expected) {
-        return true;
+    if expected_bot {
+        return review.author_type.as_deref() == Some("Bot")
+            && review.author_node_id.is_some()
+            && (review.author.eq_ignore_ascii_case(expected)
+                || review
+                    .author
+                    .eq_ignore_ascii_case(&expected[..expected.len() - 5]));
     }
-    expected_bot
-        && review.author_type.as_deref() == Some("Bot")
-        && review.author_node_id.is_some()
-        && review
-            .author
-            .eq_ignore_ascii_case(&expected[..expected.len() - 5])
+    review.author.eq_ignore_ascii_case(expected)
 }
 
 fn read_complete_report<R: BackendRunner>(
@@ -436,18 +435,18 @@ fn read_complete_report<R: BackendRunner>(
             "native report read-back is invalid",
         )
     })?;
-    let alias = !selected.author.eq_ignore_ascii_case(expected_author);
+    let bot = selected.author_type.as_deref() == Some("Bot");
     let rest_author = &value["user"];
     let same_node = selected
         .author_node_id
         .as_deref()
         .is_some_and(|node| rest_author["node_id"].as_str() == Some(node));
-    let identity_matches = if alias {
+    let identity_matches = if bot {
         selected.author_type.as_deref() == Some("Bot")
             && rest_author["type"].as_str() == Some("Bot")
             && same_node
     } else {
-        // Reject conflicting stable identities/types when both APIs supply them.
+        // A retained stable identity must agree with the REST read-back.
         selected.author_node_id.is_none() || same_node
     };
     if value["id"].as_u64() != Some(id)

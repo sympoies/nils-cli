@@ -79,7 +79,7 @@ fn records(h: ReviewHandoff, reviewed_head: Option<&str>) -> Vec<ReviewStateReco
 fn review(head: &str, verdict: &str) -> Value {
     json!({"id":"REVIEW_1", "databaseId":1,
         "url":"https://github.com/acme/widgets/pull/7#pullrequestreview-1",
-        "author":{"login":"review-app[bot]"}, "state":"COMMENTED", "commit":{"oid":head},
+        "author":{"login":"review-app[bot]", "__typename":"Bot", "id":"BOT_REVIEW_APP"}, "state":"COMMENTED", "commit":{"oid":head},
         "submittedAt":"2026-07-20T12:00:02Z",
         "body":format!("<!-- agent-kit:specialist-review-report:v1 -->\n## Review Report\n\n- Reviewable: PR #7\n- Lens: testing maintainability\n- Lens verdict: {verdict}\n- Scope: assigned review fixture\n- Evidence reviewed: fixture validation\n\n| Finding | Severity | Confidence | Evidence | Recommendation |\n| --- | --- | ---: | --- | --- |\n| No findings | none | 0.00 | fixture | none |\n"), "viewerDidAuthor":false})
 }
@@ -110,7 +110,8 @@ fn fixture_with_native(
             "pageInfo":{"hasNextPage":false,"endCursor":null}}}}}});
     let native = reviews.last().map(|r| {
         json!({"id":r["databaseId"],"html_url":r["url"],
-        "state":r["state"],"commit_id":r["commit"]["oid"],"user":r["author"],"body":r["body"]})
+        "state":r["state"],"commit_id":r["commit"]["oid"],
+        "user":{"login":r["author"]["login"], "type":r["author"]["__typename"], "node_id":r["author"]["id"]},"body":r["body"]})
     });
     let native = native_override.or(native).unwrap_or(Value::Null);
     let summaries = json!({"data":{"viewer":{"login":"review-app[bot]"},
@@ -132,7 +133,7 @@ case "$1 $2" in
 JSON
     exit 0 ;;
   "api repos/acme/widgets/pulls/7") echo "${{PROVIDER_BASE:-{OLD}}}"; exit 0 ;;
-  "api repos/acme/widgets/pulls/7/reviews/1") cat <<'JSON'
+  "api repos/acme/widgets/pulls/7/reviews/"*) cat <<'JSON'
 {native}
 JSON
     exit 0 ;;
@@ -570,30 +571,43 @@ fn app_review_pair() -> (Value, Value) {
 #[test]
 fn app_identity_rest_and_graphql_forms_admit_the_same_review() {
     for long_body in [false, true] {
-        let (mut graphql, mut rest) = app_review_pair();
-        if long_body {
-            rest["body"] = json!(format!(
-                "{}\n{}",
-                rest["body"].as_str().unwrap(),
-                "evidence ".repeat(600)
-            ));
-            graphql["body"] = rest["body"].clone();
+        for exact_login in [false, true] {
+            let (mut graphql, mut rest) = app_review_pair();
+            if exact_login {
+                graphql["author"]["login"] = json!("review-app[bot]");
+            }
+            if long_body {
+                rest["body"] = json!(format!(
+                    "{}\n{}",
+                    rest["body"].as_str().unwrap(),
+                    "evidence ".repeat(600)
+                ));
+                graphql["body"] = rest["body"].clone();
+            }
+            let stub = fixture_with_native(
+                HEAD,
+                &records(handoff(None), Some(HEAD)),
+                vec![graphql],
+                Some(rest),
+            );
+            let output = check(&stub, HEAD);
+            assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
+            assert_eq!(parse_envelope(&output.stdout)["data"]["status"], "reviewed");
+            let calls = fs::read_to_string(stub.tempdir.path().join("calls.log")).unwrap();
+            assert!(
+                calls.contains("author { login __typename ... on Node { id } }"),
+                "{calls}"
+            );
         }
-        let stub = fixture_with_native(
-            HEAD,
-            &records(handoff(None), Some(HEAD)),
-            vec![graphql],
-            Some(rest),
-        );
-        let output = check(&stub, HEAD);
-        assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
-        assert_eq!(parse_envelope(&output.stdout)["data"]["status"], "reviewed");
     }
 }
 
 #[test]
 fn app_identity_distinct_or_ambiguous_authors_are_rejected() {
     for invalid in [
+        "exact-missing-type",
+        "exact-missing-node",
+        "exact-user",
         "different-bot",
         "same-name-user",
         "missing-type",
@@ -603,6 +617,16 @@ fn app_identity_distinct_or_ambiguous_authors_are_rejected() {
         let (mut graphql, rest) = app_review_pair();
         let mut h = handoff(None);
         match invalid {
+            "exact-missing-type" => {
+                graphql["author"] = json!({"login":"review-app[bot]", "id":"BOT_REVIEW_APP"})
+            }
+            "exact-missing-node" => {
+                graphql["author"] = json!({"login":"review-app[bot]", "__typename":"Bot"})
+            }
+            "exact-user" => {
+                graphql["author"] =
+                    json!({"login":"review-app[bot]", "__typename":"User", "id":"USER_REVIEW_APP"})
+            }
             "different-bot" => {
                 graphql["author"] =
                     json!({"login":"another-app", "__typename":"Bot", "id":"BOT_OTHER"})
@@ -631,25 +655,30 @@ fn app_identity_distinct_or_ambiguous_authors_are_rejected() {
 #[test]
 fn app_identity_readback_must_bind_the_bot_and_review() {
     for invalid in ["node", "missing-node", "type", "login", "review-id", "head"] {
-        let (graphql, mut rest) = app_review_pair();
-        match invalid {
-            "node" => rest["user"]["node_id"] = json!("BOT_OTHER"),
-            "missing-node" => {
-                rest["user"].as_object_mut().unwrap().remove("node_id");
+        for exact_login in [false, true] {
+            let (mut graphql, mut rest) = app_review_pair();
+            if exact_login {
+                graphql["author"]["login"] = json!("review-app[bot]");
             }
-            "type" => rest["user"]["type"] = json!("User"),
-            "login" => rest["user"]["login"] = json!("another-app[bot]"),
-            "review-id" => rest["id"] = json!(2),
-            "head" => rest["commit_id"] = json!(OLD),
-            _ => unreachable!(),
+            match invalid {
+                "node" => rest["user"]["node_id"] = json!("BOT_OTHER"),
+                "missing-node" => {
+                    rest["user"].as_object_mut().unwrap().remove("node_id");
+                }
+                "type" => rest["user"]["type"] = json!("User"),
+                "login" => rest["user"]["login"] = json!("another-app[bot]"),
+                "review-id" => rest["id"] = json!(2),
+                "head" => rest["commit_id"] = json!(OLD),
+                _ => unreachable!(),
+            }
+            let stub = fixture_with_native(
+                HEAD,
+                &records(handoff(None), Some(HEAD)),
+                vec![graphql],
+                Some(rest),
+            );
+            assert_refusal(&check(&stub, HEAD), 65, "review_snapshot_incomplete");
         }
-        let stub = fixture_with_native(
-            HEAD,
-            &records(handoff(None), Some(HEAD)),
-            vec![graphql],
-            Some(rest),
-        );
-        assert_refusal(&check(&stub, HEAD), 65, "review_snapshot_incomplete");
     }
 }
 
