@@ -1,5 +1,5 @@
 //! Isolated pending entries, deterministic folding, and baseline immutability.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -431,6 +431,77 @@ pub(crate) fn merge_base(devlog: &Devlog, base: &str) -> Result<String, DevlogEr
     Ok(String::from_utf8_lossy(&merge.stdout).trim().to_string())
 }
 
+/// Git pathspecs do not follow directory symlinks. Resolve their baseline
+/// targets from the tree, retaining every link whose retargeting would change
+/// which history the check owns. Never resolve baseline links through HEAD.
+fn baseline_directory(
+    devlog: &Devlog,
+    base: &str,
+    root: &Path,
+    dir: &Path,
+    links: &mut BTreeSet<PathBuf>,
+) -> Result<PathBuf, DevlogError> {
+    let mut remaining: VecDeque<_> = dir
+        .components()
+        .map(|component| component.as_os_str().to_os_string())
+        .collect();
+    let mut resolved = PathBuf::new();
+    let mut hops = 0;
+    while let Some(component) = remaining.pop_front() {
+        if component == "." {
+            continue;
+        }
+        if component == ".." {
+            if !resolved.pop() {
+                return Err(invalid(
+                    devlog.dir(),
+                    "merge-base log symlink leaves this repository",
+                ));
+            }
+            continue;
+        }
+        resolved.push(component);
+        let name = resolved.to_string_lossy().replace('\\', "/");
+        let tree = git(devlog, &["ls-tree", "-z", base, "--", &name])?;
+        if !tree.status.success() {
+            return Err(DevlogError::BaselineUnavailable);
+        }
+        if !tree.stdout.starts_with(b"120000 ") {
+            continue;
+        }
+        hops += 1;
+        if hops > 40 {
+            return Err(invalid(devlog.dir(), "too many merge-base log symlinks"));
+        }
+        links.insert(resolved.clone());
+        let target = git(devlog, &["show", &format!("{base}:{name}")])?;
+        if !target.status.success() {
+            return Err(DevlogError::BaselineUnavailable);
+        }
+        let target = std::str::from_utf8(&target.stdout)
+            .map_err(|_| invalid(devlog.dir(), "non-UTF-8 merge-base log symlink"))?;
+        let target = Path::new(target);
+        resolved.pop();
+        let target = if target.is_absolute() {
+            resolved.clear();
+            target.strip_prefix(root).map_err(|_| {
+                invalid(
+                    devlog.dir(),
+                    "merge-base log symlink leaves this repository",
+                )
+            })?
+        } else {
+            target
+        };
+        // Expand links before processing any later `..`, just as a filesystem
+        // does; lexical normalization would silently discard intermediate links.
+        for component in target.components().rev() {
+            remaining.push_front(component.as_os_str().to_os_string());
+        }
+    }
+    Ok(resolved)
+}
+
 /// Check each Git layer separately: comparing only the final working tree to
 /// the base would hide an index or HEAD change restored in a later layer.
 pub(crate) fn pr_changes(devlog: &Devlog, base: &str) -> Result<Vec<Problem>, DevlogError> {
@@ -485,8 +556,34 @@ pub(crate) fn pr_changes(devlog: &Devlog, base: &str) -> Result<Vec<Problem>, De
         // shadows the directory that discovery would select at the merge base.
         dirs.extend(crate::model::DEVLOG_DIRS.iter().map(PathBuf::from));
     }
+    let mut baseline_links = BTreeSet::new();
+    // Preserve the original argument for tree resolution: a symlink before
+    // `..` in --dir must be expanded before the parent traversal, too.
+    let original_dir = absolute.strip_prefix(&root).map_err(|_| {
+        invalid(
+            devlog.dir(),
+            "--fragments-only requires a repository-relative log path",
+        )
+    })?;
+    dirs.insert(baseline_directory(
+        devlog,
+        base,
+        &root,
+        original_dir,
+        &mut baseline_links,
+    )?);
+    for dir in dirs.clone() {
+        dirs.insert(baseline_directory(
+            devlog,
+            base,
+            &root,
+            &dir,
+            &mut baseline_links,
+        )?);
+    }
     let pathspecs: Vec<_> = dirs
         .iter()
+        .chain(&baseline_links)
         .map(|dir| format!(":(literal){}", dir.to_string_lossy().replace('\\', "/")))
         .collect();
     let mut changed = BTreeSet::new();
@@ -538,6 +635,14 @@ pub(crate) fn pr_changes(devlog: &Devlog, base: &str) -> Result<Vec<Problem>, De
     let mut problems = check_immutable_paths(devlog, base, &baseline.stdout, Some(&changed))?;
     for name in changed {
         let path = Path::new(&name);
+        if baseline_links.contains(path) {
+            problems.push(Problem {
+                kind: "log-path-changed",
+                path: name,
+                detail: "fragment-only PRs cannot retarget a merge-base log symlink".to_string(),
+            });
+            continue;
+        }
         if path.parent().is_some_and(|parent| dirs.contains(parent))
             && path
                 .file_name()

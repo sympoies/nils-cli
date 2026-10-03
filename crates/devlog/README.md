@@ -96,8 +96,10 @@ hide an edit in the index or branch. Both detected directory conventions and
 an explicit `--dir` inside the repository are supported. Conventional logs
 check both supported paths, so switching or shadowing the detected directory
 cannot hide baseline deletions. Explicit paths retain their logical location
-when a directory symlink changes its target. An external log cannot
-be compared to this repository and is refused in this mode.
+and merge-base symlink targets. Retargeting a symlink that already existed at
+the merge base, including a parent-directory symlink, reports `log-path-changed`
+(exit 65); an unchanged symlink is supported. An external log cannot be compared
+to this repository and is refused in this mode.
 
 The comparison starts at the merge base of `HEAD` and the supplied ref, so
 unrelated default-branch advancement does not count as a PR edit. Fragments
@@ -296,6 +298,7 @@ Reported problem kinds:
 | `fragment-modified` | A baseline fragment was edited. |
 | `fragment-deleted` | A baseline fragment was removed; ordinary check permits exact folding. |
 | `month-file-changed` | Fragment-only PR mode found a month-file change. |
+| `log-path-changed` | Fragment-only PR mode found a change to a merge-base log symlink, including a parent-directory symlink. |
 
 A conflict marker stops the file being parsed any further. Both sides of a
 conflict are well-formed entries, so counting them would describe an

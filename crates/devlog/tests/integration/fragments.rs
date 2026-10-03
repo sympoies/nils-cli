@@ -827,3 +827,134 @@ fn fragments_only_cannot_hide_custom_log_deletions_by_retargeting_a_symlink() {
         );
     }
 }
+
+#[cfg(unix)]
+fn baseline_symlink_retarget(committed: bool, ancestor: bool) {
+    let repo = Repo::new();
+    new(&repo.root, "Folded", "2020-04-20", "folded");
+    success(&repo.root, &["fold"]);
+    new(&repo.root, "Merged", "2020-04-21", "merged");
+    let (old_dir, new_dir, link, selected) = if ancestor {
+        (
+            "history/old/log",
+            "history/new/log",
+            "history/link",
+            "history/link/log",
+        )
+    } else {
+        ("history/old", "history/new", "history/log", "history/log")
+    };
+    std::fs::create_dir_all(repo.root.join(old_dir).parent().unwrap()).unwrap();
+    std::fs::rename(repo.root.join("docs/devlog"), repo.root.join(old_dir)).unwrap();
+    std::os::unix::fs::symlink("old", repo.root.join(link)).unwrap();
+    commit(&repo.root, "Baseline symlink log");
+    git(&repo.root, &["checkout", "-qb", "feature"]);
+    // The original symlink and its target are supported while unchanged.
+    assert!(
+        strict_check(&repo.root, Some(selected), "main")
+            .status
+            .success()
+    );
+    std::fs::remove_dir_all(repo.root.join("history/old")).unwrap();
+    std::fs::create_dir_all(repo.root.join(new_dir)).unwrap();
+    std::fs::write(repo.root.join(new_dir).join("README.md"), INDEX).unwrap();
+    std::fs::remove_file(repo.root.join(link)).unwrap();
+    std::os::unix::fs::symlink("new", repo.root.join(link)).unwrap();
+    if committed {
+        commit(&repo.root, "Retarget baseline log symlink");
+    }
+    let out = strict_check(&repo.root, Some(selected), "main");
+    assert_problem(&out, "log-path-changed", link);
+    let ordinary = run(&repo.root, false, &["--dir", selected, "check"]);
+    assert!(ordinary.status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn fragments_only_rejects_unstaged_baseline_symlink_retarget() {
+    baseline_symlink_retarget(false, false);
+}
+
+#[cfg(unix)]
+#[test]
+fn fragments_only_rejects_committed_baseline_symlink_retarget() {
+    baseline_symlink_retarget(true, false);
+}
+
+#[cfg(unix)]
+#[test]
+fn fragments_only_rejects_unstaged_baseline_symlink_ancestor_retarget() {
+    baseline_symlink_retarget(false, true);
+}
+
+#[cfg(unix)]
+#[test]
+fn fragments_only_rejects_committed_baseline_symlink_ancestor_retarget() {
+    baseline_symlink_retarget(true, true);
+}
+
+#[cfg(unix)]
+fn baseline_symlink_intermediate_retarget(committed: bool, selected: &str) {
+    let repo = Repo::new();
+    new(&repo.root, "Folded", "2020-04-20", "folded");
+    success(&repo.root, &["fold"]);
+    new(&repo.root, "Merged", "2020-04-21", "merged");
+    std::fs::create_dir_all(repo.root.join("history/nested/deeper")).unwrap();
+    std::fs::write(repo.root.join("history/nested/deeper/.keep"), "").unwrap();
+    std::fs::rename(
+        repo.root.join("docs/devlog"),
+        repo.root.join("history/nested/old"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("nested/deeper", repo.root.join("history/pivot")).unwrap();
+    std::os::unix::fs::symlink("pivot/../old", repo.root.join("history/log")).unwrap();
+    commit(&repo.root, "Baseline intermediate symlink log");
+    git(&repo.root, &["checkout", "-qb", "feature"]);
+    assert!(
+        strict_check(&repo.root, Some(selected), "main")
+            .status
+            .success()
+    );
+    std::fs::remove_dir_all(repo.root.join("history/nested/old")).unwrap();
+    std::fs::create_dir_all(repo.root.join("history/new/deeper")).unwrap();
+    std::fs::write(repo.root.join("history/new/deeper/.keep"), "").unwrap();
+    std::fs::create_dir_all(repo.root.join("history/new/old")).unwrap();
+    std::fs::write(repo.root.join("history/new/old/README.md"), INDEX).unwrap();
+    std::fs::remove_file(repo.root.join("history/pivot")).unwrap();
+    std::os::unix::fs::symlink("new/deeper", repo.root.join("history/pivot")).unwrap();
+    if committed {
+        commit(&repo.root, "Retarget intermediate log symlink");
+    }
+    let out = strict_check(&repo.root, Some(selected), "main");
+    assert_problem(&out, "log-path-changed", "history/pivot");
+    assert_problem(&out, "month-file-changed", "history/nested/old/2020-04.md");
+    assert_problem(
+        &out,
+        "fragment-deleted",
+        "history/nested/old/pending/2020-04-21-merged.md",
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn fragments_only_rejects_unstaged_baseline_symlink_intermediate_retarget() {
+    baseline_symlink_intermediate_retarget(false, "history/log");
+}
+
+#[cfg(unix)]
+#[test]
+fn fragments_only_rejects_committed_baseline_symlink_intermediate_retarget() {
+    baseline_symlink_intermediate_retarget(true, "history/log");
+}
+
+#[cfg(unix)]
+#[test]
+fn fragments_only_rejects_unstaged_baseline_symlink_in_parent_traversal_arg() {
+    baseline_symlink_intermediate_retarget(false, "history/pivot/../old");
+}
+
+#[cfg(unix)]
+#[test]
+fn fragments_only_rejects_committed_baseline_symlink_in_parent_traversal_arg() {
+    baseline_symlink_intermediate_retarget(true, "history/pivot/../old");
+}
