@@ -90,7 +90,8 @@ Resolve **within the starting principal**:
 
 Each rule has `id`, `principal`, `profile`, and exactly one of `repo`, `org`, or
 `path`. Path rules additionally require a nonempty `repositories` allowlist and
-an absolute canonical path. A linked worktree uses the source checkout identified
+an existing absolute canonical filesystem path; symlink aliases and noncanonical
+spellings refuse during policy validation. A linked worktree uses the source checkout identified
 by its Git common directory, rather than the runtime worktree directory.
 
 Multiple matching rules at the selected precedence refuse, including duplicates
@@ -104,13 +105,17 @@ backend requests. A backend request with conflicting targets refuses. Opaque
 GraphQL node mutations remain bound to their typed repository invocation.
 Cross-repository discovery (`activity`, `inbox`, `search`) and repository bootstrap
 refuse when policy is installed; phase 1 has no multi-target or root-bootstrap
-identity contract. Other forge providers refuse protected network operations
+identity contract. An explicit API target may be used outside a checkout. If Git
+checkout metadata is present but cannot resolve, the operation refuses rather than
+ignoring managed-path rules. Other forge providers refuse protected network operations
 under this GitHub policy; the local file-backed provider remains local.
 
 Git transport resolves the actual selected remote or explicit URL and uses
 `pushurl` for pushes. Multiple URLs refuse. Authoring selects `branch.pushRemote`,
 then `remote.pushDefault`, then `branch.remote`, or a sole configured remote.
-Unknown or ambiguous repositories/principals refuse.
+Both commit diagnostics use that same authoring selection; an explicit `--remote`
+(including `--remote origin`) selects that remote instead. Unknown or ambiguous
+repositories/principals refuse.
 
 ## Execution and refusal
 
@@ -121,6 +126,8 @@ Supported HTTPS and GitHub SSH remote shapes execute over pinned HTTPS with the
 selected verified token. The SSH URL stays stored unchanged. The child has an
 empty credential-helper list followed by a helper constrained to the selected
 HTTPS host/repository, no interactive credential fallback, and redirects disabled.
+TLS certificate verification is enforced for the selected URL, overriding inherited
+`http.sslVerify` settings and removing `GIT_SSL_NO_VERIFY` from the child.
 Pre-existing URL rewrites or HTTP credential headers refuse. Credentials are never
 put into argv or remote URLs. Native SSH authentication, custom ports, insecure
 HTTP, local-file transport, clones, pulls, submodules, stashes, and tag authoring are unsupported
@@ -130,13 +137,20 @@ New commits set author and committer from the profile, force OpenPGP signing wit
 its exact fingerprint, and verify key availability first. Conflicting repository
 identity or author/committer environment overrides refuse. Amend/history-producing
 operations and caller author/signing overrides refuse rather than silently
-rewriting attribution. Local `merge --ff-only` preserves existing commits and
+rewriting attribution. This includes attached/abbreviated signing-key options and
+message-reuse options that retain another commit's author. Local `merge --ff-only` preserves existing commits and
 remains available. The existing default-branch/signing/delivery gates remain
 independent. An installed policy does not authorize a commit or provider operation.
 
 `git-cli open pr` uses one selected collaboration repository when it contacts gh;
 a credential refusal does not try another identity or ambient repository.
 Raw external `git`/`gh` invocations outside these managed runners are not covered.
+
+Credential, actor, Git metadata, and signer probes share the caller's deadline
+with execution where the runner supplies one. Standalone identity preparation
+and diagnostics have a finite 30-second probe budget. Each probe bounds captured
+stdout and stderr to 8 MiB, kills its process group on refusal, and reaps its leader;
+probe errors contain stable codes rather than captured child output.
 
 ## Diagnostics and audit
 
@@ -170,7 +184,9 @@ Typed refusal codes include `identity_policy_invalid`, `identity_policy_version`
 `identity_credential_missing`, `identity_actor_unavailable`,
 `identity_actor_mismatch`, `identity_app_repository_missing`,
 `identity_signing_key_missing`, `identity_commit_mismatch`, and transport/override
-refusals. `forge-cli` maps them to DATA (65). Git runner callers retain their
+refusals. `forge-cli` maps policy refusals to DATA (65);
+`identity_probe_timeout` and `identity_probe_output_limit` map to UNAVAILABLE (69).
+Git runner callers retain their
 existing error envelopes/exit mapping and receive stable codes in diagnostics.
 TOML source diagnostics and credential-probe output are suppressed. Protected
 subprocess stdout/stderr redact the selected credential before callers receive it.

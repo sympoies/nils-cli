@@ -12,7 +12,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use nils_common::default_branch_receipt::{DefaultBranchReceipt, read_strict};
@@ -72,6 +72,7 @@ struct GitProcessSettings {
 
 impl GitRunner for ProcessGitRunner {
     fn run(&self, workdir: &Path, args: &[OsString]) -> Result<GitOutput, ForgeError> {
+        let started = Instant::now();
         let settings = current_git_process_settings();
         let mut command = Command::new(&settings.executable);
         command.arg("-C").arg(workdir).args(args);
@@ -88,62 +89,77 @@ impl GitRunner for ProcessGitRunner {
                 })
             })
             .collect::<Result<_, _>>()?;
-        let identity = nils_common::forge_identity::prepare_git(&mut command, Some(workdir), &refs)
-            .map_err(|e| ForgeError::validation(schema_error(), e.code, e.to_string(), None))?;
-        let mut output = match output_with_limits(
+        let identity = nils_common::forge_identity::prepare_git_with_deadline(
             &mut command,
-            Some(settings.timeout),
-            settings.capture_limit,
-        ) {
-            Ok(output) => output,
-            Err(ProcessOutputError::Io(error)) => {
-                return Err(ForgeError::software(
-                    schema_error(),
-                    format!("failed to launch {}", settings.executable.to_string_lossy()),
-                    Some(error.to_string()),
-                ));
-            }
-            Err(ProcessOutputError::Timeout {
-                timeout,
-                mut output,
-            }) => {
-                if let Some(identity) = &identity {
-                    identity.redact_output(&mut output);
-                }
-                let stderr = redact_and_tail(&String::from_utf8_lossy(&output.stderr));
-                return Err(ForgeError::unavailable(
-                    schema_error(),
-                    "git_timeout",
-                    format!(
-                        "{} timed out after {}",
-                        settings.executable.to_string_lossy(),
-                        format_duration(timeout)
-                    ),
-                    (!stderr.is_empty()).then_some(stderr),
-                ));
-            }
-            Err(ProcessOutputError::OutputLimit {
-                stream,
-                limit,
-                mut output,
-            }) => {
-                if let Some(identity) = &identity {
-                    identity.redact_output(&mut output);
-                }
-                let stderr = redact_and_tail(&String::from_utf8_lossy(&output.stderr));
-                return Err(ForgeError::unavailable(
-                    schema_error(),
-                    "git_output_limit",
-                    format!(
-                        "{} {} exceeded the {}-byte capture limit",
-                        settings.executable.to_string_lossy(),
-                        stream.as_str(),
-                        limit
-                    ),
-                    (!stderr.is_empty()).then_some(stderr),
-                ));
-            }
+            Some(workdir),
+            &refs,
+            started.checked_add(settings.timeout),
+        )
+        .map_err(|e| ForgeError::validation(schema_error(), e.code, e.to_string(), None))?;
+        let remaining = if identity.is_some() {
+            settings.timeout.saturating_sub(started.elapsed())
+        } else {
+            settings.timeout
         };
+        if remaining.is_zero() {
+            return Err(ForgeError::unavailable(
+                schema_error(),
+                "git_timeout",
+                "identity preparation consumed the Git deadline",
+                None,
+            ));
+        }
+        let mut output =
+            match output_with_limits(&mut command, Some(remaining), settings.capture_limit) {
+                Ok(output) => output,
+                Err(ProcessOutputError::Io(error)) => {
+                    return Err(ForgeError::software(
+                        schema_error(),
+                        format!("failed to launch {}", settings.executable.to_string_lossy()),
+                        Some(error.to_string()),
+                    ));
+                }
+                Err(ProcessOutputError::Timeout {
+                    timeout,
+                    mut output,
+                }) => {
+                    if let Some(identity) = &identity {
+                        identity.redact_output(&mut output);
+                    }
+                    let stderr = redact_and_tail(&String::from_utf8_lossy(&output.stderr));
+                    return Err(ForgeError::unavailable(
+                        schema_error(),
+                        "git_timeout",
+                        format!(
+                            "{} timed out after {}",
+                            settings.executable.to_string_lossy(),
+                            format_duration(timeout)
+                        ),
+                        (!stderr.is_empty()).then_some(stderr),
+                    ));
+                }
+                Err(ProcessOutputError::OutputLimit {
+                    stream,
+                    limit,
+                    mut output,
+                }) => {
+                    if let Some(identity) = &identity {
+                        identity.redact_output(&mut output);
+                    }
+                    let stderr = redact_and_tail(&String::from_utf8_lossy(&output.stderr));
+                    return Err(ForgeError::unavailable(
+                        schema_error(),
+                        "git_output_limit",
+                        format!(
+                            "{} {} exceeded the {}-byte capture limit",
+                            settings.executable.to_string_lossy(),
+                            stream.as_str(),
+                            limit
+                        ),
+                        (!stderr.is_empty()).then_some(stderr),
+                    ));
+                }
+            };
         if let Some(identity) = identity {
             identity.redact_output(&mut output);
             identity

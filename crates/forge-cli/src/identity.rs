@@ -17,6 +17,17 @@ impl Drop for Scope {
     }
 }
 fn error(e: identity::Error) -> ForgeError {
+    if matches!(
+        e.code,
+        "identity_probe_timeout" | "identity_probe_output_limit"
+    ) {
+        return ForgeError::unavailable(
+            schema_version_for(BINARY, "identity", 1),
+            e.code,
+            e.to_string(),
+            None,
+        );
+    }
     ForgeError::validation(
         schema_version_for(BINARY, "identity", 1),
         e.code,
@@ -128,6 +139,13 @@ fn target_from_call(call: &BackendCall) -> identity::Result<Option<Target>> {
 pub fn prepare_api(
     call: &BackendCall,
     cmd: &mut std::process::Command,
+    deadline: Option<std::time::Instant>,
+) -> Result<Option<Authorization>, ForgeError> {
+    identity::with_probe_deadline(deadline, || prepare_api_inner(call, cmd))
+}
+fn prepare_api_inner(
+    call: &BackendCall,
+    cmd: &mut std::process::Command,
 ) -> Result<Option<Authorization>, ForgeError> {
     let Some(policy) = identity::load().map_err(error)? else {
         return Ok(None);
@@ -149,7 +167,7 @@ pub fn prepare_api(
         return Err(error(identity::Error::new("identity_target_ambiguous")));
     }
     let operation = scope.map(|(_, o)| o).unwrap_or(Operation::ApiWrite);
-    let path = identity::managed_path(None).ok();
+    let path = identity::managed_path_optional(None).map_err(error)?;
     let auth = policy
         .authorize(
             &target,
@@ -172,6 +190,15 @@ pub fn run(
     global: &GlobalFlags,
     command: IdentityCommand,
     format: OutputFormat,
+    remote_explicit: bool,
+) -> Result<i32, ForgeError> {
+    identity::with_probe_deadline(None, || run_inner(global, command, format, remote_explicit))
+}
+fn run_inner(
+    global: &GlobalFlags,
+    command: IdentityCommand,
+    format: OutputFormat,
+    remote_explicit: bool,
 ) -> Result<i32, ForgeError> {
     let (doctor, operation) = match command {
         IdentityCommand::Explain { operation } => (false, operation.operation()),
@@ -185,24 +212,37 @@ pub fn run(
         signing_key_verified: false,
     };
     if let Some(policy) = policy {
-        let ctx = detect(
-            global.provider_hint(),
-            &global.remote,
-            global.repo.as_deref(),
-            git_remote_url,
-        )?;
-        if ctx.provider != Provider::GitHub {
-            return Err(error(identity::Error::new("identity_provider_unsupported")));
-        }
         let target = if global.repo.is_none()
             && matches!(
                 operation,
                 Operation::GitRead | Operation::GitPush | Operation::Commit
             ) {
-            identity::target_for_remote(None, &global.remote, operation != Operation::GitRead)
-                .map_err(error)?
-                .0
+            let remote = if operation == Operation::Commit && !remote_explicit {
+                identity::authoring_remote(None).map_err(error)?
+            } else {
+                global.remote.clone()
+            };
+            let (target, url) =
+                identity::target_for_remote(None, &remote, operation != Operation::GitRead)
+                    .map_err(error)?;
+            let ctx = detect(global.provider_hint(), &remote, None, |_| Some(url.clone()))?;
+            if ctx.provider != Provider::GitHub {
+                return Err(error(identity::Error::new("identity_provider_unsupported")));
+            }
+            if ctx.host != target.host {
+                return Err(error(identity::Error::new("identity_target_ambiguous")));
+            }
+            target
         } else {
+            let ctx = detect(
+                global.provider_hint(),
+                &global.remote,
+                global.repo.as_deref(),
+                git_remote_url,
+            )?;
+            if ctx.provider != Provider::GitHub {
+                return Err(error(identity::Error::new("identity_provider_unsupported")));
+            }
             Target::new(
                 &ctx.host,
                 ctx.repo
@@ -211,7 +251,7 @@ pub fn run(
             )
             .map_err(error)?
         };
-        let path = identity::managed_path(None).ok();
+        let path = identity::managed_path_optional(None).map_err(error)?;
         let selection = policy
             .select(&target, path.as_deref(), operation)
             .map_err(error)?;

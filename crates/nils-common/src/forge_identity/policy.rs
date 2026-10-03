@@ -219,6 +219,7 @@ impl Policy {
             if let Some(path) = &rule.path {
                 if !path.is_absolute()
                     || rule.repositories.is_empty()
+                    || !std::fs::canonicalize(path).is_ok_and(|canonical| canonical == *path)
                     || path
                         .components()
                         .any(|c| matches!(c, std::path::Component::ParentDir))

@@ -12,7 +12,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use clap::builder::{PossibleValue, TypedValueParser};
-use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use nils_common::cli_contract::{OutputFormat, emit_parse_error, exit, schema_version_for};
 
@@ -40,6 +40,9 @@ pub struct Cli {
     /// Git remote whose URL feeds provider detection (default: `origin`).
     #[arg(long, global = true, default_value = "origin")]
     pub remote: String,
+    /// Preserve whether the launcher supplied a remote override.
+    #[arg(skip)]
+    pub remote_explicit: bool,
 
     /// Override auto-detected provider.
     #[arg(long, global = true, value_parser = ProviderValueParser)]
@@ -2436,7 +2439,9 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
     }
 
     let result = match cli.command {
-        Some(Command::Identity(args)) => crate::identity::run(&global, args.command, format),
+        Some(Command::Identity(args)) => {
+            crate::identity::run(&global, args.command, format, cli.remote_explicit)
+        }
         Some(Command::Provider(ProviderArgs {
             command: Some(ProviderCommand::Add(args)),
         })) => {
@@ -2725,7 +2730,16 @@ pub(crate) fn parse_or_exit(args: Vec<OsString>) -> Result<Cli, i32> {
     argv.push(OsString::from("forge-cli"));
     argv.extend(args);
 
-    match Cli::try_parse_from(argv.iter()) {
+    let parsed = Cli::command()
+        .try_get_matches_from(argv.iter())
+        .and_then(|matches| {
+            let explicit =
+                matches.value_source("remote") == Some(clap::parser::ValueSource::CommandLine);
+            let mut cli = Cli::from_arg_matches(&matches)?;
+            cli.remote_explicit = explicit;
+            Ok(cli)
+        });
+    match parsed {
         Ok(cli) => Ok(cli),
         Err(err) => {
             use clap::error::ErrorKind;

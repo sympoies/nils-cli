@@ -2,8 +2,12 @@
 //! The launcher supplies the starting principal; authenticated session binding is a separate layer.
 mod git;
 mod policy;
-pub use git::{prepare_git, target_for_remote, verify_key};
+mod probe;
+pub use git::{
+    authoring_remote, prepare_git, prepare_git_with_deadline, target_for_remote, verify_key,
+};
 pub use policy::{Credential, Operation, Policy, Profile, Selection, Target};
+pub use probe::with_deadline as with_probe_deadline;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -80,6 +84,15 @@ impl LoadedPolicy {
         op: Operation,
         gh: &std::ffi::OsStr,
     ) -> Result<Authorization> {
+        probe::with_deadline(None, || self.authorize_inner(target, path, op, gh))
+    }
+    fn authorize_inner(
+        &self,
+        target: &Target,
+        path: Option<&Path>,
+        op: Operation,
+        gh: &std::ffi::OsStr,
+    ) -> Result<Authorization> {
         let selected = self.select(target, path, op);
         let result = selected
             .as_ref()
@@ -116,9 +129,13 @@ impl LoadedPolicy {
                     "--user",
                     user,
                 ]);
-                let out = cmd
-                    .output()
-                    .map_err(|_| Error::new("identity_credential_missing"))?;
+                let out = probe::run(&mut cmd).map_err(|e| {
+                    if e.code == "identity_probe_unavailable" {
+                        Error::new("identity_credential_missing")
+                    } else {
+                        e
+                    }
+                })?;
                 if !out.status.success() {
                     return Err(Error::new("identity_credential_missing"));
                 }
@@ -333,9 +350,13 @@ impl Authorization {
         self.apply_api(&mut cmd);
         cmd.args(args)
             .args(["--hostname", &self.selection.target.host]);
-        let output = cmd
-            .output()
-            .map_err(|_| Error::new("identity_actor_unavailable"))?;
+        let output = probe::run(&mut cmd).map_err(|e| {
+            if e.code == "identity_probe_unavailable" {
+                Error::new("identity_actor_unavailable")
+            } else {
+                e
+            }
+        })?;
         if !output.status.success() {
             return Err(Error::new("identity_actor_unavailable"));
         }
@@ -358,10 +379,8 @@ pub fn managed_path(cwd: Option<&Path>) -> Result<PathBuf> {
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    let output = cmd
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()
-        .map_err(|_| Error::new("identity_target_unknown"))?;
+    cmd.args(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    let output = probe::run(&mut cmd)?;
     if !output.status.success() {
         return Err(Error::new("identity_target_unknown"));
     }
@@ -372,4 +391,28 @@ pub fn managed_path(cwd: Option<&Path>) -> Result<PathBuf> {
         common
     };
     fs::canonicalize(path).map_err(|_| Error::new("identity_target_unknown"))
+}
+
+/// Explicit API targets may have no checkout. Existing checkout metadata must
+/// resolve successfully; an unreadable or damaged checkout is not absence.
+pub fn managed_path_optional(cwd: Option<&Path>) -> Result<Option<PathBuf>> {
+    let cwd = cwd
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(std::env::current_dir)
+        .map_err(|_| Error::new("identity_target_unknown"))?;
+    if std::env::var_os("GIT_DIR").is_some_and(|v| !v.is_empty()) {
+        return managed_path(Some(&cwd)).map(Some);
+    }
+    for dir in cwd.ancestors() {
+        match fs::symlink_metadata(dir.join(".git")) {
+            Ok(_) => return managed_path(Some(&cwd)).map(Some),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err(Error::new("identity_target_unknown")),
+        }
+        if dir.join("HEAD").is_file() && dir.join("objects").is_dir() {
+            return managed_path(Some(&cwd)).map(Some);
+        }
+    }
+    Ok(None)
 }

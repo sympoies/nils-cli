@@ -92,14 +92,15 @@ fn identity_equal_precedence_conflicts_refuse() {
 #[test]
 fn identity_path_remote_conflict_refuses_and_canonical_path_fallback_is_allowlisted() {
     let path = tempfile::tempdir().unwrap();
+    let canonical = std::fs::canonicalize(path.path()).unwrap();
     let mut text = FIXTURE.to_string();
-    text.push_str(&format!("\n[[rules]]\nid='managed'\nprincipal='contributor'\npath={}\nrepositories=['github.com/sandbox/widget','github.com/other/widget']\nprofile='account-b'\n", toml::Value::String(path.path().to_str().unwrap().into())));
+    text.push_str(&format!("\n[[rules]]\nid='managed'\nprincipal='contributor'\npath={}\nrepositories=['github.com/sandbox/widget','github.com/other/widget']\nprofile='account-b'\n", toml::Value::String(canonical.to_str().unwrap().into())));
     let p = Policy::parse(&text).unwrap();
     assert_eq!(
         p.resolve(
             "contributor",
             &target("sandbox/widget"),
-            Some(path.path()),
+            Some(&canonical),
             Operation::ApiRead
         )
         .unwrap_err()
@@ -110,7 +111,7 @@ fn identity_path_remote_conflict_refuses_and_canonical_path_fallback_is_allowlis
         p.resolve(
             "contributor",
             &target("other/widget"),
-            Some(path.path()),
+            Some(&canonical),
             Operation::ApiRead
         )
         .unwrap()
@@ -121,12 +122,29 @@ fn identity_path_remote_conflict_refuses_and_canonical_path_fallback_is_allowlis
         p.resolve(
             "contributor",
             &target("other/unknown"),
-            Some(path.path()),
+            Some(&canonical),
             Operation::ApiRead
         )
         .unwrap_err()
         .code,
         "identity_path_conflict"
+    );
+}
+#[cfg(unix)]
+#[test]
+fn identity_symlink_path_selector_is_refused_before_it_can_skip_a_conflict() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    let alias = root.path().join("alias");
+    std::os::unix::fs::symlink(&source, &alias).unwrap();
+    let policy = format!(
+        "{FIXTURE}\n[[rules]]\nid='managed-alias'\nprincipal='contributor'\npath={}\nrepositories=['github.com/sandbox/widget']\nprofile='account-b'\n",
+        toml::Value::String(alias.to_str().unwrap().into())
+    );
+    assert_eq!(
+        Policy::parse(&policy).err().map(|e| e.code),
+        Some("identity_policy_invalid")
     );
 }
 #[test]
@@ -338,6 +356,16 @@ mod execution {
         let _principal = EnvGuard::set(&lock, "FORGE_IDENTITY_PRINCIPAL", "contributor");
         let _secret = EnvGuard::set(&lock, "FIXTURE_ACCOUNT_A_CREDENTIAL", CANARY);
         let _path = prepend_path(&lock, bins.path());
+        let _tls = EnvGuard::set(&lock, "GIT_SSL_NO_VERIFY", "1");
+        raw_git(repo.path(), &["config", "http.sslVerify", "false"]);
+        raw_git(
+            repo.path(),
+            &[
+                "config",
+                "http.https://github.com/sandbox/widget.git.sslVerify",
+                "false",
+            ],
+        );
         for args in [
             vec![
                 "push",
@@ -358,6 +386,18 @@ mod execution {
         )
         .unwrap()
         .unwrap();
+        assert!(
+            cmd.get_envs()
+                .any(|(k, v)| k == "GIT_SSL_NO_VERIFY" && v.is_none())
+        );
+        cmd.current_dir(repo.path()).args([
+            "config",
+            "--get-urlmatch",
+            "http.sslVerify",
+            "https://github.com/sandbox/widget.git",
+        ]);
+        let verification = cmd.output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&verification.stdout).trim(), "true");
         assert!(!format!("{:?}", cmd.get_args().collect::<Vec<_>>()).contains(CANARY));
         let env: std::collections::BTreeMap<_, _> = cmd
             .get_envs()
@@ -426,6 +466,16 @@ mod execution {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&keyhome, fs::Permissions::from_mode(0o700)).unwrap();
         let _gpg = EnvGuard::set(&lock, "GNUPGHOME", keyhome.to_str().unwrap());
+        struct FixtureAgent(std::path::PathBuf);
+        impl Drop for FixtureAgent {
+            fn drop(&mut self) {
+                let _ = Command::new("gpgconf")
+                    .env("GNUPGHOME", &self.0)
+                    .args(["--kill", "gpg-agent"])
+                    .output();
+            }
+        }
+        let _agent = FixtureAgent(keyhome.clone());
         let generation = Command::new("gpg")
             .args([
                 "--batch",
@@ -451,6 +501,39 @@ mod execution {
             .output()
             .unwrap();
         let fingerprint = String::from_utf8_lossy(&key.stdout)
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("fpr:")
+                    .and_then(|_| line.split(':').nth(9))
+            })
+            .unwrap()
+            .to_string();
+        let second = Command::new("gpg")
+            .args([
+                "--batch",
+                "--pinentry-mode",
+                "loopback",
+                "--passphrase",
+                "",
+                "--quick-generate-key",
+                "Example Contributor B <contributor-b@example.invalid>",
+                "ed25519",
+                "sign",
+                "0",
+            ])
+            .output()
+            .unwrap();
+        assert!(second.status.success());
+        let second = Command::new("gpg")
+            .args([
+                "--batch",
+                "--with-colons",
+                "--list-secret-keys",
+                "contributor-b@example.invalid",
+            ])
+            .output()
+            .unwrap();
+        let other_fingerprint = String::from_utf8_lossy(&second.stdout)
             .lines()
             .find_map(|line| {
                 line.strip_prefix("fpr:")
@@ -509,6 +592,23 @@ mod execution {
                 .status
                 .success()
         );
+        for options in [
+            vec![format!("--gpg-sign={other_fingerprint}")],
+            vec![format!("-aS{other_fingerprint}")],
+            vec![format!("--gpg-s={other_fingerprint}")],
+            vec!["-C".into(), "HEAD".into()],
+            vec!["-cHEAD".into()],
+            vec!["--reuse-message=HEAD".into()],
+            vec!["--reedit-message".into(), "HEAD".into()],
+        ] {
+            let mut args = vec!["commit"];
+            args.extend(options.iter().map(String::as_str));
+            let refused = identity::prepare_git(&mut Command::new("git"), Some(repo.path()), &args);
+            assert_eq!(
+                refused.err().map(|e| e.code),
+                Some("identity_commit_override")
+            );
+        }
         if let Some(binary) =
             nils_test_support::bin::sibling_or_skip("semantic-commit", "nils-semantic-commit")
         {
@@ -572,9 +672,6 @@ mod execution {
             .code,
             "identity_signing_key_missing"
         );
-        // Terminate this fixture's daemon before removing its private temporary keyring.
-        let _ = Command::new("gpgconf")
-            .args(["--kill", "gpg-agent"])
-            .status();
+        // FixtureAgent terminates only this temporary keyring's daemon, including on panic.
     }
 }

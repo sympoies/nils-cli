@@ -88,8 +88,13 @@ printf '%s' "$GH_TOKEN" >&2
             Self { home, gh }
         }
         fn command(&self) -> Command {
+            let mut c = self.bare_command();
+            c.args(["--repo", "sandbox/widget"]);
+            c
+        }
+        fn bare_command(&self) -> Command {
             let mut c = Command::new(resolve("forge-cli"));
-            c.args(["--format", "json", "--repo", "sandbox/widget"])
+            c.args(["--format", "json"])
                 .env("XDG_CONFIG_HOME", self.home.path())
                 .env("XDG_STATE_HOME", self.home.path().join("state"))
                 .env("FORGE_IDENTITY_PRINCIPAL", "contributor")
@@ -108,6 +113,168 @@ printf '%s' "$GH_TOKEN" >&2
             )
             .unwrap()
         }
+    }
+    #[test]
+    fn identity_commit_diagnostics_share_authoring_remote_selection_and_explicit_override() {
+        let policy = format!(
+            "{POLICY}\n[[rules]]\nid='publish'\nprincipal='contributor'\nprofile='account-b'\nrepo='github.com/sandbox/publish'\n"
+        );
+        for selector in [
+            "branch.main.pushRemote",
+            "remote.pushDefault",
+            "branch.main.remote",
+            "sole",
+        ] {
+            let f = Fixture::new(&policy);
+            let repo = tempfile::tempdir().unwrap();
+            let git = |args: &[&str]| {
+                let out = Command::new("git")
+                    .current_dir(repo.path())
+                    .args(args)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success());
+            };
+            git(&["init", "-b", "main"]);
+            if selector != "sole" {
+                git(&[
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/sandbox/widget.git",
+                ]);
+                git(&["config", selector, "publish"]);
+            }
+            git(&[
+                "remote",
+                "add",
+                "publish",
+                "https://github.com/sandbox/publish.git",
+            ]);
+            let out = f
+                .bare_command()
+                .current_dir(repo.path())
+                .args(["identity", "explain", "--operation", "commit"])
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(value["data"]["selection"]["profile_id"], "account-b");
+            let doctor = f
+                .bare_command()
+                .current_dir(repo.path())
+                .env("FIXTURE_ACTOR", "account-b")
+                .args(["identity", "doctor", "--operation", "commit"])
+                .output()
+                .unwrap();
+            assert_eq!(doctor.status.code(), Some(65));
+            assert!(
+                String::from_utf8_lossy(&doctor.stdout).contains("identity_signing_key_missing")
+            );
+            let audit: Vec<serde_json::Value> = f
+                .audit()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            assert!(audit.iter().all(|entry| entry["profile_id"] == "account-b"));
+            if selector != "sole" {
+                for spelling in [vec!["--remote", "origin"], vec!["--remote=origin"]] {
+                    let out = f
+                        .bare_command()
+                        .current_dir(repo.path())
+                        .args(spelling)
+                        .args(["identity", "explain", "--operation", "commit"])
+                        .output()
+                        .unwrap();
+                    assert_eq!(out.status.code(), Some(0));
+                    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+                    assert_eq!(value["data"]["selection"]["profile_id"], "account-a");
+                }
+            }
+        }
+    }
+    #[test]
+    fn identity_preparation_and_execution_share_the_callers_deadline_without_secret_output() {
+        use forge_cli::backend::{BackendCall, BackendProgram, BackendRunner, ProcessRunner};
+        use forge_cli::error::ForgeError;
+        use nils_test_support::{EnvGuard, GlobalStateLock};
+        use std::time::{Duration, Instant};
+        let lock = GlobalStateLock::new();
+        for (principal, script, timeout) in [
+            (
+                "contributor",
+                "if test \"$2\" = user; then printf '%s' \"$GH_TOKEN\" >&2; sleep 2; printf '{\"login\":\"account-a\"}'; else printf '{}'; fi",
+                75,
+            ),
+            (
+                "coordinator",
+                "if test \"$1\" = auth; then sleep 2; printf '%s' \"$FIXTURE_SECRET_B\"; else printf '{\"login\":\"account-b\"}'; fi",
+                75,
+            ),
+            (
+                "contributor",
+                "if test \"$2\" = user; then sleep 0.1; printf '{\"login\":\"account-a\"}'; else sleep 0.1; printf '{}'; fi",
+                150,
+            ),
+        ] {
+            let f = Fixture::new(POLICY);
+            fs::write(&f.gh, format!("#!/bin/sh\n{script}\n")).unwrap();
+            let _config = EnvGuard::set(&lock, "XDG_CONFIG_HOME", f.home.path().to_str().unwrap());
+            let _state = EnvGuard::set(
+                &lock,
+                "XDG_STATE_HOME",
+                f.home.path().join("state").to_str().unwrap(),
+            );
+            let _principal = EnvGuard::set(&lock, "FORGE_IDENTITY_PRINCIPAL", principal);
+            let _secret = EnvGuard::set(&lock, "FIXTURE_ACCOUNT_A_CREDENTIAL", CANARY);
+            let _named_secret = EnvGuard::set(&lock, "FIXTURE_SECRET_B", CANARY);
+            let _gh = EnvGuard::set(&lock, "FORGE_CLI_GH_BIN", f.gh.to_str().unwrap());
+            let call =
+                BackendCall::new(BackendProgram::Gh, ["api", "repos/sandbox/widget/issues/1"]);
+            let started = Instant::now();
+            let result =
+                ProcessRunner.run_raw_with_timeout(&call, Some(Duration::from_millis(timeout)));
+            assert!(
+                started.elapsed() < Duration::from_millis(750),
+                "identity preparation exceeded caller deadline"
+            );
+            let error = result.unwrap_err();
+            assert!(matches!(
+                &error,
+                ForgeError::BackendUnavailable {
+                    kind: "identity_probe_timeout" | "backend_timeout",
+                    ..
+                }
+            ));
+            assert!(!format!("{error:?}").contains(CANARY));
+            assert!(!f.audit().contains(CANARY));
+        }
+    }
+    #[test]
+    fn identity_explicit_api_target_allows_no_checkout_but_refuses_failed_checkout_metadata() {
+        let f = Fixture::new(POLICY);
+        let out = f
+            .command()
+            .current_dir(f.home.path())
+            .args(["--host", "github.com", "identity", "explain"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        fs::write(f.home.path().join(".git"), "gitdir: missing-checkout\n").unwrap();
+        let out = f
+            .command()
+            .current_dir(f.home.path())
+            .args(["--host", "github.com", "issue", "view", "1"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(65));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("identity_target_unknown"));
+        assert!(!f.home.path().join("calls").exists());
     }
     #[test]
     fn identity_explain_is_metadata_only_and_two_principals_select_different_profiles() {

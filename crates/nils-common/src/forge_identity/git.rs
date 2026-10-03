@@ -7,10 +7,8 @@ fn raw(cwd: Option<&Path>, args: &[&str]) -> Result<String> {
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    let output = command
-        .args(args)
-        .output()
-        .map_err(|_| Error::new("identity_target_unknown"))?;
+    command.args(args);
+    let output = super::probe::run(&mut command)?;
     if !output.status.success() {
         return Err(Error::new("identity_target_unknown"));
     }
@@ -52,7 +50,7 @@ fn operation(tail: &[&str]) -> Result<Option<Operation>> {
         _ => Ok(None),
     }
 }
-fn default_remote(cwd: Option<&Path>) -> Result<String> {
+pub fn authoring_remote(cwd: Option<&Path>) -> Result<String> {
     let branch = raw(cwd, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
     let selected = optional(cwd, &format!("branch.{branch}.pushRemote"))
         .or_else(|| optional(cwd, "remote.pushDefault"))
@@ -71,7 +69,7 @@ fn default_remote(cwd: Option<&Path>) -> Result<String> {
 }
 fn selected_remote(cwd: Option<&Path>, tail: &[&str], op: Operation) -> Result<String> {
     if op == Operation::Commit {
-        return default_remote(cwd);
+        return authoring_remote(cwd);
     }
     if tail.first() == Some(&"remote") {
         return tail
@@ -168,16 +166,21 @@ pub fn target_for_remote(cwd: Option<&Path>, remote: &str, push: bool) -> Result
 }
 
 pub fn verify_key(profile: &Profile) -> Result<()> {
-    let out = Command::new("gpg")
-        .args([
-            "--batch",
-            "--with-colons",
-            "--with-fingerprint",
-            "--list-secret-keys",
-            &profile.signing_fingerprint,
-        ])
-        .output()
-        .map_err(|_| Error::new("identity_signing_key_missing"))?;
+    let mut command = Command::new("gpg");
+    command.args([
+        "--batch",
+        "--with-colons",
+        "--with-fingerprint",
+        "--list-secret-keys",
+        &profile.signing_fingerprint,
+    ]);
+    let out = super::probe::run(&mut command).map_err(|e| {
+        if e.code == "identity_probe_unavailable" {
+            Error::new("identity_signing_key_missing")
+        } else {
+            e
+        }
+    })?;
     if !out.status.success() {
         return Err(Error::new("identity_signing_key_missing"));
     }
@@ -236,6 +239,64 @@ fn verify_local_identity(cwd: Option<&Path>, profile: &Profile) -> Result<()> {
 }
 const HELPER: &str = "!f() { test \"$1\" = get || exit 0; p= h= r=; while IFS= read -r line; do case \"$line\" in protocol=*) p=${line#protocol=};; host=*) h=${line#host=};; path=*) r=${line#path=};; esac; done; test \"$p\" = https && test \"$h\" = \"$FORGE_IDENTITY_HOST\" && test \"$r\" = \"$FORGE_IDENTITY_REPO.git\" || exit 1; printf 'username=x-access-token\\npassword=%s\\n' \"$FORGE_IDENTITY_TOKEN\"; }; f";
 
+fn commit_override(args: &[&str]) -> bool {
+    let mut args = args.iter().skip(1);
+    while let Some(arg) = args.next() {
+        if *arg == "--" {
+            break;
+        }
+        if arg.starts_with("--") {
+            let option = arg.split('=').next().unwrap();
+            if [
+                "--author",
+                "--no-gpg-sign",
+                "--amend",
+                "--reuse-message",
+                "--reedit-message",
+                "--gpg-sign",
+            ]
+            .iter()
+            .any(|protected| protected.starts_with(option))
+                && *arg != "--gpg-sign"
+            {
+                return true;
+            }
+            if !arg.contains('=')
+                && [
+                    "--message",
+                    "--file",
+                    "--template",
+                    "--fixup",
+                    "--squash",
+                    "--trailer",
+                    "--cleanup",
+                    "--pathspec-from-file",
+                ]
+                .iter()
+                .any(|value_option| value_option.starts_with(option))
+            {
+                args.next();
+            }
+        } else if let Some(short) = arg.strip_prefix('-') {
+            let mut options = short.chars().peekable();
+            while let Some(option) = options.next() {
+                match option {
+                    'c' | 'C' => return true,
+                    'S' if options.peek().is_some() => return true,
+                    'm' | 'F' | 't' => {
+                        if options.peek().is_none() {
+                            args.next();
+                        }
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Configure only this command. The shared runners call it after caller environments
 /// are applied, and capture protected child output before redacting it.
 fn prepare_git_inner(
@@ -284,14 +345,7 @@ fn prepare_git_inner(
     if op == Operation::Commit {
         // History-producing commands require dedicated contracts; do not let rebase,
         // cherry-pick, merge or am preserve a different author silently.
-        if tail.first() != Some(&"commit")
-            || tail.iter().any(|a| {
-                a.starts_with("--author")
-                    || a.starts_with("--no-gpg-sign")
-                    || *a == "--amend"
-                    || a.starts_with("-S") && *a != "-S"
-            })
-        {
+        if tail.first() != Some(&"commit") || commit_override(tail) {
             policy.audit(
                 Some(&auth.selection),
                 &target,
@@ -346,6 +400,8 @@ fn prepare_git_inner(
             (String::from("credential.helper"), HELPER.to_string()),
             (String::from("credential.useHttpPath"), String::from("true")),
             (String::from("http.followRedirects"), String::from("false")),
+            (String::from("http.sslVerify"), String::from("true")),
+            (format!("http.{https}.sslVerify"), String::from("true")),
             (String::from("http.extraHeader"), String::new()),
         ]);
         command
@@ -353,6 +409,7 @@ fn prepare_git_inner(
             .env("FORGE_IDENTITY_REPO", &target.repo)
             .env("FORGE_IDENTITY_TOKEN", &auth.token)
             .env("GIT_TERMINAL_PROMPT", "0")
+            .env_remove("GIT_SSL_NO_VERIFY")
             .env("GIT_ASKPASS", "false");
         for (key, _) in std::env::vars_os() {
             if key.to_string_lossy().starts_with("GIT_TRACE") {
@@ -375,7 +432,16 @@ pub fn prepare_git(
     cwd: Option<&Path>,
     args: &[&str],
 ) -> Result<Option<Authorization>> {
-    let result = prepare_git_inner(command, cwd, args);
+    prepare_git_with_deadline(command, cwd, args, None)
+}
+
+pub fn prepare_git_with_deadline(
+    command: &mut Command,
+    cwd: Option<&Path>,
+    args: &[&str],
+    deadline: Option<std::time::Instant>,
+) -> Result<Option<Authorization>> {
+    let result = super::probe::with_deadline(deadline, || prepare_git_inner(command, cwd, args));
     if let Err(error) = &result {
         super::audit_refusal(error.code)?;
     }
