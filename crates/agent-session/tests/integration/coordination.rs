@@ -37581,7 +37581,7 @@ fn main_agent_submit_recovery_rechecks_authority_inside_the_serialized_send_boun
                 .expect("worker session json");
                 let queued = json!({
                     "schema_version": "agent-session.codex-account-next.v1",
-                    "account": "poies",
+                    "account": "acct2",
                     "revision": 1,
                     "state": "queued",
                     "updated_at": "2030-01-01T00:00:03Z"
@@ -37610,7 +37610,7 @@ fn main_agent_submit_recovery_rechecks_authority_inside_the_serialized_send_boun
                     json!(runtime_root.join("thread-attached"));
                 let binding = json!({
                     "schema_version": "agent-session.codex-account-binding.v1",
-                    "selected_account": "gamania",
+                    "selected_account": "acct1",
                     "revision": 1,
                     "state": "bound",
                     "applied_runtime_id": worker_incarnation,

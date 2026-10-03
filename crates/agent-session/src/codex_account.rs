@@ -1807,7 +1807,7 @@ mod tests {
 
     #[test]
     fn nickname_validation_rejects_paths_and_identity_values() {
-        assert!(validate_account("gamania").is_ok());
+        assert!(validate_account("acct1").is_ok());
         assert!(validate_account("team-1").is_ok());
         assert!(validate_account("../auth.json").is_err());
         assert!(validate_account("person@example.com").is_err());
@@ -1838,7 +1838,7 @@ mod tests {
         for value in [
             json!({
                 "schema_version": "agent-session.codex-account-binding.v2",
-                "selected_account": "gamania",
+                "selected_account": "acct1",
                 "revision": 1,
                 "state": "bound",
                 "applied_runtime_id": "runtime-binding-fixture",
@@ -1855,7 +1855,7 @@ mod tests {
             }),
             json!({
                 "schema_version": BINDING_SCHEMA_VERSION,
-                "selected_account": "gamania",
+                "selected_account": "acct1",
                 "revision": 0,
                 "state": "bound",
                 "applied_runtime_id": "runtime-binding-fixture",
@@ -1935,7 +1935,7 @@ mod tests {
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
 
         assert_eq!(
-            begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "poies",)
+            begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "acct2",)
                 .unwrap_err()
                 .code(),
             "codex-account-session-busy"
@@ -1972,7 +1972,7 @@ mod tests {
     fn valid_binding(state: &str) -> Value {
         json!({
             "schema_version": BINDING_SCHEMA_VERSION,
-            "selected_account": "gamania",
+            "selected_account": "acct1",
             "revision": 7,
             "state": state,
             "applied_runtime_id": if state == "bound" { Value::String("runtime-binding-fixture".into()) } else { Value::Null },
@@ -2020,7 +2020,7 @@ mod tests {
                 &switch_context,
                 &switch_id,
                 "runtime-binding-fixture",
-                "poies",
+                "acct2",
             )
             .map(|_| "switch")
         });
@@ -2074,11 +2074,11 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persist_record(&tmp, valid_binding("bound"));
         let error =
-            begin_switch_binding(&context, &record.id, "stale-launch", "poies").unwrap_err();
+            begin_switch_binding(&context, &record.id, "stale-launch", "acct2").unwrap_err();
         assert_eq!(error.code(), "codex-account-session-incarnation-conflict");
         assert_eq!(
             selected_account(&load_session_record(&context, &record.id).unwrap()).as_deref(),
-            Some("gamania")
+            Some("acct1")
         );
     }
 
@@ -2096,13 +2096,13 @@ shift
 printf '%s\n' "$*" >> "$calls"
 case "$1" in
   list)
-    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts":[{"account":"gamania","label":"Gamania","plan":"team"}]}'
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","accounts":[{"account":"acct1","label":"Acct1","plan":"team"}]}'
     ;;
   resolve)
-    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture","plan":"team"}'
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture","plan":"team"}'
     ;;
   select)
-    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","plan":"team"}'
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","plan":"team"}'
     ;;
   *) exit 2 ;;
 esac
@@ -2120,21 +2120,21 @@ esac
         assert_eq!(
             list_accounts().unwrap(),
             vec![CodexAccountSummary {
-                account: "gamania".to_string(),
-                label: Some("Gamania".to_string()),
+                account: "acct1".to_string(),
+                label: Some("Acct1".to_string()),
                 plan: Some("team".to_string()),
             }]
         );
-        let credentials = resolve_account("gamania", false).unwrap();
+        let credentials = resolve_account("acct1", false).unwrap();
         assert_eq!(credentials.access_token, "fixture-token");
         assert_eq!(credentials.chatgpt_account_id, "workspace-fixture");
         assert_eq!(credentials.chatgpt_plan_type.as_deref(), Some("team"));
-        let refreshed = resolve_account("gamania", true).unwrap();
+        let refreshed = resolve_account("acct1", true).unwrap();
         assert_eq!(refreshed.chatgpt_account_id, "workspace-fixture");
         assert_eq!(
             select_account("default_with_capacity").unwrap(),
             CodexAccountSummary {
-                account: "gamania".to_string(),
+                account: "acct1".to_string(),
                 label: None,
                 plan: Some("team".to_string()),
             }
@@ -2147,8 +2147,8 @@ esac
                 .collect::<Vec<_>>(),
             vec![
                 "list --format json",
-                "resolve --account gamania --format json",
-                "resolve --account gamania --force-refresh --format json",
+                "resolve --account acct1 --format json",
+                "resolve --account acct1 --force-refresh --format json",
                 "select --strategy default_with_capacity --format json",
             ]
         );
@@ -2259,7 +2259,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         {
             let _guard = acquire_session_record_lock(&context, &record.id).unwrap();
             let mut current = load_session_record(&context, &record.id).unwrap();
-            queue_auto_failover_locked(&context, &mut current, "poies").unwrap();
+            queue_auto_failover_locked(&context, &mut current, "acct2").unwrap();
         }
         let expected = pending_auto_failover_apply(&reload(&context, &record.id))
             .unwrap()
@@ -2301,7 +2301,7 @@ case "$mode" in
     printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v2","accounts":[]}'
     ;;
   mismatch-resolve)
-    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"poies","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture"}'
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct2","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture"}'
     ;;
   invalid-select)
     printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"../auth.json"}'
@@ -2347,7 +2347,7 @@ esac
         ])
         .unwrap();
         let _broker = EnvGuard::set(&lock, BROKER_ENV, &mismatch_argv);
-        let error = match resolve_account("gamania", false) {
+        let error = match resolve_account("acct1", false) {
             Ok(_) => panic!("mismatched broker account must be rejected"),
             Err(error) => error,
         };
@@ -2417,20 +2417,20 @@ esac
         let (context, record) = persisted_bound(&tmp);
 
         let attempt =
-            begin_refresh_binding(&context, &record.id, "runtime-binding-fixture", "gamania")
+            begin_refresh_binding(&context, &record.id, "runtime-binding-fixture", "acct1")
                 .unwrap();
         assert_eq!(attempt.revision(), 8);
         let view = restore_binding_after_refresh_failure(
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "gamania",
+            "acct1",
             attempt,
         )
         .unwrap();
 
         assert_eq!(view.state, "bound");
-        assert_eq!(view.selected_account.as_deref(), Some("gamania"));
+        assert_eq!(view.selected_account.as_deref(), Some("acct1"));
         assert_eq!(view.revision, 8);
         assert_eq!(
             view.applied_runtime_id.as_deref(),
@@ -2446,16 +2446,16 @@ esac
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
         let attempt =
-            begin_refresh_binding(&context, &record.id, "runtime-binding-fixture", "gamania")
+            begin_refresh_binding(&context, &record.id, "runtime-binding-fixture", "acct1")
                 .unwrap();
         mark_waiting(&context, &record);
-        begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
 
         let error = restore_binding_after_refresh_failure(
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "gamania",
+            "acct1",
             attempt,
         )
         .unwrap_err();
@@ -2463,7 +2463,7 @@ esac
         assert_eq!(error.code(), "codex-account-binding-superseded");
         let view = view_for_record(&reload(&context, &record.id));
         assert_eq!(view.state, "pending");
-        assert_eq!(view.selected_account.as_deref(), Some("poies"));
+        assert_eq!(view.selected_account.as_deref(), Some("acct2"));
     }
 
     #[test]
@@ -2473,16 +2473,16 @@ esac
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
         let view =
-            queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+            queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         assert_eq!(view.state, "bound");
-        assert_eq!(view.selected_account.as_deref(), Some("gamania"));
+        assert_eq!(view.selected_account.as_deref(), Some("acct1"));
         let next = view.next.expect("queued next intent present");
-        assert_eq!(next.account.as_deref(), Some("poies"));
+        assert_eq!(next.account.as_deref(), Some("acct2"));
         assert_eq!(next.state, "queued");
         assert_eq!(next.revision, 1);
         assert_eq!(
             selected_account(&reload(&context, &record.id)).as_deref(),
-            Some("gamania"),
+            Some("acct1"),
             "the applied account stays authoritative while a next account is queued"
         );
     }
@@ -2500,7 +2500,7 @@ esac
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "poies",
+            "acct2",
         )
         .unwrap();
         assert_eq!(queued.state, "unbound");
@@ -2510,28 +2510,28 @@ esac
                 .next
                 .as_ref()
                 .and_then(|next| next.account.as_deref()),
-            Some("poies")
+            Some("acct2")
         );
         assert_eq!(queued.next.as_ref().map(|next| next.state), Some("queued"));
 
         let applying = begin_next_apply(&context, &record.id, "runtime-binding-fixture")
             .unwrap()
             .expect("queued account is drainable");
-        assert_eq!(applying.account, "poies");
+        assert_eq!(applying.account, "acct2");
         assert_eq!(applying.revision, 1);
         let intent_id = applying.intent_id.expect("intent identity");
         let bound = finish_next_apply(
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "poies",
+            "acct2",
             1,
             &intent_id,
             Ok(()),
         )
         .unwrap();
         assert_eq!(bound.state, "bound");
-        assert_eq!(bound.selected_account.as_deref(), Some("poies"));
+        assert_eq!(bound.selected_account.as_deref(), Some("acct2"));
         assert_eq!(
             bound.applied_runtime_id.as_deref(),
             Some("runtime-binding-fixture")
@@ -2555,7 +2555,7 @@ esac
                 &context,
                 &record.id,
                 "runtime-binding-fixture",
-                "poies",
+                "acct2",
             )
             .unwrap_err();
             assert_eq!(error.code(), "codex-account-not-bound", "{case}");
@@ -2575,7 +2575,7 @@ esac
         record.extra.remove(BINDING_KEY);
         write_session_record(&context, &record).unwrap();
 
-        queue_next_account_with_unbound(&context, &record.id, "runtime-binding-fixture", "poies")
+        queue_next_account_with_unbound(&context, &record.id, "runtime-binding-fixture", "acct2")
             .unwrap();
         let applying = begin_next_apply(&context, &record.id, "runtime-binding-fixture")
             .unwrap()
@@ -2585,7 +2585,7 @@ esac
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "poies",
+            "acct2",
             1,
             &intent_id,
             Err("refresh_failed"),
@@ -2612,14 +2612,14 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let view =
-            queue_next_account(&context, &record.id, "runtime-binding-fixture", "gamania").unwrap();
+            queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct1").unwrap();
         assert!(
             view.next.is_none(),
             "selecting the current account cancels the queued intent"
         );
-        assert_eq!(view.selected_account.as_deref(), Some("gamania"));
+        assert_eq!(view.selected_account.as_deref(), Some("acct1"));
     }
 
     #[test]
@@ -2628,7 +2628,7 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let view =
             queue_next_account(&context, &record.id, "runtime-binding-fixture", "sym").unwrap();
         let next = view.next.expect("superseding next intent present");
@@ -2644,7 +2644,7 @@ esac
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
         assert!(ensure_input_allowed(&reload(&context, &record.id)).is_ok());
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         assert_eq!(
             ensure_input_allowed(&reload(&context, &record.id))
                 .unwrap_err()
@@ -2655,7 +2655,7 @@ esac
             &context,
             &record.id,
             "runtime-binding-fixture",
-            Some("poies"),
+            Some("acct2"),
             Some(1),
         )
         .unwrap();
@@ -2668,7 +2668,7 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let queued = reload(&context, &record.id);
 
         assert!(
@@ -2688,14 +2688,14 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         queue_next_account(&context, &record.id, "runtime-binding-fixture", "sym").unwrap();
 
         let error = cancel_next_account(
             &context,
             &record.id,
             "runtime-binding-fixture",
-            Some("poies"),
+            Some("acct2"),
             Some(1),
         )
         .unwrap_err();
@@ -2735,7 +2735,7 @@ esac
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "poies",
+            "acct2",
             absent.as_ref(),
             "reserved-account-intent-0001",
         )
@@ -2790,7 +2790,7 @@ esac
             NEXT_KEY.to_string(),
             json!({
                 "schema_version": "agent-session.codex-account-next.v2",
-                "account": "poies",
+                "account": "acct2",
                 "revision": 1,
                 "state": "queued",
                 "updated_at": "2030-01-01T00:00:00Z"
@@ -2813,10 +2813,10 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let apply = begin_next_apply(&context, &record.id, "runtime-binding-fixture").unwrap();
         let apply = apply.expect("queued apply");
-        assert_eq!(apply.account, "poies");
+        assert_eq!(apply.account, "acct2");
         assert_eq!(apply.revision, 1);
         let intent_id = apply.intent_id.expect("intent id");
         assert_eq!(
@@ -2830,13 +2830,13 @@ esac
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "poies",
+            "acct2",
             1,
             &intent_id,
             Ok(()),
         )
         .unwrap();
-        assert_eq!(view.selected_account.as_deref(), Some("poies"));
+        assert_eq!(view.selected_account.as_deref(), Some("acct2"));
         assert_eq!(view.state, "bound");
         assert_eq!(
             view.revision, 8,
@@ -2852,7 +2852,7 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let intent_id = begin_next_apply(&context, &record.id, "runtime-binding-fixture")
             .unwrap()
             .expect("queued apply")
@@ -2862,7 +2862,7 @@ esac
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "poies",
+            "acct2",
             1,
             &intent_id,
             Err("refresh_failed"),
@@ -2870,7 +2870,7 @@ esac
         .unwrap();
         assert_eq!(
             view.selected_account.as_deref(),
-            Some("gamania"),
+            Some("acct1"),
             "a failed apply never changes the applied account"
         );
         let next = view.next.expect("a failed intent stays visible");
@@ -2895,7 +2895,7 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         begin_next_apply(&context, &record.id, "runtime-binding-fixture").unwrap();
         let mut current = reload(&context, &record.id);
         assert_eq!(view_for_record(&current).next.unwrap().state, "applying");
@@ -2909,7 +2909,7 @@ esac
         );
         assert_eq!(
             pending_next_apply(&current).unwrap(),
-            Some(("poies".to_string(), 1)),
+            Some(("acct2".to_string(), 1)),
             "a recovered intent is drainable again"
         );
     }
@@ -2920,7 +2920,7 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         begin_next_apply(&context, &record.id, "runtime-binding-fixture").unwrap();
 
         let prepared =
@@ -2935,7 +2935,7 @@ esac
         let persisted = reload(&context, &record.id);
         assert_eq!(
             pending_next_apply(&persisted).unwrap(),
-            Some(("poies".to_string(), 1)),
+            Some(("acct2".to_string(), 1)),
             "daemon reconnect must persist a drainable recovered intent"
         );
     }
@@ -2946,7 +2946,7 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let intent_id = begin_next_apply(&context, &record.id, "runtime-binding-fixture")
             .unwrap()
             .expect("queued apply")
@@ -2954,7 +2954,7 @@ esac
             .expect("intent id");
         mark_waiting(&context, &record);
 
-        begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "gamania").unwrap();
+        begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "acct1").unwrap();
         let current = reload(&context, &record.id);
         assert!(
             view_for_record(&current).next.is_none(),
@@ -2965,7 +2965,7 @@ esac
                 &context,
                 &record.id,
                 "runtime-binding-fixture",
-                "poies",
+                "acct2",
                 1,
                 &intent_id,
                 Ok(()),
@@ -2982,7 +2982,7 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let intent_id = begin_next_apply(&context, &record.id, "runtime-binding-fixture")
             .unwrap()
             .expect("queued apply")
@@ -2992,7 +2992,7 @@ esac
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "poies",
+            "acct2",
             1,
             &intent_id,
             Err("refresh_failed"),
@@ -3000,7 +3000,7 @@ esac
         .unwrap();
         mark_waiting(&context, &record);
 
-        begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "gamania").unwrap();
+        begin_switch_binding(&context, &record.id, "runtime-binding-fixture", "acct1").unwrap();
         assert!(
             view_for_record(&reload(&context, &record.id))
                 .next
@@ -3015,7 +3015,7 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let intent_id = begin_next_apply(&context, &record.id, "runtime-binding-fixture")
             .unwrap()
             .expect("queued apply")
@@ -3026,7 +3026,7 @@ esac
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "poies",
+            "acct2",
             1,
             &intent_id,
             Ok(()),
@@ -3034,7 +3034,7 @@ esac
         .unwrap_err();
         assert_eq!(error.code(), "codex-account-next-superseded");
         let view = view_for_record(&reload(&context, &record.id));
-        assert_eq!(view.selected_account.as_deref(), Some("gamania"));
+        assert_eq!(view.selected_account.as_deref(), Some("acct1"));
         assert_eq!(view.next.unwrap().account.as_deref(), Some("sym"));
     }
 
@@ -3044,20 +3044,20 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let stale_intent_id = begin_next_apply(&context, &record.id, "runtime-binding-fixture")
             .unwrap()
             .expect("queued apply")
             .intent_id
             .expect("intent id");
         // Cancel by selecting the current account, then re-queue the same one.
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "gamania").unwrap();
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct1").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let error = finish_next_apply(
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "poies",
+            "acct2",
             1,
             &stale_intent_id,
             Ok(()),
@@ -3077,7 +3077,7 @@ esac
         for stale_result in [Ok(()), Err("refresh_failed")] {
             let tmp = tempfile::TempDir::new().unwrap();
             let (context, record) = persisted_bound(&tmp);
-            queue_next_account(&context, &record.id, "runtime-binding-fixture", "poies").unwrap();
+            queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
             let stale = begin_next_apply(&context, &record.id, "runtime-binding-fixture")
                 .unwrap()
                 .expect("stale apply");
@@ -3088,7 +3088,7 @@ esac
                 &mut current,
                 &DurableNextAccount {
                     schema_version: NEXT_SCHEMA_VERSION.to_string(),
-                    account: "poies".to_string(),
+                    account: "acct2".to_string(),
                     selection_source: Some("explicit".to_string()),
                     revision: 1,
                     intent_id: Some("replacement-intent".to_string()),
@@ -3105,7 +3105,7 @@ esac
                 &context,
                 &record.id,
                 "runtime-binding-fixture",
-                "poies",
+                "acct2",
                 1,
                 &stale_intent_id,
                 stale_result,
@@ -3135,7 +3135,7 @@ esac
             &mut current,
             &DurableNextAccount {
                 schema_version: NEXT_SCHEMA_VERSION.to_string(),
-                account: "poies".to_string(),
+                account: "acct2".to_string(),
                 selection_source: None,
                 revision: 1,
                 intent_id: None,
@@ -3160,7 +3160,7 @@ esac
             &context,
             &record.id,
             "runtime-binding-fixture",
-            "poies",
+            "acct2",
             1,
             &intent_id,
             Ok(()),
@@ -3170,7 +3170,7 @@ esac
             view_for_record(&reload(&context, &record.id))
                 .selected_account
                 .as_deref(),
-            Some("poies")
+            Some("acct2")
         );
     }
 
@@ -3180,7 +3180,7 @@ esac
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
-        let error = queue_next_account(&context, &record.id, "stale-launch", "poies").unwrap_err();
+        let error = queue_next_account(&context, &record.id, "stale-launch", "acct2").unwrap_err();
         assert_eq!(error.code(), "codex-account-session-incarnation-conflict");
         assert!(
             view_for_record(&reload(&context, &record.id))
