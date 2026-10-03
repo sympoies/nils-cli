@@ -957,7 +957,7 @@ fn live_same_head_handoff_appends_reconciles_and_admits_published_review() {
     let inherited = review_state::observe_review_loop(None, HEAD, &[])
         .unwrap()
         .state;
-    let legacy = ReviewStateRecord::new(
+    let inherited_record = ReviewStateRecord::new(
         "acme/widgets",
         7,
         HEAD,
@@ -973,7 +973,7 @@ fn live_same_head_handoff_appends_reconciles_and_admits_published_review() {
         7,
         HEAD,
         1,
-        Some(legacy.record_digest.clone()),
+        Some(inherited_record.record_digest.clone()),
         ReviewStatePayload::ReviewHandoff {
             handoff: handoff(None),
         },
@@ -981,7 +981,7 @@ fn live_same_head_handoff_appends_reconciles_and_admits_published_review() {
     .unwrap();
     let stub = fixture(
         HEAD,
-        &[legacy.clone(), assigned.clone()],
+        &[inherited_record.clone(), assigned.clone()],
         vec![review(HEAD, "pass")],
     )
     .env("AGENT_SESSION_ID", "reviewer-session");
@@ -1044,7 +1044,11 @@ sys.exit(r.returncode)
     assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
     assert_eq!(parse_envelope(&output.stdout)["data"]["appended"], true);
     let body = fs::read_to_string(&posted).unwrap();
-    let bodies = [legacy.marker().unwrap(), assigned.marker().unwrap(), body];
+    let bodies = [
+        inherited_record.marker().unwrap(),
+        assigned.marker().unwrap(),
+        body,
+    ];
     let chain =
         review_state::parse_chain(bodies.iter().map(String::as_str), "acme/widgets", 7).unwrap();
     assert_eq!(chain.records.len(), 3);
