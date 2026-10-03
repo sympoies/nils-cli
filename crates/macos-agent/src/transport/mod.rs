@@ -35,6 +35,7 @@ static TOKEN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BackendAction {
+    Prune,
     Install,
     Status,
     Verify,
@@ -694,6 +695,7 @@ fn execute_remote_operation(
             strict,
         } => {
             let value = match action {
+                BackendAction::Prune => serde_json::to_value(backend::prune(dry_run, strict)?),
                 BackendAction::Install => serde_json::to_value(backend::install(dry_run, strict)?),
                 BackendAction::Status => serde_json::to_value(backend::status(dry_run)?),
                 BackendAction::Verify => serde_json::to_value(backend::verify(strict)?),

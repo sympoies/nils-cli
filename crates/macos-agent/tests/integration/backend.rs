@@ -3,11 +3,231 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use pretty_assertions::assert_eq;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use crate::common;
+
+#[test]
+fn upgrade_acceptance_stable_cli_survives_upgrade_and_rollback_and_is_verified() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let old = candidate(cwd.path(), "v4.4.0", '4');
+    let new = candidate(cwd.path(), "v4.6.0", '6');
+    authorize_rollback(&new, &old);
+    let stable = root.join("stable/peekaboo");
+    for release in [&old, &new] {
+        let installed = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            release,
+            &["--format", "json", "backend", "install", "--strict"],
+        );
+        assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+        assert_eq!(
+            fs::read(&stable).expect("stable CLI"),
+            fs::read(release.source.join("peekaboo-macos-universal/peekaboo")).expect("source CLI")
+        );
+    }
+    let rollback = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "rollback", "--strict"],
+    );
+    assert_eq!(rollback.code, 0, "{}", rollback.stderr_text());
+    assert_eq!(
+        fs::read(&stable).expect("stable rollback CLI"),
+        fs::read(old.source.join("peekaboo-macos-universal/peekaboo")).expect("old CLI")
+    );
+    fs::write(&stable, "changed executable").expect("tamper stable CLI");
+    let verified = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--error-format", "json", "backend", "verify", "--strict"],
+    );
+    assert_eq!(verified.code, 69, "{}", verified.stderr_text());
+}
+
+#[test]
+fn upgrade_acceptance_prune_preserves_current_and_predecessor_and_dry_run_is_read_only() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let first = candidate(cwd.path(), "v4.2.2", '2');
+    let previous = candidate(cwd.path(), "v4.4.0", '4');
+    let current = candidate(cwd.path(), "v4.6.0", '6');
+    authorize_rollback(&previous, &first);
+    authorize_rollback(&current, &previous);
+    for release in [&first, &previous, &current] {
+        let out = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            release,
+            &["--format", "json", "backend", "install", "--strict"],
+        );
+        assert_eq!(out.code, 0, "{}", out.stderr_text());
+    }
+    let obsolete = root.join("versions/v4.2.2");
+    write_executable(&current.tools.join("lsof"), "#!/bin/sh\necho 123\nexit 0\n");
+    let busy = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &current,
+        &["--format", "json", "backend", "prune", "--strict"],
+    );
+    assert_eq!(busy.code, 69, "{}", busy.stderr_text());
+    assert!(obsolete.is_dir(), "prune removed an in-use cache");
+    write_executable(&current.tools.join("lsof"), "#!/bin/sh\nexit 1\n");
+    let outside = cwd.path().join("outside");
+    fs::create_dir(&outside).expect("outside directory");
+    fs::write(outside.join("retained"), "fixture").expect("outside file");
+    let link = root.join("versions/v9.9.9");
+    symlink(&outside, &link).expect("symlinked cache entry");
+    let unsafe_plan = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &current,
+        &["--format", "json", "backend", "prune", "--strict"],
+    );
+    assert_eq!(unsafe_plan.code, 69, "{}", unsafe_plan.stderr_text());
+    assert!(obsolete.is_dir(), "prune partially applied an unsafe plan");
+    assert!(outside.join("retained").is_file());
+    fs::remove_file(link).expect("remove fixture symlink");
+    for dry_run in [true, false] {
+        let mut args = vec!["--format", "json", "backend", "prune", "--strict"];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let out = run_backend(&harness, cwd.path(), &root, &current, &args);
+        assert_eq!(out.code, 0, "{}", out.stderr_text());
+        assert_eq!(out.stdout_json()["result"]["removed"], json!(["v4.2.2"]));
+        assert_eq!(obsolete.exists(), dry_run);
+        assert!(root.join("versions/v4.4.0").is_dir());
+        assert!(root.join("versions/v4.6.0").is_dir());
+    }
+}
+
+#[test]
+fn upgrade_acceptance_doctor_names_the_missing_permission() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.6.0", '6');
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    let out = run_backend_probe_mode(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["--format", "json", "doctor", "--strict"],
+        "permission_denied",
+    );
+    assert_eq!(out.code, 77, "{}", out.stderr_text());
+    let result = out.stdout_json();
+    let message = result["result"]["permissions"]["message"]
+        .as_str()
+        .expect("permission message");
+    assert!(message.contains("Screen Recording"), "{message}");
+    assert!(message.contains("Peekaboo GUI app"), "{message}");
+    assert!(message.contains("team FIXTURE"), "{message}");
+    assert!(!message.contains("locked"), "{message}");
+}
+
+#[test]
+fn upgrade_acceptance_prune_is_bounded_to_32_inactive_versions() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.6.0", '6');
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    for index in 0..34 {
+        let cached = root.join(format!("versions/v1.0.{index}"));
+        fs::create_dir_all(cached.join("cli")).expect("cached CLI parent");
+        fs::create_dir_all(cached.join("app/Peekaboo.app/Contents/MacOS"))
+            .expect("cached app parent");
+        fs::write(cached.join("cli/peekaboo"), "inactive fixture").expect("cached CLI");
+        fs::write(
+            cached.join("app/Peekaboo.app/Contents/MacOS/Peekaboo"),
+            "inactive fixture",
+        )
+        .expect("cached app");
+    }
+    for expected in [32, 2] {
+        let pruned = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            &release,
+            &["--format", "json", "backend", "prune", "--strict"],
+        );
+        assert_eq!(pruned.code, 0, "{}", pruned.stderr_text());
+        assert_eq!(
+            pruned.stdout_json()["result"]["removed"]
+                .as_array()
+                .expect("removed versions")
+                .len(),
+            expected
+        );
+        assert!(root.join("versions/v4.6.0").is_dir());
+    }
+}
+
+#[test]
+fn upgrade_acceptance_legacy_cli_migration_is_explicit_and_dry_run_is_read_only() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.4.0", '4');
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    let stable = root.join("stable/peekaboo");
+    fs::remove_file(&stable).expect("simulate the legacy version-specific CLI layout");
+    let receipt = fs::read(root.join("receipts/current.json")).expect("receipt");
+    for dry_run in [true, false] {
+        let mut args = vec!["--format", "json", "backend", "install", "--strict"];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let out = run_backend(&harness, cwd.path(), &root, &release, &args);
+        assert_eq!(out.code, 0, "{}", out.stderr_text());
+        assert_eq!(stable.exists(), !dry_run);
+        assert_eq!(
+            fs::read(root.join("receipts/current.json")).expect("receipt"),
+            receipt
+        );
+    }
+}
 
 #[test]
 fn lifecycle_status_discloses_locked_notarization_policy() {
@@ -30,6 +250,41 @@ fn lifecycle_status_discloses_locked_notarization_policy() {
         status.stdout_json()["result"]["cli_notarization_policy"],
         "required"
     );
+}
+
+#[test]
+fn upgrade_acceptance_verify_migrates_the_accepted_predecessor_without_selecting_the_candidate() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let old = candidate(cwd.path(), "v4.4.0", '4');
+    let new = candidate(cwd.path(), "v4.6.0", '6');
+    authorize_rollback(&new, &old);
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &old,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    let receipt = fs::read(root.join("receipts/current.json")).expect("accepted receipt");
+    fs::remove_file(root.join("stable/peekaboo")).expect("legacy CLI layout");
+    let verified = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "verify", "--strict"],
+    );
+    assert_eq!(verified.code, 0, "{}", verified.stderr_text());
+    assert_eq!(verified.stdout_json()["result"]["active_tag"], "v4.4.0");
+    assert_eq!(
+        fs::read(root.join("receipts/current.json")).expect("accepted receipt"),
+        receipt
+    );
+    assert!(root.join("stable/peekaboo").is_file());
+    assert!(!root.join("versions/v4.6.0").exists());
 }
 
 #[test]
@@ -1359,6 +1614,7 @@ fn candidate(root: &Path, tag: &str, commit_char: char) -> Candidate {
     fs::create_dir_all(source.join("Peekaboo.app/Contents/MacOS")).expect("app source");
     fs::create_dir_all(&assets).expect("assets");
     fs::create_dir_all(&tools).expect("tools");
+    write_executable(&tools.join("lsof"), "#!/bin/sh\nexit 1\n");
     write_executable(
         &tools.join("lipo"),
         r#"#!/bin/sh
