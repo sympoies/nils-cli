@@ -93,7 +93,10 @@ modifications, renames and deletions of `YYYY-MM.md` files in the selected log
 directory with `month-file-changed` (exit 65). It checks committed, staged,
 unstaged and untracked changes separately, so restoring the working tree cannot
 hide an edit in the index or branch. Both detected directory conventions and
-an explicit `--dir` inside the repository are supported. An external log cannot
+an explicit `--dir` inside the repository are supported. Conventional logs
+check both supported paths, so switching or shadowing the detected directory
+cannot hide baseline deletions. Explicit paths retain their logical location
+when a directory symlink changes its target. An external log cannot
 be compared to this repository and is refused in this mode.
 
 The comparison starts at the merge base of `HEAD` and the supplied ref, so

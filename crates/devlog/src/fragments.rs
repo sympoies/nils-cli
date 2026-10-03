@@ -354,8 +354,17 @@ fn immutability_with_fold(
     if !list.status.success() {
         return Err(DevlogError::BaselineUnavailable);
     }
+    check_immutable_paths(devlog, &base, &list.stdout, pr_changed)
+}
+
+fn check_immutable_paths(
+    devlog: &Devlog,
+    base: &str,
+    names: &[u8],
+    pr_changed: Option<&BTreeSet<String>>,
+) -> Result<Vec<Problem>, DevlogError> {
     let mut problems = Vec::new();
-    for name in list.stdout.split(|b| *b == 0).filter(|n| !n.is_empty()) {
+    for name in names.split(|b| *b == 0).filter(|n| !n.is_empty()) {
         let name = std::str::from_utf8(name)
             .map_err(|_| invalid(devlog.dir(), "non-UTF-8 baseline fragment path"))?;
         let old = git(devlog, &["show", &format!("{base}:{name}")])?;
@@ -433,15 +442,55 @@ pub(crate) fn pr_changes(devlog: &Devlog, base: &str) -> Result<Vec<Problem>, De
         path: devlog.dir().to_path_buf(),
         source,
     })?;
-    let dir = directory.strip_prefix(&root).map_err(|_| {
+    let resolved_dir = directory.strip_prefix(&root).map_err(|_| {
         invalid(
             devlog.dir(),
             "--fragments-only requires a log inside this repository",
         )
     })?;
-    let pathspec = format!(":(literal){}", dir.to_string_lossy().replace('\\', "/"));
+    // Canonical paths prove containment, while lexical paths retain ownership
+    // when a branch replaces a tracked directory with a directory symlink.
+    let absolute = if devlog.dir().is_absolute() {
+        devlog.dir().to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|source| DevlogError::Io {
+                path: devlog.dir().to_path_buf(),
+                source,
+            })?
+            .join(devlog.dir())
+    };
+    let mut lexical = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                lexical.pop();
+            }
+            _ => lexical.push(component.as_os_str()),
+        }
+    }
+    let logical_dir = lexical.strip_prefix(&root).map_err(|_| {
+        invalid(
+            devlog.dir(),
+            "--fragments-only requires a repository-relative log path",
+        )
+    })?;
+    let mut dirs = BTreeSet::from([resolved_dir.to_path_buf(), logical_dir.to_path_buf()]);
+    if crate::model::DEVLOG_DIRS
+        .iter()
+        .any(|candidate| dirs.contains(Path::new(candidate)))
+    {
+        // Keep both conventions visible even if the feature branch deletes or
+        // shadows the directory that discovery would select at the merge base.
+        dirs.extend(crate::model::DEVLOG_DIRS.iter().map(PathBuf::from));
+    }
+    let pathspecs: Vec<_> = dirs
+        .iter()
+        .map(|dir| format!(":(literal){}", dir.to_string_lossy().replace('\\', "/")))
+        .collect();
     let mut changed = BTreeSet::new();
-    for args in [
+    for mut args in [
         vec![
             "diff",
             "--name-only",
@@ -450,7 +499,6 @@ pub(crate) fn pr_changes(devlog: &Devlog, base: &str) -> Result<Vec<Problem>, De
             base,
             "HEAD",
             "--",
-            &pathspec,
         ],
         vec![
             "diff",
@@ -460,11 +508,11 @@ pub(crate) fn pr_changes(devlog: &Devlog, base: &str) -> Result<Vec<Problem>, De
             "-z",
             "HEAD",
             "--",
-            &pathspec,
         ],
-        vec!["diff", "--name-only", "--no-renames", "-z", "--", &pathspec],
-        vec!["ls-files", "--others", "-z", "--", &pathspec],
+        vec!["diff", "--name-only", "--no-renames", "-z", "--"],
+        vec!["ls-files", "--others", "-z", "--"],
     ] {
+        args.extend(pathspecs.iter().map(String::as_str));
         let output = git(devlog, &args)?;
         if !output.status.success() {
             return Err(DevlogError::BaselineUnavailable);
@@ -477,10 +525,20 @@ pub(crate) fn pr_changes(devlog: &Devlog, base: &str) -> Result<Vec<Problem>, De
             );
         }
     }
-    let mut problems = immutability_with_fold(devlog, Some(base), Some(&changed))?;
+    let pending: Vec<_> = dirs
+        .iter()
+        .map(|dir| dir.join("pending").to_string_lossy().replace('\\', "/"))
+        .collect();
+    let mut args = vec!["ls-tree", "-rz", "--name-only", base, "--"];
+    args.extend(pending.iter().map(String::as_str));
+    let baseline = git(devlog, &args)?;
+    if !baseline.status.success() {
+        return Err(DevlogError::BaselineUnavailable);
+    }
+    let mut problems = check_immutable_paths(devlog, base, &baseline.stdout, Some(&changed))?;
     for name in changed {
         let path = Path::new(&name);
-        if path.parent() == Some(dir)
+        if path.parent().is_some_and(|parent| dirs.contains(parent))
             && path
                 .file_name()
                 .and_then(|s| s.to_str())

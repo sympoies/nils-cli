@@ -762,3 +762,68 @@ fn fragments_only_passes_new_fragments_without_requiring_the_writer_environment(
         assert_eq!(out.stderr, ordinary.stderr);
     }
 }
+
+#[test]
+fn fragments_only_cannot_hide_baseline_deletions_by_switching_log_conventions() {
+    for (old_dir, new_dir) in [
+        ("docs/devlog", "docs/source/devlog"),
+        ("docs/source/devlog", "docs/devlog"),
+    ] {
+        let repo = Repo::new();
+        new(&repo.root, "Folded", "2020-04-20", "folded");
+        success(&repo.root, &["fold"]);
+        new(&repo.root, "Merged", "2020-04-21", "merged");
+        if old_dir != "docs/devlog" {
+            std::fs::create_dir_all(repo.root.join(old_dir).parent().unwrap()).unwrap();
+            std::fs::rename(repo.root.join("docs/devlog"), repo.root.join(old_dir)).unwrap();
+        }
+        commit(&repo.root, "Baseline log");
+        git(&repo.root, &["checkout", "-qb", "feature"]);
+        std::fs::remove_dir_all(repo.root.join(old_dir)).unwrap();
+        std::fs::create_dir_all(repo.root.join(new_dir)).unwrap();
+        std::fs::write(repo.root.join(new_dir).join("README.md"), INDEX).unwrap();
+        for committed in [false, true] {
+            if committed {
+                commit(&repo.root, "Switch log directory");
+            }
+            for dir in [None, Some(new_dir)] {
+                let out = strict_check(&repo.root, dir, "main");
+                assert_problem(&out, "month-file-changed", &format!("{old_dir}/2020-04.md"));
+                assert_problem(
+                    &out,
+                    "fragment-deleted",
+                    &format!("{old_dir}/pending/2020-04-21-merged.md"),
+                );
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn fragments_only_cannot_hide_custom_log_deletions_by_retargeting_a_symlink() {
+    let repo = Repo::new();
+    new(&repo.root, "Folded", "2020-04-20", "folded");
+    success(&repo.root, &["fold"]);
+    new(&repo.root, "Merged", "2020-04-21", "merged");
+    std::fs::create_dir_all(repo.root.join("history")).unwrap();
+    std::fs::rename(repo.root.join("docs/devlog"), repo.root.join("history/log")).unwrap();
+    commit(&repo.root, "Baseline custom log");
+    git(&repo.root, &["checkout", "-qb", "feature"]);
+    std::fs::remove_dir_all(repo.root.join("history/log")).unwrap();
+    std::fs::create_dir_all(repo.root.join("history/other")).unwrap();
+    std::fs::write(repo.root.join("history/other/README.md"), INDEX).unwrap();
+    std::os::unix::fs::symlink("other", repo.root.join("history/log")).unwrap();
+    for committed in [false, true] {
+        if committed {
+            commit(&repo.root, "Retarget custom log");
+        }
+        let out = strict_check(&repo.root, Some("history/log"), "main");
+        assert_problem(&out, "month-file-changed", "history/log/2020-04.md");
+        assert_problem(
+            &out,
+            "fragment-deleted",
+            "history/log/pending/2020-04-21-merged.md",
+        );
+    }
+}
