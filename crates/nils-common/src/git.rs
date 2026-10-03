@@ -45,6 +45,7 @@ pub enum PrKind {
     Docs,
     Ci,
     Refactor,
+    Test,
 }
 
 impl PrKind {
@@ -58,6 +59,7 @@ impl PrKind {
             PrKind::Docs => "docs",
             PrKind::Ci => "ci",
             PrKind::Refactor => "refactor",
+            PrKind::Test => "test",
         }
     }
 
@@ -73,6 +75,7 @@ impl PrKind {
             PrKind::Docs => "docs",
             PrKind::Ci => "ci",
             PrKind::Refactor => "refactor",
+            PrKind::Test => "test",
         }
     }
 
@@ -86,12 +89,13 @@ impl PrKind {
             "docs" => Some(PrKind::Docs),
             "ci" => Some(PrKind::Ci),
             "refactor" => Some(PrKind::Refactor),
+            "test" => Some(PrKind::Test),
             _ => None,
         }
     }
 
     /// Every kind in declaration order, for help text and exhaustive tests.
-    pub fn all() -> [PrKind; 6] {
+    pub fn all() -> [PrKind; 7] {
         [
             PrKind::Feature,
             PrKind::Bug,
@@ -99,6 +103,7 @@ impl PrKind {
             PrKind::Docs,
             PrKind::Ci,
             PrKind::Refactor,
+            PrKind::Test,
         ]
     }
 }
@@ -562,6 +567,7 @@ mod tests {
         assert_eq!(PrKind::Docs.branch_prefix(), "docs");
         assert_eq!(PrKind::Ci.branch_prefix(), "ci");
         assert_eq!(PrKind::Refactor.branch_prefix(), "refactor");
+        assert_eq!(PrKind::Test.branch_prefix(), "test");
     }
 
     #[test]

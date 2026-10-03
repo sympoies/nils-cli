@@ -2165,7 +2165,7 @@ checks and after ready, and merge uses the same OID as a compare-and-swap
 condition. Amend, rebase, or post-check push operations invalidate the latest
 delivery attestation until `test-first-evidence bind-delivery` appends a new
 attempt; the baseline is never replaced. Record v1 remains readable but cannot
-satisfy this gate. `docs` / `chore` / `ci` / `refactor` kinds are exempt. Failures
+satisfy this gate. `docs` / `chore` / `ci` / `refactor` / `test` kinds are exempt. Failures
 surface as `test_first_evidence_required`, `test_first_evidence_v1`,
 `test_first_evidence_classification`, `test_first_evidence_incomplete`,
 `test_first_evidence_unbound`, `test_first_evidence_subject_mismatch`,

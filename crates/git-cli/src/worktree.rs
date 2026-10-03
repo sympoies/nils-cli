@@ -736,7 +736,7 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, CliError> {
             CliError::usage(
                 "invalid-kind",
                 format!(
-                    "unknown --kind '{value}' (expected one of: feature, bug, chore, docs, ci, refactor)"
+                    "unknown --kind '{value}' (expected one of: feature, bug, chore, docs, ci, refactor, test)"
                 ),
             )
         })?,
@@ -920,10 +920,10 @@ fn reject_extra_args(command: &str, args: &[String]) -> Result<(), CliError> {
 
 fn print_add_help() {
     println!(
-        "Usage: git-cli worktree add <slug> [--from <ref>] [--kind <feature|bug|chore|docs|ci|refactor>] [--format text|json]"
+        "Usage: git-cli worktree add <slug> [--from <ref>] [--kind <feature|bug|chore|docs|ci|refactor|test>] [--format text|json]"
     );
     println!(
-        "  --kind selects the branch prefix (feature->feat/, bug->fix/, chore->chore/, docs->docs/, ci->ci/, refactor->refactor/); default: feature"
+        "  --kind selects the branch prefix (feature->feat/, bug->fix/, chore->chore/, docs->docs/, ci->ci/, refactor->refactor/, test->test/); default: feature"
     );
 }
 
