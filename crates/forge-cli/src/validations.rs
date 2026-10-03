@@ -49,6 +49,7 @@ pub enum BranchPrefix {
     Docs,
     Ci,
     Refactor,
+    Test,
 }
 
 impl BranchPrefix {
@@ -60,6 +61,7 @@ impl BranchPrefix {
             BranchPrefix::Docs => "docs",
             BranchPrefix::Ci => "ci",
             BranchPrefix::Refactor => "refactor",
+            BranchPrefix::Test => "test",
         }
     }
 }
@@ -89,7 +91,7 @@ fn schema() -> String {
 }
 
 /// Rule 1a — branch name matches
-/// `^(feat|fix|chore|docs|ci|refactor)/[a-z0-9][a-z0-9.-]{1,63}$`.
+/// `^(feat|fix|chore|docs|ci|refactor|test)/[a-z0-9][a-z0-9.-]{1,63}$`.
 ///
 /// The slug character class permits `.` so release-style branches such as
 /// `chore/release-0.22.1` validate without forcing kebab-case versions on
@@ -101,7 +103,7 @@ pub fn branch_name(branch: &str) -> Result<BranchPrefix, ForgeError> {
         None => {
             return Err(branch_name_err(
                 branch,
-                "missing one of feat|fix|chore|docs|ci|refactor prefix",
+                "missing one of feat|fix|chore|docs|ci|refactor|test prefix",
             ));
         }
     };
@@ -113,11 +115,13 @@ pub fn branch_name(branch: &str) -> Result<BranchPrefix, ForgeError> {
         "docs" => BranchPrefix::Docs,
         "ci" => BranchPrefix::Ci,
         "refactor" => BranchPrefix::Refactor,
+
+        "test" => BranchPrefix::Test,
         other => {
             return Err(branch_name_err(
                 branch,
                 &format!(
-                    "unknown prefix '{other}' (expected one of feat|fix|chore|docs|ci|refactor)"
+                    "unknown prefix '{other}' (expected one of feat|fix|chore|docs|ci|refactor|test)"
                 ),
             ));
         }
@@ -156,13 +160,14 @@ fn branch_name_err(branch: &str, why: &str) -> ForgeError {
         schema(),
         "branch_name_invalid",
         format!("branch '{branch}' is invalid: {why}"),
-        Some("rule=^(feat|fix|chore|docs|ci|refactor)/[a-z0-9][a-z0-9.-]{1,63}$".to_string()),
+        Some("rule=^(feat|fix|chore|docs|ci|refactor|test)/[a-z0-9][a-z0-9.-]{1,63}$".to_string()),
     )
 }
 
 /// Rule 1b — declared `--kind` matches the branch prefix one-for-one
 /// (`feature` ↔ `feat/*`, `bug` ↔ `fix/*`, `chore` ↔ `chore/*`,
-/// `docs` ↔ `docs/*`, `ci` ↔ `ci/*`, `refactor` ↔ `refactor/*`).
+/// `docs` ↔ `docs/*`, `ci` ↔ `ci/*`, `refactor` ↔ `refactor/*`,
+/// `test` ↔ `test/*`).
 pub fn branch_kind_matches(prefix: BranchPrefix, kind: PrKind) -> Result<(), ForgeError> {
     // Compare against the single source of truth in `nils_common::git::PrKind`
     // so this rule and `git-cli`'s `worktree add --kind` derivation share one
@@ -180,7 +185,7 @@ pub fn branch_kind_matches(prefix: BranchPrefix, kind: PrKind) -> Result<(), For
                 kind = kind.as_str(),
             ),
             Some(format!(
-                "feature -> feat/*, bug -> fix/*, chore -> chore/*, docs -> docs/*, ci -> ci/*, refactor -> refactor/* (branch_prefix={p}, kind={k})",
+                "feature -> feat/*, bug -> fix/*, chore -> chore/*, docs -> docs/*, ci -> ci/*, refactor -> refactor/*, test -> test/* (branch_prefix={p}, kind={k})",
                 p = prefix.as_str(),
                 k = kind.as_str(),
             )),
@@ -797,6 +802,7 @@ mod tests {
             ok_branch("refactor/forge-cli-validations"),
             BranchPrefix::Refactor,
         );
+        assert_eq!(ok_branch("test/verify-test-kind"), BranchPrefix::Test);
     }
 
     #[test]
@@ -854,6 +860,7 @@ mod tests {
         branch_kind_matches(BranchPrefix::Docs, PrKind::Docs).expect("docs+docs");
         branch_kind_matches(BranchPrefix::Ci, PrKind::Ci).expect("ci+ci");
         branch_kind_matches(BranchPrefix::Refactor, PrKind::Refactor).expect("refactor+refactor");
+        branch_kind_matches(BranchPrefix::Test, PrKind::Test).expect("test+test");
     }
 
     #[test]
@@ -867,6 +874,10 @@ mod tests {
         assert_eq!(err_kind(err), "branch_kind_mismatch");
         let err =
             branch_kind_matches(BranchPrefix::Docs, PrKind::Refactor).expect_err("docs+refactor");
+        assert_eq!(err_kind(err), "branch_kind_mismatch");
+        let err = branch_kind_matches(BranchPrefix::Chore, PrKind::Test).expect_err("chore+test");
+        assert_eq!(err_kind(err), "branch_kind_mismatch");
+        let err = branch_kind_matches(BranchPrefix::Test, PrKind::Chore).expect_err("test+chore");
         assert_eq!(err_kind(err), "branch_kind_mismatch");
     }
 
@@ -1146,6 +1157,7 @@ mod tests {
         assert_eq!(PrKind::parse("docs"), Some(PrKind::Docs));
         assert_eq!(PrKind::parse("ci"), Some(PrKind::Ci));
         assert_eq!(PrKind::parse("refactor"), Some(PrKind::Refactor));
+        assert_eq!(PrKind::parse("test"), Some(PrKind::Test));
         assert_eq!(PrKind::parse("nope"), None);
         assert_eq!(PrKind::Feature.as_str(), "feature");
         assert_eq!(PrKind::Bug.as_str(), "bug");
@@ -1153,6 +1165,7 @@ mod tests {
         assert_eq!(PrKind::Docs.as_str(), "docs");
         assert_eq!(PrKind::Ci.as_str(), "ci");
         assert_eq!(PrKind::Refactor.as_str(), "refactor");
+        assert_eq!(PrKind::Test.as_str(), "test");
     }
 
     #[test]

@@ -72,7 +72,7 @@ subcommands (matching the binary's `--help` output):
 
 - `add <slug>`: Create a managed worktree under
   `$AGENT_HOME/worktrees/<repo-key>/<branch-slug>` on a fresh `<prefix>/<branch-slug>` branch.
-  Options: `--from <ref>`, `--kind feature|bug|chore|docs|ci|refactor` (selects the branch prefix;
+  Options: `--from <ref>`, `--kind feature|bug|chore|docs|ci|refactor|test` (selects the branch prefix;
   default `feature`), `--format text|json`.
 - `list`: List all linked git worktrees and mark entries managed by the git-cli convention.
   Options: `--format text|json`.
