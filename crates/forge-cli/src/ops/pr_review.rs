@@ -4040,6 +4040,8 @@ mod tests {
             database_id: Some(7),
             url: "https://github.com/acme/widgets/pull/44#pullrequestreview-7".to_string(),
             author: "attacker".to_string(),
+            author_node_id: None,
+            author_type: None,
             state: "COMMENTED".to_string(),
             commit_sha: "head-44".to_string(),
             submitted_at: "2026-07-20T12:00:00Z".to_string(),
