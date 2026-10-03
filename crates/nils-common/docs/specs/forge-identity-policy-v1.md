@@ -130,7 +130,8 @@ New commits set author and committer from the profile, force OpenPGP signing wit
 its exact fingerprint, and verify key availability first. Conflicting repository
 identity or author/committer environment overrides refuse. Amend/history-producing
 operations and caller author/signing overrides refuse rather than silently
-rewriting attribution. Local `merge --ff-only` preserves existing commits and remains available. The existing default-branch/signing/delivery gates remain
+rewriting attribution. Local `merge --ff-only` preserves existing commits and
+remains available. The existing default-branch/signing/delivery gates remain
 independent. An installed policy does not authorize a commit or provider operation.
 
 `git-cli open pr` uses one selected collaboration repository when it contacts gh;
