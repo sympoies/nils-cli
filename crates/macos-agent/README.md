@@ -59,7 +59,7 @@ take the exclusive lifecycle lock, so verified code cannot be swapped between
 check and use. It will not replace an app it cannot prove it owns. It never
 changes TCC permissions.
 
-`backend verify` migrates a missing legacy CLI path from the authenticated
+`backend verify` migrates a missing version-specific CLI path from the authenticated
 active receipt, without selecting the candidate release. It verifies the
 stable CLI itself and restarts the owned app at its stable path. Install and
 rollback also retire owned previous app instances before swapping bundles and

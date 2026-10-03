@@ -287,7 +287,7 @@ _macos-agent__subcmd__backend_commands() {
     local commands; commands=(
 'install:Download, verify, and atomically activate the locked release' \
 'status:Report the current and previous receipts without exposing local paths' \
-'verify:Verify the active assets, migrate a legacy CLI path, and restart the owned app' \
+'verify:Verify the active assets, migrate a version-specific CLI path, and restart the owned app' \
 'rollback:Atomically select the verified previous receipt' \
 'prune:Remove at most 32 inactive cached versions, retaining authenticated receipts' \
     )
