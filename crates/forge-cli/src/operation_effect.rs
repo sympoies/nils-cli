@@ -8,8 +8,8 @@ use nils_common::execution_effect::{
 use crate::cli::{
     ActivityArgs, AuthArgs, AuthCommand, Cli, Command, InboxArgs, InboxCommand, IssueArgs,
     IssueCommand, IssueTrackerCommand, LabelArgs, LabelCommand, PrArgs, PrCommand,
-    PrPendingReviewCommand, PrReviewCommand, PrReviewLoopCommand, RepoArgs, RepoCommand,
-    ReviewThreadsCommand, SearchArgs,
+    PrPendingReviewCommand, PrReviewCommand, PrReviewHandoffCommand, PrReviewLoopCommand, RepoArgs,
+    RepoCommand, ReviewThreadsCommand, SearchArgs,
 };
 
 pub fn run(argv: Vec<OsString>, format: OutputFormat) -> i32 {
@@ -109,6 +109,17 @@ fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<&'static st
             // that write nothing. `validate` in particular reads one local file
             // and never opens a socket, so declaring it a network write hands
             // the permission layer an authority it does not need.
+            PrCommand::ReviewHandoff(args) => match &args.command {
+                PrReviewHandoffCommand::Inspect(_) | PrReviewHandoffCommand::Check(_) => {
+                    ("pr.review-handoff.read", read, network, vec!["provider"])
+                }
+                _ => (
+                    "pr.review-handoff.write",
+                    mutation,
+                    ProviderEffect::NetworkWrite,
+                    Vec::new(),
+                ),
+            },
             PrCommand::ReviewLoop(args) => match &args.command {
                 PrReviewLoopCommand::Validate(_) => (
                     "pr.review-loop.validate",

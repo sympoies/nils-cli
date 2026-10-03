@@ -19,6 +19,10 @@ schema_prefix: cli.forge-cli
 # Shared validation catalog. Each op picks the subset it enforces.
 # ---------------------------------------------------------------------------
 validations_catalog:
+  designated_review_handoff:
+    rule: "Exact provider base/head and retained tip; active reviewer/author and assignment generation; reviewer-owned surrender or explicit reasoned coordinator recovery; complete trusted chain and expected-PR canonical passing publication"
+    error_kind: review_assignment_invalid | review_assignment_missing | review_assignment_conflict | review_assignment_generation_conflict | review_state_conflict | review_writer_conflict | review_handover_required | review_scope_changed | awaiting_designated_review | designated_reviewer_unavailable | review_repair_unobserved | designated_review_provider_unsupported
+    exit: DATA | UNAVAILABLE
   branch_name:
     rule: "^(feat|fix)/[a-z0-9][a-z0-9-]{1,63}$"
     error_kind: branch_name_invalid
@@ -744,6 +748,40 @@ operations:
         author: string
         deleted: boolean
     notes: "destructive recovery requires an explicit --confirm-abandoned acknowledgement plus exact expected PR head, review commit, and review body. Expected and provider bodies are limited to 64 KiB; file and stdin inputs use bounded reads. The live command reads and validates a complete paginated pending-only membership snapshot while retaining only the target body, then takes the private provider/host/repository/PR/viewer lease, re-fetches the exact target node immediately before mutation, and revalidates PR membership, PENDING state, head, commit, normalized body, viewerDidAuthor, and viewerCanDelete. Inline draft comments fail with pending_review_inline_comments_present and require manual provider recovery. Body values and body-file paths are never emitted; dry-run validates a named body file and includes the exact-target plan. Only the revalidated node id is passed to deletePullRequestReview, and provider absence is reconciled before success. GitHub exposes no content CAS for that mutation, so the lease excludes cooperating forge-cli processes but not a same-identity non-cooperating provider client in the irreducible final-read-to-delete interval."
+
+  - id: pr.review-handoff
+    schema_version: cli.forge-cli.pr.review-handoff.v1
+    summary: "Explicit designated-review ownership and published-current-head admission"
+    inputs:
+      - { name: subcommand, type: enum, values: [assign, inspect, check, surrender, recover], required: true }
+      - { name: id, type: u64, required: true }
+      - { name: --expected-head, type: string, required: conditional }
+      - { name: --expected-state, type: string, required: conditional }
+      - { name: --reviewer-session, type: string, required: conditional }
+      - { name: --review-author, type: string, required: conditional }
+      - { name: --base-sha, type: string, required: conditional }
+      - { name: --reason, type: enum, values: [reviewer-unreachable, reviewer-closed, reviewer-declined, reviewer-timeout], required: conditional }
+    dry_run:
+      offline: false
+      repo_resolution: "--repo owner/name or recognised GitHub remote"
+    validations:
+      - designated_review_handoff
+    backends:
+      github:
+        argv: ["gh", "api", "graphql"]
+        note: "Trusted complete provider-state/native-review reads; assign/surrender/recover append through the existing head/tip-CAS ledger owner. Never publishes raw session or machine selectors."
+    output:
+      data:
+        provider: enum<github>
+        number: integer
+        url: string
+        head_sha: string
+        base_sha: string
+        state_tip_digest: string|null
+        handoff_digest: string|null
+        handoff: object|null
+        status: string
+        ignored_stale_records: array<string> # omitted when empty
 
   - id: pr.review-loop.inspect
     schema_version: cli.forge-cli.pr.review-loop.inspect.v1

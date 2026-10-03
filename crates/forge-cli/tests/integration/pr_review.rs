@@ -27,6 +27,12 @@ if [ "$1" != "api" ]; then
   echo "stub: unexpected gh command: $*" >&2
   exit 99
 fi
+if [ "$1 $2" = "api graphql" ]; then
+  case "$*" in *"comments(first: 100, after:"*)
+    printf '%s\n' '{{"data":{{"viewer":{{"login":"review-reader"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
+    exit 0 ;;
+  esac
+fi
 case "$2" in
   repos/acme/widgets/pulls/44)
     echo "head-44"
@@ -54,6 +60,12 @@ fn github_native_review_mismatch_stub(capture: &str, state: &str, author: &str) 
         r#"#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> {capture:?}
+if [ "$1 $2" = "api graphql" ]; then
+  case "$*" in *"comments(first: 100, after:"*)
+    printf '%s\n' '{{"data":{{"viewer":{{"login":"review-reader"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
+    exit 0 ;;
+  esac
+fi
 case "$2" in
   repos/acme/widgets/pulls/44)
     echo "head-44"
@@ -75,6 +87,12 @@ fn github_native_review_head_stub(capture: &str, current_head: &str, review_head
         r#"#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> {capture:?}
+if [ "$1 $2" = "api graphql" ]; then
+  case "$*" in *"comments(first: 100, after:"*)
+    printf '%s\n' '{{"data":{{"viewer":{{"login":"review-reader"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
+    exit 0 ;;
+  esac
+fi
 case "$2" in
   repos/acme/widgets/pulls/44)
     echo "{current_head}"
@@ -1266,6 +1284,12 @@ if [ "$1" != "api" ]; then
   echo "stub: unexpected gh command: $*" >&2
   exit 99
 fi
+if [ "$1 $2" = "api graphql" ]; then
+  case "$*" in *"comments(first: 100, after:"*)
+    printf '%s\n' '{{"data":{{"viewer":{{"login":"review-reader"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
+    exit 0 ;;
+  esac
+fi
 case "$2" in
   repos/acme/widgets/pulls/44)
     echo "44"
@@ -1304,6 +1328,12 @@ printf '%s\n' "$*" >> {capture:?}
 if [ "$1" != "api" ]; then
   echo "stub: unexpected gh command: $*" >&2
   exit 99
+fi
+if [ "$1 $2" = "api graphql" ]; then
+  case "$*" in *"comments(first: 100, after:"*)
+    printf '%s\n' '{{"data":{{"viewer":{{"login":"review-reader"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
+    exit 0 ;;
+  esac
 fi
 case "$2" in
   repos/acme/widgets/pulls/44)
@@ -1347,6 +1377,12 @@ printf '%s\n' "$*" >> {capture:?}
 if [ "$1" != "api" ]; then
   echo "stub: unexpected gh command: $*" >&2
   exit 99
+fi
+if [ "$1 $2" = "api graphql" ]; then
+  case "$*" in *"comments(first: 100, after:"*)
+    printf '%s\n' '{{"data":{{"viewer":{{"login":"review-reader"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
+    exit 0 ;;
+  esac
 fi
 case "$2" in
   repos/acme/widgets/pulls/44)
@@ -1405,6 +1441,12 @@ fn github_review_recover_pending_stub(
     r#"#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "@CAPTURE@"
+if [ "$1 $2" = "api graphql" ]; then
+  case "$*" in *"comments(first: 100, after:"*)
+    printf '%s\n' '{"data":{"viewer":{"login":"review-reader"},"repository":{"pullRequest":{"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
+    exit 0 ;;
+  esac
+fi
 case "$1 $2" in
   "pr view")
     printf '%s\n' '{"number":44,"url":"https://github.com/acme/widgets/pull/44","state":"OPEN","isDraft":false,"baseRefName":"main","headRefName":"feat/reviews","headRefOid":"head-44","title":"feat: reviews","body":""}'

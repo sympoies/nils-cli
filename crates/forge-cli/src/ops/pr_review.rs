@@ -726,12 +726,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         ));
     }
 
-    // GitHub posts review outcomes through the issue-comments API, which accepts
-    // both issues and pull requests (every PR is an issue, but not every issue
-    // is a PR). Verify `<id>` is actually a pull request first, so a typo'd or
-    // non-PR number can't silently post a review outcome onto an unrelated
-    // issue. GitLab's `glab mr note` already fails on a non-MR id, so this guard
-    // is GitHub-only.
+    super::pr_review_handoff::ensure_provider(&ctx)?;
     if ctx.provider == Provider::GitHub {
         ensure_github_pull_request(
             runner,
@@ -743,6 +738,9 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                 None
             },
         )?;
+        let repository = github_owner_name(&ctx).map(|(o, n)| format!("{o}/{n}"))?;
+        let chain = read_review_state_chain(runner, &ctx, &repository, id)?;
+        super::pr_review_handoff::ensure_writer(&chain)?;
         if let (Some(review_id), Some(native_review_url), Some(native_review_author)) = (
             native_review_id,
             native_review_url.as_deref(),
@@ -1569,6 +1567,7 @@ fn submit_github_review_with_threads<R: BackendRunner>(
             inline_manifest: manifest.clone(),
         };
         let state = read_review_state_snapshot(runner, ctx, &repository, number)?;
+        super::pr_review_handoff::ensure_writer(&state.chain)?;
         if receipt_is_recorded(&state.chain, &receipt)?
             && let Some(review_url) =
                 find_submitted_review_run(runner, ctx, number, &target.url, &receipt)?
@@ -1615,6 +1614,7 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         inline_manifest: manifest.clone(),
     };
     let state = read_review_state_snapshot(runner, ctx, &repository, number)?;
+    super::pr_review_handoff::ensure_writer(&state.chain)?;
     if receipt_is_recorded(&state.chain, &receipt)?
         && let Some(review_url) =
             find_submitted_review_run(runner, ctx, number, &target.url, &receipt)?
@@ -2037,6 +2037,23 @@ fn ensure_review_run_receipt<R: BackendRunner>(
     if receipt_is_recorded(&state.chain, receipt)? {
         return Ok(());
     }
+    if super::pr_review_handoff::is_assigned(&state.chain) {
+        append_review_state_payload(
+            runner,
+            ctx,
+            ReviewStateAppend {
+                repository,
+                number,
+                expected_head: &receipt.expected_head,
+                expected_tip: state.chain.tip_digest.as_deref(),
+                payload: review_state::ReviewStatePayload::ReviewRunReceipt {
+                    receipt: receipt.clone(),
+                },
+                visible_outcome: None,
+            },
+        )?;
+        return Ok(());
+    }
     let record = review_state::ReviewStateRecord::new(
         repository,
         number,
@@ -2117,6 +2134,7 @@ pub(crate) fn read_review_state_chain<R: BackendRunner>(
 pub(crate) struct ReviewLoopStateView {
     pub chain: review_state::ReviewStateChain,
     pub tip_created_at: Option<String>,
+    pub handoff_created_at: Option<String>,
     /// Raw bodies of the privileged comments this chain was parsed from. Needed
     /// to answer presentation questions the chain deliberately cannot, such as
     /// whether a delivery outcome was already posted alongside the tip record.
@@ -2139,6 +2157,26 @@ pub(crate) fn read_review_loop_state_view<R: BackendRunner>(
                 .map(|_| comment.created_at.clone())
         })
     });
+    let handoff_created_at = snapshot
+        .chain
+        .records
+        .iter()
+        .rev()
+        .find(|r| {
+            matches!(
+                r.payload,
+                review_state::ReviewStatePayload::ReviewHandoff { .. }
+            )
+        })
+        .and_then(|record| {
+            snapshot.trusted_comments.iter().find_map(|c| {
+                review_state::parse_state_marker(&c.body)
+                    .ok()
+                    .flatten()
+                    .filter(|r| r.record_digest == record.record_digest)
+                    .map(|_| c.created_at.clone())
+            })
+        });
     let trusted_comment_bodies = snapshot
         .trusted_comments
         .iter()
@@ -2147,6 +2185,7 @@ pub(crate) fn read_review_loop_state_view<R: BackendRunner>(
     Ok(ReviewLoopStateView {
         chain: snapshot.chain,
         tip_created_at,
+        handoff_created_at,
         trusted_comment_bodies,
     })
 }
@@ -2193,6 +2232,42 @@ pub(crate) fn append_review_loop_state<R: BackendRunner>(
         state,
         visible_outcome,
     } = append;
+    append_review_state_payload(
+        runner,
+        ctx,
+        ReviewStateAppend {
+            repository,
+            number,
+            expected_head,
+            expected_tip,
+            payload: review_state::ReviewStatePayload::ReviewLoop { state },
+            visible_outcome,
+        },
+    )
+}
+
+pub(crate) struct ReviewStateAppend<'a> {
+    pub repository: &'a str,
+    pub number: u64,
+    pub expected_head: &'a str,
+    pub expected_tip: Option<&'a str>,
+    pub payload: review_state::ReviewStatePayload,
+    pub visible_outcome: Option<&'a str>,
+}
+
+pub(crate) fn append_review_state_payload<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    append: ReviewStateAppend<'_>,
+) -> Result<ReviewLoopAppendResult, ForgeError> {
+    let ReviewStateAppend {
+        repository,
+        number,
+        expected_head,
+        expected_tip,
+        payload,
+        visible_outcome,
+    } = append;
     let before = read_review_state_snapshot(runner, ctx, repository, number)?;
     if before.chain.tip_digest.as_deref() != expected_tip {
         return Err(ForgeError::validation(
@@ -2206,14 +2281,26 @@ pub(crate) fn append_review_loop_state<R: BackendRunner>(
             )),
         ));
     }
+    if let review_state::ReviewStatePayload::ReviewHandoff { handoff } = &payload {
+        super::pr_review_handoff::ensure_handoff_append(&before.chain, handoff)?;
+    } else {
+        super::pr_review_handoff::ensure_writer(&before.chain)?;
+    }
+    let assignment_generation = match &payload {
+        review_state::ReviewStatePayload::ReviewHandoff { handoff } => {
+            Some(handoff.assignment_generation)
+        }
+        _ => super::pr_review_handoff::latest(&before.chain).map(|h| h.assignment_generation),
+    };
     let record = review_state::ReviewStateRecord::new(
         repository,
         number,
         expected_head,
         before.chain.records.len() as u64,
         before.chain.tip_digest.clone(),
-        review_state::ReviewStatePayload::ReviewLoop { state },
-    )?;
+        payload,
+    )?
+    .with_assignment_generation(assignment_generation)?;
     let marker = record.marker()?;
     let body = review_state::render_state_comment_body(&record, visible_outcome)?;
     let append_result = runner.run(&build_issue_comment_call(ctx, number, &body));
@@ -3272,7 +3359,7 @@ fn native_review_verification_error(detail: String) -> ForgeError {
     )
 }
 
-fn validate_specialist_review_report(body: &str) -> Result<(), ForgeError> {
+pub(crate) fn validate_specialist_review_report(body: &str) -> Result<(), ForgeError> {
     const MARKER: &str = "<!-- agent-kit:specialist-review-report:v1 -->";
     const TABLE_HEADER: &str = "| Finding | Severity | Confidence | Evidence | Recommendation |";
     const TABLE_SEPARATOR: &str = "| --- | --- | ---: | --- | --- |";
@@ -3678,7 +3765,7 @@ fn github_pull_lookup_argv(ctx: &ProviderContext, id: u64, include_head: bool) -
 
 /// Read one native review from the exact repository and pull request before
 /// metadata-only publication trusts its URL, state, or author.
-fn github_native_review_lookup_argv(
+pub(crate) fn github_native_review_lookup_argv(
     ctx: &ProviderContext,
     pr_id: u64,
     review_id: u64,

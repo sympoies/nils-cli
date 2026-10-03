@@ -29,6 +29,7 @@ mod integration {
     mod pr_merge;
     mod pr_pending_review;
     mod pr_review;
+    mod pr_review_handoff;
     mod pr_review_loop;
     mod pr_reviews;
     mod pr_wait_checks;

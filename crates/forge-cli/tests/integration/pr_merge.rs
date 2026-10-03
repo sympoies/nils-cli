@@ -2549,3 +2549,54 @@ fn pr_merge_reports_an_enqueue_graphql_error_as_rejected() {
         .unwrap_or_default();
     assert!(detail.contains("not mergeable"), "{detail}");
 }
+
+#[test]
+fn assigned_live_merge_refuses_before_backend_without_published_review() {
+    let tempdir = make_github_repo(None);
+    let repo = tempdir.path().join("repo");
+    let head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let handoff = forge_cli::ops::pr_review_handoff::ReviewHandoff {
+        coordinator_digest: forge_cli::ops::review_state::sha256_digest(b"worker-session"),
+        reviewer_digest: forge_cli::ops::review_state::sha256_digest(b"reviewer-session"),
+        review_author: "review-app[bot]".into(),
+        base_sha: head.into(),
+        assigned_head: head.into(),
+        returned_reason: None,
+        assignment_generation: 1,
+        surrendered: false,
+    };
+    let record = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        head,
+        0,
+        None,
+        ReviewStatePayload::ReviewHandoff { handoff },
+    )
+    .unwrap();
+    let stub = StubEnv::new();
+    let script = github_merge_stub_with_ledger(&stub, "", "", true, Some(record.marker().unwrap()))
+        .replace("head123", head);
+    let stub = stub
+        .gh_stub(&script)
+        .env("AGENT_REVIEWER_SESSION", "reviewer-session")
+        .env("AGENT_SESSION_ID", "worker-session");
+    let out = run_forge_cli_in(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "merge",
+            "7",
+        ],
+        Some(&repo),
+    );
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+    assert!(out.stdout.contains("awaiting_designated_review"));
+    assert!(!stub.tempdir.path().join("github-merged").exists());
+}

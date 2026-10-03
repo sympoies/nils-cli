@@ -193,6 +193,8 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
     let mut merged = false;
     let mut merge_sha: Option<String> = None;
 
+    crate::ops::pr_review_handoff::ensure_provider(ctx)?;
+
     // 1. auth.status
     let auth_payload = match auth_status::compute(runner, global, git_remote_url) {
         Ok(p) => p,
@@ -538,6 +540,20 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
             current_view.head_sha.as_deref(),
             current_view.head_repository.as_deref(),
         ) {
+            return Ok(emit_chain_failure(
+                steps,
+                args,
+                ctx,
+                Some((pr_number, pr_url)),
+                &err,
+                format,
+            ));
+        }
+        // Discover persisted ownership even after a restarted session loses its
+        // assignment environment; keep unassigned delivery outcomes unchanged.
+        if let Err(err) =
+            super::super::ops::pr_review_handoff::ensure_delivery_ready(runner, ctx, &current_view)
+        {
             return Ok(emit_chain_failure(
                 steps,
                 args,

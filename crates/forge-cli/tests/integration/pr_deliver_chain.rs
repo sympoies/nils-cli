@@ -893,6 +893,12 @@ fn write_qualified_head_collision_stub(stub: &StubEnv, head_sha: &str) -> PathBu
     let body = format!(
         r###"#!/bin/sh
 set -e
+if [ "$1 $2" = "api graphql" ]; then
+  case "$*" in *"comments(first: 100, after:"*)
+    printf '%s\n' '{{"data":{{"viewer":{{"login":"review-reader"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
+    exit 0 ;;
+  esac
+fi
 case "$1 $2" in
   "auth status")
     printf '%s\n' 'github.com' 1>&2
@@ -976,6 +982,12 @@ fn write_closeout_chain_stub(
     let body = format!(
         r#"#!/bin/sh
 set -e
+if [ "$1 $2" = "api graphql" ]; then
+  case "$*" in *"comments(first: 100, after:"*)
+    printf '%s\n' '{{"data":{{"viewer":{{"login":"review-reader"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
+    exit 0 ;;
+  esac
+fi
 case "$1 $2" in
   "auth status")
     cat <<'EOF' 1>&2
@@ -2967,5 +2979,128 @@ fn pr_deliver_without_method_lets_a_merge_commit_queue_decide() {
     assert!(
         !direct_merge.exists(),
         "the direct merge API must not be used"
+    );
+}
+
+#[test]
+fn assigned_no_merge_delivery_stops_before_ready_or_self_review() {
+    let tempdir = make_git_repo();
+    let repo_path = tempdir.path().join("repo");
+    let stub = StubEnv::new();
+    let gh_path = write_full_chain_stub(&stub);
+    let stub = stub
+        .env("FORGE_CLI_GH_BIN", gh_path.to_string_lossy())
+        .env("AGENT_REVIEWER_SESSION", "reviewer-session")
+        .env("AGENT_SESSION_ID", "worker-session");
+    let out = run_in_repo(
+        &stub,
+        &repo_path,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "deliver",
+            "--kind",
+            "feature",
+            "--title",
+            "feat: sample feature",
+            "--body",
+            "## Summary\n\nFeature.\n\n## Test plan\n\nVerified.\n",
+            "--head",
+            "feat/sample",
+            "--base",
+            "main",
+            "--timeout",
+            "5s",
+            "--no-merge",
+        ],
+    );
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+    assert!(out.stdout.contains("awaiting_designated_review"));
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["pr"]["merged"], false);
+    assert_eq!(envelope["data"]["pr"]["number"], 123);
+    assert!(
+        !envelope["data"]["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["step"] == "ready" || s["step"] == "merge")
+    );
+}
+
+#[test]
+fn restarted_no_merge_delivery_reads_persisted_assignment() {
+    let repo = make_git_repo();
+    let repo_path = repo.path().join("repo");
+    let stub = StubEnv::new();
+    let gh_path = write_full_chain_stub(&stub);
+    let inner = stub.tempdir.path().join("gh-inner-handoff");
+    fs::rename(&gh_path, &inner).unwrap();
+    let head = git_output(&repo_path, &["rev-parse", "HEAD"]);
+    let handoff = forge_cli::ops::pr_review_handoff::ReviewHandoff {
+        coordinator_digest: forge_cli::ops::review_state::sha256_digest(b"worker-session"),
+        reviewer_digest: forge_cli::ops::review_state::sha256_digest(b"reviewer-session"),
+        review_author: "review-app[bot]".into(),
+        base_sha: "b".repeat(40),
+        assigned_head: head.clone(),
+        returned_reason: None,
+        assignment_generation: 1,
+        surrendered: false,
+    };
+    let record = ReviewStateRecord::new(
+        "sympoies/nils-cli",
+        123,
+        &head,
+        0,
+        None,
+        ReviewStatePayload::ReviewHandoff { handoff },
+    )
+    .unwrap();
+    let response = serde_json::json!({"data":{"viewer":{"login":"testuser-gh"},"repository":{"pullRequest":{
+        "comments":{"nodes":[{"author":{"login":"testuser-gh"},"authorAssociation":"OWNER",
+        "createdAt":"2026-07-20T12:00:00Z","body":record.marker().unwrap()}],
+        "pageInfo":{"hasNextPage":false,"endCursor":null}}}}}});
+    let wrapper = format!(
+        "#!/bin/sh\ncase \"$*\" in *'comments(first:'*) cat <<'JSON'\n{response}\nJSON\nexit 0;; esac\nexec '{}' \"$@\"\n",
+        inner.display()
+    );
+    fs::write(&gh_path, wrapper).unwrap();
+    fs::set_permissions(&gh_path, fs::Permissions::from_mode(0o755)).unwrap();
+    let stub = stub
+        .env("FORGE_CLI_GH_BIN", gh_path.to_string_lossy())
+        .env("AGENT_SESSION_ID", "worker-session");
+    let out = run_in_repo(
+        &stub,
+        &repo_path,
+        &[
+            "--provider",
+            "github",
+            "--format",
+            "json",
+            "pr",
+            "deliver",
+            "--kind",
+            "feature",
+            "--title",
+            "feat: sample feature",
+            "--body",
+            "## Summary\n\nFeature.\n\n## Test plan\n\nVerified.\n",
+            "--head",
+            "feat/sample",
+            "--base",
+            "main",
+            "--timeout",
+            "5s",
+            "--no-merge",
+        ],
+    );
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+    assert!(
+        out.stdout.contains("awaiting_designated_review"),
+        "{}",
+        out.stdout
     );
 }

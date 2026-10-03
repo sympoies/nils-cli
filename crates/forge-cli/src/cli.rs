@@ -990,6 +990,91 @@ pub struct PrPendingReviewArgs {
     pub command: PrPendingReviewCommand,
 }
 
+/// Explicit designated reviewer ownership and current-head publication gate.
+#[derive(Args, Debug, Clone)]
+pub struct PrReviewHandoffArgs {
+    #[command(subcommand)]
+    pub command: PrReviewHandoffCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum PrReviewHandoffCommand {
+    /// Persist or explicitly reassign review ownership with head/tip CAS.
+    Assign(PrReviewHandoffAssignArgs),
+    /// Read the persisted handoff without revealing mailbox addresses.
+    Inspect(PrReviewHandoffInspectArgs),
+    /// Require a published current-head passing review and closed ledger.
+    Check(PrReviewHandoffCheckArgs),
+    /// Reviewer-owned surrender of the current assignment generation.
+    Surrender(PrReviewHandoffSurrenderArgs),
+    /// Explicit coordinator revocation with a required reason and fresh generation.
+    Recover(PrReviewHandoffReturnArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct PrReviewHandoffInspectArgs {
+    pub id: u64,
+    /// Exact provider head SHA for this handoff operation.
+    #[arg(long)]
+    pub expected_head: Option<String>,
+    /// Expected public native review author of an existing assignment.
+    #[arg(long)]
+    pub review_author: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct PrReviewHandoffSurrenderArgs {
+    pub id: u64,
+    /// Exact provider head SHA for this handoff operation.
+    #[arg(long)]
+    pub expected_head: String,
+    /// Exact retained provider ledger tip for the ownership transition.
+    #[arg(long)]
+    pub expected_state: String,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct PrReviewHandoffCheckArgs {
+    pub id: u64,
+    /// Exact provider head SHA for this handoff operation.
+    #[arg(long)]
+    pub expected_head: String,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct PrReviewHandoffAssignArgs {
+    pub id: u64,
+    /// Private session selector; only its session digest is published.
+    #[arg(long)]
+    pub reviewer_session: String,
+    /// Expected public author of the native governed or portable review.
+    #[arg(long)]
+    pub review_author: String,
+    /// Exact provider base SHA captured for the assignment.
+    #[arg(long)]
+    pub base_sha: String,
+    /// Exact provider head SHA for this handoff operation.
+    #[arg(long)]
+    pub expected_head: String,
+    /// Exact ledger tip, or none for genesis. Required even for reassignment.
+    #[arg(long)]
+    pub expected_state: String,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct PrReviewHandoffReturnArgs {
+    pub id: u64,
+    /// Exact provider head SHA for this handoff operation.
+    #[arg(long)]
+    pub expected_head: String,
+    /// Exact retained provider ledger tip for the ownership transition.
+    #[arg(long)]
+    pub expected_state: String,
+    /// Bounded role-based reason; mailbox details stay private.
+    #[arg(long, value_parser = ["reviewer-unreachable", "reviewer-closed", "reviewer-declined", "reviewer-timeout"])]
+    pub reason: String,
+}
+
 /// Durable provider-visible review-loop ledger operations.
 #[derive(Args, Debug, Clone)]
 pub struct PrReviewLoopArgs {
@@ -1483,6 +1568,8 @@ pub enum PrCommand {
     PendingReview(PrPendingReviewArgs),
     /// Inspect and advance the durable review-loop ledger.
     ReviewLoop(PrReviewLoopArgs),
+    /// Explicit designated reviewer handoff and published-review admission.
+    ReviewHandoff(PrReviewHandoffArgs),
     /// List GFM task-list items in the PR / MR description with their state.
     Tasks(PrTasksArgs),
     /// Merge a ready PR / MR.
@@ -2426,6 +2513,10 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
                 ops::pr_pending_review::run_delete(&global, delete_args, format)
             }
         },
+        Some(Command::Pr(PrArgs {
+            command: Some(PrCommand::ReviewHandoff(args)),
+            ..
+        })) => ops::pr_review_handoff::run(&global, args, format),
         Some(Command::Pr(PrArgs {
             command: Some(PrCommand::ReviewLoop(args)),
         })) => match args.command {

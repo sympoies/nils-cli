@@ -718,6 +718,73 @@ distinctions that cannot be proven offline.
   `pending_review_identity_mismatch`, `pending_review_pr_mismatch`, or
   `pending_review_not_found` with no mutation.
 
+### `pr review-handoff assign` / `inspect` / `check` / `surrender` / `recover`
+
+The designated-review route is opt-in through `AGENT_REVIEWER_SESSION` or an
+explicit `assign` operation. No assignment preserves the existing self-run
+results, envelopes, ledger bytes, mutations, and exit codes. Live publication
+and delivery read the trusted ledger to detect persisted ownership even after
+a restart without the assignment environment. Assigned operations require
+GitHub's trusted provider ledger; other providers fail closed when assigned.
+
+- `assign <id> --reviewer-session <session-id>[@machine] --review-author <login>
+  --base-sha <sha> --expected-head <sha> --expected-state <digest|none>` records
+  an explicit handover in the existing `forge-cli.review-state.v1` chain.
+  Base and head must match the provider. Coordinator and reviewer must be
+  different sessions. Only opaque session digests, the configured public
+  native-review author, and commit SHAs reach the provider; selectors and
+  machine addresses stay private. Initial assignment generation is one.
+- `inspect <id> [--expected-head <sha>] [--review-author <login>]` validates the
+  supplied head and any existing assignment before private mailbox handoff.
+  An unassigned result is bootstrap discovery, not admission; append and verify
+  the assignment before sending private evidence.
+  `check <id> --expected-head <sha>` requires a reviewer-owned closed observation
+  after handover and a canonical native report bound to the same PR, base,
+  head, and appointed author. GitHub login comparison is case-insensitive.
+  The latest appointed-author review must be `COMMENTED` or `APPROVED`, have
+  a `pass` or `follow-up-pass` verdict, and postdate handover. A report in the
+  same timestamp second fails closed. Long summaries use bounded native-body
+  read-back with verified identity and head. A later blocked report supersedes
+  an earlier pass.
+- `surrender <id> --expected-head <sha> --expected-state <digest>` is a
+  reviewer-owned relinquishment at the current assignment generation.
+  Ordinary reassignment requires this explicit surrender; inspection alone
+  never transfers ownership.
+- `recover <id> --expected-head <sha> --expected-state <digest> --reason
+  <reviewer-unreachable|reviewer-closed|reviewer-declined|reviewer-timeout>` is
+  an explicit original-coordinator revocation that advances the assignment
+  generation. The parent owns mailbox transport, bounded waits, and liveness
+  evidence; the CLI never guesses availability. Surrendered or revoked control
+  fails with `designated_reviewer_unavailable`, never self-review. Only the
+  original coordinator may assign the next generation after surrender/recovery.
+- Assignment mutations require the caller's retained exact ledger tip; they
+  never refresh it to hide a competing writer. Every operation emits
+  `cli.forge-cli.pr.review-handoff.v1` with `number`, `url`, `head_sha`,
+  `base_sha`, `state_tip_digest`, `handoff_digest`, `handoff`, and `status`.
+  Nonempty `ignored_stale_records` reports records superseded by recovery.
+  `--dry-run` performs read-only admission and reports prospective ownership
+  while retaining the observed durable tip.
+
+`AGENT_SESSION_ID` fences the invoking session; routing metadata does not grant
+provider authorization. Reviewer appends and native publication also require
+`AGENT_REVIEW_ASSIGNMENT_GENERATION` equal to the retained assignment generation.
+The final append rereads ownership, generation, tip, and head. If recovery and
+an old-generation write both reach the provider, the explicit higher-generation
+recovery wins; stale children and descendants are ignored and reported, never
+silently merged. Other competing children still fail closed. A repair before
+the first designated observation is rejected as `review_repair_unobserved`.
+The first owned observation appends even at an unchanged head and preserves
+inherited findings and history. Reassignment requires a fresh owned observation.
+
+Live assigned `pr deliver`, including `--no-merge`, returns
+`awaiting_designated_review` after creating/adopting the PR and checking CI,
+before ready/merge. Its failure envelope retains PR URL/number. A delivery
+`--dry-run` is a local command preview; use `review-handoff check` for readiness
+proof. Assigned merge preview and live merge use the same gate. Live delivery,
+merge, and publication detect persisted assignment with the environment absent.
+Mailbox `pass`, stale publication, missing handoff, open findings, and unavailable
+reviewers cannot satisfy admission. Existing convergence and merge gates remain.
+
 ### `pr review-loop inspect` / `observe` / `extend` / `validate`
 
 - These GitHub-only commands make the repair/re-review loop resumable from the
