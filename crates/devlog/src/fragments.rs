@@ -1,5 +1,5 @@
 //! Isolated pending entries, deterministic folding, and baseline immutability.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -297,6 +297,14 @@ pub(crate) fn immutability(
     devlog: &Devlog,
     base: Option<&str>,
 ) -> Result<Vec<Problem>, DevlogError> {
+    immutability_with_fold(devlog, base, None)
+}
+
+fn immutability_with_fold(
+    devlog: &Devlog,
+    base: Option<&str>,
+    pr_changed: Option<&BTreeSet<String>>,
+) -> Result<Vec<Problem>, DevlogError> {
     // Compare physical paths without changing the established --dir display
     // behavior. Relative directories are resolved against the caller's cwd.
     let root = std::fs::canonicalize(devlog.repo_root()).map_err(|source| DevlogError::Io {
@@ -357,12 +365,13 @@ pub(crate) fn immutability(
         let path = devlog.repo_root().join(name);
         let unchanged = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file())
             && std::fs::read(&path).is_ok_and(|data| data == old.stdout);
-        if unchanged {
+        if unchanged && !pr_changed.is_some_and(|changed| changed.contains(name)) {
             continue;
         }
         let deleted = !path.exists();
         let mut folded = false;
-        if deleted
+        if pr_changed.is_none()
+            && deleted
             && let Ok(text) = std::str::from_utf8(&old.stdout)
             && let Ok(entries) = blocks(text, &path)
             && entries.len() == 1
@@ -376,7 +385,109 @@ pub(crate) fn immutability(
             }
         }
         if !folded {
-            problems.push(Problem { kind: if deleted { "fragment-deleted" } else { "fragment-modified" }, path: name.to_string(), detail: "default-branch fragments are immutable; fold unchanged content before correcting the month entry".to_string() });
+            problems.push(Problem {
+                kind: if deleted { "fragment-deleted" } else { "fragment-modified" },
+                path: name.to_string(),
+                detail: if pr_changed.is_some() {
+                    "merged fragments cannot change in a PR; only the trusted fold owner may delete them"
+                } else {
+                    "default-branch fragments are immutable; fold unchanged content before correcting the month entry"
+                }.to_string(),
+            });
+        }
+    }
+    Ok(problems)
+}
+
+/// Resolve both refs as commits before passing them to merge-base. Missing or
+/// shallow unrelated history must never turn PR enforcement into a clean check.
+pub(crate) fn merge_base(devlog: &Devlog, base: &str) -> Result<String, DevlogError> {
+    let resolved = git(
+        devlog,
+        &[
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &format!("{base}^{{commit}}"),
+        ],
+    )?;
+    if !resolved.status.success() {
+        return Err(DevlogError::BaselineUnavailable);
+    }
+    let commit = String::from_utf8_lossy(&resolved.stdout).trim().to_string();
+    let merge = git(devlog, &["merge-base", "HEAD", &commit])?;
+    if !merge.status.success() {
+        return Err(DevlogError::BaselineUnavailable);
+    }
+    Ok(String::from_utf8_lossy(&merge.stdout).trim().to_string())
+}
+
+/// Check each Git layer separately: comparing only the final working tree to
+/// the base would hide an index or HEAD change restored in a later layer.
+pub(crate) fn pr_changes(devlog: &Devlog, base: &str) -> Result<Vec<Problem>, DevlogError> {
+    let root = std::fs::canonicalize(devlog.repo_root()).map_err(|source| DevlogError::Io {
+        path: devlog.repo_root().to_path_buf(),
+        source,
+    })?;
+    let directory = std::fs::canonicalize(devlog.dir()).map_err(|source| DevlogError::Io {
+        path: devlog.dir().to_path_buf(),
+        source,
+    })?;
+    let dir = directory.strip_prefix(&root).map_err(|_| {
+        invalid(
+            devlog.dir(),
+            "--fragments-only requires a log inside this repository",
+        )
+    })?;
+    let pathspec = format!(":(literal){}", dir.to_string_lossy().replace('\\', "/"));
+    let mut changed = BTreeSet::new();
+    for args in [
+        vec![
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            base,
+            "HEAD",
+            "--",
+            &pathspec,
+        ],
+        vec![
+            "diff",
+            "--cached",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            "HEAD",
+            "--",
+            &pathspec,
+        ],
+        vec!["diff", "--name-only", "--no-renames", "-z", "--", &pathspec],
+        vec!["ls-files", "--others", "-z", "--", &pathspec],
+    ] {
+        let output = git(devlog, &args)?;
+        if !output.status.success() {
+            return Err(DevlogError::BaselineUnavailable);
+        }
+        for name in output.stdout.split(|b| *b == 0).filter(|n| !n.is_empty()) {
+            changed.insert(
+                std::str::from_utf8(name)
+                    .map_err(|_| invalid(devlog.dir(), "non-UTF-8 changed log path"))?
+                    .to_string(),
+            );
+        }
+    }
+    let mut problems = immutability_with_fold(devlog, Some(base), Some(&changed))?;
+    for name in changed {
+        let path = Path::new(&name);
+        if path.parent() == Some(dir)
+            && path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.strip_suffix(".md"))
+                .is_some_and(|s| s.parse::<Month>().is_ok())
+        {
+            problems.push(Problem { kind: "month-file-changed", path: name, detail: "month files cannot change in a fragment-only PR; only the trusted fold owner may update them".to_string() });
         }
     }
     Ok(problems)

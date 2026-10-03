@@ -79,25 +79,55 @@ keeps its own `Pending` prose intact when no fragments exist. Authors need not r
 `new`, so parallel PRs can leave shared files untouched. `check` accepts that
 pending list being absent or not yet refreshed.
 
-Run `devlog check` in CI with the fragment setting enabled. Fragments present
-on the default branch are immutable: edits report `fragment-modified`, and
-deletions report `fragment-deleted` unless the unchanged entry, including its
-identity, is present exactly once in its month file. Fold first; corrections
-belong in the month file after the fold has landed. `fix` repairs month files
-and the index; it does not edit fragments.
+### Fragment-only PR checks
 
-The default-branch baseline is the local `origin/HEAD` remote-tracking ref,
-then local `main` or `master`. Fetch the default branch in CI before checking;
-for a custom branch name or a shallow checkout, pass an available ref explicitly:
+Enable the PR ownership gate explicitly:
 
 ```bash
-devlog check --base origin/main
+devlog check --base origin/main --fragments-only
 ```
 
+`--fragments-only` requires `--base` and works independently of the writer
+setting. It runs the existing structural checks, then rejects additions,
+modifications, renames and deletions of `YYYY-MM.md` files in the selected log
+directory with `month-file-changed` (exit 65). It checks committed, staged,
+unstaged and untracked changes separately, so restoring the working tree cannot
+hide an edit in the index or branch. Both detected directory conventions and
+an explicit `--dir` inside the repository are supported. An external log cannot
+be compared to this repository and is refused in this mode.
+
+The comparison starts at the merge base of `HEAD` and the supplied ref, so
+unrelated default-branch advancement does not count as a PR edit. Fragments
+present at that merge base are immutable: edits report `fragment-modified`,
+and deletions report `fragment-deleted`, including a deletion whose unchanged
+entry is already copied into a month file by a local fold. New fragments pass.
+The month-file and fragment problem kinds appear in the normal check report;
+JSON failures carry them under `error.details.problems`.
+
+CI must fetch the target default branch and enough history to resolve a common
+ancestor with the checked-out PR head. For a full-history checkout targeting
+`main`, for example:
+
+```bash
+git fetch origin main:refs/remotes/origin/main
+DEVLOG_LAYOUT=fragments devlog check --base origin/main --fragments-only
+```
+
+For a shallow checkout, fetch or unshallow the history first; substitute the
+actual target branch when it differs from `main`. An unavailable ref, unborn
+`HEAD`, or missing common ancestor reports `baseline-unavailable` (exit 69).
+The PR mode fails closed rather than skipping its baseline checks.
+
+Ordinary `devlog check` retains its behavior. Fragments present on its
+baseline cannot be edited or deleted unless the unchanged entry, including its
+identity, is present exactly once in its month file. The ordinary baseline is
+local `origin/HEAD`, then local `main` or `master`; `--base` overrides it.
 An unborn repository has no baseline entries. A repository with fragments and
-commits but no resolvable baseline fails with `baseline-unavailable` (exit 69);
-`--base` must name a readable ref. A month-only log with the switch unset keeps
-its existing structural checks.
+commits but no resolvable baseline fails with `baseline-unavailable` (exit 69).
+A month-only log with the writer switch unset keeps its structural checks.
+`fix` repairs month files and the index; it does not edit fragments. A
+maintainer correction after folding needs a separately authorized route when
+fragment-only PR enforcement is enabled.
 
 ### `devlog fold`
 
@@ -123,8 +153,12 @@ including the index. JSON output uses `cli.devlog.fold.v1` and reports `folded`,
 
 Assign folding to one owner, typically a scheduled CI job on the default
 branch. That job supplies `DEVLOG_LAYOUT=fragments`, fetches the current default
-branch, runs `devlog fold` and `devlog check`, and commits only if there is a
-diff. Use the repository's protected-branch and signing workflow to publish the
+branch, runs `devlog fold` and ordinary `devlog check` (without
+`--fragments-only`), and commits only if there is a diff. The trusted fold
+owner validates structure and exact fragment transfer through ordinary check;
+its month updates and fragment deletions are allowed there. Keep the PR
+ownership gate on feature PRs and route the trusted fold through a separately
+authorized CI path. Use the repository's protected-branch and signing workflow to publish the
 result, or open a PR. If the default branch moves before delivery, refetch and
 rerun the fold against the new content. Keep the CLI and check environment in
 sync across development and CI.
@@ -255,6 +289,10 @@ Reported problem kinds:
 | `index-stale-month` | The index lists a month with no file. |
 | `conflict-markers` | The file still holds an unresolved merge conflict. |
 | `unterminated-fence` | A fenced code block is not closed; the opening line is reported. |
+| `invalid-fragment` | A pending entry does not satisfy the fragment contract. |
+| `fragment-modified` | A baseline fragment was edited. |
+| `fragment-deleted` | A baseline fragment was removed; ordinary check permits exact folding. |
+| `month-file-changed` | Fragment-only PR mode found a month-file change. |
 
 A conflict marker stops the file being parsed any further. Both sides of a
 conflict are well-formed entries, so counting them would describe an
@@ -383,8 +421,8 @@ Exit codes:
 | `0` | Success; for `search`, at least one match. |
 | `1` | `search` found no matches, a requested month file is absent, or `new` refused a month file whose heading is wrong. |
 | `64` | Usage error, including a malformed month or an impossible date. |
-| `65` | `check` found structural problems, `fix` could not repair all of them, or a file still holds an unresolved merge conflict. |
-| `69` | No devlog directory, or not a git work tree. |
+| `65` | `check` found structural or disallowed PR changes, `fix` could not repair all of them, or a file still holds an unresolved merge conflict. |
+| `69` | No devlog directory, not a git work tree, or an unavailable required baseline. |
 | `70` | Filesystem error. |
 
 `search` distinguishes "no matches in an existing month" (`1`, with the term

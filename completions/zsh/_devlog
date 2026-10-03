@@ -65,6 +65,7 @@ _arguments "${_arguments_options[@]}" : \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--dir=[Devlog directory. Defaults to detecting docs/devlog or docs/source/devlog]:DIR:_files' \
+'--fragments-only[Enforce fragment-only PR changes against the merge base; requires --base]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0

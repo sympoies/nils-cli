@@ -42,6 +42,20 @@ pub fn check(devlog: &Devlog) -> Result<CheckReport, DevlogError> {
 }
 
 pub fn check_with_base(devlog: &Devlog, base: Option<&str>) -> Result<CheckReport, DevlogError> {
+    check_impl(devlog, base, false)
+}
+
+/// Enforce PR ownership against an available merge base, including local Git changes.
+pub fn check_fragments_only(devlog: &Devlog, base: &str) -> Result<CheckReport, DevlogError> {
+    let base = crate::fragments::merge_base(devlog, base)?;
+    check_impl(devlog, Some(&base), true)
+}
+
+fn check_impl(
+    devlog: &Devlog,
+    base: Option<&str>,
+    fragments_only: bool,
+) -> Result<CheckReport, DevlogError> {
     let scan = devlog.months()?;
     let mut problems = Vec::new();
     let mut entry_count = 0usize;
@@ -77,7 +91,15 @@ pub fn check_with_base(devlog: &Devlog, base: Option<&str>) -> Result<CheckRepor
         }
     }
     // Existing month-only logs require neither a Git baseline nor extra reads.
-    if crate::fragments::enabled()? || base.is_some() || devlog.dir().join("pending").exists() {
+    if fragments_only {
+        problems.extend(crate::fragments::pr_changes(
+            devlog,
+            base.expect("resolved merge base"),
+        )?);
+    } else if crate::fragments::enabled()?
+        || base.is_some()
+        || devlog.dir().join("pending").exists()
+    {
         problems.extend(crate::fragments::immutability(devlog, base)?);
     }
     problems.extend(check_index(devlog, &scan.months)?);
