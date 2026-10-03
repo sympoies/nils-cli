@@ -75,6 +75,9 @@ enum Command {
         /// Default-branch ref for fragment immutability (auto-detected when omitted).
         #[arg(long)]
         base: Option<String>,
+        /// Enforce fragment-only PR changes against the merge base; requires --base.
+        #[arg(long, requires = "base")]
+        fragments_only: bool,
     },
     /// Fold pending entries dated before today into deterministically sorted month files.
     Fold,
@@ -259,8 +262,18 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<i32, DevlogError> {
             });
             Ok(exit::SUCCESS)
         }
-        Command::Check { base } => {
-            let report = nils_devlog::check::check_with_base(&devlog, base.as_deref())?;
+        Command::Check {
+            base,
+            fragments_only,
+        } => {
+            let report = if *fragments_only {
+                nils_devlog::check::check_fragments_only(
+                    &devlog,
+                    base.as_deref().expect("clap requires --base"),
+                )?
+            } else {
+                nils_devlog::check::check_with_base(&devlog, base.as_deref())?
+            };
             if report.ok() {
                 emit(format, "check", 1, &report, print_check);
                 Ok(exit::SUCCESS)

@@ -1,5 +1,5 @@
 //! Isolated pending entries, deterministic folding, and baseline immutability.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -297,6 +297,14 @@ pub(crate) fn immutability(
     devlog: &Devlog,
     base: Option<&str>,
 ) -> Result<Vec<Problem>, DevlogError> {
+    immutability_with_fold(devlog, base, None)
+}
+
+fn immutability_with_fold(
+    devlog: &Devlog,
+    base: Option<&str>,
+    pr_changed: Option<&BTreeSet<String>>,
+) -> Result<Vec<Problem>, DevlogError> {
     // Compare physical paths without changing the established --dir display
     // behavior. Relative directories are resolved against the caller's cwd.
     let root = std::fs::canonicalize(devlog.repo_root()).map_err(|source| DevlogError::Io {
@@ -346,8 +354,17 @@ pub(crate) fn immutability(
     if !list.status.success() {
         return Err(DevlogError::BaselineUnavailable);
     }
+    check_immutable_paths(devlog, &base, &list.stdout, pr_changed)
+}
+
+fn check_immutable_paths(
+    devlog: &Devlog,
+    base: &str,
+    names: &[u8],
+    pr_changed: Option<&BTreeSet<String>>,
+) -> Result<Vec<Problem>, DevlogError> {
     let mut problems = Vec::new();
-    for name in list.stdout.split(|b| *b == 0).filter(|n| !n.is_empty()) {
+    for name in names.split(|b| *b == 0).filter(|n| !n.is_empty()) {
         let name = std::str::from_utf8(name)
             .map_err(|_| invalid(devlog.dir(), "non-UTF-8 baseline fragment path"))?;
         let old = git(devlog, &["show", &format!("{base}:{name}")])?;
@@ -357,12 +374,13 @@ pub(crate) fn immutability(
         let path = devlog.repo_root().join(name);
         let unchanged = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file())
             && std::fs::read(&path).is_ok_and(|data| data == old.stdout);
-        if unchanged {
+        if unchanged && !pr_changed.is_some_and(|changed| changed.contains(name)) {
             continue;
         }
         let deleted = !path.exists();
         let mut folded = false;
-        if deleted
+        if pr_changed.is_none()
+            && deleted
             && let Ok(text) = std::str::from_utf8(&old.stdout)
             && let Ok(entries) = blocks(text, &path)
             && entries.len() == 1
@@ -376,7 +394,263 @@ pub(crate) fn immutability(
             }
         }
         if !folded {
-            problems.push(Problem { kind: if deleted { "fragment-deleted" } else { "fragment-modified" }, path: name.to_string(), detail: "default-branch fragments are immutable; fold unchanged content before correcting the month entry".to_string() });
+            problems.push(Problem {
+                kind: if deleted { "fragment-deleted" } else { "fragment-modified" },
+                path: name.to_string(),
+                detail: if pr_changed.is_some() {
+                    "merged fragments cannot change in a PR; only the trusted fold owner may delete them"
+                } else {
+                    "default-branch fragments are immutable; fold unchanged content before correcting the month entry"
+                }.to_string(),
+            });
+        }
+    }
+    Ok(problems)
+}
+
+/// Resolve both refs as commits before passing them to merge-base. Missing or
+/// shallow unrelated history must never turn PR enforcement into a clean check.
+pub(crate) fn merge_base(devlog: &Devlog, base: &str) -> Result<String, DevlogError> {
+    let resolved = git(
+        devlog,
+        &[
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &format!("{base}^{{commit}}"),
+        ],
+    )?;
+    if !resolved.status.success() {
+        return Err(DevlogError::BaselineUnavailable);
+    }
+    let commit = String::from_utf8_lossy(&resolved.stdout).trim().to_string();
+    let merge = git(devlog, &["merge-base", "HEAD", &commit])?;
+    if !merge.status.success() {
+        return Err(DevlogError::BaselineUnavailable);
+    }
+    Ok(String::from_utf8_lossy(&merge.stdout).trim().to_string())
+}
+
+/// Git pathspecs do not follow directory symlinks. Resolve their baseline
+/// targets from the tree, retaining every link whose retargeting would change
+/// which history the check owns. Never resolve baseline links through HEAD.
+fn baseline_directory(
+    devlog: &Devlog,
+    base: &str,
+    root: &Path,
+    dir: &Path,
+    links: &mut BTreeSet<PathBuf>,
+) -> Result<PathBuf, DevlogError> {
+    let mut remaining: VecDeque<_> = dir
+        .components()
+        .map(|component| component.as_os_str().to_os_string())
+        .collect();
+    let mut resolved = PathBuf::new();
+    let mut hops = 0;
+    while let Some(component) = remaining.pop_front() {
+        if component == "." {
+            continue;
+        }
+        if component == ".." {
+            if !resolved.pop() {
+                return Err(invalid(
+                    devlog.dir(),
+                    "merge-base log symlink leaves this repository",
+                ));
+            }
+            continue;
+        }
+        resolved.push(component);
+        let name = resolved.to_string_lossy().replace('\\', "/");
+        let tree = git(devlog, &["ls-tree", "-z", base, "--", &name])?;
+        if !tree.status.success() {
+            return Err(DevlogError::BaselineUnavailable);
+        }
+        if !tree.stdout.starts_with(b"120000 ") {
+            continue;
+        }
+        hops += 1;
+        if hops > 40 {
+            return Err(invalid(devlog.dir(), "too many merge-base log symlinks"));
+        }
+        links.insert(resolved.clone());
+        let target = git(devlog, &["show", &format!("{base}:{name}")])?;
+        if !target.status.success() {
+            return Err(DevlogError::BaselineUnavailable);
+        }
+        let target = std::str::from_utf8(&target.stdout)
+            .map_err(|_| invalid(devlog.dir(), "non-UTF-8 merge-base log symlink"))?;
+        let target = Path::new(target);
+        resolved.pop();
+        let target = if target.is_absolute() {
+            resolved.clear();
+            target.strip_prefix(root).map_err(|_| {
+                invalid(
+                    devlog.dir(),
+                    "merge-base log symlink leaves this repository",
+                )
+            })?
+        } else {
+            target
+        };
+        // Expand links before processing any later `..`, just as a filesystem
+        // does; lexical normalization would silently discard intermediate links.
+        for component in target.components().rev() {
+            remaining.push_front(component.as_os_str().to_os_string());
+        }
+    }
+    Ok(resolved)
+}
+
+/// Check each Git layer separately: comparing only the final working tree to
+/// the base would hide an index or HEAD change restored in a later layer.
+pub(crate) fn pr_changes(devlog: &Devlog, base: &str) -> Result<Vec<Problem>, DevlogError> {
+    let root = std::fs::canonicalize(devlog.repo_root()).map_err(|source| DevlogError::Io {
+        path: devlog.repo_root().to_path_buf(),
+        source,
+    })?;
+    let directory = std::fs::canonicalize(devlog.dir()).map_err(|source| DevlogError::Io {
+        path: devlog.dir().to_path_buf(),
+        source,
+    })?;
+    let resolved_dir = directory.strip_prefix(&root).map_err(|_| {
+        invalid(
+            devlog.dir(),
+            "--fragments-only requires a log inside this repository",
+        )
+    })?;
+    // Canonical paths prove containment, while lexical paths retain ownership
+    // when a branch replaces a tracked directory with a directory symlink.
+    let absolute = if devlog.dir().is_absolute() {
+        devlog.dir().to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|source| DevlogError::Io {
+                path: devlog.dir().to_path_buf(),
+                source,
+            })?
+            .join(devlog.dir())
+    };
+    let mut lexical = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                lexical.pop();
+            }
+            _ => lexical.push(component.as_os_str()),
+        }
+    }
+    let logical_dir = lexical.strip_prefix(&root).map_err(|_| {
+        invalid(
+            devlog.dir(),
+            "--fragments-only requires a repository-relative log path",
+        )
+    })?;
+    let mut dirs = BTreeSet::from([resolved_dir.to_path_buf(), logical_dir.to_path_buf()]);
+    if crate::model::DEVLOG_DIRS
+        .iter()
+        .any(|candidate| dirs.contains(Path::new(candidate)))
+    {
+        // Keep both conventions visible even if the feature branch deletes or
+        // shadows the directory that discovery would select at the merge base.
+        dirs.extend(crate::model::DEVLOG_DIRS.iter().map(PathBuf::from));
+    }
+    let mut baseline_links = BTreeSet::new();
+    // Preserve the original argument for tree resolution: a symlink before
+    // `..` in --dir must be expanded before the parent traversal, too.
+    let original_dir = absolute.strip_prefix(&root).map_err(|_| {
+        invalid(
+            devlog.dir(),
+            "--fragments-only requires a repository-relative log path",
+        )
+    })?;
+    dirs.insert(baseline_directory(
+        devlog,
+        base,
+        &root,
+        original_dir,
+        &mut baseline_links,
+    )?);
+    for dir in dirs.clone() {
+        dirs.insert(baseline_directory(
+            devlog,
+            base,
+            &root,
+            &dir,
+            &mut baseline_links,
+        )?);
+    }
+    let pathspecs: Vec<_> = dirs
+        .iter()
+        .chain(&baseline_links)
+        .map(|dir| format!(":(literal){}", dir.to_string_lossy().replace('\\', "/")))
+        .collect();
+    let mut changed = BTreeSet::new();
+    for mut args in [
+        vec![
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            base,
+            "HEAD",
+            "--",
+        ],
+        vec![
+            "diff",
+            "--cached",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            "HEAD",
+            "--",
+        ],
+        vec!["diff", "--name-only", "--no-renames", "-z", "--"],
+        vec!["ls-files", "--others", "-z", "--"],
+    ] {
+        args.extend(pathspecs.iter().map(String::as_str));
+        let output = git(devlog, &args)?;
+        if !output.status.success() {
+            return Err(DevlogError::BaselineUnavailable);
+        }
+        for name in output.stdout.split(|b| *b == 0).filter(|n| !n.is_empty()) {
+            changed.insert(
+                std::str::from_utf8(name)
+                    .map_err(|_| invalid(devlog.dir(), "non-UTF-8 changed log path"))?
+                    .to_string(),
+            );
+        }
+    }
+    let pending: Vec<_> = dirs
+        .iter()
+        .map(|dir| dir.join("pending").to_string_lossy().replace('\\', "/"))
+        .collect();
+    let mut args = vec!["ls-tree", "-rz", "--name-only", base, "--"];
+    args.extend(pending.iter().map(String::as_str));
+    let baseline = git(devlog, &args)?;
+    if !baseline.status.success() {
+        return Err(DevlogError::BaselineUnavailable);
+    }
+    let mut problems = check_immutable_paths(devlog, base, &baseline.stdout, Some(&changed))?;
+    for name in changed {
+        let path = Path::new(&name);
+        if baseline_links.contains(path) {
+            problems.push(Problem {
+                kind: "log-path-changed",
+                path: name,
+                detail: "fragment-only PRs cannot retarget a merge-base log symlink".to_string(),
+            });
+            continue;
+        }
+        if path.parent().is_some_and(|parent| dirs.contains(parent))
+            && path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.strip_suffix(".md"))
+                .is_some_and(|s| s.parse::<Month>().is_ok())
+        {
+            problems.push(Problem { kind: "month-file-changed", path: name, detail: "month files cannot change in a fragment-only PR; only the trusted fold owner may update them".to_string() });
         }
     }
     Ok(problems)
