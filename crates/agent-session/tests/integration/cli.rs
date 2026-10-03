@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -11711,6 +11711,115 @@ fn resume_refuses_when_tmux_status_is_unknown() {
             .all(|call| call.first().is_none_or(|arg| arg != "new-session")),
         "unknown status should not create tmux sessions: {calls:?}"
     );
+}
+
+#[test]
+fn send_to_bound_codex_from_operator_without_broker_environment() {
+    // Keep the manual-input acknowledgement socket within macOS SUN_LEN.
+    let tmp = tempfile::tempdir_in("/tmp").expect("short socket tempdir");
+    let state_dir = tmp.path().join("state");
+    let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
+    let session = write_session_record(&state_dir, "operator-send", "codex", "hs-operator-send");
+    attach_provider_runtime(
+        tmp.path(),
+        &state_dir,
+        &session,
+        "operator-send",
+        "codex",
+        "hs-operator-send",
+    );
+    let record_path = session.join("session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record["codex_account_binding"] = json!({
+        "schema_version": "agent-session.codex-account-binding.v1",
+        "selected_account": "alpha",
+        "revision": 1,
+        "state": "bound",
+        "applied_runtime_id": "launch-operator-send",
+        "updated_at": "2030-01-01T00:00:00Z"
+    });
+    // Advertise the live proxy lease expected by serialized terminal input.
+    let capability_path = session.join(".codex-app-server-proxy-capability");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    fs::write(
+        &capability_path,
+        serde_json::to_vec(&json!({
+            "schema_version": "agent-session.codex-manual-input-proxy.v1",
+            "launch_id": "launch-operator-send",
+            "token": "00000000-0000-4000-8000-000000000001",
+            "owner_pid": std::process::id(),
+            "expires_at_epoch_ms": now + 60_000,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let capability = fs::File::open(&capability_path).unwrap();
+    // SAFETY: the fixture owns this descriptor for the complete test.
+    assert_eq!(
+        unsafe { libc::flock(capability.as_raw_fd(), libc::LOCK_SH) },
+        0
+    );
+    let options = CmdOptions::new()
+        .with_cwd(tmp.path())
+        .with_env_remove_prefix("AGENT_SESSION_")
+        .with_env("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log.to_str().unwrap());
+    let args = [
+        "--state-dir",
+        state_dir.to_str().unwrap(),
+        "send",
+        "operator-send",
+        "--text",
+        "hello",
+        "--key",
+        "enter",
+        "--tmux-bin",
+        tmux_bin.to_str().unwrap(),
+        "--format",
+        "json",
+    ];
+    for (binding_state, runtime_id, expected) in [
+        ("pending", "launch-operator-send", "codex-account-not-bound"),
+        (
+            "applying",
+            "launch-operator-send",
+            "codex-account-not-bound",
+        ),
+        ("failed", "launch-operator-send", "codex-account-not-bound"),
+        ("bound", "previous-runtime", "codex-account-not-bound"),
+        ("bound", "launch-operator-send", ""),
+    ] {
+        record["codex_account_binding"]["state"] = json!(binding_state);
+        record["codex_account_binding"]["applied_runtime_id"] = json!(runtime_id);
+        fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        let output = run_resolved("agent-session", &args, &options);
+        if expected.is_empty() {
+            assert_eq!(
+                output.code,
+                0,
+                "stdout={} stderr={}",
+                output.stdout_text(),
+                output.stderr_text()
+            );
+            assert_eq!(data(&output.stdout_json())["sent_text"], true);
+            assert!(
+                tmux_calls(&tmux_log)
+                    .iter()
+                    .any(|call| call.first().is_some_and(|arg| arg == "send-keys")
+                        && call.last().is_some_and(|arg| arg == "Enter"))
+            );
+        } else {
+            assert_ne!(output.code, 0);
+            assert_eq!(output.stdout_json()["error"]["code"], expected);
+            assert!(
+                !tmux_calls(&tmux_log)
+                    .iter()
+                    .any(|call| call.first().is_some_and(|arg| arg == "send-keys"))
+            );
+        }
+    }
 }
 
 #[test]
