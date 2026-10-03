@@ -93,6 +93,30 @@ socket. A release transition retires only inactive daemon sockets whose exact
 old build is still authorized by the embedded lock. `process` passes
 `--no-remote`.
 
+## Upstream release checks
+
+The **Peekaboo release check** GitHub Actions workflow runs daily and supports
+manual dispatch on `main`. Its job summary and retained JSON artifact show the
+last check time, accepted lock, newest stable official release, and candidate
+status. Discovery reads only `openclaw/Peekaboo`; drafts, prereleases and
+non-stable tags are excluded. It never changes the embedded lock or installs a
+backend.
+
+Each newer release gets one automation-owned candidate issue. Repeated checks
+refresh its machine-owned section, preserving maintainer notes and open/closed
+state. A closed or rejected candidate is never recreated or reopened. Missing
+install assets, API failures and ambiguous records produce actionable reports;
+the accepted backend stays in place.
+
+Candidate selection requires a separate exact-lock PR with official archive
+and executable SHA256 digests, source commit, signing identity, notarization
+policy, and updated version docs/generated notices. Keep all existing install,
+verify, compatibility and security gates enabled. Before that PR merges, the
+resident macOS tester must check doctor/capabilities, observe/click/type/key/
+screenshot, three independent Calculator reset/result trials, and explicit
+`BRIDGE_UNAVAILABLE` / `CAPTURE_FAILED` reproductions. Record a failed candidate's
+result in its issue and keep the accepted lock.
+
 ## Migrating from the native engine
 
 The adapter v2 boundary began with nils-cli v1.22.6. The Peekaboo v4 migration
