@@ -316,7 +316,8 @@ impl BackendRunner for ProcessRunner {
         for arg in &call.argv {
             cmd.arg(arg);
         }
-        let output = match output_with_timeout(&mut cmd, timeout) {
+        let identity = crate::identity::prepare_api(call, &mut cmd)?;
+        let mut output = match output_with_timeout(&mut cmd, timeout) {
             Ok(out) => out,
             Err(ProcessOutputError::Io(err)) => {
                 let kind = err.kind();
@@ -337,7 +338,13 @@ impl BackendRunner for ProcessRunner {
                     Some(err.to_string()),
                 ));
             }
-            Err(ProcessOutputError::Timeout { timeout, output }) => {
+            Err(ProcessOutputError::Timeout {
+                timeout,
+                mut output,
+            }) => {
+                if let Some(identity) = &identity {
+                    identity.redact_output(&mut output);
+                }
                 let stderr_full = String::from_utf8_lossy(&output.stderr).into_owned();
                 let stderr = redact_and_tail(&stderr_full);
                 return Err(ForgeError::unavailable(
@@ -354,8 +361,11 @@ impl BackendRunner for ProcessRunner {
             Err(ProcessOutputError::OutputLimit {
                 stream,
                 limit,
-                output,
+                mut output,
             }) => {
+                if let Some(identity) = &identity {
+                    identity.redact_output(&mut output);
+                }
                 let stderr_full = String::from_utf8_lossy(&output.stderr).into_owned();
                 let stderr = redact_and_tail(&stderr_full);
                 return Err(ForgeError::unavailable(
@@ -371,6 +381,12 @@ impl BackendRunner for ProcessRunner {
             }
         };
 
+        if let Some(identity) = identity {
+            identity.redact_output(&mut output);
+            identity
+                .finish(output.status.success(), None)
+                .map_err(|e| ForgeError::validation(schema(), e.code, e.to_string(), None))?;
+        }
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr_full = String::from_utf8_lossy(&output.stderr).into_owned();
         let stderr = redact_and_tail(&stderr_full);

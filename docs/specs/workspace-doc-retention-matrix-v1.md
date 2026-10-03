@@ -112,6 +112,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/memo/docs/specs/memo-release-policy.md`
 - `crates/memo/docs/specs/memo-storage-schema-v1.md`
 - `crates/memo/docs/specs/memo-workflow-extension-contract-v1.md`
+- `crates/nils-common/docs/specs/forge-identity-policy-v1.md`
 - `crates/nils-common/docs/specs/markdown-helpers-contract-v1.md`
 - `crates/nils-markdown/CHANGELOG.md`
 

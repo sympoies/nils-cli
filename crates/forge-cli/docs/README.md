@@ -4,6 +4,7 @@ Crate-local documentation for the `forge-cli` binary.
 
 ## Specs
 
+- [Shared forge identity policy](../../nils-common/docs/specs/forge-identity-policy-v1.md) — identity explain/doctor, enforcement, and rollout interface.
 - [`specs/forge-cli-spec-v1.md`](specs/forge-cli-spec-v1.md) — v1 contract,
   parity matrix, lock-down rules, exit-code map.
 - [`specs/forge-cli-ops-v1.yaml`](specs/forge-cli-ops-v1.yaml) —

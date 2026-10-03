@@ -1,0 +1,46 @@
+version = 1
+
+[credentials.account-a]
+kind = "env"
+name = "FIXTURE_ACCOUNT_A_CREDENTIAL"
+[credentials.account-b]
+kind = "gh_user"
+user = "account-b"
+
+[profiles.account-a]
+expected_login = "account-a"
+credential = "account-a"
+commit_name = "Example Contributor A"
+commit_email = "contributor-a@example.invalid"
+signing_fingerprint = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+operations = ["api_read", "api_write", "git_read", "git_push", "commit"]
+[profiles.account-b]
+expected_login = "account-b"
+credential = "account-b"
+commit_name = "Example Contributor B"
+commit_email = "contributor-b@example.invalid"
+signing_fingerprint = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+operations = ["api_read", "api_write", "git_read", "git_push", "commit"]
+
+[principals.contributor]
+profiles = ["account-a", "account-b"]
+[principals.coordinator]
+profiles = ["account-b"]
+default_profile = "account-b"
+default_repositories = ["github.com/sandbox/default"]
+
+[[rules]]
+id = "contributor-org"
+principal = "contributor"
+org = "github.com/sandbox"
+profile = "account-b"
+[[rules]]
+id = "contributor-widget"
+principal = "contributor"
+repo = "github.com/sandbox/widget"
+profile = "account-a"
+[[rules]]
+id = "coordinator-widget"
+principal = "coordinator"
+repo = "github.com/sandbox/widget"
+profile = "account-b"

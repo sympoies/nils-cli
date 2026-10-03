@@ -6,10 +6,10 @@ use nils_common::execution_effect::{
 };
 
 use crate::cli::{
-    ActivityArgs, AuthArgs, AuthCommand, Cli, Command, InboxArgs, InboxCommand, IssueArgs,
-    IssueCommand, IssueTrackerCommand, LabelArgs, LabelCommand, PrArgs, PrCommand,
-    PrPendingReviewCommand, PrReviewCommand, PrReviewHandoffCommand, PrReviewLoopCommand, RepoArgs,
-    RepoCommand, ReviewThreadsCommand, SearchArgs,
+    ActivityArgs, AuthArgs, AuthCommand, Cli, Command, IdentityArgs, IdentityCommand, InboxArgs,
+    InboxCommand, IssueArgs, IssueCommand, IssueTrackerCommand, LabelArgs, LabelCommand, PrArgs,
+    PrCommand, PrPendingReviewCommand, PrReviewCommand, PrReviewHandoffCommand,
+    PrReviewLoopCommand, RepoArgs, RepoCommand, ReviewThreadsCommand, SearchArgs,
 };
 
 pub fn run(argv: Vec<OsString>, format: OutputFormat) -> i32 {
@@ -42,7 +42,7 @@ pub fn run(argv: Vec<OsString>, format: OutputFormat) -> i32 {
     emit(format, descriptor)
 }
 
-fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<&'static str>) {
+pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<&'static str>) {
     let network = ProviderEffect::NetworkRead;
     let read = Effect::ReadOnly;
     let mutation = Effect::Mutation;
@@ -223,6 +223,25 @@ fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<&'static st
         Some(Command::Search(SearchArgs { command: Some(_) })) => {
             ("search.query", read, network, vec!["provider"])
         }
+        Some(Command::Identity(IdentityArgs {
+            command: IdentityCommand::Doctor { .. },
+        })) => (
+            "identity.doctor",
+            mutation,
+            network,
+            vec![
+                "identity_policy",
+                "provider_auth",
+                "signing_key",
+                "identity_audit",
+            ],
+        ),
+        Some(Command::Identity(_)) => (
+            "identity.explain",
+            read,
+            ProviderEffect::None,
+            vec!["identity_policy"],
+        ),
         Some(Command::Completion(_)) => ("completion", read, ProviderEffect::None, Vec::new()),
         Some(Command::OperationEffect(_)) | None => (
             "operation-effect",

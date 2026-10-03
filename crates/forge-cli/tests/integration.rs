@@ -46,3 +46,5 @@ mod integration {
     mod tracker_grammar;
     mod validations;
 }
+#[path = "integration/identity.rs"]
+mod identity;

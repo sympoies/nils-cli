@@ -75,7 +75,22 @@ impl GitRunner for ProcessGitRunner {
         let settings = current_git_process_settings();
         let mut command = Command::new(&settings.executable);
         command.arg("-C").arg(workdir).args(args);
-        let output = match output_with_limits(
+        let refs: Vec<_> = args
+            .iter()
+            .map(|arg| {
+                arg.to_str().ok_or_else(|| {
+                    ForgeError::validation(
+                        schema_error(),
+                        "identity_target_invalid",
+                        "forge identity refused non-UTF8 Git arguments",
+                        None,
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let identity = nils_common::forge_identity::prepare_git(&mut command, Some(workdir), &refs)
+            .map_err(|e| ForgeError::validation(schema_error(), e.code, e.to_string(), None))?;
+        let mut output = match output_with_limits(
             &mut command,
             Some(settings.timeout),
             settings.capture_limit,
@@ -88,7 +103,13 @@ impl GitRunner for ProcessGitRunner {
                     Some(error.to_string()),
                 ));
             }
-            Err(ProcessOutputError::Timeout { timeout, output }) => {
+            Err(ProcessOutputError::Timeout {
+                timeout,
+                mut output,
+            }) => {
+                if let Some(identity) = &identity {
+                    identity.redact_output(&mut output);
+                }
                 let stderr = redact_and_tail(&String::from_utf8_lossy(&output.stderr));
                 return Err(ForgeError::unavailable(
                     schema_error(),
@@ -104,8 +125,11 @@ impl GitRunner for ProcessGitRunner {
             Err(ProcessOutputError::OutputLimit {
                 stream,
                 limit,
-                output,
+                mut output,
             }) => {
+                if let Some(identity) = &identity {
+                    identity.redact_output(&mut output);
+                }
                 let stderr = redact_and_tail(&String::from_utf8_lossy(&output.stderr));
                 return Err(ForgeError::unavailable(
                     schema_error(),
@@ -120,6 +144,12 @@ impl GitRunner for ProcessGitRunner {
                 ));
             }
         };
+        if let Some(identity) = identity {
+            identity.redact_output(&mut output);
+            identity
+                .finish(output.status.success(), None)
+                .map_err(|e| ForgeError::validation(schema_error(), e.code, e.to_string(), None))?;
+        }
         Ok(GitOutput {
             success: output.status.success(),
             exit_code: output.status.code().unwrap_or(-1),
@@ -1141,6 +1171,64 @@ mod tests {
 
     use crate::backend::{BackendCall, BackendSuccess};
     use crate::provider::{DetectionSource, ProviderContext};
+
+    #[cfg(unix)]
+    #[test]
+    fn identity_bounded_git_errors_redact_the_selected_credential() {
+        use nils_test_support::{EnvGuard, GlobalStateLock, StubBinDir, prepend_path};
+        let lock = GlobalStateLock::new();
+        let home = tempfile::tempdir().unwrap();
+        let repo = nils_test_support::git::init_repo_main_with_initial_commit();
+        fs::create_dir(home.path().join("forge-cli")).unwrap();
+        fs::write(
+            home.path().join("forge-cli/identity.toml"),
+            include_str!("../../../nils-common/tests/fixtures/identity/policy.toml"),
+        )
+        .unwrap();
+        let bins = StubBinDir::new();
+        bins.write_exe("gh", "#!/bin/sh\nprintf '{\"login\":\"account-a\"}'\n");
+        let _path = prepend_path(&lock, bins.path());
+        let _config = EnvGuard::set(&lock, "XDG_CONFIG_HOME", home.path().to_str().unwrap());
+        let _state = EnvGuard::set(
+            &lock,
+            "XDG_STATE_HOME",
+            home.path().join("state").to_str().unwrap(),
+        );
+        let _principal = EnvGuard::set(&lock, "FORGE_IDENTITY_PRINCIPAL", "contributor");
+        const CANARY: &str = "FIXTURE_BOUNDED_GIT_SECRET_71";
+        let _secret = EnvGuard::set(&lock, "FIXTURE_ACCOUNT_A_CREDENTIAL", CANARY);
+        let executable = bins.path().join("bounded-git");
+        let _exe = EnvGuard::set(&lock, ENV_GIT_BIN, executable.to_str().unwrap());
+        let _timeout = EnvGuard::set(&lock, ENV_GIT_TIMEOUT_MS, "75");
+        for (body, expected) in [
+            (
+                "#!/bin/sh\nprintf '%s' \"$FORGE_IDENTITY_TOKEN\" >&2\nsleep 1\n",
+                "git_timeout",
+            ),
+            (
+                "#!/bin/sh\nwhile :; do printf '%s' \"$FORGE_IDENTITY_TOKEN\" >&2; done\n",
+                "git_output_limit",
+            ),
+        ] {
+            bins.write_exe("bounded-git", body);
+            let _limit = EnvGuard::set(&lock, ENV_GIT_CAPTURE_LIMIT_BYTES, "256");
+            let error = ProcessGitRunner
+                .run(
+                    repo.path(),
+                    &os_args(&["ls-remote", "https://github.com/sandbox/widget.git"]),
+                )
+                .unwrap_err();
+            match error {
+                ForgeError::BackendUnavailable { kind, detail, .. } => {
+                    pretty_assertions::assert_eq!(kind, expected);
+                    let detail = detail.unwrap();
+                    assert!(detail.contains("[REDACTED]"));
+                    assert!(!detail.contains(CANARY));
+                }
+                other => panic!("unexpected bounded error: {other:?}"),
+            }
+        }
+    }
 
     struct TimeoutRecordingRunner {
         timeout: Cell<Option<Duration>>,

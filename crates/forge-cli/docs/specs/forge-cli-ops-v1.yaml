@@ -198,6 +198,34 @@ review_state_contract:
 # ---------------------------------------------------------------------------
 operations:
 
+  - id: identity.explain
+    schema_version: cli.forge-cli.identity.explain.v1
+    summary: Explain principal, matched rule, profile and target without credentials or network.
+    inputs:
+      - { name: --operation, type: enum<api-read|api-write|git-read|git-push|commit>, default: api-read }
+    validations: []
+    backends: {}
+    output:
+      data:
+        enforced: bool
+        selection: optional<object>
+        credential_verified: bool
+        signing_key_verified: bool
+
+  - id: identity.doctor
+    schema_version: cli.forge-cli.identity.doctor.v1
+    summary: Verify selected credential actor and signing key without provider mutations.
+    inputs:
+      - { name: --operation, type: enum<api-read|api-write|git-read|git-push|commit>, default: api-read }
+    validations: []
+    backends: {}
+    output:
+      data:
+        enforced: bool
+        selection: optional<object>
+        credential_verified: bool
+        signing_key_verified: bool
+
   - id: pr.create
     schema_version: cli.forge-cli.pr.create.v1
     summary: Open a draft pull/merge request from the current branch.

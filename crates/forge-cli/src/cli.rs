@@ -240,6 +240,8 @@ pub enum Command {
     Search(SearchArgs),
     /// Repository helpers.
     Repo(RepoArgs),
+    /// Explain or verify context-based forge identity selection.
+    Identity(IdentityArgs),
     /// Backend authentication helpers.
     Auth(AuthArgs),
     /// Describe the effect of one exact typed forge-cli invocation.
@@ -247,6 +249,45 @@ pub enum Command {
     OperationEffect(OperationEffectArgs),
     /// Emit shell-completion scripts.
     Completion(CompletionArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct IdentityArgs {
+    #[command(subcommand)]
+    pub command: IdentityCommand,
+}
+#[derive(Subcommand, Debug)]
+pub enum IdentityCommand {
+    /// Explain selection without reading credentials or contacting the forge.
+    Explain {
+        #[arg(long, value_enum, default_value = "api-read")]
+        operation: IdentityOperation,
+    },
+    /// Verify the selected credential actor and local signing key.
+    Doctor {
+        #[arg(long, value_enum, default_value = "api-read")]
+        operation: IdentityOperation,
+    },
+}
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum IdentityOperation {
+    ApiRead,
+    ApiWrite,
+    GitRead,
+    GitPush,
+    Commit,
+}
+impl IdentityOperation {
+    pub fn operation(self) -> nils_common::forge_identity::Operation {
+        use nils_common::forge_identity::Operation as O;
+        match self {
+            Self::ApiRead => O::ApiRead,
+            Self::ApiWrite => O::ApiWrite,
+            Self::GitRead => O::GitRead,
+            Self::GitPush => O::GitPush,
+            Self::Commit => O::Commit,
+        }
+    }
 }
 
 #[derive(Args, Debug)]
@@ -2353,6 +2394,21 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
 
     let global: GlobalFlags = (&cli).into();
     let format = global.output_format();
+    let _identity_scope = match crate::identity::scope(&cli, &global) {
+        Ok(scope) => scope,
+        Err(error) => {
+            if let Err(audit) = nils_common::forge_identity::audit_refusal(error.kind()) {
+                return ForgeError::validation(
+                    schema_version_for(BINARY, "identity", 1),
+                    audit.code,
+                    audit.to_string(),
+                    None,
+                )
+                .emit(format);
+            }
+            return error.emit(format);
+        }
+    };
 
     if let Some(Command::OperationEffect(args)) = &cli.command {
         return crate::operation_effect::run(args.command.clone(), format);
@@ -2380,6 +2436,7 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
     }
 
     let result = match cli.command {
+        Some(Command::Identity(args)) => crate::identity::run(&global, args.command, format),
         Some(Command::Provider(ProviderArgs {
             command: Some(ProviderCommand::Add(args)),
         })) => {

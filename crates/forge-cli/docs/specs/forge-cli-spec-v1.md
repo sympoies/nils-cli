@@ -1,5 +1,15 @@
 # forge-cli Spec v1
 
+## Optional identity policy
+
+`identity explain` and `identity doctor` expose the versioned shared
+[forge identity contract](../../../nils-common/docs/specs/forge-identity-policy-v1.md).
+A configured user policy enforces starting-principal selection and typed refusal
+across managed API/Git calls. With no policy file, existing authentication and
+Git behavior remain unchanged. The policy contains metadata and credential
+reference names only; session binding and environment-specific installation are
+separate phases.
+
 ## Purpose
 
 This spec is the canonical contract for `forge-cli`, a new binary in the
