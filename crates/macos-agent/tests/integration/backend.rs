@@ -76,7 +76,7 @@ fn upgrade_acceptance_prune_preserves_current_and_predecessor_and_dry_run_is_rea
         );
         assert_eq!(out.code, 0, "{}", out.stderr_text());
     }
-    let obsolete = root.join("versions/v4.2.2");
+    let inactive_cache = root.join("versions/v4.2.2");
     write_executable(&current.tools.join("lsof"), "#!/bin/sh\necho 123\nexit 0\n");
     let busy = run_backend(
         &harness,
@@ -86,7 +86,7 @@ fn upgrade_acceptance_prune_preserves_current_and_predecessor_and_dry_run_is_rea
         &["--format", "json", "backend", "prune", "--strict"],
     );
     assert_eq!(busy.code, 69, "{}", busy.stderr_text());
-    assert!(obsolete.is_dir(), "prune removed an in-use cache");
+    assert!(inactive_cache.is_dir(), "prune removed an in-use cache");
     write_executable(&current.tools.join("lsof"), "#!/bin/sh\nexit 1\n");
     let outside = cwd.path().join("outside");
     fs::create_dir(&outside).expect("outside directory");
@@ -101,7 +101,10 @@ fn upgrade_acceptance_prune_preserves_current_and_predecessor_and_dry_run_is_rea
         &["--format", "json", "backend", "prune", "--strict"],
     );
     assert_eq!(unsafe_plan.code, 69, "{}", unsafe_plan.stderr_text());
-    assert!(obsolete.is_dir(), "prune partially applied an unsafe plan");
+    assert!(
+        inactive_cache.is_dir(),
+        "prune partially applied an unsafe plan"
+    );
     assert!(outside.join("retained").is_file());
     fs::remove_file(link).expect("remove fixture symlink");
     for dry_run in [true, false] {
@@ -112,7 +115,7 @@ fn upgrade_acceptance_prune_preserves_current_and_predecessor_and_dry_run_is_rea
         let out = run_backend(&harness, cwd.path(), &root, &current, &args);
         assert_eq!(out.code, 0, "{}", out.stderr_text());
         assert_eq!(out.stdout_json()["result"]["removed"], json!(["v4.2.2"]));
-        assert_eq!(obsolete.exists(), dry_run);
+        assert_eq!(inactive_cache.exists(), dry_run);
         assert!(root.join("versions/v4.4.0").is_dir());
         assert!(root.join("versions/v4.6.0").is_dir());
     }
@@ -198,7 +201,7 @@ fn upgrade_acceptance_prune_is_bounded_to_32_inactive_versions() {
 }
 
 #[test]
-fn upgrade_acceptance_legacy_cli_migration_is_explicit_and_dry_run_is_read_only() {
+fn upgrade_acceptance_version_specific_cli_migration_is_explicit_and_dry_run_is_read_only() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("cwd");
     let root = cwd.path().join("backend");
