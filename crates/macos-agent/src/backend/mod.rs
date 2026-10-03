@@ -2149,7 +2149,10 @@ mod tests {
         };
 
         let contracts = obsolete_runtime_contracts(&lock, &receipt);
-        assert_eq!(contracts.len(), 3);
+        assert_eq!(contracts.len(), 4);
+        assert!(contracts.iter().any(|contract| {
+            contract.identity() == "adc07d5064647251" && contract.bridge_build() == "4.4.0 (4.4.0)"
+        }));
         assert!(contracts.iter().any(|contract| {
             contract.identity() == "795176aaf84396b2" && contract.bridge_build() == "4.2.2 (4.2.2)"
         }));

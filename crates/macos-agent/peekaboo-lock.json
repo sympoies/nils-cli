@@ -1,24 +1,24 @@
 {
   "schema_version": 2,
   "repository": "https://github.com/openclaw/Peekaboo",
-  "tag": "v4.4.0",
-  "commit": "d82dbd88832688252cbed2254af6433ed9699abd",
-  "released_at": "2026-09-14T07:22:53Z",
+  "tag": "v4.6.0",
+  "commit": "b54551ce2d0013e52c2a405bfeabced88ec5c2e0",
+  "released_at": "2026-09-26T08:52:13Z",
   "license": {
     "spdx": "MIT",
-    "source": "https://github.com/openclaw/Peekaboo/blob/v4.4.0/LICENSE"
+    "source": "https://github.com/openclaw/Peekaboo/blob/v4.6.0/LICENSE"
   },
   "minimum_macos": "15.0",
   "assets": [
     {
       "kind": "cli",
       "name": "peekaboo-macos-universal.tar.gz",
-      "url": "https://github.com/openclaw/Peekaboo/releases/download/v4.4.0/peekaboo-macos-universal.tar.gz",
-      "sha256": "6260d3560dc05b8df6621ffac5544ff987291105842ffeb652ecf018ec725d45",
+      "url": "https://github.com/openclaw/Peekaboo/releases/download/v4.6.0/peekaboo-macos-universal.tar.gz",
+      "sha256": "a9179b2bf9f4259cebc67737ae4d444a1dfe9c3fcb60d5922afb7d8f65ef87bf",
       "archive_root": "peekaboo-macos-universal",
       "executable": "peekaboo",
-      "executable_sha256": "adc07d5064647251530a7081a6dddbb6d02b7b7345cd2e9e1dffa3c586308c62",
-      "bridge_build": "4.4.0 (4.4.0)",
+      "executable_sha256": "b5a7215fa3fb03c76fb139872cd593fd03d9290f81c8667fb408207bcc4657ed",
+      "bridge_build": "4.6.0 (4.6.0)",
       "architectures": ["arm64", "x86_64"],
       "signing_authority": "Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)",
       "team_id": "FWJYW4S8P8",
@@ -28,13 +28,13 @@
     },
     {
       "kind": "app",
-      "name": "Peekaboo-4.4.0.app.zip",
-      "url": "https://github.com/openclaw/Peekaboo/releases/download/v4.4.0/Peekaboo-4.4.0.app.zip",
-      "sha256": "ca87deb3fd705b71e29d51c131ba53d34a3d88f6d1048878a7673e0a049b6764",
+      "name": "Peekaboo-4.6.0.app.zip",
+      "url": "https://github.com/openclaw/Peekaboo/releases/download/v4.6.0/Peekaboo-4.6.0.app.zip",
+      "sha256": "51dd57f4259c5561c4657738d8288548f81cf7704472016f51cabf2a7dda4004",
       "archive_root": "Peekaboo.app",
       "executable": "Contents/MacOS/Peekaboo",
-      "executable_sha256": "11d5725eedb299c43a99a75657380b6f2c9050a4d39ac3595cd8b605003e1f90",
-      "bridge_build": "4.4.0 (4040099)",
+      "executable_sha256": "f0e1a139d59d32e2fcc3b891fe88fa6889c61123421e312d2b96d92e9b8d28a5",
+      "bridge_build": "4.6.0 (4060099)",
       "architectures": ["arm64"],
       "bundle_id": "boo.peekaboo.mac",
       "signing_authority": "Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)",
@@ -62,7 +62,53 @@
     {"id": "verification", "argv": ["verify", "--help"]},
     {"id": "mcp_stdio", "argv": ["mcp", "serve", "--transport", "stdio", "--help"]}
   ],
-  "rollback_releases": [],
+  "rollback_releases": [
+    {
+      "tag": "v4.4.0",
+      "commit": "d82dbd88832688252cbed2254af6433ed9699abd",
+      "minimum_macos": "15.0",
+      "assets": [
+        {
+          "kind": "cli",
+          "name": "peekaboo-macos-universal.tar.gz",
+          "url": "https://github.com/openclaw/Peekaboo/releases/download/v4.4.0/peekaboo-macos-universal.tar.gz",
+          "sha256": "6260d3560dc05b8df6621ffac5544ff987291105842ffeb652ecf018ec725d45",
+          "archive_root": "peekaboo-macos-universal",
+          "executable": "peekaboo",
+          "executable_sha256": "adc07d5064647251530a7081a6dddbb6d02b7b7345cd2e9e1dffa3c586308c62",
+          "bridge_build": "4.4.0 (4.4.0)",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "signing_authority": "Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)",
+          "team_id": "FWJYW4S8P8",
+          "notarization": {
+            "policy": "required"
+          }
+        },
+        {
+          "kind": "app",
+          "name": "Peekaboo-4.4.0.app.zip",
+          "url": "https://github.com/openclaw/Peekaboo/releases/download/v4.4.0/Peekaboo-4.4.0.app.zip",
+          "sha256": "ca87deb3fd705b71e29d51c131ba53d34a3d88f6d1048878a7673e0a049b6764",
+          "archive_root": "Peekaboo.app",
+          "executable": "Contents/MacOS/Peekaboo",
+          "executable_sha256": "11d5725eedb299c43a99a75657380b6f2c9050a4d39ac3595cd8b605003e1f90",
+          "bridge_build": "4.4.0 (4040099)",
+          "architectures": [
+            "arm64"
+          ],
+          "bundle_id": "boo.peekaboo.mac",
+          "signing_authority": "Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)",
+          "team_id": "FWJYW4S8P8",
+          "notarization": {
+            "policy": "required"
+          }
+        }
+      ]
+    }
+  ],
   "upgrade_from_releases": [
     {
       "tag": "v3.9.3",
