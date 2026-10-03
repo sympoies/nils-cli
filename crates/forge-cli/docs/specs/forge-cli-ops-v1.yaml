@@ -24,11 +24,11 @@ validations_catalog:
     error_kind: review_assignment_invalid | review_assignment_missing | review_assignment_conflict | review_assignment_generation_conflict | review_state_conflict | review_writer_conflict | review_handover_required | review_scope_changed | awaiting_designated_review | designated_reviewer_unavailable | review_repair_unobserved | designated_review_provider_unsupported
     exit: DATA | UNAVAILABLE
   branch_name:
-    rule: "^(feat|fix)/[a-z0-9][a-z0-9-]{1,63}$"
+    rule: "^(feat|fix|chore|docs|ci|refactor|test)/[a-z0-9][a-z0-9-]{1,63}$"
     error_kind: branch_name_invalid
     exit: DATA
   branch_kind_matches:
-    rule: "feature -> feat/*, bug -> fix/*"
+    rule: "feature -> feat/*, bug -> fix/*, chore -> chore/*, docs -> docs/*, ci -> ci/*, refactor -> refactor/*, test -> test/*"
     error_kind: branch_kind_mismatch
     exit: DATA
   body_summary:
@@ -207,7 +207,7 @@ operations:
       - { name: --title,       type: string,         required: true }
       - { name: --body,        type: string,         required: false }
       - { name: --body-file,   type: path,           required: false }
-      - { name: --kind,        type: enum<feature|bug>, required: true }
+      - { name: --kind,        type: enum<feature|bug|chore|docs|ci|refactor|test>, required: true }
       - { name: --draft,       type: bool,           default: true }
       - { name: --reviewer,    type: list<string>,   default: [] }
       - { name: --label,       type: list<string>,   default: [] }
@@ -247,7 +247,7 @@ operations:
         base: string
         draft: bool
         title: string
-        kind: enum<feature|bug>
+        kind: enum<feature|bug|chore|docs|ci|refactor|test>
         provider: enum<github|gitlab>
 
   - id: pr.view
@@ -1555,7 +1555,7 @@ macros:
     schema_version: cli.forge-cli.pr.deliver.v1
     summary: End-to-end "open draft (or adopt the branch's open PR) → CI green → ready → merge" flow.
     inputs:
-      - { name: --kind,                     type: enum<feature|bug>,            required: true }
+      - { name: --kind,                     type: enum<feature|bug|chore|docs|ci|refactor|test>,            required: true }
       - { name: --title,                    type: string,                       required: false }
       - { name: --body,                     type: string,                       required: false }
       - { name: --body-file,                type: path,                         required: false }
@@ -1619,7 +1619,7 @@ macros:
       - { step: issue_closeout,     op: issue.closeout, schema_version: cli.forge-cli.issue.closeout.v1, skip_when: "--no-merge or --no-issue-closeout" }
     output:
       data:
-        kind: enum<feature|bug>
+        kind: enum<feature|bug|chore|docs|ci|refactor|test>
         provider: enum<github|gitlab>
         review_convergence: optional<resolved<{require, quiet_period, timeout, bots}>> # dry-run merge phase only; absent with --no-merge
         pr:
