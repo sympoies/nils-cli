@@ -22,6 +22,7 @@ macos-agent backend install --strict --format json
 macos-agent backend status --format json
 macos-agent backend verify --strict --format json
 macos-agent backend rollback --dry-run --strict --format json
+macos-agent backend prune --dry-run --strict --format json
 macos-agent doctor --strict --format json
 macos-agent capabilities --strict --format json
 ```
@@ -40,7 +41,8 @@ Timeout or signal termination always fails closed. There is no runtime bypass
 flag. Lifecycle responses from install,
 status, and rollback also expose `strict`, `cli_notarization_policy`, and
 `security_posture`; an accepted waiver is therefore never collapsed into an
-undifferentiated `verified=true` result. It atomically owns one stable app path.
+undifferentiated `verified=true` result. It atomically owns one stable app path
+and one stable CLI path; versioned files remain an authenticated recovery cache.
 Rollback is permitted only
 when the exact prior tag, commit, assets, and executable digests are retained in
 the embedded `rollback_releases` allowlist; mutable receipts are never a trust
@@ -52,10 +54,25 @@ retire the supported in-place predecessor, while the exact v3.9.3 tuple remains
 available for older transition recovery. Neither transition-only release can
 become active again through rollback. A shared verified-backend
 lease, including the digest recorded in the
-journal, is held for the full lifetime of every execution. Install and rollback
+journal, is held for the full lifetime of every execution. Install, verify, prune, and rollback
 take the exclusive lifecycle lock, so verified code cannot be swapped between
 check and use. It will not replace an app it cannot prove it owns. It never
 changes TCC permissions.
+
+`backend verify` migrates a missing legacy CLI path from the authenticated
+active receipt, without selecting the candidate release. It verifies the
+stable CLI itself and restarts the owned app at its stable path. Install and
+rollback also retire owned previous app instances before swapping bundles and
+start exactly one stable instance. An unowned running app or a refused quit
+stops the operation with an actionable error. App launch reuses an instance
+instead of requesting another one.
+
+`backend prune` removes at most 32 inactive cached versions per invocation,
+retaining the authenticated current and previous receipts. It refuses pending
+activations, invalid receipts, symlinked cache entries, and executables still
+in use. `--dry-run` reports the same bounded plan without deleting files.
+See the [backend upgrade runbook](docs/runbooks/backend-upgrade-v1.md) for
+permission identity, migration, acceptance, rollback, and cleanup steps.
 
 `doctor` without `--strict` is report-only and exits successfully with
 `ready=false` when the environment is not ready. `doctor --strict` exits 77 for
@@ -63,6 +80,11 @@ the same failed permission, Bridge, runtime, or capability checks. Its Bridge
 probe targets the stable app socket at
 `~/Library/Application Support/Peekaboo/bridge.sock` directly, so an unrelated
 default-selected daemon cannot satisfy or block stable-app readiness.
+Permission diagnostics name the missing or pending service and the app or CLI
+authority. Capture/Bridge failures use a bounded permission-status recheck;
+only a confirmed denial changes the adapter diagnostic and exit code to 77.
+The original upstream result remains available for diagnosis. An unavailable
+probe does not establish that a GUI session is locked or that a grant is denied.
 
 ## Execute Peekaboo
 
@@ -86,8 +108,8 @@ macos-agent exec \
 
 Use `--runtime app|daemon|auto|process` to select the effective Peekaboo
 authority. `app` is the stable default: it reuses the owned app only when its
-exact locked Bridge build is ready, otherwise launches a new stable app
-instance on `~/Library/Application Support/Peekaboo/bridge.sock` and verifies
+exact locked Bridge build is ready, otherwise requests the stable app on
+`~/Library/Application Support/Peekaboo/bridge.sock` and verifies
 the exact handshake. `daemon` starts the verified CLI daemon on an
 executable-digest-scoped socket. `auto` first selects an exact compatible GUI
 Bridge and otherwise starts the verified CLI daemon on its own digest-scoped

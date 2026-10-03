@@ -68,7 +68,14 @@ pub fn run_local(
                 expected: args.expected.clone(),
                 argv: args.argv.clone(),
                 status: StepStatus::Failed,
-                failure_class: Some("backend_drift".into()),
+                failure_class: Some(
+                    if error.class() == ErrorClass::Permission {
+                        "permission"
+                    } else {
+                        "backend_drift"
+                    }
+                    .into(),
+                ),
                 duration_ms: 0,
                 retries: 0,
                 precondition_refs: Vec::new(),
@@ -158,6 +165,15 @@ pub fn run_local(
             failure_class = Some("false_success".into());
         }
     }
+    let permission_diagnostic = (!output.timed_out
+        && output.signal.is_none()
+        && status == StepStatus::Failed
+        && capture_or_bridge_failure(parsed.as_ref(), &stderr_text))
+    .then(|| runtime.permission_diagnostic(binary.path()))
+    .flatten();
+    if permission_diagnostic.is_some() {
+        failure_class = Some("permission".into());
+    }
     let debug_artifact = if args.evidence_mode == crate::cli::EvidenceMode::Debug {
         Some(write_debug_artifact(
             &args.out_dir,
@@ -210,9 +226,13 @@ pub fn run_local(
         .map(|value| sanitize_result_json(value, args.evidence_mode));
     let text = (json.is_none() && !stdout_text.trim().is_empty())
         .then(|| sanitize_output(stdout_text.trim(), args.evidence_mode));
-    let diagnostic = (!stderr_text.trim().is_empty())
-        .then(|| sanitize_output(stderr_text.trim(), args.evidence_mode));
-    let exit_code = if output.timed_out || output.exit_code != 0 || malformed_json {
+    let diagnostic = permission_diagnostic.clone().or_else(|| {
+        (!stderr_text.trim().is_empty())
+            .then(|| sanitize_output(stderr_text.trim(), args.evidence_mode))
+    });
+    let exit_code = if permission_diagnostic.is_some() {
+        ErrorClass::Permission.exit_code()
+    } else if output.timed_out || output.exit_code != 0 || malformed_json {
         ErrorClass::Upstream.exit_code()
     } else {
         0
@@ -236,6 +256,22 @@ pub fn run_local(
         },
         exit_code,
     })
+}
+
+fn capture_or_bridge_failure(parsed: Option<&serde_json::Value>, stderr: &str) -> bool {
+    parsed
+        .and_then(|value| value.pointer("/error/code"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|code| {
+            matches!(
+                code,
+                "CAPTURE_FAILED"
+                    | "BRIDGE_UNAVAILABLE"
+                    | "GUI_SESSION_LOCKED"
+                    | "PERMISSION_DENIED"
+            )
+        })
+        || stderr.to_ascii_lowercase().contains("gui session locked")
 }
 
 /// The parts of the Peekaboo v4 result envelope the adapter classifies on.
