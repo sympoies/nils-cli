@@ -15,6 +15,7 @@ mod integration {
     mod inbox;
     mod issue_atoms;
     mod issue_tracker;
+    mod kind_parity;
     mod label_ops;
     mod ledger_blank_comment_probe;
     mod local_ops;

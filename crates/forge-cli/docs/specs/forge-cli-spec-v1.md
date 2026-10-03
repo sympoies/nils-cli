@@ -76,7 +76,7 @@ In scope (v1):
 - Repository helpers: read-only `repo view`, the explicitly governed
   `repo push-default` delivery exception, and the GitHub merge-freeze record
   `repo freeze start|end|status`.
-- Macro ops: `pr deliver` (kind = `feature` | `bug`), composing the
+- Macro ops: `pr deliver` (kind = `feature` | `bug` | `chore` | `docs` | `ci` | `refactor` | `test`), composing the
   atoms above into the agent-runtime-kit standard "open draft → wait CI →
   ready → merge → cleanup" flow.
 
@@ -389,7 +389,7 @@ backend mapping, validation rules, and output schema versions.
 - Input: `--head <branch>` (default current branch; GitHub also accepts
   `<user>:<branch>` for a cross-fork head), `--base <branch>`
   (default repo default branch), `--title <str>`, `--body-file <path>`
-  or `--body <str>`, `--kind feature|bug`, `--draft` (default `true`),
+  or `--body <str>`, `--kind feature|bug|chore|docs|ci|refactor|test`, `--draft` (default `true`),
   `--reviewer <user>...`, `--label <name>...`,
   `--label-catalog <path>`, `--strict-labels`.
 - Validation (see "Lock-down policy" for the full list):
@@ -1512,7 +1512,7 @@ Synopsis:
 
 ```text
 forge-cli pr deliver \
-  --kind feature|bug \
+  --kind feature|bug|chore|docs|ci|refactor|test \
   [--title <str>] [--body-file <path>] \
   [--base <branch>] [--head <branch>] \
   [--method squash|merge|rebase] \
@@ -2175,7 +2175,7 @@ checks and after ready, and merge uses the same OID as a compare-and-swap
 condition. Amend, rebase, or post-check push operations invalidate the latest
 delivery attestation until `test-first-evidence bind-delivery` appends a new
 attempt; the baseline is never replaced. Record v1 remains readable but cannot
-satisfy this gate. `docs` / `chore` / `ci` / `refactor` kinds are exempt. Failures
+satisfy this gate. `docs` / `chore` / `ci` / `refactor` / `test` kinds are exempt. Failures
 surface as `test_first_evidence_required`, `test_first_evidence_v1`,
 `test_first_evidence_classification`, `test_first_evidence_incomplete`,
 `test_first_evidence_unbound`, `test_first_evidence_subject_mismatch`,

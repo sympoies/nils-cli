@@ -4606,7 +4606,7 @@ _forge__cli() {
                     return 0
                     ;;
                 --kind)
-                    COMPREPLY=($(compgen -W "feature bug chore docs ci refactor" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "feature bug chore docs ci refactor test" -- "${cur}"))
                     return 0
                     ;;
                 --reviewer)
@@ -4664,7 +4664,7 @@ _forge__cli() {
             fi
             case "${prev}" in
                 --kind)
-                    COMPREPLY=($(compgen -W "feature bug chore docs ci refactor" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "feature bug chore docs ci refactor test" -- "${cur}"))
                     return 0
                     ;;
                 --title)

@@ -612,7 +612,7 @@ fn kind_arg() -> Arg {
         .long("kind")
         .help("Branch prefix kind")
         .value_name("kind")
-        .value_parser(["feature", "bug", "chore", "docs", "ci", "refactor"])
+        .value_parser(["feature", "bug", "chore", "docs", "ci", "refactor", "test"])
 }
 
 #[cfg(test)]
@@ -758,7 +758,7 @@ mod tests {
             .iter()
             .map(|value| value.get_name().to_string())
             .collect();
-        for expected in ["feature", "bug", "chore", "docs", "ci", "refactor"] {
+        for expected in ["feature", "bug", "chore", "docs", "ci", "refactor", "test"] {
             assert!(
                 values.iter().any(|value| value == expected),
                 "kind candidate `{expected}` should be present, got {values:?}"

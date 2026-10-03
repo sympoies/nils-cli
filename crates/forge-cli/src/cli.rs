@@ -463,6 +463,7 @@ pub enum PrKindFlag {
     Docs,
     Ci,
     Refactor,
+    Test,
 }
 
 impl PrKindFlag {
@@ -474,6 +475,7 @@ impl PrKindFlag {
             PrKindFlag::Docs => crate::validations::PrKind::Docs,
             PrKindFlag::Ci => crate::validations::PrKind::Ci,
             PrKindFlag::Refactor => crate::validations::PrKind::Refactor,
+            PrKindFlag::Test => crate::validations::PrKind::Test,
         }
     }
 
@@ -485,6 +487,7 @@ impl PrKindFlag {
             PrKindFlag::Docs => "docs",
             PrKindFlag::Ci => "ci",
             PrKindFlag::Refactor => "refactor",
+            PrKindFlag::Test => "test",
         }
     }
 }

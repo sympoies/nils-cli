@@ -150,6 +150,47 @@ fn worktree_add_kind_bug_uses_fix_branch_prefix() {
 }
 
 #[test]
+fn worktree_add_kind_test_uses_test_branch_prefix() {
+    let harness = GitCliHarness::new();
+    let repo = init_repo();
+    let agent_home = tempfile::TempDir::new().expect("agent home");
+
+    let add = run_with_agent_home(
+        &harness,
+        repo.path(),
+        agent_home.path(),
+        &[
+            "worktree",
+            "add",
+            "topic-test",
+            "--from",
+            "main",
+            "--kind",
+            "test",
+            "--format",
+            "json",
+        ],
+    );
+
+    assert_eq!(add.code, 0, "stderr: {}", add.stderr_text());
+    assert_eq!(add.stderr_text(), "");
+
+    let add_json = parse_json(&add);
+    assert_eq!(add_json["ok"], true);
+    assert_eq!(add_json["data"]["slug"], "topic-test");
+    assert_eq!(add_json["data"]["kind"], "test");
+    assert_eq!(
+        add_json["data"]["branch"], "test/topic-test",
+        "kind=test derives the test/ prefix forge-cli's --kind test expects"
+    );
+
+    let path = add_json["data"]["path"].as_str().expect("path");
+    let porcelain = git(repo.path(), &["worktree", "list", "--porcelain"]);
+    assert!(porcelain.contains("branch refs/heads/test/topic-test"));
+    assert!(porcelain.contains(path));
+}
+
+#[test]
 fn worktree_add_rejects_unknown_kind() {
     let harness = GitCliHarness::new();
     let repo = init_repo();
