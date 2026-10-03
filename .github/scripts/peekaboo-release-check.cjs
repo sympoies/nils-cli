@@ -39,12 +39,15 @@ function report(result) {
 async function recordCandidate({ github, context, result }) {
   const marker = `<!-- peekaboo-release-check:${result.candidate} -->`;
   // All states matter: a rejected/closed candidate must not be recreated daily.
-  const issues = await github.paginate(github.rest.issues.list, {
+  const issues = await github.paginate(github.rest.issues.listForRepo, {
     ...context.repo, state: "all", per_page: 100,
   });
   const matches = issues.filter((issue) => !issue.pull_request &&
-    issue.user?.login === "github-actions[bot]" && (issue.body || "").includes(marker));
+    (issue.body || "").includes(marker));
   if (matches.length > 1) throw new Error("duplicate candidate records; maintainer must reconcile them");
+  if (matches.length === 1 && matches[0].user?.login !== "github-actions[bot]") {
+    throw new Error("foreign-owned candidate marker; maintainer must reconcile ownership before retrying");
+  }
   const section = `${marker}\n${report(result)}\n${SECTION_END}`;
   if (matches.length === 0) {
     const response = await github.rest.issues.create({
@@ -99,6 +102,7 @@ async function runReleaseCheck({ github, context, core,
     result.status = "error";
     // Do not forward API diagnostics or upstream prose into public reports.
     const reason = ["duplicate candidate records; maintainer must reconcile them",
+      "foreign-owned candidate marker; maintainer must reconcile ownership before retrying",
       "candidate record section is incomplete; maintainer must repair its markers", "invalid official backend lock",
       "no stable official release found"].includes(error.message) ? error.message : "GitHub API request failed";
     result.action = `Release check failed: ${reason}; keep the accepted backend. Inspect the check run and retry after resolving the failure.`;

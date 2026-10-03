@@ -14,12 +14,15 @@ if (fs.existsSync(modulePath)) {
   function fixture(releases = [release("v4.6.0")], issues = []) {
     const state = { releases, issues, writes: [], summary: "", failed: [], result: null, lists: [] };
     const listReleases = () => {};
-    const listIssues = () => {};
+    const listIssuesForRepo = () => {};
+    const listUserIssues = () => {};
     const github = { paginate: async (method, args) => {
       state.lists.push(args);
       if (method === listReleases) return state.releases;
-      return state.issues;
-    }, rest: { repos: { listReleases }, issues: { list: listIssues,
+      if (method === listIssuesForRepo) return state.issues;
+      if (method === listUserIssues) return state.issues.filter((issue) => issue.assigned_to_authenticated_user);
+      throw new Error("unexpected endpoint");
+    }, rest: { repos: { listReleases }, issues: { list: listUserIssues, listForRepo: listIssuesForRepo,
       create: async (args) => { state.writes.push(["create", args]); const issue = { number: 12, body: args.body,
         user: { login: "github-actions[bot]" }, html_url: "https://github.com/example/project/issues/12" };
         state.issues.push(issue); return { data: issue }; },
@@ -69,6 +72,27 @@ if (fs.existsSync(modulePath)) {
     assert.ok(update.body.includes("2026-10-04T00:00:00.000Z"));
     assert.equal(update.state, undefined);
   });
+  test("repository discovery reuses a closed unassigned candidate without creating one", async () => {
+    const marker = "<!-- peekaboo-release-check:v4.6.0 -->";
+    const record = { number: 17, state: "closed", user: { login: "github-actions[bot]" },
+      body: `${marker}\nOld check\n<!-- peekaboo-release-check:end -->\nMaintainer decision`,
+      html_url: "https://github.com/example/project/issues/17" };
+    const { state, options } = fixture([release("v4.6.0")], [record]);
+    await runReleaseCheck(options);
+    assert.deepEqual(state.writes.map(([kind]) => kind), ["update"]);
+    assert.equal(state.writes[0][1].issue_number, 17);
+    assert.deepEqual(state.lists[1], { owner: "example", repo: "project", state: "all", per_page: 100 });
+    assert.equal(state.writes[0][1].state, undefined);
+  });
+  test("a foreign-owned exact candidate marker refuses all writes", async () => {
+    const { state, options } = fixture([release("v4.6.0")], [{ number: 18, state: "closed",
+      user: { login: "maintainer" }, body: "<!-- peekaboo-release-check:v4.6.0 -->\nMaintainer decision" }]);
+    await runReleaseCheck(options);
+    assert.equal(state.result.status, "error");
+    assert.equal(state.failed.length, 1);
+    assert.equal(state.writes.length, 0);
+    assert.match(state.summary, /foreign|owner|ownership/);
+  });
   test("missing official install assets reports an unsupported candidate without touching the lock", async () => {
     const { state, options } = fixture([release("v4.6.0", { assets: [] })]);
     await runReleaseCheck(options);
@@ -89,14 +113,16 @@ if (fs.existsSync(modulePath)) {
     }
   });
   test("ambiguous existing candidate records fail closed instead of creating another", async () => {
-    const { state, options } = fixture();
-    await runReleaseCheck(options);
-    state.issues.push({ ...state.issues[0], number: 13 });
-    state.writes = [];
-    await runReleaseCheck(options);
-    assert.equal(state.result.status, "error");
-    assert.equal(state.writes.length, 0);
-    assert.ok(state.summary.includes("duplicate"));
+    for (const owner of ["github-actions[bot]", "maintainer"]) {
+      const { state, options } = fixture();
+      await runReleaseCheck(options);
+      state.issues.push({ ...state.issues[0], number: 13, user: { login: owner } });
+      state.writes = [];
+      await runReleaseCheck(options);
+      assert.equal(state.result.status, "error");
+      assert.equal(state.writes.length, 0);
+      assert.ok(state.summary.includes("duplicate"));
+    }
   });
   test("issue-write errors remain visible in summary and result", async () => {
     const { state, options } = fixture();
