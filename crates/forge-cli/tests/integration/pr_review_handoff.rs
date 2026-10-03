@@ -723,6 +723,19 @@ fn handoff_operation_uses_the_existing_catalog_schema() {
         "operation must expose canonical output"
     );
     assert!(operation.get("outputs").is_none());
+    assert!(
+        catalog["validations_catalog"]["designated_review_handoff"]["error_kind"]
+            .as_str()
+            .unwrap()
+            .split(" | ")
+            .any(|kind| kind == "review_assignment_missing")
+    );
+    assert!(
+        !operation["backends"]["github"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("assign/return")
+    );
     for rule in operation["validations"].as_sequence().unwrap() {
         assert!(
             catalog["validations_catalog"]
@@ -937,4 +950,116 @@ exec '{inner}' "$@"
                 .contains("--method POST")
         );
     }
+}
+
+#[test]
+fn live_same_head_handoff_appends_reconciles_and_admits_published_review() {
+    let inherited = review_state::observe_review_loop(None, HEAD, &[])
+        .unwrap()
+        .state;
+    let legacy = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        HEAD,
+        0,
+        None,
+        ReviewStatePayload::ReviewLoop {
+            state: inherited.clone(),
+        },
+    )
+    .unwrap();
+    let assigned = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        HEAD,
+        1,
+        Some(legacy.record_digest.clone()),
+        ReviewStatePayload::ReviewHandoff {
+            handoff: handoff(None),
+        },
+    )
+    .unwrap();
+    let stub = fixture(
+        HEAD,
+        &[legacy.clone(), assigned.clone()],
+        vec![review(HEAD, "pass")],
+    )
+    .env("AGENT_SESSION_ID", "reviewer-session");
+    let gh = stub.tempdir.path().join("gh");
+    let inner = stub.tempdir.path().join("inner-gh");
+    fs::rename(&gh, &inner).unwrap();
+    let posted = stub.tempdir.path().join("posted-body");
+    let wrapper = format!(
+        r#"#!/usr/bin/env python3
+import json, subprocess, sys
+from pathlib import Path
+args = sys.argv[1:]
+posted = Path({posted:?})
+if args[:2] == ['api', 'repos/acme/widgets/issues/7/comments']:
+    body = next(a[len('body='):] for a in args if a.startswith('body='))
+    posted.write_text(body)
+    print(json.dumps({{'html_url':'https://github.com/acme/widgets/pull/7#issuecomment-2'}}))
+    sys.exit(0)
+r = subprocess.run([{inner:?}] + args, capture_output=True, text=True)
+if r.returncode == 0 and args[:2] == ['api', 'graphql'] and 'comments(first:' in ' '.join(args) and posted.exists():
+    data = json.loads(r.stdout)
+    data['data']['repository']['pullRequest']['comments']['nodes'].append({{
+        'author':{{'login':'review-app[bot]'}}, 'authorAssociation':'OWNER',
+        'createdAt':'2026-07-20T12:00:01Z', 'body':posted.read_text()}})
+    print(json.dumps(data))
+else:
+    sys.stdout.write(r.stdout)
+sys.stderr.write(r.stderr)
+sys.exit(r.returncode)
+"#,
+        posted = posted.to_str().unwrap(),
+        inner = inner.to_str().unwrap()
+    );
+    fs::write(&gh, wrapper).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let findings = stub.tempdir.path().join("clean-live.json");
+    fs::write(&findings, "[]").unwrap();
+    let args = [
+        "--provider",
+        "github",
+        "--repo",
+        "acme/widgets",
+        "--format",
+        "json",
+        "pr",
+        "review-loop",
+        "observe",
+        "7",
+        "--expected-head",
+        HEAD,
+        "--auto-state",
+        "--findings-file",
+        findings.to_str().unwrap(),
+    ];
+    let output = run_forge_cli(&stub, &args);
+    assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
+    assert_eq!(parse_envelope(&output.stdout)["data"]["appended"], true);
+    let body = fs::read_to_string(&posted).unwrap();
+    let bodies = [legacy.marker().unwrap(), assigned.marker().unwrap(), body];
+    let chain =
+        review_state::parse_chain(bodies.iter().map(String::as_str), "acme/widgets", 7).unwrap();
+    assert_eq!(chain.records.len(), 3);
+    assert_eq!(chain.records.last().unwrap().assignment_generation, Some(1));
+    assert_eq!(
+        review_state::latest_review_loop_state(&chain),
+        Some(&inherited)
+    );
+    let admission = check(&stub, HEAD);
+    assert_eq!(
+        admission.code, 0,
+        "{} {}",
+        admission.stdout, admission.stderr
+    );
+    let retry = run_forge_cli(&stub, &args);
+    assert_eq!(retry.code, 0, "{} {}", retry.stdout, retry.stderr);
+    assert_eq!(parse_envelope(&retry.stdout)["data"]["appended"], false);
 }
