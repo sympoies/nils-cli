@@ -11715,7 +11715,8 @@ fn resume_refuses_when_tmux_status_is_unknown() {
 
 #[test]
 fn send_to_bound_codex_from_operator_without_broker_environment() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
+    // Keep the manual-input acknowledgement socket within macOS SUN_LEN.
+    let tmp = tempfile::tempdir_in("/tmp").expect("short socket tempdir");
     let state_dir = tmp.path().join("state");
     let (tmux_bin, tmux_log) = fake_tmux(tmp.path());
     let session = write_session_record(&state_dir, "operator-send", "codex", "hs-operator-send");
