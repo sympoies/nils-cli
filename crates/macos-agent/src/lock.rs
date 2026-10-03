@@ -407,15 +407,17 @@ fn lock_error(message: impl Into<String>) -> CliError {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::{CLI_NOTARIZATION_WAIVER_REASON, NotarizationPolicy, PeekabooLock};
 
     #[test]
     fn embedded_lock_is_complete_and_immutable() {
         let lock = PeekabooLock::embedded().expect("embedded lock");
-        assert_eq!(lock.tag, "v4.4.0");
+        assert_eq!(lock.tag, "v4.6.0");
         assert_eq!(lock.assets.len(), 2);
         assert_eq!(lock.cli_asset().architectures, ["arm64", "x86_64"]);
-        assert_eq!(lock.cli_asset().bridge_build, "4.4.0 (4.4.0)");
+        assert_eq!(lock.cli_asset().bridge_build, "4.6.0 (4.6.0)");
         assert_eq!(
             lock.cli_asset().notarization.policy,
             NotarizationPolicy::Required
@@ -424,12 +426,31 @@ mod tests {
             lock.app_asset().notarization.policy,
             NotarizationPolicy::Required
         );
-        assert_eq!(lock.app_asset().bridge_build, "4.4.0 (4040099)");
+        assert_eq!(lock.app_asset().bridge_build, "4.6.0 (4060099)");
         assert_eq!(
             lock.app_asset().bundle_id.as_deref(),
             Some("boo.peekaboo.mac")
         );
-        assert!(lock.rollback_releases.is_empty());
+        assert_eq!(lock.rollback_releases.len(), 1);
+        let accepted = lock
+            .rollback_release("v4.4.0", "d82dbd88832688252cbed2254af6433ed9699abd")
+            .expect("accepted backend remains available for rollback");
+        assert_eq!(
+            accepted.cli_asset().sha256,
+            "6260d3560dc05b8df6621ffac5544ff987291105842ffeb652ecf018ec725d45"
+        );
+        assert_eq!(
+            accepted.app_asset().sha256,
+            "ca87deb3fd705b71e29d51c131ba53d34a3d88f6d1048878a7673e0a049b6764"
+        );
+        assert_eq!(
+            accepted.cli_asset().notarization.policy,
+            NotarizationPolicy::Required
+        );
+        assert_eq!(
+            accepted.app_asset().notarization.policy,
+            NotarizationPolicy::Required
+        );
         assert!(
             lock.upgrade_from_release("v4.2.2", "05675b0b5e2c382146963e19493787d9dac0d45b")
                 .is_some()
