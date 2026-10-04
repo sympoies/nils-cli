@@ -207,7 +207,7 @@ fn task_failed() -> CliError {
     CliError::runtime("serve-task-failed", "internal task failed", None)
 }
 
-fn from_loopback_peer(parts: &Parts) -> bool {
+pub(crate) fn from_loopback_peer(parts: &Parts) -> bool {
     let Some(ConnectInfo(peer)) = parts.extensions.get::<ConnectInfo<SocketAddr>>() else {
         // Without transport peer information the origin is unknown.
         return false;

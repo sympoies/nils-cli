@@ -77,7 +77,7 @@ pub(crate) struct InboxCursor {
 struct MessageMetadata {
     schema_version: String,
     message_id: String,
-    sender: SenderProjection,
+    sender: Value,
     recipient_session_id: String,
     state: String,
     revision: u64,
@@ -85,16 +85,6 @@ struct MessageMetadata {
     created_at: String,
     expires_at: String,
     body_bytes: usize,
-}
-
-#[derive(Clone, Debug, Serialize)]
-struct SenderProjection {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    machine: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    session_incarnation: Option<String>,
-    session_id: String,
-    authenticated: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -390,7 +380,7 @@ pub(crate) fn show(context: &CliContext, args: MessageShowArgs) -> Result<Value,
     let result = MessageBodyView {
         metadata: metadata(message),
         body: UntrustedBody {
-            classification: "untrusted_peer_data",
+            classification: body_classification(message),
             text: message.body.clone(),
         },
     };
@@ -516,6 +506,13 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
     drop(locked);
     drop(_sender_lock);
     let original = original.ok_or_else(message_not_found)?;
+    if super::service::is_service_sender(&original.sender_session_id) {
+        return Err(CliError::data(
+            "mailbox-service-reply-unsupported",
+            "service origins have no session reply mailbox",
+            None,
+        ));
+    }
     if super::remote::is_remote_sender(&original.sender_session_id) {
         return super::remote::cli_reply(context, &args, &original, body);
     }
@@ -623,7 +620,7 @@ pub(crate) fn wait_with_cancellation(
             let result = json_value(MessageBodyView {
                 metadata: metadata(&message),
                 body: UntrustedBody {
-                    classification: "untrusted_peer_data",
+                    classification: body_classification(&message),
                     text: message.body.clone(),
                 },
             });
@@ -1043,7 +1040,7 @@ where
 pub(crate) fn read_body(path: &Path) -> Result<String, CliError> {
     let mut file = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)
         .map_err(|_| body_invalid())?;
     let metadata = file.metadata().map_err(|_| body_invalid())?;
@@ -1071,15 +1068,27 @@ pub(crate) fn read_body(path: &Path) -> Result<String, CliError> {
         ));
     }
     let body = String::from_utf8(bytes).map_err(|_| body_invalid())?;
+    validate_body(&body)?;
+    Ok(body)
+}
+
+pub(super) fn validate_body(body: &str) -> Result<(), CliError> {
+    if body.len() > BODY_MAX_BYTES {
+        return Err(CliError::data(
+            "mailbox-body-too-large",
+            "coordination message body exceeds 16 KiB",
+            None,
+        ));
+    }
     if body.is_empty()
         || body.contains('\0')
         || body
             .chars()
-            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
     {
         return Err(body_invalid());
     }
-    Ok(body)
+    Ok(())
 }
 
 pub(crate) fn resolve_capability_file(path: Option<&Path>) -> Result<PathBuf, CliError> {
@@ -1088,22 +1097,28 @@ pub(crate) fn resolve_capability_file(path: Option<&Path>) -> Result<PathBuf, Cl
         .ok_or_else(super::unauthorized)
 }
 
+fn body_classification(message: &StoredMessage) -> &'static str {
+    if super::service::is_service_sender(&message.sender_session_id) {
+        "untrusted_service_data"
+    } else {
+        "untrusted_peer_data"
+    }
+}
+
 fn metadata(message: &StoredMessage) -> MessageMetadata {
     MessageMetadata {
         schema_version: message.schema_version.clone(),
         message_id: message.message_id.clone(),
-        sender: {
+        sender: if let Some(service) = super::service::sender_origin(message) {
+            json!({"kind":"service", "machine":service.machine, "service_id":service.service_id, "service_generation":service.service_generation, "authenticated":true})
+        } else {
             let remote = super::remote::sender_address(message);
-            SenderProjection {
-                machine: remote.as_ref().map(|sender| sender.machine.clone()),
-                session_incarnation: remote
-                    .as_ref()
-                    .map(|sender| sender.session_incarnation.clone()),
-                session_id: remote
-                    .map(|sender| sender.session_id)
-                    .unwrap_or_else(|| message.sender_session_id.clone()),
-                authenticated: true,
+            let mut sender = json!({"session_id":remote.as_ref().map(|s| s.session_id.as_str()).unwrap_or(&message.sender_session_id), "authenticated":true});
+            if let Some(remote) = remote {
+                sender["machine"] = json!(remote.machine);
+                sender["session_incarnation"] = json!(remote.session_incarnation);
             }
+            sender
         },
         recipient_session_id: message.recipient_session_id.clone(),
         state: message.state.clone(),
@@ -1113,6 +1128,10 @@ fn metadata(message: &StoredMessage) -> MessageMetadata {
         expires_at: message.expires_at.clone(),
         body_bytes: message.body_bytes,
     }
+}
+
+pub(super) fn message_projection(message: &StoredMessage) -> Value {
+    serde_json::to_value(metadata(message)).expect("message metadata")
 }
 
 fn find_recipient_message_mut<'a>(

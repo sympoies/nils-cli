@@ -700,6 +700,25 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(service-send)
+_arguments "${_arguments_options[@]}" : \
+'--service=[]:SERVICE:_default' \
+'--service-generation=[]:SERVICE_GENERATION:_default' \
+'--credential-file=[Private service credential reference; never a session capability]:PATH:_files' \
+'--to=[]:TO_SESSION:_default' \
+'--to-machine=[]:TO_MACHINE:_default' \
+'--body-file=[]:PATH:_files' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--expires-in=[]:DURATION:_default' \
+'--expected-recipient-incarnation=[Optional recipient fence; discovery never redirects a queued submission]:EXPECTED_RECIPIENT_INCARNATION:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
 (inbox)
 _arguments "${_arguments_options[@]}" : \
 '--session=[Authenticated recipient session id]:SESSION:_default' \
@@ -914,6 +933,7 @@ esac
 _arguments "${_arguments_options[@]}" : \
 '--bind=[Versioned work-context (\`work-context/v1\`) and mailbox (\`messages/v1\`) routes share the same loopback control plane and library contracts. Address to bind. Defaults to loopback; a non-loopback address is refused unless --allow-non-loopback is passed (it exposes a remote shell)]:ADDR:_default' \
 '--token=[Bearer token required on activity streaming, write, and attach endpoints. Falls back to AGENT_SESSION_TOKEN. When unset, activity streaming, writes, and attach are disabled (session reads still work on loopback)]:TOKEN:_default' \
+'--mailbox-services-file=[Private, reference-only service mailbox admission document. Disabled when omitted. Falls back to AGENT_SESSION_MAILBOX_SERVICES_FILE. Re-read on each submission]:PATH:_files' \
 '--machine=[Machine identity reported in responses. Falls back to AGENT_SESSION_MACHINE, then --host, then the short hostname]:NAME:_default' \
 '--tmux-bin=[tmux binary override]:PATH:_files' \
 '--config=[Versioned serve config (TOML or JSON by extension) holding launch profiles, retitle, the Codex account broker, and extra PATH entries. Non-empty environment variables take precedence over the file]:PATH:_files' \
@@ -1184,6 +1204,7 @@ _agent-session__subcmd__message_commands() {
 'peers:Discover authorized remote mailbox recipients through the local daemon' \
 'delivery:Inspect durable remote delivery; delivered means saved, not read or accepted' \
 'send:Send one bounded private message and schedule an eventual fixed notification' \
+'service-send:Submit a body-file through the owning daemon as an explicitly admitted local service' \
 'inbox:List bounded private mailbox metadata for the authenticated recipient' \
 'show:Read one private message body as its authenticated recipient' \
 'ack:Acknowledge one private message using revision compare-and-swap' \
@@ -1227,6 +1248,11 @@ _agent-session__subcmd__message__subcmd__reply_commands() {
 _agent-session__subcmd__message__subcmd__send_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session message send commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__message__subcmd__service-send_commands] )) ||
+_agent-session__subcmd__message__subcmd__service-send_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session message service-send commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__message__subcmd__show_commands] )) ||
 _agent-session__subcmd__message__subcmd__show_commands() {

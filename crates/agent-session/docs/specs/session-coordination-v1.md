@@ -1383,3 +1383,119 @@ an unsafe code fails with `console-start-unavailable` (HTTP 502). The request
 timeout is 120 seconds, because a create that pastes a prompt or selects an
 account can take the target daemon over a minute. No lock is held across the
 network call.
+
+## Service-origin submission
+
+`message service-send --service ID --service-generation GENERATION
+--credential-file FILE --to ID --body-file FILE --idempotency-key KEY
+[--to-machine MACHINE] [--expires-in DURATION]
+[--expected-recipient-incarnation INCARNATION]` submits through the owning
+supervised daemon, without managed-session authentication. Its CLI envelope is
+`cli.agent-session.message-service-send.v1`. Admission/configuration/revocation
+are separate operator controls, described in the
+[daemon runbook](../runbooks/serve-daemon.md#admit-a-local-mailbox-service).
+
+`POST /coordination/services/messages/v1` accepts a direct loopback peer only,
+with its distinct admitted service token in `Authorization: Bearer`. Unknown
+fields and proxied requests are rejected. The JSON request is:
+
+```json
+{
+  "service_id": "reporter",
+  "service_generation": "generation-1",
+  "to_machine": null,
+  "to_session": "recipient",
+  "body": "service-authored private text",
+  "idempotency_key": "operation-1",
+  "expires_in": "24h",
+  "expected_recipient_incarnation": null
+}
+```
+
+The daemon derives the source machine from its own configuration, authenticates
+service ID/generation and credential possession, and revalidates admission at
+commit. Neither a body-file CLI selector nor a session capability grants service
+authority. Operator/federation tokens cannot authenticate this route. Existing
+managed-session send authentication and wire serialization are unchanged.
+An optional expected recipient incarnation rejects stale selectors; all
+submissions require a full session ID and bind the exact live ready recipient
+before commit; abbreviated IDs never select a service recipient. Receipts replay
+before fresh discovery, preserving the original destination across movement.
+Local and remote keys cannot silently cross routing channels.
+
+Local mailbox responses retain `agent-session.message.v1`, with the sender
+projection `{kind: "service", machine, service_id, service_generation,
+authenticated: true}` and no session ID/incarnation fields. Recipient show/wait
+bodies are `untrusted_service_data`. Internal sender storage uses `service:`
+plus the canonical JSON tuple `[machine, service_id]`, with generation stored
+in the existing sender-generation field. This opaque principal is never loaded
+as a session or adopted as controller guidance. The existing mailbox lock,
+quota admission, notification scheduler and receipt store own local persistence;
+there is no separate service queue. Service replies are explicitly unsupported
+(`mailbox-service-reply-unsupported`).
+
+Remote submission uses the existing private federation journal and transport.
+Discovery at `GET /api/coordination/peers/v1` supplies `source_service_id` and
+`source_service_generation` instead of session selectors. The relay must bind
+those selectors to the authenticated machine and its explicit service admission
+before returning authorized recipients or forwarding an envelope. The distinct
+wire schema is `agent-session.remote-service-message.v1`:
+
+```json
+{
+  "schema_version": "agent-session.remote-service-message.v1",
+  "message_id": "a UUID",
+  "from": {
+    "machine": "source-machine",
+    "service_id": "reporter",
+    "service_generation": "generation-1"
+  },
+  "to": {
+    "machine": "destination-machine",
+    "session_id": "recipient",
+    "session_incarnation": "launch UUID"
+  },
+  "body": "service-authored private text",
+  "body_sha256": "lowercase SHA-256 hex",
+  "created_at_epoch": 1800000000,
+  "expires_at_epoch": 1800086400,
+  "reply_to": null,
+  "reply_depth": 0
+}
+```
+
+Both origin shapes reject unknown fields. The envelope schema discriminates
+session from service origin; hybrid identities, schema/origin mismatches,
+service reply parents and nonzero reply depth are invalid. Service tokens never
+cross the machine boundary. Destination ingress still requires the existing
+operator bearer plus distinct relay ingress token; that trusted relay attests
+to the admitted source tuple. A caller's unauthenticated source strings never
+replace those credentials. Destination body/digest/expiry/recipient/quota checks
+and atomic mailbox/dedup persistence use the existing receive transaction.
+
+Delivery projections remain `agent-session.remote-delivery.v1`, with a service
+sender including `kind: "service"`; delivery receipts remain unchanged. Network
+errors retain queued envelopes and retry through the existing drain. Rejected or uncertain service deliveries retain their original envelopes
+inside the same bounded journal until message expiry, allowing safe operator
+reconciliation without retargeting or losing live queued content. The existing
+drain deadline wakes for that expiry even without another submission; bodies
+then compact to the existing body-free identity retention. These held failed
+envelopes consume the existing outbox count and byte budgets. Delivered service
+records and managed-session terminal records compact as before. An uncertain prior
+attempt remains `delivery-unknown` if a later rejection cannot prove nondelivery.
+Revocation blocks further source submission/replay but preserves already
+committed deliveries. Rollback retains the private journal: older daemons may
+refuse a service-bearing journal, so pause remote submissions and restore a
+compatible owner rather than rewriting or deleting pending data. Local managed
+mailbox operations continue to use their existing registry independently.
+
+Service diagnostics contain fixed messages/codes and typed `retryable`,
+`next_action` and bounded `recovery` fields. Body text, credential values, IO
+paths and arbitrary peer error details are excluded. Typical codes are
+`mailbox-service-unauthorized`, `mailbox-service-forbidden`,
+`mailbox-service-request-invalid`, `mailbox-service-unavailable`, the existing
+mailbox body/expiry/quota/rate/idempotency codes, and
+`session-incarnation-conflict`. HTTP uses 401 for service authentication denial,
+403 for nonlocal/proxied submission, 409 for recipient/idempotency revision
+conflicts, 400/422 for invalid requests, and 503 for unavailable coordination or
+transport. The CLI uses usage/data/unavailable exit categories (64/65/69).

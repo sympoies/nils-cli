@@ -393,6 +393,7 @@ fn coordination_command_name(command: &Command) -> Option<&'static str> {
         Command::Message(args) => Some(match &args.command {
             cli::MessageCommand::Peers(_) => "message-peers",
             cli::MessageCommand::Delivery(_) => "message-delivery",
+            cli::MessageCommand::ServiceSend(_) => "message-service-send",
             cli::MessageCommand::Send(_) => "message-send",
             cli::MessageCommand::Inbox(_) => "message-inbox",
             cli::MessageCommand::Show(_) => "message-show",
@@ -500,6 +501,7 @@ fn command_format(command: &Command) -> OutputFormat {
         Command::Message(args) => match &args.command {
             cli::MessageCommand::Peers(args) => args.format,
             cli::MessageCommand::Delivery(args) => args.format,
+            cli::MessageCommand::ServiceSend(args) => args.format,
             cli::MessageCommand::Send(args) => args.format,
             cli::MessageCommand::Inbox(args) => args.format,
             cli::MessageCommand::Show(args) => args.format,

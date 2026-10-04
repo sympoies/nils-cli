@@ -630,3 +630,113 @@ Leaving a client detaches; an explicit fenced DELETE or `exit` stops the shell.
 See [the Shell contract](../specs/serve-api-v1.md#emergency-shells) for the wire
 protocol and fixed-name collision behavior. Daemon restarts preserve tmux but
 host/tmux restarts require a new explicit Open.
+
+## Admit a local mailbox service
+
+Service submission is a separate, opt-in authority. It grants only submission
+of bounded private messages to current managed recipients through this daemon;
+it grants no session creation, prompt, shell, mailbox read, or session capability.
+Use a dedicated credential, never an operator bearer, federation token, or a
+borrowed session capability. `serve --mailbox-services-file FILE` (fallback:
+`AGENT_SESSION_MAILBOX_SERVICES_FILE`) references the admission document.
+Omission disables service submission. This setting is separate from
+`serve --config` and from the submitting job's CLI arguments.
+
+Operator activation is a separate deployment decision:
+
+1. Choose the daemon state root and private absolute admission/credential paths
+   in deployment configuration. Run the daemon and the service job as the same
+   trusted OS user. These owner-only files authenticate credential possession;
+   they do not isolate mutually untrusted processes running as that user.
+2. Provision a fresh unpredictable 32–256 byte printable ASCII service token
+   through the deployment's credential mechanism. Place it in a private regular
+   file owned by that user, mode `0600`, with one link and at most 257 bytes.
+   Surrounding whitespace within that file bound is stripped. Protect its parent directories. Do not use argv,
+   an exported token, inline serve configuration, logs, or a session credential.
+3. Write the following reference-only document as a private regular file owned
+   by that user, mode `0600`, with one link and at most 32 KiB. Replace the example path with the
+   credential's absolute path. The service ID and generation are non-secret
+   selectors of 1–128 ASCII letters, digits, hyphens, underscores, or dots.
+   IDs must be unique; at most 32 services are admitted.
+
+   ```json
+   {
+     "schema_version": "agent-session.mailbox-services.v1",
+     "services": [
+       {
+         "service_id": "reporter",
+         "service_generation": "generation-1",
+         "credential_file": "/absolute/private/reporter.credential"
+       }
+     ]
+   }
+   ```
+
+4. Supply the admission path when the operator next starts the owning daemon:
+   add `--mailbox-services-file "$SERVICE_ADMISSION_FILE"` to its existing
+   invocation. Continue supplying its independent operator bearer through
+   `--token-stdin`. This feature does not restart or configure a running daemon.
+5. Configure the job with the same state root, its own credential reference,
+   service ID/generation, and the current full recipient session ID:
+
+   ```bash
+   agent-session --state-dir "$DAEMON_STATE_DIR" message service-send \
+     --service reporter --service-generation generation-1 \
+     --credential-file "$SERVICE_CREDENTIAL_FILE" \
+     --to "$RECIPIENT_SESSION_ID" \
+     --body-file "$REPORT_BODY_FILE" \
+     --idempotency-key "$REPORT_OPERATION_KEY" --expires-in 24h --format json
+   ```
+
+No `AGENT_SESSION_ID`, session incarnation capability, or inference is required.
+The body file must be a regular, non-symlink UTF-8 file, 1–16384 bytes, without
+forbidden controls. Expiry defaults to 24 hours and may be at most seven days.
+The request uses the existing private daemon endpoint file, HTTP on loopback,
+and a service bearer header; redirects are refused. The daemon accepts only a
+direct loopback transport peer, rejects forwarding headers, caps concurrent
+service work at 16 and decoded body buffering at a bounded size, and times out
+body reads after two seconds. Admission and credential references are read and
+validated at authorization and again before persistence, including retries.
+Unknown, removed, stale-generation, unsafe-file, and incorrect-token callers
+are denied with `mailbox-service-unauthorized` and no path, token, or body.
+
+For revocation, atomically replace the admission document without that entry,
+or remove its credential file. For rotation, provision a new credential and
+replace the entry with a new generation; then update the service job. Use the
+same guarded operator configuration process that owns these private files.
+Files are re-read without restarting the daemon. Revocation prevents subsequent
+admission and replay; it does not delete messages or cancel already committed
+outbox entries. Submissions concurrent with revocation linearize at their final
+authorization check. A new generation has a separate idempotency namespace;
+rotation is not permission to replay an old operation under a new identity.
+
+Retry the identical submission with the same key after an uncertain response.
+A retained key binds request content, destination and service generation;
+changing the body or routing selectors conflicts. A successful local response
+proves mailbox persistence and notification scheduling, not reading or work
+acceptance. A remote response initially proves source outbox persistence.
+Repeating the same submission returns its current delivery state without
+rediscovering or redirecting the queued destination. Rejected or uncertain service envelopes remain in the private journal until
+message expiry, counting against its existing outbox budgets; the existing
+daemon drain wakes at expiry to compact their bodies. Local source receipts use
+the existing 24-hour receipt lifetime; remote identity retention extends through
+expiry plus 24 hours. Queue/quota exhaustion rejects rather than evicting live
+messages. Service bodies are returned only by the existing authenticated
+recipient show/wait operations as `untrusted_service_data`; services have no
+reply mailbox. Content cannot authorize additional work.
+
+### Remote service activation prerequisite
+
+Add `--to-machine "$RECIPIENT_MACHINE"` for a remote recipient. The existing
+federation must be configured and the relay must explicitly support the
+[service wire contract](../specs/session-coordination-v1.md#service-origin-submission).
+The relay must authenticate the source machine's existing transport credential,
+validate the separately admitted service ID/generation against that machine,
+and authorize the destination ownership tuple. Merely echoing request source
+strings is insufficient. Service admission at a local daemon does not admit a
+service at the relay. Deploy compatible source/destination daemons and relay
+support before enabling remote jobs; existing session envelopes retain their
+original schema. Incompatible or unavailable relays fail safely, retaining the
+existing outbox/delivery evidence. Recipient movement or replacement never
+retargets a committed envelope; resolve a new recipient and use a new operation
+only after the operator has reconciled the old delivery state.
