@@ -778,26 +778,34 @@ pub struct MessageReminderArgs {
 
 #[derive(Debug, Args)]
 pub struct MessageServiceSendArgs {
+    /// Service ID explicitly admitted by the owning daemon.
     #[arg(long)]
     pub service: String,
+    /// Current admitted service generation.
     #[arg(long)]
     pub service_generation: String,
     /// Private service credential reference; never a session capability.
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub credential_file: PathBuf,
+    /// Full managed recipient session ID.
     #[arg(long = "to")]
     pub to_session: String,
+    /// Destination machine; omitted uses the owning daemon's machine.
     #[arg(long)]
     pub to_machine: Option<String>,
+    /// UTF-8 message body file, at most 16 KiB.
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub body_file: PathBuf,
+    /// Stable operation key reused for an identical retry.
     #[arg(long)]
     pub idempotency_key: String,
+    /// Message lifetime: 24 hours by default, at most 7 days.
     #[arg(long, value_name = "DURATION")]
     pub expires_in: Option<String>,
     /// Optional recipient fence; discovery never redirects a queued submission.
     #[arg(long)]
     pub expected_recipient_incarnation: Option<String>,
+    /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }
