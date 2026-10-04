@@ -399,9 +399,11 @@ recorded in `sympoies/nils-cli#1409`.
   The local `agent-session logs <id>` command can read that diagnostic, but it is
   never copied into the session projection. Raw argv, environment, provider responses,
   stderr, prompts, and filesystem paths are never copied into the projection. A
-  record that reached `ready` keeps that
-  state after an ordinary later stop, so consumers must not relabel normal
-  session termination as startup failure. A resume starts a fresh startup
+  record that reached `ready` keeps that state after an ordinary later stop,
+  so consumers must not relabel normal session termination as startup failure.
+  A fresh managed Codex client that exits nonzero before binding its first
+  provider thread reports `provider-client-exited`, even if an earlier view
+  reported `ready` from the initial proxy connection. A resume starts a fresh startup
   lifecycle for its new runtime generation; synchronous launch rollback restores
   the prior projection and private diagnostic artifacts. A leftover resume
   backup from an interrupted process blocks another resume before mutation so
@@ -1341,7 +1343,9 @@ changing only the readiness argv is accepted when the new probe succeeds.
 Because standalone resume cannot enforce the live registry, the daemon does not
 advertise it as a managed copy action. Set
 `auto_resume_supported` only when the profile has authoritative usage semantics
-for its provider; the default is fail-closed `false`.
+for its provider; the default is fail-closed `false`. A profile with this
+capability disabled can still create its initial managed Codex thread and turn;
+it does not gain automatic continuation support.
 
 The retired base agent `hermes` is refused: serve does not start with a
 profile that names it.

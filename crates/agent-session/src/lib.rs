@@ -1576,6 +1576,25 @@ fn desired_startup_projection(
 ) -> Option<StartupProjection> {
     let current = startup_projection(record)?;
     if current.state != "starting" {
+        // The proxy connection precedes thread/start. A nonzero client exit
+        // before any fresh thread binding is a failed bootstrap, even if an
+        // earlier view already projected connection readiness. Established
+        // threads and ordinary later stops keep their readiness history.
+        if current.state == "ready"
+            && status == "stopped"
+            && codex_app_server::runtime_is_supported(record)
+            && record.provider_resume.is_none()
+            && codex_app_server::thread_attached_path(record).is_some_and(|path| !path.is_file())
+            && let Some((code, occurred_at)) = startup_failure_marker(context, record)
+            && code == "provider-client-exited"
+        {
+            return Some(failed_projection(
+                &current.started_at,
+                &code,
+                &current.stage,
+                Some(&occurred_at),
+            ));
+        }
         return None;
     }
     let observed_stage =
@@ -1666,7 +1685,9 @@ fn reconcile_startup_projection(
     observed_status: String,
     bulk_snapshot_started_at: Option<&Timestamp>,
 ) -> (SessionRecord, String) {
-    if startup_projection(&observed).is_none_or(|startup| startup.state != "starting") {
+    if startup_projection(&observed).is_none_or(|startup| startup.state != "starting")
+        && desired_startup_projection(context, &observed, &observed_status).is_none()
+    {
         return (observed, observed_status);
     }
     let lock = match try_acquire_session_record_lock(context, &observed.id) {
@@ -24420,6 +24441,181 @@ fi
             projection.failure_code.as_deref(),
             Some("provider-client-exited")
         );
+    }
+
+    #[test]
+    fn failed_fresh_thread_bootstrap_overrides_connection_readiness() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        let mut created = create_record(RecordRequest {
+            context: &context,
+            agent: AgentKind::Codex,
+            mode: "interactive",
+            coordination_mode: crate::cli::CoordinationMode::Advisory,
+            title: None,
+            title_state: None,
+            explicit_id: Some("failed-thread-bootstrap"),
+            cwd: Path::new("/repo"),
+            prompt: None,
+            log_file_name: None,
+            provider_resume: None,
+            agent_args: Vec::new(),
+            agent_bin: None,
+        })
+        .unwrap();
+        make_managed_runtime(&mut created.record, tmp.path());
+        let session_dir = super::session_dir(&context, &created.record.id);
+        fs::write(
+            session_dir.join(super::STARTUP_STAGE_FILE),
+            "initial_connection\n",
+        )
+        .unwrap();
+        fs::write(
+            session_dir.join(super::STARTUP_FAILURE_FILE),
+            "provider-client-exited\n",
+        )
+        .unwrap();
+        super::store_startup_projection(
+            &mut created.record,
+            &super::ready_projection("2030-01-01T00:00:00Z"),
+        );
+
+        let projection = super::desired_startup_projection(&context, &created.record, "stopped")
+            .expect(
+                "an unbound failed fresh bootstrap must replace provisional connection readiness",
+            );
+        assert_eq!(projection.state, "failed");
+        assert_eq!(
+            projection.failure_code.as_deref(),
+            Some("provider-client-exited")
+        );
+
+        fs::write(
+            super::codex_app_server::thread_attached_path(&created.record).unwrap(),
+            "bound-thread",
+        )
+        .unwrap();
+        assert!(
+            super::desired_startup_projection(&context, &created.record, "stopped").is_none(),
+            "an established thread's later exit must preserve startup readiness"
+        );
+    }
+
+    #[test]
+    fn production_reconciliation_persists_failed_unbound_bootstrap_and_preserves_bound_sessions() {
+        for scenario in ["attached", "resumed", "unbound"] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let context = test_context(tmp.path());
+            let mut created = create_record(RecordRequest {
+                context: &context,
+                agent: AgentKind::Codex,
+                mode: "interactive",
+                coordination_mode: crate::cli::CoordinationMode::Advisory,
+                title: None,
+                title_state: None,
+                explicit_id: Some("reconcile-bootstrap-failure"),
+                cwd: Path::new("/repo"),
+                prompt: None,
+                log_file_name: None,
+                provider_resume: None,
+                agent_args: Vec::new(),
+                agent_bin: None,
+            })
+            .unwrap();
+            make_managed_runtime(&mut created.record, tmp.path());
+            super::store_startup_projection(
+                &mut created.record,
+                &super::ready_projection("2030-01-01T00:00:00Z"),
+            );
+            let session_dir = super::session_dir(&context, &created.record.id);
+            fs::write(
+                session_dir.join(super::STARTUP_STAGE_FILE),
+                "initial_connection\n",
+            )
+            .unwrap();
+            fs::write(
+                session_dir.join(super::STARTUP_FAILURE_FILE),
+                "provider-client-exited\n",
+            )
+            .unwrap();
+            if scenario == "attached" {
+                fs::write(
+                    super::codex_app_server::thread_attached_path(&created.record).unwrap(),
+                    "fixture-thread",
+                )
+                .unwrap();
+            } else if scenario == "resumed" {
+                created.record.provider_resume = Some(super::codex_provider_resume(
+                    &created.record,
+                    "fixture-thread",
+                ));
+            }
+            super::write_session_record(&context, &created.record).unwrap();
+            let observed = created.record.clone();
+            let (locked, _) = super::reconcile_startup_projection(
+                &context,
+                observed.clone(),
+                "stopped".into(),
+                None,
+            );
+            assert_eq!(
+                super::startup_projection(&locked).unwrap().state,
+                "ready",
+                "held record lock"
+            );
+            drop(created);
+            let snapshot_started_at = "2000-01-01T00:00:00Z".parse::<jiff::Timestamp>().unwrap();
+            let (stale, _) = super::reconcile_startup_projection(
+                &context,
+                observed.clone(),
+                "stopped".into(),
+                Some(&snapshot_started_at),
+            );
+            assert_eq!(
+                super::startup_projection(&stale).unwrap().state,
+                "ready",
+                "stale bulk snapshot"
+            );
+            let (running, _) = super::reconcile_startup_projection(
+                &context,
+                observed.clone(),
+                "running".into(),
+                None,
+            );
+            assert_eq!(
+                super::startup_projection(&running).unwrap().state,
+                "ready",
+                "running client"
+            );
+            let (record, status) =
+                super::reconcile_startup_projection(&context, observed, "stopped".into(), None);
+            let persisted = super::load_session_record(&context, &record.id).unwrap();
+            let expected = if scenario == "unbound" {
+                "failed"
+            } else {
+                "ready"
+            };
+            assert_eq!(status, "stopped");
+            assert_eq!(
+                super::startup_projection(&record).unwrap().state,
+                expected,
+                "returned {scenario}"
+            );
+            assert_eq!(
+                super::startup_projection(&persisted).unwrap().state,
+                expected,
+                "persisted {scenario}"
+            );
+            if scenario == "unbound" {
+                assert_eq!(
+                    super::startup_projection(&persisted)
+                        .unwrap()
+                        .failure_code
+                        .as_deref(),
+                    Some("provider-client-exited")
+                );
+            }
+        }
     }
 
     #[test]

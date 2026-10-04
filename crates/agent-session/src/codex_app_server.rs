@@ -767,6 +767,10 @@ fi
 diagnostic_hold_open=1
 "$agent" -c check_for_update_on_startup=false --remote "unix://$proxy" "$@" 9>&- 2>"$provider_stderr_pipe"
 status=$?
+if [ "$(cat "$startup_stage" 2>/dev/null)" != initial_connection ] ||
+   { [ "$status" != 0 ] && [ ! -f "$attached" ]; }; then
+  record_startup_failure provider-client-exited
+fi
 write_startup_marker "$runtime_exit_status" "$status"
 exec 9>&-
 diagnostic_hold_open=
@@ -778,9 +782,6 @@ owned_pid=$provider_stderr_pid
 provider_stderr_pid=
 wait "$owned_pid" 2>/dev/null || true
 rm -f -- "$provider_stderr_pipe"
-if [ "$(cat "$startup_stage" 2>/dev/null)" != initial_connection ]; then
-  record_startup_failure provider-client-exited
-fi
 exit "$status"
 "#,
     ]
@@ -4332,7 +4333,10 @@ fn auto_resume_is_healthy_idle(context: &CliContext, record: &SessionRecord) -> 
         "enabled" => view.enabled,
         _ => false,
     };
-    view.supported
+    // A profile may disable automatic continuation while still using the
+    // managed protocol. Its healthy disabled state has no continuation to
+    // cancel; it must not deny the create-owned initial thread and turn.
+    (view.supported || (!view.enabled && view.state == "disabled"))
         && idle_state_matches_enablement
         && view.scheduled_at.is_none()
         && view.failure_reason.is_none()
@@ -6545,6 +6549,11 @@ exit "$FAKE_PROVIDER_EXIT"
 
         let status_only = run_case("failed-status-only", 23, "", false, false);
         assert!(!status_only.join(".startup-diagnostic.log").exists());
+        assert_eq!(
+            fs::read_to_string(status_only.join(".startup-failure")).unwrap(),
+            "provider-client-exited\n",
+            "an initial proxy connection without a bound thread must not hide failed bootstrap"
+        );
         assert_eq!(
             fs::read_to_string(status_only.join(".runtime-exit-status")).unwrap(),
             "23\n"
@@ -11914,6 +11923,64 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
                 "params": { "threadId": "fresh-thread", "input": [] }
             }),
         ));
+    }
+
+    #[tokio::test]
+    async fn fresh_profile_without_auto_resume_authorizes_bootstrap_under_create_lock() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record = record_with_runtime("profile-bootstrap", &tmp.path().join("app.sock"));
+        let runtime = record.runtime.as_mut().unwrap();
+        runtime.extra.insert(
+            crate::AGENT_PROFILE_RUNTIME_KEY.to_string(),
+            json!("custom-codex"),
+        );
+        runtime.extra.insert(
+            crate::AGENT_PROFILE_AUTO_RESUME_SUPPORTED_RUNTIME_KEY.to_string(),
+            json!(false),
+        );
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::activity::activate_runtime(&context, &record).unwrap();
+        let create = begin_create_bootstrap(&record).unwrap().unwrap();
+        let lifecycle = crate::acquire_session_record_lock(&context, &record.id).unwrap();
+        let mut bootstrap = FreshBootstrap::for_runtime(&context, &record);
+        let authorization = cancel_before_tui_mutation_detailed(
+            &context,
+            &record,
+            &mut bootstrap,
+            &json!({ "id": 1, "method": "thread/start", "params": {} }),
+        )
+        .await;
+        assert!(
+            authorization.is_ok(),
+            "disabled automatic continuation must not reject a fresh managed thread: {:?}",
+            authorization.err()
+        );
+        drop(authorization);
+        bootstrap
+            .observe_server(&json!({ "id": 1, "result": { "thread": { "id": "fresh-thread" } } }));
+        let authorization = cancel_before_tui_mutation_detailed(
+            &context,
+            &record,
+            &mut bootstrap,
+            &json!({
+                "id": 2, "method": "turn/start",
+                "params": { "threadId": "fresh-thread", "input": [] }
+            }),
+        )
+        .await;
+        assert!(authorization.is_ok());
+        drop(authorization);
+        assert_eq!(bootstrap, FreshBootstrap::Closed);
+        let continuation = crate::auto_resume::view_for_record(&context, &record);
+        assert!(!continuation.supported);
+        assert!(!continuation.enabled);
+        assert_eq!(continuation.state, "disabled");
+        create.finish(|| drop(lifecycle));
     }
 
     #[test]
