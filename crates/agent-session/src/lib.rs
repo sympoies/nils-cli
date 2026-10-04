@@ -1576,6 +1576,25 @@ fn desired_startup_projection(
 ) -> Option<StartupProjection> {
     let current = startup_projection(record)?;
     if current.state != "starting" {
+        // The proxy connection precedes thread/start. A nonzero client exit
+        // before any fresh thread binding is a failed bootstrap, even if an
+        // earlier view already projected connection readiness. Established
+        // threads and ordinary later stops keep their readiness history.
+        if current.state == "ready"
+            && status == "stopped"
+            && codex_app_server::runtime_is_supported(record)
+            && record.provider_resume.is_none()
+            && codex_app_server::thread_attached_path(record).is_some_and(|path| !path.is_file())
+            && let Some((code, occurred_at)) = startup_failure_marker(context, record)
+            && code == "provider-client-exited"
+        {
+            return Some(failed_projection(
+                &current.started_at,
+                &code,
+                &current.stage,
+                Some(&occurred_at),
+            ));
+        }
         return None;
     }
     let observed_stage =
@@ -24419,6 +24438,64 @@ fi
         assert_eq!(
             projection.failure_code.as_deref(),
             Some("provider-client-exited")
+        );
+    }
+
+    #[test]
+    fn failed_fresh_thread_bootstrap_overrides_connection_readiness() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        let mut created = create_record(RecordRequest {
+            context: &context,
+            agent: AgentKind::Codex,
+            mode: "interactive",
+            coordination_mode: crate::cli::CoordinationMode::Advisory,
+            title: None,
+            title_state: None,
+            explicit_id: Some("failed-thread-bootstrap"),
+            cwd: Path::new("/repo"),
+            prompt: None,
+            log_file_name: None,
+            provider_resume: None,
+            agent_args: Vec::new(),
+            agent_bin: None,
+        })
+        .unwrap();
+        make_managed_runtime(&mut created.record, tmp.path());
+        let session_dir = super::session_dir(&context, &created.record.id);
+        fs::write(
+            session_dir.join(super::STARTUP_STAGE_FILE),
+            "initial_connection\n",
+        )
+        .unwrap();
+        fs::write(
+            session_dir.join(super::STARTUP_FAILURE_FILE),
+            "provider-client-exited\n",
+        )
+        .unwrap();
+        super::store_startup_projection(
+            &mut created.record,
+            &super::ready_projection("2030-01-01T00:00:00Z"),
+        );
+
+        let projection = super::desired_startup_projection(&context, &created.record, "stopped")
+            .expect(
+                "an unbound failed fresh bootstrap must replace provisional connection readiness",
+            );
+        assert_eq!(projection.state, "failed");
+        assert_eq!(
+            projection.failure_code.as_deref(),
+            Some("provider-client-exited")
+        );
+
+        fs::write(
+            super::codex_app_server::thread_attached_path(&created.record).unwrap(),
+            "bound-thread",
+        )
+        .unwrap();
+        assert!(
+            super::desired_startup_projection(&context, &created.record, "stopped").is_none(),
+            "an established thread's later exit must preserve startup readiness"
         );
     }
 
