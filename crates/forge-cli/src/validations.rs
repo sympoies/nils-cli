@@ -40,7 +40,7 @@ pub use nils_common::git::PrKind;
 
 /// Branch prefix recovered from a branch name that matches the
 /// `branch_name` rule. The set tracks the Conventional Commits type
-/// whitelist (`feat`, `fix`, `chore`, `docs`, `ci`, `refactor`).
+/// whitelist (`feat`, `fix`, `chore`, `docs`, `ci`, `refactor`, `test`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchPrefix {
     Feat,
