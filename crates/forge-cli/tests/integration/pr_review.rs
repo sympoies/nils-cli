@@ -2895,8 +2895,8 @@ fn pr_review_thread_file_dry_run_renders_thread_creation_plan() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(
-        receipt_plan.contains("Review checkpoint — review progress recorded."),
-        "review receipt should use the tool-neutral notice: {receipt_plan}"
+        receipt_plan.contains("Review receipt recorded at head <reviewed-head>"),
+        "review receipt should use a visible checkpoint sentence: {receipt_plan}"
     );
     assert!(
         receipt_plan.contains(
