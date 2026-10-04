@@ -22,7 +22,7 @@ pub(crate) struct Origin {
 }
 impl Origin {
     pub fn valid(&self) -> bool {
-        valid_selector(&self.machine)
+        !self.machine.is_empty()
             && valid_selector(&self.service_id)
             && valid_selector(&self.service_generation)
     }
@@ -164,10 +164,7 @@ where
     };
     if !origin.valid()
         || !valid_selector(&args.to_session)
-        || args
-            .to_machine
-            .as_deref()
-            .is_some_and(|m| !valid_selector(m))
+        || args.to_machine.as_deref().is_some_and(str::is_empty)
     {
         return Err(CliError::usage(
             "mailbox-service-request-invalid",

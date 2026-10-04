@@ -2562,6 +2562,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "activity-revision-conflict"
         | "message-revision-conflict"
         | "idempotency-conflict"
+        | "idempotency-key-conflict"
         | "idempotency-key-reused"
         | "retitle-turn-conflict"
         | "retitle-state-conflict"

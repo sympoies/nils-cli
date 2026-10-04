@@ -16,7 +16,8 @@ const root = mkdtempSync(join(tmpdir(), 'nils-service-mailbox-'));
 const hash = value => createHash('sha256').update(value).digest('hex');
 const now = () => Math.floor(Date.now() / 1000);
 const privateWrite = (path, value) => { writeFileSync(path, typeof value === 'string' ? value : JSON.stringify(value), { mode: 0o600 }); chmodSync(path, 0o600); };
-const hosts = ['alpha', 'beta'].map(machine => ({ machine, root: join(root, machine), session: `${machine}-recipient`, incarnation: randomUUID(), capability: randomUUID() + randomUUID(), operator: randomUUID() + randomUUID(), relay: randomUUID() + randomUUID(), ingress: randomUUID() + randomUUID() }));
+const machineArg = flag => process.argv.includes(flag) ? process.argv[process.argv.indexOf(flag) + 1] : null;
+const hosts = ['alpha', 'beta'].map((label, index) => ({ machine: machineArg(index === 0 ? '--source-machine' : '--target-machine') ?? label, root: join(root, label), session: `${label}-recipient`, incarnation: randomUUID(), capability: randomUUID() + randomUUID(), operator: randomUUID() + randomUUID(), relay: randomUUID() + randomUUID(), ingress: randomUUID() + randomUUID() }));
 const [source, target] = hosts;
 const service = { id: 'reporter', generation: 'generation-1', token: randomUUID() + randomUUID(), credential: join(root, 'service-credential'), admission: join(root, 'service-admission.json') };
 const address = host => ({ machine: host.machine, session_id: host.session, session_incarnation: host.incarnation });
@@ -116,10 +117,12 @@ try {
   const local = await submit(payload('local-send'));
   const row = registry(source).messages.find(m => m.message_id === local.message_id); assert(row); assert.equal(row.body, 'PRIVATE-SERVICE-BODY-CANARY');
   assert.equal(local.sender.kind, 'service'); assert.equal(local.sender.service_id, service.id); assert(!('session_id' in local.sender));
+  assert.equal(local.sender.machine, source.machine);
   const inboxResponse = await fetch(source.url + `/sessions/${source.session}/messages/v1`, { headers: { Authorization: `Bearer ${source.operator}`, 'X-Agent-Session-Capability': source.capability } });
   const inbox = await inboxResponse.json(); assert(!JSON.stringify(inbox).includes('PRIVATE-SERVICE-BODY-CANARY'));
   const showResponse = await fetch(source.url + `/sessions/${source.session}/messages/${local.message_id}/v1`, { headers: { Authorization: `Bearer ${source.operator}`, 'X-Agent-Session-Capability': source.capability } });
   const show = await showResponse.json(); assert.equal(show.data.coordination.body.classification, 'untrusted_service_data'); assert.equal(show.data.coordination.body.text, row.body);
+  assert.equal(show.data.coordination.sender.machine, source.machine);
   const replyResponse = await fetch(source.url + `/sessions/${source.session}/messages/${local.message_id}/reply/v1`, { method: 'POST', headers: { Authorization: `Bearer ${source.operator}`, 'X-Agent-Session-Capability': source.capability, 'Content-Type': 'application/json' }, body: JSON.stringify({ body: 'reply', idempotency_key: 'service-reply-unsupported', if_revision: show.data.coordination.revision }) });
   const reply = await replyResponse.json(); assert.equal(reply.error.code, 'mailbox-service-reply-unsupported');
   assert.equal(local.sender.service_generation, service.generation); assert(!JSON.stringify(local).includes(row.body)); checks.push('explicit-local-service-origin');
@@ -152,7 +155,13 @@ try {
   const remote = await submit(remoteBody); assert.equal(remote.state, 'queued');
   await waitFor(() => journal().remote_outbox.some(i => i.envelope.message_id === remote.message_id && i.attempts > 0), 'transport failure retained');
   assert.equal((await submit(remoteBody)).message_id, remote.message_id); assert.equal(journal().remote_outbox.filter(i => i.envelope.message_id === remote.message_id).length, 1);
+  const conflict = await submit({ ...remoteBody, body: 'changed-remote-body' }, 409);
+  assert.equal(conflict.error.code, 'idempotency-key-conflict');
+  assert.equal(journal().remote_outbox.filter(i => i.envelope.message_id === remote.message_id).length, 1);
+  assert.equal(journal().remote_outbox.find(i => i.envelope.message_id === remote.message_id).envelope.body, remoteBody.body);
+  checks.push('remote-changed-retry-conflict-retains-original');
   const queuedEnvelope = journal().remote_outbox.find(i => i.envelope.message_id === remote.message_id).envelope;
+  assert.equal(queuedEnvelope.from.machine, source.machine); assert.equal(queuedEnvelope.to.machine, target.machine);
   for (const field of ['machine', 'service_generation']) {
     const tampered = structuredClone(queuedEnvelope); tampered.from[field] = 'tampered';
     const denied = await fetch(edge.url + '/api/coordination/relay/v1', { method: 'POST', headers: { Authorization: `Bearer ${source.relay}`, 'Content-Type': 'application/json' }, body: JSON.stringify(tampered) }); assert.equal(denied.status, 403);
@@ -169,6 +178,10 @@ try {
   await waitFor(() => registry(target).messages.some(m => m.message_id === remote.message_id), 'destination persisted');
   await waitFor(async () => (await submit(remoteBody)).state === 'delivered', 'lost response retry');
   assert.equal(registry(target).messages.filter(m => m.message_id === remote.message_id).length, 1); checks.push('remote-forward-transport-failure-and-response-loss-dedup');
+  const remoteShowResponse = await fetch(target.url + `/sessions/${target.session}/messages/${remote.message_id}/v1`, { headers: { Authorization: `Bearer ${target.operator}`, 'X-Agent-Session-Capability': target.capability } });
+  assert.equal(remoteShowResponse.status, 200);
+  const remoteShow = await remoteShowResponse.json(); assert.equal(remoteShow.data.coordination.sender.machine, source.machine);
+  checks.push('existing-machine-identity-provenance-preserved');
   hold = true; const movedBody = payload('moved-remote', { to_machine: target.machine, to_session: target.session }); const moved = await submit(movedBody);
   const targetPath = join(target.root, 'sessions', target.session, 'session.json'); const changed = JSON.parse(readFileSync(targetPath, 'utf8')); changed.runtime.launch_id = randomUUID(); privateWrite(targetPath, changed);
   hold = false; const fenced = await waitFor(async () => { const value = await submit(movedBody); return ['rejected', 'delivery-unknown'].includes(value.state) ? value : false; }, 'moved recipient fenced');
