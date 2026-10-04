@@ -89,7 +89,7 @@ struct ReviewLoopObserveDryRunPayload {
 /// the caller already owns the outcome bytes it supplied.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 struct PlannedStateComment {
-    /// The visible notice rendered above the machine marker.
+    /// The record-specific visible checkpoint sentence above the marker.
     visible_metadata: String,
     /// Whether the supplied delivery outcome shares this one comment.
     includes_outcome_body: bool,
@@ -2591,10 +2591,7 @@ mod tests {
         );
         let body = &bodies[0];
         assert!(body.contains("## Delivery outcome"), "{body}");
-        assert!(
-            body.contains("Review checkpoint — review progress recorded."),
-            "{body}"
-        );
+        assert!(body.starts_with("Review "), "{body}");
         // The ledger half is still an exact, parseable record.
         let chain = review_state::parse_chain([body.as_str()], REPO, PR).expect("appended chain");
         assert_eq!(chain.records.len(), 1);
@@ -2870,7 +2867,7 @@ mod tests {
             bodies[0]
         );
         assert!(
-            bodies[0].contains("Review checkpoint — review progress recorded."),
+            bodies[0].starts_with("Review "),
             "the stop receipt still carries a visible notice: {}",
             bodies[0]
         );

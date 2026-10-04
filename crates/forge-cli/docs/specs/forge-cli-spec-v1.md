@@ -639,12 +639,11 @@ distinctions that cannot be proven offline.
   lets a later authorized session resume the same provider-visible chain
   without a machine-local ledger.
 - Record encoding and comment presentation are separate. Every state comment the
-  CLI posts leads with the tool-neutral notice
-  `Review checkpoint — review progress recorded.`, followed by the unchanged
-  marker on its own line.
+  CLI posts leads with a record-specific plain-English checkpoint sentence,
+  followed by the unchanged marker on its own line.
   GitHub hides HTML comments when it renders Markdown, so a marker-only body
   appears in the timeline as a blank comment under the operator's identity; the
-  visible notice prevents a confusing blank entry without exposing forge-cli's
+  visible sentence prevents a confusing blank entry without exposing forge-cli's
   generation, payload-kind, or head bookkeeping to ordinary readers. A combined
   delivery outcome is appended *after* both, separated by a
   `---` rule. That ordering is load-bearing, not cosmetic: a Markdown HTML block
@@ -657,8 +656,9 @@ distinctions that cannot be proven offline.
   sessions that compute the identical transition converge on one record even if
   their comments differ, so a divergent concurrent outcome is possible and is
   detected only for the writing session (see `review_outcome_not_posted` below).
-- The visible notice is constant plain Markdown. Record-specific details stay in
-  the hidden marker and never enter the human-facing timeline label.
+- The visible checkpoint sentence contains only bounded public author/head,
+  review-state, and next-step text. Session identities, digests, and local paths
+  stay in the hidden marker and never enter the human-facing sentence.
 - Receipt fields intentionally exclude authentication tokens, credentials,
   environment-variable values, local paths, and private identity/profile names.
   The durable identity route contains only portable lens names and the semantic
@@ -865,7 +865,7 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   newer one. `agent-runtime-kit`'s delivery skills are in that second category:
   their posting-order contract requires the disposition to post last and to be
   refreshed on merge-convergence retries, so they keep the outcome as its own
-  comment by design. They still benefit from the visible notice above,
+  comment by design. They still benefit from the visible checkpoint sentence above,
   which is what stops a ledger comment from rendering blank. Do not adopt the
   combined form in a workflow without first checking that its outcome is
   single-shot.
@@ -937,7 +937,7 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   no comment is planned.
   `data.planned_comment` reports the planned write as
   `{visible_metadata, includes_outcome_body, bytes}`, where the established
-  `visible_metadata` field now carries the tool-neutral notice and `bytes` is the
+  `visible_metadata` field now carries the checkpoint sentence and `bytes` is the
   complete rendered body the size limit binds. It is present only when a write is
   planned, and the `state_comment_body` verdict is likewise reported only then: an
   already-current chain writes nothing, so there is no body to check and no

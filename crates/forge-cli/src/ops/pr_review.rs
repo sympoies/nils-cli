@@ -602,10 +602,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                 })?;
             let state_plan =
                 build_github_review_state_comments_call(&ctx, repository, id).plan_argv();
-            let receipt_body = format!(
-                "{}\n<!-- forge-cli:review-state:v1 <record-dependent-on-provider-chain-tip> -->",
-                review_state::STATE_COMMENT_NOTICE
-            );
+            let receipt_body = "Review receipt recorded at head <reviewed-head>. Follow the review findings before merge.\n<!-- forge-cli:review-state:v1 <record-dependent-on-provider-chain-tip> -->".to_string();
             (
                 Some(state_plan.clone()),
                 Some(
@@ -613,7 +610,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                         &ctx,
                         id,
                         // Mirrors the live receipt prewrite body: a visible
-                        // tool-neutral notice above the canonical marker. A plan that
+                        // checkpoint sentence above the canonical marker. A plan that
                         // still showed a bare marker would advertise a body the
                         // live call no longer writes.
                         &receipt_body,

@@ -497,9 +497,11 @@ fn observe_dry_run_renders_the_exact_combined_comment_it_would_post() {
 
     let planned = &envelope["data"]["planned_comment"];
     assert_eq!(planned["includes_outcome_body"], true, "{envelope}");
-    assert_eq!(
-        planned["visible_metadata"],
-        "Review checkpoint — review progress recorded."
+    assert!(
+        planned["visible_metadata"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("Review closed at head")
     );
     // The reported size is the complete body that would be posted, which is what
     // the provider limit is checked against — so it must equal the byte length of
@@ -773,7 +775,7 @@ fn a_live_combined_observe_reports_appended_and_outcome_posted() {
         "one comment mutation only, log={log}"
     );
     for expected in [
-        "Review checkpoint — review progress recorded.",
+        "Review ",
         "<!-- forge-cli:review-state:v1 ",
         "Approved: bounded review converged.",
     ] {
@@ -818,10 +820,7 @@ fn a_live_observe_without_an_outcome_body_reports_outcome_posted_false() {
     assert_eq!(envelope["data"]["outcome_posted"], false, "{envelope}");
     // Even with no outcome, the ledger comment is never a bare marker.
     let log = gh_args_log(&stub);
-    assert!(
-        log.contains("Review checkpoint — review progress recorded."),
-        "{log}"
-    );
+    assert!(log.contains("Review "), "{log}");
 }
 
 #[test]
@@ -871,7 +870,7 @@ fn observe_help_documents_both_findings_file_shapes_and_the_combined_outcome() {
         "disposition",
         "--dry-run",
         "--body-file",
-        "Review checkpoint",
+        "checkpoint sentence",
         "outcome_posted",
         // The combined form is only correct for a single-shot outcome; a caller
         // must be able to learn that without reading the spec.

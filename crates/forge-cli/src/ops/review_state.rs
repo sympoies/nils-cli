@@ -27,7 +27,6 @@ const MAX_PROVIDER_STATE_MARKER_BYTES: usize = 64 * 1024;
 /// part of that body once visible text wraps it. The complete rendered body is
 /// what the provider actually stores, so it carries the binding limit.
 const MAX_PROVIDER_STATE_COMMENT_BYTES: usize = 64 * 1024;
-pub(crate) const STATE_COMMENT_NOTICE: &str = "Review checkpoint — review progress recorded.";
 const HTML_COMMENT_OPEN: &str = "<!--";
 const REVIEW_RUN_MARKER_PREFIX: &str = "<!-- forge-cli:review-run:v1 run=";
 const FINDING_MARKER_PREFIX: &str = "<!-- forge-cli:review-finding:v1 run=";
@@ -324,15 +323,125 @@ impl ReviewStateRecord {
     }
 }
 
-/// The one-line, tool-neutral notice shown in the provider timeline.
-///
-/// The function retains its established name because the v1 dry-run response
-/// exposes this presentation string as `visible_metadata`. The machine marker
-/// already owns generation, payload-kind, and head details; repeating them in
-/// the visible timeline is unnecessary noise for readers who do not use
-/// `forge-cli`.
-pub fn state_comment_visible_metadata(_record: &ReviewStateRecord) -> String {
-    STATE_COMMENT_NOTICE.to_string()
+/// The one-line, tool-neutral checkpoint sentence shown in the provider
+/// timeline. The function retains its established name because the v1 dry-run
+/// response exposes this presentation string as `visible_metadata`.
+pub fn state_comment_visible_metadata(record: &ReviewStateRecord) -> String {
+    match &record.payload {
+        ReviewStatePayload::ReviewRunReceipt { receipt } => format!(
+            "Review receipt recorded at head {}. Follow the review findings before merge.",
+            short_sha(&receipt.expected_head)
+        ),
+        ReviewStatePayload::ReviewLoop { state } => {
+            if let Some(stop) = state.hard_stop.as_ref() {
+                return if stop.extension_applied {
+                    format!(
+                        "Review budget extension recorded at head {}. Resume the review observation before merge.",
+                        short_sha(&stop.attempted_head_sha)
+                    )
+                } else {
+                    format!(
+                        "Review paused at head {} by a review budget stop. Resolve the stop before continuing.",
+                        short_sha(&stop.attempted_head_sha)
+                    )
+                };
+            }
+            let open_blocking = state
+                .findings
+                .values()
+                .filter(|finding| finding.status == ReviewFindingStatus::Open && finding.blocking)
+                .count();
+            let open_non_blocking = state
+                .findings
+                .values()
+                .filter(|finding| finding.status == ReviewFindingStatus::Open && !finding.blocking)
+                .count();
+            if open_blocking + open_non_blocking > 0 {
+                let blocking_categories = visible_finding_categories(state, true);
+                let non_blocking_categories = visible_finding_categories(state, false);
+                let blocking = if blocking_categories.is_empty() {
+                    "0 blocking".to_string()
+                } else {
+                    format!("{open_blocking} blocking ({blocking_categories})")
+                };
+                let non_blocking = if non_blocking_categories.is_empty() {
+                    "0 non-blocking".to_string()
+                } else {
+                    format!("{open_non_blocking} non-blocking ({non_blocking_categories})")
+                };
+                format!(
+                    "Review findings recorded at head {}: {blocking}, {non_blocking}. The author may fix only these findings; the same reviewer re-checks the fix.",
+                    short_sha(&state.head_sha),
+                )
+            } else {
+                let fixed = state
+                    .findings
+                    .values()
+                    .filter(|finding| finding.status == ReviewFindingStatus::Fixed)
+                    .count();
+                format!(
+                    "Review closed at head {}: {} {} fixed, 0 open. Ready for merge checks.",
+                    short_sha(&state.head_sha),
+                    fixed,
+                    if fixed == 1 { "finding" } else { "findings" }
+                )
+            }
+        }
+        ReviewStatePayload::ReviewHandoff { handoff } if handoff.surrendered => format!(
+            "Reviewer released this assignment at head {}. Waiting for reassignment.",
+            short_sha(&handoff.assigned_head)
+        ),
+        ReviewStatePayload::ReviewHandoff { handoff } if handoff.returned_reason.is_some() => {
+            format!(
+                "Review assignment recovered at head {}. Waiting for reassignment.",
+                short_sha(&handoff.assigned_head)
+            )
+        }
+        ReviewStatePayload::ReviewHandoff { handoff } => format!(
+            "Review assigned to {} for head {} (base {}). Only this exact head is under review; a new push needs re-review before merge.",
+            handoff.review_author,
+            short_sha(&handoff.assigned_head),
+            short_sha(&handoff.base_sha)
+        ),
+    }
+}
+
+fn visible_finding_categories(state: &ReviewLoopState, blocking: bool) -> String {
+    const SAFE_CATEGORIES: &[&str] = &[
+        "api-contract",
+        "correctness",
+        "maintainability",
+        "performance",
+        "reliability",
+        "security",
+        "testing",
+        "usability",
+    ];
+
+    let categories = state
+        .findings
+        .iter()
+        .filter(|(_, finding)| {
+            finding.status == ReviewFindingStatus::Open && finding.blocking == blocking
+        })
+        .map(|(fingerprint, _)| fingerprint.split(':').next().unwrap_or_default())
+        .map(|category| {
+            if SAFE_CATEGORIES.contains(&category) {
+                category
+            } else {
+                "other"
+            }
+        })
+        .collect::<BTreeSet<_>>();
+    categories.into_iter().collect::<Vec<_>>().join(", ")
+}
+
+fn short_sha(sha: &str) -> &str {
+    if sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        &sha[..7]
+    } else {
+        "unknown"
+    }
 }
 
 /// Renders the complete provider comment body for one ledger record, optionally
@@ -340,8 +449,8 @@ pub fn state_comment_visible_metadata(_record: &ReviewStateRecord) -> String {
 ///
 /// GitHub hides HTML comments when it renders Markdown, so a body that is only
 /// the canonical marker appears in the timeline as a blank comment authored by
-/// the operator. The visible notice fixes that, and it is emitted FIRST,
-/// with the marker immediately under it, so no caller-supplied byte can ever
+/// the operator. The visible checkpoint sentence fixes that, and it is emitted
+/// FIRST, with the marker immediately under it, so no caller-supplied byte can ever
 /// precede the notice. That ordering is load-bearing rather than cosmetic: a
 /// Markdown HTML block opened in caller text runs until a line containing
 /// `-->`, so an outcome ending in an unterminated `<!--` placed above the notice
@@ -1512,7 +1621,7 @@ mod tests {
             review_run_id: "sha256:run".to_string(),
             route_lenses: vec!["testing".to_string(), "maintainability".to_string()],
             decision: "comments-only".to_string(),
-            expected_head: "head-abc".to_string(),
+            expected_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
             round: 0,
             summary_digest: "sha256:summary".to_string(),
             inline_manifest: Vec::new(),
@@ -1660,16 +1769,16 @@ mod tests {
     // ---------------------------------------------------------------------
 
     #[test]
-    fn a_rendered_state_comment_uses_a_tool_neutral_notice_and_still_parses() {
+    fn a_rendered_state_comment_describes_the_review_loop_and_still_parses() {
+        let mut state = fixture_loop_state(1);
+        state.head_sha = "0123456789abcdef0123456789abcdef01234567".to_string();
         let record = ReviewStateRecord::new(
             "acme/widgets",
             7,
             "0123456789abcdef0123456789abcdef01234567",
             3,
             Some("sha256:previous".to_string()),
-            ReviewStatePayload::ReviewLoop {
-                state: fixture_loop_state(1),
-            },
+            ReviewStatePayload::ReviewLoop { state },
         )
         .expect("record");
 
@@ -1678,22 +1787,23 @@ mod tests {
         assert_eq!(
             body,
             format!(
-                "Review checkpoint — review progress recorded.\n{}",
+                "Review closed at head 0123456: 0 findings fixed, 0 open. Ready for merge checks.\n{}",
                 record.marker().expect("marker")
             )
         );
         // The visible line is real Markdown text, so the comment can never
         // render empty.
         assert!(!body.lines().next().expect("first line").starts_with("<!--"),);
+        assert!(body.ends_with(&record.marker().expect("marker")));
         assert_eq!(parse_state_marker(&body).expect("parse"), Some(record));
     }
 
     #[test]
-    fn every_record_kind_uses_the_same_tool_neutral_notice() {
+    fn review_run_receipt_has_a_visible_checkpoint_sentence() {
         let record = ReviewStateRecord::new(
             "acme/widgets",
             7,
-            "head-abc",
+            "0123456789abcdef0123456789abcdef01234567",
             0,
             None,
             ReviewStatePayload::ReviewRunReceipt {
@@ -1704,7 +1814,221 @@ mod tests {
 
         assert_eq!(
             state_comment_visible_metadata(&record),
-            "Review checkpoint — review progress recorded."
+            "Review receipt recorded at head 0123456. Follow the review findings before merge."
+        );
+        let old_body = format!(
+            "Review checkpoint — review progress recorded.\n{}",
+            record.marker().expect("marker")
+        );
+        let new_body = render_state_comment_body(&record, None).expect("render");
+        assert_eq!(
+            parse_state_marker(&old_body).expect("old comment"),
+            parse_state_marker(&new_body).expect("new comment")
+        );
+    }
+
+    #[test]
+    fn review_loop_visible_checkpoint_reports_open_findings_and_closure() {
+        let mut state = fixture_loop_state(1);
+        state.head_sha = "a62d8da000000000000000000000000000000000".to_string();
+        state.findings.insert(
+            "performance:review-loop:shared-root".to_string(),
+            ReviewLoopFinding {
+                root_cause_fingerprint: None,
+                status: ReviewFindingStatus::Open,
+                blocking: true,
+                first_seen_head: state.head_sha.clone(),
+                last_seen_head: state.head_sha.clone(),
+                seen_count: 1,
+                reopen_count: 0,
+                threads: Vec::new(),
+            },
+        );
+        let observation = ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            state.head_sha.clone(),
+            0,
+            None,
+            ReviewStatePayload::ReviewLoop {
+                state: state.clone(),
+            },
+        )
+        .expect("observation");
+        assert_eq!(
+            state_comment_visible_metadata(&observation),
+            "Review findings recorded at head a62d8da: 1 blocking (performance), 0 non-blocking. The author may fix only these findings; the same reviewer re-checks the fix."
+        );
+
+        let mut with_unknown_category = state.clone();
+        with_unknown_category.findings.insert(
+            "custom-category:review-loop:generic-invariant".to_string(),
+            ReviewLoopFinding {
+                root_cause_fingerprint: None,
+                status: ReviewFindingStatus::Open,
+                blocking: false,
+                first_seen_head: state.head_sha.clone(),
+                last_seen_head: state.head_sha.clone(),
+                seen_count: 1,
+                reopen_count: 0,
+                threads: Vec::new(),
+            },
+        );
+        let categorized = ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            with_unknown_category.head_sha.clone(),
+            0,
+            None,
+            ReviewStatePayload::ReviewLoop {
+                state: with_unknown_category,
+            },
+        )
+        .expect("categorized observation");
+        let visible = state_comment_visible_metadata(&categorized);
+        assert!(visible.contains("1 non-blocking (other)"), "{visible}");
+        assert!(!visible.contains("custom-category"), "{visible}");
+
+        state.findings.values_mut().next().expect("finding").status = ReviewFindingStatus::Fixed;
+        state
+            .findings
+            .values_mut()
+            .next()
+            .expect("finding")
+            .blocking = false;
+        let closure = ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            state.head_sha.clone(),
+            1,
+            Some(observation.record_digest.clone()),
+            ReviewStatePayload::ReviewLoop { state },
+        )
+        .expect("closure");
+        assert_eq!(
+            state_comment_visible_metadata(&closure),
+            "Review closed at head a62d8da: 1 finding fixed, 0 open. Ready for merge checks."
+        );
+    }
+
+    #[test]
+    fn review_budget_stop_visible_sentence_never_claims_merge_readiness() {
+        let mut state = fixture_loop_state(1);
+        state.head_sha = "a62d8da000000000000000000000000000000000".to_string();
+        state.hard_stop = Some(ReviewLoopHardStop {
+            code: "review_round_limit_exceeded".to_string(),
+            budget_field: "max_repair_rounds".to_string(),
+            increment: 1,
+            proposal_digest: "sha256:proposal".to_string(),
+            attempted_head_sha: state.head_sha.clone(),
+            observation_digest: "sha256:observation".to_string(),
+            extension_applied: false,
+        });
+        let stopped = ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            state.head_sha.clone(),
+            0,
+            None,
+            ReviewStatePayload::ReviewLoop {
+                state: state.clone(),
+            },
+        )
+        .expect("stop");
+        assert_eq!(
+            state_comment_visible_metadata(&stopped),
+            "Review paused at head a62d8da by a review budget stop. Resolve the stop before continuing."
+        );
+
+        state.hard_stop.as_mut().expect("stop").extension_applied = true;
+        let extended = ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            state.head_sha.clone(),
+            1,
+            Some(stopped.record_digest.clone()),
+            ReviewStatePayload::ReviewLoop { state },
+        )
+        .expect("extended");
+        assert_eq!(
+            state_comment_visible_metadata(&extended),
+            "Review budget extension recorded at head a62d8da. Resume the review observation before merge."
+        );
+    }
+
+    #[test]
+    fn handoff_record_kinds_have_visible_checkpoint_sentences() {
+        use super::super::pr_review_handoff::ReviewHandoff;
+
+        let make_record = |surrendered: bool, returned_reason: Option<&str>| {
+            ReviewStateRecord::new(
+                "acme/widgets",
+                7,
+                "e1f5006000000000000000000000000000000000",
+                0,
+                None,
+                ReviewStatePayload::ReviewHandoff {
+                    handoff: ReviewHandoff {
+                        coordinator_digest: format!("sha256:{}", "1".repeat(64)),
+                        reviewer_digest: format!("sha256:{}", "2".repeat(64)),
+                        review_author: "sympoies-reviewer[bot]".to_string(),
+                        base_sha: "0c1340b000000000000000000000000000000000".to_string(),
+                        assigned_head: "e1f5006000000000000000000000000000000000".to_string(),
+                        returned_reason: returned_reason.map(str::to_string),
+                        assignment_generation: 1,
+                        surrendered,
+                    },
+                },
+            )
+            .expect("record")
+        };
+
+        let assigned = make_record(false, None);
+        assert_eq!(
+            state_comment_visible_metadata(&assigned),
+            "Review assigned to sympoies-reviewer[bot] for head e1f5006 (base 0c1340b). Only this exact head is under review; a new push needs re-review before merge."
+        );
+
+        let surrendered = make_record(true, None);
+        assert_eq!(
+            state_comment_visible_metadata(&surrendered),
+            "Reviewer released this assignment at head e1f5006. Waiting for reassignment."
+        );
+
+        let recovered = make_record(false, Some("reviewer-unreachable"));
+        assert_eq!(
+            state_comment_visible_metadata(&recovered),
+            "Review assignment recovered at head e1f5006. Waiting for reassignment."
+        );
+
+        for record in [&assigned, &surrendered, &recovered] {
+            let marker = record.marker().expect("marker");
+            let old_body = format!("Review checkpoint — review progress recorded.\n{marker}");
+            let new_body = render_state_comment_body(record, None).expect("render");
+            assert_eq!(
+                parse_state_marker(&old_body).expect("old"),
+                Some(record.clone())
+            );
+            assert_eq!(
+                parse_state_marker(&new_body).expect("new"),
+                Some(record.clone())
+            );
+        }
+        assert_eq!(
+            parse_chain(
+                [render_state_comment_body(&assigned, None)
+                    .expect("render")
+                    .as_str()],
+                "acme/widgets",
+                7
+            )
+            .expect("review-state merge reader accepts handoff"),
+            parse_chain(
+                [assigned.marker().expect("marker").as_str()],
+                "acme/widgets",
+                7
+            )
+            .expect("historical handoff marker")
         );
     }
 
@@ -1722,6 +2046,10 @@ mod tests {
         );
         let historical = genesis.marker().expect("historical marker");
         let rendered = render_state_comment_body(&child, None).expect("rendered body");
+        let old_fixed_text = format!(
+            "Review checkpoint — review progress recorded.\n{}",
+            child.marker().expect("historical marker")
+        );
 
         let mixed =
             parse_chain([historical.as_str(), rendered.as_str()], REPO, PR).expect("mixed history");
@@ -1737,6 +2065,12 @@ mod tests {
 
         assert_eq!(mixed, all_legacy);
         assert_eq!(mixed.tip_digest.as_deref(), Some(&*child.record_digest));
+        assert_eq!(
+            parse_chain([historical.as_str(), old_fixed_text.as_str()], REPO, PR)
+                .expect("old visible text"),
+            parse_chain([historical.as_str(), rendered.as_str()], REPO, PR)
+                .expect("new visible text")
+        );
     }
 
     #[test]
@@ -1932,14 +2266,17 @@ mod tests {
         ] {
             assert!(!metadata.contains(forbidden), "{forbidden} in {metadata}");
         }
-        assert_eq!(metadata, STATE_COMMENT_NOTICE);
+        assert_eq!(
+            metadata,
+            "Review receipt recorded at head 0123456. Follow the review findings before merge."
+        );
         assert!(!metadata.contains("abcdef012345"));
         assert!(!metadata.contains("generation"));
         assert!(!metadata.contains(record.payload.kind()));
     }
 
     #[test]
-    fn provider_head_never_changes_the_visible_notice() {
+    fn provider_head_does_not_override_the_review_receipt_head() {
         for head in ["", "  ", "a\nb", "**bold**", "héad-1234567890"] {
             let record = ReviewStateRecord::new(
                 "acme/widgets",
@@ -1953,7 +2290,10 @@ mod tests {
             )
             .expect("record");
             let metadata = state_comment_visible_metadata(&record);
-            assert_eq!(metadata, STATE_COMMENT_NOTICE);
+            assert_eq!(
+                metadata,
+                "Review receipt recorded at head 0123456. Follow the review findings before merge."
+            );
         }
     }
 
