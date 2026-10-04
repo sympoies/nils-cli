@@ -122,4 +122,11 @@ failure at exit zero becomes `false_success`; and an envelope proving no
 mutation dispatched resolves an otherwise unknown mutation. An upstream result
 without an envelope keeps the exit-code rules unchanged.
 
+A mutating envelope reporting `mutation_dispatched: true` and either an
+`indeterminate` state or an `unverifiable` failure becomes `unknown` with class
+`unknown_mutation`, taking precedence over generic upstream/false-success
+classification. Its first occurrence is significant and it cannot be replayed.
+The original upstream JSON, failure exit, and unsafe retry outcome are preserved.
+Successful unverified background deliveries retain their existing classification.
+
 Raw upstream payloads and screenshots are never promoted automatically.
