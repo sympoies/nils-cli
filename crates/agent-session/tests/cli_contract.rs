@@ -3,6 +3,39 @@ use std::process::Command;
 use nils_test_support::bin;
 
 #[test]
+fn service_mailbox_surface_requires_no_managed_sender() {
+    let mut command = Command::new(bin::resolve("agent-session"));
+    nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+    let output = command
+        .args(["message", "service-send", "--help"])
+        .output()
+        .expect("service mailbox help");
+    assert!(
+        output.status.success(),
+        "service submission must be discoverable"
+    );
+    let help = String::from_utf8_lossy(&output.stdout);
+    for flag in [
+        "--service",
+        "--to",
+        "--to-machine",
+        "--body-file",
+        "--expires-in",
+        "--idempotency-key",
+    ] {
+        assert!(help.contains(flag), "missing {flag}: {help}");
+    }
+    assert!(
+        !help.contains("--from"),
+        "a service must not borrow a session"
+    );
+    assert!(
+        !help.contains("--capability-file"),
+        "session capabilities are not service credentials"
+    );
+}
+
+#[test]
 fn remote_mailbox_surface_is_discoverable() {
     let output = Command::new(bin::resolve("agent-session"))
         .args(["message", "send", "--help"])

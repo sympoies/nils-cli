@@ -8,6 +8,7 @@ mod notification;
 pub use notification::NotificationProjection;
 pub(crate) mod remote;
 pub(crate) mod server;
+pub(crate) mod service;
 
 pub(crate) use notification::NotificationCandidate;
 pub(crate) use notification::is_mailbox_reminder_prompt;
@@ -305,6 +306,11 @@ pub(crate) fn run_message(context: &CliContext, args: cli::MessageArgs) -> i32 {
             "message-delivery",
             args.format,
             remote::cli_delivery(context, args),
+        ),
+        MessageCommand::ServiceSend(args) => (
+            "message-service-send",
+            args.format,
+            service::cli_send(context, args).map_err(service::recovery),
         ),
         MessageCommand::Send(args) => ("message-send", args.format, mailbox::send(context, args)),
         MessageCommand::Inbox(args) => {
@@ -2843,7 +2849,7 @@ fn coordination_root(context: &CliContext) -> Result<PathBuf, CliError> {
 fn read_private_file(path: &Path, max_bytes: u64) -> io::Result<Vec<u8>> {
     let mut file = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)?;
     let metadata = file.metadata()?;
     if !metadata.is_file()

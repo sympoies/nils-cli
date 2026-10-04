@@ -748,6 +748,8 @@ pub enum MessageCommand {
     Delivery(MessageDeliveryArgs),
     /// Send one bounded private message and schedule an eventual fixed notification.
     Send(MessageSendArgs),
+    /// Submit a body-file through the owning daemon as an explicitly admitted local service.
+    ServiceSend(MessageServiceSendArgs),
     /// List bounded private mailbox metadata for the authenticated recipient.
     Inbox(MessageInboxArgs),
     /// Read one private message body as its authenticated recipient.
@@ -770,6 +772,40 @@ pub struct MessageReminderArgs {
     /// Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE.
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub capability_file: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct MessageServiceSendArgs {
+    /// Service ID explicitly admitted by the owning daemon.
+    #[arg(long)]
+    pub service: String,
+    /// Current admitted service generation.
+    #[arg(long)]
+    pub service_generation: String,
+    /// Private service credential reference; never a session capability.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub credential_file: PathBuf,
+    /// Full managed recipient session ID.
+    #[arg(long = "to")]
+    pub to_session: String,
+    /// Destination machine; omitted uses the owning daemon's machine.
+    #[arg(long)]
+    pub to_machine: Option<String>,
+    /// UTF-8 message body file, at most 16 KiB.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub body_file: PathBuf,
+    /// Stable operation key reused for an identical retry.
+    #[arg(long)]
+    pub idempotency_key: String,
+    /// Message lifetime: 24 hours by default, at most 7 days.
+    #[arg(long, value_name = "DURATION")]
+    pub expires_in: Option<String>,
+    /// Optional recipient fence; discovery never redirects a queued submission.
+    #[arg(long)]
+    pub expected_recipient_incarnation: Option<String>,
+    /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }
@@ -1398,6 +1434,11 @@ pub struct ServeArgs {
     /// Read the bearer token once from stdin instead of process arguments.
     #[arg(long = "token-stdin", conflicts_with = "token")]
     pub token_stdin: bool,
+
+    /// Private, reference-only service mailbox admission document. Disabled when omitted.
+    /// Falls back to AGENT_SESSION_MAILBOX_SERVICES_FILE. Re-read on each submission.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub mailbox_services_file: Option<PathBuf>,
 
     /// Machine identity reported in responses. Falls back to
     /// AGENT_SESSION_MACHINE, then --host, then the short hostname.

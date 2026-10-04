@@ -86,12 +86,69 @@ pub(crate) struct Address {
     pub session_id: String,
     pub session_incarnation: String,
 }
+/// Both variants reject unknown fields, so mixed session/service identities cannot parse.
+/// The envelope schema must also match the variant before ingress admission.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub(crate) enum Origin {
+    Session(Address),
+    Service(super::service::Origin),
+}
+impl From<Address> for Origin {
+    fn from(value: Address) -> Self {
+        Self::Session(value)
+    }
+}
+impl Origin {
+    fn generation(&self) -> &str {
+        match self {
+            Self::Session(a) => &a.session_incarnation,
+            Self::Service(a) => &a.service_generation,
+        }
+    }
+    fn principal(&self) -> String {
+        match self {
+            Self::Session(a) => a.session_id.clone(),
+            Self::Service(a) => a.stored_id(),
+        }
+    }
+    fn stored_id(&self) -> String {
+        match self {
+            Self::Session(a) => encode_sender(a),
+            Self::Service(a) => a.stored_id(),
+        }
+    }
+    fn wire_version(&self) -> &str {
+        match self {
+            Self::Session(_) => ENVELOPE_VERSION,
+            Self::Service(_) => super::service::WIRE_VERSION,
+        }
+    }
+    fn valid(&self) -> bool {
+        match self {
+            Self::Session(a) => {
+                !a.machine.is_empty()
+                    && !a.session_id.is_empty()
+                    && !a.session_incarnation.is_empty()
+            }
+            Self::Service(a) => a.valid(),
+        }
+    }
+    fn projection(&self) -> Value {
+        let mut value = serde_json::to_value(self).expect("origin");
+        if matches!(self, Self::Service(_)) {
+            value["kind"] = json!("service");
+        }
+        value
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Envelope {
+pub(crate) struct Envelope<F = Address> {
     pub schema_version: String,
     pub message_id: String,
-    pub from: Address,
+    pub from: F,
     pub to: Address,
     pub body: String,
     pub body_sha256: String,
@@ -100,9 +157,25 @@ pub(crate) struct Envelope {
     pub reply_to: Option<String>,
     pub reply_depth: u8,
 }
+impl<F: Into<Origin>> Envelope<F> {
+    fn into_origin(self) -> Envelope<Origin> {
+        Envelope {
+            schema_version: self.schema_version,
+            message_id: self.message_id,
+            from: self.from.into(),
+            to: self.to,
+            body: self.body,
+            body_sha256: self.body_sha256,
+            created_at_epoch: self.created_at_epoch,
+            expires_at_epoch: self.expires_at_epoch,
+            reply_to: self.reply_to,
+            reply_depth: self.reply_depth,
+        }
+    }
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Outbox {
-    pub envelope: Envelope,
+    pub envelope: Envelope<Origin>,
     pub request_digest: String,
     pub idempotency_key: String,
     pub state: String,
@@ -112,6 +185,11 @@ pub(crate) struct Outbox {
     pub reason: Option<String>,
 }
 impl Outbox {
+    fn retains_failed_service_body(&self, now: i64) -> bool {
+        matches!(self.envelope.from, Origin::Service(_))
+            && matches!(self.state.as_str(), "rejected" | "delivery-unknown")
+            && self.envelope.expires_at_epoch > now
+    }
     fn identity(&self) -> Retained {
         Retained {
             message_id: self.envelope.message_id.clone(),
@@ -138,7 +216,7 @@ impl Outbox {
 #[serde(deny_unknown_fields)]
 struct Retained {
     message_id: String,
-    sender: Address,
+    sender: Origin,
     recipient: Address,
     expires_at_epoch: i64,
     request_digest: String,
@@ -167,12 +245,13 @@ struct Journal {
     retained: Vec<Retained>,
 }
 impl Journal {
-    /// Moves terminal entries to body-free records, keeping the identity total,
-    /// and drops identities 24 hours after expiry, never earlier.
+    /// Failed service content stays recoverable until its original expiry.
+    /// Other terminal entries compact to body-free records immediately; every
+    /// identity is retained through expiry plus 24 hours, never evicting live IDs.
     fn compact(&mut self, now: i64) {
         let (queued, terminal) = std::mem::take(&mut self.remote_outbox)
             .into_iter()
-            .partition(|item| item.state == "queued");
+            .partition(|item| item.state == "queued" || item.retains_failed_service_body(now));
         self.remote_outbox = queued;
         self.retained.extend(terminal.iter().map(Outbox::identity));
         self.remote_outbox
@@ -223,8 +302,8 @@ impl Journal {
     }
     fn find_key(&self, session: &str, incarnation: &str, key: &str) -> Option<Retained> {
         self.find(|item| {
-            item.sender.session_id == session
-                && item.sender.session_incarnation == incarnation
+            item.sender.principal() == session
+                && item.sender.generation() == incarnation
                 && item.idempotency_key == key
         })
     }
@@ -324,6 +403,8 @@ pub(crate) struct Submit {
     pub reply_to: Option<String>,
     pub expires_in: Option<String>,
     pub reply_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_recipient_incarnation: Option<String>,
 }
 
 /// Bounded federation HTTP client: 15-second timeout, redirects refused.
@@ -372,6 +453,9 @@ fn response_json(
         Responder::Relay => relay_error(&value),
         Responder::LocalDaemon => local_daemon_error(&value),
     })
+}
+pub(super) fn local_response(response: reqwest::blocking::Response) -> Result<Value, CliError> {
+    response_json(response, Responder::LocalDaemon)
 }
 fn local_daemon_error(value: &Value) -> CliError {
     let text = |pointer| {
@@ -446,11 +530,30 @@ pub(crate) fn peers(
     token: &str,
 ) -> Result<Value, CliError> {
     let (_, current) = authenticate_token(context, session, token)?;
+    peers_from(
+        config,
+        &Origin::Session(Address {
+            machine: config.machine.clone(),
+            session_id: session.into(),
+            session_incarnation: current,
+        }),
+    )
+}
+fn peers_from(config: &Config, origin: &Origin) -> Result<Value, CliError> {
     let mut url = reqwest::Url::parse(&format!("{}/api/coordination/peers/v1", config.url))
         .map_err(|_| unavailable())?;
-    url.query_pairs_mut()
-        .append_pair("source_session_id", session)
-        .append_pair("source_incarnation", &current);
+    match origin {
+        Origin::Session(source) => {
+            url.query_pairs_mut()
+                .append_pair("source_session_id", &source.session_id)
+                .append_pair("source_incarnation", &source.session_incarnation);
+        }
+        Origin::Service(source) => {
+            url.query_pairs_mut()
+                .append_pair("source_service_id", &source.service_id)
+                .append_pair("source_service_generation", &source.service_generation);
+        }
+    }
     let response = client()?
         .get(url)
         .bearer_auth(&config.token)
@@ -471,6 +574,72 @@ pub(crate) fn submit(
     args: Submit,
 ) -> Result<Value, CliError> {
     let (_, source_incarnation) = authenticate_token(context, session, token)?;
+    submit_origin(
+        context,
+        config,
+        Origin::Session(Address {
+            machine: config.machine.clone(),
+            session_id: session.into(),
+            session_incarnation: source_incarnation,
+        }),
+        args,
+        Some(token),
+        None,
+        || Ok(()),
+    )
+}
+
+pub(super) fn submit_service<F>(
+    context: &CliContext,
+    config: &Config,
+    origin: super::service::Origin,
+    args: super::service::Submit,
+    authorize: F,
+) -> Result<Value, CliError>
+where
+    F: Fn() -> Result<(), CliError>,
+{
+    if origin.machine != config.machine {
+        return Err(super::service::unauthorized());
+    }
+    let digest = digest_bytes(&serde_json::to_vec(&args).map_err(|_| invalid())?);
+    let submit = Submit {
+        to_machine: args.to_machine.ok_or_else(invalid)?,
+        to_session: args.to_session,
+        body: args.body,
+        idempotency_key: args.idempotency_key,
+        reply_to: None,
+        expires_in: args.expires_in,
+        reply_revision: None,
+        expected_recipient_incarnation: args.expected_recipient_incarnation,
+    };
+    submit_origin(
+        context,
+        config,
+        Origin::Service(origin),
+        submit,
+        None,
+        Some(digest),
+        authorize,
+    )
+}
+
+fn submit_origin<F>(
+    context: &CliContext,
+    config: &Config,
+    origin: Origin,
+    args: Submit,
+    token: Option<&str>,
+    digest_override: Option<String>,
+    authorize: F,
+) -> Result<Value, CliError>
+where
+    F: Fn() -> Result<(), CliError>,
+{
+    authorize()?;
+    let principal = origin.principal();
+    let session = principal.as_str();
+    let source_incarnation = origin.generation().to_string();
     super::validate_idempotency_key(&args.idempotency_key)?;
     if args.body.is_empty()
         || args.body.len() > 16 * 1024
@@ -479,10 +648,26 @@ pub(crate) fn submit(
     {
         return Err(invalid());
     }
-    let digest = digest_bytes(&serde_json::to_vec(&args).map_err(|_| invalid())?);
+    let digest = digest_override
+        .unwrap_or_else(|| digest_bytes(&serde_json::to_vec(&args).expect("submission")));
+    if matches!(origin, Origin::Service(_)) {
+        let locked = super::lock_registry_observational(context)?;
+        authorize()?;
+        if let Some(prior) = super::idempotency_replay(
+            &locked.registry,
+            &args.idempotency_key,
+            session,
+            &source_incarnation,
+            "service-message-submit",
+            &digest,
+        )? {
+            return Ok(prior);
+        }
+    }
     // Replay before discovery: a retry must retain its original destination incarnation.
     {
         let locked = lock_journal(context)?;
+        authorize()?;
         if let Some(item) =
             locked
                 .registry
@@ -538,7 +723,7 @@ pub(crate) fn submit(
         }
         (sender, parent.reply_depth + 1)
     } else {
-        let discovered = peers(context, config, session, token)?;
+        let discovered = peers_from(config, &origin)?;
         let peer = discovered["peers"]
             .as_array()
             .expect("validated peers")
@@ -567,16 +752,23 @@ pub(crate) fn submit(
             0,
         )
     };
+    if args
+        .expected_recipient_incarnation
+        .as_deref()
+        .is_some_and(|expected| expected != destination.session_incarnation)
+    {
+        return Err(CliError::data(
+            "session-incarnation-conflict",
+            "service recipient was replaced",
+            None,
+        ));
+    }
     let expiry = super::mailbox::parse_expiry(args.expires_in.as_deref())?;
     let now = now_epoch();
     let envelope = Envelope {
-        schema_version: ENVELOPE_VERSION.into(),
+        schema_version: origin.wire_version().into(),
         message_id: uuid::Uuid::new_v4().to_string(),
-        from: Address {
-            machine: config.machine.clone(),
-            session_id: session.into(),
-            session_incarnation: source_incarnation.clone(),
-        },
+        from: origin.clone(),
         to: destination,
         body_sha256: digest_bytes(args.body.as_bytes()),
         body: args.body,
@@ -586,23 +778,32 @@ pub(crate) fn submit(
         reply_depth,
     };
     // Authenticate again after discovery, then persist without any network-held locks.
-    let _source_lock = crate::acquire_session_record_lock(context, session)?;
-    let (_, current) = authenticate_token(context, session, token)?;
-    if current != source_incarnation {
-        return Err(super::unauthorized());
+    let _source_lock = if matches!(origin, Origin::Session(_)) {
+        Some(crate::acquire_session_record_lock(context, session)?)
+    } else {
+        None
+    };
+    if let Some(token) = token {
+        let (_, current) = authenticate_token(context, session, token)?;
+        if current != source_incarnation {
+            return Err(super::unauthorized());
+        }
     }
     let locked = lock_registry(context)?;
-    let broker = locked
-        .registry
-        .brokers
-        .get(session)
-        .ok_or_else(super::unauthorized)?;
-    if broker.state != "ready"
-        || broker.incarnation != source_incarnation
-        || broker.capability_digest != digest_bytes(token.as_bytes())
-    {
-        return Err(super::unauthorized());
+    if let Some(token) = token {
+        let broker = locked
+            .registry
+            .brokers
+            .get(session)
+            .ok_or_else(super::unauthorized)?;
+        if broker.state != "ready"
+            || broker.incarnation != source_incarnation
+            || broker.capability_digest != digest_bytes(token.as_bytes())
+        {
+            return Err(super::unauthorized());
+        }
     }
+    authorize()?;
     if let Some(parent_id) = envelope.reply_to.as_deref() {
         let parent = locked
             .registry
@@ -627,8 +828,21 @@ pub(crate) fn submit(
             ));
         }
     }
+    if matches!(origin, Origin::Service(_))
+        && let Some(prior) = super::idempotency_replay(
+            &locked.registry,
+            &args.idempotency_key,
+            session,
+            &source_incarnation,
+            "service-message-submit",
+            &digest,
+        )?
+    {
+        return Ok(prior);
+    }
     let _registry_guard = locked;
     let mut locked = lock_journal(context)?;
+    authorize()?;
     if let Some(item) =
         locked
             .registry
@@ -708,11 +922,12 @@ pub(crate) fn submit(
             &destination,
         ));
     }
+    authorize()?;
     locked.write(&bytes)?;
     Ok(outcome)
 }
 fn projection(item: &Retained) -> Value {
-    json!({"schema_version":DELIVERY_VERSION,"message_id":item.message_id,"state":item.state,"sender":item.sender,"recipient":item.recipient,"attempts":item.attempts,"reason":item.reason,"receipt":item.receipt()})
+    json!({"schema_version":DELIVERY_VERSION,"message_id":item.message_id,"state":item.state,"sender":item.sender.projection(),"recipient":item.recipient,"attempts":item.attempts,"reason":item.reason,"receipt":item.receipt()})
 }
 pub(crate) fn delivery(
     context: &CliContext,
@@ -726,15 +941,24 @@ pub(crate) fn delivery(
         .registry
         .find(|i| {
             i.message_id == id
-                && i.sender.session_id == session
-                && i.sender.session_incarnation == current
+                && i.sender.principal() == session
+                && i.sender.generation() == current
         })
         .ok_or_else(|| CliError::data("message-not-found", "delivery does not exist", None))?;
     Ok(projection(&item))
 }
 pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>, CliError> {
     let items = {
-        let locked = lock_journal(context)?;
+        let mut locked = lock_journal(context)?;
+        let now = now_epoch();
+        if locked.registry.remote_outbox.iter().any(|item| {
+            matches!(item.envelope.from, Origin::Service(_))
+                && matches!(item.state.as_str(), "rejected" | "delivery-unknown")
+                && item.envelope.expires_at_epoch <= now
+        }) {
+            // Expiry wakes must compact held content even without a queued attempt.
+            locked.save()?;
+        }
         locked
             .registry
             .remote_outbox
@@ -834,30 +1058,150 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
         locked.save()?;
     }
     let locked = lock_journal(context)?;
+    let now = now_epoch();
     Ok(locked
         .registry
         .remote_outbox
         .iter()
-        .filter(|i| i.state == "queued")
-        .map(|i| i.next_attempt_epoch.min(i.envelope.expires_at_epoch))
+        .filter(|item| item.state == "queued" || item.retains_failed_service_body(now))
+        .map(|item| {
+            if item.state == "queued" {
+                item.next_attempt_epoch.min(item.envelope.expires_at_epoch)
+            } else {
+                item.envelope.expires_at_epoch
+            }
+        })
         .min())
 }
 /// Destination admission. Quota refusals name this host as the destination.
-pub(crate) fn receive(
+pub(crate) fn receive<F: Into<Origin>>(
     context: &CliContext,
     machine: &str,
-    envelope: Envelope,
+    envelope: Envelope<F>,
 ) -> Result<Value, CliError> {
-    receive_admitted(context, machine, envelope)
+    receive_admitted(context, machine, envelope.into_origin(), None, &|| Ok(()))
         .map_err(|error| super::quota_origin(error, machine, "destination"))
 }
+
+struct LocalSubmission {
+    origin: super::service::Origin,
+    key: String,
+    digest: String,
+}
+fn local_replay(
+    registry: &super::Registry,
+    source: Option<&LocalSubmission>,
+) -> Result<Option<Value>, CliError> {
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    super::idempotency_replay(
+        registry,
+        &source.key,
+        &source.origin.stored_id(),
+        &source.origin.service_generation,
+        "service-message-submit",
+        &source.digest,
+    )
+}
+
+pub(super) fn submit_local_service<F>(
+    context: &CliContext,
+    origin: super::service::Origin,
+    args: super::service::Submit,
+    digest: String,
+    authorize: F,
+) -> Result<Value, CliError>
+where
+    F: Fn() -> Result<(), CliError>,
+{
+    let source = LocalSubmission {
+        origin: origin.clone(),
+        key: args.idempotency_key,
+        digest,
+    };
+    {
+        let locked = super::lock_registry_observational(context)?;
+        authorize()?;
+        if let Some(prior) = local_replay(&locked.registry, Some(&source))? {
+            return Ok(prior);
+        }
+        reject_remote_key(context, &source)?;
+    }
+    let recipient = crate::load_session_record(context, &args.to_session)?;
+    if recipient.id != args.to_session {
+        return Err(CliError::data(
+            "message-not-found",
+            "service recipient requires an exact session id",
+            None,
+        ));
+    }
+    let target_incarnation = incarnation(&recipient)?;
+    if args
+        .expected_recipient_incarnation
+        .as_deref()
+        .is_some_and(|expected| expected != target_incarnation)
+    {
+        return Err(CliError::data(
+            "session-incarnation-conflict",
+            "service recipient was replaced",
+            None,
+        ));
+    }
+    let now = now_epoch();
+    let envelope = Envelope {
+        schema_version: super::service::WIRE_VERSION.into(),
+        message_id: uuid::Uuid::new_v4().to_string(),
+        from: Origin::Service(origin.clone()),
+        to: Address {
+            machine: origin.machine.clone(),
+            session_id: args.to_session,
+            session_incarnation: target_incarnation,
+        },
+        body_sha256: digest_bytes(args.body.as_bytes()),
+        body: args.body,
+        created_at_epoch: now,
+        expires_at_epoch: now
+            .saturating_add(super::mailbox::parse_expiry(args.expires_in.as_deref())?),
+        reply_to: None,
+        reply_depth: 0,
+    };
+    receive_admitted(
+        context,
+        &origin.machine,
+        envelope,
+        Some(&source),
+        &authorize,
+    )
+}
+fn reject_remote_key(context: &CliContext, source: &LocalSubmission) -> Result<(), CliError> {
+    if lock_journal(context)?
+        .registry
+        .find_key(
+            &source.origin.stored_id(),
+            &source.origin.service_generation,
+            &source.key,
+        )
+        .is_some()
+    {
+        return Err(CliError::data(
+            "idempotency-key-conflict",
+            "service idempotency key belongs to another request",
+            None,
+        ));
+    }
+    Ok(())
+}
+
 fn receive_admitted(
     context: &CliContext,
     machine: &str,
-    envelope: Envelope,
+    envelope: Envelope<Origin>,
+    source: Option<&LocalSubmission>,
+    authorize: &dyn Fn() -> Result<(), CliError>,
 ) -> Result<Value, CliError> {
     let now = now_epoch();
-    if envelope.schema_version != ENVELOPE_VERSION
+    if envelope.schema_version != envelope.from.wire_version()
         || uuid::Uuid::parse_str(&envelope.message_id).is_err()
         || envelope.to.machine != machine
         || envelope.body.is_empty()
@@ -868,17 +1212,23 @@ fn receive_admitted(
             .expires_at_epoch
             .saturating_sub(envelope.created_at_epoch)
             > super::mailbox::MAX_EXPIRY_SECS
-        || envelope.from.machine.is_empty()
-        || envelope.from.session_id.is_empty()
-        || envelope.from.session_incarnation.is_empty()
+        || !envelope.from.valid()
+        || (matches!(envelope.from, Origin::Service(_))
+            && (envelope.reply_to.is_some() || envelope.reply_depth != 0))
     {
         return Err(invalid());
     }
+    super::mailbox::validate_body(&envelope.body)?;
+    authorize()?;
     let digest = digest_bytes(&serde_json::to_vec(&envelope).map_err(|_| invalid())?);
     // Durable delivery wins over later expiry or replacement. Release this lock
     // before the session lock; the final transaction repeats the same check.
     {
         let locked = super::lock_registry_observational(context)?;
+        authorize()?;
+        if let Some(prior) = local_replay(&locked.registry, source)? {
+            return Ok(prior);
+        }
         if let Some(prior) = receive_replay(&locked.registry, &envelope, &digest)? {
             return Ok(prior);
         }
@@ -888,7 +1238,21 @@ fn receive_admitted(
     }
     let _session_lock = crate::acquire_session_record_lock(context, &envelope.to.session_id)?;
     let recipient = crate::load_session_record(context, &envelope.to.session_id)?;
+    if matches!(envelope.from, Origin::Service(_)) && recipient.id != envelope.to.session_id {
+        return Err(CliError::data(
+            "message-not-found",
+            "service recipient requires an exact session id",
+            None,
+        ));
+    }
     let mut locked = lock_registry(context)?;
+    authorize()?;
+    if let Some(prior) = local_replay(&locked.registry, source)? {
+        return Ok(prior);
+    }
+    if let Some(source) = source {
+        reject_remote_key(context, source)?;
+    }
     if let Some(prior) = receive_replay(&locked.registry, &envelope, &digest)? {
         return Ok(prior);
     }
@@ -936,7 +1300,7 @@ fn receive_admitted(
     let now_millis = super::mailbox::now_epoch_millis();
     super::mailbox::admit_message(
         &mut locked.registry,
-        &encode_sender(&envelope.from),
+        &envelope.from.stored_id(),
         &recipient.id,
         envelope.body.len(),
         envelope.reply_to.as_deref(),
@@ -947,8 +1311,8 @@ fn receive_admitted(
     let message = super::mailbox::StoredMessage {
         schema_version: "agent-session.message.v1".into(),
         message_id: envelope.message_id.clone(),
-        sender_session_id: encode_sender(&envelope.from),
-        sender_incarnation: envelope.from.session_incarnation,
+        sender_session_id: envelope.from.stored_id(),
+        sender_incarnation: envelope.from.generation().to_string(),
         recipient_session_id: recipient.id.clone(),
         recipient_incarnation: recipient_incarnation.clone(),
         state: "unread".into(),
@@ -966,12 +1330,14 @@ fn receive_admitted(
         body_bytes: envelope.body.len(),
         body: envelope.body,
     };
-    super::notification::schedule(
+    let notification = super::notification::schedule(
         &mut locked.registry,
         &recipient.id,
         &recipient_incarnation,
         now,
     );
+    let mut local_outcome = super::mailbox::message_projection(&message);
+    local_outcome["notification"] = serde_json::to_value(notification).expect("notification");
     locked.registry.messages.push(message);
     super::store_receipt(
         &mut locked.registry,
@@ -997,8 +1363,25 @@ fn receive_admitted(
         .get_mut(&key)
         .expect("just inserted")
         .expires_at_epoch = envelope.expires_at_epoch.saturating_add(86400);
+    if let Some(source) = source {
+        super::store_receipt(
+            &mut locked.registry,
+            source.key.clone(),
+            source.origin.stored_id(),
+            source.origin.service_generation.clone(),
+            "service-message-submit".into(),
+            source.digest.clone(),
+            local_outcome.clone(),
+            now,
+        )?;
+    }
+    authorize()?;
     locked.save()?;
-    Ok(receipt)
+    Ok(if source.is_some() {
+        local_outcome
+    } else {
+        receipt
+    })
 }
 
 pub(crate) fn write_endpoint(
@@ -1153,6 +1536,7 @@ pub(crate) fn reply_replay(
         reply_to: Some(args.message.clone()),
         expires_in: None,
         reply_revision: Some(args.if_revision),
+        expected_recipient_incarnation: None,
     };
     let digest = digest_bytes(&serde_json::to_vec(&submission).map_err(|_| invalid())?);
     if digest != item.request_digest {
@@ -1167,7 +1551,7 @@ pub(crate) fn reply_replay(
 
 fn receive_replay(
     registry: &super::Registry,
-    envelope: &Envelope,
+    envelope: &Envelope<Origin>,
     digest: &str,
 ) -> Result<Option<Value>, CliError> {
     super::idempotency_replay(
@@ -1329,7 +1713,7 @@ mod tests {
             });
             let mut locked = lock_journal(&context).unwrap();
             locked.registry.remote_outbox.push(Outbox {
-                envelope: envelope(),
+                envelope: envelope().into_origin(),
                 request_digest: "fixture".into(),
                 idempotency_key: "fixture".into(),
                 state: "queued".into(),
@@ -1518,6 +1902,7 @@ mod tests {
             reply_to: Some(parent_id),
             expires_in: None,
             reply_revision: Some(1),
+            expected_recipient_incarnation: None,
         };
         assert_eq!(
             submit(&context, &config(), "recipient", TOKEN, args)
@@ -1538,7 +1923,7 @@ mod tests {
         let (_temp, context) = fixture();
         let mut journal = lock_journal(&context).unwrap();
         journal.registry.remote_outbox.push(Outbox {
-            envelope: envelope(),
+            envelope: envelope().into_origin(),
             request_digest: "fixture".into(),
             idempotency_key: "fixture".into(),
             state: "delivered".into(),
@@ -1693,6 +2078,7 @@ mod tests {
             reply_to: None,
             expires_in: None,
             reply_revision: None,
+            expected_recipient_incarnation: None,
         };
         let mut message = envelope();
         message.from = Address {
@@ -1707,7 +2093,7 @@ mod tests {
         };
         let mut locked = lock_journal(&context).expect("journal");
         locked.registry.remote_outbox.push(Outbox {
-            envelope: message,
+            envelope: message.into_origin(),
             request_digest: digest_bytes(&serde_json::to_vec(&args).expect("digest")),
             idempotency_key: args.idempotency_key.clone(),
             state: "queued".into(),
@@ -1765,7 +2151,7 @@ mod tests {
         let id = message.message_id.clone();
         let mut locked = lock_journal(&context).expect("journal");
         locked.registry.remote_outbox.push(Outbox {
-            envelope: message,
+            envelope: message.into_origin(),
             request_digest: "digest".into(),
             idempotency_key: "expiry-key-0001".into(),
             state: "queued".into(),
@@ -1867,7 +2253,7 @@ mod tests {
         let delivered = state == "delivered";
         Outbox {
             receipt: delivered.then(|| json!({"schema_version":DELIVERY_VERSION,"message_id":message.message_id,"state":"delivered","recipient":message.to,"persisted_at_epoch":now_epoch()})),
-            envelope: message,
+            envelope: message.into_origin(),
             request_digest: format!("digest-{key}"),
             idempotency_key: key.into(),
             state: state.into(),
@@ -1890,6 +2276,7 @@ mod tests {
         let parent_id = parent.message_id.clone();
         receive(context, "destination", parent).unwrap();
         Submit {
+            expected_recipient_incarnation: None,
             to_machine: "source".into(),
             to_session: "recipient".into(),
             body: "bounded reply".into(),
@@ -2137,6 +2524,127 @@ mod tests {
         assert_eq!(
             local_daemon_error(&json!({"error":{"code":"Bad Code"}})).code(),
             "remote-messaging-unavailable"
+        );
+    }
+    #[test]
+    fn service_failed_deliveries_retain_bodies_without_expanding_existing_bounds() {
+        for state in ["rejected", "delivery-unknown", "delivered"] {
+            let managed = Outbox {
+                envelope: envelope().into_origin(),
+                request_digest: "digest".into(),
+                idempotency_key: "key".into(),
+                state: state.into(),
+                attempts: 1,
+                next_attempt_epoch: 0,
+                receipt: None,
+                reason: None,
+            };
+            let mut service = managed.clone();
+            service.envelope.schema_version = super::super::service::WIRE_VERSION.into();
+            service.envelope.from = Origin::Service(super::super::service::Origin {
+                machine: "source".into(),
+                service_id: "reporter".into(),
+                service_generation: "generation-1".into(),
+            });
+            let expected_body = service.envelope.body.clone();
+            let expiry = service.envelope.expires_at_epoch;
+            let mut journal = Journal {
+                schema_version: JOURNAL_VERSION.into(),
+                remote_outbox: vec![managed, service],
+                retained: vec![],
+            };
+            journal.compact(now_epoch());
+            if state == "delivered" {
+                assert_eq!(journal.remote_outbox.len(), 0);
+                assert_eq!(journal.retained.len(), 2);
+            } else {
+                assert_eq!(
+                    journal.remote_outbox.len(),
+                    1,
+                    "failed service content must remain recoverable"
+                );
+                assert_eq!(journal.remote_outbox[0].envelope.body, expected_body);
+                assert_eq!(
+                    journal.retained.len(),
+                    1,
+                    "managed terminal compaction stays unchanged"
+                );
+            }
+            journal.compact(expiry);
+            assert_eq!(
+                journal.remote_outbox.len(),
+                0,
+                "failed content expires at the original deadline"
+            );
+            assert_eq!(journal.retained.len(), 2);
+            journal.compact(expiry + 86400);
+            assert_eq!(
+                journal.remote_outbox.len(),
+                0,
+                "existing retention deadline remains bounded"
+            );
+            assert_eq!(journal.retained.len(), 0);
+        }
+    }
+
+    #[test]
+    fn service_origin_extension_preserves_managed_envelope_wire_bytes() {
+        let session_envelope = envelope();
+        let bytes = serde_json::to_vec(&session_envelope).unwrap();
+        assert_eq!(
+            bytes,
+            serde_json::to_vec(&session_envelope.into_origin()).unwrap()
+        );
+    }
+
+    #[test]
+    fn service_failure_expiry_uses_the_existing_daemon_drain_deadline() {
+        let (_temp, context) = fixture();
+        let mut envelope = envelope().into_origin();
+        envelope.schema_version = super::super::service::WIRE_VERSION.into();
+        envelope.from = Origin::Service(super::super::service::Origin {
+            machine: "source".into(),
+            service_id: "reporter".into(),
+            service_generation: "generation-1".into(),
+        });
+        let expiry = envelope.expires_at_epoch;
+        {
+            let mut locked = lock_journal(&context).unwrap();
+            locked.registry.remote_outbox.push(Outbox {
+                envelope,
+                request_digest: "digest".into(),
+                idempotency_key: "key".into(),
+                state: "delivery-unknown".into(),
+                attempts: 1,
+                next_attempt_epoch: 0,
+                receipt: None,
+                reason: Some("session-incarnation-conflict".into()),
+            });
+            locked.save().unwrap();
+        }
+        assert_eq!(
+            drain(&context, &config()).unwrap(),
+            Some(expiry),
+            "owner must wake to expire failed service content without new submissions"
+        );
+        {
+            let mut locked = lock_journal(&context).unwrap();
+            assert_eq!(locked.registry.remote_outbox.len(), 1);
+            locked.registry.remote_outbox[0].envelope.expires_at_epoch = now_epoch() - 1;
+            // Simulate time passing on disk without invoking save's compaction.
+            std::fs::write(&locked.path, serde_json::to_vec(&locked.registry).unwrap()).unwrap();
+        }
+        assert_eq!(drain(&context, &config()).unwrap(), None);
+        let locked = lock_journal(&context).unwrap();
+        assert_eq!(
+            locked.registry.remote_outbox.len(),
+            0,
+            "body removed at expiry"
+        );
+        assert_eq!(
+            locked.registry.retained.len(),
+            1,
+            "body-free dedup identity retained"
         );
     }
 }
