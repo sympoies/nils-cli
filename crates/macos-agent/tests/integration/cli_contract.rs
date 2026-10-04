@@ -1,6 +1,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use crate::common;
@@ -31,6 +32,27 @@ fn cli_errors_and_exit_classes_are_stable() {
     assert_eq!(policy.code, 78);
     assert_eq!(policy.stderr_json()["error"]["class"], "policy");
     assert!(cwd.path().join("denied/steps.jsonl").is_file());
+    let denied_step: serde_json::Value = serde_json::from_str(
+        fs::read_to_string(cwd.path().join("denied/steps.jsonl"))
+            .expect("denied journal")
+            .trim(),
+    )
+    .expect("denied step JSON");
+    assert_eq!(denied_step["status"], "policy_blocked");
+    assert_eq!(denied_step["failure_class"], "policy");
+    let denied_review = harness.run(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "journal",
+            "review",
+            "--out-dir",
+            cwd.path().join("denied").to_str().expect("out"),
+        ],
+    );
+    assert_eq!(denied_review.code, 0);
+    assert_eq!(denied_review.stdout_json()["result"]["clean"], true);
 
     let missing_postcondition = harness.run(
         cwd.path(),
@@ -398,4 +420,131 @@ fn signal_and_timeout_preserve_distinct_upstream_and_mutation_state() {
 fn write_executable(path: &std::path::Path, body: &str) {
     fs::write(path, body).expect("write executable");
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod executable");
+}
+
+fn assert_outcome_journal(
+    argv: &[&str],
+    upstream: serde_json::Value,
+    expected_status: &str,
+    expected_class: &str,
+    significant: bool,
+) {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let fake = cwd.path().join("peekaboo-outcome");
+    write_executable(
+        &fake,
+        &format!("#!/bin/sh\nprintf '%s\\n' '{upstream}'\nexit 1\n"),
+    );
+    let out_dir = cwd.path().join("journal");
+    let options = harness.cmd_options(cwd.path()).with_env(
+        "NILS_MACOS_AGENT_PEEKABOO_BIN",
+        fake.to_str().expect("fixture"),
+    );
+    let mut args = vec![
+        "--format",
+        "json",
+        "exec",
+        "--out-dir",
+        out_dir.to_str().expect("out"),
+        "--expected",
+        "Fixture state changed",
+        "--",
+    ];
+    args.extend_from_slice(argv);
+    let out = harness.run_with_options(cwd.path(), &args, options.clone());
+    assert_eq!(out.code, 70, "{}", out.stderr_text());
+    assert_eq!(out.stdout_json()["result"]["upstream"]["exit_code"], 1);
+    assert_eq!(out.stdout_json()["result"]["upstream"]["json"], upstream);
+    let step: serde_json::Value = serde_json::from_str(
+        fs::read_to_string(out_dir.join("steps.jsonl"))
+            .expect("journal")
+            .trim(),
+    )
+    .expect("step JSON");
+    let review = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "journal",
+            "review",
+            "--out-dir",
+            out_dir.to_str().expect("out"),
+        ],
+        options,
+    );
+    assert_eq!(review.code, 0, "{}", review.stderr_text());
+    let result = review.stdout_json();
+    assert_eq!(result["result"]["clean"], !significant);
+    assert_eq!(result["result"]["candidates"][0]["count"], 1);
+    assert_eq!(
+        result["result"]["candidates"][0]["significant"],
+        significant
+    );
+    assert_eq!(step["status"], expected_status);
+    assert_eq!(step["failure_class"], expected_class);
+    assert_eq!(step["retries"], 0);
+    if expected_status == "unknown" {
+        assert_eq!(step["replay_class"], "never");
+    }
+}
+
+#[test]
+fn a_single_indeterminate_click_is_a_significant_unknown_mutation() {
+    assert_outcome_journal(
+        &["click", "--id", "fixture-button", "--json"],
+        serde_json::json!({
+            "success": false,
+            "outcome": {"state": "indeterminate", "mutation_dispatched": true,
+                "retry_safe": false, "retry_safety": "unsafe", "evidence": "response_lost"},
+            "error": {"code": "INTERACTION_FAILED", "message": "Fixture receipt unavailable"}
+        }),
+        "unknown",
+        "unknown_mutation",
+        true,
+    );
+}
+
+#[test]
+fn a_single_unverifiable_typing_failure_is_a_significant_unknown_mutation() {
+    assert_outcome_journal(
+        &["type", "7+2", "--json"],
+        serde_json::json!({
+            "success": false,
+            "outcome": {"effect": "unverifiable", "mutation_dispatched": true,
+                "retry_safe": false, "retry_safety": "unsafe", "evidence": "completion_unknown"},
+            "error": {"code": "INTERACTION_FAILED", "message": "Fixture completion unknown"}
+        }),
+        "unknown",
+        "unknown_mutation",
+        true,
+    );
+}
+
+#[test]
+fn no_dispatch_and_informational_failures_keep_their_existing_classification() {
+    let mut outcome = serde_json::json!({
+        "success": false,
+        "outcome": {"state": "indeterminate", "effect": "unverifiable",
+            "mutation_dispatched": false, "retry_safe": true},
+        "error": {"code": "SNAPSHOT_STALE", "message": "Fixture snapshot stale before dispatch"}
+    });
+    assert_outcome_journal(
+        &["click", "--id", "fixture-button", "--json"],
+        outcome.clone(),
+        "failed",
+        "upstream",
+        false,
+    );
+    outcome["outcome"]["mutation_dispatched"] = true.into();
+    assert_outcome_journal(&["click", "--help"], outcome, "failed", "upstream", false);
+    assert_outcome_journal(
+        &["click", "--id", "fixture-button", "--json"],
+        serde_json::json!({"success": false, "outcome": {
+            "effect": "refused", "refusal_reason": "target_unavailable", "mutation_dispatched": false}}),
+        "failed",
+        "upstream_refused",
+        true,
+    );
 }

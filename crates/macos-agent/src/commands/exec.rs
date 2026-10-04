@@ -147,6 +147,9 @@ pub fn run_local(
         if outcome.refused {
             status = StepStatus::Failed;
             failure_class = Some("upstream_refused".into());
+        } else if mutating && outcome.indeterminate && outcome.mutation_dispatched == Some(true) {
+            status = StepStatus::Unknown;
+            failure_class = Some("unknown_mutation".into());
         } else if resolved_unknown {
             status = StepStatus::Failed;
             failure_class = Some("upstream".into());
@@ -243,6 +246,7 @@ struct UpstreamOutcome {
     success: Option<bool>,
     refused: bool,
     mutation_dispatched: Option<bool>,
+    indeterminate: bool,
 }
 
 fn upstream_outcome(value: &serde_json::Value) -> Option<UpstreamOutcome> {
@@ -251,16 +255,23 @@ fn upstream_outcome(value: &serde_json::Value) -> Option<UpstreamOutcome> {
     let refusal_reason = outcome
         .and_then(|outcome| outcome.get("refusal_reason"))
         .is_some_and(|reason| !reason.is_null());
-    let refused_effect = outcome
+    let effect = outcome
         .and_then(|outcome| outcome.get("effect"))
-        .and_then(|effect| effect.as_str())
-        == Some("refused");
+        .and_then(|effect| effect.as_str());
+    let success = object.get("success").and_then(|value| value.as_bool());
     Some(UpstreamOutcome {
-        success: object.get("success").and_then(|value| value.as_bool()),
-        refused: refusal_reason || refused_effect,
+        success,
+        refused: refusal_reason || effect == Some("refused"),
         mutation_dispatched: outcome
             .and_then(|outcome| outcome.get("mutation_dispatched"))
             .and_then(|value| value.as_bool()),
+        // Unverifiable failures report uncertainty. Accepted background
+        // deliveries retain their existing success semantics.
+        indeterminate: outcome
+            .and_then(|outcome| outcome.get("state"))
+            .and_then(|state| state.as_str())
+            == Some("indeterminate")
+            || (success == Some(false) && effect == Some("unverifiable")),
     })
 }
 
@@ -330,6 +341,7 @@ mod tests {
                 success: Some(false),
                 refused: true,
                 mutation_dispatched: Some(false),
+                indeterminate: false,
             })
         );
 
@@ -345,6 +357,7 @@ mod tests {
                 success: Some(true),
                 refused: false,
                 mutation_dispatched: Some(true),
+                indeterminate: false,
             })
         );
 
