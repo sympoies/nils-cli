@@ -31,7 +31,8 @@ If `AGENT_HOME` is unset, the CLI falls back to
 - `git-cli worktree go <slug-or-branch-or-path> [--shell] [--format text|json]`
 
 `--kind` selects the branch prefix (`feature`->`feat/`, `bug`->`fix/`,
-`chore`->`chore/`, `docs`->`docs/`, `ci`->`ci/`, `refactor`->`refactor/`);
+`chore`->`chore/`, `docs`->`docs/`, `ci`->`ci/`, `refactor`->`refactor/`,
+`test`->`test/`);
 default `feature`.
 
 `remove` refuses to remove the primary checkout or the current worktree. It uses
