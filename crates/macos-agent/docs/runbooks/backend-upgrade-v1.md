@@ -15,8 +15,12 @@ authority. The GUI grant does not prove that a daemon's CLI grant is ready.
 macOS tracks signed code using its designated requirement, including signing
 identifier and signer. See Apple's
 [code identity reference](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
-Official v4.4.0 and v4.6.0 assets use team `FWJYW4S8P8`; the app identifier is
+Official v4.4.0 and v4.8.0 assets use team `FWJYW4S8P8`; the app identifier is
 unchanged. The strict lock and installed signatures still need verification.
+The v4.8.0 CLI requires the archive's `libswiftCompatibilitySpan.dylib` beside
+the executable. The lock binds its exact digest, signing authority/team and all
+three architectures. Install, verification, execution and rollback assess the
+complete CLI runtime; copying the executable alone is insufficient.
 Do not re-sign assets, edit TCC databases, reset grants, or disable trust gates.
 
 ## Establish the accepted baseline
@@ -33,7 +37,7 @@ candidate_bin="$candidate_target_dir/release/macos-agent"
 ```
 
 The candidate lock authorizes the exact v4.4.0 predecessor. Before installing
-v4.6.0, confirm that the current receipt is still v4.4.0. `backend verify`
+v4.8.0, confirm that the current receipt is still v4.4.0. `backend verify`
 establishes the stable CLI from that authenticated receipt when migrating a
 version-specific CLI layout, and restarts one owned app. It does not
 install the candidate. Changed stable files are refused.
@@ -89,7 +93,12 @@ When doctor names a missing or pending Screen Recording or Accessibility
 grant, the maintainer inspects the matching app or CLI entry in System
 Settings > Privacy & Security. Confirm that exact authority, restart it using
 `backend verify --strict`, and repeat doctor. A failed permission probe means
-the grant could not be assessed; it does not prove a locked GUI session. If
+the grant could not be assessed; it does not prove a locked GUI session.
+A missing/pending grant can also accompany an uncertain dispatched mutation.
+The supplementary diagnostic does not change its `unknown_mutation` journal
+classification, upstream failure exit, original JSON, or forbidden replay.
+Do not repeat that mutation to test a recovered permission; observe its state
+first. If
 Bridge or capture still fails with grants ready, retain the original upstream
 failure and diagnose it separately instead of resetting privacy settings.
 
@@ -119,4 +128,7 @@ Each invocation removes at most 32 inactive cached versions and keeps the
 authenticated current and previous receipts. Repeat the dry run if more
 inactive entries remain. A pending activation, invalid receipt, symlinked
 entry, or executable still in use blocks deletion; recover or quit the named
-backend first. Prune does not delete stable runtime paths or receipt files.
+backend first. The refusal names the cached version and app/CLI executable;
+unavailable inspection also refuses deletion. The entire bounded plan is
+inspected before any deletion, including when a later entry is busy. Prune
+does not delete stable runtime paths or receipt files.

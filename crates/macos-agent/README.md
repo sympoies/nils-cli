@@ -35,8 +35,12 @@ archive, architecture, signature, and Gatekeeper commands use fixed macOS
 system paths rather than caller-controlled `PATH` lookup. App Gatekeeper/notary
 assessment is mandatory during both install and execution verification;
 `--strict` additionally assesses standalone CLI notarization. The current
-v4.6.0 CLI and app both require notarization and report
-`security_posture=full`.
+v4.8.0 CLI and app both require notarization and report
+`security_posture=full`. The CLI archive also contains the locked
+`libswiftCompatibilitySpan.dylib`; install preserves it beside both cached and
+stable executables. Its digest, signing authority/team, and architectures are
+verified before activation and execution, and its digest contributes to daemon
+identity. Rollback removes only authenticated outgoing runtime libraries.
 Timeout or signal termination always fails closed. There is no runtime bypass
 flag. Lifecycle responses from install,
 status, and rollback also expose `strict`, `cli_notarization_policy`, and
@@ -46,7 +50,7 @@ and one stable CLI path; versioned files remain an authenticated recovery cache.
 Rollback is permitted only
 when the exact prior tag, commit, assets, and executable digests are retained in
 the embedded `rollback_releases` allowlist; mutable receipts are never a trust
-root. The v4.6.0 lock retains the complete accepted v4.4.0 tuple in
+root. The v4.8.0 lock retains the complete accepted v4.4.0 tuple in
 `rollback_releases` for authenticated upgrade and rollback if candidate
 acceptance fails. The exact
 v4.2.2 tuple is retained in `upgrade_from_releases` only to authenticate and

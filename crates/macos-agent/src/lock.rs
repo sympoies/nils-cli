@@ -70,6 +70,16 @@ pub struct AssetLock {
     pub signing_authority: String,
     pub team_id: String,
     pub notarization: NotarizationLock,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_libraries: Vec<RuntimeLibraryLock>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeLibraryLock {
+    pub name: String,
+    pub sha256: String,
+    pub architectures: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -319,6 +329,29 @@ fn validate_assets(
         {
             return Err(lock_error(format!("asset `{}` is malformed", asset.kind)));
         }
+        let mut library_names = BTreeSet::new();
+        for library in &asset.runtime_libraries {
+            let architectures = library
+                .architectures
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            if asset.kind != "cli"
+                || !safe_asset_name(&library.name)
+                || !library.name.ends_with(".dylib")
+                || library.name == asset.executable
+                || !library_names.insert(&library.name)
+                || library.sha256.len() != 64
+                || !is_lower_hex(&library.sha256)
+                || architectures.is_empty()
+                || architectures.len() != library.architectures.len()
+                || !architectures.is_subset(&BTreeSet::from(["arm64", "arm64e", "x86_64"]))
+            {
+                return Err(lock_error(
+                    "CLI runtime library identity is malformed or duplicated",
+                ));
+            }
+        }
         validate_notarization(asset, repository, tag, commit)?;
     }
     Ok(())
@@ -414,10 +447,10 @@ mod tests {
     #[test]
     fn embedded_lock_is_complete_and_immutable() {
         let lock = PeekabooLock::embedded().expect("embedded lock");
-        assert_eq!(lock.tag, "v4.6.0");
+        assert_eq!(lock.tag, "v4.8.0");
         assert_eq!(lock.assets.len(), 2);
         assert_eq!(lock.cli_asset().architectures, ["arm64", "x86_64"]);
-        assert_eq!(lock.cli_asset().bridge_build, "4.6.0 (4.6.0)");
+        assert_eq!(lock.cli_asset().bridge_build, "4.8.0 (4.8.0)");
         assert_eq!(
             lock.cli_asset().notarization.policy,
             NotarizationPolicy::Required
@@ -426,7 +459,7 @@ mod tests {
             lock.app_asset().notarization.policy,
             NotarizationPolicy::Required
         );
-        assert_eq!(lock.app_asset().bridge_build, "4.6.0 (4060099)");
+        assert_eq!(lock.app_asset().bridge_build, "4.8.0 (4080099)");
         assert_eq!(
             lock.app_asset().bundle_id.as_deref(),
             Some("boo.peekaboo.mac")
@@ -458,6 +491,37 @@ mod tests {
         assert!(
             lock.upgrade_from_release("v3.9.3", "3cfd612adbcb1b43e8431a7a1f3b02ec45d01269")
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn auxiliary_runtime_libraries_are_exact_cli_only_identities() {
+        for name in ["../lib.dylib", "/lib.dylib", "nested/lib.dylib", "peekaboo"] {
+            let mut lock = PeekabooLock::embedded().expect("lock");
+            lock.assets[0].runtime_libraries[0].name = name.into();
+            assert!(
+                lock.validate().is_err(),
+                "unsafe library name accepted: {name}"
+            );
+        }
+        let mut lock = PeekabooLock::embedded().expect("lock");
+        lock.assets[0].runtime_libraries[0].sha256 = "a".repeat(63);
+        assert!(lock.validate().is_err());
+        let mut lock = PeekabooLock::embedded().expect("lock");
+        let duplicate = lock.assets[0].runtime_libraries[0].clone();
+        lock.assets[0].runtime_libraries.push(duplicate);
+        assert!(lock.validate().is_err());
+        for architectures in [vec![], vec!["arm64", "arm64"], vec!["unreviewed"]] {
+            let mut lock = PeekabooLock::embedded().expect("lock");
+            lock.assets[0].runtime_libraries[0].architectures =
+                architectures.into_iter().map(String::from).collect();
+            assert!(lock.validate().is_err());
+        }
+        let mut lock = PeekabooLock::embedded().expect("lock");
+        lock.assets[1].runtime_libraries = lock.assets[0].runtime_libraries.clone();
+        assert!(
+            lock.validate().is_err(),
+            "CLI sidecars must not be applied to an app bundle"
         );
     }
 

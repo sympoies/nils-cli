@@ -74,12 +74,20 @@ fn repository_contains_a_complete_immutable_peekaboo_lock() {
 
     assert_eq!(lock["schema_version"], 2);
     assert_eq!(lock["repository"], "https://github.com/openclaw/Peekaboo");
-    assert_eq!(lock["tag"], "v4.6.0");
-    assert_eq!(lock["commit"], "b54551ce2d0013e52c2a405bfeabced88ec5c2e0");
+    assert_eq!(lock["tag"], "v4.8.0");
+    assert_eq!(lock["commit"], "4d43dc9d80cd2aa3787a27f54b76d692db1dcf8f");
     assert_eq!(lock["minimum_macos"], "15.0");
     assert_eq!(lock["assets"].as_array().map(Vec::len), Some(2));
     assert_eq!(lock["assets"][0]["notarization"]["policy"], "required");
     assert_eq!(lock["assets"][1]["notarization"]["policy"], "required");
+    assert_eq!(
+        lock["assets"][0]["runtime_libraries"],
+        serde_json::json!([{
+            "name":"libswiftCompatibilitySpan.dylib",
+            "sha256":"7eff39be935575664872f1d3f05e813fcc4458e5f22ac98ce156608cd9bf7ebd",
+            "architectures":["arm64", "arm64e", "x86_64"]
+        }])
+    );
     assert_eq!(lock["rollback_releases"].as_array().map(Vec::len), Some(1));
     assert_eq!(lock["rollback_releases"][0]["tag"], "v4.4.0");
     assert_eq!(
@@ -89,13 +97,13 @@ fn repository_contains_a_complete_immutable_peekaboo_lock() {
     for (index, archive, executable) in [
         (
             0,
-            "a9179b2bf9f4259cebc67737ae4d444a1dfe9c3fcb60d5922afb7d8f65ef87bf",
-            "b5a7215fa3fb03c76fb139872cd593fd03d9290f81c8667fb408207bcc4657ed",
+            "78c35068b1c12c10cd4e3e9082d2d5a3af9358cc2f16430e425f70178477ac75",
+            "ea98a240218854d754f24ea3b18184733375bebc48bec42779fcea51f20aa18c",
         ),
         (
             1,
-            "51dd57f4259c5561c4657738d8288548f81cf7704472016f51cabf2a7dda4004",
-            "f0e1a139d59d32e2fcc3b891fe88fa6889c61123421e312d2b96d92e9b8d28a5",
+            "bd063e66bd5270d3e58181fb8717466a90607380b393bab129b0bd7fed8bc0e8",
+            "6400c9c5b1ba1d4bb47cd461df81ca2e93c6a6fff48c432d6773fce8ccbc7435",
         ),
     ] {
         assert_eq!(lock["assets"][index]["sha256"], archive);

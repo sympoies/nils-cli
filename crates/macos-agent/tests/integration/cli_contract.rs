@@ -601,3 +601,79 @@ exit 1
             .contains("\"failure_class\":\"permission\"")
     );
 }
+
+#[test]
+fn uncertain_bridge_failure_names_missing_permission_without_changing_replay_safety() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let fake = cwd.path().join("peekaboo-pending-permission");
+    let upstream = serde_json::json!({
+        "success": false,
+        "outcome": {"state":"indeterminate", "effect":"unverifiable",
+            "mutation_dispatched":true, "retry_safe":false},
+        "error": {"code":"BRIDGE_UNAVAILABLE", "message":"GUI session locked"}
+    });
+    write_executable(
+        &fake,
+        &format!(
+            r#"#!/bin/sh
+case " $* " in
+  *" permissions status "*)
+    echo '{{"success":true,"data":{{"source":"local","permissions":[{{"name":"Screen Recording","isRequired":true,"isGranted":false}},{{"name":"Accessibility","isRequired":true,"isGranted":false}}]}}}}'
+    exit 0 ;;
+esac
+printf '%s\n' '{upstream}'
+exit 1
+"#
+        ),
+    );
+    let out_dir = cwd.path().join("journal");
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--format",
+            "json",
+            "exec",
+            "--runtime",
+            "process",
+            "--expected",
+            "fixture button activated",
+            "--out-dir",
+            out_dir.to_str().expect("journal"),
+            "--",
+            "click",
+            "--id",
+            "fixture-button",
+            "--json",
+        ],
+        harness.cmd_options(cwd.path()).with_env(
+            "NILS_MACOS_AGENT_PEEKABOO_BIN",
+            fake.to_str().expect("fixture"),
+        ),
+    );
+    assert_eq!(out.code, 70, "{}", out.stderr_text());
+    let result = out.stdout_json();
+    let diagnostic = result["result"]["upstream"]["diagnostic"]
+        .as_str()
+        .expect("permission diagnostic");
+    assert!(
+        diagnostic.contains("Screen Recording and Accessibility"),
+        "{diagnostic}"
+    );
+    assert!(
+        diagnostic.contains("missing or pending for Peekaboo CLI"),
+        "{diagnostic}"
+    );
+    assert!(!diagnostic.contains("locked"), "{diagnostic}");
+    assert_eq!(result["result"]["upstream"]["json"], upstream);
+    let step: serde_json::Value = serde_json::from_str(
+        fs::read_to_string(out_dir.join("steps.jsonl"))
+            .expect("journal")
+            .trim(),
+    )
+    .expect("step JSON");
+    assert_eq!(step["status"], "unknown");
+    assert_eq!(step["failure_class"], "unknown_mutation");
+    assert_eq!(step["replay_class"], "never");
+    assert_eq!(step["retries"], 0);
+}

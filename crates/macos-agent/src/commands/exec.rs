@@ -167,11 +167,11 @@ pub fn run_local(
     }
     let permission_diagnostic = (!output.timed_out
         && output.signal.is_none()
-        && status == StepStatus::Failed
+        && matches!(status, StepStatus::Failed | StepStatus::Unknown)
         && capture_or_bridge_failure(parsed.as_ref(), &stderr_text))
     .then(|| runtime.permission_diagnostic(binary.path()))
     .flatten();
-    if permission_diagnostic.is_some() {
+    if permission_diagnostic.is_some() && status != StepStatus::Unknown {
         failure_class = Some("permission".into());
     }
     let debug_artifact = if args.evidence_mode == crate::cli::EvidenceMode::Debug {
@@ -230,7 +230,7 @@ pub fn run_local(
         (!stderr_text.trim().is_empty())
             .then(|| sanitize_output(stderr_text.trim(), args.evidence_mode))
     });
-    let exit_code = if permission_diagnostic.is_some() {
+    let exit_code = if permission_diagnostic.is_some() && status != StepStatus::Unknown {
         ErrorClass::Permission.exit_code()
     } else if output.timed_out || output.exit_code != 0 || malformed_json {
         ErrorClass::Upstream.exit_code()

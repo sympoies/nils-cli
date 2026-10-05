@@ -8,10 +8,12 @@ use std::time::Duration;
 
 use nils_common::fs::{SECRET_FILE_MODE, sha256_file, write_atomic};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::CliError;
 use crate::lock::{
-    AssetLock, NotarizationPolicy, PeekabooLock, RollbackReleaseLock, bridge_build_number,
+    AssetLock, NotarizationPolicy, PeekabooLock, RollbackReleaseLock, RuntimeLibraryLock,
+    bridge_build_number,
 };
 use crate::process;
 use crate::test_mode;
@@ -298,7 +300,7 @@ fn status_unlocked(
     let current = read_receipt(&paths.current_receipt())?;
     let previous = read_receipt(&paths.previous_receipt())?;
     let verified = current.as_ref().is_some_and(|receipt| {
-        if !stable_cli_matches(paths, receipt).unwrap_or(false) {
+        if !stable_cli_matches(paths, lock, receipt).unwrap_or(false) {
             return false;
         }
         if receipt.tag == lock.tag && receipt.commit == lock.commit {
@@ -435,6 +437,10 @@ fn install_into_staging(
             "verified archives do not contain the locked executables",
         ));
     }
+    verify_cli_runtime_libraries(
+        cli_source.parent().expect("CLI source parent"),
+        lock.cli_asset(),
+    )?;
     verify_version(&cli_source, &lock.tag)?;
     verify_architectures(&cli_source, &lock.cli_asset().architectures)?;
     verify_architectures(&app_binary, &lock.app_asset().architectures)?;
@@ -461,6 +467,15 @@ fn install_into_staging(
     let cli_target = version_stage.join("cli").join("peekaboo");
     let app_target = version_stage.join("app").join("Peekaboo.app");
     copy_file(&cli_source, &cli_target, 0o755)?;
+    copy_cli_runtime_libraries(
+        cli_source.parent().expect("CLI source parent"),
+        cli_target.parent().expect("CLI target parent"),
+        lock.cli_asset(),
+    )?;
+    verify_cli_runtime_libraries(
+        cli_target.parent().expect("CLI target parent"),
+        lock.cli_asset(),
+    )?;
     copy_tree(&app_source, &app_target)?;
 
     let version_root = paths.version_root(&lock.tag);
@@ -669,7 +684,7 @@ fn verify_unlocked(
     }
     let (active_cli_asset, active_app_asset, minimum_macos) =
         release_contract_for_receipt(lock, &receipt)?;
-    if !stable_cli_matches(paths, &receipt)? {
+    if !stable_cli_matches(paths, lock, &receipt)? {
         return Err(backend_error(
             "the stable CLI is missing or changed; run backend verify to migrate a version-specific layout; changed files are never overwritten",
         ));
@@ -704,6 +719,10 @@ fn verify_unlocked(
         passed("version", "active CLI reports the locked version"),
         passed("stable_app", "stable app is owned by the current receipt"),
         passed("stable_cli", "stable CLI is owned by the current receipt"),
+        passed(
+            "runtime_libraries",
+            "active CLI auxiliary runtime libraries match their immutable release contract",
+        ),
     ];
     if strict {
         checks.extend([
@@ -872,7 +891,7 @@ pub fn acquire_verified_backend() -> Result<VerifiedBackend, CliError> {
     let obsolete_runtimes = obsolete_runtime_contracts(&lock, &receipt);
     Ok(VerifiedBackend {
         path,
-        runtime_identity: receipt.cli_binary_sha256[..16].into(),
+        runtime_identity: cli_runtime_identity(cli_asset),
         cli_bridge_build: Some(cli_asset.bridge_build.clone()),
         app_bridge_build: Some(app_asset.bridge_build.clone()),
         obsolete_runtimes,
@@ -1113,9 +1132,9 @@ pub fn prune(dry_run: bool, strict: bool) -> Result<PruneReport, CliError> {
     // Inspect the entire bounded plan before deleting anything. An open CLI or
     // app executable means the version is still in use and must be retained.
     for tag in &inactive {
-        for executable in [
-            paths.cli_for(tag),
-            paths.app_for(tag).join("Contents/MacOS/Peekaboo"),
+        for (executable, authority) in [
+            (paths.cli_for(tag), "CLI"),
+            (paths.app_for(tag).join("Contents/MacOS/Peekaboo"), "app"),
         ] {
             reject_symlink_components(&executable)?;
             let output = run_tool(
@@ -1128,9 +1147,9 @@ pub fn prune(dry_run: bool, strict: bool) -> Result<PruneReport, CliError> {
                 || !output.stdout.is_empty()
                 || output.exit_code != 1
             {
-                return Err(backend_error(
-                    "a cached backend version is still in use; quit it before pruning",
-                ));
+                return Err(backend_error(format!(
+                    "cached backend {tag} {authority} is still in use or could not be assessed; quit it and rerun prune --dry-run before pruning",
+                )));
             }
         }
     }
@@ -1174,13 +1193,10 @@ fn verify_transition_runtime(
 ) -> Result<VerifiedTransitionRuntime, CliError> {
     verify_transition_receipt(paths, lock, receipt, strict)?;
     let (cli_asset, _, _) = release_contract_for_transition_receipt(lock, receipt)?;
-    let identity = cli_asset
-        .executable_sha256
-        .get(..16)
-        .ok_or_else(|| backend_error("locked CLI digest cannot identify its runtime"))?;
+    let identity = cli_runtime_identity(cli_asset);
     Ok(VerifiedTransitionRuntime {
         binary: paths.cli_for(&receipt.tag),
-        contract: RuntimeContract::new(identity.into(), cli_asset.bridge_build.clone()),
+        contract: RuntimeContract::new(identity, cli_asset.bridge_build.clone()),
     })
 }
 
@@ -1215,6 +1231,13 @@ fn verify_receipt(
         receipt,
         &lock.cli_asset().executable_sha256,
         &lock.app_asset().executable_sha256,
+    )?;
+    verify_cli_runtime_libraries(
+        paths
+            .cli_for(&receipt.tag)
+            .parent()
+            .expect("version CLI parent"),
+        lock.cli_asset(),
     )?;
     verify_version(&paths.cli_for(&receipt.tag), &receipt.tag)?;
     if strict {
@@ -1290,6 +1313,13 @@ fn verify_historical_receipt(
         receipt,
         &release.cli_asset().executable_sha256,
         &release.app_asset().executable_sha256,
+    )?;
+    verify_cli_runtime_libraries(
+        paths
+            .cli_for(&receipt.tag)
+            .parent()
+            .expect("version CLI parent"),
+        release.cli_asset(),
     )?;
     verify_version(&paths.cli_for(&receipt.tag), &receipt.tag)?;
     if strict {
@@ -1467,10 +1497,74 @@ fn reconcile_apps(
     )
 }
 
-fn stable_cli_matches(paths: &BackendPaths, receipt: &Receipt) -> Result<bool, CliError> {
+fn stable_cli_matches(
+    paths: &BackendPaths,
+    lock: &PeekabooLock,
+    receipt: &Receipt,
+) -> Result<bool, CliError> {
     let path = paths.stable_cli();
     reject_symlink_components(&path)?;
-    Ok(path.is_file() && hash_file(&path)? == receipt.cli_binary_sha256)
+    let (asset, _, _) = release_contract_for_transition_receipt(lock, receipt)?;
+    Ok(path.is_file()
+        && hash_file(&path)? == receipt.cli_binary_sha256
+        && verify_cli_runtime_libraries(path.parent().expect("stable CLI parent"), asset).is_ok())
+}
+
+fn copy_cli_runtime_libraries(
+    source: &Path,
+    destination: &Path,
+    asset: &AssetLock,
+) -> Result<(), CliError> {
+    for library in &asset.runtime_libraries {
+        copy_file(
+            &source.join(&library.name),
+            &destination.join(&library.name),
+            0o755,
+        )?;
+    }
+    Ok(())
+}
+
+fn verify_cli_runtime_libraries(directory: &Path, asset: &AssetLock) -> Result<(), CliError> {
+    for library in &asset.runtime_libraries {
+        let path = directory.join(&library.name);
+        verify_cli_runtime_library(&path, library, asset)?;
+    }
+    for entry in fs::read_dir(directory)
+        .map_err(|_| backend_error("unable to inspect the CLI runtime closure"))?
+    {
+        let entry =
+            entry.map_err(|_| backend_error("unable to inspect the CLI runtime closure"))?;
+        if entry.path().extension().is_some_and(|ext| ext == "dylib")
+            && !entry.file_name().to_string_lossy().starts_with("._")
+            && !asset
+                .runtime_libraries
+                .iter()
+                .any(|library| entry.file_name() == library.name.as_str())
+        {
+            return Err(backend_error(
+                "an unowned auxiliary CLI runtime library is present",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verify_cli_runtime_library(
+    path: &Path,
+    library: &RuntimeLibraryLock,
+    asset: &AssetLock,
+) -> Result<(), CliError> {
+    reject_symlink_components(path)?;
+    if hash_file(path)? != library.sha256 {
+        return Err(backend_error(
+            "CLI runtime library digest does not match the embedded lock",
+        ));
+    }
+    // Libraries inherit the archive's exact Developer ID authority and team.
+    // The CLI and app retain their existing mandatory notarization gates.
+    verify_signature(path, asset, false, false)?;
+    verify_architectures(path, &library.architectures)
 }
 
 fn replace_stable_cli(
@@ -1479,28 +1573,66 @@ fn replace_stable_cli(
     receipt: &Receipt,
     strict: bool,
 ) -> Result<(), CliError> {
+    // The exclusive lifecycle lease and pending receipt cover the whole closure.
+    // Each file uses atomic rename; interrupted mixed closures are reconciled
+    // only when every existing component belongs to an authenticated receipt.
+    verify_transition_receipt(paths, lock, receipt, strict)?;
+    let (asset, _, _) = release_contract_for_transition_receipt(lock, receipt)?;
     let destination = paths.stable_cli();
     reject_symlink_components(&destination)?;
+    let parent = destination.parent().expect("stable CLI parent");
+    let mut receipts = vec![receipt.clone()];
+    for path in [paths.current_receipt(), paths.pending_receipt()] {
+        if let Some(prior) = read_receipt(&path)? {
+            verify_transition_receipt(paths, lock, &prior, strict)?;
+            receipts.push(prior);
+        }
+    }
     if destination.exists() {
         let digest = hash_file(&destination)?;
-        let mut owned = digest == receipt.cli_binary_sha256;
-        for path in [paths.current_receipt(), paths.pending_receipt()] {
-            if let Some(prior) = read_receipt(&path)? {
-                verify_transition_receipt(paths, lock, &prior, strict)?;
-                owned |= digest == prior.cli_binary_sha256;
-            }
-        }
-        if !owned {
+        if !receipts
+            .iter()
+            .any(|prior| digest == prior.cli_binary_sha256)
+        {
             return Err(backend_error(
                 "refusing to replace a changed or unowned stable CLI",
             ));
         }
-        if digest == receipt.cli_binary_sha256 {
-            return Ok(());
+    }
+    let mut existing_libraries = Vec::new();
+    if parent.exists() {
+        for entry in fs::read_dir(parent)
+            .map_err(|_| backend_error("unable to inspect stable CLI runtime libraries"))?
+        {
+            let entry = entry
+                .map_err(|_| backend_error("unable to inspect stable CLI runtime libraries"))?;
+            if !entry.path().extension().is_some_and(|ext| ext == "dylib") {
+                continue;
+            }
+            reject_symlink_components(&entry.path())?;
+            let digest = hash_file(&entry.path())?;
+            let mut owned = false;
+            for prior in &receipts {
+                let (prior_asset, _, _) = release_contract_for_transition_receipt(lock, prior)?;
+                if let Some(library) = prior_asset.runtime_libraries.iter().find(|library| {
+                    entry.file_name() == library.name.as_str() && digest == library.sha256
+                }) {
+                    verify_cli_runtime_library(&entry.path(), library, prior_asset)?;
+                    owned = true;
+                    break;
+                }
+            }
+            if !owned {
+                return Err(backend_error(
+                    "refusing to replace a changed or unowned stable CLI runtime library",
+                ));
+            }
+            existing_libraries.push(entry.path());
         }
     }
-    let (asset, _, _) = release_contract_for_transition_receipt(lock, receipt)?;
-    let parent = destination.parent().expect("stable CLI parent");
+    if stable_cli_matches(paths, lock, receipt)? {
+        return Ok(());
+    }
     create_private_dir(parent)?;
     let incoming = parent.join(".peekaboo-incoming");
     reject_symlink_components(&incoming)?;
@@ -1509,8 +1641,46 @@ fn replace_stable_cli(
         return Err(backend_error("stable CLI staging digest mismatch"));
     }
     verify_signature(&incoming, asset, false, strict)?;
+    let source = paths.cli_for(&receipt.tag);
+    for library in &asset.runtime_libraries {
+        let staged = parent.join(format!(".{}-incoming", library.name));
+        reject_symlink_components(&staged)?;
+        copy_file(
+            &source
+                .parent()
+                .expect("version CLI parent")
+                .join(&library.name),
+            &staged,
+            0o755,
+        )?;
+        verify_cli_runtime_library(&staged, library, asset)?;
+    }
+    for library in &asset.runtime_libraries {
+        fs::rename(
+            parent.join(format!(".{}-incoming", library.name)),
+            parent.join(&library.name),
+        )
+        .map_err(|_| backend_error("failed to atomically activate a stable CLI runtime library"))?;
+    }
+    for path in existing_libraries {
+        if !asset
+            .runtime_libraries
+            .iter()
+            .any(|library| path.file_name() == Some(library.name.as_ref()))
+        {
+            fs::remove_file(path).map_err(|_| {
+                backend_error("failed to retire a previous stable CLI runtime library")
+            })?;
+        }
+    }
     fs::rename(&incoming, &destination)
-        .map_err(|_| backend_error("failed to atomically activate the stable CLI"))
+        .map_err(|_| backend_error("failed to atomically activate the stable CLI"))?;
+    if !stable_cli_matches(paths, lock, receipt)? {
+        return Err(backend_error(
+            "the activated stable CLI runtime closure does not match the lock",
+        ));
+    }
+    Ok(())
 }
 
 fn app_path_matches(app: &Path, receipt: &Receipt) -> Result<bool, CliError> {
@@ -1641,8 +1811,30 @@ fn app_contract_for_receipt<'a>(
     Ok((app, minimum_macos))
 }
 
+fn cli_runtime_identity(asset: &AssetLock) -> String {
+    if asset.runtime_libraries.is_empty() {
+        return asset.executable_sha256[..16].into();
+    }
+    let mut digest = Sha256::new();
+    digest.update(asset.executable_sha256.as_bytes());
+    for library in &asset.runtime_libraries {
+        digest.update([0]);
+        digest.update(library.name.as_bytes());
+        digest.update([0]);
+        digest.update(library.sha256.as_bytes());
+    }
+    digest
+        .finalize()
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn obsolete_runtime_contracts(lock: &PeekabooLock, receipt: &Receipt) -> Vec<RuntimeContract> {
-    let active_identity = &receipt.cli_binary_sha256[..16];
+    let active_identity = release_contract_for_transition_receipt(lock, receipt)
+        .map(|(asset, _, _)| cli_runtime_identity(asset))
+        .unwrap_or_else(|_| receipt.cli_binary_sha256[..16].to_string());
     let current = std::iter::once((lock.tag.as_str(), lock.commit.as_str(), lock.cli_asset()));
     let rollback = lock.rollback_releases.iter().map(|release| {
         (
@@ -1664,7 +1856,7 @@ fn obsolete_runtime_contracts(lock: &PeekabooLock, receipt: &Receipt) -> Vec<Run
         .chain(upgrade_from)
         .filter(|(tag, commit, _)| *tag != receipt.tag || *commit != receipt.commit)
         .filter_map(|(_, _, asset)| {
-            let identity = asset.executable_sha256[..16].to_string();
+            let identity = cli_runtime_identity(asset);
             let key = (identity.clone(), asset.bridge_build.clone());
             (identity != active_identity && seen.insert(key.clone()))
                 .then(|| RuntimeContract::new(key.0, key.1))
@@ -2294,8 +2486,9 @@ mod tests {
     use super::{
         LIFECYCLE_LOCK_FILE, LifecycleLock, LifecycleLockMode, NotarizationAssessment,
         RECEIPT_SCHEMA, Receipt, app_contract_for_receipt, classify_cli_notarization_assessment,
-        create_private_dir, macos_version_supported, obsolete_runtime_contracts,
-        production_tool_path, safe_tag, validate_archive_path, validate_symlink_tree,
+        cli_runtime_identity, create_private_dir, macos_version_supported,
+        obsolete_runtime_contracts, production_tool_path, safe_tag, validate_archive_path,
+        validate_symlink_tree,
     };
     use crate::lock::{NotarizationPolicy, PeekabooLock};
 
@@ -2454,6 +2647,21 @@ mod tests {
     }
 
     #[test]
+    fn daemon_runtime_identity_binds_the_locked_auxiliary_library() {
+        let lock = PeekabooLock::embedded().expect("lock");
+        let asset = lock.cli_asset();
+        let identity = cli_runtime_identity(asset);
+        let mut changed = asset.clone();
+        changed.runtime_libraries[0].sha256 = "a".repeat(64);
+        assert_ne!(cli_runtime_identity(&changed), identity);
+        changed.runtime_libraries.clear();
+        assert_eq!(
+            cli_runtime_identity(&changed),
+            asset.executable_sha256[..16]
+        );
+    }
+
+    #[test]
     fn inactive_locked_releases_become_exact_obsolete_runtime_contracts() {
         let mut lock = PeekabooLock::embedded().expect("lock");
         let mut historical_cli = lock.cli_asset().clone();
@@ -2464,7 +2672,7 @@ mod tests {
                 tag: "v3.9.2".into(),
                 commit: "2".repeat(40),
                 minimum_macos: "15.0".into(),
-                assets: vec![historical_cli, lock.app_asset().clone()],
+                assets: vec![historical_cli.clone(), lock.app_asset().clone()],
             });
         let receipt = Receipt {
             schema_version: RECEIPT_SCHEMA.into(),
@@ -2489,7 +2697,7 @@ mod tests {
             contract.identity() == "6380687e62cf42d1" && contract.bridge_build() == "3.9.3 (3.9.3)"
         }));
         assert!(contracts.iter().any(|contract| {
-            contract.identity() == "2222222222222222"
+            contract.identity() == cli_runtime_identity(&historical_cli)
                 && contract.bridge_build() == "3.9.2 (historical)"
         }));
     }
