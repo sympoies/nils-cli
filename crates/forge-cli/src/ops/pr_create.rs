@@ -215,7 +215,7 @@ pub(crate) fn resolve_head_ref<'a>(
             "branch_name_invalid",
             format!("GitHub head '{head}' is not a valid <user>:<branch> reference"),
             Some(
-                "rule=<non-empty-github-user>:<(feat|fix|chore|docs|ci|refactor)/semantic-branch> with exactly one qualifier; forge-cli delegates username grammar and account type to GitHub; GitHub CLI does not support organization-qualified fork heads"
+                "rule=<non-empty-github-user>:<(feat|fix|chore|docs|ci|refactor|test)/semantic-branch> with exactly one qualifier; forge-cli delegates username grammar and account type to GitHub; GitHub CLI does not support organization-qualified fork heads"
                     .to_string(),
             ),
         ));
@@ -473,7 +473,7 @@ fn test_first_gate_applies(kind: PrKind, required: bool) -> bool {
 /// v2 record with a testable classification, durable before-fix evidence,
 /// scoped passing validation, an explicit residual-gap declaration, and a
 /// baseline/delivery subject matching the current repository and head.
-/// Other kinds (docs, chore, ci, refactor) are exempt.
+/// Other kinds (docs, chore, ci, refactor, test) are exempt.
 pub(crate) fn test_first_gate(
     kind: PrKind,
     required: bool,
