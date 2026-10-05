@@ -675,3 +675,84 @@ mod execution {
         // FixtureAgent terminates only this temporary keyring's daemon, including on panic.
     }
 }
+
+#[test]
+fn identity_asserted_only_unset_passthrough_and_asserted_strict_without_credentials() {
+    use nils_common::forge_identity as identity;
+    use nils_test_support::{EnvGuard, GlobalStateLock};
+    use std::{fs, process::Command};
+    let lock = GlobalStateLock::new();
+    let home = tempfile::tempdir().unwrap();
+    let _config = EnvGuard::set(&lock, "XDG_CONFIG_HOME", home.path().to_str().unwrap());
+    let _principal = EnvGuard::remove(&lock, "FORGE_IDENTITY_PRINCIPAL");
+    fs::create_dir(home.path().join("forge-cli")).unwrap();
+    let path = home.path().join("forge-cli/identity.toml");
+    fs::write(&path, format!("activation='asserted-only'\n{FIXTURE}")).unwrap();
+    assert!(identity::load().unwrap().is_none());
+    // These are protected operations whose ordinary invocation/config must be
+    // left intact, irrespective of provider, remote, repository or signing.
+    for args in [
+        vec![
+            "fetch",
+            "https://gitlab.example.invalid/example/project.git",
+        ],
+        vec!["push", "https://github.com/upstream/unmapped.git"],
+        vec!["commit", "-m", "Example"],
+    ] {
+        let mut command = Command::new("git");
+        assert!(
+            identity::prepare_git(&mut command, Some(home.path()), &args)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(command.get_envs().count(), 0);
+        assert_eq!(command.get_args().count(), 0);
+    }
+    {
+        let _assertion = EnvGuard::set(&lock, "FORGE_IDENTITY_PRINCIPAL", "contributor");
+        let loaded = identity::load().unwrap().unwrap();
+        assert_eq!(
+            loaded
+                .select(&target("sandbox/widget"), None, Operation::Commit)
+                .unwrap()
+                .profile_id,
+            "account-a"
+        );
+        assert_eq!(
+            loaded
+                .select(&target("upstream/unmapped"), None, Operation::Commit)
+                .unwrap_err()
+                .code,
+            "identity_repository_unknown"
+        );
+    }
+    for assertion in ["", "unknown"] {
+        let _assertion = EnvGuard::set(&lock, "FORGE_IDENTITY_PRINCIPAL", assertion);
+        let loaded = identity::load().unwrap().unwrap();
+        assert_eq!(
+            loaded
+                .select(&target("sandbox/widget"), None, Operation::ApiRead)
+                .unwrap_err()
+                .code,
+            "identity_principal_unknown"
+        );
+    }
+    // Strict schema and the previous default remain active even with no assertion.
+    fs::write(&path, FIXTURE).unwrap();
+    assert_eq!(
+        identity::load()
+            .unwrap()
+            .unwrap()
+            .select(&target("sandbox/widget"), None, Operation::Commit)
+            .unwrap_err()
+            .code,
+        "identity_principal_missing"
+    );
+    fs::write(
+        &path,
+        format!("activation='asserted-only'\nunknown='SOURCE_CANARY'\n{FIXTURE}"),
+    )
+    .unwrap();
+    assert!(matches!(identity::load(),Err(e) if e.code=="identity_policy_invalid"));
+    assert!(!home.path().join("state").exists());
+}

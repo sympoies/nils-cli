@@ -64,6 +64,13 @@ pub fn load() -> Result<Option<LoadedPolicy>> {
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     let policy = Policy::parse(&text)?;
+    // Presence, including an empty/non-Unicode value, activates strict selection.
+    // Parse first so an unreadable or malformed installed policy never bypasses.
+    if policy.activation == policy::Activation::AssertedOnly
+        && std::env::var_os(PRINCIPAL_ENV).is_none()
+    {
+        return Ok(None);
+    }
     Ok(Some(LoadedPolicy { policy, digest }))
 }
 pub fn principal() -> Result<String> {

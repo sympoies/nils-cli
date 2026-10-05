@@ -8,7 +8,19 @@ credential isolation from processes with the same operating-system privileges.
 ## Policy discovery and launch interface
 
 The policy is `${XDG_CONFIG_HOME:-$HOME/.config}/forge-cli/identity.toml`.
-When absent, existing behavior remains unchanged. Unreadable or malformed policy
+When absent, existing behavior remains unchanged. An optional root-level
+`activation = "asserted-only"` also leaves ordinary managed API, Git transport,
+and commit behavior unchanged when `FORGE_IDENTITY_PRINCIPAL` is **absent**.
+This applies to every provider and repository; no target selection, credential
+probe, identity override, or identity audit runs in that case. `identity explain`
+and `doctor` report `enforced: false`. An empty, invalid, or unknown asserted
+principal still activates enforcement and refuses; an asserted principal has no
+unmatched-target fallback. The default (omitted, or `activation = "always"`)
+retains Phase 1 strict enforcement whenever the file exists. Policy parsing and
+validation always run before the activation decision, so malformed policy still
+refuses even with no principal assertion. This is a trusted-launcher rollout
+choice, not isolation from processes with the same operating-system privileges.
+Unreadable or malformed policy
 refuses protected operations. Pure local Git inspection does not load credentials.
 
 A launcher supplies `FORGE_IDENTITY_PRINCIPAL` as a stable configured principal ID

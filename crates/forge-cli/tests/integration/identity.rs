@@ -114,6 +114,77 @@ printf '%s' "$GH_TOKEN" >&2
             .unwrap()
         }
     }
+
+    #[test]
+    fn identity_asserted_only_api_passthrough_unset_and_strict_when_set() {
+        let f = Fixture::new(&format!("activation='asserted-only'\n{POLICY}"));
+        let glab = f.home.path().join("glab");
+        fs::write(&glab,r#"#!/bin/sh
+printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/issues/1","state":"opened","title":"Example","description":"Example","labels":[],"assignees":[]}'
+"#).unwrap();
+        fs::set_permissions(&glab, fs::Permissions::from_mode(0o700)).unwrap();
+        for (provider, host, repo) in [
+            ("github", "github.com", "upstream/unmapped"),
+            ("gitlab", "gitlab.example.invalid", "example/project"),
+        ] {
+            let out = f
+                .bare_command()
+                .env_remove("FORGE_IDENTITY_PRINCIPAL")
+                .env("FORGE_CLI_GLAB_BIN", &glab)
+                .env_remove("FIXTURE_ACCOUNT_A_CREDENTIAL")
+                .env_remove("FIXTURE_SECRET_B")
+                .env_remove("GH_TOKEN")
+                .env_remove("GITHUB_TOKEN")
+                .args([
+                    "--provider",
+                    provider,
+                    "--host",
+                    host,
+                    "--repo",
+                    repo,
+                    "issue",
+                    "view",
+                    "1",
+                ])
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+        let out = f.command().args(["identity", "explain"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["data"]["selection"]
+                ["principal"],
+            "contributor"
+        );
+        let out = f
+            .bare_command()
+            .args([
+                "--provider",
+                "github",
+                "--repo",
+                "upstream/unmapped",
+                "identity",
+                "explain",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(65));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("identity_repository_unknown"));
+        let out = f
+            .command()
+            .env_remove("FIXTURE_ACCOUNT_A_CREDENTIAL")
+            .args(["issue", "view", "1"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(65));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("identity_credential_missing"));
+    }
     #[test]
     fn identity_commit_diagnostics_share_authoring_remote_selection_and_explicit_override() {
         let policy = format!(
