@@ -13,10 +13,20 @@ pub enum Operation {
     Commit,
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Activation {
+    #[default]
+    Always,
+    AssertedOnly,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     pub version: u32,
+    #[serde(default)]
+    pub activation: Activation,
     pub principals: BTreeMap<String, Principal>,
     pub profiles: BTreeMap<String, Profile>,
     pub credentials: BTreeMap<String, Credential>,
