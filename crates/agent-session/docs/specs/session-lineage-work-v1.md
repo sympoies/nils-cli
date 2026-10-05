@@ -363,11 +363,16 @@ inheriting the initiator. The child uses its own explicitly assigned role or
 null. `--no-parent` preserves the authenticated initiator while starting a new
 root. Adoption and resume do not replace this launch context.
 
+Generic HTTP `POST /sessions` refuses any `lineage.forge_context` with HTTP 400
+`identity_session_binding_untrusted` before creating a record. HTTP authentication
+does not verify the asserted initiator or role. Local operator launches and
+authenticated local child launches produce the binding.
+
 Authenticated Console child requests reconstruct context from the caller's
-record, replacing caller-supplied lineage. The trusted Console root launch owner
-must forward a configured initiator in the create lineage; that integration is
-separate from the local CLI launch contract. Existing records without context
-remain valid but cannot satisfy a required forge binding.
+record, replacing caller-supplied lineage. Forwarding a bound context through
+generic HTTP creation fails closed. Console roots and bound child forwarding
+require a separately implemented, verified launch-owner protocol. Existing records
+without context remain valid but cannot satisfy a required forge binding.
 
 `broker identity --session ID [--capability-file FILE] --format json` is a
 metadata-only authenticated projection, with envelope
@@ -392,6 +397,7 @@ none; readers treat an absent `role` as null.
 | --- | --- | --- |
 | `work-ref-invalid` | usage / 400 | A reference outside the grammar, more than 4 issues, or an invalid `work` object. |
 | `lineage-invalid` | usage / 400 | A create body `lineage` with an invalid shape. |
+| `identity_session_binding_untrusted` | usage / 400 | Generic HTTP creation supplied a forge launch context without verified launch ownership. |
 | `role-invalid` | usage / 400 | A malformed role identifier or non-string role. |
 | `role-requires-root` | usage / 400 | A `role` on a start that has a parent. |
 | `lineage-parent-mismatch` | usage / 400 | The console edge found `lineage.parent` differing from the relaying session. `console_start` forwards it, with `role-invalid`, `lineage-invalid` and `work-ref-invalid`, as a usage error. |

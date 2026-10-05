@@ -153,11 +153,13 @@ credential isolation or cross-principal delegation. Existing sessions without a
 launch context must be relaunched before enabling required binding.
 
 The runtime command owner must preserve the managed session ID, incarnation and
-capability reference and assert through this projection. A Console launch owner
-must establish the configured root initiator and forward the immutable context
-and explicit role in the authenticated create request. These counterpart changes
-are separate rollout work; this repository implements the producer and shared
-forge/git consumer only.
+capability reference and assert through this projection. Generic HTTP session
+creation refuses supplied forge launch context: authenticating an HTTP caller
+does not verify its asserted initiator or role. Console roots and bound child
+forwarding require a separately implemented, verified launch-owner protocol;
+forwarding context to generic HTTP creation fails closed. These counterpart
+changes are separate rollout work; this repository implements the local producer
+and shared forge/git consumer only.
 
 ## Resolution
 

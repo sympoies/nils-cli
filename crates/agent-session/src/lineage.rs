@@ -506,6 +506,13 @@ impl LineageSeed {
 
     /// Validate the `lineage` of a create body for a session on `machine`.
     pub(crate) fn from_create_json(machine: &str, value: &Value) -> Result<Self, CliError> {
+        if value.get(CONTEXT_KEY).is_some() {
+            return Err(CliError::usage(
+                "identity_session_binding_untrusted",
+                "forge launch context requires a verified launch owner",
+                None,
+            ));
+        }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct RefInput {
@@ -532,8 +539,6 @@ impl LineageSeed {
             root: Option<RefInput>,
             depth: u32,
             starter: StarterInput,
-            #[serde(default)]
-            forge_context: Option<LaunchContext>,
         }
         fn checked(input: RefInput, keep_incarnation: bool) -> Result<SessionRef, CliError> {
             checked_ref(SessionRef {
@@ -552,9 +557,6 @@ impl LineageSeed {
             .is_some_and(|version| version != LINEAGE_SCHEMA)
         {
             return Err(lineage_invalid("unsupported lineage schema_version"));
-        }
-        if let Some(context) = &input.forge_context {
-            context.validate().map_err(crate::forge_identity::error)?;
         }
         let parented = matches!(
             input.starter.kind.as_str(),
@@ -599,7 +601,7 @@ impl LineageSeed {
             machine: machine.to_string(),
             parent,
             starter,
-            forge_context: input.forge_context,
+            forge_context: None,
         })
     }
 }
