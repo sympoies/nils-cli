@@ -3464,7 +3464,7 @@ struct CreateBody {
     /// `session-lineage-work-v1`: resolved program and issue references.
     #[serde(default)]
     work: Option<Value>,
-    /// `session-lineage-work-v1`: `coordinator`, stored verbatim.
+    /// `session-lineage-work-v1`: configured launch role, stored verbatim.
     #[serde(default)]
     role: Option<Value>,
 }
@@ -6888,6 +6888,7 @@ async fn create_handler(
         account: None,
         agent_profile: None,
         no_parent: false,
+        forge_initiator: None,
         role: None,
         program: None,
         issues: Vec::new(),
@@ -22941,7 +22942,7 @@ esac
         assert_eq!(body["data"]["session"]["role"], "coordinator");
 
         for (id, extra, code) in [
-            ("bad-role", json!({"role": "boss"}), "role-invalid"),
+            ("bad-role", json!({"role": "invalid role"}), "role-invalid"),
             ("bad-role-type", json!({"role": 7}), "role-invalid"),
             (
                 "bad-lineage",

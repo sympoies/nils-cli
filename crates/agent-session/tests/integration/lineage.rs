@@ -748,7 +748,33 @@ fn start_role_marks_a_coordinator_and_is_never_inherited() {
             .exists()
     );
 
-    // Only `coordinator` exists.
-    let output = fixture.start("role-bad", &["--role", "boss"], None);
+    // Malformed role identifiers refuse.
+    let output = fixture.start("role-bad", &["--role", "invalid role"], None);
     assert_eq!(output.code, 64, "stderr={}", output.stderr_text());
+}
+
+#[test]
+fn forge_launch_context_is_recorded_once_and_managed_rebinding_is_refused() {
+    let fixture = Fixture::new();
+    fixture.started(
+        "forge-root",
+        &["--forge-initiator", "operator", "--role", "reviewer"],
+        None,
+    );
+    let root = fixture.record("forge-root");
+    assert_eq!(
+        root["lineage"]["forge_context"],
+        json!({"initiator":"operator","role":"reviewer"})
+    );
+    let launch = root["runtime"]["launch_id"].as_str().unwrap();
+    let out = fixture.start(
+        "forged-child",
+        &["--no-parent", "--forge-initiator", "other-operator"],
+        Some(("forge-root", launch)),
+    );
+    assert_eq!(out.code, 65);
+    assert_eq!(
+        out.stdout_json()["error"]["code"],
+        "forge-initiator-rebind-forbidden"
+    );
 }

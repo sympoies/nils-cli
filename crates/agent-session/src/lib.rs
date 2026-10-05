@@ -19,6 +19,7 @@ pub mod coordination;
 mod diagnose;
 #[doc(hidden)]
 pub mod dsh_external;
+mod forge_identity;
 mod group_lifecycle;
 #[doc(hidden)]
 pub mod lineage;
@@ -384,6 +385,7 @@ fn coordination_command_name(command: &Command) -> Option<&'static str> {
             cli::WorkContextCommand::Reconcile(_) => "work-context-reconcile",
         }),
         Command::Broker(args) => Some(match &args.command {
+            cli::BrokerCommand::Identity(_) => "broker-identity",
             cli::BrokerCommand::Status(_) => "broker-status",
             cli::BrokerCommand::Adopt(_) => "broker-adopt",
             cli::BrokerCommand::Reconcile(_) => "broker-reconcile",
@@ -432,6 +434,7 @@ fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("work-context", "admit") => Some("work-context-admit"),
             ("work-context", "complete") => Some("work-context-complete"),
             ("work-context", "reconcile") => Some("work-context-reconcile"),
+            ("broker", "identity") => Some("broker-identity"),
             ("broker", "status") => Some("broker-status"),
             ("broker", "adopt") => Some("broker-adopt"),
             ("broker", "reconcile") => Some("broker-reconcile"),
@@ -493,7 +496,7 @@ fn command_format(command: &Command) -> OutputFormat {
             cli::WorkContextCommand::Reconcile(args) => args.format,
         },
         Command::Broker(args) => match &args.command {
-            cli::BrokerCommand::Status(args) => args.format,
+            cli::BrokerCommand::Identity(args) | cli::BrokerCommand::Status(args) => args.format,
             cli::BrokerCommand::Adopt(args) | cli::BrokerCommand::Reconcile(args) => args.format,
             cli::BrokerCommand::Stop(args) => args.format,
             cli::BrokerCommand::Heartbeat(args) => args.format,
@@ -589,6 +592,20 @@ pub fn render_clap_message(err: &clap::Error) -> String {
 
 fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     let format = args.format;
+    if args.forge_initiator.is_some() && non_empty_env("AGENT_SESSION_ID").is_some() {
+        return render_error(
+            START_COMMAND,
+            format,
+            CliError::data(
+                "forge-initiator-rebind-forbidden",
+                "managed sessions cannot replace their launch initiator",
+                None,
+            ),
+        );
+    }
+    if let Err(err) = lineage::role_from_request(args.role.as_deref()) {
+        return render_error(START_COMMAND, format, err);
+    }
     let work = match lineage::WorkRequest::from_flags(
         args.program.as_deref(),
         &args.issues,
@@ -618,7 +635,7 @@ fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
             Err(err) => render_error(CONSOLE_START_COMMAND, format, err),
         };
     }
-    let (initial_lineage, warning) =
+    let (mut initial_lineage, warning) =
         match lineage::resolve_cli_start(context, args.no_parent, &work) {
             Ok(resolved) => resolved,
             Err(err) => return render_error(START_COMMAND, format, err),
@@ -630,6 +647,16 @@ fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
         lineage::require_root_for_role(args.role.as_deref(), initial_lineage.seed.has_parent())
     {
         return render_error(START_COMMAND, format, err);
+    }
+    if let Some(initiator) = &args.forge_initiator {
+        let context = nils_common::forge_identity::session::LaunchContext {
+            initiator: initiator.clone(),
+            role: args.role.clone(),
+        };
+        if let Err(err) = context.validate() {
+            return render_error(START_COMMAND, format, forge_identity::error(err));
+        }
+        initial_lineage.seed.set_forge_context(Some(context));
     }
     args.initial_lineage = Some(crate::InitialLineage {
         role: args.role.clone(),
@@ -3423,7 +3450,8 @@ fn create_record_with_lineage(
         role: None,
         resume_sidecar_extra: BTreeMap::new(),
     };
-    if let Some(initial) = initial_lineage {
+    if let Some(mut initial) = initial_lineage {
+        initial.seed.set_forge_role(initial.role.clone());
         record.lineage = Some(initial.seed.finalize(&record.id, &record.created_at));
         record.work = initial.work;
         record.role = initial.role;

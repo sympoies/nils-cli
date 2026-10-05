@@ -121,6 +121,9 @@ _agent__session() {
             agent__session__broker,heartbeat)
                 cmd="agent__session__broker__heartbeat"
                 ;;
+            agent__session__broker,identity)
+                cmd="agent__session__broker__identity"
+                ;;
             agent__session__broker,reconcile)
                 cmd="agent__session__broker__reconcile"
                 ;;
@@ -661,7 +664,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__broker)
-            opts="-h --state-dir --host --help status adopt reconcile stop heartbeat"
+            opts="-h --state-dir --host --help status identity adopt reconcile stop heartbeat"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -776,6 +779,54 @@ _agent__session() {
                     return 0
                     ;;
                 --generation)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --capability-file)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__broker__identity)
+            opts="-h --session --capability-file --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --session)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -2509,7 +2560,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__start)
-            opts="-h --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --tmux-bin --agent-bin --agent-arg --coordination-mode --paste-delay-ms --via-console --machine --account --agent-profile --no-parent --role --program --issue --no-inherit-work --format --state-dir --host --help"
+            opts="-h --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --tmux-bin --agent-bin --agent-arg --coordination-mode --paste-delay-ms --via-console --machine --account --agent-profile --no-parent --role --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2608,7 +2659,11 @@ _agent__session() {
                     return 0
                     ;;
                 --role)
-                    COMPREPLY=($(compgen -W "coordinator" -- "${cur}"))
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --forge-initiator)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 --program)

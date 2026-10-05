@@ -27,11 +27,23 @@ pub struct Policy {
     pub version: u32,
     #[serde(default)]
     pub activation: Activation,
+    #[serde(default)]
+    pub require_session_binding: bool,
+    #[serde(default)]
+    pub launch_rules: Vec<LaunchRule>,
     pub principals: BTreeMap<String, Principal>,
     pub profiles: BTreeMap<String, Profile>,
     pub credentials: BTreeMap<String, Credential>,
     #[serde(default)]
     pub rules: Vec<Rule>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchRule {
+    pub id: String,
+    pub initiator: String,
+    pub role: Option<String>,
+    pub principal: String,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -199,6 +211,17 @@ impl Policy {
                 }
             }
         }
+        let mut launch_ids = BTreeSet::new();
+        for rule in &self.launch_rules {
+            if !identifier(&rule.id)
+                || !launch_ids.insert(&rule.id)
+                || !identifier(&rule.initiator)
+                || rule.role.as_ref().is_some_and(|role| !identifier(role))
+                || !self.principals.contains_key(&rule.principal)
+            {
+                return Err(invalid());
+            }
+        }
         let mut ids = BTreeSet::new();
         for rule in &self.rules {
             let Some(principal) = self.principals.get(&rule.principal) else {
@@ -321,6 +344,7 @@ impl Policy {
             profile_id,
             matched_rule,
             profile,
+            session_binding: None,
         })
     }
 }
@@ -332,4 +356,6 @@ pub struct Selection {
     pub profile_id: String,
     pub matched_rule: String,
     pub profile: Profile,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_binding: Option<super::session::SessionDecision>,
 }
