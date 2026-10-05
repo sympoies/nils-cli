@@ -1118,8 +1118,14 @@ pub struct PrReviewHandoffReturnArgs {
     #[arg(long)]
     pub expected_state: String,
     /// Bounded role-based reason; mailbox details stay private.
-    #[arg(long, value_parser = ["reviewer-unreachable", "reviewer-closed", "reviewer-declined", "reviewer-timeout"])]
+    #[arg(long, value_parser = ["reviewer-unreachable", "reviewer-closed", "reviewer-declined", "reviewer-timeout", "coordinator-retired"])]
     pub reason: String,
+    /// Recorded coordinator selector; required for coordinator-retired only.
+    #[arg(long, required_if_eq("reason", "coordinator-retired"))]
+    pub coordinator_session: Option<String>,
+    /// Exact current provider base; required for coordinator-retired only.
+    #[arg(long, required_if_eq("reason", "coordinator-retired"))]
+    pub base_sha: Option<String>,
 }
 
 /// Durable provider-visible review-loop ledger operations.

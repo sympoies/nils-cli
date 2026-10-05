@@ -3049,6 +3049,7 @@ fn restarted_no_merge_delivery_reads_persisted_assignment() {
         returned_reason: None,
         assignment_generation: 1,
         surrendered: false,
+        coordinator_transfer: None,
     };
     let record = ReviewStateRecord::new(
         "sympoies/nils-cli",

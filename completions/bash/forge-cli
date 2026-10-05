@@ -6311,7 +6311,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__review__handoff__recover)
-            opts="-h --expected-head --expected-state --reason --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --expected-head --expected-state --reason --coordinator-session --base-sha --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -6326,7 +6326,15 @@ _forge__cli() {
                     return 0
                     ;;
                 --reason)
-                    COMPREPLY=($(compgen -W "reviewer-unreachable reviewer-closed reviewer-declined reviewer-timeout" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "reviewer-unreachable reviewer-closed reviewer-declined reviewer-timeout coordinator-retired" -- "${cur}"))
+                    return 0
+                    ;;
+                --coordinator-session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --base-sha)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 --format)

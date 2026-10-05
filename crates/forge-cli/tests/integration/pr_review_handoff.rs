@@ -21,6 +21,7 @@ fn handoff(returned: Option<&str>) -> ReviewHandoff {
         returned_reason: returned.map(str::to_string),
         assignment_generation: if returned.is_some() { 2 } else { 1 },
         surrendered: false,
+        coordinator_transfer: None,
     }
 }
 
@@ -1200,4 +1201,647 @@ sys.exit(r.returncode)
     let retry = run_forge_cli(&stub, &args);
     assert_eq!(retry.code, 0, "{} {}", retry.stdout, retry.stderr);
     assert_eq!(parse_envelope(&retry.stdout)["data"]["appended"], false);
+}
+
+fn coordinator_board(stub: StubEnv, state: &str, reason: &str) -> StubEnv {
+    let now = jiff::Timestamp::now().to_string();
+    let board = json!({"ok":true,"data":{"mode":"local","board":{
+        "schema_version":"agent-session.board-view.v1", "generated_at":now,
+        "truncated":false, "machines":[{"machine":"source", "available":true,"last_seen_at":now}],
+        "records":[{"session_id":"worker-session", "machine":"source", "state":state,
+            "runtime_status":if state == "live" { json!("running") } else { Value::Null },
+            "closed_at":if state == "closed" { json!(now) } else { Value::Null },
+            "close_reason":reason}]
+    }}});
+    let path = stub.write_stub(
+        "agent-session",
+        &format!("#!/bin/sh\ncat <<'JSON'\n{board}\nJSON\n"),
+    );
+    stub.env("FORGE_CLI_AGENT_SESSION_BIN", path.to_string_lossy())
+        .env("AGENT_SESSION_ID", "successor-session")
+}
+
+fn takeover(
+    stub: &StubEnv,
+    head: &str,
+    base: &str,
+    tip: &str,
+    selector: &str,
+    dry: bool,
+) -> super::support::CmdOutput {
+    let mut args = vec![
+        "--provider",
+        "github",
+        "--repo",
+        "acme/widgets",
+        "--format",
+        "json",
+    ];
+    if dry {
+        args.push("--dry-run");
+    }
+    args.extend([
+        "pr",
+        "review-handoff",
+        "recover",
+        "7",
+        "--expected-head",
+        head,
+        "--expected-state",
+        tip,
+        "--base-sha",
+        base,
+        "--reason",
+        "coordinator-retired",
+        "--coordinator-session",
+        selector,
+    ]);
+    run_forge_cli(stub, &args)
+}
+
+#[test]
+fn retired_coordinator_takeover_preview_transfers_only_coordinator_authority() {
+    let seeded = records(handoff(None), Some(HEAD));
+    let tip = &seeded.last().unwrap().record_digest;
+    let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "deleted")
+        .env("PROVIDER_BASE", HEAD);
+    let out = takeover(&stub, HEAD, HEAD, tip, "worker-session@source", true);
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let data = parse_envelope(&out.stdout)["data"].clone();
+    assert_eq!(data["state_tip_digest"], *tip);
+    assert_eq!(
+        data["handoff"]["coordinator_digest"],
+        review_state::sha256_digest(b"successor-session")
+    );
+    assert_eq!(
+        data["handoff"]["reviewer_digest"],
+        review_state::sha256_digest(b"reviewer-session")
+    );
+    assert_eq!(data["handoff"]["assignment_generation"], 2);
+    assert_eq!(data["handoff"]["base_sha"], HEAD);
+    assert_eq!(data["handoff"]["returned_reason"], "coordinator-retired");
+    assert_eq!(
+        data["handoff"]["coordinator_transfer"]["old_coordinator_digest"],
+        review_state::sha256_digest(b"worker-session")
+    );
+    assert_eq!(
+        data["handoff"]["coordinator_transfer"]["new_coordinator_digest"],
+        review_state::sha256_digest(b"successor-session")
+    );
+    assert_eq!(
+        data["handoff"]["coordinator_transfer"]["reason"],
+        "coordinator-retired"
+    );
+    assert_eq!(
+        data["handoff"]["coordinator_transfer"]["lifecycle_source_digest"],
+        review_state::sha256_digest(b"source")
+    );
+    assert!(!out.stdout.contains("\"source\""));
+    assert!(!out.stdout.contains("worker-session"));
+    assert!(!out.stdout.contains("successor-session"));
+    assert!(
+        !fs::read_to_string(stub.tempdir.path().join("calls.log"))
+            .unwrap()
+            .contains("--method POST")
+    );
+}
+
+#[test]
+fn retired_coordinator_takeover_refuses_live_unproven_and_wrong_identity() {
+    let seeded = records(handoff(None), None);
+    let tip = &seeded.last().unwrap().record_digest;
+    for (state, reason, selector, kind) in [
+        ("live", "", "worker-session", "review_coordinator_live"),
+        (
+            "stopped",
+            "",
+            "worker-session",
+            "review_coordinator_unproven",
+        ),
+        (
+            "closed",
+            "vanished",
+            "worker-session",
+            "review_coordinator_unproven",
+        ),
+        (
+            "closed",
+            "deleted",
+            "another-session",
+            "review_assignment_conflict",
+        ),
+    ] {
+        let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), state, reason);
+        let out = takeover(&stub, HEAD, OLD, tip, selector, true);
+        assert_refusal(&out, 65, kind);
+    }
+}
+
+#[test]
+fn retired_coordinator_takeover_requires_exact_head_base_and_tip() {
+    let seeded = records(handoff(None), None);
+    let tip = &seeded.last().unwrap().record_digest;
+    for (head, base, expected_tip, kind) in [
+        (OLD, OLD, tip.as_str(), "review_state_conflict"),
+        (HEAD, HEAD, tip.as_str(), "review_scope_changed"),
+        (HEAD, OLD, "none", "review_state_conflict"),
+    ] {
+        let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "archived");
+        let out = takeover(&stub, head, base, expected_tip, "worker-session", true);
+        assert_refusal(&out, 65, kind);
+    }
+}
+
+/// A provider adapter stores posted bodies and reads them back through trusted comments.
+fn writable_ledger(stub: StubEnv, seeded: &[ReviewStateRecord]) -> StubEnv {
+    let inner = stub.tempdir.path().join("gh-inner");
+    fs::rename(stub.tempdir.path().join("gh"), &inner).unwrap();
+    let seed = stub.tempdir.path().join("ledger.json");
+    let bodies: Vec<_> = seeded
+        .iter()
+        .map(|r| review_state::render_state_comment_body(r, None).unwrap())
+        .collect();
+    fs::write(&seed, serde_json::to_string(&bodies).unwrap()).unwrap();
+    let script = r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+root = pathlib.Path(__file__).parent
+args = sys.argv[1:]
+ledger = root / 'ledger.json'
+if args[:2] == ['api', 'repos/acme/widgets/issues/7/comments']:
+    bodies = json.loads(ledger.read_text())
+    bodies.append(next(a[5:] for a in args if a.startswith('body=')))
+    ledger.write_text(json.dumps(bodies))
+    print('https://github.com/acme/widgets/pull/7#issuecomment-2')
+elif args[:2] == ['api', 'graphql'] and any('comments(first:' in a for a in args):
+    nodes = [{'author': {'login': 'review-app[bot]'}, 'authorAssociation': 'OWNER',
+              'createdAt': '2026-07-20T12:00:00Z', 'body': b}
+             for b in json.loads(ledger.read_text())]
+    print(json.dumps({'data': {'viewer': {'login': 'review-app[bot]'}, 'repository': {
+        'pullRequest': {'comments': {'nodes': nodes, 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}}}))
+else:
+    os.execv(str(root / 'gh-inner'), [str(root / 'gh-inner')] + args)
+"#;
+    stub.gh_stub(script)
+}
+
+#[test]
+fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
+    let mut seeded = records(handoff(None), None);
+    let findings: Vec<review_state::ReviewFindingObservation> = serde_json::from_value(json!([
+        {"fingerprint":"testing:handoff:open-finding", "blocking":true, "threads":["thread-1"]}
+    ]))
+    .unwrap();
+    let original = review_state::observe_review_loop(None, HEAD, &findings)
+        .unwrap()
+        .state;
+    seeded.push(
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            HEAD,
+            1,
+            Some(seeded[0].record_digest.clone()),
+            ReviewStatePayload::ReviewLoop {
+                state: original.clone(),
+            },
+        )
+        .unwrap()
+        .with_assignment_generation(Some(1))
+        .unwrap(),
+    );
+    let mut surrendered = handoff(None);
+    surrendered.surrendered = true;
+    seeded.push(
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            HEAD,
+            2,
+            Some(seeded[1].record_digest.clone()),
+            ReviewStatePayload::ReviewHandoff {
+                handoff: surrendered,
+            },
+        )
+        .unwrap(),
+    );
+    let stub = writable_ledger(
+        coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "archived"),
+        &seeded,
+    )
+    .env("PROVIDER_BASE", HEAD);
+    let out = takeover(
+        &stub,
+        HEAD,
+        HEAD,
+        &seeded.last().unwrap().record_digest,
+        "worker-session@source",
+        false,
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let tip = parse_envelope(&out.stdout)["data"]["state_tip_digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let saved: Vec<String> =
+        serde_json::from_str(&fs::read_to_string(stub.tempdir.path().join("ledger.json")).unwrap())
+            .unwrap();
+    let chain =
+        review_state::parse_chain(saved.iter().map(String::as_str), "acme/widgets", 7).unwrap();
+    assert_eq!(chain.records.len(), seeded.len() + 1);
+    assert_eq!(
+        review_state::latest_review_loop_state(&chain),
+        Some(&original)
+    );
+    assert!(
+        saved
+            .last()
+            .unwrap()
+            .contains("Coordinator ownership transferred")
+    );
+    // Coordinator transfer alone never authorizes reviewer appends or publication.
+    let blocked = observe(&stub, HEAD);
+    assert_eq!(
+        parse_envelope(&blocked.stdout)["data"]["preflight_ok"],
+        false
+    );
+    assert!(blocked.stdout.contains("designated_reviewer_unavailable"));
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-handoff",
+            "assign",
+            "7",
+            "--reviewer-session",
+            "reviewer-session",
+            "--review-author",
+            "review-app[bot]",
+            "--base-sha",
+            HEAD,
+            "--expected-head",
+            HEAD,
+            "--expected-state",
+            &tip,
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let data = parse_envelope(&out.stdout)["data"].clone();
+    assert_eq!(data["handoff"]["assignment_generation"], 3);
+    assert!(data["handoff"].get("coordinator_transfer").is_none());
+    let blocked = observe(&stub, HEAD);
+    assert_eq!(
+        parse_envelope(&blocked.stdout)["data"]["preflight_ok"],
+        false
+    );
+    assert!(blocked.stdout.contains("review_writer_conflict"));
+    let published = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review",
+            "7",
+            "--decision",
+            "comments-only",
+            "--submit-review",
+            "--expected-head",
+            HEAD,
+            "--comment",
+            "review evidence",
+            "--lens",
+            "testing",
+        ],
+    );
+    assert_refusal(&published, 65, "review_writer_conflict");
+    let reviewer = stub
+        .env("AGENT_SESSION_ID", "reviewer-session")
+        .env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "3");
+    let findings_file = reviewer.tempdir.path().join("open-findings.json");
+    fs::write(&findings_file, r#"[{"lifecycle_fingerprint":"testing:handoff:open-finding","disposition":"open","blocking":true,"threads":["thread-1"]}]"#).unwrap();
+    let out = run_forge_cli(
+        &reviewer,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-loop",
+            "observe",
+            "7",
+            "--expected-head",
+            HEAD,
+            "--auto-state",
+            "--findings-file",
+            findings_file.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let data = parse_envelope(&out.stdout);
+    assert_eq!(data["data"]["appended"], true, "{}", out.stdout);
+    let saved: Vec<String> = serde_json::from_str(
+        &fs::read_to_string(reviewer.tempdir.path().join("ledger.json")).unwrap(),
+    )
+    .unwrap();
+    let chain =
+        review_state::parse_chain(saved.iter().map(String::as_str), "acme/widgets", 7).unwrap();
+    assert_eq!(
+        review_state::latest_review_loop_state(&chain),
+        Some(&original)
+    );
+}
+
+#[test]
+fn retired_coordinator_takeover_rechecks_lifecycle_before_posting() {
+    let seeded = records(handoff(None), None);
+    let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "deleted");
+    let inner = stub.tempdir.path().join("board-inner");
+    fs::rename(stub.tempdir.path().join("agent-session"), &inner).unwrap();
+    let counter = stub.tempdir.path().join("board-read");
+    let script = format!(
+        r#"#!/bin/sh
+if [ -e '{counter}' ]; then
+  '{inner}' "$@" | sed 's/"closed"/"live"/g'
+else
+  touch '{counter}'
+  exec '{inner}' "$@"
+fi
+"#,
+        counter = counter.display(),
+        inner = inner.display()
+    );
+    stub.write_stub("agent-session", &script);
+    let out = takeover(
+        &stub,
+        HEAD,
+        OLD,
+        &seeded[0].record_digest,
+        "worker-session",
+        false,
+    );
+    assert_refusal(&out, 65, "review_coordinator_live");
+    assert!(
+        !fs::read_to_string(stub.tempdir.path().join("calls.log"))
+            .unwrap()
+            .contains("--method POST")
+    );
+}
+
+#[test]
+fn retired_coordinator_takeover_refuses_incomplete_or_stale_board_evidence() {
+    let seeded = records(handoff(None), None);
+    for change in [
+        "absent",
+        "offline",
+        "truncated",
+        "stale",
+        "malformed",
+        "failed",
+        "duplicate-live",
+    ] {
+        let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "deleted");
+        let now = jiff::Timestamp::now().to_string();
+        let mut board = json!({"ok":true,"data":{"board":{
+            "schema_version":"agent-session.board-view.v1", "generated_at":now, "truncated":false,
+            "machines":[{"machine":"source", "available":true, "last_seen_at":now}],
+            "records":[{"session_id":"worker-session", "machine":"source", "state":"closed",
+                "runtime_status":null,"closed_at":now,"close_reason":"deleted"}]
+        }}});
+        let b = &mut board["data"]["board"];
+        match change {
+            "absent" => b["records"] = json!([]),
+            "offline" => b["machines"][0]["available"] = json!(false),
+            "truncated" => b["truncated"] = json!(true),
+            "stale" => b["machines"][0]["last_seen_at"] = json!("2020-01-01T00:00:00Z"),
+            "duplicate-live" => b["records"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"session_id":"worker-session","state":"live"})),
+            _ => (),
+        }
+        let script = match change {
+            "malformed" => "#!/bin/sh\necho private-evidence-canary\n".into(),
+            "failed" => "#!/bin/sh\necho private-evidence-canary >&2\nexit 1\n".into(),
+            _ => format!("#!/bin/sh\ncat <<'JSON'\n{board}\nJSON\n"),
+        };
+        stub.write_stub("agent-session", &script);
+        let out = takeover(
+            &stub,
+            HEAD,
+            OLD,
+            &seeded[0].record_digest,
+            "worker-session",
+            true,
+        );
+        let kind = if change == "duplicate-live" {
+            "review_coordinator_live"
+        } else {
+            "review_coordinator_unproven"
+        };
+        assert_refusal(&out, 65, kind);
+        let error = parse_envelope(&out.stdout)["error"].clone();
+        assert!(error["details"]["retryable"].is_boolean());
+        assert!(error["details"]["next_action"].is_string());
+        assert!(error["details"]["recovery"].is_object());
+        assert!(!out.stdout.contains("private-evidence-canary"));
+        assert!(!out.stderr.contains("private-evidence-canary"));
+    }
+}
+
+#[test]
+fn retired_coordinator_takeover_chain_validates_transfer_and_racing_writers() {
+    let root = records(handoff(None), None).remove(0);
+    let mut value = serde_json::to_value(handoff(None)).unwrap();
+    value["coordinator_digest"] = json!(review_state::sha256_digest(b"successor-session"));
+    value["returned_reason"] = json!("coordinator-retired");
+    value["assignment_generation"] = json!(2);
+    value["coordinator_transfer"] = json!({
+        "old_coordinator_digest":review_state::sha256_digest(b"worker-session"),
+        "new_coordinator_digest":review_state::sha256_digest(b"successor-session"),
+        "lifecycle_source_digest":review_state::sha256_digest(b"source"),
+        "reason":"coordinator-retired"
+    });
+    let transfer = |v: Value| {
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            HEAD,
+            1,
+            Some(root.record_digest.clone()),
+            ReviewStatePayload::ReviewHandoff {
+                handoff: serde_json::from_value(v).unwrap(),
+            },
+        )
+        .unwrap()
+    };
+    let recovery = transfer(value.clone());
+    let observation = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        HEAD,
+        1,
+        Some(root.record_digest.clone()),
+        ReviewStatePayload::ReviewLoop {
+            state: review_state::observe_review_loop(None, HEAD, &[])
+                .unwrap()
+                .state,
+        },
+    )
+    .unwrap()
+    .with_assignment_generation(Some(1))
+    .unwrap();
+    let markers = [
+        root.marker().unwrap(),
+        observation.marker().unwrap(),
+        recovery.marker().unwrap(),
+    ];
+    let chain =
+        review_state::parse_chain(markers.iter().map(String::as_str), "acme/widgets", 7).unwrap();
+    assert_eq!(chain.tip_digest, Some(recovery.record_digest.clone()));
+    assert_eq!(chain.ignored_stale_records, vec![observation.record_digest]);
+    let mut invalid = value.clone();
+    invalid["coordinator_transfer"]["old_coordinator_digest"] =
+        json!(review_state::sha256_digest(b"unrelated-session"));
+    let markers = [root.marker().unwrap(), transfer(invalid).marker().unwrap()];
+    assert!(
+        review_state::parse_chain(markers.iter().map(String::as_str), "acme/widgets", 7).is_err()
+    );
+    let mut competing = value;
+    competing["coordinator_digest"] = json!(review_state::sha256_digest(b"another-successor"));
+    competing["coordinator_transfer"]["new_coordinator_digest"] =
+        competing["coordinator_digest"].clone();
+    let markers = [
+        root.marker().unwrap(),
+        recovery.marker().unwrap(),
+        transfer(competing).marker().unwrap(),
+    ];
+    assert!(
+        review_state::parse_chain(markers.iter().map(String::as_str), "acme/widgets", 7).is_err()
+    );
+    assert!(
+        !serde_json::to_string(&handoff(None))
+            .unwrap()
+            .contains("coordinator_transfer")
+    );
+}
+
+#[test]
+fn retired_coordinator_takeover_rechecks_provider_scope_before_posting() {
+    let seeded = records(handoff(None), None);
+    for changed in ["head", "base", "tip"] {
+        let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "deleted");
+        let inner = stub.tempdir.path().join("gh-inner");
+        fs::rename(stub.tempdir.path().join("gh"), &inner).unwrap();
+        let counter = stub.tempdir.path().join("scope-read");
+        let script = format!(
+            r#"#!/bin/sh
+case "$1 $2" in
+  "pr view")
+    if [ '{changed}' = head ]; then
+      if [ -e '{counter}' ]; then '{inner}' "$@" | sed 's/{HEAD}/{OLD}/g'; exit 0; fi
+      touch '{counter}'
+    fi ;;
+  "api repos/acme/widgets/pulls/7")
+    if [ '{changed}' = base ]; then
+      if [ -e '{counter}' ]; then echo '{HEAD}'; exit 0; fi
+      touch '{counter}'
+    fi ;;
+  "api graphql")
+    if [ '{changed}' = tip ]; then
+      if [ -e '{counter}' ]; then
+        echo '{{"data":{{"viewer":{{"login":"review-app[bot]"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}'
+        exit 0
+      fi
+      touch '{counter}'
+    fi ;;
+esac
+exec '{inner}' "$@"
+"#,
+            changed = changed,
+            counter = counter.display(),
+            inner = inner.display()
+        );
+        let stub = stub.gh_stub(&script);
+        let out = takeover(
+            &stub,
+            HEAD,
+            OLD,
+            &seeded[0].record_digest,
+            "worker-session",
+            false,
+        );
+        assert_refusal(
+            &out,
+            65,
+            if changed == "base" {
+                "review_scope_changed"
+            } else {
+                "review_state_conflict"
+            },
+        );
+        assert!(
+            !fs::read_to_string(stub.tempdir.path().join("calls.log"))
+                .unwrap()
+                .contains("--method POST")
+        );
+    }
+}
+
+#[test]
+fn retired_coordinator_takeover_binds_the_selected_lifecycle_source() {
+    let seeded = records(handoff(None), None);
+    for scenario in ["unavailable", "live-namesake", "closed-namesake"] {
+        let target_closed = scenario != "unavailable";
+        let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "deleted");
+        let now = jiff::Timestamp::now().to_string();
+        let mut board = json!({"ok":true,"data":{"board":{
+            "schema_version":"agent-session.board-view.v1", "generated_at":now, "truncated":false,
+            "machines":[{"machine":"target", "available":target_closed, "last_seen_at":now},
+                {"machine":"namesake", "available":true, "last_seen_at":now}],
+            "records":if target_closed { json!([
+                {"session_id":"worker-session", "machine":"target", "state":"closed", "runtime_status":null,
+                    "closed_at":now,"close_reason":"deleted"},
+                {"session_id":"worker-session", "machine":"namesake", "state":"live", "runtime_status":"running"}
+            ]) } else { json!([
+                {"session_id":"worker-session", "machine":"namesake", "state":"closed", "runtime_status":null,
+                    "closed_at":now,"close_reason":"deleted"}
+            ]) }
+        }}});
+        if scenario == "closed-namesake" {
+            board["data"]["board"]["records"][1] = json!({
+                "session_id":"worker-session", "machine":"namesake", "state":"closed", "runtime_status":null,
+                "closed_at":now,"close_reason":"deleted"
+            });
+        }
+        stub.write_stub(
+            "agent-session",
+            &format!("#!/bin/sh\ncat <<'JSON'\n{board}\nJSON\n"),
+        );
+        let out = takeover(
+            &stub,
+            HEAD,
+            OLD,
+            &seeded[0].record_digest,
+            "worker-session@target",
+            true,
+        );
+        if scenario == "live-namesake" {
+            assert_refusal(&out, 65, "review_coordinator_live");
+        } else {
+            assert_refusal(&out, 65, "review_coordinator_unproven");
+        }
+    }
 }

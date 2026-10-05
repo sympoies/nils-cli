@@ -387,6 +387,12 @@ pub fn state_comment_visible_metadata(record: &ReviewStateRecord) -> String {
                 )
             }
         }
+        ReviewStatePayload::ReviewHandoff { handoff } if handoff.coordinator_transfer.is_some() => {
+            format!(
+                "Coordinator ownership transferred (coordinator-retired); review assignment generation {} revoked. Findings remain in this ledger.",
+                handoff.assignment_generation
+            )
+        }
         ReviewStatePayload::ReviewHandoff { handoff } if handoff.surrendered => format!(
             "Reviewer released this assignment at head {}. Waiting for reassignment.",
             short_sha(&handoff.assigned_head)
@@ -686,7 +692,9 @@ pub fn parse_chain<'a>(
                         .assignment_generation
                         .checked_add(1)
                         .ok_or_else(|| state_conflict("assignment generation overflow", None))?;
-                if handoff.coordinator_digest != old.coordinator_digest
+                let transfer = super::pr_review_handoff::valid_coordinator_transfer(old, handoff);
+                if (handoff.coordinator_digest != old.coordinator_digest && !transfer)
+                    || (handoff.coordinator_transfer.is_some() && !transfer)
                     || (!same && !next)
                     || (same
                         && (!handoff.surrendered
@@ -710,6 +718,7 @@ pub fn parse_chain<'a>(
                 if handoff.assignment_generation != 1
                     || handoff.surrendered
                     || handoff.returned_reason.is_some()
+                    || handoff.coordinator_transfer.is_some()
                     || record.assignment_generation != Some(1)
                 {
                     return Err(state_conflict("invalid initial designated ownership", None));
@@ -762,7 +771,8 @@ pub fn parse_chain<'a>(
             .filter(|key| {
                 matches!(&by_digest[*key].payload, ReviewStatePayload::ReviewHandoff { handoff }
                 if handoff.assignment_generation == next_generation
-                    && handoff.coordinator_digest == active.coordinator_digest
+                    && (handoff.coordinator_digest == active.coordinator_digest
+                        || super::pr_review_handoff::valid_coordinator_transfer(active, handoff))
                     && handoff.returned_reason.is_some()
                     && by_digest[*key].assignment_generation == Some(next_generation))
             })
@@ -1977,6 +1987,7 @@ mod tests {
                         returned_reason: returned_reason.map(str::to_string),
                         assignment_generation: 1,
                         surrendered,
+                        coordinator_transfer: None,
                     },
                 },
             )
