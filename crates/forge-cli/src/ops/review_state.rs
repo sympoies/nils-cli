@@ -693,8 +693,9 @@ pub fn parse_chain<'a>(
                         .checked_add(1)
                         .ok_or_else(|| state_conflict("assignment generation overflow", None))?;
                 let transfer = super::pr_review_handoff::valid_coordinator_transfer(old, handoff);
-                if (handoff.coordinator_digest != old.coordinator_digest && !transfer)
-                    || (handoff.coordinator_transfer.is_some() && !transfer)
+                if (handoff.coordinator_digest != old.coordinator_digest
+                    || handoff.coordinator_transfer.is_some())
+                    && !transfer
                     || (!same && !next)
                     || (same
                         && (!handoff.surrendered

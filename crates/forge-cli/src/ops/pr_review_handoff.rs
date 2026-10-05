@@ -407,10 +407,10 @@ fn prove_coordinator_retired(
             || row["state"] != "closed"
             || !row["runtime_status"].is_null()
             || !matches!(row["close_reason"].as_str(), Some("deleted" | "archived"))
-            || !row["closed_at"]
+            || row["closed_at"]
                 .as_str()
                 .and_then(|s| s.parse::<jiff::Timestamp>().ok())
-                .is_some_and(|t| t <= jiff::Timestamp::now())
+                .is_none_or(|t| t > jiff::Timestamp::now())
         {
             return Err(unproven());
         }
