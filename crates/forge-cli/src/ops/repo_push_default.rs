@@ -546,11 +546,7 @@ pub fn run_with<R: BackendRunner, G: GitRunner>(
         workdir,
         &os_args(&[
             "-c",
-            "push.followTags=false",
-            "-c",
             "push.pushOption=",
-            "-c",
-            "push.recurseSubmodules=no",
             "push",
             "--porcelain",
             "--no-follow-tags",

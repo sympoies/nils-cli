@@ -26,7 +26,10 @@ fn command_tail<'a>(args: &'a [&'a str]) -> Result<&'a [&'a str]> {
         match args[i] {
             "-c" => {
                 let value = *args.get(i + 1).ok_or(Error::new("identity_git_override"))?;
-                if !(value.starts_with("core.quotepath=") || value.starts_with("core.pager=")) {
+                if !(value.starts_with("core.quotepath=")
+                    || value.starts_with("core.pager=")
+                    || value == "push.pushOption=")
+                {
                     return Err(Error::new("identity_git_override"));
                 }
                 i += 2;
