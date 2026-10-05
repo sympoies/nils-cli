@@ -91,6 +91,76 @@ no alternate profile or active-account fallback occurs.
 key matching that exact fingerprint. API reads/writes and Git transport do not
 require the signer; `doctor` checks both credential and signing readiness.
 
+## Authenticated launch binding
+
+`require_session_binding = true` opts managed calls into the authenticated launch
+contract. Its default is false, preserving the Phase 1 assertion behavior. When
+true it takes precedence over `activation = "asserted-only"`: removing the
+principal assertion cannot disable the required binding. Missing policy still
+preserves ordinary behavior.
+
+Configure principal selection independently from repository/profile rules:
+
+```toml
+require_session_binding = true
+
+[[launch_rules]]
+id = "operator-default"
+initiator = "operator"
+principal = "contributor"
+
+[[launch_rules]]
+id = "operator-review"
+initiator = "operator"
+role = "reviewer"
+principal = "reviewer"
+```
+
+This fragment belongs to a complete version 1 policy with the referenced
+principals/profiles/credentials configured. Identifiers and accounts are
+configuration, not built-in role mappings. A matching explicit role rule wins
+over the initiator's rule without a role. A rule without a role is the explicit
+default for that initiator. No match or multiple matches at the chosen precedence
+refuse, even when they select the same principal.
+
+An operator CLI launch supplies `agent-session start --forge-initiator ID` and an
+optional `--role ROLE`. The immutable `lineage.forge_context` stores initiator and
+role. Managed children authenticate their parent broker, inherit the initiator,
+and record their explicitly assigned role; they cannot replace the initiator.
+An authenticated managed `--no-parent` start preserves the initiator while
+creating a new lineage root. Roles are never inherited. Resume and adoption
+preserve the original context.
+
+Each resolver calls `agent-session broker identity --session ID --format json`
+under the caller's probe deadline. The producer verifies the private session
+capability, live heartbeat/registry and current runtime incarnation. The consumer
+requires exact session/incarnation agreement with its managed environment.
+`FORGE_IDENTITY_PRINCIPAL`, when present, is only an assertion and must equal the
+mapped principal. Selection then uses all existing repository/profile/actor and
+signer checks. Missing, stale or conflicting bindings refuse before credential
+lookup. `FORGE_IDENTITY_AGENT_SESSION_BIN` selects the broker executable for
+configured installations and fixtures.
+
+`identity explain` includes the authenticated root/parent/current session,
+initiator, role and matched launch rule under `selection.session_binding` without
+reading forge credentials or writing an audit. Managed operation audits record
+this launch provenance, the mapped principal and the asserted principal separately;
+ambiguity retains the available launch context even without a selected principal.
+Policy digest identifies the configuration used for each decision.
+
+This is a same-operating-system-user trusted-launcher contract. It creates no
+credential isolation or cross-principal delegation. Existing sessions without a
+launch context must be relaunched before enabling required binding.
+
+The runtime command owner must preserve the managed session ID, incarnation and
+capability reference and assert through this projection. Generic HTTP session
+creation refuses supplied forge launch context: authenticating an HTTP caller
+does not verify its asserted initiator or role. Console roots and bound child
+forwarding require a separately implemented, verified launch-owner protocol;
+forwarding context to generic HTTP creation fails closed. These counterpart
+changes are separate rollout work; this repository implements the local producer
+and shared forge/git consumer only.
+
 ## Resolution
 
 Resolve **within the starting principal**:

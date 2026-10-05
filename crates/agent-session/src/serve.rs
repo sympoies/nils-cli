@@ -3464,7 +3464,7 @@ struct CreateBody {
     /// `session-lineage-work-v1`: resolved program and issue references.
     #[serde(default)]
     work: Option<Value>,
-    /// `session-lineage-work-v1`: `coordinator`, stored verbatim.
+    /// `session-lineage-work-v1`: configured launch role, stored verbatim.
     #[serde(default)]
     role: Option<Value>,
 }
@@ -6888,6 +6888,7 @@ async fn create_handler(
         account: None,
         agent_profile: None,
         no_parent: false,
+        forge_initiator: None,
         role: None,
         program: None,
         issues: Vec::new(),
@@ -22941,7 +22942,7 @@ esac
         assert_eq!(body["data"]["session"]["role"], "coordinator");
 
         for (id, extra, code) in [
-            ("bad-role", json!({"role": "boss"}), "role-invalid"),
+            ("bad-role", json!({"role": "invalid role"}), "role-invalid"),
             ("bad-role-type", json!({"role": 7}), "role-invalid"),
             (
                 "bad-lineage",
@@ -22958,6 +22959,62 @@ esac
             let (status, body) = call(router(st.clone()), create(id, extra)).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
             assert_eq!(body["error"]["code"], code);
+            assert!(!tmp.path().join("sessions").join(id).exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn create_refuses_untrusted_forge_context_before_session_creation() {
+        use pretty_assertions::assert_eq;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        let config = tmp.path().join("provider-config");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        let launcher = fake_agent(tmp.path(), "fixture-agent");
+        let profiles = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id":"fixture-profile","label":"Fixture","agent":"claude",
+                "agent_bin":launcher,"provider_config_dir":config,"readiness_args":["--check"]
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let mut st = state(
+            tmp.path(),
+            Some(TOKEN),
+            logging_tmux(tmp.path(), &tmp.path().join("tmux.log")),
+        );
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
+        let reference = json!({"machine":"launch-source","session_id":"parent-session","session_created_at":"2026-10-01T00:00:00Z"});
+        for (id, lineage) in [
+            (
+                "forged-root",
+                json!({"depth":0,"starter":{"kind":"operator","via":"http"},
+                "forge_context":{"initiator":"operator","role":"reviewer"}}),
+            ),
+            (
+                "forged-child",
+                json!({"depth":1,"parent":reference,"root":reference,
+                "starter":{"kind":"session","via":"console"},
+                "forge_context":{"initiator":"operator","role":"reviewer"}}),
+            ),
+        ] {
+            let (status, body) = call(
+                router(st.clone()),
+                post_json(
+                    "/sessions",
+                    Some(TOKEN),
+                    json!({
+                        "agent":"claude","agent_profile":"fixture-profile","id":id,"cwd":cwd,
+                        "role":"reviewer","lineage":lineage
+                    }),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
+            assert_eq!(body["error"]["code"], "identity_session_binding_untrusted");
             assert!(!tmp.path().join("sessions").join(id).exists());
         }
     }

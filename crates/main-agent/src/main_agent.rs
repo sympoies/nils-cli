@@ -4328,6 +4328,7 @@ fn run_worker_start_single_input(
                 agent_profile: None,
                 no_parent: false,
                 role: None,
+                forge_initiator: None,
                 program: None,
                 issues: Vec::new(),
                 no_inherit_work: false,

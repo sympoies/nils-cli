@@ -323,14 +323,14 @@ to.
 
 ## `role`
 
-`SessionRecord.role` is `"coordinator"` or absent (null). It marks a session
-the operator or its tooling treats as a coordinator, by explicit statement
-rather than by inference from the repository name or tree position. Any
-number of sessions may hold it at once, for example during a handoff overlap.
+`SessionRecord.role` is a configured bounded identifier or absent (null).
+It records the explicitly assigned launch role. No account mapping is built in;
+any number of sessions may share a role. The `coordinator` role retains its
+existing root-only topology requirement.
 
 - Written once at start; it never changes and is never inherited: a child of a
   coordinator has no role unless it is started with one.
-- `agent-session start --role coordinator` (the only accepted value) sets it.
+- `agent-session start --role ROLE` sets it.
   A coordinator is a root: the role is accepted only on a start with no
   parent. Inside a managed session that means `--no-parent`; a successor
   coordinator is started with `--no-parent --role coordinator`, and its
@@ -340,15 +340,49 @@ number of sessions may hold it at once, for example during a handoff overlap.
   `start --via-console`.
 - A console start sends `role` as a top-level request key (`machine`,
   `no_parent`, `work`, `role`, `session`) and the daemon relays it as
-  `session.role`, next to `session.lineage`; the daemon route refuses a `role`
+  `session.role`, next to `session.lineage`; the daemon route refuses `coordinator`
   without `no_parent: true` with `role-requires-root`. A `role` the caller put in
   `session` itself is replaced. The aggregator forwards it in the target
   daemon's `POST /sessions` body.
 - `POST /sessions` accepts an optional `role`, stored verbatim after
-  validation, and only with a root lineage (none, or `parent: null`); a
-  parented lineage fails with `role-requires-root`. Any value other than `"coordinator"` or `null` fails with HTTP 400
+  validation. A coordinator requires a root lineage (none, or `parent: null`);
+  a parented coordinator fails with `role-requires-root`. A malformed identifier
+  or non-string value other than `null` fails with HTTP 400
   `role-invalid` before anything is created. The create response's `session` echoes it.
-- `role` is descriptive, like lineage: it authorizes nothing.
+- Roles and lineage do not grant session permissions. An explicitly enabled
+  forge policy may map the authenticated immutable launch context to a principal;
+  see the shared forge identity policy specification.
+
+## Forge launch context
+
+An operator CLI start may supply `--forge-initiator ID`; it is refused inside a
+managed session and with `--via-console`. Its bounded identifier and optional
+role are stored in `lineage.forge_context` once. Managed starts with a bound
+parent authenticate its broker capability and runtime incarnation before
+inheriting the initiator. The child uses its own explicitly assigned role or
+null. `--no-parent` preserves the authenticated initiator while starting a new
+root. Adoption and resume do not replace this launch context.
+
+Generic HTTP `POST /sessions` refuses any `lineage.forge_context` with HTTP 400
+`identity_session_binding_untrusted` before creating a record. HTTP authentication
+does not verify the asserted initiator or role. Local operator launches and
+authenticated local child launches produce the binding.
+
+Authenticated Console child requests reconstruct context from the caller's
+record, replacing caller-supplied lineage. Forwarding a bound context through
+generic HTTP creation fails closed. Console roots and bound child forwarding
+require a separately implemented, verified launch-owner protocol. Existing records
+without context remain valid but cannot satisfy a required forge binding.
+
+`broker identity --session ID [--capability-file FILE] --format json` is a
+metadata-only authenticated projection, with envelope
+`cli.agent-session.broker-identity.v1` and data schema
+`agent-session.forge-binding.v1`. It returns exact current session/incarnation,
+creation time, original root/parent references, initiator and role. Capability,
+registry readiness and heartbeat are required. A managed caller's session and
+runtime must agree. The command does not renew registry state or modify session
+records; it returns no forge credentials. This contract assumes a trusted
+launcher under the same operating-system user, rather than credential isolation.
 
 ## Read surfaces
 
@@ -363,7 +397,8 @@ none; readers treat an absent `role` as null.
 | --- | --- | --- |
 | `work-ref-invalid` | usage / 400 | A reference outside the grammar, more than 4 issues, or an invalid `work` object. |
 | `lineage-invalid` | usage / 400 | A create body `lineage` with an invalid shape. |
-| `role-invalid` | usage / 400 | A `role` other than `coordinator`. |
+| `identity_session_binding_untrusted` | usage / 400 | Generic HTTP creation supplied a forge launch context without verified launch ownership. |
+| `role-invalid` | usage / 400 | A malformed role identifier or non-string role. |
 | `role-requires-root` | usage / 400 | A `role` on a start that has a parent. |
 | `lineage-parent-mismatch` | usage / 400 | The console edge found `lineage.parent` differing from the relaying session. `console_start` forwards it, with `role-invalid`, `lineage-invalid` and `work-ref-invalid`, as a usage error. |
 | `lineage-depth-exceeded` | usage / 400 | A start deeper than 64. |

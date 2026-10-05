@@ -285,10 +285,13 @@ pub struct StartArgs {
     #[arg(long)]
     pub no_parent: bool,
 
-    /// Mark this session as a coordinator. Stored once at start and never
-    /// inherited by its children.
-    #[arg(long, value_name = "ROLE", value_parser = ["coordinator"])]
+    /// Configurable launch role; stored once and never inherited. A coordinator requires a root.
+    #[arg(long, value_name = "ROLE")]
     pub role: Option<String>,
+
+    /// Operator-only configured initiator for forge identity binding. Managed children inherit it.
+    #[arg(long, value_name = "ID", conflicts_with = "via_console")]
+    pub forge_initiator: Option<String>,
 
     /// Work-mode program tracker issue this session belongs to, as
     /// OWNER/REPO#N. Replaces the inherited program.
@@ -661,6 +664,8 @@ pub struct BrokerArgs {
 pub enum BrokerCommand {
     /// Show privacy-safe broker readiness and claim/operation summaries.
     Status(BrokerStatusArgs),
+    /// Authenticate and project the immutable forge launch binding (no credential access).
+    Identity(BrokerStatusArgs),
     /// Adopt an unchanged live runtime after validating recovery proof.
     Adopt(BrokerRecoveryArgs),
     /// Reconcile broker and registry state from validated recovery proof.

@@ -272,6 +272,11 @@ pub(crate) fn run_work_context(context: &CliContext, args: cli::WorkContextArgs)
 
 pub(crate) fn run_broker(context: &CliContext, args: cli::BrokerArgs) -> i32 {
     let (command, format, result) = match args.command {
+        BrokerCommand::Identity(args) => (
+            "broker-identity",
+            args.format,
+            crate::forge_identity::projection(context, &args),
+        ),
         BrokerCommand::Status(args) => {
             ("broker-status", args.format, broker::status(context, args))
         }
@@ -2393,6 +2398,21 @@ fn authenticate_any_from_file_with_maintenance(
         return Err(unauthorized());
     }
     Ok((record, broker.incarnation, claim))
+}
+
+pub(crate) fn authenticate_token_observational(
+    context: &CliContext,
+    session_id: &str,
+    token: &str,
+) -> Result<(SessionRecord, String), CliError> {
+    if token.len() < 32 || token.len() > 256 || !token.is_ascii() {
+        return Err(unauthorized());
+    }
+    let record = load_session_record(context, session_id).map_err(|_| unauthorized())?;
+    let incarnation = incarnation(&record)?;
+    let locked = lock_registry_observational(context)?;
+    verify_capability_token(context, &locked.registry, &record, &incarnation, token)?;
+    Ok((record, incarnation))
 }
 
 pub(crate) fn authenticate_token(

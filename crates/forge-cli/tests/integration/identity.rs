@@ -524,3 +524,242 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
         }
     }
 }
+
+#[cfg(unix)]
+mod session_binding_tests {
+    use super::{Command, resolve};
+    use pretty_assertions::assert_eq;
+    use serde_json::{Value, json};
+    use std::{fs, os::unix::fs::PermissionsExt};
+    const POLICY: &str = include_str!("../../../nils-common/tests/fixtures/identity/policy.toml");
+    struct Fixture {
+        home: tempfile::TempDir,
+        broker: std::path::PathBuf,
+    }
+    impl Fixture {
+        fn new(required: bool) -> Self {
+            let home = tempfile::tempdir().unwrap();
+            fs::create_dir(home.path().join("forge-cli")).unwrap();
+            let policy = format!(
+                "require_session_binding = {required}\n{POLICY}\n[[launch_rules]]\nid='ordinary'\ninitiator='operator'\nprincipal='contributor'\n[[launch_rules]]\nid='review'\ninitiator='operator'\nrole='reviewer'\nprincipal='coordinator'\n"
+            );
+            fs::write(home.path().join("forge-cli/identity.toml"), policy).unwrap();
+            let broker = home.path().join("agent-session");
+            fs::write(&broker, "#!/bin/sh\nprintf '%s' \"$FIXTURE_PROJECTION\"\n").unwrap();
+            fs::set_permissions(&broker, fs::Permissions::from_mode(0o700)).unwrap();
+            let gh = home.path().join("gh");
+            fs::write(
+                &gh,
+                "#!/bin/sh\necho credential-probe-forbidden >&2\nexit 99\n",
+            )
+            .unwrap();
+            fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
+            Self { home, broker }
+        }
+        fn command(&self, role: Option<&str>, session: &str) -> Command {
+            let mut cmd = Command::new(resolve("forge-cli"));
+            cmd.current_dir(self.home.path()).args(["--format","json","--provider","github","--host","github.com","--repo","sandbox/widget"])
+                .env("XDG_CONFIG_HOME",self.home.path()).env("XDG_STATE_HOME",self.home.path().join("state"))
+                .env("FORGE_IDENTITY_AGENT_SESSION_BIN",&self.broker)
+                .env("FORGE_CLI_GH_BIN",self.home.path().join("gh"))
+                .env("AGENT_SESSION_ID",session).env("AGENT_SESSION_RUNTIME_ID","generation-a")
+                .env_remove("FORGE_IDENTITY_PRINCIPAL").env_remove("FORGE_IDENTITY_SESSION")
+                .env("FIXTURE_PROJECTION",json!({"schema_version":"cli.agent-session.broker-identity.v1","ok":true,"data":{
+                    "schema_version":"agent-session.forge-binding.v1","session_id":session,"session_incarnation":"generation-a",
+                    "session_created_at":"2026-10-01T00:00:00Z","root":{"machine":"launch-source","session_id":"root-session","session_created_at":"2026-10-01T00:00:00Z"},
+                    "parent":null,"initiator":"operator","role":role
+                }}).to_string());
+            cmd
+        }
+    }
+    fn value(out: &std::process::Output) -> Value {
+        serde_json::from_slice(&out.stdout).unwrap()
+    }
+    #[test]
+    fn identity_session_binding_selects_roles_concurrently_without_credentials_or_audit_writes() {
+        let f = Fixture::new(true);
+        let children: Vec<_> = [
+            (None, "ordinary-session"),
+            (Some("reviewer"), "review-session"),
+        ]
+        .into_iter()
+        .map(|(role, id)| {
+            f.command(role, id)
+                .args(["identity", "explain"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+        for (child, principal) in children.into_iter().zip(["contributor", "coordinator"]) {
+            let out = child.wait_with_output().unwrap();
+            assert_eq!(out.status.code(), Some(0));
+            let v = value(&out);
+            assert_eq!(v["data"]["selection"]["principal"], principal);
+            assert_eq!(
+                v["data"]["selection"]["session_binding"]["initiator"],
+                "operator"
+            );
+            assert_eq!(
+                v["data"]["selection"]["session_binding"]["root"]["session_id"],
+                "root-session"
+            );
+        }
+        assert!(!f.home.path().join("state").exists());
+    }
+    #[test]
+    fn identity_session_binding_mismatch_refuses_before_credential_probe_and_records_audit() {
+        let f = Fixture::new(true);
+        let out = f
+            .command(Some("reviewer"), "review-session")
+            .env("FORGE_IDENTITY_PRINCIPAL", "contributor")
+            .args(["issue", "view", "1"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(65));
+        assert_eq!(
+            value(&out)["error"]["code"],
+            "identity_session_principal_mismatch"
+        );
+        assert!(!String::from_utf8_lossy(&out.stderr).contains("credential-probe-forbidden"));
+        let audit =
+            fs::read_to_string(f.home.path().join("state/forge-cli/identity-audit.jsonl")).unwrap();
+        assert!(audit.contains("identity_session_principal_mismatch"));
+        assert!(audit.contains("review-session"));
+        assert!(audit.contains("reviewer"));
+        let record: Value = serde_json::from_str(audit.lines().last().unwrap()).unwrap();
+        assert_eq!(record["principal"], "coordinator");
+        assert_eq!(record["asserted_principal"], "contributor");
+        assert_eq!(record["matched_launch_rule"], "review");
+    }
+    #[test]
+    fn identity_session_binding_concurrent_refusals_keep_distinct_audit_provenance() {
+        let f = Fixture::new(true);
+        let children: Vec<_> = [
+            (None, "ordinary-session", "coordinator"),
+            (Some("reviewer"), "review-session", "contributor"),
+        ]
+        .into_iter()
+        .map(|(role, id, assertion)| {
+            f.command(role, id)
+                .env("FORGE_IDENTITY_PRINCIPAL", assertion)
+                .args(["issue", "view", "1"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+        for child in children {
+            let out = child.wait_with_output().unwrap();
+            assert_eq!(
+                value(&out)["error"]["code"],
+                "identity_session_principal_mismatch"
+            );
+            assert!(!String::from_utf8_lossy(&out.stderr).contains("credential-probe-forbidden"));
+        }
+        let text =
+            fs::read_to_string(f.home.path().join("state/forge-cli/identity-audit.jsonl")).unwrap();
+        let records: Vec<Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        // Existing API execution and command-refusal layers each retain a record.
+        assert_eq!(records.len(), 4);
+        for (id, principal) in [
+            ("ordinary-session", "contributor"),
+            ("review-session", "coordinator"),
+        ] {
+            let matching: Vec<_> = records.iter().filter(|r| r["session"] == id).collect();
+            assert_eq!(matching.len(), 2);
+            for record in matching {
+                assert_eq!(record["principal"], principal);
+                assert_eq!(record["session_binding"]["session_id"], id);
+            }
+        }
+    }
+    #[test]
+    fn identity_session_binding_missing_stale_or_ambiguous_refuses() {
+        let f = Fixture::new(true);
+        for (projection, code) in [
+            (json!({"ok":false}), "identity_session_binding_unavailable"),
+            (
+                json!({"schema_version":"cli.agent-session.broker-identity.v1","ok":true,"data":{
+                    "schema_version":"agent-session.forge-binding.v1","session_id":"other-session","session_incarnation":"generation-a",
+                    "session_created_at":"2026-10-01T00:00:00Z","root":{"machine":"launch-source","session_id":"root-session","session_created_at":"2026-10-01T00:00:00Z"},"parent":null,"initiator":"operator","role":null
+                }}),
+                "identity_session_binding_mismatch",
+            ),
+        ] {
+            let out = f
+                .command(None, "ordinary-session")
+                .env("FIXTURE_PROJECTION", projection.to_string())
+                .args(["identity", "explain"])
+                .output()
+                .unwrap();
+            assert_eq!(value(&out)["error"]["code"], code);
+        }
+        let path = f.home.path().join("forge-cli/identity.toml");
+        let policy = fs::read_to_string(&path).unwrap();
+        fs::write(path,format!("{policy}\n[[launch_rules]]\nid='duplicate'\ninitiator='operator'\nrole='reviewer'\nprincipal='coordinator'\n")).unwrap();
+        let out = f
+            .command(Some("reviewer"), "review-session")
+            .args(["identity", "explain"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            value(&out)["error"]["code"],
+            "identity_launch_rule_ambiguous"
+        );
+    }
+    #[test]
+    fn identity_session_binding_required_cannot_be_disabled_by_unset_assertion() {
+        let f = Fixture::new(true);
+        let path = f.home.path().join("forge-cli/identity.toml");
+        let policy = fs::read_to_string(&path).unwrap();
+        fs::write(&path, format!("activation='asserted-only'\n{policy}")).unwrap();
+        let out = f
+            .command(Some("unmapped-role"), "ordinary-session")
+            .args(["identity", "explain"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(value(&out)["data"]["selection"]["principal"], "contributor");
+        assert_eq!(
+            value(&out)["data"]["selection"]["session_binding"]["matched_launch_rule"],
+            "ordinary"
+        );
+        let out = f
+            .command(None, "ordinary-session")
+            .env_remove("AGENT_SESSION_ID")
+            .args(["identity", "explain"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            value(&out)["error"]["code"],
+            "identity_session_binding_missing"
+        );
+    }
+    #[test]
+    fn identity_session_binding_opt_out_and_missing_policy_preserve_phase_one() {
+        let f = Fixture::new(false);
+        let out = f
+            .command(Some("reviewer"), "review-session")
+            .env("FORGE_IDENTITY_PRINCIPAL", "contributor")
+            .env("FORGE_IDENTITY_AGENT_SESSION_BIN", "missing-broker")
+            .args(["identity", "explain"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(value(&out)["data"]["selection"]["principal"], "contributor");
+        fs::remove_file(f.home.path().join("forge-cli/identity.toml")).unwrap();
+        let out = f
+            .command(None, "ordinary-session")
+            .args(["identity", "explain"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(value(&out)["data"]["enforced"], false);
+    }
+}

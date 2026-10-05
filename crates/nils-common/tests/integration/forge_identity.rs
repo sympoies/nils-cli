@@ -205,6 +205,71 @@ mod execution {
         fs::write(home.join("forge-cli/identity.toml"), policy).unwrap();
     }
     #[test]
+    fn identity_session_binding_git_refuses_mismatch_before_any_credential_probe() {
+        let lock = GlobalStateLock::new();
+        let home = tempfile::tempdir().unwrap();
+        let repo = init_repo();
+        let bins = StubBinDir::new();
+        bins.write_exe(
+            "agent-session",
+            "#!/bin/sh\nprintf '%s' \"$FIXTURE_PROJECTION\"\n",
+        );
+        bins.write_exe(
+            "gh",
+            "#!/bin/sh\necho credential-probe-forbidden >&2\nexit 99\n",
+        );
+        install(
+            home.path(),
+            &format!(
+                "require_session_binding=true\n{FIXTURE}\n[[launch_rules]]\nid='bound-default'\ninitiator='operator'\nprincipal='coordinator'\n"
+            ),
+        );
+        raw_git(
+            repo.path(),
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/sandbox/widget.git",
+            ],
+        );
+        let _config = EnvGuard::set(&lock, "XDG_CONFIG_HOME", home.path().to_str().unwrap());
+        let _state = EnvGuard::set(
+            &lock,
+            "XDG_STATE_HOME",
+            home.path().join("state").to_str().unwrap(),
+        );
+        let _principal = EnvGuard::set(&lock, "FORGE_IDENTITY_PRINCIPAL", "contributor");
+        let _session = EnvGuard::set(&lock, "AGENT_SESSION_ID", "bound-session");
+        let _runtime = EnvGuard::set(&lock, "AGENT_SESSION_RUNTIME_ID", "generation-a");
+        let _bin = EnvGuard::remove(&lock, "FORGE_IDENTITY_AGENT_SESSION_BIN");
+        let _path = prepend_path(&lock, bins.path());
+        let projection=serde_json::json!({"schema_version":"cli.agent-session.broker-identity.v1","ok":true,"data":{
+            "schema_version":"agent-session.forge-binding.v1","session_id":"bound-session","session_incarnation":"generation-a",
+            "session_created_at":"2026-10-01T00:00:00Z","root":{"machine":"launch-source","session_id":"bound-session","session_created_at":"2026-10-01T00:00:00Z"},
+            "parent":null,"initiator":"operator","role":null
+        }}).to_string();
+        let _projection = EnvGuard::set(&lock, "FIXTURE_PROJECTION", &projection);
+        for args in [
+            vec!["fetch", "origin"],
+            vec!["push", "origin", "HEAD"],
+            vec!["commit", "-m", "fixture"],
+        ] {
+            let err = git::run_output_in(repo.path(), &args).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("identity_session_principal_mismatch")
+            );
+        }
+        let text =
+            fs::read_to_string(home.path().join("state/forge-cli/identity-audit.jsonl")).unwrap();
+        for line in text.lines() {
+            let record: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(record["principal"], "coordinator");
+            assert_eq!(record["session_binding"]["session_id"], "bound-session");
+        }
+    }
+    #[test]
     fn identity_git_missing_credential_refuses_before_transport_and_local_reads_remain_available() {
         let lock = GlobalStateLock::new();
         let home = tempfile::tempdir().unwrap();

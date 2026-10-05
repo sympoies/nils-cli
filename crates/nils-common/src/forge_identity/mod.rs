@@ -1,8 +1,9 @@
 //! Optional, metadata-only forge identity policy shared by managed API and Git runners.
-//! The launcher supplies the starting principal; authenticated session binding is a separate layer.
+//! Configured sessions resolve the principal from authenticated immutable launch context.
 mod git;
 mod policy;
 mod probe;
+pub mod session;
 pub use git::{
     authoring_remote, prepare_git, prepare_git_with_deadline, target_for_remote, verify_key,
 };
@@ -66,7 +67,8 @@ pub fn load() -> Result<Option<LoadedPolicy>> {
     let policy = Policy::parse(&text)?;
     // Presence, including an empty/non-Unicode value, activates strict selection.
     // Parse first so an unreadable or malformed installed policy never bypasses.
-    if policy.activation == policy::Activation::AssertedOnly
+    if !policy.require_session_binding
+        && policy.activation == policy::Activation::AssertedOnly
         && std::env::var_os(PRINCIPAL_ENV).is_none()
     {
         return Ok(None);
@@ -82,7 +84,20 @@ pub fn principal() -> Result<String> {
 }
 impl LoadedPolicy {
     pub fn select(&self, target: &Target, path: Option<&Path>, op: Operation) -> Result<Selection> {
-        self.policy.resolve(&principal()?, target, path, op)
+        if !self.policy.require_session_binding {
+            return self.policy.resolve(&principal()?, target, path, op);
+        }
+        probe::with_deadline(None, || {
+            let (principal, decision) = self.policy.session_decision(session::current()?)?;
+            if let Some(asserted) = std::env::var_os(PRINCIPAL_ENV)
+                && asserted != std::ffi::OsStr::new(&principal)
+            {
+                return Err(Error::new("identity_session_principal_mismatch"));
+            }
+            let mut selected = self.policy.resolve(&principal, target, path, op)?;
+            selected.session_binding = Some(decision);
+            Ok(selected)
+        })
     }
     pub fn authorize(
         &self,
@@ -241,16 +256,40 @@ impl LoadedPolicy {
             signer: Option<&'a str>,
             actor: Option<&'a str>,
             outcome: &'a str,
+            session_binding: Option<session::SessionBinding>,
+            matched_launch_rule: Option<String>,
+            asserted_principal: Option<String>,
         }
+        let binding = selection
+            .and_then(|s| s.session_binding.as_ref())
+            .map(|d| d.binding.clone())
+            .or_else(|| {
+                self.policy
+                    .require_session_binding
+                    .then(|| session::current().ok())
+                    .flatten()
+            });
+        let decision = binding
+            .as_ref()
+            .and_then(|b| self.policy.session_decision(b.clone()).ok());
         let record = Record {
             schema_version: "forge.identity.audit.v1",
             timestamp: jiff::Timestamp::now().to_string(),
             policy_version: 1,
             policy_digest: &self.digest,
-            principal: principal().ok(),
-            session: std::env::var(SESSION_ENV)
-                .ok()
-                .filter(|s| policy::identifier(s)),
+            principal: selection
+                .map(|s| s.principal.clone())
+                .or_else(|| decision.as_ref().map(|(p, _)| p.clone()))
+                .or_else(|| {
+                    (!self.policy.require_session_binding)
+                        .then(|| principal().ok())
+                        .flatten()
+                }),
+            session: binding.as_ref().map(|b| b.session_id.clone()).or_else(|| {
+                std::env::var(SESSION_ENV)
+                    .ok()
+                    .filter(|s| policy::identifier(s))
+            }),
             target,
             operation,
             profile_id: selection.map(|s| s.profile_id.as_str()),
@@ -260,6 +299,13 @@ impl LoadedPolicy {
                 .map(|s| s.profile.signing_fingerprint.as_str()),
             actor,
             outcome,
+            session_binding: binding,
+            matched_launch_rule: decision.map(|(_, d)| d.matched_launch_rule),
+            asserted_principal: self
+                .policy
+                .require_session_binding
+                .then(|| principal().ok())
+                .flatten(),
         };
         append_audit(&record)
     }
@@ -305,6 +351,23 @@ fn append_audit(record: &impl Serialize) -> Result<()> {
 }
 /// Record a refusal whose repository or policy could not be resolved. No caller text is retained.
 pub fn audit_refusal(code: &'static str) -> Result<()> {
+    if let Some(loaded) = load().ok().flatten()
+        && loaded.policy.require_session_binding
+    {
+        let binding = session::current().ok();
+        let decision = binding
+            .as_ref()
+            .and_then(|b| loaded.policy.session_decision(b.clone()).ok());
+        return append_audit(&serde_json::json!({
+            "schema_version":"forge.identity.audit.v1", "timestamp":jiff::Timestamp::now().to_string(),
+            "policy_version":1,"policy_digest":loaded.digest,
+            "principal":decision.as_ref().map(|(p,_)|p),
+            "session":binding.as_ref().map(|b|&b.session_id),
+            "session_binding":binding,
+            "matched_launch_rule":decision.map(|(_,d)|d.matched_launch_rule),
+            "asserted_principal":principal().ok(),"outcome":code,"target":null
+        }));
+    }
     append_audit(
         &serde_json::json!({"schema_version":"forge.identity.audit.v1","timestamp":jiff::Timestamp::now().to_string(),"principal":principal().ok(),"outcome":code,"target":null}),
     )
@@ -336,7 +399,7 @@ impl Authorization {
             "schema_version":"forge.identity.audit.v1","timestamp":jiff::Timestamp::now().to_string(),
             "policy_version":1,"policy_digest":self.policy_digest,"principal":self.selection.principal,
             "target":self.selection.target,"operation":self.selection.operation,"profile_id":self.selection.profile_id,
-            "matched_rule":self.selection.matched_rule,"actor":self.actor,
+            "matched_rule":self.selection.matched_rule,"actor":self.actor,"session_binding":self.selection.session_binding,
             "signer":(self.selection.operation == Operation::Commit).then_some(&self.selection.profile.signing_fingerprint),
             "outcome":if success {"execution_succeeded"} else {"execution_failed"},"object":object
         })).map_err(|_| Error::new("identity_audit_failed_after_execution"))

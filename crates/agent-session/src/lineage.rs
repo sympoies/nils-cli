@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use nils_common::forge_identity::session::{CONTEXT_KEY, LaunchContext};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -31,7 +32,7 @@ pub(crate) const VIA_CLI: &str = "cli";
 pub(crate) const VIA_CONSOLE: &str = "console";
 pub(crate) const VIA_HTTP: &str = "http";
 
-/// The only explicit session role.
+/// The coordinator role retains its root-only topology requirement.
 pub(crate) const ROLE_COORDINATOR: &str = "coordinator";
 const ROLE_INVALID: &str = "role-invalid";
 const ROLE_REQUIRES_ROOT: &str = "role-requires-root";
@@ -298,10 +299,19 @@ fn canonical_issues(issues: Vec<WorkRef>) -> Result<Vec<WorkRef>, CliError> {
 pub(crate) fn role_from_request(value: Option<&str>) -> Result<Option<String>, CliError> {
     match value {
         None => Ok(None),
-        Some(ROLE_COORDINATOR) => Ok(Some(ROLE_COORDINATOR.to_string())),
+        Some(role)
+            if LaunchContext {
+                initiator: "operator".into(),
+                role: Some(role.into()),
+            }
+            .validate()
+            .is_ok() =>
+        {
+            Ok(Some(role.into()))
+        }
         Some(_) => Err(CliError::usage(
             ROLE_INVALID,
-            "role must be \"coordinator\"",
+            "role must be a bounded identifier",
             None,
         )),
     }
@@ -318,7 +328,7 @@ pub(crate) fn role_from_create_body(value: Option<&Value>) -> Result<Option<Stri
 
 /// A coordinator is a root: it may not be started with a parent.
 pub(crate) fn require_root_for_role(role: Option<&str>, has_parent: bool) -> Result<(), CliError> {
-    if role.is_some() && has_parent {
+    if role == Some(ROLE_COORDINATOR) && has_parent {
         return Err(CliError::usage(
             ROLE_REQUIRES_ROOT,
             "role coordinator needs a root start: use --no-parent, or a start with no parent",
@@ -364,6 +374,7 @@ pub struct LineageSeed {
     machine: String,
     parent: Option<ParentLink>,
     starter: Starter,
+    forge_context: Option<LaunchContext>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -379,6 +390,7 @@ impl LineageSeed {
         Self {
             machine: machine.to_string(),
             parent: None,
+            forge_context: None,
             starter: Starter {
                 kind: kind.to_string(),
                 via: via.to_string(),
@@ -413,6 +425,12 @@ impl LineageSeed {
         }
         Ok(Self {
             machine: machine.to_string(),
+            forge_context: crate::forge_identity::context_of(parent)?.map(|context| {
+                LaunchContext {
+                    role: None,
+                    ..context
+                }
+            }),
             parent: Some(ParentLink {
                 parent: parent_ref,
                 root,
@@ -448,7 +466,21 @@ impl LineageSeed {
             depth,
             starter: self.starter.clone(),
             budget: None,
-            extra: BTreeMap::new(),
+            extra: self
+                .forge_context
+                .as_ref()
+                .map(|context| BTreeMap::from([(CONTEXT_KEY.into(), json!(context))]))
+                .unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn set_forge_context(&mut self, context: Option<LaunchContext>) {
+        self.forge_context = context;
+    }
+
+    pub(crate) fn set_forge_role(&mut self, role: Option<String>) {
+        if let Some(context) = self.forge_context.as_mut() {
+            context.role = role;
         }
     }
 
@@ -459,17 +491,28 @@ impl LineageSeed {
             Some(link) => (json!(link.parent), json!(link.root), link.depth),
             None => (Value::Null, Value::Null, 0),
         };
-        json!({
+        let mut value = json!({
             "schema_version": LINEAGE_SCHEMA,
             "parent": parent,
             "root": root,
             "depth": depth,
             "starter": self.starter,
-        })
+        });
+        if let Some(context) = &self.forge_context {
+            value[CONTEXT_KEY] = json!(context);
+        }
+        value
     }
 
     /// Validate the `lineage` of a create body for a session on `machine`.
     pub(crate) fn from_create_json(machine: &str, value: &Value) -> Result<Self, CliError> {
+        if value.get(CONTEXT_KEY).is_some() {
+            return Err(CliError::usage(
+                "identity_session_binding_untrusted",
+                "forge launch context requires a verified launch owner",
+                None,
+            ));
+        }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct RefInput {
@@ -558,6 +601,7 @@ impl LineageSeed {
             machine: machine.to_string(),
             parent,
             starter,
+            forge_context: None,
         })
     }
 }
@@ -578,6 +622,19 @@ pub(crate) fn resolve_cli_start(
         role: None,
     };
     let caller = crate::non_empty_env("AGENT_SESSION_ID");
+    if no_parent
+        && let Some(caller) = &caller
+        && let Ok(parent) = crate::load_session_record(context, caller)
+        && let Some(launch) = crate::forge_identity::context_of(&parent)?
+    {
+        crate::forge_identity::authenticate_parent(context, &parent)?;
+        let mut initial = root();
+        initial.seed.set_forge_context(Some(LaunchContext {
+            role: None,
+            ..launch
+        }));
+        return Ok((initial, None));
+    }
     let Some(caller) = caller.filter(|_| !no_parent) else {
         return Ok((root(), None));
     };
@@ -592,6 +649,9 @@ pub(crate) fn resolve_cli_start(
     let Ok(parent) = crate::load_session_record(context, &caller) else {
         return unresolved("does not resolve in this state directory");
     };
+    if crate::forge_identity::context_of(&parent)?.is_some() {
+        crate::forge_identity::authenticate_parent(context, &parent)?;
+    }
     let runtime = crate::non_empty_env("AGENT_SESSION_RUNTIME_ID");
     if runtime.is_none() || runtime.as_deref() != launch_id(&parent) {
         return unresolved("does not match AGENT_SESSION_RUNTIME_ID");
@@ -1277,6 +1337,7 @@ mod tests {
             session_incarnation: Some("launch-1".to_string()),
         };
         let seed = LineageSeed {
+            forge_context: None,
             machine: "c8".to_string(),
             parent: Some(ParentLink {
                 parent: parent.clone(),

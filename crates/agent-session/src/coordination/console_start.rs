@@ -178,11 +178,17 @@ fn child_session(
     session.remove("work");
     session.remove("role");
     let (seed, work) = if request.no_parent {
-        let seed = LineageSeed::root(
+        let mut seed = LineageSeed::root(
             relay_machine,
             lineage::STARTER_OPERATOR,
             lineage::VIA_CONSOLE,
         );
+        seed.set_forge_context(crate::forge_identity::context_of(caller)?.map(|context| {
+            nils_common::forge_identity::session::LaunchContext {
+                role: None,
+                ..context
+            }
+        }));
         (seed, request.work.resolve(None))
     } else {
         let seed = LineageSeed::child_of(
@@ -359,7 +365,7 @@ mod tests {
             json!({"machine": "c8"}),
             json!({"session": "claude"}),
             json!({"session": session, "no_parent": "yes"}),
-            json!({"session": session, "role": "boss"}),
+            json!({"session": session, "role": "invalid role"}),
             json!({"session": session, "role": 7}),
             json!({"session": session, "work": {"program": "a/b#1"}}),
             json!([]),

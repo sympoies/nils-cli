@@ -50,7 +50,8 @@ off\:"Disable agent-session collision warnings and admission"))' \
 '--machine=[Target machine for --via-console, as Agent Console names it. Defaults to this daemon'\''s machine]:MACHINE:_default' \
 '--account=[Account for --via-console, as the target daemon'\''s account broker names it\: a Codex account for --agent codex or a Claude account for --agent claude]:NAME:_default' \
 '--agent-profile=[Launch profile for --via-console, as the target daemon advertises it. A profile owns its launch command, so Agent Console ignores --agent-arg with it]:ID:_default' \
-'--role=[Mark this session as a coordinator. Stored once at start and never inherited by its children]:ROLE:(coordinator)' \
+'--role=[Configurable launch role; stored once and never inherited. A coordinator requires a root]:ROLE:_default' \
+'(--via-console)--forge-initiator=[Operator-only configured initiator for forge identity binding. Managed children inherit it]:ID:_default' \
 '--program=[Work-mode program tracker issue this session belongs to, as OWNER/REPO#N. Replaces the inherited program]:OWNER/REPO#N:_default' \
 '*--issue=[Issue this session works on, as OWNER/REPO#N. Repeatable, at most 4; replaces the inherited issues]:OWNER/REPO#N:_default' \
 '--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
@@ -566,6 +567,18 @@ _arguments "${_arguments_options[@]}" : \
         curcontext="${curcontext%:*:*}:agent-session-broker-command-$line[1]:"
         case $line[1] in
             (status)
+_arguments "${_arguments_options[@]}" : \
+'--session=[Managed session id whose broker status is shown]:SESSION:_default' \
+'--capability-file=[]:PATH:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(identity)
 _arguments "${_arguments_options[@]}" : \
 '--session=[Managed session id whose broker status is shown]:SESSION:_default' \
 '--capability-file=[]:PATH:_files' \
@@ -1114,6 +1127,7 @@ _agent-session__subcmd__board_commands() {
 _agent-session__subcmd__broker_commands() {
     local commands; commands=(
 'status:Show privacy-safe broker readiness and claim/operation summaries' \
+'identity:Authenticate and project the immutable forge launch binding (no credential access)' \
 'adopt:Adopt an unchanged live runtime after validating recovery proof' \
 'reconcile:Reconcile broker and registry state from validated recovery proof' \
 'stop:' \
@@ -1130,6 +1144,11 @@ _agent-session__subcmd__broker__subcmd__adopt_commands() {
 _agent-session__subcmd__broker__subcmd__heartbeat_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session broker heartbeat commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__broker__subcmd__identity_commands] )) ||
+_agent-session__subcmd__broker__subcmd__identity_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session broker identity commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__broker__subcmd__reconcile_commands] )) ||
 _agent-session__subcmd__broker__subcmd__reconcile_commands() {
