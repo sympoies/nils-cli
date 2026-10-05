@@ -358,6 +358,7 @@ fn post_reset(
 ) -> Result<(u16, String), RequestFailure> {
     let payload = serde_json::to_string(body).map_err(|_| RequestFailure::Client)?;
     let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(reset_max_time_seconds()))
         .build()
         .map_err(|_| RequestFailure::Client)?;

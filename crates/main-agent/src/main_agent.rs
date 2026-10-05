@@ -26857,8 +26857,7 @@ mod tests {
         );
         assert!(
             classified.1.contains("reassign"),
-            "the next action must route to reassign/cancel, got: {}",
-            classified.1
+            "the next action must route to reassign/cancel"
         );
         assert!(classified.2, "cancel and reassign are safe from this state");
 
@@ -26921,8 +26920,7 @@ mod tests {
         assert_eq!(post_claim.0, "post_claim_failure");
         assert!(
             post_claim.1.contains("reconcile-stopped"),
-            "the next action must name the executable terminalization, got: {}",
-            post_claim.1
+            "the next action must name the executable terminalization"
         );
         assert!(
             !post_claim.2,

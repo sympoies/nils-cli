@@ -2554,8 +2554,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             resumed.value["completed"], true,
-            "identical retry must resume from durable progress: {}",
-            resumed.value
+            "identical retry must resume from durable progress"
         );
         assert_eq!(resumed.value["run_closed"], true);
         assert_eq!(resumed.value["main_deleted"], true);
@@ -2653,8 +2652,7 @@ mod tests {
 
         assert_eq!(
             execution.value["completed"], true,
-            "unexpected cleanup result: {}",
-            execution.value
+            "unexpected cleanup result"
         );
         assert_eq!(execution.value["run_closed"], true);
         assert_eq!(execution.value["main_deleted"], true);
@@ -2794,8 +2792,7 @@ mod tests {
                 execute_group_cleanup(&context, "main", request.clone(), tmux.clone()).unwrap();
             assert_eq!(
                 resumed.value["completed"], true,
-                "stage={stage} result={}",
-                resumed.value
+                "cleanup retry must resume from durable progress"
             );
             let replayed = execute_group_cleanup(&context, "main", request, tmux).unwrap();
             assert_eq!(replayed.value, resumed.value, "stage={stage}");
@@ -3079,8 +3076,7 @@ mod tests {
             execute_group_cleanup(&context, "main-c", request.clone(), tmux.clone()).unwrap();
         assert_eq!(
             execution.value["completed"], true,
-            "unexpected prior-version replay result: {}",
-            execution.value
+            "prior-version replay must complete"
         );
         assert_eq!(
             execution.value["workers"][0]["assignment_id"], "prior-progress-canary",

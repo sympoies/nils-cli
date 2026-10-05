@@ -642,7 +642,7 @@ pub(crate) fn resolve_cli_start(
         Ok((
             root(),
             Some(format!(
-                "AGENT_SESSION_ID {caller} {reason}; starting a new root session without a parent"
+                "AGENT_SESSION_ID {reason}; starting a new root session without a parent"
             )),
         ))
     };
