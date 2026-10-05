@@ -1314,6 +1314,16 @@ fn startup_failure_details(
     observed_stage: &str,
 ) -> Option<(&'static str, &'static str, bool)> {
     match code {
+        "claude-account-switch-cleanup-incomplete" => Some((
+            "runtime",
+            "The account switch failed and runtime cleanup is incomplete. Inspect or repair the session before retrying.",
+            false,
+        )),
+        "claude-account-switch-resume-failed" => Some((
+            "runtime",
+            "The account switch stopped the session but could not resume it. Retry resume to apply the next account.",
+            true,
+        )),
         "runtime-helper-unavailable" => Some((
             "proxy",
             "Session runtime helper is unavailable after an upgrade.",
@@ -10783,6 +10793,8 @@ fn resume_session_locked(
     record.extra.remove(DELETE_TMUX_PRIOR_IDENTITIES_KEY);
     record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
     let previous_record = record.clone();
+    // Capture absence before new-session can reuse the old internal tmux ID.
+    let previous_runtime = coordination::capture_previous_runtime(&previous_record, tmux_bin);
     let app_server_managed = agent == AgentKind::Codex
         && (codex_app_server::runtime_is_supported(&previous_record)
             || codex_account::binding_is_present(&previous_record));
@@ -10867,7 +10879,11 @@ fn resume_session_locked(
                         return Err(termination_err);
                     }
                 }
-            } else if let Err(err) = establish_coordination_broker(context, &record) {
+            } else if let Err(err) = establish_coordination_broker_with_previous(
+                context,
+                &record,
+                Some(&previous_runtime),
+            ) {
                 match recover_failed_tmux_launch(
                     context,
                     &mut record,
@@ -11109,7 +11125,18 @@ fn establish_coordination_broker(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Result<(), CliError> {
-    coordination::provision(context, record)?;
+    establish_coordination_broker_with_previous(context, record, None)
+}
+
+fn establish_coordination_broker_with_previous(
+    context: &CliContext,
+    record: &SessionRecord,
+    previous: Option<&coordination::PreviousRuntimeEvidence>,
+) -> Result<(), CliError> {
+    match previous {
+        Some(prior) => coordination::provision_with_previous(context, record, prior)?,
+        None => coordination::provision(context, record)?,
+    };
     write_private_file(&broker_gate_path(&context.state_dir, record), b"ready\n").map_err(
         |_| {
             CliError::runtime(

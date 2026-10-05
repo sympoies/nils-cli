@@ -380,7 +380,8 @@ recorded in `sympoies/nils-cli#1409`.
   allowlisted code: `runtime-helper-unavailable`, `agent-binary-unavailable`,
   `working-directory-unavailable`, `terminal-runtime-create-failed`,
   `app-server-start-failed`, `proxy-start-failed`, `provider-client-exited`,
-  `provider-configuration-rejected`, `startup-timeout`, or `startup-exited`.
+  `provider-configuration-rejected`, `startup-timeout`, `startup-exited`, or
+  `claude-account-switch-resume-failed`, or `claude-account-switch-cleanup-incomplete`.
   A failure whose cleanup could not finish adds a bounded `cleanup` object with
   `state` of `pending` or `blocked` and one allowlisted `reason`:
   `session_still_running`, `process_boundary_live`, `runtime_identity_changed`,
@@ -1278,7 +1279,7 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   (`agent-session.claude-account.v1`: `supported`, `state`
   `bound`/`unbound`/`failed`/`unsupported`, `selected_account`,
   `selection_source`, `revision`, `applied_runtime_id`, optional
-  `next: {account, revision, state: "queued"}`). It is omitted for other
+  `next: {account, revision, state: "queued" | "failed", failure_reason?}`). It is omitted for other
   providers and for Claude sessions without binding state on a daemon without
   a Claude broker. It never contains the directory path.
 - Switch: `PUT /sessions/{id}/account` with
@@ -1299,11 +1300,21 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   and the intent stays queued. After a verified stop, the switch retires the
   stopped runtime's coordination incarnation (its heartbeat writer died with
   it) before resuming, so the resume is not refused as a live prior
-  incarnation. If the resume still fails, the response is
+  incarnation. If the resume still fails and the current runtime is proven
+  stopped, the response is
   `claude-account-switch-resume-failed` (HTTP 422) with
   `details: {id, session_state: "stopped", next_account, cause, recovery}`:
-  the session is stopped with the account queued, and `recovery` names the
-  `agent-session resume <id>` command that applies it. The local
+  the next account is retained with `state: "failed"` and `failure_reason`
+  carrying the underlying error code. The account projection's state is
+  `failed`, and the session's `startup` projection reports
+  `claude-account-switch-resume-failed`, so later Console reads expose the
+  failure. `recovery` names the
+  `agent-session resume <id>` command that applies it. If replacement cleanup
+  remains live or unverified, the response preserves the original termination
+  or rollback error instead of claiming a stopped session. The account attempt
+  is still marked failed with that code; startup reports
+  `claude-account-switch-cleanup-incomplete` with `retry_safe: false`; the durable
+  startup record retains bounded cleanup state. The local
   `agent-session account switch` CLI shares this path; run from inside the
   session's own tmux session it only queues, since restarting the runtime that
   hosts it would stop the switch mid-way. There is no automatic failover for

@@ -1920,6 +1920,16 @@ pub fn provision(context: &CliContext, record: &SessionRecord) -> Result<PathBuf
     broker::provision(context, record)
 }
 
+pub(crate) use broker::{PreviousRuntimeEvidence, capture_previous_runtime};
+
+pub(crate) fn provision_with_previous(
+    context: &CliContext,
+    record: &SessionRecord,
+    previous: &PreviousRuntimeEvidence,
+) -> Result<PathBuf, CliError> {
+    broker::provision_with_previous(context, record, Some(previous))
+}
+
 pub(crate) fn prepare(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
     broker::prepare(context, record)
 }
@@ -2029,8 +2039,9 @@ pub(crate) fn revoke(context: &CliContext, record: &SessionRecord) -> Result<(),
 pub(crate) fn retire_after_verified_stop(
     context: &CliContext,
     record: &SessionRecord,
+    tmux_bin: &Path,
 ) -> Result<(), CliError> {
-    broker::retire_after_verified_stop(context, record)
+    broker::retire_after_verified_stop(context, record, tmux_bin)
 }
 
 pub(crate) fn forget_revoked_failed_launch(

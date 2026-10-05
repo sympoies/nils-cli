@@ -138,7 +138,93 @@ pub(crate) fn prepare_in_dir(session_dir: &Path) -> Result<(), CliError> {
         .map_err(|_| unavailable())
 }
 
+/// The old tmux target may be reused by the replacement, so retain its
+/// pre-launch observation rather than probing that target after launch.
+pub(crate) struct PreviousRuntimeEvidence {
+    record: SessionRecord,
+    status: crate::CoordinationRuntimeStatus,
+}
+
+pub(crate) fn capture_previous_runtime(
+    record: &SessionRecord,
+    tmux_bin: &Path,
+) -> PreviousRuntimeEvidence {
+    let status = incarnation(record)
+        .ok()
+        .map(|incarnation| legacy_runtime_status(record, &incarnation, tmux_bin))
+        .unwrap_or(crate::CoordinationRuntimeStatus::Unknown);
+    PreviousRuntimeEvidence {
+        record: record.clone(),
+        status,
+    }
+}
+
+/// Positive process evidence wins; Linux retains namespace and boot checks.
+/// Missing, invalid, or incarnation-mismatched persisted evidence stays unknown.
+fn legacy_process_runtime_status(
+    record: &SessionRecord,
+    expected_incarnation: &str,
+) -> crate::CoordinationRuntimeStatus {
+    use crate::CoordinationRuntimeStatus::{Running, Stopped, Unknown};
+    if incarnation(record).ok().as_deref() != Some(expected_incarnation) {
+        return Unknown;
+    }
+    let Ok(Some(identity)) = crate::persisted_tmux_runtime_identity(record) else {
+        return Unknown;
+    };
+    #[cfg(target_os = "linux")]
+    let status = crate::coordination_process_runtime_status(&identity);
+    #[cfg(not(target_os = "linux"))]
+    let status = identity
+        .process_group_id
+        .map(crate::process_group_status)
+        .unwrap_or(crate::ProcessGroupStatus::Unknown);
+    match status {
+        crate::ProcessGroupStatus::Running => Running,
+        crate::ProcessGroupStatus::Stopped => Stopped,
+        crate::ProcessGroupStatus::Unknown => Unknown,
+    }
+}
+
+/// A stopped process boundary also needs the exact old tmux target absent.
+/// This probe runs before any replacement is launched (or during stop retirement).
+fn legacy_runtime_status(
+    record: &SessionRecord,
+    expected_incarnation: &str,
+    tmux_bin: &Path,
+) -> crate::CoordinationRuntimeStatus {
+    use crate::CoordinationRuntimeStatus::{Running, Stopped, Unknown};
+    let status = legacy_process_runtime_status(record, expected_incarnation);
+    if status != Stopped {
+        return status;
+    }
+    let Ok(Some(identity)) = crate::persisted_tmux_runtime_identity(record) else {
+        return Unknown;
+    };
+    match crate::verified_tmux_status_with_timeout(
+        tmux_bin,
+        &identity.session_id,
+        crate::DELETE_TERMINATION_VERIFY_TIMEOUT,
+    )
+    .as_str()
+    {
+        "stopped" => Stopped,
+        "running" => Running,
+        _ => Unknown,
+    }
+}
+
 pub(crate) fn provision(context: &CliContext, record: &SessionRecord) -> Result<PathBuf, CliError> {
+    provision_with_previous(context, record, None)
+}
+
+/// Resume retains the old record before the new pane identity overwrites it.
+/// Only a broker from an older release without its own identity may use this evidence.
+pub(crate) fn provision_with_previous(
+    context: &CliContext,
+    record: &SessionRecord,
+    prior_record: Option<&PreviousRuntimeEvidence>,
+) -> Result<PathBuf, CliError> {
     crate::orchestration::ensure_session_not_quarantined(context, record)?;
     prepare(context, record)?;
     let incarnation = incarnation(record)?;
@@ -178,7 +264,24 @@ pub(crate) fn provision(context: &CliContext, record: &SessionRecord) -> Result<
             .runtime_identity
             .as_ref()
             .map(crate::coordination_runtime_status_for_identity)
-            .unwrap_or(crate::CoordinationRuntimeStatus::Unknown);
+            .unwrap_or_else(|| {
+                prior_record
+                    .filter(|prior| {
+                        prior.record.id == record.id
+                            && prior
+                                .record
+                                .runtime
+                                .as_ref()
+                                .is_some_and(|runtime| runtime.generation == previous.generation)
+                    })
+                    .map(|prior| {
+                        match legacy_process_runtime_status(&prior.record, &previous.incarnation) {
+                            crate::CoordinationRuntimeStatus::Stopped => prior.status,
+                            status => status,
+                        }
+                    })
+                    .unwrap_or(crate::CoordinationRuntimeStatus::Unknown)
+            });
         if heartbeat_live || previous_runtime_status == crate::CoordinationRuntimeStatus::Running {
             if previous.lost_since_epoch.is_some() {
                 if let Some(previous) = locked.registry.brokers.get_mut(&record.id) {
@@ -496,8 +599,10 @@ pub(crate) fn revoke(context: &CliContext, record: &SessionRecord) -> Result<(),
 pub(crate) fn retire_after_verified_stop(
     context: &CliContext,
     record: &SessionRecord,
+    tmux_bin: &Path,
 ) -> Result<(), CliError> {
     let incarnation = incarnation(record)?;
+    let previous_runtime = capture_previous_runtime(record, tmux_bin);
     revoke(context, record)?;
     let locked = lock_registry(context)?;
     let proven_stopped = locked
@@ -505,9 +610,17 @@ pub(crate) fn retire_after_verified_stop(
         .brokers
         .get(&record.id)
         .filter(|broker| broker.incarnation == incarnation)
-        .and_then(|broker| broker.runtime_identity.as_ref())
-        .is_some_and(|identity| {
-            crate::coordination_runtime_status_for_identity(identity)
+        .is_some_and(|broker| {
+            broker
+                .runtime_identity
+                .as_ref()
+                .map(crate::coordination_runtime_status_for_identity)
+                .unwrap_or_else(|| {
+                    match legacy_process_runtime_status(&previous_runtime.record, &incarnation) {
+                        crate::CoordinationRuntimeStatus::Stopped => previous_runtime.status,
+                        status => status,
+                    }
+                })
                 == crate::CoordinationRuntimeStatus::Stopped
         });
     if proven_stopped && heartbeat_fresh(context, &record.id, &incarnation, 0) {
@@ -1433,10 +1546,11 @@ fn heartbeat_fresh_with_clock(
 
 /// Seeds for tests outside this module that exercise a stopped runtime's
 /// coordination incarnation.
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
     use serde_json::json;
+    #[cfg(target_os = "linux")]
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::process::CommandExt;
 
@@ -1454,19 +1568,38 @@ pub(crate) mod test_support {
 
     /// Runtime identity evidence for `process_group` in this pid namespace.
     pub(crate) fn process_group_identity(process_group: libc::pid_t) -> Value {
+        #[cfg(target_os = "linux")]
         let namespace = fs::metadata("/proc/self/ns/pid").expect("pid namespace");
+        #[cfg(target_os = "linux")]
         let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id").expect("boot id");
-        json!({
+        let identity = json!({
             "session_id": "$1",
             "pane_id": "%1",
             "pane_pid": process_group,
             "process_group_id": process_group,
-            "pid_namespace": {
+        });
+        #[cfg(target_os = "linux")]
+        let identity = {
+            let mut identity = identity;
+            identity["pid_namespace"] = json!({
                 "device": namespace.dev(),
                 "inode": namespace.ino(),
                 "boot_id": boot_id.trim(),
-            },
-        })
+            });
+            identity
+        };
+        identity
+    }
+
+    pub(crate) fn make_legacy_broker(context: &CliContext, session_id: &str, fresh: bool) {
+        let mut locked = lock_registry(context).expect("registry");
+        let broker = locked.registry.brokers.get_mut(session_id).expect("broker");
+        broker.runtime_identity = None;
+        broker.heartbeat_epoch = 0;
+        locked.save().expect("save older broker");
+        if !fresh {
+            fs::remove_file(super::super::heartbeat_path(&context.state_dir, session_id)).unwrap();
+        }
     }
 
     /// A ready broker for `incarnation` with a fresh heartbeat, as a running
@@ -1735,7 +1868,6 @@ mod tests {
         assert!(!registry.advisory_observations.contains_key("session"));
     }
 
-    #[cfg(target_os = "linux")]
     fn seed_retirable_broker(context: &CliContext, runtime_identity: Value) -> SessionRecord {
         let record: SessionRecord = serde_json::from_value(json!({
             "schema_version": crate::SESSION_DOCUMENT_VERSION,
@@ -1762,6 +1894,182 @@ mod tests {
         record
     }
 
+    #[test]
+    fn legacy_replacement_keeps_live_unknown_and_broker_owned_evidence_fenced() {
+        use pretty_assertions::assert_eq;
+        let temporary = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: temporary.path().to_path_buf(),
+            host: None,
+        };
+        let tmux = temporary.path().join("tmux");
+        fs::write(
+            &tmux,
+            "#!/bin/sh\nprintf '%s\n' \"can't find session: fixture\" >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let stopped_identity =
+            test_support::process_group_identity(test_support::exited_process_group());
+        let mut prior = seed_retirable_broker(&context, stopped_identity.clone());
+        let mut persisted = stopped_identity.clone();
+        persisted["launch_id"] = json!("old");
+        prior
+            .extra
+            .insert("delete_tmux_identity".to_string(), persisted);
+        crate::write_session_record(&context, &prior).unwrap();
+        let mut replacement = prior.clone();
+        replacement.runtime.as_mut().unwrap().launch_id = "new".to_string();
+        replacement.runtime.as_mut().unwrap().generation = 2;
+
+        // A missing registry identity can use only a proven stopped old record.
+        test_support::make_legacy_broker(&context, "session", false);
+        let captured = crate::persisted_tmux_runtime_identity(&prior)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::process_group_status(captured.process_group_id.unwrap()),
+            crate::ProcessGroupStatus::Stopped
+        );
+        assert_eq!(
+            crate::verified_tmux_status_with_timeout(
+                &tmux,
+                &captured.session_id,
+                Duration::from_secs(1)
+            ),
+            "stopped"
+        );
+        assert_eq!(
+            legacy_runtime_status(&prior, "old", &tmux),
+            crate::CoordinationRuntimeStatus::Stopped
+        );
+        provision_with_previous(
+            &context,
+            &replacement,
+            Some(&capture_previous_runtime(&prior, &tmux)),
+        )
+        .unwrap();
+
+        // Even stopped process evidence cannot override a fresh old heartbeat.
+        test_support::seed_live_broker(&context, "session", "old", stopped_identity.clone());
+        test_support::make_legacy_broker(&context, "session", true);
+        assert_eq!(
+            provision_with_previous(
+                &context,
+                &replacement,
+                Some(&capture_previous_runtime(&prior, &tmux))
+            )
+            .unwrap_err()
+            .code(),
+            "session-incarnation-conflict"
+        );
+        test_support::make_legacy_broker(&context, "session", false);
+
+        let mut live = prior.clone();
+        let mut identity = test_support::process_group_identity(unsafe { libc::getpgrp() });
+        identity["launch_id"] = json!("old");
+        live.extra
+            .insert("delete_tmux_identity".to_string(), identity);
+        assert_eq!(
+            provision_with_previous(
+                &context,
+                &replacement,
+                Some(&capture_previous_runtime(&live, &tmux))
+            )
+            .unwrap_err()
+            .code(),
+            "session-incarnation-conflict"
+        );
+
+        for mutation in [
+            "missing",
+            "invalid",
+            "wrong-launch",
+            "wrong-session",
+            "wrong-generation",
+            "no-group",
+        ] {
+            let mut unverified = prior.clone();
+            match mutation {
+                "missing" => {
+                    unverified.extra.remove("delete_tmux_identity");
+                }
+                "invalid" => {
+                    unverified
+                        .extra
+                        .insert("delete_tmux_identity".to_string(), json!({}));
+                }
+                "wrong-launch" => {
+                    unverified.extra.get_mut("delete_tmux_identity").unwrap()["launch_id"] =
+                        json!("other");
+                }
+                "wrong-session" => {
+                    unverified.id = "other".to_string();
+                }
+                "wrong-generation" => {
+                    unverified.runtime.as_mut().unwrap().generation = 9;
+                }
+                "no-group" => {
+                    unverified
+                        .extra
+                        .get_mut("delete_tmux_identity")
+                        .unwrap()
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("process_group_id");
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                provision_with_previous(
+                    &context,
+                    &replacement,
+                    Some(&capture_previous_runtime(&unverified, &tmux))
+                )
+                .unwrap_err()
+                .code(),
+                "coordination-runtime-unverified",
+                "{mutation}"
+            );
+        }
+        fs::write(&tmux, "#!/bin/sh\nexit 0\n").unwrap();
+        assert_eq!(
+            provision_with_previous(
+                &context,
+                &replacement,
+                Some(&capture_previous_runtime(&prior, &tmux))
+            )
+            .unwrap_err()
+            .code(),
+            "session-incarnation-conflict"
+        );
+        fs::write(&tmux, "#!/bin/sh\nexit 2\n").unwrap();
+        assert_eq!(
+            provision_with_previous(
+                &context,
+                &replacement,
+                Some(&capture_previous_runtime(&prior, &tmux))
+            )
+            .unwrap_err()
+            .code(),
+            "coordination-runtime-unverified"
+        );
+
+        // A broker's own unknown evidence must never be replaced by the fallback.
+        test_support::seed_live_broker(&context, "session", "old", json!({}));
+        fs::remove_file(super::super::heartbeat_path(&context.state_dir, "session")).unwrap();
+        assert_eq!(
+            provision_with_previous(
+                &context,
+                &replacement,
+                Some(&capture_previous_runtime(&prior, &tmux))
+            )
+            .unwrap_err()
+            .code(),
+            "coordination-runtime-unverified"
+        );
+    }
+
     /// A verified stop kills the heartbeat writer with the runtime, but its last
     /// beat stays fresh for the freshness window and would refuse the session's
     /// own resume as "the prior coordination incarnation is still live".
@@ -1779,7 +2087,7 @@ mod tests {
         );
         assert!(heartbeat_fresh(&context, "session", "old", 0));
 
-        retire_after_verified_stop(&context, &record).expect("retire");
+        retire_after_verified_stop(&context, &record, Path::new("tmux")).expect("retire");
 
         assert!(
             !heartbeat_fresh(&context, "session", "old", 0),
@@ -1793,7 +2101,8 @@ mod tests {
         let own_group = unsafe { libc::getpgrp() };
         let record =
             seed_retirable_broker(&context, test_support::process_group_identity(own_group));
-        retire_after_verified_stop(&context, &record).expect("retire is a no-op");
+        retire_after_verified_stop(&context, &record, Path::new("tmux"))
+            .expect("retire is a no-op");
         assert!(heartbeat_fresh(&context, "session", "old", 0));
     }
 

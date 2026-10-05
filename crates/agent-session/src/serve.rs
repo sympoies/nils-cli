@@ -30366,7 +30366,201 @@ esac
             "{details}"
         );
         let persisted = load_session_record(&context, "claude-stranded").unwrap();
-        assert!(crate::claude_account::has_queued_next(&persisted));
+        let view =
+            serde_json::to_value(crate::session_view(&context, &persisted, None, Some(&tmux)))
+                .unwrap();
+        assert_eq!(view["claude_account"]["next"]["state"], "failed");
+        assert_eq!(
+            view["claude_account"]["next"]["failure_reason"],
+            details["cause"]
+        );
+        assert_eq!(view["claude_account"]["state"], "failed");
+        assert_eq!(view["startup"]["state"], "failed");
+        assert_eq!(
+            view["startup"]["failure_code"],
+            "claude-account-switch-resume-failed"
+        );
+        assert!(!crate::claude_account::has_queued_next(&persisted));
+        let retry_tmux = resume_tmux(tmp.path(), &tmp.path().join("retry.log"));
+        let retried = crate::resume_session_locked(&context, persisted, &retry_tmux).unwrap();
+        let retried = serde_json::to_value(retried.session).unwrap();
+        assert_eq!(retried["claude_account"]["selected_account"], "beta");
+        assert!(retried["claude_account"].get("next").is_none());
+        assert_ne!(retried["startup"]["state"], "failed");
+    }
+
+    #[test]
+    fn claude_switch_preserves_unverified_replacement_cleanup_failure() {
+        use crate::coordination::broker::test_support;
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let _broker = claude_broker_fixture(&lock, tmp.path());
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        seed_bound_claude_session(tmp.path(), "uncertain-switch", &cwd, "alpha");
+        let mut record = load_session_record(&context, "uncertain-switch").unwrap();
+        crate::claude_account::queue_next(&mut record, "beta").unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        let old = record.runtime.as_ref().unwrap().launch_id.clone();
+        // An explicit unknown broker identity refuses provisioning, while the
+        // fake tmux kill does not stop the new pane's real process boundary.
+        test_support::seed_live_broker(&context, &record.id, &old, json!({}));
+        let heartbeat = crate::coordination::heartbeat_path(&context.state_dir, &record.id);
+        fs::remove_file(heartbeat).unwrap();
+        let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
+        let error = crate::session_account::resume_after_switch_stop(&context, &record.id, &tmux)
+            .unwrap_err();
+        assert_eq!(error.code(), "session-termination-failed");
+        assert_ne!(
+            error.details().unwrap().get("session_state"),
+            Some(&json!("stopped"))
+        );
+        let retained = load_session_record(&context, &record.id).unwrap();
+        let view =
+            serde_json::to_value(crate::session_view(&context, &retained, None, Some(&tmux)))
+                .unwrap();
+        assert_eq!(view["claude_account"]["next"]["state"], "failed");
+        assert_eq!(
+            view["claude_account"]["next"]["failure_reason"],
+            "session-termination-failed"
+        );
+        assert_eq!(view["startup"]["state"], "failed");
+        assert_eq!(view["startup"]["retry_safe"], false);
+        assert!(retained.extra["startup"].get("cleanup").is_some());
+    }
+
+    #[test]
+    fn legacy_broker_resume_uses_prior_persisted_identity() {
+        use crate::coordination::broker::test_support;
+        let lock = GlobalStateLock::new();
+        for agent in ["claude", "codex"] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let cwd = tmp.path().join("repo");
+            fs::create_dir_all(&cwd).unwrap();
+            let _broker = claude_broker_fixture(&lock, tmp.path());
+            let context = CliContext {
+                state_dir: tmp.path().to_path_buf(),
+                host: None,
+            };
+            if agent == "claude" {
+                seed_bound_claude_session(tmp.path(), "prior-resume", &cwd, "alpha");
+            } else {
+                seed_resumable_session(
+                    tmp.path(),
+                    "prior-resume",
+                    "codex",
+                    "fixture-runtime",
+                    &cwd,
+                    &[
+                        "resume",
+                        "resume-session-id",
+                        "--cd",
+                        cwd.to_str().unwrap(),
+                        "--no-alt-screen",
+                    ],
+                );
+            }
+            let mut record = load_session_record(&context, "prior-resume").unwrap();
+            let old = record.runtime.as_ref().unwrap().launch_id.clone();
+            let mut identity =
+                test_support::process_group_identity(test_support::exited_process_group());
+            identity["launch_id"] = json!(old);
+            record.extra.remove("tmux_runtime_never_launched");
+            record
+                .extra
+                .insert("delete_tmux_identity".to_string(), identity.clone());
+            crate::write_session_record(&context, &record).unwrap();
+            test_support::seed_live_broker(&context, &record.id, &old, identity);
+            test_support::make_legacy_broker(&context, &record.id, false);
+            let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
+            let result = crate::resume_session_locked(&context, record, &tmux)
+                .expect("a stopped older broker must permit exact provider resume");
+            assert_ne!(result.session_incarnation.as_deref(), Some(old.as_str()));
+            assert_eq!(result.session.status, "running");
+        }
+    }
+
+    #[test]
+    fn legacy_resume_allows_tmux_to_reuse_the_stopped_internal_session_id() {
+        use crate::coordination::broker::test_support;
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let _broker = claude_broker_fixture(&lock, tmp.path());
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        seed_bound_claude_session(tmp.path(), "reused-runtime", &cwd, "alpha");
+        let mut record = load_session_record(&context, "reused-runtime").unwrap();
+        let old = record.runtime.as_ref().unwrap().launch_id.clone();
+        let mut identity =
+            test_support::process_group_identity(test_support::exited_process_group());
+        identity["launch_id"] = json!(old);
+        identity["session_id"] = json!("$77");
+        identity["pane_id"] = json!("%77");
+        record.extra.remove("tmux_runtime_never_launched");
+        record
+            .extra
+            .insert("delete_tmux_identity".to_string(), identity.clone());
+        crate::write_session_record(&context, &record).unwrap();
+        test_support::seed_live_broker(&context, &record.id, &old, identity);
+        test_support::make_legacy_broker(&context, &record.id, false);
+        let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
+        let script = fs::read_to_string(&tmux).unwrap()
+            .replace("has-session)", "has-session) if [ -f \"$NILS_TEST_PANE_PARENT/.replacement-live\" ]; then exit 0; fi;")
+            .replace("new-session)", "new-session) touch \"$NILS_TEST_PANE_PARENT/.replacement-live\";");
+        fs::write(&tmux, script).unwrap();
+        let result = crate::resume_session_locked(&context, record, &tmux)
+            .expect("the new runtime may reuse the stopped internal tmux ID");
+        assert_eq!(result.session.status, "running");
+    }
+
+    #[test]
+    fn claude_legacy_switch_retires_the_verified_stop_and_applies_next_account() {
+        use crate::coordination::broker::test_support;
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cwd = tmp.path().join("repo");
+        fs::create_dir_all(&cwd).unwrap();
+        let _broker = claude_broker_fixture(&lock, tmp.path());
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        seed_bound_claude_session(tmp.path(), "prior-switch", &cwd, "alpha");
+        let mut record = load_session_record(&context, "prior-switch").unwrap();
+        let old = record.runtime.as_ref().unwrap().launch_id.clone();
+        let mut identity =
+            test_support::process_group_identity(test_support::exited_process_group());
+        identity["launch_id"] = json!(old);
+        record.extra.remove("tmux_runtime_never_launched");
+        record
+            .extra
+            .insert("delete_tmux_identity".to_string(), identity.clone());
+        crate::claude_account::queue_next(&mut record, "beta").unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        test_support::seed_live_broker(&context, &record.id, &old, identity);
+        test_support::make_legacy_broker(&context, &record.id, true);
+        let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
+        let script = fs::read_to_string(&tmux).unwrap().replace(
+            r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then"#,
+            r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then gate="$(dirname "$heartbeat")/broker-provisioned"; (i=0; while [ ! -f "$gate" ] && [ "$i" -lt 1000 ]; do i=$((i + 1)); sleep 0.01; done; printf '%s:%s\n' "$incarnation" "$(date +%s)" > "$heartbeat"; chmod 600 "$heartbeat") >/dev/null 2>&1 & fi; if false; then"#,
+        );
+        fs::write(&tmux, script).unwrap();
+        let (incarnation, _) =
+            crate::session_account::resume_after_switch_stop(&context, &record.id, &tmux)
+                .expect("verified older runtime stop must resume under the queued account");
+        assert_ne!(incarnation.as_deref(), Some(old.as_str()));
+        let resumed = load_session_record(&context, &record.id).unwrap();
+        let view = serde_json::to_value(crate::claude_account::view_for_record(&resumed)).unwrap();
+        assert_eq!(view["selected_account"], "beta");
+        assert!(view.get("next").is_none());
     }
 
     /// The killed runtime's broker still has a fresh heartbeat when the switch
