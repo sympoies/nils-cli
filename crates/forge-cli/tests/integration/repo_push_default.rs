@@ -429,6 +429,18 @@ fn run_with_repo_options(
     head: &str,
     repository: &str,
 ) -> (StubEnv, super::support::CmdOutput) {
+    run_with_repo_options_and_identity(scenario, dry_run, provider, host, head, repository, false)
+}
+
+fn run_with_repo_options_and_identity(
+    scenario: GitScenario<'_>,
+    dry_run: bool,
+    provider: &str,
+    host: Option<&str>,
+    head: &str,
+    repository: &str,
+    selected_identity: bool,
+) -> (StubEnv, super::support::CmdOutput) {
     let provider_stub = scenario.provider_stub.map(str::to_string);
     let stub = match provider {
         "github" => {
@@ -459,7 +471,49 @@ fn run_with_repo_options(
     if let Some(capture_limit_bytes) = scenario.capture_limit_bytes {
         stub = stub.env("FORGE_CLI_GIT_CAPTURE_LIMIT_BYTES", capture_limit_bytes);
     }
-    let stub = stub.git_stub(&git_body);
+    let mut stub = stub.git_stub(&git_body);
+    if selected_identity {
+        let config_home = stub.tempdir.path().join("identity-config");
+        let forge_config = config_home.join("forge-cli");
+        fs::create_dir_all(&forge_config).expect("identity config dir");
+        let policy = include_str!("../../../nils-common/tests/fixtures/identity/policy.toml")
+            .replace("sandbox/widget", "sympoies/demo");
+        fs::write(
+            forge_config.join("identity.toml"),
+            format!("activation = 'asserted-only'\n{policy}"),
+        )
+        .expect("identity policy");
+        let bin_dir = stub.tempdir.path().join("identity-bin");
+        fs::create_dir(&bin_dir).expect("identity bin dir");
+        let identity_gh = bin_dir.join("gh");
+        fs::write(
+            &identity_gh,
+            format!(
+                "#!/bin/sh\nif [ \"$1:$2\" = api:user ]; then printf '{{\"login\":\"account-a\"}}'; else cat <<'EOF'\n{GH_REPO_VIEW_JSON}\nEOF\nfi\n"
+            ),
+        )
+        .expect("identity gh stub");
+        let mut permissions = fs::metadata(&identity_gh).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&identity_gh, permissions).expect("identity gh executable");
+        let fixture_path = format!(
+            "{}:{}",
+            bin_dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        stub = stub
+            .env(
+                "XDG_CONFIG_HOME",
+                config_home.to_string_lossy().into_owned(),
+            )
+            .env("FORGE_IDENTITY_PRINCIPAL", "contributor")
+            .env("FIXTURE_ACCOUNT_A_CREDENTIAL", "fixture-credential")
+            .env(
+                "FORGE_CLI_GH_BIN",
+                identity_gh.to_string_lossy().into_owned(),
+            )
+            .env("PATH", fixture_path);
+    }
     let reason = reason.to_string_lossy().into_owned();
     let mut args = vec![
         "--provider",
@@ -482,6 +536,18 @@ fn run_with_repo_options(
     }
     if dry_run {
         args.insert(0, "--dry-run");
+    }
+    if selected_identity {
+        let initialized = Command::new("git")
+            .current_dir(stub.tempdir.path())
+            .args(["init", "-b", "feat/identity-fixture"])
+            .output()
+            .expect("initialize identity fixture repository");
+        assert!(
+            initialized.status.success(),
+            "{}",
+            String::from_utf8_lossy(&initialized.stderr)
+        );
     }
     let out = run_forge_cli_in(&stub, &args, Some(stub.tempdir.path()));
     (stub, out)
@@ -858,6 +924,26 @@ fn push_default_returns_verified_remote_receipt_without_force() {
 }
 
 #[test]
+fn push_default_accepts_selected_asserted_identity() {
+    let (stub, out) = run_with_repo_options_and_identity(
+        GitScenario::default(),
+        false,
+        "github",
+        None,
+        "HEAD",
+        "sympoies/demo",
+        true,
+    );
+    assert_eq!(out.code, 0, "stdout={} stderr={}", out.stdout, out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["pushed"], true);
+    let log = fs::read_to_string(stub.tempdir.path().join("git.log")).expect("git log");
+    assert!(
+        log.contains("push --porcelain --no-follow-tags --no-recurse-submodules --no-push-option")
+    );
+}
+
+#[test]
 fn push_default_returns_equivalent_verified_gitlab_receipt() {
     let scenario = GitScenario {
         push_urls: "https://gitlab.com/sympoies/demo.git\n",
@@ -966,9 +1052,9 @@ fn push_default_disables_inherited_real_git_push_expansion() {
     assert!(log.contains("--no-follow-tags"));
     assert!(log.contains("--no-recurse-submodules"));
     assert!(log.contains("--no-push-option"));
-    assert!(log.contains("push.followTags=false"));
+    assert!(!log.contains("push.followTags=false"));
     assert!(log.contains("push.pushOption="));
-    assert!(log.contains("push.recurseSubmodules=no"));
+    assert!(!log.contains("push.recurseSubmodules=no"));
 }
 
 #[test]

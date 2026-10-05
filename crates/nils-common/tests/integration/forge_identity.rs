@@ -439,10 +439,20 @@ mod execution {
             ],
             vec!["fetch", "--multiple", "origin", "secondary"],
             vec!["fetch", "--upload-pack=alternate", "origin"],
+            vec!["-c", "push.followTags=false", "push", "origin"],
+            vec!["-c", "push.recurseSubmodules=no", "push", "origin"],
+            vec!["-c", "push.pushOption=ci.skip", "push", "origin"],
+            vec!["-c", "push.default=nothing", "push", "origin"],
         ] {
             let refused = identity::prepare_git(&mut Command::new("git"), Some(repo.path()), &args);
             assert_eq!(refused.err().map(|e| e.code), Some("identity_git_override"));
         }
+        let safe_empty_push_option = identity::prepare_git(
+            &mut Command::new("git"),
+            Some(repo.path()),
+            &["-c", "push.pushOption=", "push", "origin"],
+        );
+        assert!(safe_empty_push_option.unwrap().is_some());
         let mut cmd = Command::new("git");
         let auth = identity::prepare_git(
             &mut cmd,
