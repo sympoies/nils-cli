@@ -506,3 +506,7 @@ It requires a current-head published review and a reviewer-owned closed ledger;
 mailbox verdicts never replace provider evidence. See the
 [handoff contract](docs/specs/forge-cli-spec-v1.md#pr-review-handoff-assign--inspect--check--surrender--recover)
 for assignment, writer fencing, generation-bound surrender/recovery, and privacy boundaries.
+A successor can recover a retired coordinator with `--reason coordinator-retired`,
+the recorded `--coordinator-session`, and exact `--base-sha`, `--expected-head`,
+and `--expected-state`. Fresh terminal session-board evidence is required;
+the transfer preserves findings and keeps review verdicts reviewer-owned.

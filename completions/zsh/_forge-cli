@@ -905,7 +905,9 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 _arguments "${_arguments_options[@]}" : \
 '--expected-head=[Exact provider head SHA for this handoff operation]:EXPECTED_HEAD:_default' \
 '--expected-state=[Exact retained provider ledger tip for the ownership transition]:EXPECTED_STATE:_default' \
-'--reason=[Bounded role-based reason; mailbox details stay private]:REASON:(reviewer-unreachable reviewer-closed reviewer-declined reviewer-timeout)' \
+'--reason=[Bounded role-based reason; mailbox details stay private]:REASON:(reviewer-unreachable reviewer-closed reviewer-declined reviewer-timeout coordinator-retired)' \
+'--coordinator-session=[Recorded coordinator selector; required for coordinator-retired only]:COORDINATOR_SESSION:_default' \
+'--base-sha=[Exact current provider base; required for coordinator-retired only]:BASE_SHA:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \

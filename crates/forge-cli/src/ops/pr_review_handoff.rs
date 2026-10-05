@@ -3,6 +3,8 @@
 
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::{Deserialize, Serialize};
+use std::process::Command;
+use std::time::Duration;
 
 use crate::backend::{BackendCall, BackendProgram, BackendRunner};
 use crate::cli::{BINARY, GlobalFlags, PrReviewHandoffArgs, PrReviewHandoffCommand};
@@ -25,6 +27,17 @@ pub struct ReviewHandoff {
     pub returned_reason: Option<String>,
     pub assignment_generation: u64,
     pub surrendered: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinator_transfer: Option<CoordinatorTransfer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CoordinatorTransfer {
+    pub old_coordinator_digest: String,
+    pub new_coordinator_digest: String,
+    pub lifecycle_source_digest: String,
+    pub reason: String,
 }
 
 #[derive(Serialize)]
@@ -88,6 +101,15 @@ pub(crate) fn validate_handoff(h: &ReviewHandoff) -> Result<(), ForgeError> {
     }
     if h.assignment_generation == 0
         || (h.surrendered && h.returned_reason.is_some())
+        || (h.returned_reason.as_deref() == Some("coordinator-retired"))
+            != h.coordinator_transfer.is_some()
+        || h.coordinator_transfer.as_ref().is_some_and(|t| {
+            !digest_valid(&t.old_coordinator_digest)
+                || !digest_valid(&t.lifecycle_source_digest)
+                || t.old_coordinator_digest == h.coordinator_digest
+                || t.new_coordinator_digest != h.coordinator_digest
+                || t.reason != "coordinator-retired"
+        })
         || !digest_valid(&h.coordinator_digest)
         || !digest_valid(&h.reviewer_digest)
         || h.coordinator_digest == h.reviewer_digest
@@ -106,6 +128,7 @@ pub(crate) fn validate_handoff(h: &ReviewHandoff) -> Result<(), ForgeError> {
                     | "reviewer-closed"
                     | "reviewer-declined"
                     | "reviewer-timeout"
+                    | "coordinator-retired"
             )
         })
     {
@@ -241,6 +264,21 @@ pub(crate) fn ensure_handoff_append(
         if next.assignment_generation == old.assignment_generation && next.surrendered {
             return ensure_writer(chain);
         }
+        if valid_coordinator_transfer(old, next) {
+            if actor != next.coordinator_digest {
+                return Err(fail(
+                    "review_writer_conflict",
+                    "takeover belongs to the successor coordinator",
+                ));
+            }
+            return prove_coordinator_retired(
+                old,
+                next.coordinator_transfer
+                    .as_ref()
+                    .map(|t| t.lifecycle_source_digest.as_str()),
+            )
+            .map(|_| ());
+        }
         if actor != old.coordinator_digest || next.coordinator_digest != old.coordinator_digest {
             return Err(fail(
                 "review_writer_conflict",
@@ -262,6 +300,126 @@ pub(crate) fn ensure_handoff_append(
         ));
     }
     Ok(())
+}
+
+/// A transfer is a recovery, never an assignment or a reviewer publication.
+pub(crate) fn valid_coordinator_transfer(old: &ReviewHandoff, next: &ReviewHandoff) -> bool {
+    next.coordinator_transfer.as_ref().is_some_and(|t| {
+        t.old_coordinator_digest == old.coordinator_digest
+            && t.new_coordinator_digest == next.coordinator_digest
+            && next.coordinator_digest != old.coordinator_digest
+            && next.coordinator_digest != old.reviewer_digest
+            && t.reason == "coordinator-retired"
+            && next.returned_reason.as_deref() == Some("coordinator-retired")
+            && Some(next.assignment_generation) == old.assignment_generation.checked_add(1)
+            && next.reviewer_digest == old.reviewer_digest
+            && next.review_author == old.review_author
+            && !next.surrendered
+    })
+}
+
+/// Read the existing session-board authority, never caller-supplied evidence.
+/// Absence, stopped/unknown runtimes, cached or unavailable sources prove nothing.
+fn prove_coordinator_retired(
+    old: &ReviewHandoff,
+    expected_source: Option<&str>,
+) -> Result<String, ForgeError> {
+    let unproven = || {
+        fail(
+            "review_coordinator_unproven",
+            "fresh terminal coordinator lifecycle evidence is required",
+        )
+    };
+    let executable = std::env::var_os("FORGE_CLI_AGENT_SESSION_BIN")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "agent-session".into());
+    let output = crate::backend::output_with_limits(
+        Command::new(executable).args(["board", "--state", "all", "--format", "json"]),
+        Some(Duration::from_secs(15)),
+        2 * 1024 * 1024,
+    )
+    .map_err(|_| unproven())?;
+    if !output.status.success() {
+        return Err(unproven());
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|_| unproven())?;
+    let board = &value["data"]["board"];
+    let fresh = |v: &serde_json::Value| {
+        v.as_str()
+            .and_then(|s| s.parse::<jiff::Timestamp>().ok())
+            .is_some_and(|t| {
+                let age = jiff::Timestamp::now().as_second() - t.as_second();
+                (0..=60).contains(&age)
+            })
+    };
+    if value["ok"] != true
+        || board["schema_version"] != "agent-session.board-view.v1"
+        || board["truncated"] != false
+        || !fresh(&board["generated_at"])
+    {
+        return Err(unproven());
+    }
+    let machines = board["machines"].as_array().ok_or_else(unproven)?;
+    let records = board["records"].as_array().ok_or_else(unproven)?;
+    let matching: Vec<_> = records
+        .iter()
+        .filter(|row| {
+            row["session_id"]
+                .as_str()
+                .and_then(|id| session_digest(id).ok())
+                .as_deref()
+                == Some(old.coordinator_digest.as_str())
+        })
+        .collect();
+    // Historical ledger identities omit machine routing. A selector must never
+    // hide a live namesake or resolve an otherwise ambiguous persisted identity.
+    if matching
+        .iter()
+        .any(|row| row["state"] == "live" || row["runtime_status"] == "running")
+    {
+        return Err(fail(
+            "review_coordinator_live",
+            "the recorded coordinator is still live",
+        ));
+    }
+    let sources: std::collections::BTreeSet<_> = matching
+        .iter()
+        .filter_map(|row| row["machine"].as_str())
+        .collect();
+    if sources.len() != 1 {
+        return Err(unproven());
+    }
+    let source_digest = review_state::sha256_digest(sources.iter().next().unwrap().as_bytes());
+    if expected_source.is_some_and(|source| source != source_digest) {
+        return Err(unproven());
+    }
+    let mut found = false;
+    for row in matching {
+        let machine = row["machine"].as_str().ok_or_else(unproven)?;
+        let sources: Vec<_> = machines
+            .iter()
+            .filter(|m| m["machine"].as_str() == Some(machine))
+            .collect();
+        if sources.len() != 1
+            || sources[0]["available"] != true
+            || !fresh(&sources[0]["last_seen_at"])
+            || row["state"] != "closed"
+            || !row["runtime_status"].is_null()
+            || !matches!(row["close_reason"].as_str(), Some("deleted" | "archived"))
+            || row["closed_at"]
+                .as_str()
+                .and_then(|s| s.parse::<jiff::Timestamp>().ok())
+                .is_none_or(|t| t > jiff::Timestamp::now())
+        {
+            return Err(unproven());
+        }
+        found = true;
+    }
+    if !found {
+        return Err(unproven());
+    }
+    Ok(source_digest)
 }
 
 pub(crate) fn ensure_delivery_ready<R: BackendRunner>(
@@ -665,6 +823,7 @@ pub fn run(
                 returned_reason: None,
                 assignment_generation: generation,
                 surrendered: false,
+                coordinator_transfer: None,
             });
         }
         PrReviewHandoffCommand::Surrender(a) => {
@@ -683,11 +842,66 @@ pub fn run(
             let mut h = latest(&chain)
                 .cloned()
                 .ok_or_else(|| fail("review_assignment_missing", "no handoff to recover"))?;
-            if actor_digest()? != h.coordinator_digest {
-                return Err(fail(
-                    "review_writer_conflict",
-                    "only the handoff coordinator may explicitly revoke review ownership",
-                ));
+            let actor = actor_digest()?;
+            h.coordinator_transfer = None;
+            if a.reason == "coordinator-retired" {
+                if a.base_sha.as_deref() != Some(base.as_str()) {
+                    return Err(fail(
+                        "review_scope_changed",
+                        "takeover base differs from the provider base",
+                    ));
+                }
+                if session_digest(a.coordinator_session.as_deref().unwrap_or_default())?
+                    != h.coordinator_digest
+                {
+                    return Err(fail(
+                        "review_assignment_conflict",
+                        "coordinator selector differs from the recorded coordinator",
+                    ));
+                }
+                if actor == h.coordinator_digest || actor == h.reviewer_digest {
+                    return Err(fail(
+                        "review_writer_conflict",
+                        "takeover requires a distinct successor coordinator",
+                    ));
+                }
+                let source = a
+                    .coordinator_session
+                    .as_deref()
+                    .and_then(|s| s.split_once('@'))
+                    .map(|(_, machine)| {
+                        if machine.is_empty() || machine.len() > 128 || machine.contains('@') {
+                            return Err(fail(
+                                "review_assignment_invalid",
+                                "coordinator lifecycle source is invalid",
+                            ));
+                        }
+                        Ok(review_state::sha256_digest(machine.as_bytes()))
+                    })
+                    .transpose()?;
+                let lifecycle_source_digest = prove_coordinator_retired(&h, source.as_deref())?;
+                h.coordinator_transfer = Some(CoordinatorTransfer {
+                    old_coordinator_digest: h.coordinator_digest.clone(),
+                    new_coordinator_digest: actor.clone(),
+                    lifecycle_source_digest,
+                    reason: a.reason.clone(),
+                });
+                h.coordinator_digest = actor;
+                h.base_sha = base.clone();
+                h.assigned_head = head.to_string();
+            } else {
+                if a.coordinator_session.is_some() || a.base_sha.is_some() {
+                    return Err(fail(
+                        "review_assignment_invalid",
+                        "takeover selectors require coordinator-retired",
+                    ));
+                }
+                if actor != h.coordinator_digest {
+                    return Err(fail(
+                        "review_writer_conflict",
+                        "only the handoff coordinator may explicitly revoke review ownership",
+                    ));
+                }
             }
             h.assignment_generation = h.assignment_generation.checked_add(1).ok_or_else(|| {
                 fail(

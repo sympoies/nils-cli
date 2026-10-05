@@ -2280,6 +2280,25 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
     }
     if let review_state::ReviewStatePayload::ReviewHandoff { handoff } = &payload {
         super::pr_review_handoff::ensure_handoff_append(&before.chain, handoff)?;
+        if handoff.coordinator_transfer.is_some() {
+            let current = super::pr_view::compute(runner, ctx, number)?;
+            if current.head_sha.as_deref() != Some(expected_head) {
+                return Err(ForgeError::validation(
+                    schema_err(),
+                    "review_state_conflict",
+                    "provider head changed before coordinator takeover",
+                    None,
+                ));
+            }
+            if super::pr_review_handoff::provider_base(runner, ctx, number)? != handoff.base_sha {
+                return Err(ForgeError::validation(
+                    schema_err(),
+                    "review_scope_changed",
+                    "provider base changed before coordinator takeover",
+                    None,
+                ));
+            }
+        }
     } else {
         super::pr_review_handoff::ensure_writer(&before.chain)?;
     }

@@ -270,9 +270,22 @@ impl ForgeError {
     /// capturing stdout.
     fn render_json(&self) -> String {
         let envelope_error = EnvelopeError::new(self.kind(), self.message());
-        let envelope_error = match self.detail() {
-            Some(detail) => envelope_error.with_details(serde_json::json!({ "detail": detail })),
-            None => envelope_error,
+        let envelope_error = if matches!(
+            self.kind(),
+            "review_coordinator_live" | "review_coordinator_unproven"
+        ) {
+            envelope_error.with_details(serde_json::json!({
+                "retryable": self.kind() == "review_coordinator_unproven",
+                "next_action": if self.kind() == "review_coordinator_live" { "return_to_coordinator" } else { "refresh_session_evidence" },
+                "recovery": { "reason": "coordinator-retired", "requires_exact_head_base_tip": true }
+            }))
+        } else {
+            match self.detail() {
+                Some(detail) => {
+                    envelope_error.with_details(serde_json::json!({ "detail": detail }))
+                }
+                None => envelope_error,
+            }
         };
         let envelope: Envelope<EnvelopeStub> =
             Envelope::failure(self.schema_version().to_string(), envelope_error);
