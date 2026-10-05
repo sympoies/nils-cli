@@ -155,8 +155,9 @@ pub(crate) fn claude_switch_locked(
 ///
 /// The stopped runtime's coordination incarnation is retired first; otherwise
 /// its last heartbeat refuses the resume as a live prior incarnation. Should
-/// the resume still fail, the error says the session is stopped with the
-/// account queued and how to recover, instead of the bare resume error.
+/// the resume still fail, the next-account intent and startup projection retain
+/// the failure for later Console reads. Incomplete cleanup keeps its original
+/// error and never advertises a safely stopped session.
 pub(crate) fn resume_after_switch_stop(
     context: &CliContext,
     id: &str,
@@ -164,14 +165,54 @@ pub(crate) fn resume_after_switch_stop(
 ) -> Result<(Option<String>, Option<ClaudeAccountView>), CliError> {
     let stopped = load_session_record(context, id)?;
     let next_account = crate::claude_account::queued_next_account(&stopped);
-    let resumed = crate::coordination::retire_after_verified_stop(context, &stopped)
-        .and_then(|()| crate::resume_session_locked(context, stopped, tmux_bin));
+    let resumed = crate::coordination::retire_after_verified_stop(context, &stopped, tmux_bin)
+        .and_then(|()| crate::resume_session_locked(context, stopped.clone(), tmux_bin));
     let outcome = resumed.map_err(|cause| {
+        let persist_failure = || -> Result<bool, CliError> {
+            let mut record = load_session_record(context, id)?;
+            crate::claude_account::mark_next_resume_failed(&mut record, &stopped, cause.code())?;
+            let now = jiff::Timestamp::now().to_string();
+            let safely_stopped = cause.code() != "resume-launch-rollback-failed"
+                && crate::session_status(context, tmux_bin, &record) == "stopped"
+                && match crate::persisted_tmux_runtime_identity(&record) {
+                    Ok(Some(identity)) => crate::verify_stopped_tmux_runtime(
+                        tmux_bin, &identity, std::time::Duration::ZERO,
+                    ).is_ok(),
+                    Ok(None) => crate::runtime_is_proven_never_launched(&record),
+                    Err(_) => false,
+                };
+            let started_at = record.runtime.as_ref()
+                .map(|runtime| runtime.started_at.as_str()).unwrap_or(&now);
+            let mut failure = crate::failed_projection(
+                started_at,
+                if safely_stopped { "claude-account-switch-resume-failed" }
+                else { "claude-account-switch-cleanup-incomplete" },
+                "runtime", Some(&now),
+            );
+            if !safely_stopped {
+                crate::store_startup_cleanup(&mut failure, crate::failed_launch_cleanup_from_error(&cause));
+            }
+            crate::store_startup_projection(&mut record, &failure);
+            record.updated_at = now;
+            write_session_record(context, &record)?;
+            Ok(safely_stopped)
+        };
+        let safely_stopped = match persist_failure() {
+            Ok(stopped) => stopped,
+            Err(error) => return CliError::runtime(
+                "claude-account-switch-failure-persist-failed",
+                "the account switch could not resume or persist its failure; inspect the session before retrying",
+                Some(json!({ "id": id, "cause": cause.code(), "persistence_cause": error.code() })),
+            ),
+        };
+        if !safely_stopped {
+            return cause;
+        }
         let recovery = format!("agent-session resume {id}");
         CliError::data(
             "claude-account-switch-resume-failed",
             "the account switch stopped the session but could not resume it; \
-             the session is stopped with the next account queued",
+             the next account is marked failed and can be retried by resuming",
             Some(json!({
                 "id": id,
                 "session_state": "stopped",
@@ -290,6 +331,9 @@ fn render_text(result: &SessionAccount) -> String {
         let account = field(next, "account").unwrap_or_else(|| "unknown".to_string());
         let state = field(next, "state").unwrap_or_default();
         text.push_str(&format!("next: {account} ({state})\n"));
+        if let Some(reason) = field(next, "failure_reason") {
+            text.push_str(&format!("resume failure: {reason}\n"));
+        }
     }
     text
 }

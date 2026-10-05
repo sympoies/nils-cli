@@ -64,6 +64,8 @@ struct DurableBinding {
 /// launch. The applied binding stays authoritative until that launch succeeds.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 struct DurableNextAccount {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure_reason: Option<String>,
     schema_version: String,
     account: String,
     revision: u64,
@@ -101,6 +103,8 @@ struct ClaudeNextAccountView {
     account: Option<String>,
     revision: u64,
     state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_reason: Option<String>,
 }
 
 pub(crate) type ClaudeAccountInventory = AccountInventory;
@@ -142,12 +146,18 @@ pub(crate) fn view_for_record(record: &SessionRecord) -> Option<ClaudeAccountVie
         Decoded::Valid(next) => Some(ClaudeNextAccountView {
             account: Some(next.account.clone()),
             revision: next.revision,
-            state: "queued",
+            state: if next.state == "failed" {
+                "failed"
+            } else {
+                "queued"
+            },
+            failure_reason: next.failure_reason.clone(),
         }),
         Decoded::Invalid => Some(ClaudeNextAccountView {
             account: None,
             revision: 0,
             state: "failed",
+            failure_reason: Some("next_invalid".to_string()),
         }),
     };
     let mut view = ClaudeAccountView {
@@ -174,6 +184,10 @@ pub(crate) fn view_for_record(record: &SessionRecord) -> Option<ClaudeAccountVie
             view.revision = binding.revision;
             view.applied_runtime_id = binding.applied_runtime_id;
         }
+    }
+    if let Some(next) = view.next.as_ref().filter(|next| next.state == "failed") {
+        view.state = "failed";
+        view.failure_reason = next.failure_reason.clone();
     }
     if !configured {
         view.state = "unsupported";
@@ -359,6 +373,7 @@ pub(crate) fn queue_next(record: &mut SessionRecord, account: &str) -> Result<()
         .map_or(1, |binding| binding.revision.saturating_add(1))
         .max(prior_next_revision.saturating_add(1));
     let next = DurableNextAccount {
+        failure_reason: None,
         schema_version: NEXT_SCHEMA_VERSION.to_string(),
         account: account.to_string(),
         revision,
@@ -371,7 +386,25 @@ pub(crate) fn queue_next(record: &mut SessionRecord, account: &str) -> Result<()
 }
 
 pub(crate) fn has_queued_next(record: &SessionRecord) -> bool {
-    matches!(decode_next(record), Decoded::Valid(_))
+    matches!(decode_next(record), Decoded::Valid(next) if next.state == "queued")
+}
+
+/// Persist a failed post-stop attempt without losing its retryable account
+/// intent, even if launch rollback retained a newer runtime record.
+pub(crate) fn mark_next_resume_failed(
+    record: &mut SessionRecord,
+    stopped: &SessionRecord,
+    cause: &str,
+) -> Result<(), CliError> {
+    let Decoded::Valid(mut next) = decode_next(stopped) else {
+        return Err(invalid_binding_error(stopped));
+    };
+    next.state = "failed".to_string();
+    next.failure_reason = Some(cause.to_string());
+    next.updated_at = jiff::Timestamp::now().to_string();
+    let value = serde_json::to_value(next).map_err(|_| encode_error(record))?;
+    record.extra.insert(NEXT_KEY.to_string(), value);
+    Ok(())
 }
 
 /// The account queued for the session's next launch, if any.
@@ -540,7 +573,15 @@ fn decode_next(record: &SessionRecord) -> Decoded<DurableNextAccount> {
             if next.schema_version == NEXT_SCHEMA_VERSION
                 && validate_account(&next.account).is_ok()
                 && next.revision > 0
-                && next.state == "queued" =>
+                && ((next.state == "queued" && next.failure_reason.is_none())
+                    || (next.state == "failed"
+                        && next.failure_reason.as_deref().is_some_and(|code| {
+                            !code.is_empty()
+                                && code.len() <= 128
+                                && code.bytes().all(|byte| {
+                                    byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
+                                })
+                        }))) =>
         {
             Decoded::Valid(next)
         }
