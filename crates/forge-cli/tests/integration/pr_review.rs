@@ -1753,6 +1753,13 @@ if [ "$1" != "api" ]; then
 fi
 
 case "$*" in
+  *"repos/acme/widgets/pulls/44/files"*)
+    printf '%s\n' '[{"filename":"src/lib.rs","patch":"@@ -41,2 +41,2 @@\n-old\n+new\n tail"},{"filename":"src/other.rs","patch":"@@ -7,1 +7,1 @@\n-old\n+new"}]'
+    ;;
+  *"deletePullRequestReview(input:"*)
+    rm -f "$pending_body"
+    printf '%s\n' '{"data":{"deletePullRequestReview":{"pullRequestReview":{"id":"PRR_kwDOpending","url":"https://github.com/acme/widgets/pull/44#pullrequestreview-9900"}}}}'
+    ;;
   *"repos/acme/widgets/pulls/44 --jq .number"*)
     echo "44"
     ;;
@@ -1830,6 +1837,9 @@ case "$*" in
     total=0
     if [ -f "$finding_body_0" ]; then
       comment=$(json_escape "$finding_body_0")
+      if [ "$failure" = "thread-null-second-mismatch" ]; then
+        comment="$comment changed by another writer"
+      fi
       path=$(json_escape "$finding_path_0")
       line=$(sed -n '1p' "$finding_line_0")
       [ -n "$line" ] || line=null
@@ -1868,6 +1878,16 @@ case "$*" in
     printf '%s\n' '{"data":{"addPullRequestReview":{"pullRequestReview":{"id":"PRR_kwDOpending","url":"https://github.com/acme/widgets/pull/44#pullrequestreview-9900"}}}}'
     ;;
   *"addPullRequestReviewThread(input:"*)
+    if [ -f "$finding_body_0" ]; then
+      case "$failure" in thread-null-second*)
+        printf '%s\n' '{"data":{"addPullRequestReviewThread":{"thread":null}}}'
+        exit 0 ;;
+      esac
+    fi
+    if [ "$failure" = "thread-null" ]; then
+      printf '%s\n' '{"data":{"addPullRequestReviewThread":{"thread":null}}}'
+      exit 0
+    fi
     if [ ! -f "$finding_body_0" ]; then
       finding_body="$finding_body_0"
       finding_path="$finding_path_0"
@@ -2056,10 +2076,6 @@ esac
 "#,
         capture = capture
     )
-}
-
-fn github_review_thread_rejected_stub(capture: &str) -> String {
-    github_resumable_thread_stub(capture, false, false, false, "thread-422", false)
 }
 
 fn github_review_thread_fail_on_submit_stub(capture: &str) -> String {
@@ -2845,6 +2861,14 @@ fn pr_review_thread_file_dry_run_renders_thread_creation_plan() {
     assert_eq!(env["ok"], true);
     assert_eq!(env["data"]["submitted_review"], true);
     assert_eq!(env["data"]["planned_review_threads"], 1);
+    let diff_plan = env["data"]["diff_plan"]
+        .as_array()
+        .expect("mandatory diff plan");
+    assert!(
+        diff_plan
+            .iter()
+            .any(|arg| arg == "repos/acme/widgets/pulls/44/files")
+    );
     let thread_plan = env["data"]["thread_plan"]
         .as_array()
         .expect("thread_plan present")
@@ -3833,73 +3857,61 @@ fn pr_review_thread_file_preserves_pending_review_after_thread_failure() {
 }
 
 #[test]
-fn pr_review_thread_file_preserves_pending_review_after_github_diff_failure() {
+fn pr_review_thread_file_rejects_off_diff_before_pending_review() {
+    for (spec, code) in [
+        (
+            r#"[{"path":"src/lib.rs","line":99,"body":"Thread body"}]"#,
+            "review_thread_line_not_in_diff",
+        ),
+        (
+            r#"[{"path":"src/offdiff.rs","line":42,"body":"Thread body"}]"#,
+            "review_thread_file_not_changed",
+        ),
+    ] {
+        let stub = StubEnv::new();
+        let capture = stub.tempdir.path().join("gh-args.log");
+        let thread_file = stub.tempdir.path().join("review-threads.json");
+        fs::write(&thread_file, spec).unwrap();
+        let stub = stub.gh_stub(&github_review_thread_submit_stub(
+            &capture.to_string_lossy(),
+        ));
+        let out = run_resumable_thread_review(&stub, &thread_file);
+        assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+        assert_eq!(parse_envelope(&out.stdout)["error"]["code"], code);
+        let calls = fs::read_to_string(capture).unwrap();
+        assert!(!calls.contains("--method POST"), "{calls}");
+        assert!(!calls.contains("mutation("), "{calls}");
+    }
+}
+
+#[test]
+fn pr_review_thread_file_rolls_back_confirmed_null_thread() {
     let stub = StubEnv::new();
     let capture = stub.tempdir.path().join("gh-args.log");
     let thread_file = stub.tempdir.path().join("review-threads.json");
     fs::write(
         &thread_file,
-        r#"[{"path":"src/lib.rs","line":99,"body":"Thread body"}]"#,
+        r#"[{"path":"src/lib.rs","line":42,"body":"Thread body"}]"#,
     )
-    .expect("write thread specs");
-    let stub = stub.gh_stub(&github_review_thread_rejected_stub(
+    .unwrap();
+    let stub = stub.gh_stub(&github_resumable_thread_stub(
         &capture.to_string_lossy(),
+        false,
+        false,
+        false,
+        "thread-null",
+        false,
     ));
-
-    let out = run_forge_cli(
-        &stub,
-        &[
-            "--provider",
-            "github",
-            "--repo",
-            "acme/widgets",
-            "--format",
-            "json",
-            "pr",
-            "review",
-            "44",
-            "--decision",
-            "comments-only",
-            "--submit-review",
-            "--expected-head",
-            "head-44",
-            "--comment",
-            "Summary body",
-            "--thread-file",
-            thread_file.to_str().expect("utf8 path"),
-        ],
-    );
-
-    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
-    let env = parse_envelope(&out.stdout);
-    assert_eq!(env["schema_version"], "cli.forge-cli.error.v1");
-    assert_eq!(env["ok"], false);
+    let out = run_resumable_thread_review(&stub, &thread_file);
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
     assert_eq!(
-        env["error"]["code"],
-        "pending_review_transaction_incomplete"
+        parse_envelope(&out.stdout)["error"]["code"],
+        "review_thread_creation_rejected"
     );
-    let detail = env["error"]["details"]["detail"]
-        .as_str()
-        .expect("detail is preserved");
-    assert!(detail.contains("thread_spec_index=1"), "{detail}");
-    assert!(detail.contains("thread_spec_path=src/lib.rs"), "{detail}");
-    assert!(detail.contains("thread_spec_line=99"), "{detail}");
-    assert!(detail.contains("line must be part of the diff"), "{detail}");
-
-    let calls = fs::read_to_string(capture).expect("read captured calls");
-    assert!(calls.contains("addPullRequestReview(input:"), "{calls}");
-    assert!(
-        calls.contains("addPullRequestReviewThread(input:"),
-        "{calls}"
-    );
-    assert!(
-        !calls.contains("deletePullRequestReview(input:"),
-        "rejected inline content must remain available for recovery: {calls}"
-    );
-    assert!(
-        !calls.contains("submitPullRequestReview(input:"),
-        "failed pending review must not be submitted: {calls}"
-    );
+    let calls = fs::read_to_string(&capture).unwrap();
+    assert!(calls.contains("deletePullRequestReview(input:"), "{calls}");
+    assert!(!calls.contains("submitPullRequestReview(input:"), "{calls}");
+    assert!(!capture.with_extension("log.pending-body").exists());
 }
 
 #[test]
@@ -4740,5 +4752,44 @@ fn specialist_reviewable_validate_without_repo_stays_local() {
             );
         }
         assert_backend_not_invoked(&capture);
+    }
+}
+
+#[test]
+fn confirmed_null_rollback_requires_the_complete_receipt_bound_prefix() {
+    for (failure, code, deletes) in [
+        (
+            "thread-null-second",
+            "review_thread_creation_rejected",
+            true,
+        ),
+        (
+            "thread-null-second-mismatch",
+            "pending_review_transaction_incomplete",
+            false,
+        ),
+    ] {
+        let stub = StubEnv::new();
+        let capture = stub.tempdir.path().join("gh-args.log");
+        let thread_file = stub.tempdir.path().join("review-threads.json");
+        fs::write(&thread_file, r#"[{"path":"src/lib.rs","line":42,"body":"First finding"},{"path":"src/other.rs","line":7,"body":"Second finding"}]"#).unwrap();
+        let stub = stub.gh_stub(&github_resumable_thread_stub(
+            &capture.to_string_lossy(),
+            false,
+            false,
+            false,
+            failure,
+            false,
+        ));
+        let out = run_resumable_thread_review(&stub, &thread_file);
+        assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+        assert_eq!(parse_envelope(&out.stdout)["error"]["code"], code);
+        let calls = fs::read_to_string(capture).unwrap();
+        assert_eq!(
+            calls.contains("deletePullRequestReview(input:"),
+            deletes,
+            "{calls}"
+        );
+        assert!(!calls.contains("submitPullRequestReview(input:"), "{calls}");
     }
 }

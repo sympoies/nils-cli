@@ -151,6 +151,9 @@ struct PrReviewDryRunPayload {
     native_review_verification_plan: Option<Vec<String>>,
     planned_review_threads: usize,
     target_plan: Option<Vec<String>>,
+    /// Mandatory diff admission before a threaded native review writes state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diff_plan: Option<Vec<String>>,
     thread_plan: Vec<Vec<String>>,
     submit_plan: Option<Vec<String>>,
 }
@@ -627,6 +630,11 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         } else {
             (None, None, None)
         };
+        let diff_plan = if thread_specs.is_empty() {
+            None
+        } else {
+            Some(build_github_pr_files_call(&ctx, id)?.plan_argv())
+        };
         let issue_plan = mirror_issue.map(|issue| {
             let mirror_url = native_review_url
                 .as_deref()
@@ -659,6 +667,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                 native_review_verification_plan,
                 planned_review_threads: thread_specs.len(),
                 target_plan,
+                diff_plan,
                 thread_plan,
                 submit_plan,
             },
@@ -695,6 +704,12 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                     println!(
                         "would verify review transaction state: {plan}",
                         plan = plan.join(" ")
+                    );
+                }
+                if let Some(diff) = p.diff_plan.as_ref() {
+                    println!(
+                        "would validate thread anchors against diff: {}",
+                        diff.join(" ")
                     );
                 }
                 if let Some(target) = p.target_plan.as_ref() {
@@ -1514,6 +1529,8 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         specs,
         route_lenses,
     } = request;
+    // Admission must finish before a receipt or pending review is written.
+    validate_review_threads_against_github_diff(runner, ctx, number, specs)?;
     let (owner, name) = github_owner_name(ctx)?;
     let target_output = runner.run(&build_github_review_target_call(ctx, owner, name, number))?;
     let target = parse_github_review_target(&target_output)?;
@@ -1757,6 +1774,78 @@ fn submit_github_review_with_threads<R: BackendRunner>(
                 ));
             }
         };
+        // A confirmed null is a rejected anchor, unlike a lost response. Only
+        // roll back a review created by this invocation, after proving that its
+        // complete contents still match the receipt. Resumed drafts and
+        // ambiguous mutations retain the existing recovery contract.
+        let null_thread = serde_json::from_str::<serde_json::Value>(&output.stdout)
+            .ok()
+            .is_some_and(|value| {
+                value
+                    .pointer("/data/addPullRequestReviewThread/thread")
+                    .is_some_and(serde_json::Value::is_null)
+            });
+        if null_thread && viewer_pending.is_empty() {
+            let rollback = (|| -> Result<(), ForgeError> {
+                let snapshot =
+                    pr_reviews::compute_pending_snapshot(runner, ctx, &pending.review_id)?
+                        .ok_or_else(|| {
+                            ForgeError::software(
+                                schema_err(),
+                                "pending review disappeared before rollback",
+                                None,
+                            )
+                        })?;
+                validate_receipt_bound_snapshot(
+                    &snapshot,
+                    number,
+                    expected_head,
+                    &summary,
+                    &review_run_id,
+                    &manifest,
+                )?;
+                if !snapshot.viewer_can_delete || snapshot.inline_comments.len() != idx {
+                    return Err(ForgeError::validation(
+                        schema_err(),
+                        "pending_review_manifest_mismatch",
+                        "pending review cannot be safely rolled back",
+                        None,
+                    ));
+                }
+                let deletion = runner.run(&build_github_delete_pending_review_call(
+                    ctx,
+                    &pending.review_id,
+                ));
+                if pr_reviews::compute_pending_snapshot(runner, ctx, &pending.review_id)?.is_some()
+                {
+                    deletion?;
+                    return Err(ForgeError::software(
+                        schema_err(),
+                        "pending review rollback was not confirmed",
+                        None,
+                    ));
+                }
+                Ok(())
+            })();
+            if let Err(error) = rollback {
+                return Err(pending_transaction_incomplete(
+                    &review_run_id,
+                    Some(&pending.review_id),
+                    "rejected thread rollback could not be confirmed",
+                    Some(error),
+                ));
+            }
+            return Err(ForgeError::validation(
+                schema_err(),
+                "review_thread_creation_rejected",
+                "GitHub rejected the review thread; the newly created pending review was rolled back",
+                Some(format!(
+                    "thread_spec_index={}; thread_spec_path={}; suggestion=refresh the pull request diff before retrying",
+                    idx + 1,
+                    spec.path
+                )),
+            ));
+        }
         let thread = match parse_created_review_thread(&output, spec) {
             Ok(thread) => thread,
             Err(err) => {
