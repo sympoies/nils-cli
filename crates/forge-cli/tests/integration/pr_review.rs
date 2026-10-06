@@ -1837,9 +1837,6 @@ case "$*" in
     total=0
     if [ -f "$finding_body_0" ]; then
       comment=$(json_escape "$finding_body_0")
-      if [ "$failure" = "thread-null-second-mismatch" ]; then
-        comment="$comment changed by another writer"
-      fi
       path=$(json_escape "$finding_path_0")
       line=$(sed -n '1p' "$finding_line_0")
       [ -n "$line" ] || line=null
@@ -3885,7 +3882,7 @@ fn pr_review_thread_file_rejects_off_diff_before_pending_review() {
 }
 
 #[test]
-fn pr_review_thread_file_rolls_back_confirmed_null_thread() {
+fn pr_review_thread_file_retains_confirmed_null_for_recovery() {
     let stub = StubEnv::new();
     let capture = stub.tempdir.path().join("gh-args.log");
     let thread_file = stub.tempdir.path().join("review-threads.json");
@@ -3906,12 +3903,12 @@ fn pr_review_thread_file_rolls_back_confirmed_null_thread() {
     assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
     assert_eq!(
         parse_envelope(&out.stdout)["error"]["code"],
-        "review_thread_creation_rejected"
+        "pending_review_transaction_incomplete"
     );
     let calls = fs::read_to_string(&capture).unwrap();
-    assert!(calls.contains("deletePullRequestReview(input:"), "{calls}");
+    assert!(!calls.contains("deletePullRequestReview(input:"), "{calls}");
     assert!(!calls.contains("submitPullRequestReview(input:"), "{calls}");
-    assert!(!capture.with_extension("log.pending-body").exists());
+    assert!(capture.with_extension("log.pending-body").exists());
 }
 
 #[test]
@@ -4756,40 +4753,28 @@ fn specialist_reviewable_validate_without_repo_stays_local() {
 }
 
 #[test]
-fn confirmed_null_rollback_requires_the_complete_receipt_bound_prefix() {
-    for (failure, code, deletes) in [
-        (
-            "thread-null-second",
-            "review_thread_creation_rejected",
-            true,
-        ),
-        (
-            "thread-null-second-mismatch",
-            "pending_review_transaction_incomplete",
-            false,
-        ),
-    ] {
-        let stub = StubEnv::new();
-        let capture = stub.tempdir.path().join("gh-args.log");
-        let thread_file = stub.tempdir.path().join("review-threads.json");
-        fs::write(&thread_file, r#"[{"path":"src/lib.rs","line":42,"body":"First finding"},{"path":"src/other.rs","line":7,"body":"Second finding"}]"#).unwrap();
-        let stub = stub.gh_stub(&github_resumable_thread_stub(
-            &capture.to_string_lossy(),
-            false,
-            false,
-            false,
-            failure,
-            false,
-        ));
-        let out = run_resumable_thread_review(&stub, &thread_file);
-        assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
-        assert_eq!(parse_envelope(&out.stdout)["error"]["code"], code);
-        let calls = fs::read_to_string(capture).unwrap();
-        assert_eq!(
-            calls.contains("deletePullRequestReview(input:"),
-            deletes,
-            "{calls}"
-        );
-        assert!(!calls.contains("submitPullRequestReview(input:"), "{calls}");
-    }
+fn confirmed_null_after_a_created_thread_preserves_the_pending_review() {
+    let stub = StubEnv::new();
+    let capture = stub.tempdir.path().join("gh-args.log");
+    let thread_file = stub.tempdir.path().join("review-threads.json");
+    fs::write(&thread_file, r#"[{"path":"src/lib.rs","line":42,"body":"First finding"},{"path":"src/other.rs","line":7,"body":"Second finding"}]"#).unwrap();
+    let stub = stub.gh_stub(&github_resumable_thread_stub(
+        &capture.to_string_lossy(),
+        false,
+        false,
+        false,
+        "thread-null-second",
+        false,
+    ));
+    let out = run_resumable_thread_review(&stub, &thread_file);
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "pending_review_transaction_incomplete"
+    );
+    let calls = fs::read_to_string(&capture).unwrap();
+    assert!(!calls.contains("deletePullRequestReview(input:"), "{calls}");
+    assert!(!calls.contains("submitPullRequestReview(input:"), "{calls}");
+    assert!(capture.with_extension("log.pending-body").exists());
+    assert!(capture.with_extension("log.finding-body-0").exists());
 }
