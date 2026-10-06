@@ -39,7 +39,7 @@ impl Fixture {
         if existing {
             fs::write(&exists, "yes\n").expect("existing repository fixture");
         }
-        let gh = stub.write_stub("gh-bootstrap", r#"#!/bin/sh
+        let gh = stub.write_stub("gh", r#"#!/bin/sh
 if [ "$1" = auth ]; then
   printf '%s\n' 'fixture-token-value'
   exit 0
@@ -117,12 +117,22 @@ esac
             r#"#!/bin/sh
 printf '%s\n' "$*" >> "$GH_TEST_GIT_LOG"
 case "$*" in
+  *"init --initial-branch="*)
+    branch=${3#--initial-branch=}
+    command git -C "$2" init --initial-branch="$branch" >/dev/null
+    ;;
   *"rev-parse"*"HEAD^{commit}"*) printf '%s\n' "$GH_TEST_SHA" ;;
   *"rev-list --parents -n 1"*) printf '%s\n' "$GH_TEST_SHA" ;;
   *"log -1 --format=%G?"*) printf '%s\n' "${GH_TEST_LOCAL_SIGNATURE:-G}" ;;
   *"push "*)
-    [ "$FORGE_CLI_BOOTSTRAP_USERNAME" = x-access-token ] || exit 9
-    [ "$FORGE_CLI_BOOTSTRAP_GITHUB_TOKEN" = fixture-token-value ] || exit 9
+    if [ -n "${FORGE_IDENTITY_REPO:-}" ]; then
+      [ "$FORGE_IDENTITY_REPO" = sympoies/widgets ] || exit 9
+      [ "$FORGE_IDENTITY_TOKEN" = fixture-identity-token ] || exit 9
+      [ -z "${FORGE_CLI_BOOTSTRAP_GITHUB_TOKEN:-}" ] || exit 9
+    else
+      [ "$FORGE_CLI_BOOTSTRAP_USERNAME" = x-access-token ] || exit 9
+      [ "$FORGE_CLI_BOOTSTRAP_GITHUB_TOKEN" = fixture-token-value ] || exit 9
+    fi
     printf '%s\n' "$GH_TEST_SHA" > "$GH_TEST_REMOTE_SHA"
     if [ "${GH_TEST_PUSH_MODE:-success}" = ambiguous ]; then
       printf '%s\n' 'simulated lost push response' >&2
@@ -165,6 +175,67 @@ printf '{"ok":true,"commit":{"sha":"%s"}}\n' "$GH_TEST_SHA"
         self.run_with_visibility(existing, resume, "public")
     }
 
+    fn with_identity_policy(mut self) -> Self {
+        let config = self.stub.tempdir.path().join("identity-config/forge-cli");
+        fs::create_dir_all(&config).expect("identity config directory");
+        fs::write(
+            config.join("identity.toml"),
+            r#"version = 1
+
+[credentials.account]
+kind = "env"
+name = "BOOTSTRAP_IDENTITY_CREDENTIAL"
+
+[profiles.account]
+expected_login = "operator"
+credential = "account"
+commit_name = "Example Contributor"
+commit_email = "contributor@example.invalid"
+signing_fingerprint = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+operations = ["api_read", "api_write", "git_read", "git_push", "commit"]
+
+[principals.contributor]
+profiles = ["account"]
+default_profile = "account"
+default_repositories = ["github.com/sympoies/widgets"]
+
+[[rules]]
+id = "widgets"
+principal = "contributor"
+repo = "github.com/sympoies/widgets"
+profile = "account"
+"#,
+        )
+        .expect("identity policy");
+        let gpg = self.stub.write_stub(
+            "gpg",
+            "#!/bin/sh\nprintf 'sec:u:2048:1:AAAAAAAA:0:0::u:::sc::::::::\\n'\nprintf 'fpr:::::::::AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:\\n'\n",
+        );
+        let path = format!(
+            "{}:{}",
+            gpg.parent().expect("fixture directory").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        self.stub.envs.push(("PATH".into(), path));
+        self.stub.envs.push((
+            "XDG_CONFIG_HOME".into(),
+            self.stub
+                .tempdir
+                .path()
+                .join("identity-config")
+                .to_string_lossy()
+                .into_owned(),
+        ));
+        self.stub
+            .envs
+            .push(("FORGE_IDENTITY_PRINCIPAL".into(), "contributor".into()));
+        self.stub.envs.push((
+            "BOOTSTRAP_IDENTITY_CREDENTIAL".into(),
+            "fixture-identity-token".into(),
+        ));
+        self
+    }
+
     fn run_with_visibility(
         &self,
         existing: bool,
@@ -201,6 +272,20 @@ printf '{"ok":true,"commit":{"sha":"%s"}}\n' "$GH_TEST_SHA"
         }
         run_forge_cli(&self.stub, &args)
     }
+}
+
+#[test]
+fn github_existing_empty_bootstrap_supports_identity_routing() {
+    let fixture = Fixture::new(true).with_identity_policy();
+    let output = fixture.run(true, false);
+    assert_eq!(
+        output.code, 0,
+        "stdout={} stderr={}",
+        output.stdout, output.stderr
+    );
+    let result = parse_envelope(&output.stdout);
+    assert_eq!(result["data"]["root_commit_sha"], SHA);
+    assert_eq!(result["data"]["signature_verified"], true);
 }
 
 #[test]

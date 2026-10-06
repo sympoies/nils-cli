@@ -69,16 +69,6 @@ pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
     let Some(policy) = identity::load().map_err(error)? else {
         return Ok(none());
     };
-    if matches!(
-        cli.command,
-        Some(Command::Repo(RepoArgs {
-            command: Some(RepoCommand::Bootstrap(_))
-        }))
-    ) {
-        return Err(error(identity::Error::new(
-            "identity_operation_unsupported",
-        )));
-    }
     let cross_repository = matches!(
         &cli.command,
         Some(Command::Inbox(_))
@@ -139,6 +129,20 @@ pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
     } else {
         Operation::ApiRead
     };
+    if matches!(
+        &cli.command,
+        Some(Command::Repo(RepoArgs {
+            command: Some(RepoCommand::Bootstrap(_))
+        }))
+    ) {
+        policy
+            .select(&target, None, Operation::GitPush)
+            .map_err(error)?;
+        let commit = policy
+            .select(&target, None, Operation::Commit)
+            .map_err(error)?;
+        identity::verify_key(&commit.profile).map_err(error)?;
+    }
     Ok(enter_scope(Some((target, op))))
 }
 fn target_from_call(call: &BackendCall) -> identity::Result<Option<Target>> {
