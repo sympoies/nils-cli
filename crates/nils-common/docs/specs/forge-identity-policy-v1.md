@@ -185,9 +185,20 @@ selection; denial never falls through to a less-specific profile.
 API targets come from explicit provider host/repository context and constructed
 backend requests. A backend request with conflicting targets refuses. Opaque
 GraphQL node mutations remain bound to their typed repository invocation.
-Cross-repository discovery (`activity`, `inbox`, `search`) and repository bootstrap
-refuse when policy is installed; phase 1 has no multi-target or root-bootstrap
-identity contract. An explicit API target may be used outside a checkout. If Git
+Cross-repository reads (`inbox list/status/next` and `activity commits/events/summary`)
+without `--repo` select the starting principal's sole distinct profile. Multiple
+profiles refuse with `identity_target_ambiguous`, candidate profile IDs, and guidance
+to pass `--repo owner/repo` or choose a principal with one profile. A repository
+in the current checkout does not scope these reads. The selected profile must allow
+`api_read`; credentials and actors are verified as usual. Host-only audit targets
+omit `repo`, and App coverage checks apply only to concrete repository targets.
+With `--repo`, these commands use normal repository and managed-path rules.
+`search issues/prs/refs-to` and `activity feed` always use their repository context,
+including a remote-derived repository when `--repo` is absent. Inbox provider and
+query threads preserve the invocation's identity scope. Inbox cache reads and
+writes are disabled under managed identity because existing snapshots have no
+principal/profile binding. Repository bootstrap
+continues to refuse under policy; it has no root-bootstrap identity contract. An explicit API target may be used outside a checkout. If Git
 checkout metadata is present but cannot resolve, the operation refuses rather than
 ignoring managed-path rules. Other forge providers refuse protected network operations
 under this GitHub policy; the local file-backed provider remains local.

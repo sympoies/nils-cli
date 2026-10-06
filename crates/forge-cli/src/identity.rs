@@ -1,9 +1,12 @@
 //! CLI adapter and explicit invocation scope for the shared identity resolver.
 use crate::backend::{BackendCall, BackendProgram};
-use crate::cli::{BINARY, Cli, Command, GlobalFlags, IdentityCommand, RepoArgs, RepoCommand};
+use crate::cli::{
+    ActivityArgs, ActivityCommand, BINARY, Cli, Command, GlobalFlags, IdentityCommand, RepoArgs,
+    RepoCommand,
+};
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
-use crate::provider::{Provider, detect, git_remote_url};
+use crate::provider::{Provider, detect, detect_unscoped, git_remote_url};
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use nils_common::forge_identity::{self as identity, Authorization, Operation, Target};
 use serde::Serialize;
@@ -11,6 +14,12 @@ use std::cell::RefCell;
 
 thread_local! { static SCOPE: RefCell<Option<(Target, Operation)>> = const { RefCell::new(None) }; }
 pub struct Scope(Option<(Target, Operation)>);
+pub(crate) fn current_scope() -> Option<(Target, Operation)> {
+    SCOPE.with(|s| s.borrow().clone())
+}
+pub(crate) fn enter_scope(scope: Option<(Target, Operation)>) -> Scope {
+    Scope(SCOPE.with(|s| s.replace(scope)))
+}
 impl Drop for Scope {
     fn drop(&mut self) {
         SCOPE.with(|s| *s.borrow_mut() = self.0.take());
@@ -57,9 +66,9 @@ pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
     ) {
         return Ok(none());
     }
-    if identity::load().map_err(error)?.is_none() {
+    let Some(policy) = identity::load().map_err(error)? else {
         return Ok(none());
-    }
+    };
     if matches!(
         cli.command,
         Some(Command::Repo(RepoArgs {
@@ -70,35 +79,66 @@ pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
             "identity_operation_unsupported",
         )));
     }
-    if matches!(
-        cli.command,
-        Some(Command::Activity(_) | Command::Inbox(_) | Command::Search(_))
-    ) {
-        return Err(error(identity::Error::new("identity_target_ambiguous")));
-    }
-    let ctx = detect(
-        global.provider_hint(),
-        &global.remote,
-        global.repo.as_deref(),
-        git_remote_url,
-    )?;
-    if ctx.provider != Provider::GitHub {
-        return Err(error(identity::Error::new("identity_provider_unsupported")));
-    }
-    let target = Target::new(
-        &ctx.host,
-        ctx.repo
-            .as_deref()
-            .ok_or_else(|| error(identity::Error::new("identity_target_unknown")))?,
-    )
-    .map_err(error)?;
+    let cross_repository = matches!(
+        &cli.command,
+        Some(Command::Inbox(_))
+            | Some(Command::Activity(ActivityArgs {
+                command: Some(
+                    ActivityCommand::Commits(_)
+                        | ActivityCommand::Events(_)
+                        | ActivityCommand::Summary(_)
+                )
+            }))
+    ) && global.repo.is_none();
+    let target = if cross_repository {
+        let host = if matches!(&cli.command, Some(Command::Inbox(_))) {
+            if global
+                .provider
+                .as_ref()
+                .is_some_and(|p| !matches!(p, crate::cli::ProviderFlag::Github))
+            {
+                return Err(error(identity::Error::new("identity_provider_unsupported")));
+            }
+            crate::ops::inbox::github_host(global)
+        } else {
+            let ctx =
+                detect_unscoped(global.provider_hint(), &global.remote, None, git_remote_url)?;
+            if ctx.provider != Provider::GitHub {
+                return Err(error(identity::Error::new("identity_provider_unsupported")));
+            }
+            ctx.host
+        };
+        let target = Target::cross_repository(&host).map_err(error)?;
+        // Resolve metadata before inbox fan-out so ambiguity remains a typed
+        // invocation error, rather than a provider-local query failure.
+        policy
+            .select(&target, None, Operation::ApiRead)
+            .map_err(error)?;
+        target
+    } else {
+        let ctx = detect(
+            global.provider_hint(),
+            &global.remote,
+            global.repo.as_deref(),
+            git_remote_url,
+        )?;
+        if ctx.provider != Provider::GitHub {
+            return Err(error(identity::Error::new("identity_provider_unsupported")));
+        }
+        Target::new(
+            &ctx.host,
+            ctx.repo
+                .as_deref()
+                .ok_or_else(|| error(identity::Error::new("identity_target_unknown")))?,
+        )
+        .map_err(error)?
+    };
     let op = if effect == nils_common::execution_effect::ProviderEffect::NetworkWrite {
         Operation::ApiWrite
     } else {
         Operation::ApiRead
     };
-    let old = SCOPE.with(|s| s.replace(Some((target, op))));
-    Ok(Scope(old))
+    Ok(enter_scope(Some((target, op))))
 }
 fn target_from_call(call: &BackendCall) -> identity::Result<Option<Target>> {
     let args: Vec<_> = call.argv.iter().filter_map(|s| s.to_str()).collect();
@@ -153,7 +193,7 @@ fn prepare_api_inner(
     if call.program != BackendProgram::Gh {
         return Err(error(identity::Error::new("identity_provider_unsupported")));
     }
-    let scope = SCOPE.with(|s| s.borrow().clone());
+    let scope = current_scope();
     let own = target_from_call(call).map_err(error)?;
     if let (Some(own), Some((scoped, _))) = (&own, &scope)
         && own != scoped

@@ -86,18 +86,12 @@ pub struct Rule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Target {
     pub host: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub repo: String,
 }
 impl Target {
     pub fn new(host: &str, repo: &str) -> Result<Self> {
-        if !host
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
-            || host.is_empty()
-            || host.starts_with('-')
-        {
-            return Err(Error::new("identity_target_invalid"));
-        }
+        let host = canonical_host(host)?;
         let parts: Vec<_> = repo.split('/').collect();
         if parts.len() != 2
             || parts
@@ -107,12 +101,24 @@ impl Target {
             return Err(Error::new("identity_target_invalid"));
         }
         Ok(Self {
-            host: crate::git::canonical_git_host(host),
+            host,
             repo: repo.to_ascii_lowercase(),
         })
     }
+    /// Host-only scope for cross-repository API reads. Repository writes and Git
+    /// operations still require a concrete repository through `new`.
+    pub fn cross_repository(host: &str) -> Result<Self> {
+        Ok(Self {
+            host: canonical_host(host)?,
+            repo: String::new(),
+        })
+    }
     pub fn key(&self) -> String {
-        format!("{}/{}", self.host, self.repo)
+        if self.repo.is_empty() {
+            self.host.clone()
+        } else {
+            format!("{}/{}", self.host, self.repo)
+        }
     }
     pub fn org(&self) -> String {
         format!("{}/{}", self.host, self.repo.split('/').next().unwrap())
@@ -123,6 +129,17 @@ impl Target {
             .ok_or(Error::new("identity_target_invalid"))?;
         Self::new(host, repo)
     }
+}
+fn canonical_host(host: &str) -> Result<String> {
+    if !host
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        || host.is_empty()
+        || host.starts_with('-')
+    {
+        return Err(Error::new("identity_target_invalid"));
+    }
+    Ok(crate::git::canonical_git_host(host))
 }
 pub(super) fn identifier(s: &str) -> bool {
     !crate::redact::token_secret_regex().is_match(s)
@@ -281,6 +298,39 @@ impl Policy {
             .principals
             .get(principal)
             .ok_or(Error::new("identity_principal_unknown"))?;
+        if target.repo.is_empty() {
+            if operation != Operation::ApiRead {
+                return Err(Error::new("identity_operation_denied"));
+            }
+            let candidates: BTreeSet<_> = entry.profiles.iter().collect();
+            if candidates.len() != 1 {
+                return Err(Error::with_detail(
+                    "identity_target_ambiguous",
+                    format!(
+                        "candidate profiles: {}; pass --repo owner/repo to apply repository rules, or set FORGE_IDENTITY_PRINCIPAL to a principal with exactly one profile",
+                        candidates
+                            .into_iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                ));
+            }
+            let profile_id = (*candidates.first().unwrap()).clone();
+            let profile = self.profiles.get(&profile_id).unwrap().clone();
+            if !profile.operations.contains(&operation) {
+                return Err(Error::new("identity_operation_denied"));
+            }
+            return Ok(Selection {
+                principal: principal.to_string(),
+                target: target.clone(),
+                operation,
+                profile_id,
+                matched_rule: "principal-single-profile".to_string(),
+                profile,
+                session_binding: None,
+            });
+        }
         let key = target.key();
         let rules: Vec<_> = self
             .rules

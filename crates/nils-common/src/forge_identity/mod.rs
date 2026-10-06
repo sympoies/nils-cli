@@ -21,18 +21,29 @@ use std::process::{Command, Output};
 pub const PRINCIPAL_ENV: &str = "FORGE_IDENTITY_PRINCIPAL";
 pub const SESSION_ENV: &str = "FORGE_IDENTITY_SESSION";
 pub type Result<T> = std::result::Result<T, Error>;
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Error {
     pub code: &'static str,
+    detail: Option<String>,
 }
 impl Error {
     pub const fn new(code: &'static str) -> Self {
-        Self { code }
+        Self { code, detail: None }
+    }
+    fn with_detail(code: &'static str, detail: String) -> Self {
+        Self {
+            code,
+            detail: Some(detail),
+        }
     }
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.code)
+        f.write_str(self.code)?;
+        if let Some(detail) = &self.detail {
+            write!(f, ": {detail}")?;
+        }
+        Ok(())
     }
 }
 impl std::error::Error for Error {}
@@ -118,7 +129,7 @@ impl LoadedPolicy {
         let selected = self.select(target, path, op);
         let result = selected
             .as_ref()
-            .map_err(|e| *e)
+            .map_err(Clone::clone)
             .and_then(|s| self.verify(s, gh));
         match &result {
             Ok(auth) => self.audit(
@@ -204,29 +215,33 @@ impl LoadedPolicy {
             if viewer["data"]["viewer"]["login"].as_str() != Some(&expected) {
                 return Err(Error::new("identity_actor_mismatch"));
             }
-            // An installation token must list this repository; a public repo GET alone proves no coverage.
-            let pages = auth.probe(
-                gh,
-                &[
-                    "api",
-                    "installation/repositories?per_page=100",
-                    "--paginate",
-                    "--slurp",
-                ],
-            )?;
-            let found = pages.as_array().is_some_and(|pages| {
-                pages.iter().any(|page| {
-                    page["repositories"].as_array().is_some_and(|repos| {
-                        repos.iter().any(|repo| {
-                            repo["full_name"].as_str().is_some_and(|name| {
-                                name.eq_ignore_ascii_case(&selection.target.repo)
+            // Repo-scoped calls require installation coverage; cross-repository reads
+            // have no individual repository to check.
+            if !selection.target.repo.is_empty() {
+                // An installation token must list this repository; a public repo GET alone proves no coverage.
+                let pages = auth.probe(
+                    gh,
+                    &[
+                        "api",
+                        "installation/repositories?per_page=100",
+                        "--paginate",
+                        "--slurp",
+                    ],
+                )?;
+                let found = pages.as_array().is_some_and(|pages| {
+                    pages.iter().any(|page| {
+                        page["repositories"].as_array().is_some_and(|repos| {
+                            repos.iter().any(|repo| {
+                                repo["full_name"].as_str().is_some_and(|name| {
+                                    name.eq_ignore_ascii_case(&selection.target.repo)
+                                })
                             })
                         })
                     })
-                })
-            });
-            if !found {
-                return Err(Error::new("identity_app_repository_missing"));
+                });
+                if !found {
+                    return Err(Error::new("identity_app_repository_missing"));
+                }
             }
             expected
         };
