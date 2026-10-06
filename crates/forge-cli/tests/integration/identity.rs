@@ -115,6 +115,470 @@ printf '%s' "$GH_TOKEN" >&2
         }
     }
 
+    fn cross_repo_fixture(policy: &str) -> Fixture {
+        let f = Fixture::new(policy);
+        fs::write(&f.gh, r#"#!/bin/sh
+case "$1:$2" in
+ auth:token) printf '%s' "$FIXTURE_SECRET_B"; exit 0;;
+ api:user) printf '{"login":"%s"}' "${FIXTURE_ACTOR:-account-a}"; exit 0;;
+esac
+if test "$GH_TOKEN" != "$FIXTURE_ACCOUNT_A_CREDENTIAL" || test -n "$GITHUB_TOKEN"; then exit 9; fi
+printf 'actor call\n' >> "$FIXTURE_CALL_LOG"
+case "$1:$2" in
+ api:graphql) printf '{"data":{"user":{"contributionsCollection":{"totalCommitContributions":0,"commitContributionsByRepository":[]}},"repository":{"issueOrPullRequest":{"timelineItems":{"nodes":[]}}}}}';;
+ *) printf '[]';;
+esac
+"#).unwrap();
+        f
+    }
+
+    fn single_profile_policy() -> String {
+        POLICY
+            .replace(
+                "profiles = [\"account-a\", \"account-b\"]",
+                "profiles = [\"account-a\"]",
+            )
+            .replace(
+                "org = \"github.com/sandbox\"\nprofile = \"account-b\"",
+                "org = \"github.com/sandbox\"\nprofile = \"account-a\"",
+            )
+    }
+
+    #[test]
+    fn identity_cross_repo_reads_resolve_single_profile_without_checkout() {
+        let f = cross_repo_fixture(&single_profile_policy());
+        for args in [
+            vec!["inbox", "list"],
+            vec!["inbox", "status"],
+            vec!["inbox", "next"],
+            vec!["activity", "commits"],
+            vec!["activity", "events"],
+            vec!["activity", "summary"],
+        ] {
+            let out = f
+                .bare_command()
+                .current_dir(f.home.path())
+                .env("GITHUB_TOKEN", "WRONG_AMBIENT_CREDENTIAL")
+                .env("FORGE_CLI_INBOX_NO_CACHE", "1")
+                .args(["--provider", "github"])
+                .args(&args)
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+        assert!(f.home.path().join("calls").exists());
+        assert!(f.audit().contains("account-a"));
+        assert!(!f.audit().contains(CANARY));
+    }
+
+    #[test]
+    fn identity_cross_repo_hosts_are_authorized_before_credential_probes() {
+        let f = cross_repo_fixture(&single_profile_policy());
+        fs::write(
+            &f.gh,
+            r#"#!/bin/sh
+printf 'probe call\n' >> "$FIXTURE_CALL_LOG"
+printf '{"login":"unlisted-actor"}'
+"#,
+        )
+        .unwrap();
+        for args in [
+            vec!["activity", "commits"],
+            vec!["activity", "events"],
+            vec!["activity", "summary"],
+        ] {
+            let out = f
+                .bare_command()
+                .current_dir(f.home.path())
+                .args(["--provider", "github", "--host", "unlisted.example"])
+                .args(&args)
+                .output()
+                .unwrap();
+            assert_eq!(out.status.code(), Some(65), "{args:?}");
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains("identity_repository_unknown"),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            assert!(
+                !f.home.path().join("calls").exists(),
+                "unlisted host must not be probed"
+            );
+        }
+    }
+
+    #[test]
+    fn identity_cross_repo_reads_accept_explicitly_authorized_custom_hosts() {
+        let f = cross_repo_fixture(
+            &single_profile_policy().replace("github.com", "authorized.example"),
+        );
+        fs::write(&f.gh, r#"#!/bin/sh
+printf 'probe call\n' >> "$FIXTURE_CALL_LOG"
+if test "$GH_ENTERPRISE_TOKEN" != "$FIXTURE_ACCOUNT_A_CREDENTIAL" || test -n "$GH_TOKEN"; then exit 9; fi
+case "$1:$2" in
+ api:user) printf '{"login":"account-a"}';;
+ api:graphql) printf '{"data":{"user":{"contributionsCollection":{"totalCommitContributions":0,"commitContributionsByRepository":[]}}}}';;
+ *) printf '[]';;
+esac
+"#).unwrap();
+        for args in [
+            vec!["activity", "commits"],
+            vec!["activity", "events"],
+            vec!["activity", "summary"],
+        ] {
+            let out = f
+                .bare_command()
+                .current_dir(f.home.path())
+                .args(["--provider", "github", "--host", "authorized.example"])
+                .args(&args)
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+        assert!(f.home.path().join("calls").exists());
+    }
+
+    #[test]
+    fn identity_repo_scoped_reads_use_normal_rules_including_inbox_threads() {
+        let f = cross_repo_fixture(POLICY);
+        for args in [
+            vec!["inbox", "list"],
+            vec!["inbox", "status"],
+            vec!["inbox", "next"],
+            vec!["activity", "commits"],
+            vec!["activity", "events"],
+            vec!["activity", "summary"],
+            vec!["activity", "feed"],
+            vec!["search", "issues", "example"],
+            vec!["search", "prs", "example"],
+            vec!["search", "refs-to", "1"],
+        ] {
+            let out = f
+                .command()
+                .current_dir(f.home.path())
+                .env("FORGE_CLI_INBOX_NO_CACHE", "1")
+                .args(["--provider", "github"])
+                .args(&args)
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+        let audit = f.audit();
+        let entries: Vec<serde_json::Value> = audit
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert!(entries.iter().all(|e| e["profile_id"] == "account-a"));
+        assert!(
+            entries
+                .iter()
+                .all(|e| e["target"]["repo"] == "sandbox/widget")
+        );
+    }
+
+    #[test]
+    fn identity_cross_repo_reads_ignore_checkout_repo_but_repo_commands_infer_it() {
+        let f = cross_repo_fixture(&single_profile_policy());
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .current_dir(f.home.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        };
+        git(&["init", "-b", "main"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/upstream/unmapped.git",
+        ]);
+        let out = f
+            .bare_command()
+            .current_dir(f.home.path())
+            .env("FORGE_CLI_INBOX_NO_CACHE", "1")
+            .args(["--provider", "github", "inbox", "list"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        git(&[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/sandbox/widget.git",
+        ]);
+        for args in [
+            vec!["activity", "feed"],
+            vec!["search", "issues", "example"],
+            vec!["search", "prs", "example"],
+            vec!["search", "refs-to", "1"],
+        ] {
+            let out = f
+                .bare_command()
+                .current_dir(f.home.path())
+                .args(&args)
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+    }
+
+    #[test]
+    fn identity_cross_repo_reads_do_not_fallback_on_repo_credential_or_permission_refusal() {
+        for (repo, missing, denied, actor, expected) in [
+            (
+                "upstream/unmapped",
+                false,
+                false,
+                "account-a",
+                "identity_repository_unknown",
+            ),
+            (
+                "sandbox/widget",
+                true,
+                false,
+                "account-a",
+                "identity_credential_missing",
+            ),
+            (
+                "sandbox/widget",
+                false,
+                true,
+                "account-a",
+                "identity_operation_denied",
+            ),
+            (
+                "sandbox/widget",
+                false,
+                false,
+                "wrong-actor",
+                "identity_actor_mismatch",
+            ),
+        ] {
+            let policy = if denied {
+                single_profile_policy().replace("operations = [\"api_read\",", "operations = [")
+            } else {
+                single_profile_policy()
+            };
+            let f = cross_repo_fixture(&policy);
+            let mut command = f.bare_command();
+            command
+                .current_dir(f.home.path())
+                .env("FORGE_CLI_INBOX_NO_CACHE", "1")
+                .env("FIXTURE_ACTOR", actor);
+            if missing {
+                command.env_remove("FIXTURE_ACCOUNT_A_CREDENTIAL");
+            }
+            let out = command
+                .args(["--provider", "github", "--repo", repo, "inbox", "list"])
+                .output()
+                .unwrap();
+            assert!(!out.status.success());
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains(expected),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            assert!(!f.home.path().join("calls").exists());
+        }
+    }
+
+    #[test]
+    fn identity_inbox_canonicalizes_github_ssh_transport_alias() {
+        let f = cross_repo_fixture(&single_profile_policy());
+        for args in [
+            vec!["init", "-b", "main"],
+            vec![
+                "remote",
+                "add",
+                "origin",
+                "ssh://git@ssh.github.com:443/sandbox/widget.git",
+            ],
+        ] {
+            assert!(
+                Command::new("git")
+                    .current_dir(f.home.path())
+                    .args(args)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+        for repo in [None, Some("sandbox/widget")] {
+            let mut command = f.bare_command();
+            command
+                .current_dir(f.home.path())
+                .args(["--provider", "github"]);
+            if let Some(repo) = repo {
+                command.args(["--repo", repo]);
+            }
+            let out = command
+                .args(["inbox", "list", "--no-cache"])
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(value["data"]["providers"][0]["host"], "github.com");
+        }
+    }
+
+    #[test]
+    fn identity_inbox_does_not_read_or_write_unbound_cache() {
+        let f = cross_repo_fixture(&format!(
+            "activation='asserted-only'\n{}",
+            single_profile_policy()
+        ));
+        let script = fs::read_to_string(&f.gh).unwrap().replace(
+            "*) printf '[]';;",
+            "*) printf '[{\"number\":1,\"url\":\"https://github.com/sandbox/widget/pull/1\",\"title\":\"Cached fixture item\"}]';;",
+        );
+        fs::write(&f.gh, script).unwrap();
+        let cache = f.home.path().join("cache");
+        let run = |missing: bool, managed: bool| {
+            let mut command = f.bare_command();
+            command
+                .current_dir(f.home.path())
+                .env("FORGE_CLI_INBOX_CACHE_DIR", &cache)
+                .env_remove("FORGE_CLI_INBOX_NO_CACHE");
+            if !managed {
+                command
+                    .env_remove("FORGE_IDENTITY_PRINCIPAL")
+                    .env("GH_TOKEN", CANARY);
+            }
+            if missing {
+                command.env_remove("FIXTURE_ACCOUNT_A_CREDENTIAL");
+            }
+            command
+                .args(["--provider", "github", "inbox", "list", "--cache-fallback"])
+                .output()
+                .unwrap()
+        };
+        let success = run(false, true);
+        assert_eq!(success.status.code(), Some(0));
+        assert!(
+            !cache.exists(),
+            "managed inbox must not populate the unbound cache"
+        );
+        // Seed the unbound cache through an ordinary invocation, then ensure an
+        // identity refusal does not consume that other identity context.
+        let seed = run(false, false);
+        assert_eq!(seed.status.code(), Some(0));
+        assert!(cache.exists());
+        let refused = run(true, true);
+        assert!(!refused.status.success());
+        let value: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
+        let provider = &value["error"]["details"]["providers"][0];
+        assert_eq!(provider["error"]["kind"], "identity_credential_missing");
+        assert!(provider.get("cache").is_none());
+        assert_eq!(provider["item_count"], 0);
+        assert!(!String::from_utf8_lossy(&refused.stdout).contains("provider_cache_fallback"));
+    }
+
+    #[test]
+    fn identity_cross_repo_app_profile_verifies_app_and_viewer_without_repo_probe() {
+        let policy = single_profile_policy().replacen(
+            "expected_login = \"account-a\"",
+            "expected_app_id=42\napp_slug='fixture-app'",
+            1,
+        );
+        for (app_id, viewer, expected) in [
+            ("42", "fixture-app[bot]", 0),
+            ("43", "fixture-app[bot]", 1),
+            ("42", "wrong-actor", 1),
+        ] {
+            let f = Fixture::new(&policy);
+            fs::write(&f.gh, r#"#!/bin/sh
+case "$1:$2" in
+ api:apps/fixture-app) printf 'app\n' >> "$FIXTURE_PROBES"; printf '{"id":%s}' "$FIXTURE_APP_ID"; exit 0;;
+ api:graphql) printf 'viewer\n' >> "$FIXTURE_PROBES"; printf '{"data":{"viewer":{"login":"%s"}}}' "$FIXTURE_VIEWER"; exit 0;;
+ api:installation/repositories*) printf 'repository\n' >> "$FIXTURE_PROBES"; exit 9;;
+esac
+printf '[]'
+"#).unwrap();
+            let probes = f.home.path().join("probes");
+            let out = f
+                .bare_command()
+                .current_dir(f.home.path())
+                .env("FIXTURE_PROBES", &probes)
+                .env("FIXTURE_APP_ID", app_id)
+                .env("FIXTURE_VIEWER", viewer)
+                .args(["--provider", "github", "inbox", "list", "--no-cache"])
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(expected),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            let calls = fs::read_to_string(probes).unwrap();
+            assert!(calls.contains("app"));
+            assert!(!calls.contains("repository"));
+            if app_id == "42" {
+                assert!(calls.contains("viewer"));
+            }
+            if expected != 0 {
+                assert!(String::from_utf8_lossy(&out.stdout).contains("identity_actor_mismatch"));
+            }
+        }
+    }
+
+    #[test]
+    fn identity_cross_repo_ambiguity_names_candidates_and_repo_recovery() {
+        let f = cross_repo_fixture(POLICY);
+        let out = f
+            .bare_command()
+            .current_dir(f.home.path())
+            .args(["--provider", "github", "inbox", "list"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(65));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["error"]["code"], "identity_target_ambiguous");
+        let message = String::from_utf8_lossy(&out.stdout);
+        for expected in [
+            "account-a",
+            "account-b",
+            "--repo",
+            "FORGE_IDENTITY_PRINCIPAL",
+        ] {
+            assert!(message.contains(expected), "missing {expected}: {message}");
+        }
+        assert!(!f.home.path().join("calls").exists());
+    }
+
     #[test]
     fn identity_asserted_only_api_passthrough_unset_and_strict_when_set() {
         let f = Fixture::new(&format!("activation='asserted-only'\n{POLICY}"));

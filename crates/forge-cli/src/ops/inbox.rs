@@ -31,7 +31,9 @@ use crate::cli::{
 use crate::config::ForgeConfig;
 use crate::envelope::emit_success_with_warnings;
 use crate::error::ForgeError;
-use crate::provider::{Provider, classify_host, git_remote_url, parse_host};
+use crate::provider::{
+    Provider, canonical_provider_host, classify_host, git_remote_url, parse_host,
+};
 use crate::rate_limit::default_runner;
 
 const LIST_SCHEMA: &str = "inbox.list";
@@ -576,7 +578,10 @@ impl InboxRuntimeConfig {
         let strict_providers = overrides.strict_providers
             || env_bool(ENV_INBOX_STRICT_PROVIDERS)?
             || cfg.inbox_strict_providers.unwrap_or(false);
-        let no_cache = overrides.no_cache
+        // Inbox caches are not bound to a principal/profile. Managed
+        // identity must neither populate nor consume them.
+        let no_cache = crate::identity::current_scope().is_some()
+            || overrides.no_cache
             || env_bool(ENV_INBOX_NO_CACHE)?
             || cfg.inbox_no_cache.unwrap_or(false);
         let cache_fallback = overrides.cache_fallback
@@ -803,8 +808,11 @@ fn resolve_targets(global: &GlobalFlags, gitlab_host: Option<&str>) -> Vec<Provi
     }
 }
 
-fn github_host(global: &GlobalFlags) -> String {
-    host_from_remote(global, Provider::GitHub).unwrap_or_else(|| "github.com".to_string())
+pub(crate) fn github_host(global: &GlobalFlags) -> String {
+    canonical_provider_host(
+        Provider::GitHub,
+        &host_from_remote(global, Provider::GitHub).unwrap_or_else(|| "github.com".to_string()),
+    )
 }
 
 fn gitlab_host_for(global: &GlobalFlags, explicit: Option<&str>) -> String {
@@ -924,10 +932,15 @@ fn collect_inbox<R: BackendRunner + Sync>(
     // does not block GitHub work on the GitLab identity lookup.
     let mut slots: Vec<Option<Result<ProviderSuccess, ForgeError>>> =
         (0..plans.len()).map(|_| None).collect();
+    let identity_scope = crate::identity::current_scope();
     std::thread::scope(|s| {
         let mut handles = Vec::with_capacity(plans.len());
         for (i, plan) in plans.iter().enumerate() {
-            handles.push(s.spawn(move || (i, plan.execute(runner, runtime))));
+            let identity_scope = identity_scope.clone();
+            handles.push(s.spawn(move || {
+                let _scope = crate::identity::enter_scope(identity_scope);
+                (i, plan.execute(runner, runtime))
+            }));
         }
         for h in handles {
             let (i, res) = h.join().expect("inbox provider task panicked");
@@ -1108,10 +1121,13 @@ where
     let mut slots: Vec<Option<Result<Vec<InboxItem>, ForgeError>>> =
         (0..queries.len()).map(|_| None).collect();
     let parse_ref = &parse;
+    let identity_scope = crate::identity::current_scope();
     std::thread::scope(|s| {
         let mut handles = Vec::with_capacity(queries.len());
         for (i, query) in queries.iter().enumerate() {
+            let identity_scope = identity_scope.clone();
             handles.push(s.spawn(move || {
+                let _scope = crate::identity::enter_scope(identity_scope);
                 let result = runner
                     .run_with_timeout(&query.call, timeout)
                     .and_then(|output| parse_ref(query, &output));
