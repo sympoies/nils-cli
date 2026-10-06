@@ -1184,10 +1184,17 @@ root and authenticates to its own daemon with the current session capability.
 It never reads relay or machine operator secrets. The daemon discovers authorized
 recipients at `GET /api/coordination/peers/v1` (query `source_session_id` and
 `source_incarnation`) and submits to `POST /api/coordination/relay/v1` at the
-configured edge. Only Console-registered sessions with exact same-principal
-ownership and current coordination support are eligible. The edge binds its
-outbound service bearer to the source machine, checks both ownership tuples,
-and chooses destinations from its configured machine inventory.
+configured edge. Only Console-registered sessions with exact ownership and
+current coordination support are eligible. The edge owns owner isolation:
+same-principal messaging is the default, and cross-owner messaging requires an
+explicit edge-configured allowance. Discovery and delivery must apply the same
+allowance, retain both current ownership/incarnation checks, and constrain each
+endpoint to its own owner's permitted machines. A mailbox allowance grants no
+board visibility, Console list, attach, or transcript access. The daemon never
+accepts a caller-supplied allowance or bypasses discovery for a new send.
+The edge binds its outbound service bearer to the source machine and chooses
+destinations from its configured machine inventory. Configure an allowance in
+the owning relay implementation; no additional daemon setting is required.
 
 The JSON envelope is `agent-session.remote-message.v1`:
 
