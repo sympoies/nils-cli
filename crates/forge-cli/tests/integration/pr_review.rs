@@ -4626,3 +4626,77 @@ fn pr_review_submit_native_dry_run_renders_review_submit() {
         "pending_review_guard_plan should render the pending-only snapshot: {pending_guard_plan}"
     );
 }
+
+#[test]
+fn specialist_reviewable_is_bound_before_provider_calls() {
+    let report = "<!-- agent-kit:specialist-review-report:v1 -->\n## Review Report\n\n- Reviewable: VALUE\n- Lens: testing\n- Lens verdict: pass\n- Scope: publication\n- Evidence reviewed: fixture\n\n| Finding | Severity | Confidence | Evidence | Recommendation |\n| --- | --- | ---: | --- | --- |\n| No findings | none | 0.00 | fixture | none |\n";
+    for value in ["PR #44 at head-44", "PR #45", "acme/other#44"] {
+        let stub = StubEnv::new();
+        let capture = stub.tempdir.path().join("calls.log");
+        let stub = stub.gh_stub(&github_review_stub(&capture.to_string_lossy()));
+        let body = report.replace("VALUE", value);
+        for mode in ["validate", "publish"] {
+            let mut args = vec![
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widgets",
+                "--format",
+                "json",
+                "pr",
+                "review",
+            ];
+            if mode == "validate" {
+                args.extend(["validate", "44"]);
+            } else {
+                args.extend([
+                    "44",
+                    "--submit-review",
+                    "--decision",
+                    "approve",
+                    "--expected-head",
+                    "head-44",
+                ]);
+            }
+            args.extend(["--specialist-report", "--comment", &body]);
+            let out = run_forge_cli(&stub, &args);
+            assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+            let env = parse_envelope(&out.stdout);
+            assert_eq!(env["error"]["code"], "reviewable_mismatch");
+            assert!(
+                env["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Reviewable")
+            );
+            assert_backend_not_invoked(&capture);
+        }
+    }
+    for value in [
+        "https://github.com/acme/widgets/pull/44",
+        "PR #44",
+        "#44",
+        "acme/widgets#44",
+    ] {
+        let stub = StubEnv::new();
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widgets",
+                "--format",
+                "json",
+                "pr",
+                "review",
+                "validate",
+                "44",
+                "--specialist-report",
+                "--comment",
+                &report.replace("VALUE", value),
+            ],
+        );
+        assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    }
+}

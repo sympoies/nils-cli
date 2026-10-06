@@ -466,6 +466,11 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     }
     if args.specialist_report {
         validate_specialist_review_report(&body)?;
+        if ctx.provider == Provider::GitHub {
+            let (owner, name) = github_owner_name(&ctx)?;
+            let url = format!("https://{}/{owner}/{name}/pull/{id}", ctx.host);
+            validate_reviewable(&body, &ctx, id, &url)?;
+        }
     }
 
     // Validate the generated issue-mirror body BEFORE any backend mutation
@@ -922,6 +927,13 @@ fn run_validate_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     }
     if args.specialist_report {
         validate_specialist_review_report(&body)?;
+        if ctx.provider == Provider::GitHub
+            && let Some(id) = args.id
+        {
+            let (owner, name) = github_owner_name(&ctx)?;
+            let url = format!("https://{}/{owner}/{name}/pull/{id}", ctx.host);
+            validate_reviewable(&body, &ctx, id, &url)?;
+        }
     }
 
     let mut diff_plan = None;
@@ -3379,6 +3391,38 @@ fn native_review_verification_error(detail: String) -> ForgeError {
         "the authoritative native review did not match the selected pull request, decision, and expected App author",
         Some(detail),
     )
+}
+
+/// Publication and designated-review admission use the same target binding.
+pub(crate) fn validate_reviewable(
+    body: &str,
+    ctx: &ProviderContext,
+    number: u64,
+    url: &str,
+) -> Result<(), ForgeError> {
+    let values = body
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- Reviewable:").map(str::trim))
+        .collect::<Vec<_>>();
+    if values.len() == 1
+        && (values[0] == url
+            || values[0] == format!("PR #{number}")
+            || values[0] == format!("#{number}")
+            || ctx
+                .repo
+                .as_ref()
+                .is_some_and(|repo| values[0] == format!("{repo}#{number}")))
+    {
+        return Ok(());
+    }
+    Err(ForgeError::validation(
+        schema_err(),
+        "reviewable_mismatch",
+        "specialist report Reviewable field does not identify the selected pull request",
+        Some(format!(
+            "field=Reviewable; expected_pr={number}; accepted=PR #{number}, #{number}, repository#{number}, or the pull request URL"
+        )),
+    ))
 }
 
 pub(crate) fn validate_specialist_review_report(body: &str) -> Result<(), ForgeError> {

@@ -630,20 +630,23 @@ pub(crate) fn ensure_published<R: BackendRunner>(
         if publication_is_known_other_interval(chain, &body) {
             continue;
         }
+        if let Err(error) = pr_review::validate_reviewable(&body, ctx, number, url) {
+            return Err(ForgeError::validation(
+                schema(),
+                "awaiting_designated_review",
+                format!(
+                    "awaiting designated review: published review {} has an invalid Reviewable field",
+                    r.id
+                ),
+                Some(format!(
+                    "review_id={}; field=Reviewable; cause={}",
+                    r.id,
+                    error.kind()
+                )),
+            ));
+        }
         passing = pr_review::validate_specialist_review_report(&body).is_ok()
             && publication_matches_interval(chain, &body)
-            && body.lines().any(|l| {
-                let Some(value) = l.trim().strip_prefix("- Reviewable: ") else {
-                    return false;
-                };
-                value == url
-                    || value == format!("PR #{number}")
-                    || value == format!("#{number}")
-                    || ctx
-                        .repo
-                        .as_ref()
-                        .is_some_and(|repo| value == format!("{repo}#{number}"))
-            })
             && matches!(r.state.as_str(), "APPROVED" | "COMMENTED")
             && r.submitted_at
                 .parse::<jiff::Timestamp>()
