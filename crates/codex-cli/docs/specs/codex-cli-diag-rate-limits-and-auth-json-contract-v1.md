@@ -49,20 +49,30 @@ Success envelope:
   - `result` for single-target/single-entity responses
   - `results` for collection responses
 
-Failure envelope:
+Command-level failure envelope (no usable payload):
 
 - `ok=false`
 - `error` object with:
   - `code` (stable machine code)
   - `message` (human-readable summary)
   - optional `details` (structured diagnostics)
-- `result`/`results` must not be present when `ok=false`.
+- `result`/`results` must not be present for a command-level failure.
+  A completed collection is different: it retains `results` even when its
+  aggregate `ok` is false.
 
 Partial failure rule:
 
-- For collection workflows (`diag --all`, `diag --async`, and auth workflows that include per-target
-  outcomes), top-level `ok=true` is allowed with per-item failures in `results`/`result.targets`.
-- Command-level failure that prevents a usable payload must return `ok=false` with top-level `error`.
+- Live `diag --all` and `diag --async` collection runs return every per-account
+  result. If any account fails, the process exits nonzero and the collection
+  has `ok=false` with `results`, rather than a top-level `error`. Mixed and
+  all-failed lists both preserve each account's `ok`, `status`, and classified
+  reason. Consumers must inspect account results independently of aggregate `ok`.
+- Cached async reads can return `ok=true` with per-item cache misses; account
+  results still own their individual status.
+- Auth workflows that include per-target outcomes may likewise have top-level
+  `ok=true` with failures in `result.targets`.
+- Command-level failure that prevents a usable payload returns `ok=false` with
+  top-level `error`.
 
 Sensitive data rule:
 
@@ -238,13 +248,14 @@ for the active login) and rejected where one is given (`auth remote pull
   "schema_version": "codex-cli.diag.rate-limits.v1",
   "command": "diag rate-limits",
   "mode": "all",
-  "ok": true,
+  "ok": false,
   "results": [
     {
       "name": "alpha",
       "provider": "codex",
       "target_file": "alpha.json",
       "status": "ok",
+      "ok": true,
       "source": "network",
       "summary": {
         "non_weekly_label": "5h",
@@ -273,8 +284,10 @@ for the active login) and rejected where one is given (`auth remote pull
     },
     {
       "name": "beta",
+      "provider": "codex",
       "target_file": "beta.json",
       "status": "error",
+      "ok": false,
       "reason_code": "auth_required",
       "error": {
         "code": "missing-access-token",
