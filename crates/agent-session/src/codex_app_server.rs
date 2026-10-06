@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 
 use crate::{
@@ -2098,6 +2098,7 @@ pub(crate) fn usage_snapshot(result: &Value) -> UsageSnapshot {
 #[derive(Clone)]
 pub(crate) struct ControlHandle {
     sender: mpsc::Sender<ControlCommand>,
+    ready: watch::Receiver<bool>,
 }
 
 pub(crate) enum ControlCommand {
@@ -2128,6 +2129,26 @@ pub(crate) enum ControlCommand {
 }
 
 impl ControlHandle {
+    // Registration permits account recovery while startup is still in progress.
+    // Prompt callers must wait without holding the record lock needed by thread
+    // persistence and the initial usage wakeup.
+    pub(crate) async fn wait_ready(&self, timeout: Duration) -> Result<(), String> {
+        let mut ready = self.ready.clone();
+        tokio::time::timeout(timeout, async {
+            loop {
+                if *ready.borrow_and_update() {
+                    return Ok(());
+                }
+                ready
+                    .changed()
+                    .await
+                    .map_err(|_| "codex control startup ended".to_string())?;
+            }
+        })
+        .await
+        .map_err(|_| "codex control startup timed out".to_string())?
+    }
+
     pub(crate) async fn usage(&self) -> Result<UsageSnapshot, String> {
         let (response, receive) = oneshot::channel();
         tokio::time::timeout(CONTROL_RESPONSE_TIMEOUT, async {
@@ -2244,9 +2265,29 @@ impl ControlHandle {
     }
 }
 
-pub(crate) fn control_channel() -> (ControlHandle, mpsc::Receiver<ControlCommand>) {
+pub(crate) fn starting_control_channel() -> (
+    ControlHandle,
+    mpsc::Receiver<ControlCommand>,
+    watch::Sender<bool>,
+) {
     let (sender, receive) = mpsc::channel(4);
-    (ControlHandle { sender }, receive)
+    let (ready, readiness) = watch::channel(false);
+    (
+        ControlHandle {
+            sender,
+            ready: readiness,
+        },
+        receive,
+        ready,
+    )
+}
+
+// Fixture command receivers have no startup work to complete.
+#[cfg(test)]
+pub(crate) fn control_channel() -> (ControlHandle, mpsc::Receiver<ControlCommand>) {
+    let (handle, commands, ready) = starting_control_channel();
+    ready.send_replace(true);
+    (handle, commands)
 }
 
 /// Resolve credentials and drive the app-server external-auth login for
@@ -2529,6 +2570,7 @@ pub(crate) async fn run_control(
     context: CliContext,
     record: SessionRecord,
     mut commands: mpsc::Receiver<ControlCommand>,
+    ready: watch::Sender<bool>,
 ) -> Result<(), String> {
     let socket = socket_path(&record)
         .map(PathBuf::from)
@@ -2715,6 +2757,8 @@ pub(crate) async fn run_control(
         .map(|value| usage_snapshot(&value))?;
         wake_from_open_usage(&context, &record, &initial_usage).await?;
     }
+
+    ready.send_replace(true);
 
     loop {
         tokio::select! {
@@ -6926,6 +6970,20 @@ exit "$FAKE_PROVIDER_EXIT"
         serde_json::from_str(message.to_text().unwrap()).unwrap()
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn control_readiness_is_bounded_and_fails_when_startup_ends() {
+        let (handle, _commands, ready) = starting_control_channel();
+        assert_eq!(
+            handle.wait_ready(Duration::from_secs(1)).await.unwrap_err(),
+            "codex control startup timed out"
+        );
+        drop(ready);
+        assert_eq!(
+            handle.wait_ready(Duration::from_secs(1)).await.unwrap_err(),
+            "codex control startup ended"
+        );
+    }
+
     #[tokio::test]
     async fn response_wait_is_bounded_for_reconnect() {
         let mut stream = PendingMessageSink;
@@ -9652,8 +9710,13 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
                 .await;
             }
         });
-        let (handle, commands) = control_channel();
-        let control = tokio::spawn(run_control(context.clone(), record.clone(), commands));
+        let (handle, commands, ready) = starting_control_channel();
+        let control = tokio::spawn(run_control(
+            context.clone(),
+            record.clone(),
+            commands,
+            ready,
+        ));
 
         let usage = handle.usage().await.unwrap();
         assert!(usage.authoritative);
@@ -9747,10 +9810,15 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             )
             .await;
         });
-        let (handle, commands) = control_channel();
+        let (handle, commands, ready) = starting_control_channel();
         let control_context = context.clone();
         let control_record = record.clone();
-        let control = tokio::spawn(run_control(control_context, control_record, commands));
+        let control = tokio::spawn(run_control(
+            control_context,
+            control_record,
+            commands,
+            ready,
+        ));
         let usage = handle.usage().await;
         if let Err(error) = usage.as_ref() {
             drop(handle);
@@ -10504,8 +10572,13 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             .await;
         });
 
-        let (handle, commands) = control_channel();
-        let control = tokio::spawn(run_control(context.clone(), record.clone(), commands));
+        let (handle, commands, ready) = starting_control_channel();
+        let control = tokio::spawn(run_control(
+            context.clone(),
+            record.clone(),
+            commands,
+            ready,
+        ));
         assert!(handle.usage().await.unwrap().authoritative);
         crate::codex_account::queue_next_account(&context, &record.id, "runtime-apply-next", "sym")
             .unwrap();
@@ -10688,8 +10761,8 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             )
             .await;
         });
-        let (handle, commands) = control_channel();
-        let control = tokio::spawn(run_control(context, record, commands));
+        let (handle, commands, ready) = starting_control_channel();
+        let control = tokio::spawn(run_control(context, record, commands, ready));
 
         let error = handle
             .submit_prompt("must require an acknowledged turn id")
@@ -10782,8 +10855,13 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             )
             .await;
         });
-        let (handle, commands) = control_channel();
-        let control = tokio::spawn(run_control(context.clone(), record.clone(), commands));
+        let (handle, commands, ready) = starting_control_channel();
+        let control = tokio::spawn(run_control(
+            context.clone(),
+            record.clone(),
+            commands,
+            ready,
+        ));
 
         assert!(handle.usage().await.is_err());
         let revision = crate::codex_account::begin_switch_binding(
@@ -11269,8 +11347,13 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             .await;
         });
 
-        let (handle, commands) = control_channel();
-        let control = tokio::spawn(run_control(context.clone(), record.clone(), commands));
+        let (handle, commands, ready) = starting_control_channel();
+        let control = tokio::spawn(run_control(
+            context.clone(),
+            record.clone(),
+            commands,
+            ready,
+        ));
         handle.apply_next().await.unwrap();
         server.await.unwrap();
         control.abort();
@@ -13169,13 +13252,12 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             .await;
         });
 
-        let (handle, commands) = control_channel();
+        let (handle, commands, ready) = starting_control_channel();
         let control_context = context.clone();
         let control_record = record.clone();
-        let control =
-            tokio::spawn(
-                async move { run_control(control_context, control_record, commands).await },
-            );
+        let control = tokio::spawn(async move {
+            run_control(control_context, control_record, commands, ready).await
+        });
         let projected_turn_id = crate::activity::projected_codex_turn_identifier(
             "runtime-reconnect-control",
             "raw-recovered-active-turn",
@@ -13371,13 +13453,12 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             .await;
         });
 
-        let (handle, commands) = control_channel();
+        let (handle, commands, ready) = starting_control_channel();
         let control_context = context.clone();
         let control_record = record.clone();
-        let control =
-            tokio::spawn(
-                async move { run_control(control_context, control_record, commands).await },
-            );
+        let control = tokio::spawn(async move {
+            run_control(control_context, control_record, commands, ready).await
+        });
         let usage = handle.usage().await.unwrap();
         assert!(usage.authoritative);
         assert!(usage.has_exhausted_windows);
