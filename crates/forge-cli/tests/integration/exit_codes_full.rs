@@ -100,6 +100,8 @@ const LOCKDOWN_DATA_KINDS: &[&str] = &[
     "pending_review_not_found",
     "pending_review_author_mismatch",
     "pending_review_not_deletable",
+    "pr_hold_active",
+    "invalid_hold_labels_config",
     "merge_freeze_active",
     "merge_freeze_not_active",
     "merge_freeze_ambiguous",

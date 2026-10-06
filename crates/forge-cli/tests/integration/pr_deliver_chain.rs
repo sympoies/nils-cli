@@ -680,6 +680,7 @@ EOF
   "pr ready")
     :
     ;;
+  "api --paginate") printf '%s\n' '[[]]' ;;
   "api graphql")
     case "$*" in
       *"ForgeMergePolicy"*)
@@ -819,6 +820,7 @@ EOF
   "pr ready")
     touch {ready_sentinel}
     ;;
+  "api --paginate") printf '%s\n' '[[]]' ;;
   "api graphql")
     case "$*" in
       *"ForgeMergePolicy"*)
@@ -1025,6 +1027,7 @@ EOF
   "pr ready")
     :
     ;;
+  "api --paginate") printf '%s\n' '[[]]' ;;
   "api graphql")
     case "$*" in
       *"ForgeMergePolicy"*)

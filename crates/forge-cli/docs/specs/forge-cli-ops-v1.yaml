@@ -96,6 +96,10 @@ validations_catalog:
     rule: "when enabled, the initial provider head and every review commit OID are non-empty, a complete paginated current-head native-review snapshot has no effective CHANGES_REQUESTED, already-observed configured bot activity stays quiet for the resolved quiet_period, and a final pre-merge snapshot has not changed; absent observed bots never wait"
     error_kind: review_changes_requested | review_convergence_head_missing | review_convergence_head_changed | review_convergence_activity_changed | review_snapshot_incomplete | invalid_review_convergence_config | review_convergence_timeout | backend_output_limit | provider_unsupported
     exit: DATA | UNAVAILABLE | USAGE
+  pr_hold_active:
+    rule: "GitHub/GitLab: complete uncached PR/MR labels at entry and immediately before direct merge or queue enqueue contain no hold name; merge.hold_labels adds global/repository names to immutable compatibility defaults state::do-not-merge, do-not-merge, control::hold; only authorized removal lifts a hold and freeze overrides do not bypass it"
+    error_kind: pr_hold_active | pr_hold_labels_unavailable | invalid_hold_labels_config
+    exit: DATA | UNAVAILABLE
   merge_freeze_active:
     rule: "GitHub: no open merge-freeze issue at the first policy read or at the re-read immediately before the merge or enqueue mutation, unless every active freeze is named by --allow-merge-freeze with --allow-merge-freeze-reason; a host whose schema lacks mergeQueue is read as queueless (freeze list only)"
     error_kind: merge_freeze_active | merge_policy_unavailable
@@ -966,6 +970,7 @@ operations:
       - delivery_base_matches # when --expected-base is supplied, the first provider snapshot must still match it before merge mutation
       - draft_merge_refused
       - default_branch_protected
+      - pr_hold_active          # fresh complete label read initially and immediately before direct merge or queue enqueue; no hold bypass
       - merge_freeze_active     # GitHub: an open `merge-freeze` issue blocks unless every one is named by --allow-merge-freeze with a reason; policy read failure is merge_policy_unavailable
       - merge_queue_method_mismatch # GitHub: an explicit --method that differs from the required merge queue's method
       - merge_queue_landed      # GitHub: queued merge outcome (enqueue rejected, dequeued, checks failed, poll failed, timeout)
@@ -978,6 +983,8 @@ operations:
       - tasklist_complete
     backends:
       github: { program: gh,   argv: [pr, merge, "{id}", "--{method}", "--delete-branch?"] }
+      github_hold_labels: { program: gh, argv: [api, --paginate, --slurp, "repos/{repo}/issues/{id}/labels?per_page=100"] }
+      gitlab_hold_labels: { program: glab, argv: [api, --hostname, "{host}", "projects/{encoded_repo}/merge_requests/{id}"] }
       github_merge_policy: { program: gh, argv: [api, graphql, -f, "query=ForgeMergePolicy(owner,name,base,pr)", ...] }
       github_merge_queue: { program: gh, argv: [api, graphql, -f, "query=ForgeEnqueuePullRequest(pullRequestId,expectedHeadOid)", ...], poll: "ForgeMergeQueuePoll until MERGED; merge_queue_dequeued | merge_queue_checks_failed | merge_queue_timeout" } # replaces the direct merge when the base requires a merge queue
       gitlab: { program: glab, argv: [mr, merge, "{id}", "--squash?", "--remove-source-branch?"] }

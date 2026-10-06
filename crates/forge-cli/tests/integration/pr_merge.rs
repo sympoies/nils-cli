@@ -256,6 +256,7 @@ case "$1 $2" in
   "repo view")
     printf '%s\n' '{{"name":"widgets","owner":{{"login":"acme"}},"url":"https://github.com/acme/widgets","defaultBranchRef":{{"name":"main"}},"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true}}'
     ;;
+  "api --paginate") printf '%s\n' '[[]]' ;;
   "pr checks") printf '%s\n' '{checks_json}' ;;
   "api graphql")
     case "$*" in
@@ -366,6 +367,7 @@ EOF
 ]
 EOF
         ;;
+      *"projects/group%2Fproject/merge_requests/7") printf '%s\n' '{{"labels":[]}}' ;;
       *)
         echo "stub: unexpected api args: $*" >&2
         exit 99
@@ -2600,4 +2602,256 @@ fn assigned_live_merge_refuses_before_backend_without_published_review() {
     assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
     assert!(out.stdout.contains("awaiting_designated_review"));
     assert!(!stub.tempdir.path().join("github-merged").exists());
+}
+
+// Generic hold scenarios use the same green-check/clear-review merge fixture.
+fn github_hold_stub(
+    stub: &StubEnv,
+    label: &str,
+    late: bool,
+    queue: bool,
+    new_head: bool,
+) -> String {
+    let enqueued = stub.tempdir.path().join("enqueued");
+    let extra = format!(
+        r#"      *"ForgeEnqueuePullRequest"*) touch {enqueued}; printf '%s\n' '{{"data":{{"enqueuePullRequest":{{"mergeQueueEntry":{{"state":"QUEUED","position":1}}}}}}}}' ;;
+{MERGED_POLL}"#,
+        enqueued = enqueued.display(),
+    );
+    let mut body = github_merge_stub_full(
+        stub,
+        "",
+        "",
+        true,
+        None,
+        ONE_REQUIRED_PASS_CHECKS,
+        if queue {
+            SQUASH_QUEUE_POLICY
+        } else {
+            NO_MERGE_POLICY
+        },
+        &extra,
+    );
+    let calls = stub.tempdir.path().join("hold-reads");
+    let labels = serde_json::json!([[{"name": label}]]).to_string();
+    let arm = format!(
+        r#"  "api --paginate")
+        count=0
+        if [ -f {calls} ]; then count=$(cat {calls}); fi
+        count=$((count + 1)); printf '%s\n' "$count" > {calls}
+        if [ "{late}" = true ] && [ "$count" -eq 1 ]; then
+          printf '%s\n' '[[]]'
+        else
+          printf '%s\n' '{labels}'
+        fi ;;
+"#,
+        calls = calls.display()
+    );
+    body = body.replace("  \"api --paginate\") printf '%s\\n' '[[]]' ;;", &arm);
+    if new_head {
+        body = body.replace("head123", "head456");
+    }
+    body
+}
+
+fn assert_github_hold_blocks(label: &str, late: bool, queue: bool, new_head: bool) {
+    let repo = make_github_repo(Some("[merge]\nhold_labels = [\"review::paused\"]\n"));
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let enqueued = stub.tempdir.path().join("enqueued");
+    let reads = stub.tempdir.path().join("hold-reads");
+    let body = github_hold_stub(&stub, label, late, queue, new_head);
+    let stub = stub.gh_stub(&body);
+    let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "pr_hold_active");
+    assert!(env["error"]["message"].as_str().unwrap().contains(label));
+    assert!(env["error"]["message"].as_str().unwrap().contains("remove"));
+    assert_eq!(env["error"]["details"]["retryable"], false);
+    assert_eq!(
+        env["error"]["details"]["next_action"],
+        "request_hold_release"
+    );
+    assert_eq!(env["error"]["details"]["recovery"]["label"], label);
+    assert_eq!(
+        fs::read_to_string(reads).unwrap().trim(),
+        if late { "2" } else { "1" }
+    );
+    assert!(!merged.exists(), "held PR must not reach direct merge");
+    assert!(!enqueued.exists(), "held PR must not enter the queue");
+}
+
+#[test]
+fn pr_merge_hold_namespaced_label_blocks_direct_merge() {
+    assert_github_hold_blocks("state::do-not-merge", false, false, false);
+}
+#[test]
+fn pr_merge_hold_bare_compatibility_label_blocks_direct_merge() {
+    assert_github_hold_blocks("do-not-merge", false, false, false);
+}
+#[test]
+fn pr_merge_hold_control_label_blocks_direct_merge() {
+    assert_github_hold_blocks("control::hold", false, false, false);
+}
+#[test]
+fn pr_merge_hold_blocks_merge_queue_enqueue() {
+    assert_github_hold_blocks("state::do-not-merge", false, true, false);
+}
+#[test]
+fn pr_merge_hold_added_during_gates_is_read_again_before_enqueue() {
+    assert_github_hold_blocks("control::hold", true, true, false);
+}
+#[test]
+fn pr_merge_hold_survives_a_changed_head() {
+    let repo = make_github_repo(None);
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let enqueued = stub.tempdir.path().join("enqueued");
+    let reads = stub.tempdir.path().join("hold-reads");
+    let body = github_hold_stub(&stub, "state::do-not-merge", false, false, false);
+    let stub = stub.gh_stub(&body);
+    let before = run_github_merge(&stub, &repo.path().join("repo"), &[]);
+    assert_eq!(before.code, 65);
+    assert_eq!(
+        parse_envelope(&before.stdout)["error"]["code"],
+        "pr_hold_active"
+    );
+    stub.write_stub(
+        "gh",
+        &github_hold_stub(&stub, "state::do-not-merge", false, true, true),
+    );
+    let after = run_github_merge(&stub, &repo.path().join("repo"), &[]);
+    assert_eq!(after.code, 65);
+    assert_eq!(
+        parse_envelope(&after.stdout)["error"]["code"],
+        "pr_hold_active"
+    );
+    assert_eq!(fs::read_to_string(reads).unwrap().trim(), "2");
+    assert!(!merged.exists());
+    assert!(!enqueued.exists());
+}
+
+#[test]
+fn pr_merge_hold_added_during_gates_blocks_direct_merge() {
+    assert_github_hold_blocks("control::hold", true, false, false);
+}
+
+#[test]
+fn pr_merge_hold_configured_label_blocks_merge() {
+    assert_github_hold_blocks("review::paused", false, false, false);
+}
+
+#[test]
+fn pr_merge_hold_removed_by_owner_allows_a_fresh_attempt() {
+    let repo = make_github_repo(None);
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let reads = stub.tempdir.path().join("hold-reads");
+    let body = github_hold_stub(&stub, "control::hold", false, false, false);
+    let stub = stub.gh_stub(&body);
+    let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "pr_hold_active"
+    );
+    fs::write(
+        stub.tempdir.path().join("gh"),
+        github_merge_stub(&stub, "", "", true),
+    )
+    .unwrap();
+    let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
+    assert_eq!(out.code, 0, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert!(merged.exists());
+    assert_eq!(fs::read_to_string(reads).unwrap().trim(), "1");
+}
+
+#[test]
+fn pr_merge_hold_read_failure_blocks_the_final_merge_attempt() {
+    for queue in [false, true] {
+        for response in [
+            "exit 99",
+            "printf '%s\\n' 'null'",
+            "printf '%s\\n' '[[{}]]'",
+        ] {
+            let repo = make_github_repo(None);
+            let stub = StubEnv::new();
+            let merged = stub.tempdir.path().join("github-merged");
+            let enqueued = stub.tempdir.path().join("enqueued");
+            let reads = stub.tempdir.path().join("hold-reads");
+            let labels = serde_json::json!([[{"name":"control::hold"}]]).to_string();
+            let body = github_hold_stub(&stub, "control::hold", true, queue, false)
+                .replace(&format!("printf '%s\\n' '{labels}'"), response);
+            let stub = stub.gh_stub(&body);
+            let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
+            assert_eq!(out.code, 69, "stdout={}\nstderr={}", out.stdout, out.stderr);
+            let env = parse_envelope(&out.stdout);
+            assert_eq!(env["error"]["code"], "pr_hold_labels_unavailable");
+            assert_eq!(env["error"]["details"]["retryable"], true);
+            assert_eq!(fs::read_to_string(reads).unwrap().trim(), "2");
+            assert!(!merged.exists());
+            assert!(!enqueued.exists());
+        }
+    }
+}
+
+#[test]
+fn pr_merge_hold_cannot_be_bypassed_by_a_repo_freeze_override() {
+    let repo = make_github_repo(None);
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let body = github_hold_stub(&stub, "control::hold", false, false, false)
+        .replace(NO_MERGE_POLICY, ACTIVE_FREEZE_POLICY);
+    let stub = stub.gh_stub(&body);
+    let out = run_github_merge(
+        &stub,
+        &repo.path().join("repo"),
+        &[
+            "--allow-merge-freeze",
+            "42",
+            "--allow-merge-freeze-reason",
+            "authorized freeze exception",
+        ],
+    );
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "pr_hold_active"
+    );
+    assert!(!merged.exists());
+}
+
+#[test]
+fn pr_merge_hold_gitlab_uses_the_same_compatibility_labels() {
+    for label in ["state::do-not-merge", "do-not-merge", "control::hold"] {
+        let repo = make_gitlab_repo();
+        let stub = StubEnv::new();
+        let merged = stub.tempdir.path().join("merged");
+        let body = gitlab_merge_api_stub(&stub).replace(
+            r#"{"labels":[]}"#,
+            &serde_json::json!({"labels":[label]}).to_string(),
+        );
+        let stub = stub.glab_stub(&body);
+        let out = run_forge_cli_in(
+            &stub,
+            &[
+                "--provider",
+                "gitlab",
+                "--host",
+                "gitlab.example.com",
+                "--format",
+                "json",
+                "pr",
+                "merge",
+                "7",
+                "--review-convergence=false",
+            ],
+            Some(&repo.path().join("repo")),
+        );
+        assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+        assert_eq!(
+            parse_envelope(&out.stdout)["error"]["code"],
+            "pr_hold_active"
+        );
+        assert!(!merged.exists());
+    }
 }

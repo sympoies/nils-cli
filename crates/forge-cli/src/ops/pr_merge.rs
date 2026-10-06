@@ -36,6 +36,7 @@ use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::ops::gitlab_api;
 use crate::ops::merge_policy;
+use crate::ops::pr_hold;
 use crate::ops::pr_review_loop::{self, ReviewLoopMergeGate};
 use crate::ops::pr_review_threads;
 use crate::ops::pr_tasks;
@@ -144,6 +145,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     // [merge].delete_branch = true config in the same repo.
     enforce_keep_branch_conflict(args.keep_branch, repo_delete_branch)?;
     let delete_branch = if args.keep_branch { false } else { cfg_delete };
+    pr_hold::validate_config(&cfg)?;
     let policy = resolve_review_convergence_policy(&cfg, args.review_convergence)?;
     ensure_review_convergence_provider(ctx.provider, &policy)?;
 
@@ -182,6 +184,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             method,
             delete_branch,
             review_policy: &policy,
+            hold_labels: &cfg.resolve_hold_labels(),
         },
     )?;
     Ok(emit_success(
@@ -226,6 +229,7 @@ pub fn compute_with_clock<R: BackendRunner, C: Clock>(
     let cfg_delete = cfg.resolve_delete_branch(None);
     enforce_keep_branch_conflict(args.keep_branch, repo_delete_branch)?;
     let delete_branch = if args.keep_branch { false } else { cfg_delete };
+    pr_hold::validate_config(&cfg)?;
     let policy = resolve_review_convergence_policy(&cfg, args.review_convergence)?;
     ensure_review_convergence_provider(ctx.provider, &policy)?;
     run_lockdown_chain(
@@ -239,6 +243,7 @@ pub fn compute_with_clock<R: BackendRunner, C: Clock>(
             method,
             delete_branch,
             review_policy: &policy,
+            hold_labels: &cfg.resolve_hold_labels(),
         },
     )
 }
@@ -332,6 +337,7 @@ struct ResolvedMergeSettings<'a> {
     method: MergeMethod,
     delete_branch: bool,
     review_policy: &'a crate::config::ReviewConvergencePolicy,
+    hold_labels: &'a [String],
 }
 
 /// Whether rule 8 may pass a head with no registered checks, and the reason
@@ -460,6 +466,8 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
             None,
         ));
     }
+
+    pr_hold::ensure_clear(runner, ctx, args.id, settings.hold_labels)?;
 
     // Rule 6 — default branch protection (unless explicitly overridden).
     let repo = fetch_repo_view(runner, ctx)?;
@@ -611,6 +619,10 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         apply_merge_policy(runner, ctx, &repo, &pr, args, settings.method)?;
     enforce_method_supported(method, &repo)?;
     let queue = policy.as_ref().and_then(|policy| policy.queue.as_ref());
+
+    // Fresh, complete label read after the other gates, shared by direct merge
+    // and queue enqueue. A new head never clears a provider hold.
+    pr_hold::ensure_clear(runner, ctx, args.id, settings.hold_labels)?;
 
     // All gates clear — invoke the backend, or hand the verified head to the
     // required merge queue and wait for it to land.
