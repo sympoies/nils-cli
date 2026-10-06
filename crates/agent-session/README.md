@@ -70,7 +70,8 @@ agent-session work-context set --tier issue --issue 123 --summary "Implement the
 agent-session work-context advise --format json
 agent-session work-context acknowledge --for 30m
 agent-session work-context clear
-agent-session message inbox --session <id>
+agent-session message inbox --session <id> --category progress --category handoff
+agent-session message forward --session <id> --message <message-id> --if-revision 1 --to <destination> --category progress --idempotency-key forward-001
 agent-session serve --bind 127.0.0.1:8781 --token-stdin
 agent-session command <id>
 agent-session attach <id>

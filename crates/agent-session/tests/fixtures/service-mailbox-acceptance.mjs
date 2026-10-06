@@ -89,14 +89,15 @@ try {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname === '/api/coordination/peers/v1') {
       if (discoveryDenied) { res.writeHead(503); res.end(JSON.stringify({ error: { code: 'remote-messaging-unavailable' } })); return; }
-      assert.equal(url.searchParams.get('source_service_id'), service.id); assert.equal(url.searchParams.get('source_service_generation'), service.generation);
+      if (url.searchParams.has('source_service_id')) { assert.equal(url.searchParams.get('source_service_id'), service.id); assert.equal(url.searchParams.get('source_service_generation'), service.generation); } else { assert.equal(url.searchParams.get('source_session_id'), source.session); assert.equal(url.searchParams.get('source_incarnation'), source.incarnation); }
       res.end(JSON.stringify({ schema_version: 'agent-session.remote-peers.v1', peers: hosts.map(h => ({ ...address(h), messaging_supported: true })) })); return;
     }
     assert.equal(url.pathname, '/api/coordination/relay/v1');
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const envelope = JSON.parse(Buffer.concat(chunks));
-    if (oldRelay || JSON.stringify(envelope.from) !== JSON.stringify(origin())) { res.writeHead(403); res.end(JSON.stringify({ error: { code: 'origin-forbidden' } })); return; }
-    assert.equal(envelope.schema_version, 'agent-session.remote-service-message.v1'); assert.deepEqual(envelope.from, origin());
+    const sessionForward = JSON.stringify(envelope.from) === JSON.stringify(address(source)) && envelope.forwarding;
+    if (oldRelay || (!sessionForward && JSON.stringify(envelope.from) !== JSON.stringify(origin()))) { res.writeHead(403); res.end(JSON.stringify({ error: { code: 'origin-forbidden' } })); return; }
+    assert.equal(envelope.schema_version, sessionForward ? 'agent-session.remote-message.v2' : (envelope.category ? 'agent-session.remote-service-message.v2' : 'agent-session.remote-service-message.v1')); assert.deepEqual(envelope.from, sessionForward ? address(source) : origin());
     if (hold) { res.writeHead(503); res.end(JSON.stringify({ error: { code: 'remote-messaging-unavailable' } })); return; }
     const response = await fetch(target.url + '/coordination/messages/receive/v1', { method: 'POST', headers: { Authorization: `Bearer ${target.operator}`, 'X-Agent-Session-Relay-Token': target.ingress, 'Content-Type': 'application/json' }, body: JSON.stringify(envelope) });
     const text = await response.text();
@@ -182,6 +183,26 @@ try {
   assert.equal(remoteShowResponse.status, 200);
   const remoteShow = await remoteShowResponse.json(); assert.equal(remoteShow.data.coordination.sender.machine, source.machine);
   checks.push('existing-machine-identity-provenance-preserved');
+  const taggedLocal = await serviceCli('tagged-local', ['--category', 'progress']);
+  assert.equal(taggedLocal.category, 'progress');assert.equal(taggedLocal.sender.kind, 'service');
+  const taggedRemoteBody = payload('tagged-remote', { to_machine: target.machine, to_session: target.session, category: 'handoff' });
+  const taggedRemote = await submit(taggedRemoteBody);
+  await waitFor(async () => (await submit(taggedRemoteBody)).state === 'delivered', 'tagged service remote delivery');
+  assert.equal(registry(target).messages.find(m => m.message_id === taggedRemote.message_id).category, 'handoff');
+  const serviceForward = await fetch(source.url + `/sessions/${source.session}/messages/remote/v1`, { method: 'POST', headers: { Authorization: `Bearer ${source.capability}`, 'Content-Type': 'application/json' }, body: JSON.stringify({
+    to_machine: target.machine, to_session: target.session, body: '', idempotency_key: 'forward-service', reply_to: null, expires_in: null, reply_revision: null,
+    forward: { message: taggedLocal.message_id, if_revision: 1, categories: ['progress'] },
+  }) });
+  assert.equal(serviceForward.status, 200);
+  const serviceCopy = await serviceForward.json();const serviceCopyId = serviceCopy.message_id;
+  await waitFor(() => registry(target).messages.some(m => m.message_id === serviceCopyId), 'recipient-forwarded service delivery');
+  const serviceShownResponse = await fetch(target.url + `/sessions/${target.session}/messages/${serviceCopyId}/v1`, { headers: { Authorization: `Bearer ${target.operator}`, 'X-Agent-Session-Capability': target.capability } });
+  assert.equal(serviceShownResponse.status, 200);
+  const serviceShown = (await serviceShownResponse.json()).data.coordination;
+  assert.equal(serviceShown.body.classification, 'untrusted_service_data');
+  assert.equal(serviceShown.forwarding.original_sender.service_id, service.id);
+  assert.equal(serviceShown.sender.session_id, source.session);assert.equal(serviceShown.category, 'progress');
+  checks.push('service-categories-forward-provenance-preserve-authority');
   hold = true; const movedBody = payload('moved-remote', { to_machine: target.machine, to_session: target.session }); const moved = await submit(movedBody);
   const targetPath = join(target.root, 'sessions', target.session, 'session.json'); const changed = JSON.parse(readFileSync(targetPath, 'utf8')); changed.runtime.launch_id = randomUUID(); privateWrite(targetPath, changed);
   hold = false; const fenced = await waitFor(async () => { const value = await submit(movedBody); return ['rejected', 'delivery-unknown'].includes(value.state) ? value : false; }, 'moved recipient fenced');

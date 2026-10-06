@@ -753,6 +753,8 @@ pub enum MessageCommand {
     Delivery(MessageDeliveryArgs),
     /// Send one bounded private message and schedule an eventual fixed notification.
     Send(MessageSendArgs),
+    /// Forward one received message without reading or acknowledging its source.
+    Forward(MessageForwardArgs),
     /// Submit a body-file through the owning daemon as an explicitly admitted local service.
     ServiceSend(MessageServiceSendArgs),
     /// List bounded private mailbox metadata for the authenticated recipient.
@@ -813,6 +815,58 @@ pub struct MessageServiceSendArgs {
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+    /// Sender-declared category; omitted means uncategorized.
+    #[arg(long, value_enum)]
+    pub category: Option<MessageCategory>,
+}
+
+/// Sender-declared routing metadata; categories never grant work authority.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    serde::Deserialize,
+    serde::Serialize,
+    clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum MessageCategory {
+    #[default]
+    Uncategorized,
+    Progress,
+    Handoff,
+    Blocker,
+    Decision,
+    Report,
+}
+
+#[derive(Debug, Args)]
+pub struct MessageForwardArgs {
+    /// Authenticated recipient forwarding its own received message.
+    #[arg(long)]
+    pub session: String,
+    #[arg(long)]
+    pub message: String,
+    #[arg(long)]
+    pub if_revision: u64,
+    #[arg(long = "to")]
+    pub to_session: String,
+    #[arg(long)]
+    pub to_machine: Option<String>,
+    /// Source-category guard (repeatable OR); the copy retains its category.
+    #[arg(long = "category", value_enum)]
+    pub categories: Vec<MessageCategory>,
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub capability_file: Option<PathBuf>,
+    #[arg(long)]
+    pub idempotency_key: String,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, Args)]
@@ -838,6 +892,9 @@ pub struct MessageSendArgs {
     pub expires_in: Option<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+    /// Sender-declared category; omitted means uncategorized.
+    #[arg(long, value_enum)]
+    pub category: Option<MessageCategory>,
 }
 
 #[derive(Debug, Args)]
@@ -881,6 +938,9 @@ pub struct MessageInboxArgs {
     pub limit: Option<usize>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+    /// Match any selected category (repeatable); combine with --state.
+    #[arg(long = "category", value_enum)]
+    pub categories: Vec<MessageCategory>,
 }
 
 #[derive(Debug, Args)]
@@ -931,6 +991,9 @@ pub struct MessageReplyArgs {
     pub idempotency_key: String,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+    /// Sender-declared category; omitted means uncategorized.
+    #[arg(long, value_enum)]
+    pub category: Option<MessageCategory>,
 }
 
 #[derive(Debug, Args)]

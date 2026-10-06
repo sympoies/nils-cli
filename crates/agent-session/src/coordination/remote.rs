@@ -13,6 +13,7 @@ use super::{
 use crate::{CliContext, CliError};
 
 const JOURNAL_VERSION: &str = "agent-session.federation-journal.v2";
+const EXTENDED_JOURNAL_VERSION: &str = "agent-session.federation-journal.v3";
 const LEGACY_JOURNAL_VERSION: &str = "agent-session.federation-journal.v1";
 const JOURNAL_FILE: &str = "federation-journal.json";
 const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
@@ -22,6 +23,8 @@ const RECEIVE_PRINCIPAL: &str = "remote:receive";
 const RECEIVE_INCARNATION: &str = "v1";
 const RECEIVE_OPERATION: &str = "remote-message-receive";
 const ENVELOPE_VERSION: &str = "agent-session.remote-message.v1";
+const ENVELOPE_V2: &str = "agent-session.remote-message.v2";
+const SERVICE_ENVELOPE_V2: &str = "agent-session.remote-service-message.v2";
 const DELIVERY_VERSION: &str = "agent-session.remote-delivery.v1";
 /// Queued (undelivered) envelopes for one destination machine. Each carries its
 /// body, so an asleep or offline destination is bounded without blocking others.
@@ -124,7 +127,7 @@ impl Origin {
             Self::Service(_) => super::service::WIRE_VERSION,
         }
     }
-    fn valid(&self) -> bool {
+    pub(super) fn valid(&self) -> bool {
         match self {
             Self::Session(a) => {
                 !a.machine.is_empty()
@@ -134,7 +137,7 @@ impl Origin {
             Self::Service(a) => a.valid(),
         }
     }
-    fn projection(&self) -> Value {
+    pub(super) fn projection(&self) -> Value {
         let mut value = serde_json::to_value(self).expect("origin");
         if matches!(self, Self::Service(_)) {
             value["kind"] = json!("service");
@@ -156,6 +159,10 @@ pub(crate) struct Envelope<F = Address> {
     pub expires_at_epoch: i64,
     pub reply_to: Option<String>,
     pub reply_depth: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<crate::cli::MessageCategory>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarding: Option<super::forwarding::Provenance>,
 }
 impl<F: Into<Origin>> Envelope<F> {
     fn into_origin(self) -> Envelope<Origin> {
@@ -170,6 +177,8 @@ impl<F: Into<Origin>> Envelope<F> {
             expires_at_epoch: self.expires_at_epoch,
             reply_to: self.reply_to,
             reply_depth: self.reply_depth,
+            category: self.category,
+            forwarding: self.forwarding,
         }
     }
 }
@@ -201,6 +210,8 @@ impl Outbox {
             state: self.state.clone(),
             attempts: self.attempts,
             reason: self.reason.clone(),
+            category: self.envelope.category,
+            forwarding: self.envelope.forwarding.clone(),
             persisted_at_epoch: self
                 .receipt
                 .as_ref()
@@ -225,6 +236,10 @@ struct Retained {
     attempts: u64,
     reason: Option<String>,
     persisted_at_epoch: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    category: Option<crate::cli::MessageCategory>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    forwarding: Option<super::forwarding::Provenance>,
 }
 impl Retained {
     /// The receipt drain accepted: exactly these fields, checked against this
@@ -326,7 +341,7 @@ fn read_journal(context: &CliContext) -> Result<Journal, CliError> {
         Ok(bytes) => {
             let journal: Journal = serde_json::from_slice(&bytes).map_err(|_| journal_error())?;
             let supported = match journal.schema_version.as_str() {
-                JOURNAL_VERSION => true,
+                JOURNAL_VERSION | EXTENDED_JOURNAL_VERSION => true,
                 LEGACY_JOURNAL_VERSION => journal.retained.is_empty(),
                 _ => false,
             };
@@ -364,7 +379,21 @@ impl LockedJournal {
         self.write(&bytes)
     }
     fn encode(&mut self) -> Result<Vec<u8>, CliError> {
-        self.registry.schema_version = JOURNAL_VERSION.into();
+        let extended = self.registry.schema_version == EXTENDED_JOURNAL_VERSION
+            || self.registry.remote_outbox.iter().any(|entry| {
+                entry.envelope.category.is_some() || entry.envelope.forwarding.is_some()
+            })
+            || self
+                .registry
+                .retained
+                .iter()
+                .any(|entry| entry.category.is_some() || entry.forwarding.is_some());
+        self.registry.schema_version = if extended {
+            EXTENDED_JOURNAL_VERSION
+        } else {
+            JOURNAL_VERSION
+        }
+        .into();
         self.registry.compact(now_epoch());
         serde_json::to_vec(&self.registry).map_err(|_| journal_error())
     }
@@ -405,6 +434,10 @@ pub(crate) struct Submit {
     pub reply_revision: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_recipient_incarnation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<crate::cli::MessageCategory>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forward: Option<super::forwarding::Request>,
 }
 
 /// Bounded federation HTTP client: 15-second timeout, redirects refused.
@@ -503,7 +536,12 @@ fn relay_error(value: &Value) -> CliError {
         | "quota-exceeded"
         | "rate-limited"
         | "idempotency-key-conflict"
-        | "message-expired" => code,
+        | "message-expired"
+        | "message-revision-conflict"
+        | "message-category-conflict"
+        | "message-forward-loop"
+        | "message-forward-depth-exceeded"
+        | "message-forward-invalid" => code,
         _ => "remote-messaging-unavailable",
     };
     let details = (code == "quota-exceeded")
@@ -612,6 +650,8 @@ where
         expires_in: args.expires_in,
         reply_revision: None,
         expected_recipient_incarnation: args.expected_recipient_incarnation,
+        category: args.category,
+        forward: None,
     };
     submit_origin(
         context,
@@ -628,7 +668,7 @@ fn submit_origin<F>(
     context: &CliContext,
     config: &Config,
     origin: Origin,
-    args: Submit,
+    mut args: Submit,
     token: Option<&str>,
     digest_override: Option<String>,
     authorize: F,
@@ -641,10 +681,23 @@ where
     let session = principal.as_str();
     let source_incarnation = origin.generation().to_string();
     super::validate_idempotency_key(&args.idempotency_key)?;
-    if args.body.is_empty()
+    if let Some(request) = &mut args.forward {
+        request.normalize();
+    }
+    if (args.forward.is_none() && args.body.is_empty())
         || args.body.len() > 16 * 1024
         || args.idempotency_key.is_empty()
         || args.idempotency_key.len() > 256
+    {
+        return Err(invalid());
+    }
+    if args.forward.is_some()
+        && (!matches!(origin, Origin::Session(_))
+            || !args.body.is_empty()
+            || args.category.is_some()
+            || args.reply_to.is_some()
+            || args.reply_revision.is_some()
+            || args.expires_in.is_some())
     {
         return Err(invalid());
     }
@@ -683,6 +736,19 @@ where
             return Ok(projection(&item));
         }
     }
+    let forward_source = if let Some(request) = &args.forward {
+        let Origin::Session(actor) = &origin else {
+            return Err(invalid());
+        };
+        let locked = lock_registry(context)?;
+        let source =
+            super::forwarding::source(&locked.registry, actor, request, now_epoch())?.clone();
+        args.body = source.body.clone();
+        args.category = source.category;
+        Some(source)
+    } else {
+        None
+    };
     let (destination, reply_depth) = if let Some(parent_id) = args.reply_to.as_deref() {
         let locked = lock_registry(context)?;
         let parent = locked
@@ -765,17 +831,36 @@ where
     }
     let expiry = super::mailbox::parse_expiry(args.expires_in.as_deref())?;
     let now = now_epoch();
+    let forwarding = if let Some(source) = &forward_source {
+        let Origin::Session(actor) = &origin else {
+            return Err(invalid());
+        };
+        Some(super::forwarding::append(
+            source,
+            actor.clone(),
+            destination.clone(),
+            now,
+        )?)
+    } else {
+        None
+    };
     let envelope = Envelope {
-        schema_version: origin.wire_version().into(),
+        schema_version: envelope_version(&origin, args.category.is_some() || forwarding.is_some())
+            .into(),
         message_id: uuid::Uuid::new_v4().to_string(),
         from: origin.clone(),
         to: destination,
         body_sha256: digest_bytes(args.body.as_bytes()),
         body: args.body,
         created_at_epoch: now,
-        expires_at_epoch: now.saturating_add(expiry),
+        expires_at_epoch: forward_source
+            .as_ref()
+            .map(|source| source.expires_at_epoch)
+            .unwrap_or_else(|| now.saturating_add(expiry)),
         reply_to: args.reply_to,
         reply_depth,
+        category: args.category,
+        forwarding,
     };
     // Authenticate again after discovery, then persist without any network-held locks.
     let _source_lock = if matches!(origin, Origin::Session(_)) {
@@ -839,6 +924,15 @@ where
         )?
     {
         return Ok(prior);
+    }
+    if let Some(request) = &args.forward {
+        let Origin::Session(actor) = &origin else {
+            return Err(invalid());
+        };
+        let source = super::forwarding::source(&locked.registry, actor, request, now_epoch())?;
+        if source.body != envelope.body || source.category != envelope.category {
+            return Err(invalid());
+        }
     }
     let _registry_guard = locked;
     let mut locked = lock_journal(context)?;
@@ -927,7 +1021,12 @@ where
     Ok(outcome)
 }
 fn projection(item: &Retained) -> Value {
-    json!({"schema_version":DELIVERY_VERSION,"message_id":item.message_id,"state":item.state,"sender":item.sender.projection(),"recipient":item.recipient,"attempts":item.attempts,"reason":item.reason,"receipt":item.receipt()})
+    let mut value = json!({"schema_version":DELIVERY_VERSION,"message_id":item.message_id,"state":item.state,"sender":item.sender.projection(),"recipient":item.recipient,"attempts":item.attempts,"reason":item.reason,"receipt":item.receipt()});
+    value["category"] = json!(item.category.unwrap_or_default());
+    if let Some(forwarding) = &item.forwarding {
+        value["forwarding"] = json!(forwarding);
+    }
+    value
 }
 pub(crate) fn delivery(
     context: &CliContext,
@@ -1150,7 +1249,12 @@ where
     }
     let now = now_epoch();
     let envelope = Envelope {
-        schema_version: super::service::WIRE_VERSION.into(),
+        schema_version: if args.category.is_some() {
+            SERVICE_ENVELOPE_V2
+        } else {
+            super::service::WIRE_VERSION
+        }
+        .into(),
         message_id: uuid::Uuid::new_v4().to_string(),
         from: Origin::Service(origin.clone()),
         to: Address {
@@ -1165,6 +1269,8 @@ where
             .saturating_add(super::mailbox::parse_expiry(args.expires_in.as_deref())?),
         reply_to: None,
         reply_depth: 0,
+        category: args.category,
+        forwarding: None,
     };
     receive_admitted(
         context,
@@ -1201,7 +1307,11 @@ fn receive_admitted(
     authorize: &dyn Fn() -> Result<(), CliError>,
 ) -> Result<Value, CliError> {
     let now = now_epoch();
-    if envelope.schema_version != envelope.from.wire_version()
+    if envelope.schema_version
+        != envelope_version(
+            &envelope.from,
+            envelope.category.is_some() || envelope.forwarding.is_some(),
+        )
         || uuid::Uuid::parse_str(&envelope.message_id).is_err()
         || envelope.to.machine != machine
         || envelope.body.is_empty()
@@ -1217,6 +1327,19 @@ fn receive_admitted(
             && (envelope.reply_to.is_some() || envelope.reply_depth != 0))
     {
         return Err(invalid());
+    }
+    if let Some(provenance) = &envelope.forwarding {
+        let Origin::Session(actor) = &envelope.from else {
+            return Err(invalid());
+        };
+        if provenance
+            .hops
+            .last()
+            .is_none_or(|hop| &hop.forwarder != actor || !hop.recipient_transfers.is_empty())
+            || !provenance.valid(&envelope.to, &envelope.body, envelope.expires_at_epoch, now)
+        {
+            return Err(invalid());
+        }
     }
     super::mailbox::validate_body(&envelope.body)?;
     authorize()?;
@@ -1321,12 +1444,15 @@ fn receive_admitted(
         reply_depth: envelope.reply_depth,
         created_at: timestamp(now),
         created_at_epoch: now,
+        remote_created_at_epoch: Some(envelope.created_at_epoch),
         created_at_epoch_millis: now_millis,
         expires_at: timestamp(envelope.expires_at_epoch),
         expires_at_epoch: envelope.expires_at_epoch,
         terminal_at_epoch: None,
         forwarded_from_incarnation: None,
         forwarded_at_epoch: None,
+        category: envelope.category,
+        forwarding: envelope.forwarding,
         body_bytes: envelope.body.len(),
         body: envelope.body,
     };
@@ -1453,6 +1579,44 @@ fn local_request(
         Responder::LocalDaemon,
     )
 }
+fn envelope_version(origin: &Origin, extended: bool) -> &str {
+    if !extended {
+        return origin.wire_version();
+    }
+    match origin {
+        Origin::Session(_) => ENVELOPE_V2,
+        Origin::Service(_) => SERVICE_ENVELOPE_V2,
+    }
+}
+fn with_category(mut value: Value, category: Option<crate::cli::MessageCategory>) -> Value {
+    if let Some(category) = category {
+        value["category"] = json!(category);
+    }
+    value
+}
+pub(crate) fn cli_forward(
+    context: &CliContext,
+    args: crate::cli::MessageForwardArgs,
+) -> Result<Value, CliError> {
+    let mut request = super::forwarding::Request {
+        message: args.message,
+        if_revision: args.if_revision,
+        categories: args.categories,
+    };
+    request.normalize();
+    local_request(
+        context,
+        &args.session,
+        args.capability_file.as_deref(),
+        &format!("/sessions/{}/messages/remote/v1", args.session),
+        Some(json!({
+            "to_machine": args.to_machine, "to_session": args.to_session, "body": "",
+            "idempotency_key": args.idempotency_key, "reply_to": null, "expires_in": null,
+            "reply_revision": null, "forward": request,
+        })),
+    )
+}
+
 pub(crate) fn cli_send(
     context: &CliContext,
     args: crate::cli::MessageSendArgs,
@@ -1463,9 +1627,10 @@ pub(crate) fn cli_send(
         &args.from_session,
         args.capability_file.as_deref(),
         &format!("/sessions/{}/messages/remote/v1", args.from_session),
-        Some(
+        Some(with_category(
             json!({"to_machine":args.to_machine,"to_session":args.to_session,"body":body,"idempotency_key":args.idempotency_key,"reply_to":args.reply_to,"expires_in":args.expires_in,"reply_revision":null}),
-        ),
+            args.category,
+        )),
     )
 }
 pub(crate) fn cli_reply(
@@ -1480,9 +1645,10 @@ pub(crate) fn cli_reply(
         &args.session,
         args.capability_file.as_deref(),
         &format!("/sessions/{}/messages/remote/v1", args.session),
-        Some(
+        Some(with_category(
             json!({"to_machine":sender.machine,"to_session":sender.session_id,"body":body,"idempotency_key":args.idempotency_key,"reply_to":args.message,"expires_in":null,"reply_revision":args.if_revision}),
-        ),
+            args.category,
+        )),
     )
 }
 pub(crate) fn cli_peers(
@@ -1537,6 +1703,8 @@ pub(crate) fn reply_replay(
         expires_in: None,
         reply_revision: Some(args.if_revision),
         expected_recipient_incarnation: None,
+        category: args.category,
+        forward: None,
     };
     let digest = digest_bytes(&serde_json::to_vec(&submission).map_err(|_| invalid())?);
     if digest != item.request_digest {
@@ -1639,6 +1807,8 @@ mod tests {
     }
     fn envelope() -> Envelope {
         Envelope {
+            category: None,
+            forwarding: None,
             schema_version: ENVELOPE_VERSION.into(),
             message_id: uuid::Uuid::new_v4().to_string(),
             from: Address {
@@ -1667,6 +1837,35 @@ mod tests {
             ingress_token: "ingress-fixture-0000000000000000000001".into(),
         }
     }
+    #[test]
+    fn tagged_remote_ingress_requires_v2_and_keeps_legacy_wire_shape() {
+        let (_temp, context) = fixture();
+        let untagged = envelope();
+        let value = serde_json::to_value(&untagged).unwrap();
+        assert!(value.get("category").is_none());
+        assert!(value.get("forwarding").is_none());
+        let mut tagged = untagged.clone();
+        tagged.category = Some(crate::cli::MessageCategory::Handoff);
+        assert_eq!(
+            receive(&context, "destination", tagged.clone())
+                .unwrap_err()
+                .code(),
+            "remote-message-invalid"
+        );
+        tagged.schema_version = ENVELOPE_V2.into();
+        let receipt = receive(&context, "destination", tagged.clone()).unwrap();
+        assert_eq!(receipt["state"], "delivered");
+        let locked = lock_registry(&context).unwrap();
+        let saved = locked
+            .registry
+            .messages
+            .iter()
+            .find(|message| message.message_id == tagged.message_id)
+            .unwrap();
+        assert_eq!(saved.category, Some(crate::cli::MessageCategory::Handoff));
+        assert_eq!(saved.body, "bounded fixture body");
+    }
+
     #[test]
     fn terminal_retry_after_unconfirmed_attempt_is_unknown_but_first_rejection_is_known() {
         use std::io::{Read, Write};
@@ -1895,6 +2094,9 @@ mod tests {
         let parent_id = parent.message_id.clone();
         receive(&context, "destination", parent).unwrap();
         let args = Submit {
+            category: None,
+            forward: None,
+
             to_machine: "source".into(),
             to_session: "recipient".into(),
             body: "bounded reply".into(),
@@ -2071,6 +2273,9 @@ mod tests {
     fn outbox_replay_never_rediscovers_or_retargets_and_capability_is_required() {
         let (_temp, context) = fixture();
         let args = Submit {
+            category: None,
+            forward: None,
+
             to_machine: "other".into(),
             to_session: "other-agent".into(),
             body: "fixture body".into(),
@@ -2183,6 +2388,9 @@ mod tests {
         assert_ne!(encode_sender(&other), stored.sender_session_id);
         assert!(
             sender_address(&super::super::mailbox::StoredMessage {
+                category: None,
+                forwarding: None,
+
                 sender_session_id: "remote:malformed".into(),
                 ..stored.clone()
             })
@@ -2276,6 +2484,8 @@ mod tests {
         let parent_id = parent.message_id.clone();
         receive(context, "destination", parent).unwrap();
         Submit {
+            category: None,
+            forward: None,
             expected_recipient_incarnation: None,
             to_machine: "source".into(),
             to_session: "recipient".into(),
@@ -2480,6 +2690,9 @@ mod tests {
                 .registry
                 .messages
                 .push(super::super::mailbox::StoredMessage {
+                    category: None,
+                    forwarding: None,
+
                     message_id: uuid::Uuid::new_v4().to_string(),
                     created_at_epoch: stored.created_at_epoch - 3600,
                     created_at_epoch_millis: 0,

@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::cli::{
-    MessageAckArgs, MessageInboxArgs, MessageReminderArgs, MessageReplyArgs, MessageSendArgs,
-    MessageShowArgs, MessageWaitArgs,
+    MessageAckArgs, MessageCategory, MessageForwardArgs, MessageInboxArgs, MessageReminderArgs,
+    MessageReplyArgs, MessageSendArgs, MessageShowArgs, MessageWaitArgs,
 };
 use crate::{CliContext, CliError};
 
@@ -49,6 +49,8 @@ pub(crate) struct StoredMessage {
     pub reply_depth: u8,
     pub created_at: String,
     pub created_at_epoch: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_created_at_epoch: Option<i64>,
     #[serde(default)]
     pub created_at_epoch_millis: i64,
     pub expires_at: String,
@@ -59,6 +61,10 @@ pub(crate) struct StoredMessage {
     pub forwarded_from_incarnation: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forwarded_at_epoch: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<MessageCategory>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarding: Option<super::forwarding::Provenance>,
     pub body_bytes: usize,
     pub body: String,
 }
@@ -68,6 +74,8 @@ pub(crate) struct InboxCursor {
     pub recipient_session_id: String,
     pub recipient_incarnation: String,
     pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<MessageCategory>,
     pub after_created_at_epoch: i64,
     pub after_message_id: String,
     pub expires_at_epoch: i64,
@@ -75,6 +83,9 @@ pub(crate) struct InboxCursor {
 
 #[derive(Clone, Debug, Serialize)]
 struct MessageMetadata {
+    category: MessageCategory,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    forwarding: Option<super::forwarding::Provenance>,
     schema_version: String,
     message_id: String,
     sender: Value,
@@ -153,7 +164,87 @@ where
         None,
         None,
         require_active_sender_claim,
+        args.category,
+        None,
         authorize,
+    )
+}
+
+pub(crate) fn forward(context: &CliContext, args: MessageForwardArgs) -> Result<Value, CliError> {
+    let machine = crate::board::machine_identity(None, context);
+    if args
+        .to_machine
+        .as_deref()
+        .is_some_and(|target| target != machine)
+    {
+        return super::remote::cli_forward(context, args);
+    }
+    let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
+    let (record, current) = authenticate_from_file(context, &args.session, Some(&capability_file))?;
+    let mut request = super::forwarding::Request {
+        message: args.message,
+        if_revision: args.if_revision,
+        categories: args.categories,
+    };
+    request.normalize();
+    let digest = request_digest(
+        "message-forward",
+        &json!({
+            "source": request, "recipient": args.to_session, "machine": machine,
+        }),
+    );
+    let body = {
+        let mut locked = lock_registry(context)?;
+        clean_expired(&mut locked.registry, now_epoch());
+        revalidate_capability_file(
+            context,
+            &locked.registry,
+            &record,
+            &current,
+            &capability_file,
+        )?;
+        if let Some(replay) = idempotency_replay(
+            &locked.registry,
+            &args.idempotency_key,
+            &record.id,
+            &current,
+            "message-forward",
+            &digest,
+        )? {
+            return Ok(replay);
+        }
+        super::forwarding::source(
+            &locked.registry,
+            &super::remote::Address {
+                machine,
+                session_id: record.id.clone(),
+                session_incarnation: current.clone(),
+            },
+            &request,
+            now_epoch(),
+        )?
+        .body
+        .clone()
+    };
+    send_authenticated(
+        context,
+        &record.id,
+        &current,
+        &args.to_session,
+        body,
+        None,
+        None,
+        args.idempotency_key,
+        "message-forward",
+        &capability_file,
+        None,
+        None,
+        None,
+        Some(digest),
+        false,
+        None,
+        Some(&request),
+        || Ok(()),
     )
 }
 
@@ -198,10 +289,12 @@ pub(crate) fn reminder(context: &CliContext, args: MessageReminderArgs) -> Resul
     }))
 }
 
-pub(crate) fn inbox(context: &CliContext, args: MessageInboxArgs) -> Result<Value, CliError> {
+pub(crate) fn inbox(context: &CliContext, mut args: MessageInboxArgs) -> Result<Value, CliError> {
     let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
     let (record, recipient_incarnation) =
         authenticate_from_file(context, &args.session, Some(&capability_file))?;
+    args.categories.sort_unstable();
+    args.categories.dedup();
     let limit = args.limit.unwrap_or(DEFAULT_PAGE);
     if limit == 0 || limit > MAX_PAGE {
         return Err(CliError::usage(
@@ -243,6 +336,10 @@ pub(crate) fn inbox(context: &CliContext, args: MessageInboxArgs) -> Result<Valu
                     .state
                     .as_deref()
                     .is_none_or(|state| message.state == state)
+                && (args.categories.is_empty()
+                    || args
+                        .categories
+                        .contains(&message.category.unwrap_or_default()))
         })
         .collect();
     messages.sort_by(|left, right| {
@@ -257,6 +354,7 @@ pub(crate) fn inbox(context: &CliContext, args: MessageInboxArgs) -> Result<Valu
             if cursor.recipient_session_id != record.id
                 || cursor.recipient_incarnation != recipient_incarnation
                 || cursor.state != args.state
+                || cursor.categories != args.categories
                 || cursor.expires_at_epoch <= now
             {
                 return Err(CliError::data(
@@ -283,6 +381,7 @@ pub(crate) fn inbox(context: &CliContext, args: MessageInboxArgs) -> Result<Valu
             recipient_session_id: record.id.clone(),
             recipient_incarnation: recipient_incarnation.clone(),
             state: args.state.clone(),
+            categories: args.categories.clone(),
             after_created_at_epoch: last.created_at_epoch,
             after_message_id: last.message_id.clone(),
             expires_at_epoch: now.saturating_add(CURSOR_TTL_SECS),
@@ -295,6 +394,7 @@ pub(crate) fn inbox(context: &CliContext, args: MessageInboxArgs) -> Result<Valu
                 cursor.recipient_session_id == desired.recipient_session_id
                     && cursor.recipient_incarnation == desired.recipient_incarnation
                     && cursor.state == desired.state
+                    && cursor.categories == desired.categories
                     && cursor.after_created_at_epoch == desired.after_created_at_epoch
                     && cursor.after_message_id == desired.after_message_id
             })
@@ -454,7 +554,13 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
     let (record, sender_incarnation) =
         authenticate_from_file(context, &args.session, Some(&capability_file))?;
     let body = read_body(&args.body_file)?;
-    let digest = reply_request_digest(&record.id, &args.message, &body, args.if_revision);
+    let digest = reply_request_digest(
+        &record.id,
+        &args.message,
+        &body,
+        args.if_revision,
+        args.category,
+    );
     let _sender_lock = crate::acquire_session_record_lock(context, &record.id)
         .map_err(|_| super::unauthorized())?;
     let sender =
@@ -542,6 +648,8 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
         Some(args.if_revision),
         Some(digest),
         false,
+        args.category,
+        None,
         || Ok(()),
     )
 }
@@ -551,16 +659,18 @@ fn reply_request_digest(
     message_id: &str,
     body: &str,
     if_revision: u64,
+    category: Option<MessageCategory>,
 ) -> String {
-    request_digest(
-        "message-reply",
-        &json!({
-            "sender": sender_session_id,
-            "reply_to": message_id,
-            "body_digest": super::digest_bytes(body.as_bytes()),
-            "if_revision": if_revision,
-        }),
-    )
+    let mut input = json!({
+        "sender": sender_session_id,
+        "reply_to": message_id,
+        "body_digest": super::digest_bytes(body.as_bytes()),
+        "if_revision": if_revision,
+    });
+    if let Some(category) = category {
+        input["category"] = json!(category);
+    }
+    request_digest("message-reply", &input)
 }
 
 pub(crate) fn wait(context: &CliContext, args: MessageWaitArgs) -> Result<Value, CliError> {
@@ -661,6 +771,8 @@ fn send_authenticated<G, F>(
     expected_parent_revision: Option<u64>,
     request_digest_override: Option<String>,
     require_active_sender_claim: bool,
+    category: Option<MessageCategory>,
+    forward_request: Option<&super::forwarding::Request>,
     authorize: F,
 ) -> Result<Value, CliError>
 where
@@ -675,17 +787,18 @@ where
     }
     let expiry_secs = parse_expiry(expires_in)?;
     let digest = request_digest_override.unwrap_or_else(|| {
-        request_digest(
-            operation,
-            &json!({
-                "sender": sender_session_id,
-                "recipient": recipient_session_id,
-                "body_digest": super::digest_bytes(body.as_bytes()),
-                "reply_to": reply_to,
-                "expiry_secs": expiry_secs,
-                "if_revision": expected_parent_revision,
-            }),
-        )
+        let mut input = json!({
+            "sender": sender_session_id,
+            "recipient": recipient_session_id,
+            "body_digest": super::digest_bytes(body.as_bytes()),
+            "reply_to": reply_to,
+            "expiry_secs": expiry_secs,
+            "if_revision": expected_parent_revision,
+        });
+        if let Some(category) = category {
+            input["category"] = json!(category);
+        }
+        request_digest(operation, &input)
     });
     {
         let _sender_lock = crate::acquire_session_record_lock(context, sender_session_id)
@@ -801,6 +914,35 @@ where
             )
         })?;
     let recipient_incarnation = broker.incarnation.clone();
+    let machine = crate::board::machine_identity(None, context);
+    let (forwarding, expiry_epoch, category) = if let Some(request) = forward_request {
+        let actor = super::remote::Address {
+            machine: machine.clone(),
+            session_id: sender_session_id.into(),
+            session_incarnation: sender_incarnation.into(),
+        };
+        let source = super::forwarding::source(&locked.registry, &actor, request, now)?;
+        if source.body != body {
+            return Err(CliError::data(
+                "message-forward-invalid",
+                "forward source body changed",
+                None,
+            ));
+        }
+        let provenance = super::forwarding::append(
+            source,
+            actor,
+            super::remote::Address {
+                machine,
+                session_id: recipient.id.clone(),
+                session_incarnation: recipient_incarnation.clone(),
+            },
+            now,
+        )?;
+        (Some(provenance), source.expires_at_epoch, source.category)
+    } else {
+        (None, now.saturating_add(expiry_secs), category)
+    };
     let now_millis = now_epoch_millis();
     admit_message(
         &mut locked.registry,
@@ -861,12 +1003,15 @@ where
         reply_depth,
         created_at: timestamp(now),
         created_at_epoch: now,
+        remote_created_at_epoch: None,
         created_at_epoch_millis: now_millis,
-        expires_at: timestamp(now.saturating_add(expiry_secs)),
-        expires_at_epoch: now.saturating_add(expiry_secs),
+        expires_at: timestamp(expiry_epoch),
+        expires_at_epoch: expiry_epoch,
         terminal_at_epoch: None,
         forwarded_from_incarnation: None,
         forwarded_at_epoch: None,
+        category,
+        forwarding,
         body_bytes: body.len(),
         body,
     };
@@ -939,6 +1084,7 @@ where
         })?;
     let _ = broker;
     let _authorization_guard = authorize()?;
+    let machine = crate::board::machine_identity(None, context);
 
     let mut carried = 0usize;
     for message in &mut locked.registry.messages {
@@ -950,6 +1096,17 @@ where
             && message.state == "unread"
             && message.expires_at_epoch > now
         {
+            super::forwarding::record_recipient_transfer(
+                message,
+                &machine,
+                current_incarnation,
+                super::remote::Address {
+                    machine: machine.clone(),
+                    session_id: controller_session_id.into(),
+                    session_incarnation: controller_incarnation.into(),
+                },
+                now,
+            )?;
             message.recipient_incarnation = current_incarnation.to_string();
             message.revision = message.revision.saturating_add(1);
             message.forwarded_from_incarnation = Some(previous_incarnation.to_string());
@@ -1098,7 +1255,12 @@ pub(crate) fn resolve_capability_file(path: Option<&Path>) -> Result<PathBuf, Cl
 }
 
 fn body_classification(message: &StoredMessage) -> &'static str {
-    if super::service::is_service_sender(&message.sender_session_id) {
+    if super::service::is_service_sender(&message.sender_session_id)
+        || message
+            .forwarding
+            .as_ref()
+            .is_some_and(|p| matches!(p.original_sender, super::remote::Origin::Service(_)))
+    {
         "untrusted_service_data"
     } else {
         "untrusted_peer_data"
@@ -1107,6 +1269,8 @@ fn body_classification(message: &StoredMessage) -> &'static str {
 
 fn metadata(message: &StoredMessage) -> MessageMetadata {
     MessageMetadata {
+        category: message.category.unwrap_or_default(),
+        forwarding: message.forwarding.clone(),
         schema_version: message.schema_version.clone(),
         message_id: message.message_id.clone(),
         sender: if let Some(service) = super::service::sender_origin(message) {
@@ -1127,6 +1291,20 @@ fn metadata(message: &StoredMessage) -> MessageMetadata {
         created_at: message.created_at.clone(),
         expires_at: message.expires_at.clone(),
         body_bytes: message.body_bytes,
+    }
+}
+
+pub(super) fn sender_origin(message: &StoredMessage, machine: &str) -> super::remote::Origin {
+    if let Some(service) = super::service::sender_origin(message) {
+        super::remote::Origin::Service(service)
+    } else {
+        super::remote::Origin::Session(super::remote::sender_address(message).unwrap_or_else(
+            || super::remote::Address {
+                machine: machine.into(),
+                session_id: message.sender_session_id.clone(),
+                session_incarnation: message.sender_incarnation.clone(),
+            },
+        ))
     }
 }
 
@@ -1413,8 +1591,11 @@ mod tests {
             expires_at: String::new(),
             expires_at_epoch: NOW + 3_600,
             terminal_at_epoch: (state == "acknowledged").then_some(NOW - 60 - index as i64),
+            remote_created_at_epoch: None,
             forwarded_from_incarnation: None,
             forwarded_at_epoch: None,
+            category: None,
+            forwarding: None,
             body_bytes: bytes,
             body: String::new(),
         }
@@ -1549,8 +1730,11 @@ mod tests {
             expires_at: "time".to_string(),
             expires_at_epoch: 1,
             terminal_at_epoch: None,
+            remote_created_at_epoch: None,
             forwarded_from_incarnation: None,
             forwarded_at_epoch: None,
+            category: None,
+            forwarding: None,
             body_bytes: 6,
             body: "canary".to_string(),
         };
@@ -1570,12 +1754,12 @@ mod tests {
 
     #[test]
     fn coordination_review_reply_digest_does_not_depend_on_retained_parent_metadata() {
-        let first = reply_request_digest("sender", "message", "body", 1);
-        let retry = reply_request_digest("sender", "message", "body", 1);
+        let first = reply_request_digest("sender", "message", "body", 1, None);
+        let retry = reply_request_digest("sender", "message", "body", 1, None);
         assert_eq!(first, retry);
         assert_ne!(
             first,
-            reply_request_digest("sender", "message", "changed", 1)
+            reply_request_digest("sender", "message", "changed", 1, None)
         );
     }
 }

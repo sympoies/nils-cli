@@ -3,6 +3,7 @@ pub(crate) mod broker;
 pub mod claims;
 pub(crate) mod console_start;
 pub mod context;
+mod forwarding;
 pub mod mailbox;
 mod notification;
 pub use notification::NotificationProjection;
@@ -318,6 +319,11 @@ pub(crate) fn run_message(context: &CliContext, args: cli::MessageArgs) -> i32 {
             service::cli_send(context, args).map_err(service::recovery),
         ),
         MessageCommand::Send(args) => ("message-send", args.format, mailbox::send(context, args)),
+        MessageCommand::Forward(args) => (
+            "message-forward",
+            args.format,
+            mailbox::forward(context, args),
+        ),
         MessageCommand::Inbox(args) => {
             ("message-inbox", args.format, mailbox::inbox(context, args))
         }

@@ -142,6 +142,9 @@ _agent__session() {
             agent__session__message,delivery)
                 cmd="agent__session__message__delivery"
                 ;;
+            agent__session__message,forward)
+                cmd="agent__session__message__forward"
+                ;;
             agent__session__message,inbox)
                 cmd="agent__session__message__inbox"
                 ;;
@@ -1439,7 +1442,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__message)
-            opts="-h --state-dir --host --help peers delivery send service-send inbox show ack reply wait reminder"
+            opts="-h --state-dir --host --help peers delivery send forward service-send inbox show ack reply wait reminder"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1575,8 +1578,80 @@ _agent__session() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        agent__session__message__forward)
+            opts="-h --session --message --if-revision --to --to-machine --category --capability-file --idempotency-key --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --message)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --if-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --to)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --to-machine)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --category)
+                    COMPREPLY=($(compgen -W "uncategorized progress handoff blocker decision report" -- "${cur}"))
+                    return 0
+                    ;;
+                --capability-file)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         agent__session__message__inbox)
-            opts="-h --session --capability-file --state --cursor --limit --format --state-dir --host --help"
+            opts="-h --session --capability-file --state --cursor --limit --format --category --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1615,6 +1690,10 @@ _agent__session() {
                     ;;
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --category)
+                    COMPREPLY=($(compgen -W "uncategorized progress handoff blocker decision report" -- "${cur}"))
                     return 0
                     ;;
                 --state-dir)
@@ -1732,7 +1811,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__message__reply)
-            opts="-h --session --message --if-revision --body-file --capability-file --idempotency-key --format --state-dir --host --help"
+            opts="-h --session --message --if-revision --body-file --capability-file --idempotency-key --format --category --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1788,6 +1867,10 @@ _agent__session() {
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
                     ;;
+                --category)
+                    COMPREPLY=($(compgen -W "uncategorized progress handoff blocker decision report" -- "${cur}"))
+                    return 0
+                    ;;
                 --state-dir)
                     COMPREPLY=()
                     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
@@ -1807,7 +1890,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__message__send)
-            opts="-h --from --to --to-machine --body-file --capability-file --idempotency-key --reply-to --expires-in --format --state-dir --host --help"
+            opts="-h --from --to --to-machine --body-file --capability-file --idempotency-key --reply-to --expires-in --format --category --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1871,6 +1954,10 @@ _agent__session() {
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0
                     ;;
+                --category)
+                    COMPREPLY=($(compgen -W "uncategorized progress handoff blocker decision report" -- "${cur}"))
+                    return 0
+                    ;;
                 --state-dir)
                     COMPREPLY=()
                     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
@@ -1890,7 +1977,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__message__service__send)
-            opts="-h --service --service-generation --credential-file --to --to-machine --body-file --idempotency-key --expires-in --expected-recipient-incarnation --format --state-dir --host --help"
+            opts="-h --service --service-generation --credential-file --to --to-machine --body-file --idempotency-key --expires-in --expected-recipient-incarnation --format --category --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1956,6 +2043,10 @@ _agent__session() {
                     ;;
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --category)
+                    COMPREPLY=($(compgen -W "uncategorized progress handoff blocker decision report" -- "${cur}"))
                     return 0
                     ;;
                 --state-dir)
