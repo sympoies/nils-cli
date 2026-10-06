@@ -18478,6 +18478,7 @@ impl StoppedPostClaimFixture {
         ]
     }
 
+    #[cfg(target_os = "linux")]
     fn run_reconcile(&self) -> CmdOutput {
         run_main_agent(&self.checkout, &self.reconcile_args(), &self.envs())
     }
