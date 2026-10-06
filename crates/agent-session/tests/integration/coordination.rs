@@ -18765,6 +18765,7 @@ fn assert_claimed_runtime_stop_rejected_without_mutation(
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn stopped_post_claim_fixture_keeps_controller_heartbeat_fresh_between_commands() {
     let fixture = StoppedPostClaimFixture::new();
     fs::write(
