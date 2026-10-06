@@ -177,6 +177,78 @@ esac
     }
 
     #[test]
+    fn identity_cross_repo_hosts_are_authorized_before_credential_probes() {
+        let f = cross_repo_fixture(&single_profile_policy());
+        fs::write(
+            &f.gh,
+            r#"#!/bin/sh
+printf 'probe call\n' >> "$FIXTURE_CALL_LOG"
+printf '{"login":"unlisted-actor"}'
+"#,
+        )
+        .unwrap();
+        for args in [
+            vec!["activity", "commits"],
+            vec!["activity", "events"],
+            vec!["activity", "summary"],
+        ] {
+            let out = f
+                .bare_command()
+                .current_dir(f.home.path())
+                .args(["--provider", "github", "--host", "unlisted.example"])
+                .args(&args)
+                .output()
+                .unwrap();
+            assert_eq!(out.status.code(), Some(65), "{args:?}");
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains("identity_repository_unknown"),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            assert!(
+                !f.home.path().join("calls").exists(),
+                "unlisted host must not be probed"
+            );
+        }
+    }
+
+    #[test]
+    fn identity_cross_repo_reads_accept_explicitly_authorized_custom_hosts() {
+        let f = cross_repo_fixture(
+            &single_profile_policy().replace("github.com", "authorized.example"),
+        );
+        fs::write(&f.gh, r#"#!/bin/sh
+printf 'probe call\n' >> "$FIXTURE_CALL_LOG"
+if test "$GH_ENTERPRISE_TOKEN" != "$FIXTURE_ACCOUNT_A_CREDENTIAL" || test -n "$GH_TOKEN"; then exit 9; fi
+case "$1:$2" in
+ api:user) printf '{"login":"account-a"}';;
+ api:graphql) printf '{"data":{"user":{"contributionsCollection":{"totalCommitContributions":0,"commitContributionsByRepository":[]}}}}';;
+ *) printf '[]';;
+esac
+"#).unwrap();
+        for args in [
+            vec!["activity", "commits"],
+            vec!["activity", "events"],
+            vec!["activity", "summary"],
+        ] {
+            let out = f
+                .bare_command()
+                .current_dir(f.home.path())
+                .args(["--provider", "github", "--host", "authorized.example"])
+                .args(&args)
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+        assert!(f.home.path().join("calls").exists());
+    }
+
+    #[test]
     fn identity_repo_scoped_reads_use_normal_rules_including_inbox_threads() {
         let f = cross_repo_fixture(POLICY);
         for args in [

@@ -190,7 +190,11 @@ without `--repo` select the starting principal's sole distinct profile. Multiple
 profiles refuse with `identity_target_ambiguous`, candidate profile IDs, and guidance
 to pass `--repo owner/repo` or choose a principal with one profile. A repository
 in the current checkout does not scope these reads. The selected profile must allow
-`api_read`; credentials and actors are verified as usual. Host-only audit targets
+`api_read`. The target host must be declared by a repository, organization, or path
+allowlist rule for that principal and profile, or by its default repositories when
+that profile is the default. These host declarations apply outside a checkout;
+an undeclared host refuses with `identity_repository_unknown` before credential
+lookup or actor probing. Credentials and actors are verified as usual. Host-only audit targets
 omit `repo`, and App coverage checks apply only to concrete repository targets.
 With `--repo`, these commands use normal repository and managed-path rules.
 `search issues/prs/refs-to` and `activity feed` always use their repository context,

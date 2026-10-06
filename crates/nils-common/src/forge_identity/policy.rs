@@ -317,6 +317,27 @@ impl Policy {
                 ));
             }
             let profile_id = (*candidates.first().unwrap()).clone();
+            let host_matches = |key: &str| {
+                key.split_once('/')
+                    .is_some_and(|(host, _)| host == target.host)
+            };
+            // Host-only reads ignore checkout scope, but a credential must stay
+            // within authorities declared for this principal and profile.
+            let host_declared = self.rules.iter().any(|rule| {
+                rule.principal == principal
+                    && rule.profile == profile_id
+                    && (rule.repo.as_deref().is_some_and(host_matches)
+                        || rule.org.as_deref().is_some_and(host_matches)
+                        || rule.repositories.iter().any(|key| host_matches(key)))
+            }) || (entry.default_profile.as_deref()
+                == Some(profile_id.as_str())
+                && entry
+                    .default_repositories
+                    .iter()
+                    .any(|key| host_matches(key)));
+            if !host_declared {
+                return Err(Error::new("identity_repository_unknown"));
+            }
             let profile = self.profiles.get(&profile_id).unwrap().clone();
             if !profile.operations.contains(&operation) {
                 return Err(Error::new("identity_operation_denied"));

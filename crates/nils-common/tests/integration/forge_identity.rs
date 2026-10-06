@@ -881,3 +881,58 @@ fn identity_cross_repository_scope_is_read_only_and_requires_one_profile() {
         "identity_target_invalid"
     );
 }
+
+#[test]
+fn identity_cross_repository_scope_requires_a_principal_profile_host_declaration() {
+    let target = Target::cross_repository("AUTHORIZED.EXAMPLE").unwrap();
+    let base = FIXTURE.replace("github.com", "authorized.example")
+        .replace("default_profile = \"account-b\"\ndefault_repositories = [\"authorized.example/sandbox/default\"]\n", "");
+    let rule = "repo = \"authorized.example/sandbox/widget\"\nprofile = \"account-b\"";
+    let path = tempfile::tempdir().unwrap();
+    for declaration in [
+        rule.to_string(),
+        "org = \"authorized.example/sandbox\"\nprofile = \"account-b\"".to_string(),
+        format!(
+            "path = {:?}\nrepositories = [\"authorized.example/sandbox/widget\"]\nprofile = \"account-b\"",
+            path.path().canonicalize().unwrap()
+        ),
+    ] {
+        let policy = Policy::parse(&base.replace(rule, &declaration)).unwrap();
+        assert_eq!(
+            policy
+                .resolve("coordinator", &target, None, Operation::ApiRead)
+                .unwrap()
+                .profile_id,
+            "account-b"
+        );
+    }
+    let default_only = Policy::parse(&FIXTURE.replace("github.com", "authorized.example")
+        .replace("[[rules]]\nid = \"coordinator-widget\"\nprincipal = \"coordinator\"\nrepo = \"authorized.example/sandbox/widget\"\nprofile = \"account-b\"", "")).unwrap();
+    assert!(
+        default_only
+            .resolve("coordinator", &target, None, Operation::ApiRead)
+            .is_ok()
+    );
+    let foreign_principal = Policy::parse(&base.replace(
+        "id = \"coordinator-widget\"\nprincipal = \"coordinator\"",
+        "id = \"coordinator-widget\"\nprincipal = \"contributor\"",
+    ))
+    .unwrap();
+    for (policy, host) in [
+        (Policy::parse(FIXTURE).unwrap(), "unlisted.example"),
+        (foreign_principal, "authorized.example"),
+    ] {
+        assert_eq!(
+            policy
+                .resolve(
+                    "coordinator",
+                    &Target::cross_repository(host).unwrap(),
+                    None,
+                    Operation::ApiRead
+                )
+                .unwrap_err()
+                .code,
+            "identity_repository_unknown"
+        );
+    }
+}

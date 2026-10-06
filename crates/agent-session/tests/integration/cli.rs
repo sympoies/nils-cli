@@ -552,11 +552,7 @@ exit 0
     // the only side effects are one logged record and the logger's lock file;
     // remove both so the test observes exactly the product's calls, with no
     // pre-existing log file to observe.
-    let prewarm = Command::new(&bin)
-        .arg("version")
-        .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
-        .output()
-        .expect("prewarm fake tmux");
+    let prewarm = prewarm_fake_tmux(&bin, &log);
     assert!(
         prewarm.status.success(),
         "fake tmux prewarm failed: {}",
@@ -565,6 +561,50 @@ exit 0
     fs::remove_file(&log).expect("clear fake tmux prewarm record");
     fs::remove_file(log.with_extension("log.call-lock")).expect("clear fake tmux prewarm lock");
     (bin, log)
+}
+
+fn prewarm_fake_tmux(bin: &Path, log: &Path) -> std::process::Output {
+    // A sibling fork can briefly inherit the script's writable descriptor.
+    // Retry only that setup race before the product's bounded probe runs.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match Command::new(bin)
+            .arg("version")
+            .env("AGENT_SESSION_FAKE_TMUX_LOG", log)
+            .output()
+        {
+            Err(error)
+                if error.kind() == io::ErrorKind::ExecutableFileBusy
+                    && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            result => return result.expect("prewarm fake tmux"),
+        }
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn fake_tmux_prewarm_waits_for_a_sibling_writable_descriptor() {
+    let tmp = tempfile::TempDir::new().expect("fixture directory");
+    let bin = tmp.path().join("tmux");
+    let log = tmp.path().join("tmux.log");
+    write_executable(&bin, "#!/bin/sh\nexit 0\n");
+    let writer = OpenOptions::new()
+        .write(true)
+        .open(&bin)
+        .expect("open writer");
+    let sibling = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(100));
+        drop(writer);
+    });
+    let result = prewarm_fake_tmux(&bin, &log);
+    sibling.join().expect("release sibling writer");
+    assert!(
+        result.status.success(),
+        "fixture prewarm succeeds after close"
+    );
 }
 
 #[test]
