@@ -20167,6 +20167,11 @@ esac
             &tmp.path().join("archive-tmux"),
             "#!/usr/bin/env sh\ncase \"$1\" in\n  display-message|has-session) printf '%s\\n' \"can't find session: archive-me\" >&2; exit 1 ;;\n  *) exit 42 ;;\nesac\n",
         );
+        // The fake tmux is a shell script whose launch cannot guarantee fitting
+        // the termination probe's bounded startup budget under load, so pin the
+        // probe outcome it models: the session is gone (sympoies/nils-cli#2154).
+        let _probe =
+            crate::tmux_probe_fixture::install(&tmux, crate::tmux_probe_fixture::Probe::Stopped);
         let (archived, _) = crate::archive_session_with_expected_incarnation(
             &context,
             "archived-owner",
@@ -31654,6 +31659,11 @@ esac
             &tmp.path().join("children-guard-tmux"),
             "#!/usr/bin/env sh\ncase \"$1\" in\n  display-message|has-session) printf \"%s\\n\" \"can't find session: gone\" >&2; exit 1 ;;\n  *) exit 42 ;;\nesac\n",
         );
+        // The fake tmux is a shell script whose launch cannot guarantee fitting
+        // the termination probe's bounded startup budget under load, so pin the
+        // probe outcome it models: the session is gone (sympoies/nils-cli#2154).
+        let _probe =
+            crate::tmux_probe_fixture::install(&tmux, crate::tmux_probe_fixture::Probe::Stopped);
         // guard-stale names a parent with the same id but an earlier creation
         // time, so it is not a child of the current guard-parent.
         for id in ["guard-parent", "guard-child", "guard-stale"] {
