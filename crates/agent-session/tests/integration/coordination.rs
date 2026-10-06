@@ -43946,3 +43946,246 @@ fn harness_identity_json() -> serde_json::Value {
     }
     json!({ "pid": pid })
 }
+
+#[test]
+fn message_categories_filter_and_forward_preserve_source_and_independent_ack() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let root = tmp.path().join("state");
+    fs::create_dir(&root).expect("state");
+    seed_brokers(
+        &root,
+        &[
+            (
+                "alpha",
+                "incarnation-alpha",
+                "alpha-private-capability-material",
+            ),
+            (
+                "beta",
+                "incarnation-beta",
+                "beta-private-capability-material",
+            ),
+            (
+                "gamma",
+                "incarnation-gamma",
+                "gamma-private-capability-material",
+            ),
+        ],
+    );
+    let state = root.to_string_lossy();
+    let body = tmp.path().join("body.txt");
+    fs::write(&body, "Category forwarding body canary").expect("body");
+    let alpha = capability(&root, "alpha");
+    let beta = capability(&root, "beta");
+    let gamma = capability(&root, "gamma");
+    let call = |args: &[&str]| {
+        let mut full = vec!["--state-dir", state.as_ref(), "message"];
+        full.extend_from_slice(args);
+        full.extend(["--format", "json"]);
+        run(tmp.path(), &full)
+    };
+    let send = |key: &str, category: Option<&str>| {
+        let mut args = vec![
+            "send",
+            "--from",
+            "alpha",
+            "--to",
+            "beta",
+            "--capability-file",
+            &alpha,
+            "--body-file",
+            body.to_str().unwrap(),
+            "--idempotency-key",
+            key,
+        ];
+        if let Some(category) = category {
+            args.extend(["--category", category]);
+        }
+        call(&args)
+    };
+    let untagged = send("categories-untagged", None);
+    assert_eq!(untagged.code, 0, "{}", untagged.stdout_text());
+    assert_eq!(data(&untagged)["category"], "uncategorized");
+    let first = send("categories-progress", Some("progress"));
+    assert_eq!(first.code, 0, "{}", first.stdout_text());
+    let handoff = send("categories-handoff", Some("handoff"));
+    assert_eq!(handoff.code, 0, "{}", handoff.stdout_text());
+    let id = data(&first)["message_id"].as_str().unwrap().to_string();
+    let filtered = call(&[
+        "inbox",
+        "--session",
+        "beta",
+        "--capability-file",
+        &beta,
+        "--category",
+        "progress",
+        "--category",
+        "handoff",
+        "--limit",
+        "1",
+    ]);
+    assert_eq!(filtered.code, 0, "{}", filtered.stdout_text());
+    let page = data(&filtered);
+    assert_eq!(page["messages"].as_array().unwrap().len(), 1);
+    assert!(!filtered.stdout_text().contains("body canary"));
+    let cursor = page["next_cursor"].as_str().unwrap();
+    let next = call(&[
+        "inbox",
+        "--session",
+        "beta",
+        "--capability-file",
+        &beta,
+        "--category",
+        "handoff",
+        "--category",
+        "progress",
+        "--cursor",
+        cursor,
+    ]);
+    assert_eq!(next.code, 0, "{}", next.stdout_text());
+    assert_eq!(data(&next)["messages"].as_array().unwrap().len(), 1);
+    let wrong_cursor = call(&[
+        "inbox",
+        "--session",
+        "beta",
+        "--capability-file",
+        &beta,
+        "--category",
+        "progress",
+        "--cursor",
+        cursor,
+    ]);
+    assert_eq!(
+        wrong_cursor.stdout_json()["error"]["code"],
+        "cursor-invalid"
+    );
+    let changed = send("categories-progress", Some("report"));
+    assert_eq!(
+        changed.stdout_json()["error"]["code"],
+        "idempotency-key-reused"
+    );
+    let forward = |cap: &str, revision: &str, category: &str, key: &str| {
+        call(&[
+            "forward",
+            "--session",
+            "beta",
+            "--message",
+            &id,
+            "--if-revision",
+            revision,
+            "--to",
+            "gamma",
+            "--capability-file",
+            cap,
+            "--category",
+            category,
+            "--idempotency-key",
+            key,
+        ])
+    };
+    let unauthorized = forward(&alpha, "1", "progress", "categories-unauthorized");
+    assert_eq!(
+        unauthorized.stdout_json()["error"]["code"],
+        "coordination-unauthorized"
+    );
+    let wrong_revision = forward(&beta, "2", "progress", "categories-stale");
+    assert_eq!(
+        wrong_revision.stdout_json()["error"]["code"],
+        "message-revision-conflict"
+    );
+    let wrong_category = forward(&beta, "1", "report", "categories-wrong-category");
+    assert_eq!(
+        wrong_category.stdout_json()["error"]["code"],
+        "message-category-conflict"
+    );
+    let forwarded = forward(&beta, "1", "progress", "categories-forward");
+    assert_eq!(forwarded.code, 0, "{}", forwarded.stdout_text());
+    let copy = data(&forwarded)["message_id"].as_str().unwrap().to_string();
+    assert_ne!(copy, id);
+    assert_eq!(data(&forwarded)["category"], "progress");
+    assert_eq!(data(&forwarded)["sender"]["session_id"], "beta");
+    assert_eq!(
+        data(&forwarded)["forwarding"]["original_sender"]["session_id"],
+        "alpha"
+    );
+    assert_eq!(data(&forwarded)["forwarding"]["original_message_id"], id);
+    let original = call(&[
+        "inbox",
+        "--session",
+        "beta",
+        "--capability-file",
+        &beta,
+        "--category",
+        "progress",
+    ]);
+    assert_eq!(data(&original)["messages"][0]["state"], "unread");
+    assert_eq!(data(&original)["messages"][0]["revision"], 1);
+    let shown = call(&[
+        "show",
+        "--session",
+        "gamma",
+        "--message",
+        &copy,
+        "--capability-file",
+        &gamma,
+    ]);
+    assert_eq!(shown.code, 0, "{}", shown.stdout_text());
+    assert_eq!(
+        data(&shown)["body"]["text"],
+        "Category forwarding body canary"
+    );
+    assert_eq!(
+        data(&shown)["body"]["classification"],
+        "untrusted_peer_data"
+    );
+    let looped = call(&[
+        "forward",
+        "--session",
+        "gamma",
+        "--message",
+        &copy,
+        "--if-revision",
+        "2",
+        "--to",
+        "alpha",
+        "--capability-file",
+        &gamma,
+        "--idempotency-key",
+        "categories-loop",
+    ]);
+    assert_eq!(
+        looped.stdout_json()["error"]["code"],
+        "message-forward-loop"
+    );
+    let copy_ack = call(&[
+        "ack",
+        "--session",
+        "gamma",
+        "--message",
+        &copy,
+        "--if-revision",
+        "2",
+        "--capability-file",
+        &gamma,
+        "--idempotency-key",
+        "categories-copy-ack",
+    ]);
+    assert_eq!(copy_ack.code, 0, "{}", copy_ack.stdout_text());
+    let source_ack = call(&[
+        "ack",
+        "--session",
+        "beta",
+        "--message",
+        &id,
+        "--if-revision",
+        "1",
+        "--capability-file",
+        &beta,
+        "--idempotency-key",
+        "categories-source-ack",
+    ]);
+    assert_eq!(source_ack.code, 0, "{}", source_ack.stdout_text());
+    let replay = forward(&beta, "1", "progress", "categories-forward");
+    assert_eq!(replay.code, 0, "{}", replay.stdout_text());
+    assert_eq!(data(&replay)["message_id"], copy);
+}

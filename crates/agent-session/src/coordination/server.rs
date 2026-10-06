@@ -73,6 +73,7 @@ pub(crate) struct SendBody {
     pub idempotency_key: String,
     pub reply_to: Option<String>,
     pub expires_in: Option<String>,
+    pub category: Option<cli::MessageCategory>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +89,7 @@ pub(crate) struct ReplyBody {
     pub body: String,
     pub if_revision: u64,
     pub idempotency_key: String,
+    pub category: Option<cli::MessageCategory>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,6 +148,8 @@ pub(crate) struct InboxQuery {
     pub state: Option<String>,
     pub cursor: Option<String>,
     pub limit: Option<usize>,
+    /// HTTP query accepts one category; the CLI supports repeatable categories.
+    pub category: Option<cli::MessageCategory>,
 }
 
 pub(crate) fn show(context: &CliContext, id: &str) -> Result<Value, CliError> {
@@ -711,6 +715,7 @@ pub(crate) fn inbox(
             session: id.to_string(),
             capability_file: Some(server_capability.path.clone()),
             state: query.state,
+            categories: query.category.into_iter().collect(),
             cursor: query.cursor,
             limit: query.limit,
             format: nils_common::cli_contract::OutputFormat::Json,
@@ -737,6 +742,7 @@ pub(crate) fn send(
                 idempotency_key: body.idempotency_key,
                 reply_to: body.reply_to,
                 expires_in: body.expires_in,
+                category: body.category,
                 format: nils_common::cli_contract::OutputFormat::Json,
             },
         )
@@ -797,6 +803,7 @@ pub(crate) fn reply(
                 session: id.to_string(),
                 message: message.to_string(),
                 if_revision: body.if_revision,
+                category: body.category,
                 body_file,
                 capability_file: Some(server_capability.path.clone()),
                 idempotency_key: body.idempotency_key,

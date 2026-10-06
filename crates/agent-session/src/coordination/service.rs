@@ -78,6 +78,8 @@ pub(crate) struct Submit {
     pub idempotency_key: String,
     pub expires_in: Option<String>,
     pub expected_recipient_incarnation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<cli::MessageCategory>,
 }
 
 pub(crate) fn unauthorized() -> CliError {
@@ -297,6 +299,7 @@ pub(crate) fn cli_send(
             idempotency_key: args.idempotency_key,
             expires_in: args.expires_in,
             expected_recipient_incarnation: args.expected_recipient_incarnation,
+            category: args.category,
         })
         .send()
         .map_err(|_| {

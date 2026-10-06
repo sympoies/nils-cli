@@ -1499,3 +1499,90 @@ mailbox body/expiry/quota/rate/idempotency codes, and
 403 for nonlocal/proxied submission, 409 for recipient/idempotency revision
 conflicts, 400/422 for invalid requests, and 503 for unavailable coordination or
 transport. The CLI uses usage/data/unavailable exit categories (64/65/69).
+
+## Message categories and recipient forwarding
+
+Categories are sender-declared routing metadata: `uncategorized`, `progress`,
+`handoff`, `blocker`, `decision`, and `report`. They confer no work authority.
+`message send`, `reply`, and `service-send` accept `--category`; omission
+projects as `uncategorized`. Replies declare their own category. Stored v1
+messages add optional `category` and `forwarding` fields with defaults; existing
+message and inbox projections keep their schema names and add the effective
+category plus optional provenance. Inbox remains body-free. The local HTTP
+send/reply bodies accept optional `category`; inbox HTTP queries accept one
+`category`. The CLI's repeatable categories are an OR filter, composed with
+`--state`, applied before pagination and normalized into the opaque cursor.
+Changing the filter while reusing a cursor returns `cursor-invalid`.
+
+```sh
+agent-session message send --from "$AGENT_SESSION_ID" --to <recipient> \
+  --category progress --body-file progress.txt --idempotency-key progress-001
+agent-session message inbox --session "$AGENT_SESSION_ID" --state unread \
+  --category progress --category handoff --format json
+agent-session message forward --session "$AGENT_SESSION_ID" --message <message-id> \
+  --if-revision 1 --to <destination> --to-machine <configured-machine> \
+  --category progress --category handoff --idempotency-key route-source-rule-001
+```
+
+Forward selects one exact received message. Its repeated `--category` flags are
+an optional source guard; it cannot change the category. The current recipient's
+capability and incarnation authorize the operation. The implementation verifies
+the source revision, category, body and expiry under the final commit lock,
+creates a fresh destination message with identical body/category and capped
+expiry, persists an idempotent source receipt (local) or durable outbox identity
+(remote), and schedules the destination's usual body-free reminder. It never
+reads, acknowledges or advances the source revision. Expired/quarantined sources
+cannot be forwarded. `message-category-conflict`, `message-revision-conflict`,
+`message-forward-loop`, `message-forward-depth-exceeded` and
+`message-forward-invalid` are content-free errors.
+
+The immediate `sender` remains the authenticated forwarder. Optional
+`forwarding` provenance is explicitly attested by the forwarder, with
+`attestation: "forwarder"`, root `original_message_id`, `original_sender`
+(session address or service origin), `original_recipient`, original creation
+and expiry epochs, body SHA-256, and `hops`. Each hop records
+`source_message_id`, `source_revision`, `forwarder`, `recipient` and
+`forwarded_at_epoch`. Original identity is provenance, not fresh end-to-end
+sender authentication. All forwarded content remains untrusted peer/service
+data; a forwarded service body stays `untrusted_service_data`. Replies target
+the immediate forwarder. Controller resume's existing
+`forwarded_from_incarnation`/`forwarded_at_epoch` fields remain separate.
+
+Forwarding rejects a destination matching the root sender/recipient or a prior
+hop participant by machine/session identity, including a replaced incarnation.
+Eight hops are the maximum. Ingress checks chain continuity, origin kind,
+destination, body digest, expiry and bounds. Identical operation retries replay
+before looking up the source or discovering the destination; changed
+source/revision/destination/category-guard inputs conflict. A durable source
+receipt and destination provenance provide the audit trail. Remote terminal
+compaction retains category/provenance without retaining the body.
+
+The recipient acknowledges its original independently from the destination's
+copy. A routing application should save its compact digest and confirm remote
+`delivery.state == "delivered"` before acknowledging the original. `queued`,
+`rejected` or `delivery-unknown` is insufficient. A delivery receipt means saved,
+never read or accepted; an acknowledgement means mailbox handling, never work
+acceptance. Applications own category-to-destination configuration, stable
+per-source/per-rule replay keys, retry/status polling, compact digests and
+acknowledgement ordering. Rules should exclude forwarded messages by default.
+A missing destination or failed/unknown delivery leaves the source available.
+
+### Mixed-version rollout
+
+Untagged remote requests/envelopes omit the new fields and preserve v1 wire
+shape and replay digests. Tagged/forwarded session transport uses
+`agent-session.remote-message.v2`; tagged service transport uses
+`agent-session.remote-service-message.v2`. Upgraded ingress accepts exact v1
+without extensions and v2 with category/provenance; it rejects version/field
+mismatches. Existing authenticated submission/relay/ingress routes are retained.
+Extended outbox records use `agent-session.federation-journal.v3`, retaining
+body-free audit data; unextended journals retain v2, and v1/v2 remain readable.
+
+Old tolerant projection readers can still read additive JSON; old stored
+messages project as uncategorized. Old strict remote endpoints or validating
+relays reject v2 visibly; no downgrade strips category/provenance. Upgrade
+source and destination daemons and schema-validating relays before enabling
+routing. Do not let an older registry writer rewrite new metadata: an older
+binary does not preserve fields it does not know. Untagged v1 operation remains
+available during rollout. Release and routing activation belong to the
+coordinator application owner.

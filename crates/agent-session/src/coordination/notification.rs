@@ -939,6 +939,8 @@ mod tests {
             terminal_at_epoch: None,
             forwarded_from_incarnation: None,
             forwarded_at_epoch: None,
+            category: None,
+            forwarding: None,
             body_bytes: 0,
             body: String::new(),
         }

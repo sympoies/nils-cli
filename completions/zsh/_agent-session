@@ -707,6 +707,25 @@ _arguments "${_arguments_options[@]}" : \
 '--expires-in=[]:DURATION:_default' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
+'--category=[Sender-declared category; omitted means uncategorized]:CATEGORY:(uncategorized progress handoff blocker decision report)' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(forward)
+_arguments "${_arguments_options[@]}" : \
+'--session=[Authenticated recipient forwarding its own received message]:SESSION:_default' \
+'--message=[]:MESSAGE:_default' \
+'--if-revision=[]:IF_REVISION:_default' \
+'--to=[]:TO_SESSION:_default' \
+'--to-machine=[]:TO_MACHINE:_default' \
+'*--category=[Source-category guard (repeatable OR); the copy retains its category]:CATEGORIES:(uncategorized progress handoff blocker decision report)' \
+'--capability-file=[]:PATH:_files' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '-h[Print help (see more with '\''--help'\'')]' \
@@ -726,6 +745,7 @@ _arguments "${_arguments_options[@]}" : \
 '--expected-recipient-incarnation=[Optional recipient fence; discovery never redirects a queued submission]:EXPECTED_RECIPIENT_INCARNATION:_default' \
 '--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
+'--category=[Sender-declared category; omitted means uncategorized]:CATEGORY:(uncategorized progress handoff blocker decision report)' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '-h[Print help (see more with '\''--help'\'')]' \
@@ -741,6 +761,7 @@ _arguments "${_arguments_options[@]}" : \
 '--limit=[]:LIMIT:_default' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
+'*--category=[Match any selected category (repeatable); combine with --state]:CATEGORIES:(uncategorized progress handoff blocker decision report)' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '-h[Print help (see more with '\''--help'\'')]' \
@@ -785,6 +806,7 @@ _arguments "${_arguments_options[@]}" : \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
+'--category=[Sender-declared category; omitted means uncategorized]:CATEGORY:(uncategorized progress handoff blocker decision report)' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '-h[Print help (see more with '\''--help'\'')]' \
@@ -1223,6 +1245,7 @@ _agent-session__subcmd__message_commands() {
 'peers:Discover authorized remote mailbox recipients through the local daemon' \
 'delivery:Inspect durable remote delivery; delivered means saved, not read or accepted' \
 'send:Send one bounded private message and schedule an eventual fixed notification' \
+'forward:Forward one received message without reading or acknowledging its source' \
 'service-send:Submit a body-file through the owning daemon as an explicitly admitted local service' \
 'inbox:List bounded private mailbox metadata for the authenticated recipient' \
 'show:Read one private message body as its authenticated recipient' \
@@ -1242,6 +1265,11 @@ _agent-session__subcmd__message__subcmd__ack_commands() {
 _agent-session__subcmd__message__subcmd__delivery_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session message delivery commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__message__subcmd__forward_commands] )) ||
+_agent-session__subcmd__message__subcmd__forward_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session message forward commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__message__subcmd__inbox_commands] )) ||
 _agent-session__subcmd__message__subcmd__inbox_commands() {

@@ -17918,6 +17918,7 @@ fn run_worker_message(context: &CliContext, args: WorkerMessageArgs) -> Result<V
     agent_session::internal::coordination::mailbox::send_with_commit_authorization(
         context,
         cli::MessageSendArgs {
+            category: None,
             to_machine: None,
             from_session: record.id.clone(),
             to_session: worker.session_id.clone(),
@@ -20054,6 +20055,7 @@ fn notify_worker_scope_extended(
             agent_session::internal::coordination::mailbox::send_with_commit_authorization(
                 context,
                 cli::MessageSendArgs {
+                    category: None,
                     to_machine: None,
                     from_session: record.id.clone(),
                     to_session: worker_session_id.to_string(),
