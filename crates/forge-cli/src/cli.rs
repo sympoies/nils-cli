@@ -299,6 +299,7 @@ pub struct ReleaseUploadArgs {
     pub tag: String,
     #[arg(required = true)]
     pub assets: Vec<PathBuf>,
+    /// Replace existing release assets with the same name.
     #[arg(long)]
     pub clobber: bool,
 }
