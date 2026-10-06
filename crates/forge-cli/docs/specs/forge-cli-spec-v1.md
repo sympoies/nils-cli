@@ -737,7 +737,7 @@ and delivery read the trusted ledger to detect persisted ownership even after
 a restart without the assignment environment. Assigned operations require
 GitHub's trusted provider ledger; other providers fail closed when assigned.
 
-- `assign <id> --reviewer-session <session-id>[@machine] --review-author <login>
+- `assign <id> --reviewer-session <full-session-uuid>[@machine] --review-author <login>
   --base-sha <sha> --expected-head <sha> --expected-state <digest|none>` records
   an explicit handover in the existing `forge-cli.review-state.v1` chain.
   Base and head must match the provider. Coordinator and reviewer must be

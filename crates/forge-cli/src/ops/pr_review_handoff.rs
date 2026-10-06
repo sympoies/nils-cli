@@ -82,6 +82,22 @@ fn session_digest(selector: &str) -> Result<String, ForgeError> {
     Ok(review_state::sha256_digest(id.as_bytes()))
 }
 
+fn require_full_session_uuid(selector: &str) -> Result<(), ForgeError> {
+    let id = selector.split('@').next().unwrap_or("");
+    let canonical = id.len() == 36
+        && id.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+        });
+    if !canonical {
+        return Err(fail(
+            "review_assignment_invalid",
+            "a full session UUID is required for the designated reviewer",
+        ));
+    }
+    Ok(())
+}
+
 fn actor_digest() -> Result<String, ForgeError> {
     session_digest(&std::env::var("AGENT_SESSION_ID").unwrap_or_default())
 }
@@ -807,6 +823,7 @@ pub fn run(
                         "assignment generation overflow",
                     )
                 })?;
+            require_full_session_uuid(&a.reviewer_session)?;
             let reviewer = session_digest(&a.reviewer_session)?;
             if reviewer == coordinator {
                 return Err(fail(

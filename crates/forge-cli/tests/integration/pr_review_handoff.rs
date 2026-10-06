@@ -428,7 +428,7 @@ fn handoff_preview_redacts_the_private_selector_and_binds_the_tip() {
             "assign",
             "7",
             "--reviewer-session",
-            "reviewer-session@private-machine-canary",
+            "01234567-89ab-cdef-0123-456789abcdef@private-machine-canary",
             "--review-author",
             "review-app[bot]",
             "--base-sha",
@@ -443,11 +443,44 @@ fn handoff_preview_redacts_the_private_selector_and_binds_the_tip() {
     let data = parse_envelope(&output.stdout);
     assert_eq!(
         data["data"]["handoff"]["reviewer_digest"],
-        review_state::sha256_digest(b"reviewer-session")
+        review_state::sha256_digest(b"01234567-89ab-cdef-0123-456789abcdef")
     );
     assert!(!output.stdout.contains("private-machine-canary"));
     assert!(!output.stdout.contains("reviewer-session"));
     assert_eq!(data["data"]["status"], "awaiting-designated-review");
+}
+
+#[test]
+fn handoff_assignment_rejects_a_session_id_prefix() {
+    let stub = fixture(HEAD, &[], vec![]);
+    let output = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "--dry-run",
+            "pr",
+            "review-handoff",
+            "assign",
+            "7",
+            "--reviewer-session",
+            "01234567@private-machine-canary",
+            "--review-author",
+            "review-app[bot]",
+            "--base-sha",
+            OLD,
+            "--expected-head",
+            HEAD,
+            "--expected-state",
+            "none",
+        ],
+    );
+    assert_refusal(&output, 65, "review_assignment_invalid");
+    assert!(output.stdout.contains("full session UUID is required"));
 }
 
 #[test]
@@ -1465,6 +1498,10 @@ fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
         false
     );
     assert!(blocked.stdout.contains("designated_reviewer_unavailable"));
+    let stub = stub.env(
+        "AGENT_REVIEWER_SESSION",
+        "fedcba98-7654-3210-fedc-ba9876543210",
+    );
     let out = run_forge_cli(
         &stub,
         &[
@@ -1479,7 +1516,7 @@ fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
             "assign",
             "7",
             "--reviewer-session",
-            "reviewer-session",
+            "fedcba98-7654-3210-fedc-ba9876543210",
             "--review-author",
             "review-app[bot]",
             "--base-sha",
@@ -1525,7 +1562,7 @@ fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
     );
     assert_refusal(&published, 65, "review_writer_conflict");
     let reviewer = stub
-        .env("AGENT_SESSION_ID", "reviewer-session")
+        .env("AGENT_SESSION_ID", "fedcba98-7654-3210-fedc-ba9876543210")
         .env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "3");
     let findings_file = reviewer.tempdir.path().join("open-findings.json");
     fs::write(&findings_file, r#"[{"lifecycle_fingerprint":"testing:handoff:open-finding","disposition":"open","blocking":true,"threads":["thread-1"]}]"#).unwrap();
