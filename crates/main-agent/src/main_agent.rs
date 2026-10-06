@@ -26076,6 +26076,21 @@ mod tests {
         fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o700))
             .expect("file-reader git mode");
 
+        // Exec the fixture once outside the measured window so the
+        // fingerprint call's launches do not race the host's cold-start
+        // tail for a freshly written script; the caller deadline then
+        // reaches the reader phase this test's admission assertions
+        // model.
+        let warmup = Command::new(&fake_git)
+            .current_dir(repository)
+            .arg("diff")
+            .output()
+            .expect("pre-warm file-reader git fixture");
+        assert!(
+            warmup.status.success(),
+            "pre-warm file-reader git fixture exits cleanly"
+        );
+
         stall_next_fingerprint_file_read_for_test(Duration::from_secs(2));
         let started = Instant::now();
         assert_eq!(
@@ -26148,6 +26163,19 @@ mod tests {
         .expect("special git");
         fs::set_permissions(&special_git, fs::Permissions::from_mode(0o700))
             .expect("special git mode");
+        // Exec the fixture once outside the measured window so the product
+        // call's launches do not race the host's cold-start tail for a
+        // freshly written script; the window then covers launch latency and
+        // the FIFO open only.
+        let warmup = Command::new(&special_git)
+            .current_dir(repository)
+            .arg("diff")
+            .output()
+            .expect("pre-warm special git fixture");
+        assert!(
+            warmup.status.success(),
+            "pre-warm special git fixture exits cleanly"
+        );
         let special_started = Instant::now();
         assert_eq!(
             worktree_material_fingerprint_with_git(
@@ -26317,6 +26345,27 @@ mod tests {
             .expect("continuous output git");
         fs::set_permissions(&streaming_git, fs::Permissions::from_mode(0o700))
             .expect("continuous output git mode");
+        // Pre-warm the exec chain (script to `yes`) outside the measured
+        // window: the first exec of a freshly written script can pay a host
+        // cold-start tail. The first output byte proves `yes` is running
+        // before the bounded call below is timed.
+        let mut warmup_command = Command::new(&streaming_git);
+        warmup_command
+            .current_dir(repository)
+            .arg("diff")
+            .stdout(Stdio::piped());
+        let mut warmup = warmup_command
+            .spawn()
+            .expect("pre-warm continuous output fixture");
+        let mut first_byte = [0_u8; 1];
+        warmup
+            .stdout
+            .as_mut()
+            .expect("pre-warm stdout")
+            .read_exact(&mut first_byte)
+            .expect("pre-warm fixture produces output");
+        warmup.kill().expect("stop pre-warm fixture");
+        warmup.wait().expect("reap pre-warm fixture");
         let mut streaming_command = Command::new(&streaming_git);
         streaming_command.current_dir(repository).arg("diff");
         let started = Instant::now();
