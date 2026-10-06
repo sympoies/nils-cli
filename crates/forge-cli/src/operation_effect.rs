@@ -10,7 +10,7 @@ use crate::cli::{
     IdentityCommand, InboxArgs, InboxCommand, IssueArgs, IssueCommand, IssueTrackerCommand,
     LabelArgs, LabelCommand, PrArgs, PrCommand, PrPendingReviewCommand, PrReviewCommand,
     PrReviewHandoffCommand, PrReviewLoopCommand, ReleaseCommand, RepoArgs, RepoCommand,
-    ReviewThreadsCommand, SearchArgs, WorkflowCommand,
+    ReviewThreadsCommand, SearchArgs, SecurityArgs, SecurityCommand, WorkflowCommand,
 };
 
 pub fn run(argv: Vec<OsString>, format: OutputFormat) -> i32 {
@@ -80,6 +80,15 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
         Some(Command::Repo(RepoArgs {
             command: Some(RepoCommand::View),
         })) => ("repo.view", read, network, vec!["git_remote", "provider"]),
+        Some(Command::Repo(RepoArgs {
+            command: Some(RepoCommand::List(_)),
+        })) => ("repo.list", read, network, vec!["provider"]),
+        Some(Command::Security(SecurityArgs { command })) => match command {
+            SecurityCommand::Alerts(_) => ("security.alerts.list", read, network, vec!["provider"]),
+            SecurityCommand::Settings(_) => {
+                ("security.settings.view", read, network, vec!["provider"])
+            }
+        },
         Some(Command::Repo(RepoArgs {
             command: Some(RepoCommand::Bootstrap(_)),
         })) => (
