@@ -734,7 +734,12 @@ fn refresh_fixture_heartbeats(state_dir: &Path) {
         let Some((incarnation, _)) = heartbeat.trim().rsplit_once(':') else {
             continue;
         };
-        fs::write(&heartbeat_path, format!("{incarnation}:{now}\n")).expect("refresh heartbeat");
+        nils_common::fs::write_atomic(
+            &heartbeat_path,
+            format!("{incarnation}:{now}\n").as_bytes(),
+            0o600,
+        )
+        .expect("refresh heartbeat");
     }
 }
 
@@ -18454,6 +18459,7 @@ impl StoppedPostClaimFixture {
     }
 
     fn envs(&self) -> [(&str, &str); 5] {
+        refresh_fixture_heartbeats(&self.state_dir);
         [
             (
                 "AGENT_SESSION_CAPABILITY_FILE",
@@ -18513,6 +18519,7 @@ impl StoppedPostClaimFixture {
         runtime: &TestProcessGroup,
         idempotency_key: &str,
     ) -> CmdOutput {
+        refresh_fixture_heartbeats(&self.state_dir);
         let runtime_pid = runtime.pid().to_string();
         let state_runtime = self.state_dir.to_string_lossy().into_owned();
         run_main_agent(
@@ -18614,6 +18621,7 @@ impl StoppedPostClaimFixture {
         stage: &str,
         barrier: &Path,
     ) -> Child {
+        refresh_fixture_heartbeats(&self.state_dir);
         let runtime_pid = runtime.pid().to_string();
         let mut command = Command::new(crate::main_agent_bin());
         command
@@ -18754,6 +18762,22 @@ fn assert_claimed_runtime_stop_rejected_without_mutation(
             .contains("kill-session"),
         "a rejected stop must not reach the runtime boundary"
     );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn stopped_post_claim_fixture_keeps_controller_heartbeat_fresh_between_commands() {
+    let fixture = StoppedPostClaimFixture::new();
+    fs::write(
+        fixture
+            .state_dir
+            .join("sessions/main-one/coordination/heartbeat"),
+        "main-incarnation-one:1\n",
+    )
+    .expect("age fixture controller heartbeat");
+
+    let reconciled = fixture.run_reconcile();
+    assert_eq!(reconciled.code, 0, "outcome={}", reconciled.stdout_text());
 }
 
 #[test]
@@ -20504,7 +20528,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
     );
     let runtime_pid = runtime.pid().to_string();
     let state_runtime = fixture.state_dir.to_string_lossy().into_owned();
-    let live_env = [
+    let live_env_values = [
         (
             "AGENT_SESSION_CAPABILITY_FILE",
             fixture.main_capability.as_str(),
@@ -20535,6 +20559,10 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
             "worker-stopped-incarnation",
         ),
     ];
+    let live_env = || {
+        refresh_fixture_heartbeats(&fixture.state_dir);
+        live_env_values
+    };
     let stop_args = [
         "--state-dir",
         fixture.state_dir.to_str().expect("state dir"),
@@ -20567,7 +20595,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
             "--format",
             "json",
         ],
-        &live_env,
+        &live_env(),
     );
     assert_eq!(wrong_revision.code, 65);
     assert_eq!(
@@ -20591,7 +20619,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
             "--format",
             "json",
         ],
-        &live_env,
+        &live_env(),
     );
     assert_eq!(wrong_incarnation.code, 65);
     assert_eq!(
@@ -20649,7 +20677,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
     interrupted
         .current_dir(&fixture.checkout)
         .args(stop_args)
-        .envs(live_env)
+        .envs(live_env())
         .env(
             "NILS_AGENT_SESSION_TEST_STOP_CLAIMED_RUNTIME_BARRIER_STAGE",
             "after_reservation",
@@ -20783,7 +20811,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
             "--format",
             "json",
         ],
-        &live_env,
+        &live_env(),
     );
     assert_eq!(deleted.code, 65, "outcome={}", deleted.stdout_text());
     assert_eq!(
@@ -20820,7 +20848,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
             "--format",
             "json",
         ],
-        &live_env,
+        &live_env(),
     );
     assert_eq!(in_progress.code, 0, "outcome={}", in_progress.stdout_text());
     assert_eq!(
@@ -20852,7 +20880,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
             "--format",
             "json",
         ],
-        &live_env,
+        &live_env(),
     );
     assert_eq!(
         competing_key.code,
@@ -20912,7 +20940,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
     after_runtime
         .current_dir(&fixture.checkout)
         .args(stop_args)
-        .envs(live_env)
+        .envs(live_env())
         .env(
             "NILS_AGENT_SESSION_TEST_STOP_CLAIMED_RUNTIME_BARRIER_STAGE",
             "after_runtime_stopped",
@@ -20977,7 +21005,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
         command
             .current_dir(&fixture.checkout)
             .args(stop_args)
-            .envs(live_env)
+            .envs(live_env())
             .env(
                 "NILS_AGENT_SESSION_TEST_STOP_CLAIMED_RUNTIME_BARRIER_STAGE",
                 "after_final_receipt",
@@ -21017,7 +21045,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
             "--format",
             "json",
         ],
-        &live_env,
+        &live_env(),
     );
     assert_eq!(
         receipt_in_progress.code,
@@ -21064,7 +21092,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
         "main-agent.worker-stop-claimed-runtime-result.v1"
     );
 
-    let stopped = run_main_agent(&fixture.checkout, &stop_args, &live_env);
+    let stopped = run_main_agent(&fixture.checkout, &stop_args, &live_env());
     assert_eq!(
         stopped.code,
         0,
@@ -21189,7 +21217,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
             }),
         "the exact assignment-derived claim must remain active on TTL"
     );
-    let replay = run_main_agent(&fixture.checkout, &stop_args, &live_env);
+    let replay = run_main_agent(&fixture.checkout, &stop_args, &live_env());
     assert_eq!(replay.code, 0, "outcome={}", replay.stdout_text());
     assert_eq!(
         replay.stdout_text(),
@@ -21239,7 +21267,7 @@ fn claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped() {
         true
     );
     assert_eq!(data(&reconciled)["worker_claim_active_after"], false);
-    let post_reconcile_stop_replay = run_main_agent(&fixture.checkout, &stop_args, &live_env);
+    let post_reconcile_stop_replay = run_main_agent(&fixture.checkout, &stop_args, &live_env());
     assert_eq!(
         post_reconcile_stop_replay.code,
         0,
@@ -24249,6 +24277,7 @@ impl ExhaustedReadinessRuntimeStopFixture {
     }
 
     fn envs(&self) -> [(&str, &str); 10] {
+        refresh_fixture_heartbeats(&self.state_dir);
         [
             (
                 "AGENT_SESSION_CAPABILITY_FILE",
@@ -24351,6 +24380,37 @@ fn runtime_stop_projects_typed_executable_action() {
     assert_eq!(
         data(&supervised)["last_proven_safe_state"]["runtime_stop"]["in_flight"],
         false
+    );
+}
+
+#[test]
+fn runtime_stop_fixture_keeps_controller_heartbeat_fresh_between_commands() {
+    let fixture = ExhaustedReadinessRuntimeStopFixture::new();
+    fs::write(
+        fixture
+            .state_dir
+            .join("sessions/main-one/coordination/heartbeat"),
+        "main-incarnation-one:1\n",
+    )
+    .expect("age fixture controller heartbeat");
+
+    let supervised = run_main_agent(
+        &fixture.main_checkout,
+        &[
+            "--state-dir",
+            fixture.state_arg.as_str(),
+            "worker",
+            "supervise",
+            "assignment-exhausted",
+            "--format",
+            "json",
+        ],
+        &fixture.envs(),
+    );
+    assert_eq!(supervised.code, 0, "outcome={}", supervised.stdout_text());
+    assert_eq!(
+        data(&supervised)["classification"],
+        "readiness_stop_required"
     );
 }
 
