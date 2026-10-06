@@ -106,12 +106,36 @@ pub(crate) fn query_scoped(command: &SearchCommand) -> bool {
         SearchCommand::Issues(args) | SearchCommand::Prs(args) => &args.query,
         SearchCommand::RefsTo(_) => return false,
     };
-    query.split_whitespace().any(|term| {
-        ["org:", "user:", "repo:"].iter().any(|prefix| {
-            term.strip_prefix(prefix)
-                .is_some_and(|value| !value.is_empty())
-        })
-    })
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut term_start = true;
+    for (index, character) in query.char_indices() {
+        if escaped {
+            escaped = false;
+            term_start = false;
+        } else if character == '\\' {
+            escaped = true;
+            term_start = false;
+        } else if character == '"' {
+            quoted = !quoted;
+            term_start = false;
+        } else if character.is_whitespace() && !quoted {
+            term_start = true;
+        } else {
+            if term_start
+                && !quoted
+                && ["org:", "user:", "repo:"].iter().any(|prefix| {
+                    query[index..].strip_prefix(prefix).is_some_and(|value| {
+                        value.chars().next().is_some_and(|c| !c.is_whitespace())
+                    })
+                })
+            {
+                return true;
+            }
+            term_start = false;
+        }
+    }
+    false
 }
 
 pub fn run(

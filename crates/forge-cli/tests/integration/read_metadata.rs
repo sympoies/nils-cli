@@ -92,6 +92,97 @@ printf '%s\n' '[{"number":7,"url":"https://github.com/acme/widget/issues/7","tit
 }
 
 #[test]
+fn metadata_search_quoted_and_escaped_qualifiers_preserve_implicit_repo() {
+    use super::support::run_forge_cli_in;
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\necho unexpected-backend >&2\nexit 97\n");
+    let root = stub.tempdir.path().join("checkout");
+    std::fs::create_dir(&root).unwrap();
+    for args in [
+        vec!["init", "-b", "main"],
+        vec![
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widget.git",
+        ],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .current_dir(&root)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    for kind in ["issues", "prs"] {
+        for query in [
+            r#""see org:github""#,
+            r#""see user:operator""#,
+            r#""see repo:other/project""#,
+            r#"\org:github"#,
+            r#""see \" org:github""#,
+        ] {
+            let out = run_forge_cli_in(
+                &stub,
+                &[
+                    "search",
+                    kind,
+                    "--provider",
+                    "github",
+                    "--format",
+                    "json",
+                    "--dry-run",
+                    query,
+                ],
+                Some(&root),
+            );
+            assert_eq!(out.code, 0, "query={query}: {} {}", out.stdout, out.stderr);
+            let plan = parse_envelope(&out.stdout)["data"]["plan"]
+                .as_array()
+                .unwrap()
+                .clone();
+            assert!(
+                plan.windows(2)
+                    .any(|pair| pair[0] == "--repo" && pair[1] == "acme/widget"),
+                "query={query}: {plan:?}"
+            );
+        }
+        for query in [
+            "org:github",
+            "user:operator",
+            "repo:other/project",
+            r#""see org:github" org:example"#,
+        ] {
+            let out = run_forge_cli_in(
+                &stub,
+                &[
+                    "search",
+                    kind,
+                    "--provider",
+                    "github",
+                    "--format",
+                    "json",
+                    "--dry-run",
+                    query,
+                ],
+                Some(&root),
+            );
+            assert_eq!(out.code, 0, "query={query}: {} {}", out.stdout, out.stderr);
+            let plan = parse_envelope(&out.stdout)["data"]["plan"]
+                .as_array()
+                .unwrap()
+                .clone();
+            assert!(
+                !plan.iter().any(|arg| arg == "--repo"),
+                "query={query}: {plan:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn metadata_repo_view_default_branch_sha() {
     let data = read(
         &[
