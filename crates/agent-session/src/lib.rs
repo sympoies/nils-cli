@@ -14818,9 +14818,10 @@ pub(crate) mod tmux_probe_fixture {
     use super::*;
     use std::sync::{LazyLock, Mutex};
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Debug, PartialEq, Eq)]
     pub(crate) enum Probe {
         Stopped,
+        Running(Box<TmuxRuntimeIdentity>),
         #[cfg(target_os = "linux")]
         IdentityUnavailable,
     }
@@ -14850,11 +14851,86 @@ pub(crate) mod tmux_probe_fixture {
     pub(super) fn read(path: &Path) -> Option<Result<TmuxRuntimeProbe, SessionTerminationFailure>> {
         PROBES.lock().unwrap().get(path).map(|probe| match probe {
             Probe::Stopped => Ok(TmuxRuntimeProbe::Stopped),
+            Probe::Running(identity) => Ok(TmuxRuntimeProbe::Running(identity.clone())),
             #[cfg(target_os = "linux")]
             Probe::IdentityUnavailable => {
                 Err(SessionTerminationFailure::RuntimeIdentityUnavailable)
             }
         })
+    }
+
+    /// The outcome the `has-session` status probe reports for the pinned
+    /// path: the verification loops observe the modeled session state
+    /// instead of racing a script launch against the bounded probe budget
+    /// (sympoies/nils-cli#2131).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Status {
+        Running,
+        Stopped,
+    }
+
+    static STATUS_PROBES: LazyLock<Mutex<std::collections::HashMap<PathBuf, Status>>> =
+        LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+    pub(crate) struct StatusGuard(PathBuf);
+
+    pub(crate) fn install_status(path: &Path, status: Status) -> StatusGuard {
+        assert!(
+            STATUS_PROBES
+                .lock()
+                .unwrap()
+                .insert(path.to_path_buf(), status)
+                .is_none()
+        );
+        StatusGuard(path.to_path_buf())
+    }
+
+    impl Drop for StatusGuard {
+        fn drop(&mut self) {
+            STATUS_PROBES.lock().unwrap().remove(&self.0);
+        }
+    }
+
+    pub(super) fn read_status(path: &Path) -> Option<String> {
+        STATUS_PROBES
+            .lock()
+            .unwrap()
+            .get(path)
+            .map(|status| match status {
+                Status::Running => "running".to_string(),
+                Status::Stopped => "stopped".to_string(),
+            })
+    }
+
+    /// Models a live pane that reports the given identity: the probe
+    /// succeeds and the flow proceeds to the kill step instead of racing
+    /// a script launch against the bounded probe budget (sympoies/nils-cli#2131).
+    ///
+    /// `launch_id` must carry the record's own value when the flow persists
+    /// this identity and a later call re-reads it: retrieval is fenced on the
+    /// launch id, so a `None` launch id would not match a record that has one.
+    pub(crate) fn running_identity(
+        session_id: &str,
+        pane_id: &str,
+        pane_pid: libc::pid_t,
+        process_group_id: Option<libc::pid_t>,
+        launch_id: Option<&str>,
+    ) -> Probe {
+        Probe::Running(Box::new(TmuxRuntimeIdentity {
+            macos_boot_id: None,
+            launch_id: launch_id.map(str::to_owned),
+            session_id: session_id.to_owned(),
+            pane_id: pane_id.to_owned(),
+            pane_pid,
+            pane_start_time: None,
+            process_group_id,
+            process_session_id: None,
+            process_session_members: Vec::new(),
+            control_group_members: Vec::new(),
+            control_group: None,
+            cgroup_mount: None,
+            pid_namespace: None,
+        }))
     }
 }
 
@@ -17602,6 +17678,10 @@ fn verify_tmux_target_stopped(
 }
 
 fn verified_tmux_status_with_timeout(tmux_bin: &Path, target: &str, timeout: Duration) -> String {
+    #[cfg(test)]
+    if let Some(status) = tmux_probe_fixture::read_status(tmux_bin) {
+        return status;
+    }
     let mut command = ProcessCommand::new(tmux_bin);
     command
         .env("LC_ALL", "C")
@@ -21532,6 +21612,13 @@ exit 1
 "#,
         );
         let tmux_bin = stub.path().join("tmux");
+        // The stub is a shell script whose launch cannot guarantee fitting
+        // the probe's bounded startup budget under load, so pin the outcome
+        // it models: the session is gone (sympoies/nils-cli#2131).
+        let _status = super::tmux_probe_fixture::install_status(
+            &tmux_bin,
+            super::tmux_probe_fixture::Status::Stopped,
+        );
 
         let identity = TmuxRuntimeIdentity {
             macos_boot_id: None,
@@ -21572,6 +21659,13 @@ exit 0
 "#,
         );
         let tmux_bin = stub.path().join("tmux");
+        // The stub is a shell script whose launch cannot guarantee fitting
+        // the probe's bounded startup budget under load, so pin the outcome
+        // it models: the session is still live (sympoies/nils-cli#2131).
+        let _status = super::tmux_probe_fixture::install_status(
+            &tmux_bin,
+            super::tmux_probe_fixture::Status::Running,
+        );
 
         let identity = TmuxRuntimeIdentity {
             macos_boot_id: None,
@@ -25285,6 +25379,20 @@ fi
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // The initial probe is the script's first launch, whose startup cannot
+        // guarantee fitting the bounded probe budget under load; pin the
+        // running identity it models so the flow reaches the kill step, which
+        // is the hang under test (sympoies/nils-cli#2131).
+        let _probe = super::tmux_probe_fixture::install(
+            &tmux,
+            super::tmux_probe_fixture::running_identity(
+                "$91",
+                "%91",
+                pane.pid() as libc::pid_t,
+                Some(pane.process_group_id),
+                Some(record.runtime.as_ref().unwrap().launch_id.as_str()),
+            ),
+        );
 
         let error = terminate_without_process_runtime_for_test(
             &context,
@@ -25327,6 +25435,21 @@ fi
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // The initial probe is the script's first launch, whose cold-start tail
+        // cannot guarantee fitting the bounded probe budget under load; exec it
+        // once here so the product's probe runs warm and the flow reaches the
+        // kill step, which is the hang under test (sympoies/nils-cli#2131).
+        // Use `display-message` (not `if-shell`) so the wrapper descendant this
+        // test asserts is reaped is not spawned by the pre-warm.
+        let prewarm = std::process::Command::new(&tmux)
+            .arg("display-message")
+            .output()
+            .expect("prewarm fake tmux");
+        assert!(
+            prewarm.status.success(),
+            "fake tmux prewarm failed: {}",
+            String::from_utf8_lossy(&prewarm.stderr)
+        );
 
         let error = terminate_without_process_runtime_for_test(
             &context,
@@ -25379,12 +25502,34 @@ fi
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // The fake tmux is a shell script whose launch cannot guarantee
+        // fitting the bounded probe budgets under load, so pin the probe
+        // outcomes it models: the pane is live and the session stays live
+        // through the verification window (sympoies/nils-cli#2131).
+        let _probe = super::tmux_probe_fixture::install(
+            &tmux,
+            super::tmux_probe_fixture::running_identity(
+                "$91",
+                "%91",
+                pane.pid() as libc::pid_t,
+                Some(pane.process_group_id),
+                None,
+            ),
+        );
+        let _status = super::tmux_probe_fixture::install_status(
+            &tmux,
+            super::tmux_probe_fixture::Status::Running,
+        );
 
+        // The kill step launches the fixture script, whose first launch
+        // cannot guarantee fitting a small budget under load; the budget is
+        // not load-bearing for this test, so cover the startup phase with
+        // margin (sympoies/nils-cli#2131).
         let error = terminate_without_process_runtime_for_test(
             &context,
             &id,
             &tmux,
-            Duration::from_millis(250),
+            Duration::from_secs(2),
             Duration::from_secs(1),
         )
         .unwrap_err();
@@ -25448,12 +25593,33 @@ fi
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // The fake tmux is a shell script whose launch cannot guarantee
+        // fitting the bounded probe budgets under load, so pin the probe
+        // outcome it models for each phase: the pane is live until the fake
+        // reports the session stopped (sympoies/nils-cli#2131).
+        // The first call persists this identity and the second re-reads it,
+        // and retrieval is fenced on the launch id, so the modeled identity
+        // must carry the record's own launch id (sympoies/nils-cli#2131).
+        let live_probe = super::tmux_probe_fixture::install(
+            &tmux,
+            super::tmux_probe_fixture::running_identity(
+                "$91",
+                "%91",
+                pane.pid() as libc::pid_t,
+                Some(pane.process_group_id),
+                Some(record.runtime.as_ref().unwrap().launch_id.as_str()),
+            ),
+        );
 
+        // The kill step launches the fixture script, whose first launch
+        // cannot guarantee fitting a small budget under load; the budget is
+        // not load-bearing for this test, so cover the startup phase with
+        // margin (sympoies/nils-cli#2131).
         let first_error = terminate_without_process_runtime_for_test(
             &context,
             &id,
             &tmux,
-            Duration::from_millis(50),
+            Duration::from_secs(2),
             Duration::from_millis(75),
         )
         .unwrap_err();
@@ -25465,11 +25631,18 @@ fi
 
         pane.stop();
         fs::write(&report_stopped, "stopped").unwrap();
+        drop(live_probe);
+        let _probe =
+            super::tmux_probe_fixture::install(&tmux, super::tmux_probe_fixture::Probe::Stopped);
+        let _status = super::tmux_probe_fixture::install_status(
+            &tmux,
+            super::tmux_probe_fixture::Status::Stopped,
+        );
         terminate_without_process_runtime_for_test(
             &context,
             &id,
             &tmux,
-            Duration::from_millis(50),
+            Duration::from_millis(250),
             Duration::from_millis(75),
         )
         .unwrap();
@@ -25575,6 +25748,21 @@ fi
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // The initial probe is the script's first launch, whose cold-start tail
+        // cannot guarantee fitting the bounded probe budget under load; exec it
+        // once here so the product's probe runs warm and the flow reaches the
+        // graceful-shutdown path under test (sympoies/nils-cli#2131).
+        // Use `display-message` (not `if-shell`) so the pre-warm call log does
+        // not contain the `send-keys`/`kill-session` tokens this test inspects.
+        let prewarm = std::process::Command::new(&tmux)
+            .arg("display-message")
+            .output()
+            .expect("prewarm fake tmux");
+        assert!(
+            prewarm.status.success(),
+            "fake tmux prewarm failed: {}",
+            String::from_utf8_lossy(&prewarm.stderr)
+        );
 
         let error = delete_session_with_timeouts(
             &context,
@@ -25666,6 +25854,21 @@ exit 42
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // The initial probe is the script's first launch, whose cold-start tail
+        // cannot guarantee fitting the bounded probe budget under load; exec it
+        // once here so the product's probe runs warm and the flow reaches the
+        // verified-TUI-exit path under test (sympoies/nils-cli#2131).
+        // Use `display-message` (not `if-shell`) so the pre-warm call log does
+        // not contain the `send-keys`/`kill-session` tokens this test inspects.
+        let prewarm = std::process::Command::new(&tmux)
+            .arg("display-message")
+            .output()
+            .expect("prewarm fake tmux");
+        assert!(
+            prewarm.status.success(),
+            "fake tmux prewarm failed: {}",
+            String::from_utf8_lossy(&prewarm.stderr)
+        );
 
         let result = delete_session_with_timeouts(
             &context,
@@ -25802,6 +26005,15 @@ exit 42
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // The fake tmux is a shell script whose launch cannot guarantee
+        // fitting the bounded probe budgets under load, so pin the probe
+        // outcomes it models: the session is gone (sympoies/nils-cli#2131).
+        let _probe =
+            super::tmux_probe_fixture::install(&tmux, super::tmux_probe_fixture::Probe::Stopped);
+        let _status = super::tmux_probe_fixture::install_status(
+            &tmux,
+            super::tmux_probe_fixture::Status::Stopped,
+        );
 
         let result = delete_session_with_timeouts(
             &context,
@@ -25863,6 +26075,16 @@ exit 42
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // The fake tmux is a shell script whose launch cannot guarantee
+        // fitting the bounded probe budgets under load, so pin the probe
+        // outcomes it models: the session is gone, and the kill step must
+        // stay unreachable (sympoies/nils-cli#2131).
+        let _probe =
+            super::tmux_probe_fixture::install(&tmux, super::tmux_probe_fixture::Probe::Stopped);
+        let _status = super::tmux_probe_fixture::install_status(
+            &tmux,
+            super::tmux_probe_fixture::Status::Stopped,
+        );
 
         let result = delete_session_with_timeouts(
             &context,

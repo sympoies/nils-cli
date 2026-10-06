@@ -544,6 +544,26 @@ exit 0
         .replace("__NILS_TEST_PANE_PARENT__", &pane_parent)
         .replace("__NILS_TEST_PANE_START_TIME__", pane_start_time),
     );
+    // Pre-warm the fixture: the first exec of a freshly written script pays a
+    // host EDR/filesystem cold-start tail that can exceed the product's bounded
+    // probe budget, turning the intended probe/kill outcome into
+    // verification-failed (sympoies/nils-cli#2131). Exec it once here so the
+    // product's first exec runs warm. `version` matches no dispatch branch, so
+    // the only side effects are one logged record and the logger's lock file;
+    // remove both so the test observes exactly the product's calls, with no
+    // pre-existing log file to observe.
+    let prewarm = Command::new(&bin)
+        .arg("version")
+        .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+        .output()
+        .expect("prewarm fake tmux");
+    assert!(
+        prewarm.status.success(),
+        "fake tmux prewarm failed: {}",
+        String::from_utf8_lossy(&prewarm.stderr)
+    );
+    fs::remove_file(&log).expect("clear fake tmux prewarm record");
+    fs::remove_file(log.with_extension("log.call-lock")).expect("clear fake tmux prewarm lock");
     (bin, log)
 }
 
@@ -6287,6 +6307,19 @@ esac\nexit 42\n",
             killed.display(),
         ),
     );
+    // The product's first probe is the fake tmux's first launch, whose
+    // cold-start tail cannot guarantee fitting the bounded probe budget under
+    // load; exec it once here so the probe runs warm (sympoies/nils-cli#2131).
+    // `display-message` is side-effect-free in this fixture.
+    let prewarm = std::process::Command::new(&tmux_bin)
+        .arg("display-message")
+        .output()
+        .expect("prewarm fake tmux");
+    assert!(
+        prewarm.status.success(),
+        "fake tmux prewarm failed: {}",
+        String::from_utf8_lossy(&prewarm.stderr)
+    );
     let output = run(
         tmp.path(),
         &[
@@ -6383,6 +6416,19 @@ exit 0
             state_dir = shell_words::quote(&state_dir.to_string_lossy()),
             launch_id = shell_words::quote(&launch_id),
         ),
+    );
+    // The product's first probe is the fake tmux's first launch, whose
+    // cold-start tail cannot guarantee fitting the bounded probe budget under
+    // load; exec it once here so the probe runs warm (sympoies/nils-cli#2131).
+    // `display-message` is side-effect-free before the session is stopped.
+    let prewarm = std::process::Command::new(&tmux_bin)
+        .arg("display-message")
+        .output()
+        .expect("prewarm fake tmux");
+    assert!(
+        prewarm.status.success(),
+        "fake tmux prewarm failed: {}",
+        String::from_utf8_lossy(&prewarm.stderr)
     );
 
     let state_arg = state_dir.to_string_lossy().to_string();
@@ -6591,6 +6637,19 @@ exit 0
             state_dir = shell_words::quote(&state_dir.to_string_lossy()),
             launch_id = shell_words::quote(&launch_id),
         ),
+    );
+    // The product's first probe is the fake tmux's first launch, whose
+    // cold-start tail cannot guarantee fitting the bounded probe budget under
+    // load; exec it once here so the probe runs warm (sympoies/nils-cli#2131).
+    // `display-message` is side-effect-free before the session switches/stops.
+    let prewarm = std::process::Command::new(&tmux_bin)
+        .arg("display-message")
+        .output()
+        .expect("prewarm fake tmux");
+    assert!(
+        prewarm.status.success(),
+        "fake tmux prewarm failed: {}",
+        String::from_utf8_lossy(&prewarm.stderr)
     );
 
     let output = run(
@@ -6866,6 +6925,20 @@ exit 0
             launch_id = shell_words::quote(&launch_id),
         ),
     );
+    // The product's first probe is the fake tmux's first launch, whose
+    // cold-start tail cannot guarantee fitting the bounded probe budget under
+    // load; exec it once here so the probe runs warm (sympoies/nils-cli#2131).
+    // `display-message` only reads the generation, so it does not add the
+    // `if-shell -F -t %90` calls this test counts.
+    let prewarm = std::process::Command::new(&tmux_bin)
+        .arg("display-message")
+        .output()
+        .expect("prewarm fake tmux");
+    assert!(
+        prewarm.status.success(),
+        "fake tmux prewarm failed: {}",
+        String::from_utf8_lossy(&prewarm.stderr)
+    );
 
     let delete = run(
         tmp.path(),
@@ -6975,6 +7048,19 @@ exit 42
             killed.display(),
             killed.display(),
         ),
+    );
+    // The product's first probe is the fake tmux's first launch, whose
+    // cold-start tail cannot guarantee fitting the bounded probe budget under
+    // load; exec it once here so the probe runs warm (sympoies/nils-cli#2131).
+    // `display-message` is side-effect-free in this fixture.
+    let prewarm = std::process::Command::new(&tmux_bin)
+        .arg("display-message")
+        .output()
+        .expect("prewarm fake tmux");
+    assert!(
+        prewarm.status.success(),
+        "fake tmux prewarm failed: {}",
+        String::from_utf8_lossy(&prewarm.stderr)
     );
     let output = run(
         tmp.path(),

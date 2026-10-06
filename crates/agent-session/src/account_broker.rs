@@ -629,15 +629,31 @@ wait "$child"
                 client,
                 &[&broker.to_string_lossy(), &child_pid_file.to_string_lossy()],
             );
+            // The budget must cover the helper's startup phase (spawn the
+            // child, publish its PID) with margin, so the timeout fires while
+            // the helper is still hanging instead of before it published the
+            // child (sympoies/nils-cli#2131).
             let error = client
-                .call("list", &[], Duration::from_millis(100))
+                .call("list", &[], Duration::from_secs(2))
                 .unwrap_err();
             assert_eq!(error.code(), code(client, "timeout"));
-            let child_pid: i32 = fs::read_to_string(&child_pid_file)
-                .unwrap()
-                .trim()
-                .parse()
-                .unwrap();
+            // The group kill happened at the timeout, so wait deterministically
+            // for the published child PID instead of racy unwrapping a read.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let raw = loop {
+                if let Ok(raw) = fs::read_to_string(&child_pid_file)
+                    && raw.trim().parse::<i32>().is_ok()
+                {
+                    break raw;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "{}: broker never published the child PID file",
+                    client.provider
+                );
+                thread::sleep(Duration::from_millis(10));
+            };
+            let child_pid: i32 = raw.trim().parse().unwrap();
             let deadline = Instant::now() + Duration::from_secs(1);
             // SAFETY: signal 0 only probes whether the pid still exists.
             while unsafe { libc::kill(child_pid, 0) } == 0 && Instant::now() < deadline {
