@@ -7252,6 +7252,20 @@ async fn submit_structured_prompt_locked(
     handle: &ControlHandle,
     text: &str,
 ) -> Result<String, Response> {
+    if handle
+        .wait_ready(CODEX_CREATE_PROMPT_CONTROL_WAIT)
+        .await
+        .is_err()
+    {
+        // Preserve the incarnation error when startup lost its runtime fence.
+        load_structured_prompt_record_locked(state, id, Some(launch_id)).await?;
+        return Err(status_json(
+            StatusCode::CONFLICT,
+            "structured-prompt-unavailable",
+            "structured prompt control is not ready for this session",
+        ));
+    }
+
     let lock_context = state.context.clone();
     let lock_id = id.to_string();
     let expected_launch_id = launch_id.to_string();
@@ -9100,7 +9114,7 @@ async fn codex_control_loop(state: Arc<ServeState>) {
                 }
                 Err(_) => continue,
             };
-            let (handle, commands) = codex_app_server::control_channel();
+            let (handle, commands, ready) = codex_app_server::starting_control_channel();
             if let Ok(mut controls) = state.codex_controls.lock() {
                 controls.insert(
                     record.id.clone(),
@@ -9114,7 +9128,7 @@ async fn codex_control_loop(state: Arc<ServeState>) {
             let context = state.context.clone();
             tokio::spawn(async move {
                 if let Err(err) =
-                    codex_app_server::run_control(context, record.clone(), commands).await
+                    codex_app_server::run_control(context, record.clone(), commands, ready).await
                 {
                     eprintln!("warning: Codex app-server control ended: {err}");
                 }
@@ -24976,6 +24990,95 @@ esac
                 "explicit_fence={explicit_fence}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn structured_prompt_waits_for_control_startup_before_record_lock() {
+        use tokio_tungstenite::tungstenite::Message;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let id = "startup-prompt";
+        let launch_id = seed_codex_app_server_session(tmp.path(), id);
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let record = load_session_record(&st.context, id).unwrap();
+        let listener =
+            tokio::net::UnixListener::bind(tmp.path().join("startup-prompt.sock")).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(message)) = socket.next().await {
+                let Message::Text(text) = message else {
+                    continue;
+                };
+                let request: Value = serde_json::from_str(&text).unwrap();
+                let Some(request_id) = request.get("id") else {
+                    continue;
+                };
+                let result = match request["method"].as_str().unwrap() {
+                    "initialize" | "thread/resume" => json!({}),
+                    "thread/loaded/list" => json!({"data": ["startup-thread"]}),
+                    "account/rateLimits/read" => json!({"rateLimits": {}}),
+                    "turn/start" => json!({"turn": {"id": "startup-turn"}}),
+                    method => panic!("unexpected request: {method}"),
+                };
+                socket
+                    .send(Message::Text(
+                        json!({"id": request_id, "result": result})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        });
+        let (handle, commands, ready) = codex_app_server::starting_control_channel();
+        let submit_state = st.clone();
+        let submission = tokio::spawn(async move {
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                submit_structured_prompt_locked(
+                    &submit_state,
+                    id,
+                    &launch_id,
+                    StructuredPromptGuards::default(),
+                    &handle,
+                    "first prompt",
+                ),
+            )
+            .await
+        });
+        // Registering a control is not startup readiness. Queue the first
+        // request before the real worker persists its loaded thread, as a
+        // create can do immediately after account binding.
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while commands.is_empty() && ready.receiver_count() == 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let control = tokio::spawn(codex_app_server::run_control(
+            st.context.clone(),
+            record,
+            commands,
+            ready,
+        ));
+        let result = submission.await.unwrap();
+        control.abort();
+        let _ = control.await;
+        server.abort();
+        let _ = server.await;
+        assert!(
+            matches!(result, Ok(Ok(_))),
+            "first prompt must acknowledge without blocking startup record persistence: {result:?}"
+        );
+        assert_eq!(
+            load_session_record(&st.context, id)
+                .unwrap()
+                .provider_resume
+                .unwrap()
+                .session_id,
+            "startup-thread"
+        );
     }
 
     #[tokio::test]

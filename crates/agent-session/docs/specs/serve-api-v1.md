@@ -723,7 +723,12 @@ recorded in `sympoies/nils-cli#1409`.
   `codex-account-unknown`, both HTTP 400; `409 codex-account-unsupported`
   without a broker) before anything launches, and when a
   prompt is also present, the daemon completes account binding before
-  submitting that prompt. A fresh, profile-free Claude create may provide
+  submitting that prompt. Codex prompt submission also waits for the control
+  worker to finish loaded-thread persistence, reconnect/resume, and its initial
+  usage wakeup before taking the session-record lock. Control registration alone
+  does not establish readiness. Startup failure remains
+  `409 structured-prompt-unavailable`; the final locked incarnation and account
+  checks still fence submission. A fresh, profile-free Claude create may provide
   `claude_account`; see the [Claude account broker](#claude-account-broker).
   Each account field is rejected for another provider
   (`<provider>-account-agent-conflict`) and in provider-import mode
