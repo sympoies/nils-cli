@@ -362,7 +362,7 @@ pub(crate) fn read_since(
                 if let Some(object) = record.as_object_mut() {
                     object.insert("machine".to_string(), Value::String(machine.to_string()));
                     // An entry closed before these members existed has none.
-                    for key in ["role", "lineage", "work"] {
+                    for key in ["role", "lineage", "work", "model", "reasoning_effort"] {
                         object.entry(key).or_insert(Value::Null);
                     }
                 }
@@ -483,6 +483,27 @@ mod tests {
             serde_json::from_slice(&fs::read(ledger_path(&context)).unwrap()).unwrap();
         assert_eq!(stored["entries"][0]["record"].get("machine"), None);
         assert_eq!(stored["last_seq"], 3);
+    }
+
+    #[test]
+    fn pre_upgrade_closed_records_expose_nullable_model_settings() {
+        let (_tmp, context) = fresh();
+        append(&context, record("pre-upgrade")).expect("append pre-upgrade");
+        let mut current = record("current");
+        current["model"] = json!("example-model");
+        current["reasoning_effort"] = json!("high");
+        append(&context, current).expect("append current");
+        let all = read(&context, None).expect("read");
+        assert_eq!(all["record_schema"], super::super::RECORD_SCHEMA);
+        for key in ["model", "reasoning_effort"] {
+            assert_eq!(all["entries"][0]["record"].get(key), Some(&Value::Null));
+        }
+        assert_eq!(all["entries"][1]["record"]["model"], "example-model");
+        assert_eq!(all["entries"][1]["record"]["reasoning_effort"], "high");
+        let stored: Value =
+            serde_json::from_slice(&fs::read(ledger_path(&context)).unwrap()).unwrap();
+        assert_eq!(stored["entries"][0]["record"].get("model"), None);
+        assert_eq!(stored["entries"][0]["record"].get("reasoning_effort"), None);
     }
 
     #[test]

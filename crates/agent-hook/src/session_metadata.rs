@@ -2,6 +2,14 @@
 
 pub fn model_label(value: &str) -> Option<String> {
     let lower = value.to_ascii_lowercase();
+    let bot_credential = value.split_once(':').is_some_and(|(prefix, suffix)| {
+        prefix.len() >= 6
+            && prefix.bytes().all(|byte| byte.is_ascii_digit())
+            && suffix.len() >= 20
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    });
     if value.is_empty()
         || value.len() > 128
         || !value
@@ -10,6 +18,11 @@ pub fn model_label(value: &str) -> Option<String> {
         || !value.as_bytes()[0].is_ascii_alphanumeric()
         || [
             "sk-",
+            "sk_live_",
+            "sk_test_",
+            "pk_live_",
+            "rk_live_",
+            "pypi-",
             "ghp_",
             "gho_",
             "ghu_",
@@ -30,6 +43,7 @@ pub fn model_label(value: &str) -> Option<String> {
         ]
         .iter()
         .any(|prefix| lower.starts_with(prefix))
+        || bot_credential
     {
         return None;
     }
@@ -60,6 +74,12 @@ mod tests {
             "xoxp-example",
             "xoxa-example",
             "eyJexample.example.example",
+            "sk_live_synthetic_canary",
+            "sk_test_synthetic_canary",
+            "pk_live_synthetic_canary",
+            "rk_live_synthetic_canary",
+            "pypi-synthetic-canary",
+            "123456:synthetic_public_canary",
         ] {
             assert_eq!(model_label(value), None);
         }
