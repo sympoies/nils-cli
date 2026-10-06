@@ -46,6 +46,28 @@ Use `--remote <name>` to select a remote other than `origin`. For the local
 provider, `--store-root <path>` overrides `FORGE_CLI_LOCAL_STORE`; it does not
 affect GitHub or GitLab operations.
 
+## GitHub release, workflow, and comment writes
+
+These narrow commands use the same selected-principal binding as issue/PR
+writes. Supply `--repo owner/repository` or run inside a checkout with the
+intended remote. GitLab and Local are unsupported for these commands.
+
+```sh
+forge-cli --repo example/widget release create v1.0.0 --title 'Release 1.0.0' --notes-file notes.md --verify-tag --draft
+forge-cli --repo example/widget release upload v1.0.0 artifact.tar.gz
+forge-cli --repo example/widget workflow dispatch build.yml --ref main --input mode=check
+forge-cli --repo example/widget comment edit 123 --body-file correction.md
+forge-cli --repo example/widget comment delete 123 --kind review --dry-run
+```
+
+Comment IDs are native database IDs: the default `issue` kind covers issue/PR
+timeline comments; `review` selects diff review comments. Workflow input values
+remain literal strings, and dispatch success records acceptance rather than run
+completion. Use `--dry-run` to inspect a plan without writing. See the
+[command contract](docs/specs/forge-cli-spec-v1.md#release-create--release-upload)
+for flags and typed outputs. Release and deletion commands require the caller's
+existing authorization.
+
 ## Empty repository bootstrap
 
 `repo bootstrap` creates one signed zero-parent commit and publishes it as the

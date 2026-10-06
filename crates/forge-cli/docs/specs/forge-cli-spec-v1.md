@@ -40,7 +40,7 @@ Goals:
 
 Non-goals (v1):
 
-- Release management (`gh release`, GitLab releases).
+- Release deletion and editing, and GitLab releases.
 - Arbitrary `gh api` / GitLab REST passthrough — no escape hatch in v1
   on purpose; if a workflow needs it, the call belongs in a focused
   follow-up op, not a generic shim. **Deferred to v2** — see "Open
@@ -80,7 +80,7 @@ In scope (v1):
   atoms above into the agent-runtime-kit standard "open draft → wait CI →
   ready → merge → cleanup" flow.
 
-Out of scope (v1): inbox mutations, release management, label deletion or
+Out of scope (v1): inbox mutations, release deletion/editing, label deletion or
 rename-by-default, raw REST
 passthrough, issue macros, repo creation, branch protection management. `pr
 review` posts an outcome comment by default — recording the supplied decision in
@@ -383,6 +383,71 @@ The full machine-readable list lives in
 [`forge-cli-ops-v1.yaml`](forge-cli-ops-v1.yaml). The Markdown table
 below is the human-readable summary; the YAML is authoritative for
 backend mapping, validation rules, and output schema versions.
+
+### `release create` / `release upload`
+
+GitHub-only repository writes; both return `provider`, `repository`, `tag`,
+`url` (nullable), and the requested asset count in `assets` under
+`cli.forge-cli.release.create.v1` or `cli.forge-cli.release.upload.v1`.
+
+- `release create <tag> --title <title> --notes-file <path|-> [files...]`
+  accepts `--target <branch|sha>`, `--verify-tag`, `--draft`, `--prerelease`,
+  and `--latest <true|false>`. Explicit title and notes prevent editor prompts.
+  Without `--verify-tag`, GitHub may create a missing tag from `--target` or
+  the default branch, matching the backend's release-create behavior.
+- `release upload <tag> <files...> [--clobber]` uploads readable local files
+  to an existing release. `--clobber` explicitly replaces matching assets.
+- Asset arguments are literal files, canonicalized before the backend call;
+  shell glob expansion is the caller's responsibility. Title and notes use
+  the shared provider payload guards. Validated notes are copied into a scoped
+  temporary file for `--notes-file` transport, including stdin input, so large
+  notes do not consume process argument space or expand dry-run plans.
+- Success records backend completion; it does not claim independent readback
+  of every asset. A create URL comes from backend stdout; upload has no URL
+  when the backend supplies none.
+
+### `workflow dispatch`
+
+`workflow dispatch <workflow-id|file.yml|file.yaml> --ref <branch|tag>
+[--input KEY=VALUE ...]` emits `cli.forge-cli.workflow.dispatch.v1` with
+`provider`, `repository`, `workflow`, `git_ref`, and `dispatched: true` after
+backend acceptance. The ref is required, input keys must be unique, and values
+remain literal strings (including leading `@` and embedded `=`). `-f` aliases
+`--input`. `--inputs-file <path|->` accepts a JSON object of string values
+instead of inline inputs, enabling large UTF-8 values without argv limits;
+duplicate keys and non-string values are rejected. This command neither waits for a run nor infers a run ID from a
+concurrent workflow list.
+
+### `comment edit` / `comment delete`
+
+`comment edit <database-id> (--body <text>|--body-file <path|->)
+[--kind issue|review]` emits `cli.forge-cli.comment.edit.v1` with `provider`,
+`repository`, `id`, `kind`, `url`, `body`, and `deleted: false`. The provider
+response must match the requested id and body. Empty or guarded payloads fail
+before writing. `comment delete <database-id> [--kind issue|review]` emits
+`cli.forge-cli.comment.delete.v1` with `provider`, `repository`, `id`, `kind`,
+and `deleted: true` after a successful DELETE. IDs must be positive.
+
+`issue` (default) identifies issue and PR timeline comments, using
+`repos/{repository}/issues/comments/{id}`. `review` identifies diff review
+comments, using `repos/{repository}/pulls/comments/{id}`. These are database
+IDs, not issue/PR numbers or GraphQL node IDs; provider permissions still govern
+which actor can edit/delete a comment.
+
+All five writes resolve their repository from `--repo` or the selected remote,
+carry an explicit repository locator or REST endpoint and authority, and pass
+through the normal runner's `prepare_api` credential/actor binding. An active
+identity requires `api_write`; missing credentials, denied operations, and
+unsupported providers fail closed without using ambient authentication.
+Workflow dispatch POSTs to the repository's workflow dispatch endpoint; comment
+PATCH and workflow POST bodies use scoped JSON files with `gh api --input`.
+The payload files remain alive through backend completion and are then removed;
+large UTF-8 inputs stay out of argv and dry-run plans.
+GitLab and Local are unsupported. `--dry-run` validates local inputs and emits
+the normal backend plan without credential probing or provider mutation.
+Operation-effect metadata names each command and declares `mutation` /
+`network_write`. These commands do not authorize a release or comment deletion;
+the caller must already have authority for the requested operation.
 
 ### `pr create`
 
@@ -2420,7 +2485,7 @@ and `glab mr create …` invocations are removed.
 
 ## Open questions / v2 candidates
 
-- Releases (`gh release create / view / edit`) — GitLab requires
+- Releases (`gh release view / edit`) — GitLab requires
   glab + tag flow; could fit a `forge-cli release …` tree later.
 - `gh api` passthrough — explicitly out of v1 because it defeats the
   lock-down value. Re-evaluate if a real workflow needs a non-CRUD

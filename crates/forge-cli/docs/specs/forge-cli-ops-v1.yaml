@@ -234,6 +234,78 @@ operations:
         credential_verified: bool
         signing_key_verified: bool
 
+  - id: release.create
+    schema_version: cli.forge-cli.release.create.v1
+    summary: Create a GitHub release with explicit notes and optional assets.
+    inputs:
+      - { name: tag, type: string, required: true }
+      - { name: --title, type: string, required: true }
+      - { name: --notes-file, type: path-or-stdin, required: true }
+      - { name: --target, type: string, optional: true }
+      - { name: --verify-tag, type: bool, default: false }
+      - { name: --draft, type: bool, default: false }
+      - { name: --prerelease, type: bool, default: false }
+      - { name: --latest, type: bool, optional: true }
+      - { name: assets, type: "list<path>", optional: true }
+    validations: [no_local_path, no_agent_attribution]
+    backends:
+      github: [release, create, <tag>, --repo, <repo>]
+    output:
+      data: { provider: github, repository: string, tag: string, url: nullable<string>, assets: integer }
+
+  - id: release.upload
+    schema_version: cli.forge-cli.release.upload.v1
+    summary: Upload local files to an existing GitHub release.
+    inputs:
+      - { name: tag, type: string, required: true }
+      - { name: assets, type: "list<path>", required: true }
+      - { name: --clobber, type: bool, default: false }
+    validations: []
+    backends:
+      github: [release, upload, <tag>, --repo, <repo>]
+    output:
+      data: { provider: github, repository: string, tag: string, url: nullable<string>, assets: integer }
+
+  - id: workflow.dispatch
+    schema_version: cli.forge-cli.workflow.dispatch.v1
+    summary: Dispatch a GitHub workflow with literal string inputs and explicit ref.
+    inputs:
+      - { name: workflow, type: string, required: true }
+      - { name: --ref, type: string, required: true }
+      - { name: --input, type: "list<KEY=VALUE>", optional: true }
+      - { name: --inputs-file, type: path-or-stdin, optional: true }
+    validations: []
+    backends:
+      github: [api, "repos/<repo>/actions/workflows/<workflow>/dispatches", --method, POST, --input, <payload-file>]
+    output:
+      data: { provider: github, repository: string, workflow: string, git_ref: string, dispatched: bool }
+
+  - id: comment.edit
+    schema_version: cli.forge-cli.comment.edit.v1
+    summary: Edit a GitHub native timeline or review comment by database id.
+    inputs:
+      - { name: id, type: positive-integer, required: true }
+      - { name: --kind, type: enum<issue|review>, default: issue }
+      - { name: --body, type: string, optional: true }
+      - { name: --body-file, type: path-or-stdin, optional: true }
+    validations: [no_local_path, no_agent_attribution]
+    backends:
+      github: [api, "repos/<repo>/<issues|pulls>/comments/<id>", --method, PATCH]
+    output:
+      data: { provider: github, repository: string, id: integer, kind: "enum<issue|review>", url: string, body: string, deleted: bool }
+
+  - id: comment.delete
+    schema_version: cli.forge-cli.comment.delete.v1
+    summary: Delete a GitHub native timeline or review comment by database id.
+    inputs:
+      - { name: id, type: positive-integer, required: true }
+      - { name: --kind, type: enum<issue|review>, default: issue }
+    validations: []
+    backends:
+      github: [api, "repos/<repo>/<issues|pulls>/comments/<id>", --method, DELETE]
+    output:
+      data: { provider: github, repository: string, id: integer, kind: "enum<issue|review>", deleted: bool }
+
   - id: pr.create
     schema_version: cli.forge-cli.pr.create.v1
     summary: Open a draft pull/merge request from the current branch.

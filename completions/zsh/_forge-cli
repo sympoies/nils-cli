@@ -1687,6 +1687,259 @@ esac
     ;;
 esac
 ;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_forge-cli__subcmd__release_commands" \
+"*::: :->release" \
+&& ret=0
+
+    case $state in
+    (release)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-release-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+'--title=[]:TITLE:_default' \
+'--notes-file=[Markdown notes file; use - to read stdin]:NOTES_FILE:_default' \
+'--target=[]:TARGET:_default' \
+'--latest=[Explicitly mark (or do not mark) this release as latest]:LATEST:(true false)' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--verify-tag[]' \
+'--draft[]' \
+'--prerelease[]' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':tag:_default' \
+'*::assets -- Optional release asset files:_files' \
+&& ret=0
+;;
+(upload)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--clobber[]' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':tag:_default' \
+'*::assets:_files' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__release__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-release-help-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(upload)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(workflow)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_forge-cli__subcmd__workflow_commands" \
+"*::: :->workflow" \
+&& ret=0
+
+    case $state in
+    (workflow)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-workflow-command-$line[1]:"
+        case $line[1] in
+            (dispatch)
+_arguments "${_arguments_options[@]}" : \
+'--ref=[]:GIT_REF:_default' \
+'(--inputs-file)*-f+[Literal workflow input KEY=VALUE (repeatable; @ values are not files)]:INPUTS:_default' \
+'(--inputs-file)*--input=[Literal workflow input KEY=VALUE (repeatable; @ values are not files)]:INPUTS:_default' \
+'--inputs-file=[JSON object of string inputs; use - to read stdin]:INPUTS_FILE:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':workflow -- Workflow id or file name (not an interactive name search):_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__workflow__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-workflow-help-command-$line[1]:"
+        case $line[1] in
+            (dispatch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(comment)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_forge-cli__subcmd__comment_commands" \
+"*::: :->comment" \
+&& ret=0
+
+    case $state in
+    (comment)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-comment-command-$line[1]:"
+        case $line[1] in
+            (edit)
+_arguments "${_arguments_options[@]}" : \
+'--kind=[]:KIND:((issue\:"Issue and PR timeline comments"
+review\:"Pull request review (diff) comments"))' \
+'(--body-file)--body=[]:BODY:_default' \
+'--body-file=[Markdown body file; use - to read stdin]:BODY_FILE:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id:_default' \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" : \
+'--kind=[]:KIND:((issue\:"Issue and PR timeline comments"
+review\:"Pull request review (diff) comments"))' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__comment__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-comment-help-command-$line[1]:"
+        case $line[1] in
+            (edit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (activity)
 _arguments "${_arguments_options[@]}" : \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
@@ -2942,6 +3195,74 @@ esac
     ;;
 esac
 ;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__help__subcmd__release_commands" \
+"*::: :->release" \
+&& ret=0
+
+    case $state in
+    (release)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-help-release-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(upload)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(workflow)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__help__subcmd__workflow_commands" \
+"*::: :->workflow" \
+&& ret=0
+
+    case $state in
+    (workflow)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-help-workflow-command-$line[1]:"
+        case $line[1] in
+            (dispatch)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(comment)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__help__subcmd__comment_commands" \
+"*::: :->comment" \
+&& ret=0
+
+    case $state in
+    (comment)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-help-comment-command-$line[1]:"
+        case $line[1] in
+            (edit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (activity)
 _arguments "${_arguments_options[@]}" : \
 ":: :_forge-cli__subcmd__help__subcmd__activity_commands" \
@@ -3185,6 +3506,9 @@ _forge-cli_commands() {
 'provider:Manage named forge provider records' \
 'pr:Pull / merge request lifecycle' \
 'issue:Issue lifecycle' \
+'release:GitHub releases and release assets' \
+'workflow:GitHub workflow dispatch' \
+'comment:Edit or delete a native GitHub comment by database id' \
 'activity:Personal activity across forge repositories' \
 'label:Repository label catalog audit and ensure operations' \
 'inbox:Personal cross-repo work inbox' \
@@ -3296,6 +3620,49 @@ _forge-cli__subcmd__auth__subcmd__status_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli auth status commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__comment_commands] )) ||
+_forge-cli__subcmd__comment_commands() {
+    local commands; commands=(
+'edit:Replace the body of an issue/PR timeline or review comment' \
+'delete:Delete an issue/PR timeline or review comment' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli comment commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__comment__subcmd__delete_commands] )) ||
+_forge-cli__subcmd__comment__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli comment delete commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__comment__subcmd__edit_commands] )) ||
+_forge-cli__subcmd__comment__subcmd__edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli comment edit commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__comment__subcmd__help_commands] )) ||
+_forge-cli__subcmd__comment__subcmd__help_commands() {
+    local commands; commands=(
+'edit:Replace the body of an issue/PR timeline or review comment' \
+'delete:Delete an issue/PR timeline or review comment' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli comment help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__comment__subcmd__help__subcmd__delete_commands] )) ||
+_forge-cli__subcmd__comment__subcmd__help__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli comment help delete commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__comment__subcmd__help__subcmd__edit_commands] )) ||
+_forge-cli__subcmd__comment__subcmd__help__subcmd__edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli comment help edit commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__comment__subcmd__help__subcmd__help_commands] )) ||
+_forge-cli__subcmd__comment__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli comment help help commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__completion_commands] )) ||
 _forge-cli__subcmd__completion_commands() {
     local commands; commands=()
@@ -3307,6 +3674,9 @@ _forge-cli__subcmd__help_commands() {
 'provider:Manage named forge provider records' \
 'pr:Pull / merge request lifecycle' \
 'issue:Issue lifecycle' \
+'release:GitHub releases and release assets' \
+'workflow:GitHub workflow dispatch' \
+'comment:Edit or delete a native GitHub comment by database id' \
 'activity:Personal activity across forge repositories' \
 'label:Repository label catalog audit and ensure operations' \
 'inbox:Personal cross-repo work inbox' \
@@ -3361,6 +3731,24 @@ _forge-cli__subcmd__help__subcmd__auth_commands() {
 _forge-cli__subcmd__help__subcmd__auth__subcmd__status_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help auth status commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__comment_commands] )) ||
+_forge-cli__subcmd__help__subcmd__comment_commands() {
+    local commands; commands=(
+'edit:Replace the body of an issue/PR timeline or review comment' \
+'delete:Delete an issue/PR timeline or review comment' \
+    )
+    _describe -t commands 'forge-cli help comment commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__comment__subcmd__delete_commands] )) ||
+_forge-cli__subcmd__help__subcmd__comment__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help comment delete commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__comment__subcmd__edit_commands] )) ||
+_forge-cli__subcmd__help__subcmd__comment__subcmd__edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help comment edit commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__completion_commands] )) ||
 _forge-cli__subcmd__help__subcmd__completion_commands() {
@@ -3779,6 +4167,24 @@ _forge-cli__subcmd__help__subcmd__provider__subcmd__view_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help provider view commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__help__subcmd__release_commands] )) ||
+_forge-cli__subcmd__help__subcmd__release_commands() {
+    local commands; commands=(
+'create:Create a release with explicit title and notes' \
+'upload:Upload files to an existing release' \
+    )
+    _describe -t commands 'forge-cli help release commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__release__subcmd__create_commands] )) ||
+_forge-cli__subcmd__help__subcmd__release__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help release create commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__release__subcmd__upload_commands] )) ||
+_forge-cli__subcmd__help__subcmd__release__subcmd__upload_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help release upload commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__help__subcmd__repo_commands] )) ||
 _forge-cli__subcmd__help__subcmd__repo_commands() {
     local commands; commands=(
@@ -3851,6 +4257,18 @@ _forge-cli__subcmd__help__subcmd__search__subcmd__prs_commands() {
 _forge-cli__subcmd__help__subcmd__search__subcmd__refs-to_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help search refs-to commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__workflow_commands] )) ||
+_forge-cli__subcmd__help__subcmd__workflow_commands() {
+    local commands; commands=(
+'dispatch:Dispatch one workflow on an explicit branch or tag' \
+    )
+    _describe -t commands 'forge-cli help workflow commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__workflow__subcmd__dispatch_commands] )) ||
+_forge-cli__subcmd__help__subcmd__workflow__subcmd__dispatch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help workflow dispatch commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__identity_commands] )) ||
 _forge-cli__subcmd__identity_commands() {
@@ -4913,6 +5331,49 @@ _forge-cli__subcmd__provider__subcmd__view_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli provider view commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__release_commands] )) ||
+_forge-cli__subcmd__release_commands() {
+    local commands; commands=(
+'create:Create a release with explicit title and notes' \
+'upload:Upload files to an existing release' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli release commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__release__subcmd__create_commands] )) ||
+_forge-cli__subcmd__release__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli release create commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__release__subcmd__help_commands] )) ||
+_forge-cli__subcmd__release__subcmd__help_commands() {
+    local commands; commands=(
+'create:Create a release with explicit title and notes' \
+'upload:Upload files to an existing release' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli release help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__release__subcmd__help__subcmd__create_commands] )) ||
+_forge-cli__subcmd__release__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli release help create commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__release__subcmd__help__subcmd__help_commands] )) ||
+_forge-cli__subcmd__release__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli release help help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__release__subcmd__help__subcmd__upload_commands] )) ||
+_forge-cli__subcmd__release__subcmd__help__subcmd__upload_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli release help upload commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__release__subcmd__upload_commands] )) ||
+_forge-cli__subcmd__release__subcmd__upload_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli release upload commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__repo_commands] )) ||
 _forge-cli__subcmd__repo_commands() {
     local commands; commands=(
@@ -5103,6 +5564,37 @@ _forge-cli__subcmd__search__subcmd__prs_commands() {
 _forge-cli__subcmd__search__subcmd__refs-to_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli search refs-to commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__workflow_commands] )) ||
+_forge-cli__subcmd__workflow_commands() {
+    local commands; commands=(
+'dispatch:Dispatch one workflow on an explicit branch or tag' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli workflow commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__workflow__subcmd__dispatch_commands] )) ||
+_forge-cli__subcmd__workflow__subcmd__dispatch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli workflow dispatch commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__workflow__subcmd__help_commands] )) ||
+_forge-cli__subcmd__workflow__subcmd__help_commands() {
+    local commands; commands=(
+'dispatch:Dispatch one workflow on an explicit branch or tag' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli workflow help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__workflow__subcmd__help__subcmd__dispatch_commands] )) ||
+_forge-cli__subcmd__workflow__subcmd__help__subcmd__dispatch_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli workflow help dispatch commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__workflow__subcmd__help__subcmd__help_commands] )) ||
+_forge-cli__subcmd__workflow__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli workflow help help commands' commands "$@"
 }
 
 if [ "$funcstack[1]" = "_forge-cli" ]; then

@@ -133,18 +133,10 @@ fn env_u64(key: &str) -> Option<u64> {
 /// `gh api rate_limit` probe and REST `gh api repos/…` calls are excluded so
 /// the gate never gates itself or a call that draws on the core budget.
 ///
-/// Classification is **verb-coarse**: it treats an entire `gh` verb as
-/// GraphQL-backed rather than distinguishing per-subcommand (e.g. the
-/// REST-backed `gh release download` / `gh repo clone` would be classified
-/// GraphQL here). Every op is now routed through [`RateLimitedRunner`] via
-/// [`default_runner`], so this predicate is the sole thing that decides whether
-/// a call is actually gated. It is safe today only because no op issues a
-/// REST-backed subcommand of these verbs — the only `repo` call in the tree is
-/// `gh repo view`, which is genuinely GraphQL-backed. Before adding an op that
-/// shells a REST-backed subcommand of `pr`/`issue`/`search`/`repo`/`release`
-/// (e.g. `gh release download`, `gh repo clone`), refine this matcher to key on
-/// the subcommand, or that call would needlessly preflight and back off against
-/// the GraphQL budget for a request that spends the core budget.
+/// Lifecycle verbs retain their existing GraphQL classification. Release
+/// create/upload are REST operations and can perform several mutations per
+/// invocation: never apply GraphQL preflight or replay a partially completed
+/// invocation. Refine other verb/subcommand pairs when adding REST-backed ops.
 pub fn is_graphql_backed(call: &BackendCall) -> bool {
     if call.program != BackendProgram::Gh {
         return false;
@@ -154,8 +146,9 @@ pub fn is_graphql_backed(call: &BackendCall) -> bool {
         // `gh api graphql …` is GraphQL; every other `gh api …` (rate_limit,
         // repos/…, …) is REST/core.
         Some("api") => args.next().as_deref() == Some("graphql"),
-        // `gh pr|issue|search|repo|release …` are GraphQL-backed.
-        Some("pr") | Some("issue") | Some("search") | Some("repo") | Some("release") => true,
+        // REST release mutations must not inherit a replay policy.
+        Some("release") => !matches!(args.next().as_deref(), Some("create" | "upload")),
+        Some("pr") | Some("issue") | Some("search") | Some("repo") => true,
         _ => false,
     }
 }
@@ -633,6 +626,33 @@ mod tests {
             BackendProgram::Glab,
             ["mr", "view", "1"]
         )));
+    }
+
+    #[test]
+    fn release_rest_mutations_never_probe_or_replay_after_throttling() {
+        for subcommand in ["create", "upload"] {
+            let call = BackendCall::new(BackendProgram::Gh, ["release", subcommand, "v1"]);
+            let runner = FakeRunner::with_fail_once(vec![0; 32]);
+            let clock = FakeClock::new();
+            let gate = RateLimitedRunner::new(&runner, &clock, cfg());
+            let result = gate.run(&call);
+            assert!(
+                result.is_err(),
+                "{subcommand} must preserve the original mutation failure"
+            );
+            assert_eq!(
+                runner.real_count(),
+                1,
+                "{subcommand} must never be replayed"
+            );
+            assert_eq!(
+                runner.probe_count(),
+                0,
+                "{subcommand} uses REST, not GraphQL"
+            );
+            assert_eq!(clock.sleep_count(), 0);
+            assert!(!is_graphql_backed(&call));
+        }
     }
 
     #[test]
