@@ -26,6 +26,23 @@ pub(crate) fn validate_config(cfg: &ForgeConfig) -> Result<(), ForgeError> {
     Ok(())
 }
 
+fn validate_provider_base_config(cfg: &ForgeConfig) -> Result<(), ForgeError> {
+    validate_config(cfg)?;
+    if cfg
+        .warnings
+        .iter()
+        .any(|warning| warning == "invalid-config-value:merge:not_a_table")
+    {
+        return Err(ForgeError::validation(
+            SCHEMA,
+            "invalid_hold_labels_config",
+            "the current base [merge] section must be a table with valid hold-label settings",
+            None,
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn ensure_clear<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
@@ -178,7 +195,7 @@ fn read_base_config<R: BackendRunner>(
             "invalid_hold_labels_config", "the current base .forge-cli.toml cannot be parsed; ask the maintainer to repair it before merging", None))?,
         None => ForgeConfig::default(),
     };
-    validate_config(&cfg)?;
+    validate_provider_base_config(&cfg)?;
     Ok(cfg)
 }
 

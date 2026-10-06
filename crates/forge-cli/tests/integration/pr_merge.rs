@@ -2928,6 +2928,42 @@ fn pr_merge_hold_reads_current_provider_base_config_instead_of_stale_local_refs(
 }
 
 #[test]
+fn pr_merge_rejects_malformed_provider_base_merge_section_before_mutation() {
+    let mut outcomes = Vec::new();
+    for queue in [false, true] {
+        let repo = make_github_repo(None);
+        let stub = StubEnv::new();
+        let merged = stub.tempdir.path().join("github-merged");
+        let enqueued = stub.tempdir.path().join("enqueued");
+        let response = serde_json::json!({
+            "data": {"repository": {"object": {"text": "merge = \"bad\"\n"}}}
+        })
+        .to_string();
+        let body = github_hold_stub(&stub, "unused::hold", false, queue, false)
+            .replace(r#"{"data":{"repository":{"object":null}}}"#, &response);
+        let stub = stub.gh_stub(&body);
+        let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
+
+        outcomes.push((
+            queue,
+            out.code,
+            out.stdout,
+            merged.exists(),
+            enqueued.exists(),
+        ));
+    }
+    for (queue, code, stdout, merged, enqueued) in outcomes {
+        assert_eq!(code, 65, "queue={queue} stdout={stdout}");
+        assert_eq!(
+            parse_envelope(&stdout)["error"]["code"],
+            "invalid_hold_labels_config"
+        );
+        assert!(!merged, "malformed base config must not reach merge");
+        assert!(!enqueued, "malformed base config must not reach enqueue");
+    }
+}
+
+#[test]
 fn pr_merge_hold_base_policy_read_fails_closed() {
     for response in [
         "null",
