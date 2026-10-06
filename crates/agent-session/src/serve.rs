@@ -20886,6 +20886,11 @@ esac
             &tmp.path().join("archive-tmux"),
             "#!/usr/bin/env sh\ncase \"$1\" in\n  display-message|has-session) printf '%s\\n' \"can't find session: archive-me\" >&2; exit 1 ;;\n  *) exit 42 ;;\nesac\n",
         );
+        // The fake tmux is a shell script whose launch cannot guarantee fitting
+        // the termination probe's bounded startup budget under load, so pin the
+        // probe outcome it models: the session is gone (sympoies/nils-cli#2131).
+        let _probe =
+            crate::tmux_probe_fixture::install(&tmux, crate::tmux_probe_fixture::Probe::Stopped);
         seed_resumable_session(
             tmp.path(),
             "archive-me",
@@ -31473,6 +31478,22 @@ esac
             let calls = tmp.path().join(format!("failed-delete-{agent}.calls"));
             #[cfg(not(target_os = "linux"))]
             let tmux = failing_delete_tmux(tmp.path(), tmp.path(), &id, pane.pid(), &calls);
+            // The fake tmux is a shell script whose launch cannot guarantee
+            // fitting the termination probe's bounded startup budget under
+            // load, so pin the probe outcome it models (the pane is live)
+            // and let the real kill step fail as the test intends
+            // (sympoies/nils-cli#2131).
+            #[cfg(not(target_os = "linux"))]
+            let _probe = crate::tmux_probe_fixture::install(
+                &tmux,
+                crate::tmux_probe_fixture::running_identity(
+                    &tmux_session,
+                    "%88",
+                    pane.pid() as libc::pid_t,
+                    None,
+                    None,
+                ),
+            );
             #[cfg(target_os = "linux")]
             let tmux = tmp.path().join(format!("unavailable-probe-{agent}"));
             #[cfg(target_os = "linux")]
@@ -31539,6 +31560,11 @@ esac
             &tmp.path().join("pre-upgrade-stopped-tmux"),
             "#!/usr/bin/env sh\ncase \"$1\" in\n  display-message|has-session) printf \"%s\\n\" \"can't find session: pre-upgrade\" >&2; exit 1 ;;\n  *) exit 42 ;;\nesac\n",
         );
+        // The fake tmux is a shell script whose launch cannot guarantee fitting
+        // the termination probe's bounded startup budget under load, so pin the
+        // probe outcome it models: the session is gone (sympoies/nils-cli#2131).
+        let _probe =
+            crate::tmux_probe_fixture::install(&tmux, crate::tmux_probe_fixture::Probe::Stopped);
         let session_dir = tmp.path().join("sessions").join(id);
         let st = state(tmp.path(), Some(TOKEN), tmux);
         let request = Request::builder()
