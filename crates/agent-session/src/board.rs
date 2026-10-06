@@ -277,6 +277,8 @@ pub(crate) fn project_record(
         "cwd": string("cwd").and_then(|cwd| home_relative_cwd(cwd, home)),
         "provider": provider,
         "agent_profile": nullable("agent_profile"),
+        "model": nullable("model"),
+        "reasoning_effort": nullable("reasoning_effort"),
         "title": nullable("title"),
         "title_state": title_state,
         "turn_state": turn_state,
@@ -453,7 +455,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    const RECORD_KEYS: [&str; 21] = [
+    const RECORD_KEYS: [&str; 23] = [
         "agent_profile",
         "close_reason",
         "closed_at",
@@ -462,7 +464,9 @@ mod tests {
         "lineage",
         "machine",
         "messaging_supported",
+        "model",
         "provider",
+        "reasoning_effort",
         "repo_name",
         "role",
         "runtime_status",
@@ -574,6 +578,8 @@ mod tests {
                 "cwd": "~/Project/nils-cli",
                 "provider": "claude",
                 "agent_profile": "work",
+                "model": null,
+                "reasoning_effort": null,
                 "title": "Specify the session board",
                 "title_state": {"activity": "Drafting the closed-ledger section"},
                 "turn_state": {
@@ -752,6 +758,7 @@ mod tests {
             "turn_state",
             "agent_profile",
             "session_incarnation",
+            "reasoning_effort",
             "repo_name",
         ] {
             object.remove(key);
@@ -765,6 +772,7 @@ mod tests {
             "turn_state",
             "agent_profile",
             "session_incarnation",
+            "reasoning_effort",
             "repo_name",
             "title",
         ] {

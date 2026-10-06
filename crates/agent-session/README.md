@@ -527,3 +527,30 @@ Do not put secrets in provider arguments. For Claude sessions, provider identity
 For secrets, prefer `--text-stdin`: `--text <value>` still places the literal in agent-session's own process arguments (visible in `ps`
 to same-user processes), exactly as the existing `--prompt` flag does. `send` is not idempotent — keystrokes are delivered before the
 command returns, so a retry after a mid-delivery failure can re-send; callers that auto-retry should account for this.
+
+## Session model settings
+
+Session creation retains `model_settings` in the session record, scoped to the
+runtime launch ID. `list --format json`, HTTP session responses, and board
+records expose nullable `model` and `reasoning_effort` fields. Missing values
+are unknown, including old records without explicit launch settings; consumers
+must not infer values from accounts, profiles, or the title-generation model.
+
+The launch projection recognizes Claude `--model` / `--effort` and Codex
+`-m` / `--model`, `-c` / `--config` model and `model_reasoning_effort` overrides,
+including local Codex `--oss` models. A local Claude-compatible launcher can
+supply the same explicit flags. Provider config files, wrapper-internal settings,
+and implicit defaults are unknown until the provider reports them.
+
+Matching provider hooks can update bounded model/effort metadata. Claude
+`SessionStart` model and structured `effort.level` metadata are projected by
+`agent-hook` activity rules without forwarding prompts, paths, or raw provider
+identities. Matching tool/stop hooks update effort and read at most 64 KiB from
+the trusted primary transcript for the actual model. A model switch becomes
+visible after the provider emits that evidence. Both helpers must be updated;
+older helpers safely leave unavailable fields unknown.
+Managed Codex app-server thread responses report resolved defaults, and successful
+`turn/start` responses confirm later explicit model/effort changes. Observations
+must match the active runtime and provider session; auxiliary sessions cannot
+replace primary settings. A changed model without an effort observation clears
+the previous effort. Labels resembling credentials or paths are omitted.

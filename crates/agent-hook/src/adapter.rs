@@ -16,6 +16,50 @@ use crate::model::{
 use crate::path_binding::{TargetBinding, resolve_target_bindings};
 use crate::strict_json;
 
+/// Only display settings and a projected primary identity leave this adapter.
+pub(crate) fn project_session_model_hook(
+    request: &NormalizedRequest,
+    raw: &[u8],
+    runtime_id: &str,
+) -> Option<Vec<u8>> {
+    if request.product != Product::Claude {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(raw).ok()?;
+    if value.get("agent_id").is_some() {
+        return None;
+    }
+    let session = optional_provider_id(value.as_object()?, "session_id").ok()??;
+    let model_value = value
+        .get("model")
+        .or_else(|| value.get("to_model"))
+        .filter(|value| !value.is_null());
+    let effort_value = value.get("effort").filter(|value| !value.is_null());
+    if model_value.is_none() && effort_value.is_none() && request.event != "Stop" {
+        return None;
+    }
+    let mut metadata = json!({
+        "hook_event_name": if request.event == "SessionStart" { "SessionStart" } else { "ModelSettings" },
+        "session_id": projected_provider_id(runtime_id, request.product, "session", session),
+    });
+    if let Some(value) = model_value {
+        metadata["model"] = json!(
+            value
+                .as_str()
+                .and_then(crate::session_metadata::model_label)
+        );
+    }
+    if let Some(value) = effort_value {
+        metadata["reasoning_effort"] = json!(
+            value
+                .as_str()
+                .or_else(|| value.get("level").and_then(Value::as_str))
+                .and_then(crate::session_metadata::effort_label)
+        );
+    }
+    serde_json::to_vec(&metadata).ok()
+}
+
 pub const MAX_PROVIDER_BYTES: usize = 1024 * 1024;
 const DSH_INGRESS_V1: &str = "agent-hook.dsh-ingress.v1";
 const DSH_INGRESS_V2: &str = "agent-hook.dsh-ingress.v2";

@@ -397,8 +397,12 @@ preserves reconciliation for an already admitted operation. Its fixed
 shadow never invokes it, and governed recovery cannot bypass the underlying
 issue #676 transaction.
 
-`agent-session.activity.v1` emits only a normalized metadata event to
-`agent-session activity event`; it never forwards raw provider JSON. Shadow
+`agent-session.activity.v1` emits a normalized metadata event to
+`agent-session activity event`; it never forwards raw provider JSON. For Claude,
+activity rules also project bounded model/effort labels and a hashed primary
+session identity to the optional `activity hook` ingress. This supplemental
+call runs after mandatory activity with a separate 250 ms deadline; old helpers
+ignore it and metadata failures cannot change enforcement decisions. Shadow
 evaluation skips every side-effecting capability. If that activity update is
 temporarily unavailable, only the finite, shell-uncomposed Main Agent
 rehydration, recovery, status, rebind, and bootstrap shapes may defer the

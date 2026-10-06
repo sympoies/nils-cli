@@ -1069,6 +1069,46 @@ fn read_tail_window_with_start(path: &Path, max_bytes: usize) -> io::Result<(Vec
     Ok((buffer, start))
 }
 
+/// Read only the last bounded primary Claude transcript window for actual model
+/// evidence. Never trust a hook's transcript_path or scan unrelated sessions.
+pub(crate) fn latest_claude_model(record: &SessionRecord) -> Option<Option<String>> {
+    let source = resolve_provider_prompt_source(record)?;
+    if source.provider != ProviderKind::Claude || !source_still_matches(&source) {
+        return None;
+    }
+    let (buffer, start) =
+        read_tail_window_with_start(&source.path, MAX_PROVIDER_READ_BYTES).ok()?;
+    if !source_still_matches(&source) {
+        return None;
+    }
+    latest_claude_model_from_tail(&buffer, start != 0, &source.session_id)
+}
+
+fn latest_claude_model_from_tail(
+    buffer: &[u8],
+    partial_first_line: bool,
+    session_id: &str,
+) -> Option<Option<String>> {
+    let complete = if partial_first_line {
+        &buffer[buffer.iter().position(|byte| *byte == b'\n')? + 1..]
+    } else {
+        buffer
+    };
+    complete
+        .rsplit(|byte| *byte == b'\n')
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+        .find(|row| {
+            row.get("type").and_then(Value::as_str) == Some("assistant")
+                && row.get("sessionId").and_then(Value::as_str) == Some(session_id)
+                && row.get("isSidechain").and_then(Value::as_bool) != Some(true)
+        })
+        .map(|row| {
+            row.pointer("/message/model")
+                .and_then(Value::as_str)
+                .and_then(crate::session_model::model_label)
+        })
+}
+
 /// Scan the bounded provider-prompt history for an exact prompt submitted
 /// strictly after a durable notification attempt boundary.
 ///
@@ -2654,5 +2694,26 @@ mod tests {
             role: None,
             resume_sidecar_extra: BTreeMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod session_model_tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    #[test]
+    fn session_model_claude_tail_uses_latest_primary_model_only() {
+        let rows = br#"{"type":"assistant","sessionId":"primary","message":{"model":"old-model"}}
+{"type":"assistant","sessionId":"primary","message":{"model":"new-model"}}
+{"type":"assistant","sessionId":"other","message":{"model":"foreign-model"}}
+{"type":"assistant","sessionId":"primary","isSidechain":true,"message":{"model":"auxiliary-model"}}
+{"type":"assistant","sessionId":"primary","message":{"model":"sk-secret-canary"}}
+"#;
+        assert_eq!(latest_claude_model_from_tail(b"\xffpartial\n{\"type\":\"assistant\",\"sessionId\":\"primary\",\"message\":{\"model\":\"latest-model\"}}\n", true, "primary"), Some(Some("latest-model".into())));
+        assert_eq!(
+            latest_claude_model_from_tail(rows, false, "primary"),
+            Some(None)
+        );
+        assert_eq!(latest_claude_model_from_tail(rows, false, "missing"), None);
     }
 }

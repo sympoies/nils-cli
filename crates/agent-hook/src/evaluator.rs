@@ -1702,37 +1702,46 @@ fn run_session_activity(
             ))
         };
     };
-    let Some(event) = crate::adapter::normalize_activity_event(request, raw, &runtime_id)? else {
-        return Ok(());
-    };
-    let mut command = Command::new(resolve_activity_helper()?);
-    command
-        .args([
-            "activity",
-            "event",
-            "--format",
-            "json",
-            "--stdin",
-            &session_id,
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let output = run_with_budget(command, &event, execution_budget)?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let mut error = HookError::runtime(
-            "session-activity-failed",
-            "agent-session activity capability failed",
-        );
-        // The stable code keeps its degradation classification; the helper's
-        // typed cause rides along so an operator can see why ingest failed.
-        if let Some(cause) = activity_helper_error_code(&output.stdout) {
-            error.details = Some(Box::new(serde_json::json!({ "cause": cause })));
+    if let Some(event) = crate::adapter::normalize_activity_event(request, raw, &runtime_id)? {
+        let mut command = Command::new(resolve_activity_helper()?);
+        command
+            .args([
+                "activity",
+                "event",
+                "--format",
+                "json",
+                "--stdin",
+                &session_id,
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let output = run_with_budget(command, &event, execution_budget)?;
+        if !output.status.success() {
+            let mut error = HookError::runtime(
+                "session-activity-failed",
+                "agent-session activity capability failed",
+            );
+            if let Some(cause) = activity_helper_error_code(&output.stdout) {
+                error.details = Some(Box::new(serde_json::json!({ "cause": cause })));
+            }
+            return Err(error);
         }
-        Err(error)
     }
+    if let Some(metadata) = crate::adapter::project_session_model_hook(request, raw, &runtime_id)
+        && let Ok(helper) = resolve_activity_helper()
+    {
+        let mut command = Command::new(helper);
+        command
+            .args(["activity", "hook", "--agent", request.product.as_str()])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // Optional metadata runs after mandatory activity, with its own deadline
+        // and no charge against enforcement's child/output budget.
+        let _ = run_bounded(command, &metadata, Duration::from_millis(250), 0, false);
+    }
+    Ok(())
 }
 
 /// The helper's typed error code from its `--format json` envelope, restricted
