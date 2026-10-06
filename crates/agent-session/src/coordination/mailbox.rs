@@ -49,6 +49,8 @@ pub(crate) struct StoredMessage {
     pub reply_depth: u8,
     pub created_at: String,
     pub created_at_epoch: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_created_at_epoch: Option<i64>,
     #[serde(default)]
     pub created_at_epoch_millis: i64,
     pub expires_at: String,
@@ -1001,6 +1003,7 @@ where
         reply_depth,
         created_at: timestamp(now),
         created_at_epoch: now,
+        remote_created_at_epoch: None,
         created_at_epoch_millis: now_millis,
         expires_at: timestamp(expiry_epoch),
         expires_at_epoch: expiry_epoch,
@@ -1081,6 +1084,7 @@ where
         })?;
     let _ = broker;
     let _authorization_guard = authorize()?;
+    let machine = crate::board::machine_identity(None, context);
 
     let mut carried = 0usize;
     for message in &mut locked.registry.messages {
@@ -1092,6 +1096,17 @@ where
             && message.state == "unread"
             && message.expires_at_epoch > now
         {
+            super::forwarding::record_recipient_transfer(
+                message,
+                &machine,
+                current_incarnation,
+                super::remote::Address {
+                    machine: machine.clone(),
+                    session_id: controller_session_id.into(),
+                    session_incarnation: controller_incarnation.into(),
+                },
+                now,
+            )?;
             message.recipient_incarnation = current_incarnation.to_string();
             message.revision = message.revision.saturating_add(1);
             message.forwarded_from_incarnation = Some(previous_incarnation.to_string());
@@ -1576,6 +1591,7 @@ mod tests {
             expires_at: String::new(),
             expires_at_epoch: NOW + 3_600,
             terminal_at_epoch: (state == "acknowledged").then_some(NOW - 60 - index as i64),
+            remote_created_at_epoch: None,
             forwarded_from_incarnation: None,
             forwarded_at_epoch: None,
             category: None,
@@ -1714,6 +1730,7 @@ mod tests {
             expires_at: "time".to_string(),
             expires_at_epoch: 1,
             terminal_at_epoch: None,
+            remote_created_at_epoch: None,
             forwarded_from_incarnation: None,
             forwarded_at_epoch: None,
             category: None,

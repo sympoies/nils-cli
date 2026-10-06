@@ -937,6 +937,7 @@ mod tests {
             expires_at: String::new(),
             expires_at_epoch: expires_at,
             terminal_at_epoch: None,
+            remote_created_at_epoch: None,
             forwarded_from_incarnation: None,
             forwarded_at_epoch: None,
             category: None,

@@ -1335,7 +1335,7 @@ fn receive_admitted(
         if provenance
             .hops
             .last()
-            .is_none_or(|hop| &hop.forwarder != actor)
+            .is_none_or(|hop| &hop.forwarder != actor || !hop.recipient_transfers.is_empty())
             || !provenance.valid(&envelope.to, &envelope.body, envelope.expires_at_epoch, now)
         {
             return Err(invalid());
@@ -1444,6 +1444,7 @@ fn receive_admitted(
         reply_depth: envelope.reply_depth,
         created_at: timestamp(now),
         created_at_epoch: now,
+        remote_created_at_epoch: Some(envelope.created_at_epoch),
         created_at_epoch_millis: now_millis,
         expires_at: timestamp(envelope.expires_at_epoch),
         expires_at_epoch: envelope.expires_at_epoch,

@@ -82,6 +82,7 @@ try {
     if(denyRelay){res.writeHead(denyRelay==='rate-limited'?429:403);res.end(JSON.stringify({error:{code:denyRelay}}));return;}
     if(hold){res.writeHead(503);res.end(JSON.stringify({error:{code:'remote-messaging-unavailable'}}));return;}
     if(blockRelay){relayBlocked=true;await delay(2500);relayBlocked=false;}
+    if(message.from.machine==='alpha'&&message.body==='category forwarding body')await delay(2200);
     const target=hosts.find(h=>h.machine===message.to.machine);
     if(!target||JSON.stringify(message.to)!==JSON.stringify(address(target))){res.writeHead(409);res.end(JSON.stringify({error:{code:'session-incarnation-conflict'}}));return;}
     const response=await fetch(target.url+'/coordination/messages/receive/v1',{method:'POST',headers:{Authorization:`Bearer ${target.operator}`,'X-Agent-Session-Relay-Token':target.ingress,'Content-Type':'application/json'},body:JSON.stringify(message)});
@@ -154,10 +155,15 @@ checks.push('bidirectional-reply-show-status');
   // Source -> coordinator -> third recipient: no category loss or source consumption.
   const categoryBody=bodyFile('category-progress','category forwarding body');
   const categorySend=['send','--from',alpha.session,'--to-machine',beta.machine,'--to',beta.session,'--body-file',categoryBody,'--category','progress','--idempotency-key','category-progress-0001'];
-  const categorySource=await cli(alpha,categorySend);await delivered(alpha,categorySource.message_id);
+  const categorySource=await cli(alpha,categorySend);
+  const categorySourceEpoch=JSON.parse(readFileSync(join(alpha.root,'coordination','federation-journal.json'),'utf8')).remote_outbox.find(i=>i.envelope.message_id===categorySource.message_id).envelope.created_at_epoch;
+  await delivered(alpha,categorySource.message_id);
+  const categoryIngress=JSON.parse(readFileSync(join(beta.root,'coordination','registry.json'),'utf8')).messages.find(m=>m.message_id===categorySource.message_id);
+  assert(categoryIngress.created_at_epoch>=categorySourceEpoch+2,'fixture distinguishes source creation from local inbox ingress');
   const filtered=await cli(beta,['inbox','--session',beta.session,'--state','unread','--category','progress']);
   assert.equal(filtered.messages.length,1);assert.equal(filtered.messages[0].message_id,categorySource.message_id);
   assert.equal(filtered.messages[0].revision,1);assert(!JSON.stringify(filtered).includes('category forwarding body'));
+  await stop(beta);await start(beta); // Source creation survives destination restart.
   const forwardArgs=['forward','--session',beta.session,'--message',categorySource.message_id,'--if-revision','1','--to-machine',gamma.machine,'--to',gamma.session,'--category','progress','--idempotency-key','category-forward-0001'];
   dropOnce=true;
   const categoryForward=await cli(beta,forwardArgs);assert.equal(categoryForward.state,'queued');
@@ -169,6 +175,7 @@ checks.push('bidirectional-reply-show-status');
   assert.equal(forwarded.body.text,'category forwarding body');assert.equal(forwarded.category,'progress');
   assert.equal(forwarded.sender.machine,'beta');assert.equal(forwarded.forwarding.attestation,'forwarder');
   assert.equal(forwarded.forwarding.original_message_id,categorySource.message_id);
+  assert.equal(forwarded.forwarding.original_created_at_epoch,categorySourceEpoch,'forwarding preserves authenticated source creation, not delayed inbox ingress');
   assert.equal(forwarded.forwarding.original_sender.session_id,alpha.session);
   assert.deepEqual(forwarded.forwarding.hops[0].forwarder,address(beta));
   assert.deepEqual(forwarded.forwarding.hops[0].recipient,address(gamma));

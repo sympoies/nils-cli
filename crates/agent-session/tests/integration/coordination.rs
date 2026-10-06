@@ -16545,6 +16545,13 @@ fn main_agent_worker_bootstrap_acquires_claim_and_checkpoints_from_packet() {
                 worker_checkout.as_path(),
                 Some("enforce"),
             ),
+            (
+                "forward-target",
+                "target-incarnation",
+                "forward-target-private-capability-material-0001",
+                worker_checkout.as_path(),
+                Some("advisory"),
+            ),
         ],
     );
     let main_capability = init_main_run(
@@ -16846,6 +16853,72 @@ fn main_agent_worker_bootstrap_acquires_claim_and_checkpoints_from_packet() {
     assert_eq!(replay.code, 0, "stderr={}", replay.stderr_text());
     assert_eq!(replay.stdout_text(), bootstrapped.stdout_text());
 
+    // A controller's forwarded guidance must also survive supported resume.
+    let forwarding_body = tmp.path().join("forwarded-resume-guidance.md");
+    fs::write(&forwarding_body, "Forwarded controller guidance").unwrap();
+    let main_two_capability = capability(&state_dir, "main-two");
+    let root_guidance = run(
+        &main_checkout,
+        &[
+            "--state-dir",
+            state_dir.to_str().unwrap(),
+            "message",
+            "send",
+            "--from",
+            "main-two",
+            "--to",
+            "main-one",
+            "--category",
+            "handoff",
+            "--body-file",
+            forwarding_body.to_str().unwrap(),
+            "--capability-file",
+            &main_two_capability,
+            "--idempotency-key",
+            "resume-forward-root",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(root_guidance.code, 0, "{}", root_guidance.stdout_text());
+    let root_guidance_id = data(&root_guidance)["message_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let forwarded_guidance = run(
+        &main_checkout,
+        &[
+            "--state-dir",
+            state_dir.to_str().unwrap(),
+            "message",
+            "forward",
+            "--session",
+            "main-one",
+            "--message",
+            &root_guidance_id,
+            "--if-revision",
+            "1",
+            "--to",
+            "worker-one",
+            "--capability-file",
+            &main_capability,
+            "--idempotency-key",
+            "resume-forward-controller",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(
+        forwarded_guidance.code,
+        0,
+        "{}",
+        forwarded_guidance.stdout_text()
+    );
+    let forwarded_guidance_id = data(&forwarded_guidance)["message_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
     let continuity_body = tmp.path().join("resume-guidance.md");
     fs::write(
         &continuity_body,
@@ -16938,6 +17011,51 @@ fn main_agent_worker_bootstrap_acquires_claim_and_checkpoints_from_packet() {
         registry["brokers"]["worker-one"]["heartbeat_epoch"] = json!(now);
     });
     let resumed_capability_arg = resumed_capability_file.to_string_lossy().into_owned();
+    let unproven_id = uuid::Uuid::new_v4().to_string();
+    rewrite_registry(&state_dir, |registry| {
+        let messages = registry["messages"].as_array_mut().unwrap();
+        let mut unproven = messages
+            .iter()
+            .find(|m| m["message_id"] == forwarded_guidance_id)
+            .unwrap()
+            .clone();
+        unproven["message_id"] = json!(unproven_id);
+        unproven["recipient_incarnation"] = json!(resumed_incarnation);
+        unproven["state"] = json!("read");
+        unproven["forwarded_from_incarnation"] = json!("worker-incarnation-one");
+        unproven["forwarded_at_epoch"] = json!(now);
+        messages.push(unproven);
+    });
+    let unproven_forward = run(
+        &worker_checkout,
+        &[
+            "--state-dir",
+            state_dir.to_str().unwrap(),
+            "message",
+            "forward",
+            "--session",
+            "worker-one",
+            "--message",
+            &unproven_id,
+            "--if-revision",
+            "1",
+            "--to",
+            "forward-target",
+            "--capability-file",
+            &resumed_capability_arg,
+            "--idempotency-key",
+            "resume-forward-unproven",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(unproven_forward.code, 65);
+    assert_eq!(
+        unproven_forward.stdout_json()["error"]["code"],
+        "message-forward-invalid",
+        "changing recipient/old carry fields alone cannot prove a transfer"
+    );
+
     let resumed_args = [
         "--state-dir",
         state_dir.to_str().expect("state dir"),
@@ -17026,6 +17144,73 @@ fn main_agent_worker_bootstrap_acquires_claim_and_checkpoints_from_packet() {
         carried_guidance["revision"], 2,
         "the retained message identity advances exactly once"
     );
+    let carried_forward = resumed_registry["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["message_id"] == forwarded_guidance_id)
+        .unwrap();
+    assert_eq!(
+        carried_forward["recipient_incarnation"],
+        resumed_incarnation
+    );
+    assert_eq!(carried_forward["revision"], 2);
+    let resumed_forward = run(
+        &worker_checkout,
+        &[
+            "--state-dir",
+            state_dir.to_str().unwrap(),
+            "message",
+            "forward",
+            "--session",
+            "worker-one",
+            "--message",
+            &forwarded_guidance_id,
+            "--if-revision",
+            "2",
+            "--to",
+            "forward-target",
+            "--capability-file",
+            &resumed_capability_arg,
+            "--idempotency-key",
+            "resume-forward-after-authorized-carry",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(
+        resumed_forward.code,
+        0,
+        "supported carry must retain forwardable provenance: {}",
+        resumed_forward.stdout_text()
+    );
+    let audit = &data(&resumed_forward)["forwarding"];
+    assert_eq!(audit["original_message_id"], root_guidance_id);
+    assert_eq!(
+        audit["hops"][0]["recipient"]["session_incarnation"], "worker-incarnation-one",
+        "historical hop identity must not be rewritten"
+    );
+    assert_eq!(
+        audit["hops"][0]["recipient_transfers"][0]["from"]["session_incarnation"],
+        "worker-incarnation-one"
+    );
+    assert_eq!(
+        audit["hops"][0]["recipient_transfers"][0]["to"]["session_incarnation"],
+        resumed_incarnation
+    );
+    assert_eq!(
+        audit["hops"][0]["recipient_transfers"][0]["controller"]["session_id"],
+        "main-one"
+    );
+    assert_eq!(
+        audit["hops"][0]["recipient_transfers"][0]["message_id"],
+        forwarded_guidance_id
+    );
+    assert_eq!(
+        audit["hops"][1]["forwarder"]["session_incarnation"],
+        resumed_incarnation
+    );
+    assert_eq!(data(&resumed_forward)["category"], "handoff");
     for message_id in ["resume-guidance-expired", "resume-guidance-consumed"] {
         let untouched = resumed_registry["messages"]
             .as_array()

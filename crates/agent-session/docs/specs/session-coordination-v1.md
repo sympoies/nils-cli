@@ -1544,13 +1544,34 @@ and expiry epochs, body SHA-256, and `hops`. Each hop records
 `source_message_id`, `source_revision`, `forwarder`, `recipient` and
 `forwarded_at_epoch`. Original identity is provenance, not fresh end-to-end
 sender authentication. All forwarded content remains untrusted peer/service
-data; a forwarded service body stays `untrusted_service_data`. Replies target
+data; a forwarded service body stays `untrusted_service_data`. Remote ingress
+retains the authenticated envelope creation epoch separately from local inbox
+creation/ingress timestamps; a new forwarding root uses that source epoch.
+Existing stored remote messages without this optional clock retain their
+previously stored creation value. Replies target
 the immediate forwarder. Controller resume's existing
 `forwarded_from_incarnation`/`forwarded_at_epoch` fields remain separate.
 
 Forwarding rejects a destination matching the root sender/recipient or a prior
 hop participant by machine/session identity, including a replaced incarnation.
-Eight hops are the maximum. Ingress checks chain continuity, origin kind,
+Eight hops are the maximum. Supported local controller-authorized guidance
+carry records optional `recipient_transfers` on the existing hop, leaving the
+historical recipient unchanged. Each event retains the received copy's UUID,
+exact `from`/`to` addresses, controller address, source revision and transfer
+epoch. It changes only the incarnation of the same machine/session. The
+controller must equal that hop's forwarder and share the recipient machine;
+creation occurs under the existing broker check and controller authorization
+guard. Eight total transfers are allowed across all hops. Omitted or empty
+arrays mean no transfers; null and unknown event fields are rejected.
+
+Transfers continue exact hop identity and nondecreasing timestamps. Repeated
+transfers bind the same copy and strictly increasing revisions; the next hop
+binds that copy UUID, a newer revision and the exact transferred incarnation.
+The old carry metadata alone cannot authorize a transition. Transfers are
+historical forwarder-attested data and confer no new authority. Incoming
+transport requires an empty final-hop transfer array, preserving exact
+immediate sender/destination binding; only the local receiver can add an
+authorized carry before its next forwarding operation. Ingress checks chain continuity, origin kind,
 destination, body digest, expiry and bounds. Identical operation retries replay
 before looking up the source or discovering the destination; changed
 source/revision/destination/category-guard inputs conflict. A durable source
