@@ -747,6 +747,7 @@ fn refresh_admitted_once(
     expected: Option<&RetitleV3FenceInput>,
 ) -> Result<RetitleV3Response, CliError> {
     let observed = load_session_record(context, id)?;
+    crate::display_metadata::require_auto(&observed)?;
     let mut memory = memory_from_record(&observed)?;
     let existing_receipt = memory
         .receipts
@@ -1176,6 +1177,7 @@ pub(crate) fn claim_provider_inference(
 ) -> Result<ProviderClaim, CliError> {
     let mut authority = lock_exact_session_authority(context, id)?
         .ok_or_else(|| v3_error("session-not-found", "session does not exist"))?;
+    crate::display_metadata::require_auto(&authority.record)?;
     let mut memory = memory_from_record(&authority.record)?;
     let selected = selected_operation(&memory).map(|receipt| receipt.operation_hash.clone());
     let index = memory
@@ -1453,6 +1455,7 @@ pub(crate) fn commit_inference(
     let changed =
         authority.record.title != title || authority.record.title_state.as_ref() != Some(&state);
     if changed {
+        crate::display_metadata::require_auto(&authority.record)?;
         authority.record.title = title;
         authority.record.title_state = Some(state);
         authority.record.title_revision = authority
@@ -3727,6 +3730,39 @@ mod tests {
     use std::io::{BufWriter, Write};
     use std::path::{Path, PathBuf};
     use std::time::Instant;
+
+    #[test]
+    fn pinned_title_blocks_refresh_before_history_or_provider_work() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let mut record = fixture_record("pinned", Some("Operator title"));
+        record.extra.insert("title_mode".into(), json!("pinned"));
+        std::fs::create_dir_all(tmp.path().join("sessions/pinned")).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        let catalog = HistoryCatalog::new(
+            Vec::new(),
+            tmp.path().join("archives"),
+            tmp.path().join("stars"),
+        );
+        let error = refresh_admitted_once(
+            &context,
+            &catalog,
+            "pinned",
+            "operation",
+            "digest",
+            "automatic",
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "title-mode-pinned");
+        assert_eq!(
+            load_session_record(&context, "pinned").unwrap().title,
+            record.title
+        );
+    }
 
     fn message(id: &str, role: &str, text: &str, human_prompt: bool) -> HistoryMessage {
         HistoryMessage {

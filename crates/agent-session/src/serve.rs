@@ -1260,6 +1260,10 @@ fn router(state: Arc<ServeState>) -> Router {
         .route("/retitle/readiness", get(retitle_readiness_handler))
         .route("/clipboard/unwrap/v1", post(clipboard_unwrap_handler))
         .route("/sessions/{id}/retitle", post(session_retitle_handler))
+        .route(
+            "/sessions/{id}/display-metadata",
+            post(display_metadata_handler),
+        )
         .route("/retitle/v3/readiness", get(retitle_v3_readiness_handler))
         .route(
             "/sessions/{id}/retitle-v3/readiness",
@@ -2566,6 +2570,8 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "idempotency-key-conflict"
         | "idempotency-key-reused"
         | "retitle-turn-conflict"
+        | "display-revision-conflict"
+        | "title-mode-pinned"
         | "retitle-state-conflict"
         | "retitle-v3-state-conflict"
         | "retitle-v3-turn-conflict"
@@ -3442,6 +3448,8 @@ struct MaintenanceQuery {
 struct CreateBody {
     agent: String,
     #[serde(default)]
+    title_mode: crate::display_metadata::TitleMode,
+    #[serde(default)]
     coordination_mode: cli::CoordinationMode,
     agent_profile: Option<String>,
     cwd: Option<String>,
@@ -3857,6 +3865,39 @@ struct ClipboardCancellation(Arc<AtomicBool>);
 impl Drop for ClipboardCancellation {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+async fn display_metadata_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Result<Json<crate::display_metadata::Update>, JsonRejection>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(_) => {
+            return envelope_err(CliError::usage(
+                "invalid-json-body",
+                "display metadata request body is invalid",
+                None,
+            ));
+        }
+    };
+    let context = state.context.clone();
+    let tmux = state.tmux_bin.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::display_metadata::update(&context, &id, body)
+            .map(|record| crate::session_view(&context, &record, None, Some(&tmux)))
+    })
+    .await
+    {
+        Ok(Ok(session)) => envelope_ok(json!({"machine":state.machine,"session":session})),
+        Ok(Err(error)) => envelope_err(error),
+        Err(_) => join_err(),
     }
 }
 
@@ -4913,7 +4954,10 @@ impl AutomaticRetitleTracker {
 }
 
 fn automatic_retitle_candidate(session: &SessionView) -> Option<AutomaticRetitleCandidate> {
-    if session.status != "running" || session.provider_resume.is_none() {
+    if session.title_mode == crate::display_metadata::TitleMode::Pinned
+        || session.status != "running"
+        || session.provider_resume.is_none()
+    {
         return None;
     }
     let incarnation = session.session_incarnation.as_deref()?;
@@ -5494,6 +5538,7 @@ async fn history_resume_handler(
                 start_dsh_history_resume_session(
                     &context,
                     DshHistoryResumeArgs {
+                        title_mode: restored.title_mode,
                         provider_resume_id: history.provider_session_id,
                         cwd: PathBuf::from(history.cwd),
                         history_root: dsh_history.root.clone(),
@@ -5536,6 +5581,7 @@ async fn history_resume_handler(
                 start_provider_resume_session(
                     &context,
                     ProviderResumeImportArgs {
+                        title_mode: restored.title_mode,
                         agent,
                         provider_resume_id: history.provider_session_id,
                         title: history.title,
@@ -5575,6 +5621,7 @@ async fn history_resume_handler(
 
 /// Managed identity a history resume restores.
 struct RestoredHistoryIdentity {
+    title_mode: crate::display_metadata::TitleMode,
     /// The archived session id, when the archive recorded one and it is free.
     id: Option<String>,
     title_state: Option<crate::SessionTitleState>,
@@ -5608,7 +5655,11 @@ fn history_resume_identity(
         )
         .is_ok()
     });
-    Ok(RestoredHistoryIdentity { id, title_state })
+    Ok(RestoredHistoryIdentity {
+        id,
+        title_state,
+        title_mode: history.archived_title_mode,
+    })
 }
 
 fn live_managed_session_for_history(context: &CliContext, history_id: &str) -> Option<String> {
@@ -6762,6 +6813,7 @@ async fn create_handler(
             ));
         }
         let args = ProviderResumeImportArgs {
+            title_mode: body.title_mode,
             agent,
             provider_resume_id,
             title,
@@ -6840,6 +6892,11 @@ async fn create_handler(
         None
     };
     let args = cli::StartArgs {
+        title_mode: match body.title_mode {
+            crate::display_metadata::TitleMode::Auto => "auto",
+            crate::display_metadata::TitleMode::Pinned => "pinned",
+        }
+        .into(),
         app_server_managed: true,
         provider_stop_canary: false,
         provider_stop_canary_assignment_id: None,
@@ -20201,6 +20258,9 @@ esac
             &["resume", "resume-session-id"],
         );
         let mut record = load_session_record(&context, "archived-owner").unwrap();
+        record
+            .extra
+            .insert("title_mode".to_string(), json!("pinned"));
         record.title = Some("Saved topic - Saved activity".to_string());
         record.title_state = Some(
             serde_json::from_value(json!({
@@ -20231,6 +20291,10 @@ esac
         assert_eq!(archived.session_id.as_deref(), Some("archived-owner"));
         assert_eq!(archived.title.as_deref(), record.title.as_deref());
         assert_eq!(archived.title_state, record.title_state);
+        assert_eq!(
+            serde_json::to_value(&archived).unwrap()["title_mode"],
+            "pinned"
+        );
         let catalog = HistoryCatalog::new(
             vec![provider_history::HistorySource {
                 provider: "codex".to_string(),
@@ -20249,6 +20313,10 @@ esac
         let restored = history_resume_identity(&context, &history).unwrap();
         assert_eq!(restored.id.as_deref(), Some("archived-owner"));
         assert_eq!(restored.title_state, record.title_state);
+        assert_eq!(
+            restored.title_mode,
+            crate::display_metadata::TitleMode::Pinned
+        );
 
         // A title that no longer renders from its state keeps the title alone.
         let mut edited = history.clone();
@@ -20442,6 +20510,7 @@ esac
         provider_history::write_archive(
             &provider_history::archive_root(tmp.path()),
             &provider_history::ArchivedSession {
+                title_mode: crate::display_metadata::TitleMode::Pinned,
                 schema_version: "agent-session.history-archive.v1".to_string(),
                 history_id: id.clone(),
                 provider: "dsh".to_string(),
@@ -20472,6 +20541,7 @@ esac
         assert_eq!(status, StatusCode::OK, "body={body}");
         let managed_id = body["data"]["session"]["id"].as_str().unwrap();
         assert_eq!(managed_id, "kept-dsh");
+        assert_eq!(body["data"]["session"]["title_mode"], "pinned");
         assert_eq!(
             body["data"]["session"]["title"],
             "Kept topic - Kept activity"
@@ -20492,6 +20562,7 @@ esac
             .unwrap(),
         )
         .unwrap();
+        assert_eq!(record["title_mode"], "pinned");
         assert_eq!(record["provider_resume"]["provider"], "dsh");
         assert_eq!(record["provider_resume"]["session_id"], "dsh-one");
         assert_eq!(
@@ -20531,6 +20602,13 @@ esac
             state_dir: tmp.path().to_path_buf(),
             host: None,
         };
+        let restored_record = crate::load_session_record(&context, managed_id).unwrap();
+        assert_eq!(
+            crate::display_metadata::require_auto(&restored_record)
+                .unwrap_err()
+                .code(),
+            "title-mode-pinned"
+        );
         let error = crate::activity::ingest_event(&context, managed_id, mismatched)
             .expect_err("a resumed DSH runtime must reject another provider identity");
         assert_eq!(error.code(), "provider-session-id-mismatch");
@@ -27807,6 +27885,81 @@ esac
         assert!(
             !calls.contains("new-session"),
             "non-resumable sessions must not create tmux runtimes: {calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn display_metadata_is_exact_authenticated_fenced_and_persistent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        seed_session_with_runtime(tmp.path(), "display", "codex", "hs-display");
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let original = load_session_record(&st.context, "display").unwrap();
+        let original_title = original.title.clone();
+        for token in [None, Some(TOKEN)] {
+            let (status, body) = call(
+                router(st.clone()),
+                post_json("/sessions/display/display-metadata", token, json!({})),
+            )
+            .await;
+            assert_eq!(
+                status,
+                if token.is_none() {
+                    StatusCode::UNAUTHORIZED
+                } else {
+                    StatusCode::BAD_REQUEST
+                }
+            );
+            assert_eq!(body["schema_version"], "cli.agent-session.serve.v1");
+        }
+        let request = json!({"expected_session_created_at":"2000-01-01T00:00:00Z",
+            "expected_revision":0, "role":"reviewer", "title_mode":"pinned"});
+        let (status, _) = call(
+            router(st.clone()),
+            post_json("/sessions/display/display-metadata", None, request.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions/display/display-metadata",
+                Some(TOKEN),
+                request.clone(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["session"]["role"], "reviewer");
+        assert_eq!(body["data"]["session"]["title_mode"], "pinned");
+        assert_eq!(body["data"]["session"]["display_revision"], 1);
+        let record = load_session_record(&st.context, "display").unwrap();
+        assert_eq!(record.extra["title_mode"], "pinned");
+        assert_eq!(record.title_revision, original.title_revision + 1);
+        assert_eq!(record.runtime.as_ref().unwrap().launch_id, "launch-display");
+        let (status, _) = call(
+            router(st.clone()),
+            post_json("/sessions/display/display-metadata", Some(TOKEN), request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _) = call(router(st.clone()), post_json("/sessions/dis/display-metadata", Some(TOKEN), json!({"expected_session_created_at":"2000-01-01T00:00:00Z", "expected_revision":1,"title_mode":"auto"}))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, body) = call(router(st.clone()), post_json("/sessions/display/display-metadata", Some(TOKEN), json!({"expected_session_created_at":"2000-01-01T00:00:00Z", "expected_revision":1,"title_mode":"auto"}))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["session"]["title_mode"], "auto");
+        assert_eq!(body["data"]["session"]["role"], "reviewer");
+        let record = load_session_record(&st.context, "display").unwrap();
+        assert_eq!(record.title_revision, original.title_revision + 2);
+        let (status, body) = call(router(st.clone()), post_json("/sessions/display/retitle", Some(TOKEN), json!({
+            "schema_version":"agent-session.session-retitle.request.v2", "trigger":"manual",
+            "idempotency_key":"stale-display-mode-request", "expected_session_incarnation":"launch-display",
+            "expected_title_revision":original.title_revision
+        }))).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "title-revision-conflict");
+        assert_eq!(
+            load_session_record(&st.context, "display").unwrap().title,
+            original_title
         );
     }
 

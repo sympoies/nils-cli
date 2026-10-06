@@ -289,6 +289,10 @@ pub struct StartArgs {
     #[arg(long, value_name = "ROLE")]
     pub role: Option<String>,
 
+    /// Automatic provider titles or an operator-pinned title (default: auto).
+    #[arg(long, default_value = "auto", value_parser = ["auto", "pinned"])]
+    pub title_mode: String,
+
     /// Operator-only configured initiator for forge identity binding. Managed children inherit it.
     #[arg(long, value_name = "ID", conflicts_with = "via_console")]
     pub forge_initiator: Option<String>,

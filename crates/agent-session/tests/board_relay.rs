@@ -915,6 +915,48 @@ fn an_unreachable_daemon_is_an_error_not_a_local_view() {
 }
 
 #[test]
+fn console_start_confirms_pinned_mode_without_retrying_a_created_session() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let _serve = fixture.serve(&[], Some(&aggregator));
+    for mode in [None, Some("auto"), Some("pinned")] {
+        let mut child = json!({"id":"created-child", "agent":"claude"});
+        if let Some(mode) = mode {
+            child["title_mode"] = json!(mode);
+            child["display_revision"] = json!(0);
+        }
+        aggregator.reply_json(201, &json!({"ok":true,"data":{"session":child}}));
+        let output = fixture.start_via_console(
+            &[
+                "--agent",
+                "claude",
+                "--title-mode",
+                "pinned",
+                "--format",
+                "json",
+            ],
+            true,
+        );
+        let body = output.stdout_json();
+        if mode == Some("pinned") {
+            assert_eq!(output.code, 0, "{body}");
+            assert_eq!(body["data"]["session"]["title_mode"], "pinned");
+        } else {
+            assert_ne!(output.code, 0, "{body}");
+            assert_eq!(body["error"]["code"], "title-mode-unconfirmed");
+            assert_eq!(
+                body["error"]["details"]["created_session_id"],
+                "created-child"
+            );
+            assert_eq!(body["error"]["details"]["safe_to_retry"], false);
+        }
+    }
+    for request in aggregator.seen() {
+        assert_eq!(request.body.unwrap()["session"]["title_mode"], "pinned");
+    }
+}
+
+#[test]
 fn console_start_creates_the_child_through_the_aggregator_as_the_calling_session() {
     let fixture = Fixture::new();
     let aggregator = Aggregator::start();

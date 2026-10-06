@@ -3080,6 +3080,7 @@ fn validate_fences(
     record: &SessionRecord,
     request: &RetitleRequest,
 ) -> Result<(), CliError> {
+    crate::display_metadata::require_auto(record)?;
     validate_incarnation(record, request)?;
     validate_title_revision(record, request)?;
     if request.trigger.is_automatic() {
@@ -4914,6 +4915,14 @@ esac
             expected_provider_turn_id: Some("turn-a".into()),
         };
 
+        let mut pinned = record.clone();
+        pinned.extra.insert("title_mode".into(), json!("pinned"));
+        assert_eq!(
+            validate_fences(&context, &pinned, &request)
+                .unwrap_err()
+                .code(),
+            "title-mode-pinned"
+        );
         validate_fences(&context, &record, &request).expect("initial fence");
         write_activity(2, Some("turn-a"), None);
         validate_fences(&context, &record, &request)

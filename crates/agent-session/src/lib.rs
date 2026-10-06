@@ -17,6 +17,7 @@ pub mod completion;
 #[doc(hidden)]
 pub mod coordination;
 mod diagnose;
+mod display_metadata;
 #[doc(hidden)]
 pub mod dsh_external;
 mod forge_identity;
@@ -693,6 +694,9 @@ fn start_via_console(
 ) -> Result<Value, CliError> {
     let cwd = absolute_path(args.cwd.as_deref().unwrap_or(Path::new(".")))?;
     let mut session = json!({ "agent": args.agent.as_str(), "cwd": cwd.to_string_lossy() });
+    if args.title_mode == "pinned" {
+        session["title_mode"] = json!(args.title_mode);
+    }
     if let Some(title) = &args.title {
         session["title"] = json!(title);
     }
@@ -1837,6 +1841,8 @@ pub struct SessionView {
     title_state: Option<SessionTitleStateView>,
     title_state_supported: bool,
     title_revision: u64,
+    title_mode: display_metadata::TitleMode,
+    display_revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     retitle_attempt: Option<retitle::RetitleAttemptObservation>,
     #[serde(skip)]
@@ -1910,6 +1916,7 @@ pub struct StartView {
 
 pub(crate) struct ProviderResumeImportArgs {
     pub(crate) agent: AgentKind,
+    pub(crate) title_mode: display_metadata::TitleMode,
     pub(crate) provider_resume_id: String,
     pub(crate) title: Option<String>,
     pub(crate) title_state: Option<SessionTitleState>,
@@ -1928,6 +1935,7 @@ pub(crate) struct ProviderResumeImportArgs {
 }
 
 pub(crate) struct DshHistoryResumeArgs {
+    pub(crate) title_mode: display_metadata::TitleMode,
     pub(crate) provider_resume_id: String,
     pub(crate) cwd: PathBuf,
     pub(crate) history_root: PathBuf,
@@ -2369,6 +2377,10 @@ fn start_session_inner(
         create_guard,
         args.initial_lineage,
     )?;
+    created
+        .record
+        .extra
+        .insert("title_mode".into(), json!(args.title_mode));
     persist_initial_profile_context(
         context,
         &mut created,
@@ -2926,6 +2938,7 @@ pub(crate) fn start_dsh_history_resume_session(
     };
     let start_args = ProviderResumeImportArgs {
         agent: AgentKind::Dsh,
+        title_mode: args.title_mode,
         provider_resume_id,
         title: args.title,
         title_state: args.title_state,
@@ -2974,6 +2987,10 @@ fn start_resolved_provider_resume_session(
         Some(initial_lineage),
     )?;
 
+    created
+        .record
+        .extra
+        .insert("title_mode".into(), json!(args.title_mode));
     persist_initial_profile_context(
         context,
         &mut created,
@@ -12950,6 +12967,8 @@ fn session_view_from_parts(
         title_state: effective_session_title_state(record),
         title_state_supported: true,
         title_revision: record.title_revision,
+        title_mode: display_metadata::title_mode(record),
+        display_revision: display_metadata::revision(record),
         retitle_attempt: retitle::latest_attempt_observation(record),
         retitle_v3_memory_revision: retitle_v3::memory_revision(record),
         session_incarnation: record
@@ -13489,6 +13508,7 @@ fn prepare_session_archive(
     })?;
     let agent_profile = session_agent_profile(record).map(str::to_string);
     let archive = provider_history::ArchivedSession {
+        title_mode: display_metadata::title_mode(record),
         schema_version: "agent-session.history-archive.v1".to_string(),
         history_id: provider_history::stable_history_id(
             &provider_resume.provider,
