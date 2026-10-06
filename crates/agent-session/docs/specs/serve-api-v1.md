@@ -1013,7 +1013,10 @@ synthetic fixtures under `tests/fixtures/usage-v1/` pin that projection.
   absence means unknown, not zero. Window labels must be `Weekly` or a
   provider duration such as `5h`, from which `key` and `window_minutes` are
   derived. An account the helper reports as failed is `ok: false` with a
-  fixed `error` text and its `reason_code`. That run also refreshes the
+  fixed `error` text and its `reason_code` (`unknown` when unclassified).
+  Account results are preserved even if the aggregate helper `ok` is false or
+  its exit status is nonzero; each failure affects only that account. A valid
+  all-failed account list also stays per-account. That run also refreshes the
   shared rate-limit cache that `codex-cli account select` reads, so an account
   selection within the cache TTL does no provider fetch.
 - Claude contributes one entry (`account: null`) from

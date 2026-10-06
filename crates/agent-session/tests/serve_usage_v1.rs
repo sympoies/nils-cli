@@ -373,6 +373,48 @@ fn usage_v1_projects_provider_clis_into_the_edge_contract() {
 }
 
 #[test]
+fn usage_v1_keeps_healthy_codex_and_claude_when_other_accounts_fail() {
+    let (tmp, stubs) = setup();
+    let mut diag = fixture("codex-diag-all.json");
+    diag["ok"] = json!(false);
+    diag["results"].as_array_mut().unwrap().extend([
+        json!({"name":"unpaid", "ok":false, "status":"error", "reason_code":"billing_past_due", "error":{"message":"SECRET-MARKER"}}),
+        json!({"name":"expired", "ok":false, "status":"error", "error":{"details":{"reason_code":"auth_expired"}}}),
+        json!({"name":"disabled", "ok":false, "status":"error", "reason_code":"organization_disabled"}),
+        json!({"name":"unknown", "ok":false, "status":"error"}),
+    ]);
+    stubs.answer("codex-diag", &diag, 1);
+    let serve = Serve::spawn(tmp.path(), &stubs, &[]);
+    let body = serve.usage("/usage/v1");
+    let entries = body["data"]["usage"]["providers"].as_array().unwrap();
+    let alpha = entries
+        .iter()
+        .find(|entry| entry["account"] == "alpha")
+        .expect("healthy Codex account");
+    assert_eq!(alpha["ok"], true);
+    assert_eq!(alpha["windows"].as_array().unwrap().len(), 2);
+    assert!(alpha["windows"][0]["resets_at"].is_number());
+    assert!(entries.iter().any(|entry| entry["provider"] == "claude"
+        && entry["ok"] == true
+        && !entry["windows"].as_array().unwrap().is_empty()));
+    for (name, reason) in [
+        ("unpaid", "billing_past_due"),
+        ("expired", "auth_expired"),
+        ("disabled", "organization_disabled"),
+        ("unknown", "unknown"),
+    ] {
+        let entry = entries
+            .iter()
+            .find(|entry| entry["account"] == name)
+            .expect("failed account");
+        assert_eq!(entry["ok"], false);
+        assert_eq!(entry["reason_code"], reason);
+        assert_eq!(entry["windows"], json!([]));
+    }
+    assert!(!body.to_string().contains("SECRET-MARKER"));
+}
+
+#[test]
 fn usage_v1_reports_fixed_reason_codes_when_a_provider_is_unavailable() {
     let (tmp, stubs) = setup();
     stubs.answer("codex-diag", &fixture("codex-diag-failed.json"), 1);

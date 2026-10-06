@@ -619,13 +619,10 @@ fn codex_entry(result: &Value, updated_at: i64) -> Option<Entry> {
     let ok = result.get("ok").and_then(Value::as_bool) == Some(true)
         && result.get("status").and_then(Value::as_str) == Some("ok");
     if !ok {
-        let reason = helper_reason(result);
+        let reason = helper_reason(result).unwrap_or(ProviderUsageReason::Unknown);
         entry.ok = false;
-        entry.reason = reason;
-        entry.error = Some(reason_message(
-            Provider::Codex,
-            reason.unwrap_or(ProviderUsageReason::ServiceUnavailable),
-        ));
+        entry.reason = Some(reason);
+        entry.error = Some(reason_message(Provider::Codex, reason));
         return Some(entry);
     }
     entry.windows = codex_windows(result);
@@ -646,11 +643,8 @@ fn parse_codex(output: &HelperOutput, now: i64) -> Refresh {
     let Ok(value) = serde_json::from_slice::<Value>(&output.stdout) else {
         return Refresh::Failed(ProviderUsageReason::ServiceUnavailable);
     };
-    if value.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Refresh::Failed(
-            helper_reason(&value).unwrap_or(ProviderUsageReason::ServiceUnavailable),
-        );
-    }
+    // --all sets aggregate ok=false (and exits nonzero) if any account fails.
+    // The account results remain authoritative even when every account failed.
     let entries: Vec<Entry> = value
         .get("results")
         .and_then(Value::as_array)
@@ -660,7 +654,9 @@ fn parse_codex(output: &HelperOutput, now: i64) -> Refresh {
         .take(MAX_ACCOUNTS)
         .collect();
     if entries.is_empty() {
-        return Refresh::Failed(ProviderUsageReason::ServiceUnavailable);
+        return Refresh::Failed(
+            helper_reason(&value).unwrap_or(ProviderUsageReason::ServiceUnavailable),
+        );
     }
     Refresh::Completed(entries)
 }
@@ -1548,6 +1544,50 @@ fn parse_claude_reset_output(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn codex_partial_and_all_failed_results_keep_each_account() {
+        for healthy in [true, false] {
+            let mut results = vec![
+                json!({"name":"unpaid", "ok":false, "status":"error", "reason_code":"billing_past_due", "error":{"message":"SECRET-MARKER"}}),
+                json!({"name":"expired", "ok":false, "status":"error", "error":{"details":{"reason_code":"auth_expired"}}}),
+                json!({"name":"unknown", "ok":false, "status":"error", "error":{"message":"SECRET-MARKER"}}),
+            ];
+            if healthy {
+                results.push(json!({"name":"paid", "ok":true, "status":"ok", "windows":[
+                    {"label":"5h", "used_percent":20, "reset_at_epoch":2000000100},
+                    {"label":"Weekly", "used_percent":40, "reset_at_epoch":2000000200}
+                ]}));
+            }
+            let output = HelperOutput {
+                status: Some(1),
+                stdout: serde_json::to_vec(&json!({"ok":false,"results":results})).unwrap(),
+            };
+            let Refresh::Completed(entries) = parse_codex(&output, 2_000_000_000) else {
+                panic!("per-account results discarded");
+            };
+            assert_eq!(entries.len(), if healthy { 4 } else { 3 });
+            assert_eq!(entries[0].account.as_deref(), Some("unpaid"));
+            assert_eq!(entries[0].reason, Some(ProviderUsageReason::BillingPastDue));
+            assert_eq!(entries[1].reason, Some(ProviderUsageReason::AuthExpired));
+            assert_eq!(entries[2].reason, Some(ProviderUsageReason::Unknown));
+            assert!(
+                entries[..3]
+                    .iter()
+                    .all(|entry| !entry.ok && entry.windows.is_empty())
+            );
+            if healthy {
+                assert!(entries[3].ok);
+                assert_eq!(entries[3].windows[0]["resets_at"], 2000000100);
+                assert_eq!(entries[3].windows[1]["used_percent"], 40);
+            }
+            assert!(
+                !serde_json::to_string(&entries.iter().map(Entry::to_json).collect::<Vec<_>>())
+                    .unwrap()
+                    .contains("SECRET-MARKER")
+            );
+        }
+    }
 
     #[test]
     fn nickname_and_uuid_grammars_are_strict() {
