@@ -1158,6 +1158,16 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   paths, which has no fixed spelling and is indistinguishable from a legitimate
   citation of those same files. Rejecting it here would need a heuristic; the
   renderer refusing to emit it is the durable fix.
+- GitHub specialist reports with a selected PR must use a `Reviewable` value
+  of `PR #<number>`, `#<number>`, `<repository>#<number>`, or the canonical PR URL.
+  Each form may be followed by a space and `at <full commit SHA>` (40 hexadecimal
+  digits).
+  Offline `pr review validate` checks the reference and SHA syntax; publication
+  with `--expected-head` also requires the qualifier to match that head, and
+  designated-review admission requires it to match the native review's current
+  head. Abbreviated SHAs, extra text, other PRs, and other repositories fail
+  with `reviewable_mismatch` before publication. Admission retains its
+  `awaiting_designated_review` error with the rejected review ID and field.
 - `--metadata-only --expected-head <sha> --native-review-url <url>
   --native-review-author <login>`
   (GitHub-only) records concise

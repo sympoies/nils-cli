@@ -118,7 +118,11 @@ fn fixture_with_native(
             json!({
                 "author":{"login":"review-app[bot]"}, "authorAssociation":"OWNER",
                 "body":review_state::render_state_comment_body(r, None).unwrap(),
-                "createdAt":"2026-07-20T12:00:00Z"
+                "createdAt": if matches!(r.payload, ReviewStatePayload::ReviewHandoff { .. }) {
+                    "2026-07-20T12:00:00Z"
+                } else {
+                    "2026-07-20T12:00:03Z"
+                }
             })
         })
         .collect();
@@ -2732,4 +2736,61 @@ fn rejected_published_reviewable_names_review_and_field() {
     let error = env["error"].to_string();
     assert!(error.contains("Reviewable"), "{error}");
     assert!(error.contains("REVIEW_1"), "{error}");
+}
+
+#[test]
+fn exact_head_qualified_reviewable_admits_app_approval_in_either_observation_order() {
+    for reference in [
+        "PR #7",
+        "#7",
+        "acme/widgets#7",
+        "https://github.com/acme/widgets/pull/7",
+    ] {
+        for submitted_at in ["2026-07-20T12:00:02Z", "2026-07-20T12:00:04Z"] {
+            let (mut graphql, mut rest) = app_review_pair();
+            let body = graphql["body"].as_str().unwrap().replace(
+                "Reviewable: PR #7",
+                &format!("Reviewable: {reference} at {HEAD}"),
+            );
+            graphql["body"] = json!(body);
+            graphql["submittedAt"] = json!(submitted_at);
+            rest["body"] = graphql["body"].clone();
+            let stub = fixture_with_native(
+                HEAD,
+                &records(handoff(None), Some(HEAD)),
+                vec![graphql],
+                Some(rest),
+            );
+            let out = check(&stub, HEAD);
+            assert_eq!(out.code, 0, "{reference}: {} {}", out.stdout, out.stderr);
+            assert_eq!(parse_envelope(&out.stdout)["data"]["status"], "reviewed");
+        }
+    }
+}
+
+#[test]
+fn qualified_reviewable_must_name_the_native_review_head() {
+    for reference in [
+        format!("PR #7 at {OLD}"),
+        format!("PR #8 at {HEAD}"),
+        format!("acme/other#7 at {HEAD}"),
+        format!("PR #7 at {HEAD} extra"),
+        "PR #7 at aaaaaaa".into(),
+    ] {
+        let (mut graphql, mut rest) = app_review_pair();
+        graphql["body"] = json!(
+            graphql["body"]
+                .as_str()
+                .unwrap()
+                .replace("Reviewable: PR #7", &format!("Reviewable: {reference}"),)
+        );
+        rest["body"] = graphql["body"].clone();
+        let stub = fixture_with_native(
+            HEAD,
+            &records(handoff(None), Some(HEAD)),
+            vec![graphql],
+            Some(rest),
+        );
+        assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+    }
 }

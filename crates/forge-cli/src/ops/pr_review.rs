@@ -472,7 +472,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         if ctx.provider == Provider::GitHub {
             let (owner, name) = github_owner_name(&ctx)?;
             let url = format!("https://{}/{owner}/{name}/pull/{id}", ctx.host);
-            validate_reviewable(&body, &ctx, id, &url)?;
+            validate_reviewable(&body, &ctx, id, &url, args.expected_head.as_deref())?;
         }
     }
 
@@ -950,7 +950,7 @@ fn run_validate_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                 .as_ref()
                 .map(|repo| format!("https://{}/{repo}/pull/{id}", ctx.host))
                 .unwrap_or_default();
-            validate_reviewable(&body, &ctx, id, &url)?;
+            validate_reviewable(&body, &ctx, id, &url, None)?;
         }
     }
 
@@ -3419,28 +3419,42 @@ pub(crate) fn validate_reviewable(
     ctx: &ProviderContext,
     number: u64,
     url: &str,
+    expected_head: Option<&str>,
 ) -> Result<(), ForgeError> {
     let values = body
         .lines()
         .filter_map(|line| line.trim().strip_prefix("- Reviewable:").map(str::trim))
         .collect::<Vec<_>>();
-    if values.len() == 1
-        && ((!url.is_empty() && values[0] == url)
-            || values[0] == format!("PR #{number}")
-            || values[0] == format!("#{number}")
-            || ctx
-                .repo
-                .as_ref()
-                .is_some_and(|repo| values[0] == format!("{repo}#{number}")))
-    {
-        return Ok(());
+    if let [value] = values.as_slice() {
+        // Offline validation can check syntax; publication and admission also
+        // bind the optional full SHA to their independently guarded head.
+        let (reference, head_matches) = match value.split_once(" at ") {
+            Some((reference, sha)) => (
+                reference,
+                sha.len() == 40
+                    && sha.bytes().all(|b| b.is_ascii_hexdigit())
+                    && expected_head.is_none_or(|head| sha.eq_ignore_ascii_case(head)),
+            ),
+            None => (*value, true),
+        };
+        if head_matches
+            && ((!url.is_empty() && reference == url)
+                || reference == format!("PR #{number}")
+                || reference == format!("#{number}")
+                || ctx
+                    .repo
+                    .as_ref()
+                    .is_some_and(|repo| reference == format!("{repo}#{number}")))
+        {
+            return Ok(());
+        }
     }
     Err(ForgeError::validation(
         schema_err(),
         "reviewable_mismatch",
         "specialist report Reviewable field does not identify the selected pull request",
         Some(format!(
-            "field=Reviewable; expected_pr={number}; accepted=PR #{number}, #{number}, repository#{number}, or the pull request URL"
+            "field=Reviewable; expected_pr={number}; accepted=PR #{number}, #{number}, repository#{number}, or the pull request URL, optionally followed by at <full commit SHA> matching the expected head"
         )),
     ))
 }
