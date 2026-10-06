@@ -509,26 +509,18 @@ fn install_into_staging(
         app_binary_sha256,
     };
     let old_current = read_receipt(&paths.current_receipt())?;
-    reconcile_apps(paths, lock, true)?;
     if let Some(old) = old_current.as_ref()
         && old.tag != new_receipt.tag
     {
         let outgoing = verify_transition_runtime(paths, lock, old, strict)?;
         retire_transition_daemons(&outgoing)?;
     }
+    // Persist recovery authority before retiring the accepted app. All outgoing
+    // runtime validation and daemon retirement have already succeeded.
     write_receipt(&paths.pending_receipt(), &new_receipt)?;
+    reconcile_apps(paths, lock, true)?;
     replace_stable_app(paths, &new_receipt)?;
-    replace_stable_cli(paths, lock, &new_receipt, strict)?;
-    if let Some(old) = old_current.as_ref()
-        && old.tag != new_receipt.tag
-    {
-        write_receipt(&paths.previous_receipt(), old)?;
-    }
-    write_receipt(&paths.current_receipt(), &new_receipt)?;
-    fs::remove_file(paths.pending_receipt())
-        .map_err(|_| backend_error("failed to finalize backend activation receipt"))?;
-    reconcile_apps(paths, lock, false)?;
-    Ok(())
+    recover_pending(paths, lock, strict)
 }
 
 fn recover_pending(
@@ -624,6 +616,11 @@ fn finalize_pending(
     strict: bool,
 ) -> Result<(), CliError> {
     replace_stable_cli(paths, lock, pending, strict)?;
+    reconcile_apps(paths, lock, false).map_err(|error| {
+        error.with_hint(
+            "activation remains pending; retry the same backend operation to recover the target",
+        )
+    })?;
     if let Some(current) = current
         && current.tag != pending.tag
     {
@@ -661,7 +658,6 @@ pub fn verify(strict: bool) -> Result<VerificationReport, CliError> {
         replace_stable_cli(&paths, &lock, &receipt, strict)?;
     }
     let report = verify_unlocked(strict, &lock, &paths)?;
-    reconcile_apps(&paths, &lock, true)?;
     reconcile_apps(&paths, &lock, false)?;
     Ok(report)
 }
@@ -1032,6 +1028,15 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
             LifecycleLockMode::Exclusive
         },
     )?;
+    if paths.pending_receipt().exists() {
+        if dry_run {
+            return Err(backend_error(
+                "an interrupted backend activation requires a non-dry-run recovery",
+            ));
+        }
+        recover_pending(&paths, &lock, strict)?;
+        return status_unlocked(&lock, &paths, false, strict);
+    }
     let current = read_receipt(&paths.current_receipt())?
         .ok_or_else(|| backend_error("no current backend receipt exists"))?;
     let previous = read_receipt(&paths.previous_receipt())?
@@ -1062,14 +1067,13 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
             dry_run: true,
         });
     }
-    reconcile_apps(&paths, &lock, true)?;
     retire_transition_daemons(&outgoing)?;
     write_receipt(&paths.pending_receipt(), &previous)?;
+    reconcile_apps(&paths, &lock, true)?;
     if !stable_app_matches(&paths, &previous)? {
         replace_stable_app(&paths, &previous)?;
     }
     recover_pending(&paths, &lock, strict)?;
-    reconcile_apps(&paths, &lock, false)?;
     status_unlocked(&lock, &paths, false, strict)
 }
 
@@ -1103,7 +1107,6 @@ pub fn prune(dry_run: bool, strict: bool) -> Result<PruneReport, CliError> {
         .ok_or_else(|| backend_error("the accepted backend receipt is unavailable"))?;
     let mut retained = BTreeSet::from([current.tag]);
     if let Some(previous) = read_receipt(&paths.previous_receipt())? {
-        release_contract_for_receipt(&lock, &previous)?;
         verify_transition_receipt(&paths, &lock, &previous, strict)?;
         retained.insert(previous.tag);
     }
@@ -1144,6 +1147,8 @@ pub fn prune(dry_run: bool, strict: bool) -> Result<PruneReport, CliError> {
             if output.timed_out
                 || output.signal.is_some()
                 || output.stdout_truncated
+                || output.stderr_truncated
+                || !output.stderr.is_empty()
                 || !output.stdout.is_empty()
                 || output.exit_code != 1
             {

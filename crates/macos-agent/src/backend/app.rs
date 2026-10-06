@@ -126,6 +126,12 @@ pub(super) fn reconcile(
             "ensure-single-app"
         })
         .map_err(|_| CliError::backend("failed to record app lifecycle test action"))?;
+        if !retire_all
+            && std::env::var("NILS_MACOS_AGENT_TEST_PROBE_MODE").as_deref()
+                == Ok("app_launch_failed")
+        {
+            return Err(CliError::backend("the stable backend app did not start"));
+        }
         return Ok(());
     }
     let apps = run_script(LIST, bundle, None)?;

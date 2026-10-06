@@ -119,12 +119,13 @@ pub fn prepare_runtime(
     binary: &VerifiedBackend,
 ) -> Result<RuntimeBinding, CliError> {
     prepare_runtime_binding(runtime, binary).map_err(|error| {
-        RuntimeBinding::for_mode(runtime, binary.runtime_identity())
+        if let Some(message) = RuntimeBinding::for_mode(runtime, binary.runtime_identity())
             .permission_diagnostic(binary.path())
-            .map(|message| {
-                CliError::permission(message).with_operation(error.operation().unwrap_or("runtime"))
-            })
-            .unwrap_or(error)
+        {
+            error.with_hint(message)
+        } else {
+            error
+        }
     })
 }
 
