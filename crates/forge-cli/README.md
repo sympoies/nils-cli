@@ -185,6 +185,16 @@ ran still blocks. `pr deliver` has no freeze bypass; a freeze holder merges with
 `pr merge --allow-merge-freeze`. A GitHub Enterprise Server whose schema has no
 merge queue is treated as queueless, and only its freeze list is read.
 
+PR/MR labels `state::do-not-merge`, `do-not-merge`, and `control::hold` block
+both direct merge and queue enqueue with `pr_hold_active`, independently of
+repository freezes. Only authorized label removal lifts a hold; new heads and
+freeze overrides do not. Labels are read completely from the provider on entry
+and immediately before merge/enqueue. Read failures block with
+`pr_hold_labels_unavailable`. Add custom names through `[merge].hold_labels`
+in repository or user-global config; the compatibility defaults always apply.
+The current provider base configuration is also read fresh at both gates,
+so a PR head cannot remove its configured hold names.
+
 When the base branch requires a merge queue, `pr merge` still runs every gate.
 It then enqueues the verified head with `enqueuePullRequest` instead of calling
 the direct merge API, and waits for the queue to land it, bounded by

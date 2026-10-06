@@ -279,6 +279,24 @@ impl ForgeError {
                 "next_action": if self.kind() == "review_coordinator_live" { "return_to_coordinator" } else { "refresh_session_evidence" },
                 "recovery": { "reason": "coordinator-retired", "requires_exact_head_base_tip": true }
             }))
+        } else if self.kind() == "pr_hold_active" {
+            envelope_error.with_details(serde_json::json!({
+                "retryable": false,
+                "next_action": "request_hold_release",
+                "recovery": { "label": self.detail(), "requires_authorized_removal": true }
+            }))
+        } else if self.kind() == "pr_hold_labels_unavailable" {
+            envelope_error.with_details(serde_json::json!({
+                "retryable": true,
+                "next_action": "refresh_hold_labels",
+                "recovery": { "requires_complete_fresh_read": true }
+            }))
+        } else if self.kind() == "invalid_hold_labels_config" {
+            envelope_error.with_details(serde_json::json!({
+                "retryable": false,
+                "next_action": "fix_hold_labels_config",
+                "recovery": { "config_key": "merge.hold_labels" }
+            }))
         } else {
             match self.detail() {
                 Some(detail) => {

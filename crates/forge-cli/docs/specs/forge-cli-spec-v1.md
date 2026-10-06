@@ -1849,6 +1849,27 @@ backend implementations cannot diverge.
     Enforced by `pr merge` and the `pr deliver` merge step. `pr deliver` has no
     freeze bypass; a freeze holder merges with `pr merge --allow-merge-freeze`.
 
+19. **PR/MR hold labels.** Independently of repository freezes, direct merge
+    and merge-queue enqueue refuse `state::do-not-merge`, `do-not-merge`, and
+    `control::hold` with `pr_hold_active` (`DATA 65`). The error names the
+    matched label and requests removal by the maintainer or authorized hold
+    owner after the release conditions are satisfied. A new head does not lift
+    a hold. There is no command-line bypass; freeze overrides do not waive it.
+    Both the initial gate and the final pre-mutation gate read current labels
+    from the provider with no cache. GitHub reads every REST label page; GitLab
+    reads the MR's label array. Failed, missing, or malformed reads refuse the
+    operation with `pr_hold_labels_unavailable` (`UNAVAILABLE 69`). Provider
+    permissions/protection remain the enforcement layer for changes racing the
+    final read and mutation; this gate does not remove already queued entries.
+    `[merge].hold_labels` configures additional names; global and repository
+    lists are combined with the three compatibility defaults, which cannot be
+    removed. The current provider base branch
+    configuration is read fresh at both gates and also applies, including
+    cross-repository targets; a PR head cannot remove its configured holds.
+    Unavailable or malformed base policy reads fail closed. Invalid entries fail with `invalid_hold_labels_config` (`DATA 65`).
+    Error details include typed `retryable`, `next_action`, and `recovery` fields;
+    callers must branch on those fields and the error code, not message text.
+
 Violations map to `DATA 65` with one of these `data.error.kind` values:
 
 | `error.kind`                               | Triggered by rule     |
@@ -1896,6 +1917,9 @@ Violations map to `DATA 65` with one of these `data.error.kind` values:
 | `keep_branch_conflict`                     | 10                    |
 | `local_path_present`                       | 11                    |
 | `agent_attribution_present`                | 17                    |
+| `pr_hold_active`                           | 19                    |
+| `invalid_hold_labels_config`               | 19                    |
+| `pr_hold_labels_unavailable`               | 19 (`UNAVAILABLE 69`) |
 | `merge_freeze_active`                      | 18                    |
 | `merge_freeze_not_active`                  | 18                    |
 | `merge_freeze_ambiguous`                   | 18                    |
@@ -2106,6 +2130,7 @@ Per-repo overrides live in `.forge-cli.toml` at the repo root:
 [merge]
 method = "squash"            # squash | merge | rebase
 delete_branch = true
+hold_labels = []           # additional names; compatibility defaults always apply
 
 [body]
 summary_heading = "## Summary"

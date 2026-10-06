@@ -51,7 +51,7 @@ const KNOWN_SECTIONS: &[&str] = &[
 ];
 
 /// Recognised keys per section.
-const KNOWN_MERGE_KEYS: &[&str] = &["method", "delete_branch"];
+const KNOWN_MERGE_KEYS: &[&str] = &["method", "delete_branch", "hold_labels"];
 const KNOWN_BODY_KEYS: &[&str] = &["summary_heading", "test_plan_heading"];
 const KNOWN_BRANCH_KEYS: &[&str] = &["feature_prefix", "bug_prefix"];
 const KNOWN_TEST_FIRST_KEYS: &[&str] = &["require"];
@@ -173,6 +173,8 @@ where
 pub struct ForgeConfig {
     pub merge_method: Option<MergeMethod>,
     pub merge_delete_branch: Option<bool>,
+    /// Additional hold labels; compatibility defaults cannot be removed.
+    pub merge_hold_labels: Vec<String>,
     pub body_summary_heading: Option<String>,
     pub body_test_plan_heading: Option<String>,
     pub branch_feature_prefix: Option<String>,
@@ -216,6 +218,11 @@ pub struct ForgeConfig {
 }
 
 impl ForgeConfig {
+    /// Parse provider-owned configuration without filesystem fallback.
+    pub(crate) fn parse_content(contents: &str) -> Result<Self, toml::de::Error> {
+        toml::from_str::<Value>(contents).map(|value| parse_value(&value))
+    }
+
     /// Search upward from `start_dir` (inclusive) for `.forge-cli.toml`,
     /// stopping at `git_toplevel` (inclusive). Both paths must be absolute.
     /// If `git_toplevel` is `None`, the loader walks all the way up to the
@@ -399,6 +406,11 @@ impl ForgeConfig {
         Self {
             merge_method: top.merge_method.or(self.merge_method),
             merge_delete_branch: top.merge_delete_branch.or(self.merge_delete_branch),
+            merge_hold_labels: self
+                .merge_hold_labels
+                .into_iter()
+                .chain(top.merge_hold_labels)
+                .collect(),
             body_summary_heading: top.body_summary_heading.or(self.body_summary_heading),
             body_test_plan_heading: top.body_test_plan_heading.or(self.body_test_plan_heading),
             branch_feature_prefix: top.branch_feature_prefix.or(self.branch_feature_prefix),
@@ -442,6 +454,21 @@ impl ForgeConfig {
         explicit
             .or(self.merge_method)
             .unwrap_or(MergeMethod::Squash)
+    }
+
+    /// Default compatibility names plus configured global/repository additions.
+    pub fn resolve_hold_labels(&self) -> Vec<String> {
+        let mut labels = vec![
+            "state::do-not-merge".into(),
+            "do-not-merge".into(),
+            "control::hold".into(),
+        ];
+        for label in &self.merge_hold_labels {
+            if !labels.contains(label) {
+                labels.push(label.clone());
+            }
+        }
+        labels
     }
 
     /// Resolve `[merge].delete_branch`. Default is `true` per spec.
@@ -674,6 +701,29 @@ fn parse_merge(table: &toml::map::Map<String, Value>, cfg: &mut ForgeConfig) {
                     .warnings
                     .push("invalid-config-value:merge.method:not_a_string".to_string()),
             },
+            "hold_labels" => {
+                let labels = value.as_array().and_then(|values| {
+                    values
+                        .iter()
+                        .map(|value| {
+                            value
+                                .as_str()
+                                .filter(|label| {
+                                    !label.trim().is_empty()
+                                        && label.len() <= 128
+                                        && !label.chars().any(char::is_control)
+                                })
+                                .map(str::to_string)
+                        })
+                        .collect::<Option<Vec<_>>>()
+                });
+                match labels {
+                    Some(labels) => cfg.merge_hold_labels = labels,
+                    None => cfg
+                        .warnings
+                        .push("invalid-config-value:merge.hold_labels".into()),
+                }
+            }
             "delete_branch" => match value.as_bool() {
                 Some(b) => cfg.merge_delete_branch = Some(b),
                 None => cfg
@@ -977,6 +1027,41 @@ mod tests {
         let path = dir.join(CONFIG_FILE_NAME);
         fs::write(&path, body).expect("write config");
         path
+    }
+
+    #[test]
+    fn hold_label_configuration_combines_layers_and_preserves_defaults() {
+        let parse = |source: &str| parse_value(&toml::from_str::<Value>(source).unwrap());
+        let global = parse("[merge]\nhold_labels = [\"review::paused\"]");
+        let repo = parse("[merge]\nhold_labels = [\"control::pending\"]");
+        assert_eq!(
+            global.overlaid_by(repo).resolve_hold_labels(),
+            vec![
+                "state::do-not-merge",
+                "do-not-merge",
+                "control::hold",
+                "review::paused",
+                "control::pending"
+            ]
+        );
+        assert_eq!(
+            parse("[merge]\nhold_labels = []").resolve_hold_labels(),
+            ForgeConfig::default().resolve_hold_labels()
+        );
+    }
+
+    #[test]
+    fn invalid_hold_label_configuration_is_rejected_at_the_merge_gate() {
+        for value in ["true", "[1]", "[\"\"]", "[\" \"]", "[\"bad\\nlabel\"]"] {
+            let source = format!("[merge]\nhold_labels = {value}");
+            let cfg = parse_value(&toml::from_str::<Value>(&source).unwrap());
+            assert_eq!(
+                crate::ops::pr_hold::validate_config(&cfg)
+                    .unwrap_err()
+                    .kind(),
+                "invalid_hold_labels_config"
+            );
+        }
     }
 
     #[test]

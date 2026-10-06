@@ -28,6 +28,7 @@ pub mod pr_comment;
 pub mod pr_comments;
 pub mod pr_create;
 pub mod pr_edit;
+pub(crate) mod pr_hold;
 pub mod pr_list;
 pub mod pr_merge;
 pub mod pr_pending_review;

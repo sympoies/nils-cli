@@ -680,8 +680,10 @@ EOF
   "pr ready")
     :
     ;;
+  "api --paginate") printf '%s\n' '[[]]' ;;
   "api graphql")
     case "$*" in
+      *"ForgeHoldConfig"*) printf '%s\n' '{{"data":{{"repository":{{"object":null}}}}}}' ;;
       *"ForgeMergePolicy"*)
         printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":null,"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false}}}}}}}}'
         ;;
@@ -819,8 +821,10 @@ EOF
   "pr ready")
     touch {ready_sentinel}
     ;;
+  "api --paginate") printf '%s\n' '[[]]' ;;
   "api graphql")
     case "$*" in
+      *"ForgeHoldConfig"*) printf '%s\n' '{{"data":{{"repository":{{"object":null}}}}}}' ;;
       *"ForgeMergePolicy"*)
         printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":null,"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false}}}}}}}}'
         ;;
@@ -1025,8 +1029,10 @@ EOF
   "pr ready")
     :
     ;;
+  "api --paginate") printf '%s\n' '[[]]' ;;
   "api graphql")
     case "$*" in
+      *"ForgeHoldConfig"*) printf '%s\n' '{{"data":{{"repository":{{"object":null}}}}}}' ;;
       *"ForgeMergePolicy"*)
         printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":null,"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false}}}}}}}}'
         ;;
@@ -2893,7 +2899,8 @@ fn pr_deliver_without_method_lets_a_merge_commit_queue_decide() {
     let direct_merge = stub.tempdir.path().join("direct-merge");
     let body = fs::read_to_string(&gh_path).expect("read chain stub");
     let queue_arms = format!(
-        r#"      *"ForgeMergePolicy"*)
+        r#"      *"ForgeHoldConfig"*) printf '%s\n' '{{"data":{{"repository":{{"object":null}}}}}}' ;;
+      *"ForgeMergePolicy"*)
         printf '%s\n' '{{"data":{{"repository":{{"mergeQueue":{{"configuration":{{"mergeMethod":"MERGE"}}}},"issues":{{"nodes":[]}},"pullRequest":{{"id":"PR_node","isInMergeQueue":false,"state":"OPEN"}}}}}}}}'
         ;;
       *"ForgeEnqueuePullRequest"*)
