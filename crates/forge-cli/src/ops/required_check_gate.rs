@@ -104,7 +104,7 @@ pub fn ensure_required_checks_green<R: BackendRunner>(
         id: pr_id.to_string(),
         required_only: true,
     };
-    let snapshot = pr_checks::snapshot(runner, global, ctx, &args)?;
+    let snapshot = pr_checks::snapshot_for_gate(runner, global, ctx, &args)?;
     classify(snapshot, presence)
 }
 

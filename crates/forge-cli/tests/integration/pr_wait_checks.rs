@@ -72,7 +72,7 @@ case "$1 $2" in
 esac
 "#,
     );
-    stub.write_stub("gh", &body);
+    stub.write_gate_stub(&body);
 }
 
 const PENDING_SNAP: &str =
@@ -189,7 +189,7 @@ fn pr_wait_checks_timeout_exits_unavailable_with_kind_checks_timeout() {
 fn pr_wait_checks_dry_run_renders_plan_envelope_without_calling_backend() {
     // The stub should never run during dry-run; configure it to exit 99 to
     // assert that.
-    let stub = StubEnv::new().gh_stub("#!/bin/sh\necho 'should not run' >&2\nexit 99\n");
+    let stub = StubEnv::new().gh_gate_stub("#!/bin/sh\necho 'should not run' >&2\nexit 99\n");
 
     let out = run_forge_cli(
         &stub,
@@ -478,4 +478,413 @@ fn pr_wait_checks_without_required_checks_times_out_on_a_queued_check() {
     assert_eq!(env["error"]["code"], "checks_timeout");
     assert_eq!(env["data"]["state"], "pending");
     assert_eq!(env["data"]["pending"][0]["name"], "build");
+}
+
+/// Head-pinned provider fixture: the rollup is green, but the exact
+/// current head is still registering the base branch's required checks.
+mod registration {
+    use std::cell::{Cell, RefCell};
+    use std::time::{Duration, Instant};
+
+    use forge_cli::backend::{BackendCall, BackendRunner, BackendSuccess};
+    use forge_cli::cli::{GlobalFlags, PrWaitChecksArgs};
+    use forge_cli::error::ForgeError;
+    use forge_cli::ops::pr_wait_checks::{Clock, WaitOutcome, compute};
+    use forge_cli::provider::{DetectionSource, Provider, ProviderContext};
+    use pretty_assertions::assert_eq;
+
+    struct TestClock(Cell<Instant>);
+    impl Clock for TestClock {
+        fn now(&self) -> Instant {
+            self.0.get()
+        }
+        fn sleep(&self, d: Duration) {
+            self.0.set(self.0.get() + d);
+        }
+    }
+
+    struct RegistrationRunner {
+        polls: Cell<usize>,
+        late: bool,
+        move_head: bool,
+        requested_heads: RefCell<Vec<String>>,
+    }
+    impl BackendRunner for RegistrationRunner {
+        fn run(&self, call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+            let argv: Vec<_> = call.argv.iter().map(|s| s.to_string_lossy()).collect();
+            let text = match (argv[0].as_ref(), argv[1].as_ref()) {
+                // Old gh rollups can contain only a fast optional check.
+                ("pr", "checks") => r#"[{"name":"optional","bucket":"pass"}]"#.to_string(),
+                ("pr", "view") => {
+                    let sha = if self.move_head && self.polls.get() > 0 { "new-head" } else { "head" };
+                    format!(r#"{{"headRefOid":"{sha}","baseRefName":"main","url":"https://github.com/example/project/pull/42"}}"#)
+                }
+                ("api", "graphql") =>
+                    r#"{"data":{"repository":{"ref":{"branchProtectionRule":{"requiredStatusChecks":[{"context":"test","app":null},{"context":"coverage","app":null}]}}}}}"#.to_string(),
+                ("api", endpoint) if endpoint.contains("/rules/branches/") => "[]".to_string(),
+                ("api", endpoint) if endpoint.contains("/check-runs?") => {
+                    self.requested_heads.borrow_mut().push(endpoint.to_string());
+                    self.polls.set(self.polls.get() + 1);
+                    if self.move_head || (self.late && self.polls.get() >= 3) {
+                        r#"{"total_count":2,"check_runs":[{"name":"test","status":"completed","conclusion":"success"},{"name":"coverage","status":"completed","conclusion":"success"}]}"#.to_string()
+                    } else {
+                        r#"{"total_count":1,"check_runs":[{"name":"optional","status":"completed","conclusion":"success"}]}"#.to_string()
+                    }
+                }
+                ("api", endpoint) if endpoint.contains("/status?") => r#"{"total_count":0,"statuses":[]}"#.to_string(),
+                _ => panic!("unexpected call: {argv:?}"),
+            };
+            Ok(BackendSuccess {
+                stdout: text,
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn run(late: bool, move_head: bool) -> (WaitOutcome, usize, Vec<String>) {
+        let runner = RegistrationRunner {
+            polls: Cell::new(0),
+            late,
+            move_head,
+            requested_heads: RefCell::new(Vec::new()),
+        };
+        let clock = TestClock(Cell::new(Instant::now()));
+        let ctx = ProviderContext {
+            provider: Provider::GitHub,
+            host: "github.com".into(),
+            source: DetectionSource::Flag,
+            repo: Some("example/project".into()),
+        };
+        let global = GlobalFlags {
+            format: None,
+            remote: "origin".into(),
+            provider: None,
+            host: None,
+            repo: ctx.repo.clone(),
+            store_root: None,
+            dry_run: false,
+        };
+        let args = PrWaitChecksArgs {
+            id: "42".into(),
+            timeout: Duration::from_millis(5),
+            interval: Duration::from_millis(1),
+            required_only: true,
+            allow_no_checks: false,
+        };
+        (
+            compute(&runner, &clock, &global, &ctx, &args).unwrap(),
+            runner.polls.get(),
+            runner.requested_heads.into_inner(),
+        )
+    }
+
+    #[test]
+    fn finished_optional_check_cannot_hide_unregistered_required_checks() {
+        let (outcome, _, _) = run(false, false);
+        let WaitOutcome::TimedOut(snapshot) = outcome else {
+            panic!("missing required checks must not pass")
+        };
+        assert_eq!(
+            snapshot
+                .pending
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["test", "coverage"]
+        );
+    }
+
+    #[test]
+    fn waits_until_all_required_checks_register_on_the_current_head() {
+        let (outcome, polls, _) = run(true, false);
+        let WaitOutcome::Success(snapshot) = outcome else {
+            panic!("registered successful checks must pass")
+        };
+        assert_eq!(polls, 3);
+        assert_eq!(snapshot.required_count, 2);
+    }
+
+    #[test]
+    fn head_changed_during_snapshot_cannot_pass_old_checks() {
+        let (outcome, polls, requested) = run(true, true);
+        // Later snapshots may pass, but the first successful old-head snapshot
+        // must be discarded when the provider has already advanced the head.
+        let WaitOutcome::Success(snapshot) = outcome else {
+            panic!("new head eventually passes")
+        };
+        assert!(snapshot.duration_ms.unwrap() > 0);
+        assert_eq!(polls, 2);
+        assert_eq!(
+            requested,
+            [
+                "repos/example/project/commits/head/check-runs?per_page=100",
+                "repos/example/project/commits/new-head/check-runs?per_page=100",
+            ]
+        );
+    }
+}
+
+mod configured_gate {
+    use forge_cli::backend::{BackendCall, BackendRunner, BackendSuccess};
+    use forge_cli::cli::{GlobalFlags, PrWaitChecksArgs};
+    use forge_cli::error::ForgeError;
+    use forge_cli::ops::pr_wait_checks::{Clock, WaitOutcome, compute};
+    use forge_cli::ops::required_check_gate::{CheckPresence, ensure_required_checks_green};
+    use forge_cli::provider::{DetectionSource, Provider, ProviderContext};
+    use pretty_assertions::assert_eq;
+    use std::time::{Duration, Instant};
+
+    struct Fixture {
+        pr_url: &'static str,
+        protection: serde_json::Value,
+        rules: serde_json::Value,
+        runs: serde_json::Value,
+        statuses: serde_json::Value,
+        refuse_rules: bool,
+        graphql_errors: bool,
+    }
+    impl Default for Fixture {
+        fn default() -> Self {
+            Self {
+                pr_url: "https://github.com/example/project/pull/42",
+                protection: serde_json::json!({"requiredStatusChecks":[{"context":"test","app":null},{"context":"coverage","app":null}]}),
+                rules: serde_json::json!([]),
+                runs: serde_json::json!({"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success","app":{"id":1}}]}),
+                statuses: serde_json::json!({"total_count":0,"statuses":[]}),
+                refuse_rules: false,
+                graphql_errors: false,
+            }
+        }
+    }
+    impl BackendRunner for Fixture {
+        fn run(&self, call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+            let argv: Vec<_> = call.argv.iter().map(|s| s.to_string_lossy()).collect();
+            let body = match (argv[0].as_ref(), argv[1].as_ref()) {
+                ("pr", "view") => {
+                    serde_json::json!({"headRefOid":"head","baseRefName":"main","url":self.pr_url})
+                }
+                ("api", "graphql") => {
+                    let mut value = serde_json::json!({"data":{"repository":{"ref":{"branchProtectionRule":self.protection}}}});
+                    if self.graphql_errors {
+                        value["errors"] = serde_json::json!([{"message":"partial response"}]);
+                    }
+                    value
+                }
+                ("api", e) if e.contains("/rules/branches/") => {
+                    if self.refuse_rules {
+                        return Err(ForgeError::validation(
+                            "test",
+                            "permission_denied",
+                            "rules unavailable",
+                            None,
+                        ));
+                    }
+                    self.rules.clone()
+                }
+                ("api", "repos/example/project/commits/head/check-runs?per_page=100") => {
+                    self.runs.clone()
+                }
+                ("api", "repos/example/project/commits/head/status?per_page=100") => {
+                    self.statuses.clone()
+                }
+                _ => panic!("gate must read the exact current head: {argv:?}"),
+            };
+            Ok(BackendSuccess {
+                stdout: body.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+    fn context() -> (GlobalFlags, ProviderContext) {
+        let ctx = ProviderContext {
+            provider: Provider::GitHub,
+            host: "github.com".into(),
+            source: DetectionSource::Flag,
+            repo: Some("example/project".into()),
+        };
+        let global = GlobalFlags {
+            format: None,
+            remote: "origin".into(),
+            provider: None,
+            host: None,
+            repo: ctx.repo.clone(),
+            store_root: None,
+            dry_run: false,
+        };
+        (global, ctx)
+    }
+    fn gate(f: &Fixture) -> Result<forge_cli::ops::pr_checks::PrChecksPayload, ForgeError> {
+        let (global, ctx) = context();
+        ensure_required_checks_green(f, &global, &ctx, "42", CheckPresence::Required)
+    }
+    #[test]
+    fn partial_required_registration_blocks_merge() {
+        assert_eq!(
+            gate(&Fixture::default()).unwrap_err().kind(),
+            "checks_pending"
+        );
+    }
+    #[test]
+    fn ruleset_context_is_pending_before_registration() {
+        let f = Fixture {
+            protection: serde_json::Value::Null,
+            rules: serde_json::json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"coverage","integration_id":null}]}}]),
+            ..Fixture::default()
+        };
+        assert_eq!(gate(&f).unwrap_err().kind(), "checks_pending");
+    }
+    #[test]
+    fn required_workflow_rule_cannot_pass_with_only_optional_checks() {
+        let f = Fixture {
+            protection: serde_json::Value::Null,
+            rules: serde_json::json!([{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/required.yml","repository_id":1}]}}]),
+            ..Fixture::default()
+        };
+        assert_eq!(gate(&f).unwrap_err().kind(), "checks_snapshot_incomplete");
+    }
+
+    #[test]
+    fn wrong_app_cannot_satisfy_a_required_context() {
+        let f = Fixture {
+            protection: serde_json::json!({"requiredStatusChecks":[{"context":"test","app":{"databaseId":2}}]}),
+            ..Fixture::default()
+        };
+        assert_eq!(gate(&f).unwrap_err().kind(), "checks_pending");
+    }
+    #[test]
+    fn commit_status_can_satisfy_an_unbound_required_context() {
+        let f = Fixture {
+            statuses: serde_json::json!({"total_count":1,"statuses":[{"context":"coverage","state":"success"}]}),
+            ..Fixture::default()
+        };
+        assert_eq!(gate(&f).unwrap().required_count, 2);
+    }
+    #[test]
+    fn failed_required_context_blocks_merge() {
+        let f = Fixture {
+            statuses: serde_json::json!({"total_count":1,"statuses":[{"context":"coverage","state":"failure"}]}),
+            ..Fixture::default()
+        };
+        assert_eq!(gate(&f).unwrap_err().kind(), "checks_failed");
+    }
+    #[test]
+    fn unreadable_rules_cannot_be_replaced_with_registered_rows() {
+        let f = Fixture {
+            refuse_rules: true,
+            ..Fixture::default()
+        };
+        assert_eq!(gate(&f).unwrap_err().kind(), "permission_denied");
+    }
+    #[test]
+    fn partial_graphql_response_is_refused() {
+        let f = Fixture {
+            graphql_errors: true,
+            ..Fixture::default()
+        };
+        assert_eq!(gate(&f).unwrap_err().kind(), "checks_snapshot_incomplete");
+    }
+    #[test]
+    fn truncated_check_runs_cannot_pass() {
+        let f = Fixture {
+            protection: serde_json::json!({"requiredStatusChecks":[{"context":"test","app":null}]}),
+            runs: serde_json::json!({"total_count":2,"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}),
+            ..Fixture::default()
+        };
+        assert_eq!(gate(&f).unwrap_err().kind(), "checks_pending");
+    }
+    #[test]
+    fn missing_configuration_field_is_refused() {
+        let f = Fixture {
+            protection: serde_json::json!({}),
+            ..Fixture::default()
+        };
+        assert_eq!(gate(&f).unwrap_err().kind(), "checks_snapshot_incomplete");
+    }
+    #[test]
+    fn pr_url_must_match_the_selected_provider_authority() {
+        for (url, host) in [
+            (
+                "https://github.example.com/example/project/pull/42",
+                "github.com",
+            ),
+            (
+                "https://github.com/example/project/pull/42",
+                "github.example.com",
+            ),
+            (
+                "https://github.example.com:8443/example/project/pull/42",
+                "github.example.com",
+            ),
+            ("file:///example/project/pull/42", "github.com"),
+        ] {
+            let f = Fixture {
+                pr_url: url,
+                statuses: serde_json::json!({"total_count":1,"statuses":[{"context":"coverage","state":"success"}]}),
+                ..Fixture::default()
+            };
+            let (global, mut ctx) = context();
+            ctx.host = host.into();
+            ctx.repo = None;
+            assert_eq!(
+                ensure_required_checks_green(&f, &global, &ctx, "42", CheckPresence::Required)
+                    .unwrap_err()
+                    .kind(),
+                "checks_snapshot_incomplete",
+                "{url} vs {host}"
+            );
+        }
+    }
+    #[test]
+    fn canonical_transport_alias_and_matching_port_are_accepted() {
+        for (url, host) in [
+            (
+                "https://github.com:443/example/project/pull/42",
+                "ssh.github.com",
+            ),
+            (
+                "https://github.example.com:8443/example/project/pull/42",
+                "github.example.com:8443",
+            ),
+        ] {
+            let f = Fixture {
+                pr_url: url,
+                statuses: serde_json::json!({"total_count":1,"statuses":[{"context":"coverage","state":"success"}]}),
+                ..Fixture::default()
+            };
+            let (global, mut ctx) = context();
+            ctx.host = host.into();
+            assert_eq!(
+                ensure_required_checks_green(&f, &global, &ctx, "42", CheckPresence::Required)
+                    .unwrap()
+                    .state,
+                "success"
+            );
+        }
+    }
+
+    struct FixedClock;
+    impl Clock for FixedClock {
+        fn now(&self) -> Instant {
+            static NOW: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            *NOW.get_or_init(Instant::now)
+        }
+        fn sleep(&self, _: Duration) {
+            panic!("zero-budget fixture should never sleep")
+        }
+    }
+    #[test]
+    fn allow_no_checks_does_not_skip_missing_configured_checks() {
+        let (global, ctx) = context();
+        let args = PrWaitChecksArgs {
+            id: "42".into(),
+            timeout: Duration::ZERO,
+            interval: Duration::ZERO,
+            required_only: true,
+            allow_no_checks: true,
+        };
+        assert!(matches!(
+            compute(&Fixture::default(), &FixedClock, &global, &ctx, &args).unwrap(),
+            WaitOutcome::TimedOut(_)
+        ));
+    }
 }
