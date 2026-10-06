@@ -82,6 +82,23 @@ fn session_digest(selector: &str) -> Result<String, ForgeError> {
     Ok(review_state::sha256_digest(id.as_bytes()))
 }
 
+/// Ownership selectors (`--reviewer-session`, `--coordinator-session`) must name
+/// the full canonical session UUID, never a short prefix or any non-canonical
+/// form. A non-canonical id digests to an identity the owning session's real
+/// UUID never matches, so reject it up front instead of recording a selector
+/// that can never be honored. Prefixes are deliberately not resolved.
+fn require_canonical_session_uuid(selector: &str) -> Result<(), ForgeError> {
+    let id = selector.split('@').next().unwrap_or("");
+    let canonical = uuid::Uuid::parse_str(id).is_ok_and(|parsed| parsed.to_string() == id);
+    if !canonical {
+        return Err(fail(
+            "review_assignment_invalid",
+            "the full session UUID is required",
+        ));
+    }
+    Ok(())
+}
+
 fn actor_digest() -> Result<String, ForgeError> {
     session_digest(&std::env::var("AGENT_SESSION_ID").unwrap_or_default())
 }
@@ -807,6 +824,7 @@ pub fn run(
                         "assignment generation overflow",
                     )
                 })?;
+            require_canonical_session_uuid(&a.reviewer_session)?;
             let reviewer = session_digest(&a.reviewer_session)?;
             if reviewer == coordinator {
                 return Err(fail(
@@ -851,9 +869,9 @@ pub fn run(
                         "takeover base differs from the provider base",
                     ));
                 }
-                if session_digest(a.coordinator_session.as_deref().unwrap_or_default())?
-                    != h.coordinator_digest
-                {
+                let coordinator_selector = a.coordinator_session.as_deref().unwrap_or_default();
+                require_canonical_session_uuid(coordinator_selector)?;
+                if session_digest(coordinator_selector)? != h.coordinator_digest {
                     return Err(fail(
                         "review_assignment_conflict",
                         "coordinator selector differs from the recorded coordinator",

@@ -11,6 +11,22 @@ use super::support::{StubEnv, parse_envelope, run_forge_cli};
 const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OLD: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
+/// Full canonical session UUIDs for the ownership selectors (`--reviewer-session`,
+/// `--coordinator-session`), which must name the real full-UUID identity. A short
+/// prefix of the reviewer UUID is used to exercise the non-canonical rejection.
+const COORDINATOR_UUID: &str = "123e4567-e89b-42d3-a456-426614174000";
+const REVIEWER_UUID: &str = "6ba7b810-9dad-41d1-80b4-00c04fd430c8";
+const OTHER_COORDINATOR_UUID: &str = "00112233-4455-6677-8899-aabbccddeeff";
+
+/// A handoff whose coordinator is a full canonical UUID, as the ownership
+/// selectors require. Used by the coordinator-retired takeover fixtures, where
+/// `--coordinator-session` must digest to the recorded coordinator identity.
+fn retired_coordinator_handoff() -> ReviewHandoff {
+    let mut h = handoff(None);
+    h.coordinator_digest = review_state::sha256_digest(COORDINATOR_UUID.as_bytes());
+    h
+}
+
 fn handoff(returned: Option<&str>) -> ReviewHandoff {
     ReviewHandoff {
         coordinator_digest: review_state::sha256_digest(b"worker-session"),
@@ -428,7 +444,7 @@ fn handoff_preview_redacts_the_private_selector_and_binds_the_tip() {
             "assign",
             "7",
             "--reviewer-session",
-            "reviewer-session@private-machine-canary",
+            &format!("{REVIEWER_UUID}@private-machine-canary"),
             "--review-author",
             "review-app[bot]",
             "--base-sha",
@@ -443,11 +459,87 @@ fn handoff_preview_redacts_the_private_selector_and_binds_the_tip() {
     let data = parse_envelope(&output.stdout);
     assert_eq!(
         data["data"]["handoff"]["reviewer_digest"],
-        review_state::sha256_digest(b"reviewer-session")
+        review_state::sha256_digest(REVIEWER_UUID.as_bytes())
     );
     assert!(!output.stdout.contains("private-machine-canary"));
-    assert!(!output.stdout.contains("reviewer-session"));
+    assert!(!output.stdout.contains(REVIEWER_UUID));
     assert_eq!(data["data"]["status"], "awaiting-designated-review");
+}
+
+#[test]
+fn handoff_assign_rejects_noncanonical_reviewer_session() {
+    // A short prefix must be rejected: it would digest to an identity the
+    // reviewer's real full-UUID identity never matches, so the reviewer would
+    // later fail with a writer conflict. Prefixes are not resolved.
+    let stub = fixture(HEAD, &[], vec![]).env("AGENT_SESSION_ID", COORDINATOR_UUID);
+    let prefix = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "--dry-run",
+            "pr",
+            "review-handoff",
+            "assign",
+            "7",
+            "--reviewer-session",
+            &format!("{}@private-machine-canary", &REVIEWER_UUID[..8]),
+            "--review-author",
+            "review-app[bot]",
+            "--base-sha",
+            OLD,
+            "--expected-head",
+            HEAD,
+            "--expected-state",
+            "none",
+        ],
+    );
+    assert_eq!(prefix.code, 65, "{} {}", prefix.stdout, prefix.stderr);
+    assert!(
+        prefix.stdout.contains("the full session UUID is required"),
+        "{}",
+        prefix.stdout
+    );
+    assert!(!prefix.stdout.contains("private-machine-canary"));
+
+    // The full canonical UUID is accepted and digests as the reviewer's real identity.
+    let full = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "--dry-run",
+            "pr",
+            "review-handoff",
+            "assign",
+            "7",
+            "--reviewer-session",
+            &format!("{REVIEWER_UUID}@private-machine-canary"),
+            "--review-author",
+            "review-app[bot]",
+            "--base-sha",
+            OLD,
+            "--expected-head",
+            HEAD,
+            "--expected-state",
+            "none",
+        ],
+    );
+    assert_eq!(full.code, 0, "{} {}", full.stdout, full.stderr);
+    let data = parse_envelope(&full.stdout);
+    assert_eq!(
+        data["data"]["handoff"]["reviewer_digest"],
+        review_state::sha256_digest(REVIEWER_UUID.as_bytes())
+    );
+    assert!(!full.stdout.contains("private-machine-canary"));
 }
 
 #[test]
@@ -1208,7 +1300,7 @@ fn coordinator_board(stub: StubEnv, state: &str, reason: &str) -> StubEnv {
     let board = json!({"ok":true,"data":{"mode":"local","board":{
         "schema_version":"agent-session.board-view.v1", "generated_at":now,
         "truncated":false, "machines":[{"machine":"source", "available":true,"last_seen_at":now}],
-        "records":[{"session_id":"worker-session", "machine":"source", "state":state,
+        "records":[{"session_id":COORDINATOR_UUID, "machine":"source", "state":state,
             "runtime_status":if state == "live" { json!("running") } else { Value::Null },
             "closed_at":if state == "closed" { json!(now) } else { Value::Null },
             "close_reason":reason}]
@@ -1261,11 +1353,18 @@ fn takeover(
 
 #[test]
 fn retired_coordinator_takeover_preview_transfers_only_coordinator_authority() {
-    let seeded = records(handoff(None), Some(HEAD));
+    let seeded = records(retired_coordinator_handoff(), Some(HEAD));
     let tip = &seeded.last().unwrap().record_digest;
     let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "deleted")
         .env("PROVIDER_BASE", HEAD);
-    let out = takeover(&stub, HEAD, HEAD, tip, "worker-session@source", true);
+    let out = takeover(
+        &stub,
+        HEAD,
+        HEAD,
+        tip,
+        &format!("{COORDINATOR_UUID}@source"),
+        true,
+    );
     assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
     let data = parse_envelope(&out.stdout)["data"].clone();
     assert_eq!(data["state_tip_digest"], *tip);
@@ -1282,7 +1381,7 @@ fn retired_coordinator_takeover_preview_transfers_only_coordinator_authority() {
     assert_eq!(data["handoff"]["returned_reason"], "coordinator-retired");
     assert_eq!(
         data["handoff"]["coordinator_transfer"]["old_coordinator_digest"],
-        review_state::sha256_digest(b"worker-session")
+        review_state::sha256_digest(COORDINATOR_UUID.as_bytes())
     );
     assert_eq!(
         data["handoff"]["coordinator_transfer"]["new_coordinator_digest"],
@@ -1297,7 +1396,7 @@ fn retired_coordinator_takeover_preview_transfers_only_coordinator_authority() {
         review_state::sha256_digest(b"source")
     );
     assert!(!out.stdout.contains("\"source\""));
-    assert!(!out.stdout.contains("worker-session"));
+    assert!(!out.stdout.contains(COORDINATOR_UUID));
     assert!(!out.stdout.contains("successor-session"));
     assert!(
         !fs::read_to_string(stub.tempdir.path().join("calls.log"))
@@ -1308,26 +1407,26 @@ fn retired_coordinator_takeover_preview_transfers_only_coordinator_authority() {
 
 #[test]
 fn retired_coordinator_takeover_refuses_live_unproven_and_wrong_identity() {
-    let seeded = records(handoff(None), None);
+    let seeded = records(retired_coordinator_handoff(), None);
     let tip = &seeded.last().unwrap().record_digest;
     for (state, reason, selector, kind) in [
-        ("live", "", "worker-session", "review_coordinator_live"),
+        ("live", "", COORDINATOR_UUID, "review_coordinator_live"),
         (
             "stopped",
             "",
-            "worker-session",
+            COORDINATOR_UUID,
             "review_coordinator_unproven",
         ),
         (
             "closed",
             "vanished",
-            "worker-session",
+            COORDINATOR_UUID,
             "review_coordinator_unproven",
         ),
         (
             "closed",
             "deleted",
-            "another-session",
+            OTHER_COORDINATOR_UUID,
             "review_assignment_conflict",
         ),
     ] {
@@ -1386,7 +1485,7 @@ else:
 
 #[test]
 fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
-    let mut seeded = records(handoff(None), None);
+    let mut seeded = records(retired_coordinator_handoff(), None);
     let findings: Vec<review_state::ReviewFindingObservation> = serde_json::from_value(json!([
         {"fingerprint":"testing:handoff:open-finding", "blocking":true, "threads":["thread-1"]}
     ]))
@@ -1409,7 +1508,7 @@ fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
         .with_assignment_generation(Some(1))
         .unwrap(),
     );
-    let mut surrendered = handoff(None);
+    let mut surrendered = retired_coordinator_handoff();
     surrendered.surrendered = true;
     seeded.push(
         ReviewStateRecord::new(
@@ -1428,13 +1527,14 @@ fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
         coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "archived"),
         &seeded,
     )
-    .env("PROVIDER_BASE", HEAD);
+    .env("PROVIDER_BASE", HEAD)
+    .env("AGENT_REVIEWER_SESSION", "");
     let out = takeover(
         &stub,
         HEAD,
         HEAD,
         &seeded.last().unwrap().record_digest,
-        "worker-session@source",
+        &format!("{COORDINATOR_UUID}@source"),
         false,
     );
     assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
@@ -1479,7 +1579,7 @@ fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
             "assign",
             "7",
             "--reviewer-session",
-            "reviewer-session",
+            REVIEWER_UUID,
             "--review-author",
             "review-app[bot]",
             "--base-sha",
@@ -1525,7 +1625,7 @@ fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
     );
     assert_refusal(&published, 65, "review_writer_conflict");
     let reviewer = stub
-        .env("AGENT_SESSION_ID", "reviewer-session")
+        .env("AGENT_SESSION_ID", REVIEWER_UUID)
         .env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "3");
     let findings_file = reviewer.tempdir.path().join("open-findings.json");
     fs::write(&findings_file, r#"[{"lifecycle_fingerprint":"testing:handoff:open-finding","disposition":"open","blocking":true,"threads":["thread-1"]}]"#).unwrap();
@@ -1566,7 +1666,7 @@ fn retired_coordinator_takeover_persists_findings_and_allows_reassignment() {
 
 #[test]
 fn retired_coordinator_takeover_rechecks_lifecycle_before_posting() {
-    let seeded = records(handoff(None), None);
+    let seeded = records(retired_coordinator_handoff(), None);
     let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "deleted");
     let inner = stub.tempdir.path().join("board-inner");
     fs::rename(stub.tempdir.path().join("agent-session"), &inner).unwrap();
@@ -1589,7 +1689,7 @@ fi
         HEAD,
         OLD,
         &seeded[0].record_digest,
-        "worker-session",
+        COORDINATOR_UUID,
         false,
     );
     assert_refusal(&out, 65, "review_coordinator_live");
@@ -1602,7 +1702,7 @@ fi
 
 #[test]
 fn retired_coordinator_takeover_refuses_incomplete_or_stale_board_evidence() {
-    let seeded = records(handoff(None), None);
+    let seeded = records(retired_coordinator_handoff(), None);
     for change in [
         "absent",
         "offline",
@@ -1617,7 +1717,7 @@ fn retired_coordinator_takeover_refuses_incomplete_or_stale_board_evidence() {
         let mut board = json!({"ok":true,"data":{"board":{
             "schema_version":"agent-session.board-view.v1", "generated_at":now, "truncated":false,
             "machines":[{"machine":"source", "available":true, "last_seen_at":now}],
-            "records":[{"session_id":"worker-session", "machine":"source", "state":"closed",
+            "records":[{"session_id":COORDINATOR_UUID, "machine":"source", "state":"closed",
                 "runtime_status":null,"closed_at":now,"close_reason":"deleted"}]
         }}});
         let b = &mut board["data"]["board"];
@@ -1629,7 +1729,7 @@ fn retired_coordinator_takeover_refuses_incomplete_or_stale_board_evidence() {
             "duplicate-live" => b["records"]
                 .as_array_mut()
                 .unwrap()
-                .push(json!({"session_id":"worker-session","state":"live"})),
+                .push(json!({"session_id":COORDINATOR_UUID,"state":"live"})),
             _ => (),
         }
         let script = match change {
@@ -1643,7 +1743,7 @@ fn retired_coordinator_takeover_refuses_incomplete_or_stale_board_evidence() {
             HEAD,
             OLD,
             &seeded[0].record_digest,
-            "worker-session",
+            COORDINATOR_UUID,
             true,
         );
         let kind = if change == "duplicate-live" {
@@ -1740,7 +1840,7 @@ fn retired_coordinator_takeover_chain_validates_transfer_and_racing_writers() {
 
 #[test]
 fn retired_coordinator_takeover_rechecks_provider_scope_before_posting() {
-    let seeded = records(handoff(None), None);
+    let seeded = records(retired_coordinator_handoff(), None);
     for changed in ["head", "base", "tip"] {
         let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "deleted");
         let inner = stub.tempdir.path().join("gh-inner");
@@ -1780,7 +1880,7 @@ exec '{inner}' "$@"
             HEAD,
             OLD,
             &seeded[0].record_digest,
-            "worker-session",
+            COORDINATOR_UUID,
             false,
         );
         assert_refusal(
@@ -1802,7 +1902,7 @@ exec '{inner}' "$@"
 
 #[test]
 fn retired_coordinator_takeover_binds_the_selected_lifecycle_source() {
-    let seeded = records(handoff(None), None);
+    let seeded = records(retired_coordinator_handoff(), None);
     for scenario in ["unavailable", "live-namesake", "closed-namesake"] {
         let target_closed = scenario != "unavailable";
         let stub = coordinator_board(fixture(HEAD, &seeded, vec![]), "closed", "deleted");
@@ -1812,17 +1912,17 @@ fn retired_coordinator_takeover_binds_the_selected_lifecycle_source() {
             "machines":[{"machine":"target", "available":target_closed, "last_seen_at":now},
                 {"machine":"namesake", "available":true, "last_seen_at":now}],
             "records":if target_closed { json!([
-                {"session_id":"worker-session", "machine":"target", "state":"closed", "runtime_status":null,
+                {"session_id":COORDINATOR_UUID, "machine":"target", "state":"closed", "runtime_status":null,
                     "closed_at":now,"close_reason":"deleted"},
-                {"session_id":"worker-session", "machine":"namesake", "state":"live", "runtime_status":"running"}
+                {"session_id":COORDINATOR_UUID, "machine":"namesake", "state":"live", "runtime_status":"running"}
             ]) } else { json!([
-                {"session_id":"worker-session", "machine":"namesake", "state":"closed", "runtime_status":null,
+                {"session_id":COORDINATOR_UUID, "machine":"namesake", "state":"closed", "runtime_status":null,
                     "closed_at":now,"close_reason":"deleted"}
             ]) }
         }}});
         if scenario == "closed-namesake" {
             board["data"]["board"]["records"][1] = json!({
-                "session_id":"worker-session", "machine":"namesake", "state":"closed", "runtime_status":null,
+                "session_id":COORDINATOR_UUID, "machine":"namesake", "state":"closed", "runtime_status":null,
                 "closed_at":now,"close_reason":"deleted"
             });
         }
@@ -1835,7 +1935,7 @@ fn retired_coordinator_takeover_binds_the_selected_lifecycle_source() {
             HEAD,
             OLD,
             &seeded[0].record_digest,
-            "worker-session@target",
+            &format!("{COORDINATOR_UUID}@target"),
             true,
         );
         if scenario == "live-namesake" {
