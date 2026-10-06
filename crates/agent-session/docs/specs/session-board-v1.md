@@ -93,6 +93,8 @@ Every board surface carries records with this shape. The record has no
   "cwd": "~/Project/nils-cli",
   "provider": "claude",
   "agent_profile": null,
+  "model": null,
+  "reasoning_effort": null,
   "title": "Specify the session board",
   "title_state": {"activity": "Drafting the closed-ledger section"},
   "turn_state": {
@@ -163,6 +165,8 @@ the extension. A session with lineage and work looks like this:
 | Place | `cwd` | string or null | New derivation from `SessionView.cwd`: the daemon user's home prefix is replaced by `~` (for example `~/Project/x`). A `cwd` outside that home is `null`, never an absolute path. |
 | Place | `provider` | string | `SessionView.agent` (for example `codex`, `claude`, `dsh`). |
 | Place | `agent_profile` | string or null | `SessionView.agent_profile`. |
+| Model | `model` | string or null | Bounded `SessionView.model`; `null` means unknown. |
+| Model | `reasoning_effort` | string or null | `SessionView.reasoning_effort`; `null` means unknown. |
 | Doing | `title` | string or null | `SessionView.title`. |
 | Doing | `title_state.activity` | string or null | `SessionView.title_state.activity`. `title_state` is `null` when retitle is disabled or unavailable (`SessionView.title_state` absent); otherwise it contains only `activity`. |
 | Progress | `turn_state` | object or null | `SessionView.turn_state` (the [turn-state contract](../turn-state-contract.md)), projected to the allowlisted fields below. `null` when the session has no turn state. |

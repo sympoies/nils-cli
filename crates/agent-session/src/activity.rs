@@ -1100,7 +1100,7 @@ fn provider_source(event: &TurnEvent) -> TurnSource {
     }
 }
 
-fn projected_provider_identifier(
+pub(crate) fn projected_provider_identifier(
     runtime_id: &str,
     agent: AgentKind,
     field: &str,
@@ -3201,6 +3201,27 @@ pub(crate) fn ingest_provider_hook_input(
             }
         }
     }
+    if agent == AgentKind::Claude
+        && matches!(
+            raw_event_name,
+            Some("SessionStart" | "PostModelSwitch" | "ModelSettings")
+        )
+        && raw.get("agent_id").is_none()
+        && let Some(provider_session) = raw
+            .get("session_id")
+            .or_else(|| raw.get("session_key"))
+            .and_then(Value::as_str)
+    {
+        let _ = crate::session_model::observe_claude_hook(
+            context,
+            id,
+            runtime_id,
+            provider_session,
+            &raw,
+            raw_event_name == Some("SessionStart"),
+        );
+        return Ok(true);
+    }
     let Some(event) = normalize_provider_hook(agent, event_override, runtime_id, &raw)? else {
         return Ok(false);
     };
@@ -3208,6 +3229,21 @@ pub(crate) fn ingest_provider_hook_input(
         provider_resume_from_user_prompt_hook(context, id, agent, runtime_id, event_override, &raw);
     let _ = ingest_event(context, id, event)?;
     provider_resume?;
+    if raw.get("agent_id").is_none()
+        && let Some(provider_session) = raw
+            .get("session_id")
+            .or_else(|| raw.get("session_key"))
+            .and_then(Value::as_str)
+    {
+        let _ = crate::session_model::observe(
+            context,
+            id,
+            runtime_id,
+            agent.as_str(),
+            provider_session,
+            &raw,
+        );
+    }
     Ok(true)
 }
 

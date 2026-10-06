@@ -39,6 +39,7 @@ mod send_submit;
 mod serve;
 mod serve_config;
 mod session_account;
+mod session_model;
 mod usage;
 
 /// Unstable engine surface for the `nils-main-agent` workspace crate.
@@ -1814,6 +1815,8 @@ struct DurableResumeRecord {
 
 #[derive(Debug, Serialize)]
 pub struct SessionView {
+    #[serde(flatten)]
+    model_settings: session_model::ModelSettings,
     pub id: String,
     agent: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -3460,6 +3463,7 @@ fn create_record_with_lineage(
         role: None,
         resume_sidecar_extra: BTreeMap::new(),
     };
+    session_model::ModelSettings::store_launch(&mut record);
     if let Some(mut initial) = initial_lineage {
         initial.seed.set_forge_role(initial.role.clone());
         record.lineage = Some(initial.seed.finalize(&record.id, &record.created_at));
@@ -12923,6 +12927,7 @@ fn session_view_from_parts(
         )
     });
     SessionView {
+        model_settings: session_model::ModelSettings::for_record(record),
         id: record.id.clone(),
         agent: record.agent.clone(),
         capabilities: if status == "running"

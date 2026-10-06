@@ -28,6 +28,7 @@ mod paths;
 pub mod policy_parity;
 mod read_only;
 pub mod recovery;
+pub mod session_metadata;
 pub mod setup;
 mod strict_json;
 mod trace;

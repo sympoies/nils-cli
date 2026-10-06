@@ -3405,6 +3405,8 @@ impl Drop for ProxySocketGuard {
 }
 
 struct ProxyObserver {
+    pending_model_settings: BTreeMap<String, (String, Value)>,
+    model_settings_writer: Option<tokio::task::JoinHandle<()>>,
     pending_thread_starts: BTreeSet<String>,
     pending_system_ephemeral_thread_starts: BTreeSet<String>,
     system_ephemeral_threads: BTreeSet<String>,
@@ -3416,12 +3418,56 @@ struct ProxyObserver {
 impl ProxyObserver {
     fn new() -> Self {
         Self {
+            pending_model_settings: BTreeMap::new(),
+            model_settings_writer: None,
             pending_thread_starts: BTreeSet::new(),
             pending_system_ephemeral_thread_starts: BTreeSet::new(),
             system_ephemeral_threads: BTreeSet::new(),
             system_ephemeral_thread_order: VecDeque::new(),
             pending_attention_requests: BTreeMap::new(),
             reducer: None,
+        }
+    }
+
+    fn queue_model_settings(
+        &mut self,
+        context: &CliContext,
+        record: &SessionRecord,
+        thread_id: &str,
+        settings: &Value,
+    ) {
+        let settings = project_model_settings(settings);
+        if settings
+            .as_object()
+            .is_none_or(|settings| settings.is_empty())
+        {
+            return;
+        }
+        let previous = self.model_settings_writer.take();
+        let context = context.clone();
+        let record = record.clone();
+        let thread_id = thread_id.to_string();
+        // Keep observations ordered without delaying protocol/activity processing.
+        self.model_settings_writer = Some(tokio::spawn(async move {
+            if let Some(previous) = previous {
+                let _ = previous.await;
+            }
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::session_model::observe_primary_codex_thread(
+                    &context,
+                    &record.id,
+                    &record.runtime.as_ref().expect("bound runtime").launch_id,
+                    &thread_id,
+                    &settings,
+                )
+            })
+            .await;
+        }));
+    }
+
+    async fn finish_model_settings(&mut self) {
+        if let Some(writer) = self.model_settings_writer.take() {
+            let _ = writer.await;
         }
     }
 
@@ -3445,6 +3491,20 @@ impl ProxyObserver {
                     && !self.system_ephemeral_threads.contains(thread_id)
                 {
                     self.bind(record, thread_id)?;
+                    if let Some(key) = value.get("id").and_then(json_id_key) {
+                        if self.pending_model_settings.len() >= MAX_REDUCER_PENDING_TURNS {
+                            self.pending_model_settings.clear();
+                        }
+                        self.pending_model_settings.remove(&key);
+                        let settings = project_model_settings(&value["params"]);
+                        if settings
+                            .as_object()
+                            .is_some_and(|settings| !settings.is_empty())
+                        {
+                            self.pending_model_settings
+                                .insert(key, (thread_id.to_string(), settings));
+                        }
+                    }
                 }
             }
             _ => {}
@@ -3470,6 +3530,7 @@ impl ProxyObserver {
         ) {
             (Some(thread_id), Some(persisted_thread), false) if thread_id == persisted_thread => {
                 self.bind_persisted(thread_id)?;
+                self.queue_model_settings(context, record, thread_id, &value["result"]);
             }
             (Some(thread_id), None, true) => {
                 if self.reducer.is_none() {
@@ -3507,6 +3568,20 @@ impl ProxyObserver {
             _ => {
                 return Err("Codex persisted thread binding did not match the response".to_string());
             }
+        }
+        if value.get("error").is_some()
+            && let Some(key) = response_key.as_ref()
+        {
+            self.pending_model_settings.remove(key);
+        }
+        if value
+            .pointer("/result/turn/id")
+            .and_then(Value::as_str)
+            .is_some()
+            && let Some(key) = response_key
+            && let Some((thread_id, settings)) = self.pending_model_settings.remove(&key)
+        {
+            self.queue_model_settings(context, record, &thread_id, &settings);
         }
         if matches!(
             value.get("method").and_then(Value::as_str),
@@ -3703,6 +3778,7 @@ impl ProxyProjection {
                     break;
                 }
             }
+            observer.finish_model_settings().await;
         });
         Self {
             sender: Some(sender),
@@ -4014,17 +4090,63 @@ fn client_observation(value: &Value) -> Option<Value> {
             if !protocol_id_is_valid(thread_id) {
                 return None;
             }
-            json!({
-                "method": "turn/start",
-                "params": { "threadId": thread_id }
-            })
+            let mut observation =
+                json!({"method": "turn/start", "params": {"threadId": thread_id}});
+            if let Some(id) = value.get("id").filter(|id| json_id_key(id).is_some()) {
+                observation["id"] = id.clone();
+            }
+            let mut settings = project_model_settings(&value["params"]);
+            // Null overrides mean inherit on turn/start; rejected non-null
+            // labels remain an explicit unknown after a successful response.
+            for (source, projected) in [
+                ("model", "model"),
+                ("effort", "reasoning_effort"),
+                ("reasoning_effort", "reasoning_effort"),
+            ] {
+                if value["params"].get(source).is_some_and(Value::is_null) {
+                    settings.as_object_mut()?.remove(projected);
+                }
+            }
+            observation["params"]
+                .as_object_mut()?
+                .extend(settings.as_object()?.clone());
+            observation
         }
         _ => return None,
     };
     bounded_observation(observation)
 }
 
+fn project_model_settings(value: &Value) -> Value {
+    let mut out = json!({});
+    if let Some(value) = value.get("model") {
+        out["model"] = json!(value.as_str().and_then(crate::session_model::model_label));
+    }
+    if let Some(value) = value
+        .get("reasoning_effort")
+        .or_else(|| value.get("reasoningEffort"))
+        .or_else(|| value.get("effort"))
+    {
+        out["reasoning_effort"] =
+            json!(value.as_str().and_then(crate::session_model::effort_label));
+    }
+    out
+}
+
 fn server_observation(value: &Value) -> ServerProjection {
+    if let Some(id) = value.get("id").filter(|id| json_id_key(id).is_some())
+        && value.get("error").is_some()
+    {
+        return ServerProjection::Unique(json!({"id": id, "error": {}}));
+    }
+    if let (Some(id), Some(turn_id)) = (
+        value.get("id"),
+        value.pointer("/result/turn/id").and_then(Value::as_str),
+    ) && json_id_key(id).is_some()
+        && protocol_id_is_valid(turn_id)
+    {
+        return ServerProjection::Unique(json!({"id": id, "result": {"turn": {"id": turn_id}}}));
+    }
     if let (Some(id), Some(thread_id)) = (value.get("id"), value.pointer("/result/thread/id")) {
         let Some(thread_id) = thread_id.as_str() else {
             return ServerProjection::RejectedUnique;
@@ -4032,12 +4154,16 @@ fn server_observation(value: &Value) -> ServerProjection {
         if json_id_key(id).is_none() || !protocol_id_is_valid(thread_id) {
             return ServerProjection::RejectedUnique;
         }
-        return bounded_observation(json!({
-            "id": id,
-            "result": { "thread": { "id": thread_id } }
-        }))
-        .map(ServerProjection::Unique)
-        .unwrap_or(ServerProjection::RejectedUnique);
+        let mut result = json!({"thread": {"id": thread_id}});
+        result.as_object_mut().expect("object").extend(
+            project_model_settings(&value["result"])
+                .as_object()
+                .expect("object")
+                .clone(),
+        );
+        return bounded_observation(json!({"id": id, "result": result}))
+            .map(ServerProjection::Unique)
+            .unwrap_or(ServerProjection::RejectedUnique);
     }
     let Some(method) = value.get("method").and_then(Value::as_str) else {
         return ServerProjection::Irrelevant;
@@ -7940,6 +8066,163 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             !thread_attached_path(&record).unwrap().exists(),
             "the projection worker must not repeat marker persistence or validation"
         );
+    }
+
+    #[tokio::test]
+    async fn session_model_fresh_thread_and_optional_write_failure_preserve_binding() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = record_with_runtime("fresh-model-proxy", &tmp.path().join("server.sock"));
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        let mut observer = ProxyObserver::new();
+        observer
+            .observe_client(
+                &record,
+                &json!({"id": 1, "method": "thread/start", "params": {}}),
+            )
+            .unwrap();
+        observer.observe_server(&context, &record, &json!({"id": 1, "result": {"thread": {"id": "primary-thread"}, "model": "resolved-model", "reasoningEffort": "medium"}}), Some("primary-thread")).await.unwrap();
+        observer.finish_model_settings().await;
+        let persisted = crate::load_session_record(&context, &record.id).unwrap();
+        assert!(persisted.provider_resume.is_none());
+        let settings = crate::session_model::ModelSettings::for_record(&persisted);
+        assert_eq!(settings.model.as_deref(), Some("resolved-model"));
+        assert_eq!(settings.reasoning_effort.as_deref(), Some("medium"));
+        // Remove only the fixture record to inject failure of optional metadata I/O.
+        fs::remove_file(crate::session_dir(&context, &record.id).join("session.json")).unwrap();
+        observer
+            .observe_client(
+                &record,
+                &json!({"id": 2, "method": "thread/start", "params": {}}),
+            )
+            .unwrap();
+        observer.observe_server(&context, &record, &json!({"id": 2, "result": {"thread": {"id": "primary-thread"}, "model": "other-model"}}), Some("primary-thread")).await.unwrap();
+        observer.finish_model_settings().await;
+        assert_eq!(
+            observer.reducer.as_ref().unwrap().thread_id,
+            "primary-thread"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_model_confirmed_update_survives_busy_record_without_delaying_response() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = record_with_runtime("busy-model-proxy", &tmp.path().join("server.sock"));
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        let mut observer = ProxyObserver::new();
+        observer.observe_client(&record, &json!({"id": 1, "method": "turn/start", "params": {
+            "threadId": "primary-thread", "model": "confirmed-model", "reasoning_effort": "high"
+        }})).unwrap();
+        let lock = crate::acquire_session_record_lock(&context, &record.id).unwrap();
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            observer.observe_server(
+                &context,
+                &record,
+                &json!({"id": 1, "result": {"turn": {"id": "confirmed"}}}),
+                None,
+            ),
+        )
+        .await
+        .expect("optional metadata must not delay the protocol response")
+        .unwrap();
+        drop(lock);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let settings = crate::session_model::ModelSettings::for_record(
+                &crate::load_session_record(&context, &record.id).unwrap(),
+            );
+            if settings.model.as_deref() == Some("confirmed-model") {
+                assert_eq!(settings.reasoning_effort.as_deref(), Some("high"));
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "confirmed settings were dropped while the record was busy"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn session_model_updates_only_after_confirmed_primary_turn_requests() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record =
+            record_with_runtime("model-settings-proxy", &tmp.path().join("server.sock"));
+        record.provider_resume = Some(serde_json::from_value(json!({
+            "provider": "codex", "session_id": "primary-thread", "captured_at": "2030-01-01T00:00:00Z",
+            "capture_method": "fixture", "resume_args": []
+        })).unwrap());
+        record.agent_args = vec!["--model=initial-model".into()];
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        let mut observer = ProxyObserver::new();
+        let request = client_observation(&json!({"id": 2, "method": "turn/start", "params": {
+            "threadId": "primary-thread", "model": "updated-model", "effort": "high", "input": "private prompt"
+        }})).unwrap();
+        assert!(!request.to_string().contains("private prompt"));
+        observer.observe_client(&record, &request).unwrap();
+        assert_eq!(
+            crate::session_model::ModelSettings::for_record(
+                &crate::load_session_record(&context, &record.id).unwrap()
+            )
+            .model
+            .as_deref(),
+            Some("initial-model")
+        );
+        observer
+            .observe_server(
+                &context,
+                &record,
+                &json!({"id": 999, "result": {"turn": {"id": "unrelated"}}}),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            crate::session_model::ModelSettings::for_record(
+                &crate::load_session_record(&context, &record.id).unwrap()
+            )
+            .model
+            .as_deref(),
+            Some("initial-model")
+        );
+        observer
+            .observe_server(
+                &context,
+                &record,
+                &json!({"id": 2, "result": {"turn": {"id": "confirmed"}}}),
+                None,
+            )
+            .await
+            .unwrap();
+        observer.finish_model_settings().await;
+        let settings = crate::session_model::ModelSettings::for_record(
+            &crate::load_session_record(&context, &record.id).unwrap(),
+        );
+        assert_eq!(settings.model.as_deref(), Some("updated-model"));
+        assert_eq!(settings.reasoning_effort.as_deref(), Some("high"));
+        let ServerProjection::Unique(response) = server_observation(&json!({"id": 1, "result": {
+            "thread": {"id": "primary-thread"}, "model": "resolved-model", "reasoningEffort": "medium", "config": {"secret": "must-not-project"}
+        }})) else {
+            panic!("thread response");
+        };
+        assert_eq!(response["result"]["model"], "resolved-model");
+        assert_eq!(response["result"]["reasoning_effort"], "medium");
+        assert!(!response.to_string().contains("must-not-project"));
     }
 
     #[tokio::test]

@@ -30,7 +30,7 @@ fn lifecycle_activity_uses_the_typed_cli_with_metadata_only_json() {
     let input_path = fixture.root.join("activity.json");
     fs::write(
         &fake,
-        "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\ndd of=\"$CAPTURE_STDIN\" status=none\n",
+        "#!/bin/sh\nset -eu\nif [ \"$2\" = hook ]; then exit 0; fi\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\ndd of=\"$CAPTURE_STDIN\" status=none\n",
     )
     .expect("fake agent-session");
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).expect("fake mode");
@@ -182,7 +182,7 @@ fn claude_prompt_id_is_correlated_as_the_provider_turn_id() {
     let input_path = fixture.root.join("activity.json");
     fs::write(
         &fake,
-        "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\ndd of=\"$CAPTURE_STDIN\" status=none\n",
+        "#!/bin/sh\nset -eu\nif [ \"$2\" = hook ]; then exit 0; fi\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\ndd of=\"$CAPTURE_STDIN\" status=none\n",
     )
     .expect("fake agent-session");
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).expect("fake mode");

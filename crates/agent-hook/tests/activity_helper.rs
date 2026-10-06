@@ -30,7 +30,7 @@ version = "2026.07.20.1"
 [[rules]]
 id = "coord.activity.prompt-stop"
 products = ["codex", "claude"]
-events = ["UserPromptSubmit", "PreToolUse", "Stop"]
+events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"]
 priority = 100
 mode = "enforce"
 failure_posture = "closed"
@@ -545,4 +545,68 @@ fn an_inherited_helper_override_does_not_reach_the_process_under_test() {
         "{}",
         broken.stdout_text()
     );
+}
+
+#[test]
+fn session_model_claude_metadata_is_forwarded_without_private_hook_fields() {
+    let fixture = Fixture::new(ACTIVITY_POLICY);
+    let helper_dir = working_helper(&fixture);
+    let capture = fixture.root.join("model-metadata.json");
+    fs::write(
+        helper_dir.join("agent-session"),
+        "#!/bin/sh\nif [ \"$2\" = hook ]; then cat > \"$MODEL_CAPTURE\"; fi\nexit 0\n",
+    )
+    .unwrap();
+    let path = format!("{}:/usr/bin:/bin", helper_dir.display());
+    let dispatched = fixture.run_with_env(
+        &["dispatch", "--product", "claude", "--format", "json"],
+        Some(r#"{"hook_event_name":"SessionStart","session_id":"provider-session-canary","source":"startup","model":"resolved-model","effort":{"level":"high"},"prompt":"prompt-canary","transcript_path":"/private/transcript-canary"}"#),
+        &[("AGENT_SESSION_ID", "managed-model-session"), ("AGENT_SESSION_RUNTIME_ID", "managed-model-runtime"),
+          ("AGENT_SESSION_BIN", helper_dir.join("agent-session").to_str().unwrap()),
+          ("PATH", &path), ("MODEL_CAPTURE", capture.to_str().unwrap())],
+    );
+    assert_eq!(dispatched.code, 0, "{}", dispatched.stdout_text());
+    let metadata: Value = serde_json::from_slice(
+        &fs::read(capture).expect("SessionStart model metadata must reach the helper"),
+    )
+    .unwrap();
+    assert_eq!(metadata["model"], "resolved-model");
+    assert_eq!(metadata["reasoning_effort"], "high");
+    assert!(
+        metadata["session_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("local:v1:")
+    );
+    let projected = metadata.to_string();
+    for private in [
+        "provider-session-canary",
+        "prompt-canary",
+        "transcript-canary",
+    ] {
+        assert!(!projected.contains(private));
+    }
+}
+
+#[test]
+fn session_model_optional_timeout_cannot_prevent_mandatory_stop_activity() {
+    let fixture = Fixture::new(ACTIVITY_POLICY);
+    let helper_dir = working_helper(&fixture);
+    let capture = fixture.root.join("mandatory-event.json");
+    fs::write(helper_dir.join("agent-session"), "#!/bin/sh\nif [ \"$2\" = event ]; then cat > \"$MODEL_CAPTURE\"; else sleep 2; exit 17; fi\nexit 0\n").unwrap();
+    let path = format!("{}:/usr/bin:/bin", helper_dir.display());
+    let start = std::time::Instant::now();
+    let dispatched = fixture.run_with_env(
+        &["dispatch", "--product", "claude", "--format", "json"],
+        Some(r#"{"hook_event_name":"Stop","session_id":"primary-session","effort":{"level":"high"}}"#),
+        &[("AGENT_SESSION_ID", "managed-model-session"), ("AGENT_SESSION_RUNTIME_ID", "managed-model-runtime"),
+          ("AGENT_SESSION_BIN", helper_dir.join("agent-session").to_str().unwrap()),
+          ("PATH", &path), ("MODEL_CAPTURE", capture.to_str().unwrap())],
+    );
+    assert_eq!(dispatched.code, 0, "{}", dispatched.stdout_text());
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    let event: Value = serde_json::from_slice(&fs::read(capture).unwrap()).unwrap();
+    assert_eq!(event["kind"], "stop_observed");
+    assert!(event.get("model").is_none());
+    assert!(event.get("reasoning_effort").is_none());
 }
