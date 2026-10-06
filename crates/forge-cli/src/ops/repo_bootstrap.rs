@@ -959,6 +959,7 @@ pub fn run(
                 &receipt.files,
                 &receipt.message,
                 &receipt.default_branch,
+                &snapshot.clone_url,
             )? {
                 Some(sha) => sha,
                 None => create_signed_root(
@@ -966,6 +967,7 @@ pub fn run(
                     &receipt.files,
                     &receipt.message,
                     &receipt.default_branch,
+                    &snapshot.clone_url,
                 )?,
             };
             receipt.local_sha = Some(sha.clone());
@@ -1201,6 +1203,7 @@ fn create_signed_root(
     files: &[ReceiptFile],
     message: &str,
     branch: &str,
+    clone_url: &str,
 ) -> Result<String, ForgeError> {
     create_private_dir(checkout)?;
     require_success(
@@ -1247,10 +1250,26 @@ fn create_signed_root(
         "failed to stage the explicit bootstrap files",
     )?;
 
-    author_signed_root(checkout, message)
+    author_signed_root(checkout, message, clone_url)
 }
 
-fn author_signed_root(checkout: &Path, message: &str) -> Result<String, ForgeError> {
+fn author_signed_root(
+    checkout: &Path,
+    message: &str,
+    clone_url: &str,
+) -> Result<String, ForgeError> {
+    // The real commit boundary resolves the authoring identity from the checkout's
+    // remote. Bind it to the provider-validated target before initial or resumed
+    // authoring, without writing author or signing configuration.
+    require_success(
+        run_git(
+            checkout,
+            &["config", "--local", "remote.origin.url", clone_url],
+            &[],
+        )?,
+        "bootstrap_git_target_failed",
+        "failed to bind the managed bootstrap checkout to its repository target",
+    )?;
     let semantic = semantic_commit_bin();
     let semantic_args = [
         OsString::from("commit"),
@@ -1313,6 +1332,7 @@ fn recover_signed_root(
     files: &[ReceiptFile],
     message: &str,
     branch: &str,
+    clone_url: &str,
 ) -> Result<Option<String>, ForgeError> {
     let metadata = match fs::symlink_metadata(checkout) {
         Ok(metadata) => metadata,
@@ -1350,7 +1370,7 @@ fn recover_signed_root(
     let head = run_git(checkout, &["rev-parse", "--verify", "HEAD^{commit}"], &[])?;
     if !head.success {
         validate_staged_partial_checkout(checkout, files)?;
-        return author_signed_root(checkout, message).map(Some);
+        return author_signed_root(checkout, message, clone_url).map(Some);
     }
     let sha = head.stdout.trim().to_string();
     if validate_oid(&sha).is_err() {
@@ -1644,6 +1664,9 @@ fn run_git_push_with_identity(
         })?;
     if let Some(identity) = &identity {
         identity.redact_output(&mut output);
+        identity
+            .finish(output.status.success(), None)
+            .map_err(bootstrap_identity_error)?;
     }
     Ok(ProcessResult {
         success: output.status.success(),

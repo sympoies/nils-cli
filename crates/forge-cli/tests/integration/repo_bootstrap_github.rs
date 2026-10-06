@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 
 use super::support::{StubEnv, parse_envelope, run_forge_cli};
 
@@ -118,9 +118,10 @@ esac
 printf '%s\n' "$*" >> "$GH_TEST_GIT_LOG"
 case "$*" in
   *"init --initial-branch="*)
-    branch=${3#--initial-branch=}
+    branch=${4#--initial-branch=}
     command git -C "$2" init --initial-branch="$branch" >/dev/null
     ;;
+  *" add "*|*" config "*) command git "$@" ;;
   *"rev-parse"*"HEAD^{commit}"*) printf '%s\n' "$GH_TEST_SHA" ;;
   *"rev-list --parents -n 1"*) printf '%s\n' "$GH_TEST_SHA" ;;
   *"log -1 --format=%G?"*) printf '%s\n' "${GH_TEST_LOCAL_SIGNATURE:-G}" ;;
@@ -134,6 +135,10 @@ case "$*" in
       [ "$FORGE_CLI_BOOTSTRAP_GITHUB_TOKEN" = fixture-token-value ] || exit 9
     fi
     printf '%s\n' "$GH_TEST_SHA" > "$GH_TEST_REMOTE_SHA"
+    if [ "${GH_TEST_PUSH_MODE:-success}" = audit_failure ]; then
+      audit="$XDG_STATE_HOME/forge-cli/identity-audit.jsonl"
+      rm "$audit" && mkdir "$audit" || exit 9
+    fi
     if [ "${GH_TEST_PUSH_MODE:-success}" = ambiguous ]; then
       printf '%s\n' 'simulated lost push response' >&2
       exit 1
@@ -286,6 +291,126 @@ fn github_existing_empty_bootstrap_supports_identity_routing() {
     let result = parse_envelope(&output.stdout);
     assert_eq!(result["data"]["root_commit_sha"], SHA);
     assert_eq!(result["data"]["signature_verified"], true);
+}
+
+#[test]
+fn github_bootstrap_real_commit_boundary_resolves_the_authoring_target() {
+    let Some(semantic) =
+        nils_test_support::bin::sibling_or_skip("semantic-commit", "nils-semantic-commit")
+    else {
+        return;
+    };
+    let mut fixture = Fixture::new(true).with_identity_policy();
+    let real_git = nils_common::process::find_in_path("git").expect("Git executable");
+    let marker = fixture.stub.tempdir.path().join("commit-boundary");
+    fixture.stub.write_stub(
+        "git",
+        r#"#!/bin/sh
+case " $* " in
+  *" commit "*)
+    {
+      printf 'author=%s <%s>\n' "$GIT_AUTHOR_NAME" "$GIT_AUTHOR_EMAIL"
+      printf 'signer=%s\n' "$("$BOOTSTRAP_REAL_GIT" config --get user.signingkey)"
+      printf 'signing=%s\n' "$("$BOOTSTRAP_REAL_GIT" config --get commit.gpgsign)"
+    } > "$BOOTSTRAP_COMMIT_BOUNDARY"
+    echo 'fixture stopped after real commit identity authorization' >&2
+    exit 73
+    ;;
+  *) exec "$BOOTSTRAP_REAL_GIT" "$@" ;;
+esac
+"#,
+    );
+    fixture.stub.envs.extend([
+        (
+            "FORGE_CLI_SEMANTIC_COMMIT_BIN".into(),
+            semantic.display().to_string(),
+        ),
+        ("BOOTSTRAP_REAL_GIT".into(), real_git.display().to_string()),
+        (
+            "BOOTSTRAP_COMMIT_BOUNDARY".into(),
+            marker.display().to_string(),
+        ),
+        ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+    ]);
+    let output = fixture.run(true, false);
+    assert_ne!(output.code, 0, "the fixture stops before creating a commit");
+    let args = fs::read_to_string(&marker).unwrap_or_else(|error| {
+        panic!(
+            "real commit boundary not reached: {error}; stdout={} stderr={}",
+            output.stdout, output.stderr
+        )
+    });
+    assert!(
+        args.contains("author=Example Contributor <contributor@example.invalid>"),
+        "{args}"
+    );
+    assert!(
+        args.contains("signer=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!"),
+        "{args}"
+    );
+    assert!(args.contains("signing=true"), "{args}");
+    assert!(
+        !fixture.remote_sha.exists(),
+        "commit failure must prevent push"
+    );
+}
+
+#[test]
+fn github_bootstrap_records_identity_push_success_and_failure() {
+    for (mode, outcome) in [
+        ("success", "execution_succeeded"),
+        ("ambiguous", "execution_failed"),
+    ] {
+        let mut fixture = Fixture::new(true).with_identity_policy();
+        fixture
+            .stub
+            .envs
+            .push(("GH_TEST_PUSH_MODE".into(), mode.into()));
+        let output = fixture.run(true, false);
+        assert_eq!(
+            output.code, 0,
+            "stdout={} stderr={}",
+            output.stdout, output.stderr
+        );
+        let audit = fs::read_to_string(
+            fixture
+                .stub
+                .tempdir
+                .path()
+                .join("state/forge-cli/identity-audit.jsonl"),
+        )
+        .expect("identity audit");
+        let records: Vec<serde_json::Value> = audit
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("audit record"))
+            .collect();
+        assert!(
+            records
+                .iter()
+                .any(|record| record["operation"] == "git_push" && record["outcome"] == outcome),
+            "{audit}"
+        );
+    }
+}
+
+#[test]
+fn github_bootstrap_propagates_post_push_identity_audit_failure() {
+    let mut fixture = Fixture::new(true).with_identity_policy();
+    fixture
+        .stub
+        .envs
+        .push(("GH_TEST_PUSH_MODE".into(), "audit_failure".into()));
+    let output = fixture.run(true, false);
+    assert_ne!(output.code, 0);
+    assert_eq!(
+        parse_envelope(&output.stdout)["error"]["code"],
+        "identity_audit_failed_after_execution"
+    );
+    assert!(
+        fixture.remote_sha.exists(),
+        "audit failure occurs after push execution"
+    );
 }
 
 #[test]
