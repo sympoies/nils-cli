@@ -66,6 +66,7 @@ struct Fixture {
     server: TestServer,
     status: Arc<Mutex<(u16, String)>>,
     reset: Arc<Mutex<(u16, String, u64)>>,
+    reset_redirect: Arc<Mutex<Option<String>>>,
 }
 
 impl Fixture {
@@ -81,7 +82,12 @@ impl Fixture {
             json!({ "result": "reset" }).to_string(),
             0u64,
         )));
-        let (status_t, reset_t) = (Arc::clone(&status), Arc::clone(&reset));
+        let reset_redirect = Arc::new(Mutex::new(None::<String>));
+        let (status_t, reset_t, reset_redirect_t) = (
+            Arc::clone(&status),
+            Arc::clone(&reset),
+            Arc::clone(&reset_redirect),
+        );
         let server = TestServer::new(move |request: &RecordedRequest| {
             match (request.method.as_str(), request.path.as_str()) {
                 ("GET", USAGE_PATH) => {
@@ -91,7 +97,11 @@ impl Fixture {
                 ("POST", RESET_PATH) => {
                     let (code, body, delay) = reset_t.lock().expect("reset").clone();
                     std::thread::sleep(Duration::from_millis(delay));
-                    HttpResponse::new(code, body)
+                    let response = HttpResponse::new(code, body);
+                    match reset_redirect_t.lock().expect("redirect").clone() {
+                        Some(location) => response.with_header("Location", &location),
+                        None => response,
+                    }
                 }
                 _ => HttpResponse::new(404, "unknown route"),
             }
@@ -103,6 +113,7 @@ impl Fixture {
             server,
             status,
             reset,
+            reset_redirect,
         };
         fx.write_profile("alpha", FUTURE_MS, Some(ORG));
         fx
@@ -145,6 +156,11 @@ impl Fixture {
         *self.reset.lock().expect("reset") = (code, body, delay_ms);
     }
 
+    fn set_reset_redirect(&self, location: &str) {
+        self.set_reset_raw(307, "redirected".to_string(), 0);
+        *self.reset_redirect.lock().expect("redirect") = Some(location.to_string());
+    }
+
     fn options(&self) -> CmdOptions {
         base_options(&self.root)
             .with_env("CLAUDE_SECRET_DIR", &path_str(&self.secret_dir()))
@@ -174,7 +190,7 @@ impl Fixture {
             ] {
                 assert!(
                     !text.contains(secret),
-                    "reset-rate-limits leaked {secret}: {text}"
+                    "reset-rate-limits output must redact sensitive values"
                 );
             }
         }
@@ -586,6 +602,35 @@ fn reset_rate_limits_maps_http_failures_without_retrying_the_post() {
     let requests = fx.requests();
     assert_eq!(requests.len(), 2);
     assert!(requests.iter().all(|request| request.method == "GET"));
+}
+
+#[test]
+fn reset_rate_limits_does_not_follow_reset_redirects() {
+    let fx = Fixture::new();
+    let redirect_target = TestServer::new(|_request: &RecordedRequest| {
+        HttpResponse::new(200, r#"{"result":"reset"}"#)
+    })
+    .expect("redirect target");
+    fx.set_reset_redirect(&format!("{}/capture", redirect_target.url()));
+
+    let output = fx.run(&[
+        "auth",
+        "reset-rate-limits",
+        "--yes",
+        "--program",
+        "juniper_tide",
+        "--request-id",
+        REQUEST_ID,
+        "--format",
+        "json",
+        "alpha",
+    ]);
+
+    assert_error(&output, 3, "provider-rejected");
+    assert!(
+        redirect_target.take_requests().is_empty(),
+        "the reset request must not be replayed to a redirect target"
+    );
 }
 
 #[test]

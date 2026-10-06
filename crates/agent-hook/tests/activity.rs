@@ -112,7 +112,10 @@ fn lifecycle_activity_uses_the_typed_cli_with_metadata_only_json() {
         "questions",
         "tool_input",
     ] {
-        assert!(!claude_event.contains(secret), "leaked {secret}");
+        assert!(
+            !claude_event.contains(secret),
+            "activity event must redact sensitive values"
+        );
     }
 }
 

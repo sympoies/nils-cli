@@ -7555,7 +7555,7 @@ async fn send_handler(
             Some(json!({ "limit": MAX_SEND_KEYS })),
         ));
     }
-    let mut keys = Vec::with_capacity(MAX_SEND_KEYS.min(body.keys.len()));
+    let mut keys = Vec::with_capacity(MAX_SEND_KEYS);
     for name in &body.keys {
         match SpecialKey::from_name(name) {
             Some(key) => keys.push(key),

@@ -233,7 +233,7 @@ mod tests {
                     vec!["alpha-1.json".to_string(), "alpha-2.json".to_string()]
                 );
             }
-            other => panic!("expected ambiguous match, got {other:?}"),
+            _ => panic!("expected an ambiguous account match"),
         }
 
         assert_eq!(

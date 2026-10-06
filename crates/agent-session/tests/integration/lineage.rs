@@ -298,9 +298,10 @@ fn start_never_guesses_a_parent_that_does_not_resolve() {
         assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
         let stderr = output.stderr_text();
         assert!(
-            stderr.starts_with(&format!("warning: AGENT_SESSION_ID {}", caller.0))
+            stderr.starts_with("warning: AGENT_SESSION_ID does not")
+                && !stderr.contains(caller.0)
                 && stderr.contains("starting a new root session without a parent"),
-            "{stderr}"
+            "warning should explain the fallback without exposing the session id: {stderr}"
         );
         let record = fixture.record(id);
         assert_eq!(record["lineage"]["parent"], Value::Null, "{id}");
