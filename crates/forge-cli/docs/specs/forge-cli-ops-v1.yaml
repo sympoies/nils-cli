@@ -806,7 +806,7 @@ operations:
     backends:
       github:
         argv: ["gh", "api", "graphql"]
-        note: "Trusted complete provider-state/native-review reads; assign/surrender/recover append through the existing head/tip-CAS ledger owner. Takeover also reads fresh session-board terminal lifecycle evidence and rechecks head/base before append. Never publishes raw session or machine selectors."
+        note: "Trusted complete provider-state/native-review reads; stale-base inspect retains ownership and exact durable tip with review-scope-changed status. Same-reviewer/exact-author assign may refresh a moved base in the next generation without surrender, retaining findings and requiring fresh observation/publication. Assign/recover recheck head/base before append through the existing head/tip-CAS ledger owner; surrender retains the old scope. Takeover also reads fresh session-board terminal lifecycle evidence. Never publishes raw session or machine selectors."
     output:
       data:
         provider: enum<github>

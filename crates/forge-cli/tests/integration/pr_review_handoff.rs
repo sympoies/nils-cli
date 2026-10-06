@@ -902,6 +902,72 @@ fn coordinator_recovery_wins_over_a_racing_old_writer_child() {
 }
 
 #[test]
+fn scope_refresh_wins_over_a_racing_old_writer_and_refuses_competing_refreshes() {
+    let root = records(handoff(None), None).remove(0);
+    let state = review_state::observe_review_loop(None, HEAD, &[])
+        .unwrap()
+        .state;
+    let old_write = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        HEAD,
+        1,
+        Some(root.record_digest.clone()),
+        ReviewStatePayload::ReviewLoop { state },
+    )
+    .unwrap()
+    .with_assignment_generation(Some(1))
+    .unwrap();
+    let mut next = handoff(None);
+    next.base_sha = HEAD.into();
+    next.assignment_generation = 2;
+    let refresh = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        HEAD,
+        1,
+        Some(root.record_digest.clone()),
+        ReviewStatePayload::ReviewHandoff {
+            handoff: next.clone(),
+        },
+    )
+    .unwrap();
+    for children in [
+        vec![old_write.clone(), refresh.clone()],
+        vec![refresh.clone(), old_write.clone()],
+    ] {
+        let mut markers = vec![root.marker().unwrap()];
+        markers.extend(children.iter().map(|r| r.marker().unwrap()));
+        let chain =
+            review_state::parse_chain(markers.iter().map(String::as_str), "acme/widgets", 7)
+                .expect("a fresh reviewer interval fences the racing old-generation write");
+        assert_eq!(chain.tip_digest, Some(refresh.record_digest.clone()));
+        assert_eq!(
+            chain.ignored_stale_records,
+            vec![old_write.record_digest.clone()]
+        );
+    }
+    next.assigned_head = OLD.into();
+    let competing = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        OLD,
+        1,
+        Some(root.record_digest.clone()),
+        ReviewStatePayload::ReviewHandoff { handoff: next },
+    )
+    .unwrap();
+    let markers = [
+        root.marker().unwrap(),
+        refresh.marker().unwrap(),
+        competing.marker().unwrap(),
+    ];
+    assert!(
+        review_state::parse_chain(markers.iter().map(String::as_str), "acme/widgets", 7).is_err()
+    );
+}
+
+#[test]
 fn surrender_and_explicit_recovery_have_distinct_role_fences() {
     let seeded = records(handoff(None), None);
     for (command, actor, reason) in [
@@ -1472,15 +1538,602 @@ if args[:2] == ['api', 'repos/acme/widgets/issues/7/comments']:
     ledger.write_text(json.dumps(bodies))
     print('https://github.com/acme/widgets/pull/7#issuecomment-2')
 elif args[:2] == ['api', 'graphql'] and any('comments(first:' in a for a in args):
+    seed_count = int((root / 'seed-count').read_text())
     nodes = [{'author': {'login': 'review-app[bot]'}, 'authorAssociation': 'OWNER',
-              'createdAt': '2026-07-20T12:00:00Z', 'body': b}
-             for b in json.loads(ledger.read_text())]
+              'createdAt': '2026-07-20T12:00:03Z' if i >= seed_count else '2026-07-20T12:00:00Z', 'body': b}
+             for i, b in enumerate(json.loads(ledger.read_text()))]
     print(json.dumps({'data': {'viewer': {'login': 'review-app[bot]'}, 'repository': {
         'pullRequest': {'comments': {'nodes': nodes, 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}}}))
 else:
     os.execv(str(root / 'gh-inner'), [str(root / 'gh-inner')] + args)
 "#;
+    fs::write(
+        stub.tempdir.path().join("seed-count"),
+        seeded.len().to_string(),
+    )
+    .unwrap();
     stub.gh_stub(script)
+}
+
+fn inspect_handoff(stub: &StubEnv) -> super::support::CmdOutput {
+    run_forge_cli(
+        stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-handoff",
+            "inspect",
+            "7",
+            "--expected-head",
+            HEAD,
+        ],
+    )
+}
+
+fn assign_handoff(
+    stub: &StubEnv,
+    reviewer: &str,
+    base: &str,
+    tip: &str,
+    dry: bool,
+) -> super::support::CmdOutput {
+    let mut args = vec![
+        "--provider",
+        "github",
+        "--repo",
+        "acme/widgets",
+        "--format",
+        "json",
+    ];
+    if dry {
+        args.push("--dry-run");
+    }
+    args.extend([
+        "pr",
+        "review-handoff",
+        "assign",
+        "7",
+        "--reviewer-session",
+        reviewer,
+        "--review-author",
+        "review-app[bot]",
+        "--base-sha",
+        base,
+        "--expected-head",
+        HEAD,
+        "--expected-state",
+        tip,
+    ]);
+    run_forge_cli(stub, &args)
+}
+
+#[test]
+fn inspect_preserves_ownership_and_exact_tip_after_base_drift() {
+    for returned in [None, Some("reviewer-closed")] {
+        let seeded = records(handoff(returned), Some(HEAD));
+        let stub = fixture(HEAD, &seeded, vec![]).env("PROVIDER_BASE", HEAD);
+        let out = inspect_handoff(&stub);
+        assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+        let data = &parse_envelope(&out.stdout)["data"];
+        assert_eq!(data["status"], "review-scope-changed");
+        assert_eq!(data["base_sha"], HEAD);
+        assert_eq!(data["handoff"]["base_sha"], OLD);
+        assert_eq!(
+            data["handoff"]["coordinator_digest"],
+            review_state::sha256_digest(b"worker-session")
+        );
+        assert_eq!(
+            data["handoff"]["assignment_generation"],
+            if returned.is_some() { 2 } else { 1 }
+        );
+        assert_eq!(
+            data["state_tip_digest"],
+            seeded.last().unwrap().record_digest
+        );
+        assert!(!out.stdout.contains("private-machine-canary"));
+        assert!(
+            !fs::read_to_string(stub.tempdir.path().join("calls.log"))
+                .unwrap()
+                .contains("--method POST")
+        );
+    }
+}
+
+#[test]
+fn recovered_assignment_accepts_the_tip_returned_by_inspection() {
+    for moved_base in [OLD, HEAD] {
+        let seeded = records(handoff(None), Some(HEAD));
+        let stub = writable_ledger(fixture(HEAD, &seeded, vec![]), &seeded)
+            .env("PROVIDER_BASE", moved_base)
+            .env("AGENT_REVIEWER_SESSION", "");
+        let recovered = run_forge_cli(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widgets",
+                "--format",
+                "json",
+                "pr",
+                "review-handoff",
+                "recover",
+                "7",
+                "--expected-head",
+                HEAD,
+                "--expected-state",
+                &seeded.last().unwrap().record_digest,
+                "--reason",
+                "reviewer-closed",
+            ],
+        );
+        assert_eq!(
+            recovered.code, 0,
+            "{} {}",
+            recovered.stdout, recovered.stderr
+        );
+        let inspected = inspect_handoff(&stub);
+        assert_eq!(
+            inspected.code, 0,
+            "{} {}",
+            inspected.stdout, inspected.stderr
+        );
+        let data = parse_envelope(&inspected.stdout)["data"].clone();
+        assert_eq!(
+            data["state_tip_digest"],
+            parse_envelope(&recovered.stdout)["data"]["state_tip_digest"]
+        );
+        let tip = data["state_tip_digest"].as_str().unwrap();
+        for dry in [true, false] {
+            let out = assign_handoff(&stub, REVIEWER_UUID, moved_base, tip, dry);
+            assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+            assert_eq!(
+                parse_envelope(&out.stdout)["data"]["handoff"]["assignment_generation"],
+                3
+            );
+        }
+    }
+}
+
+#[test]
+fn same_reviewer_base_refresh_preserves_findings_and_requires_fresh_observation() {
+    let mut h = handoff(None);
+    h.reviewer_digest = review_state::sha256_digest(REVIEWER_UUID.as_bytes());
+    let mut seeded = records(h, None);
+    let findings: Vec<review_state::ReviewFindingObservation> = serde_json::from_value(json!([
+        {"fingerprint":"testing:handoff:open-finding", "blocking":true, "threads":["thread-1"]}
+    ]))
+    .unwrap();
+    let inherited = review_state::observe_review_loop(None, HEAD, &findings)
+        .unwrap()
+        .state;
+    seeded.push(
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            HEAD,
+            1,
+            Some(seeded[0].record_digest.clone()),
+            ReviewStatePayload::ReviewLoop {
+                state: inherited.clone(),
+            },
+        )
+        .unwrap()
+        .with_assignment_generation(Some(1))
+        .unwrap(),
+    );
+    let stub = writable_ledger(fixture(HEAD, &seeded, vec![review(HEAD, "pass")]), &seeded)
+        .env("PROVIDER_BASE", HEAD)
+        .env("AGENT_REVIEWER_SESSION", "");
+    let tip = &seeded.last().unwrap().record_digest;
+    for dry in [true, false] {
+        let out = assign_handoff(&stub, REVIEWER_UUID, HEAD, tip, dry);
+        assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+        let data = parse_envelope(&out.stdout)["data"].clone();
+        assert_eq!(data["handoff"]["assignment_generation"], 2);
+        assert_eq!(data["handoff"]["base_sha"], HEAD);
+    }
+    let saved: Vec<String> =
+        serde_json::from_str(&fs::read_to_string(stub.tempdir.path().join("ledger.json")).unwrap())
+            .unwrap();
+    let chain =
+        review_state::parse_chain(saved.iter().map(String::as_str), "acme/widgets", 7).unwrap();
+    assert_eq!(
+        review_state::latest_review_loop_state(&chain),
+        Some(&inherited)
+    );
+    assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+    let reviewer = stub.env("AGENT_SESSION_ID", REVIEWER_UUID);
+    let stale = observe(&reviewer, HEAD);
+    assert!(
+        stale
+            .stdout
+            .contains("review_assignment_generation_conflict"),
+        "{}",
+        stale.stdout
+    );
+    let reviewer = reviewer.env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "2");
+    let file = reviewer.tempdir.path().join("findings.json");
+    fs::write(&file, serde_json::to_vec(&findings).unwrap()).unwrap();
+    let out = run_forge_cli(
+        &reviewer,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-loop",
+            "observe",
+            "7",
+            "--expected-head",
+            HEAD,
+            "--auto-state",
+            "--findings-file",
+            file.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    assert_eq!(parse_envelope(&out.stdout)["data"]["appended"], true);
+    assert_eq!(
+        parse_envelope(&out.stdout)["data"]["state"]["findings"]
+            .as_object()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_refusal(&check(&reviewer, HEAD), 65, "awaiting_designated_review");
+}
+
+#[test]
+fn surrendered_assignment_accepts_current_base_and_inspected_tip() {
+    let mut seeded = records(handoff(None), Some(HEAD));
+    let mut h = handoff(None);
+    h.surrendered = true;
+    seeded.push(
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            HEAD,
+            seeded.len() as u64,
+            Some(seeded.last().unwrap().record_digest.clone()),
+            ReviewStatePayload::ReviewHandoff { handoff: h },
+        )
+        .unwrap(),
+    );
+    let stub = writable_ledger(fixture(HEAD, &seeded, vec![]), &seeded)
+        .env("PROVIDER_BASE", HEAD)
+        .env("AGENT_REVIEWER_SESSION", "");
+    let inspected = inspect_handoff(&stub);
+    assert_eq!(
+        inspected.code, 0,
+        "{} {}",
+        inspected.stdout, inspected.stderr
+    );
+    let data = parse_envelope(&inspected.stdout)["data"].clone();
+    assert_eq!(data["handoff"]["surrendered"], true);
+    let out = assign_handoff(
+        &stub,
+        REVIEWER_UUID,
+        HEAD,
+        data["state_tip_digest"].as_str().unwrap(),
+        false,
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["data"]["handoff"]["assignment_generation"],
+        2
+    );
+}
+
+#[test]
+fn scope_refresh_requires_publication_after_the_new_handoff() {
+    let mut h = handoff(None);
+    h.reviewer_digest = review_state::sha256_digest(REVIEWER_UUID.as_bytes());
+    let seeded = records(h.clone(), Some(HEAD));
+    h.base_sha = HEAD.into();
+    h.assignment_generation = 2;
+    let refresh = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        HEAD,
+        2,
+        Some(seeded.last().unwrap().record_digest.clone()),
+        ReviewStatePayload::ReviewHandoff { handoff: h },
+    )
+    .unwrap();
+    for (published_after_refresh, bound) in [(false, true), (true, false), (true, true)] {
+        let mut r = review(HEAD, "pass");
+        if bound {
+            r["body"] = json!(format!(
+                "{}\n<!-- forge-cli:review-handoff:v1 {} -->",
+                r["body"].as_str().unwrap(),
+                refresh.record_digest
+            ));
+        }
+        if published_after_refresh {
+            r["submittedAt"] = json!("2026-07-20T12:00:04Z");
+        }
+        let stub = writable_ledger(fixture(HEAD, &seeded, vec![r]), &seeded)
+            .env("PROVIDER_BASE", HEAD)
+            .env("AGENT_REVIEWER_SESSION", "");
+        let out = assign_handoff(
+            &stub,
+            REVIEWER_UUID,
+            HEAD,
+            &seeded.last().unwrap().record_digest,
+            false,
+        );
+        assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+        assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+        let reviewer = stub
+            .env("AGENT_SESSION_ID", REVIEWER_UUID)
+            .env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "2");
+        let findings = reviewer.tempdir.path().join("clean-refresh.json");
+        fs::write(&findings, "[]").unwrap();
+        let out = run_forge_cli(
+            &reviewer,
+            &[
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widgets",
+                "--format",
+                "json",
+                "pr",
+                "review-loop",
+                "observe",
+                "7",
+                "--expected-head",
+                HEAD,
+                "--auto-state",
+                "--findings-file",
+                findings.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+        assert_eq!(
+            parse_envelope(&out.stdout)["data"]["state"]["findings"],
+            json!({})
+        );
+        let out = check(&reviewer, HEAD);
+        if published_after_refresh && bound {
+            assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+        } else {
+            assert_refusal(&out, 65, "awaiting_designated_review");
+        }
+    }
+}
+
+#[test]
+fn old_generation_publication_racing_refresh_cannot_satisfy_the_new_interval() {
+    let mut h = handoff(None);
+    h.reviewer_digest = review_state::sha256_digest(REVIEWER_UUID.as_bytes());
+    let seeded = records(h.clone(), Some(HEAD));
+    h.assignment_generation = 2;
+    h.base_sha = HEAD.into();
+    let refresh = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        HEAD,
+        2,
+        Some(seeded.last().unwrap().record_digest.clone()),
+        ReviewStatePayload::ReviewHandoff { handoff: h },
+    )
+    .unwrap();
+    let state = review_state::observe_review_loop(None, HEAD, &[])
+        .unwrap()
+        .state;
+    let fresh_observation = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        HEAD,
+        3,
+        Some(refresh.record_digest.clone()),
+        ReviewStatePayload::ReviewLoop { state },
+    )
+    .unwrap()
+    .with_assignment_generation(Some(2))
+    .unwrap();
+    let stub = writable_ledger(fixture(HEAD, &seeded, vec![]), &seeded)
+        .env("PROVIDER_BASE", HEAD)
+        .env("AGENT_REVIEWER_SESSION", "")
+        .env("AGENT_SESSION_ID", REVIEWER_UUID);
+    let inner = stub.tempdir.path().join("ledger-gh");
+    fs::rename(stub.tempdir.path().join("gh"), &inner).unwrap();
+    fs::write(
+        stub.tempdir.path().join("refresh-records.json"),
+        serde_json::to_vec(&[
+            review_state::render_state_comment_body(&refresh, None).unwrap(),
+            review_state::render_state_comment_body(&fresh_observation, None).unwrap(),
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    let r = review(HEAD, "pass");
+    fs::write(
+        stub.tempdir.path().join("review.json"),
+        serde_json::to_vec(&r).unwrap(),
+    )
+    .unwrap();
+    let stub = stub.gh_stub(r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+root = pathlib.Path(__file__).parent
+args = sys.argv[1:]
+published = root / 'published-body'
+r = json.loads((root / 'review.json').read_text())
+if args[:2] == ['api', 'repos/acme/widgets/pulls/7/reviews']:
+    # The old command already passed its ownership read. Refresh lands just
+    # before its native report is published, and a fresh clean observation follows.
+    if not published.exists():
+        ledger = root / 'ledger.json'
+        bodies = json.loads(ledger.read_text()) + json.loads((root / 'refresh-records.json').read_text())
+        ledger.write_text(json.dumps(bodies))
+    published.write_text(next(a[5:] for a in args if a.startswith('body=')))
+    print(r['url'])
+elif args[:2] == ['api', 'graphql'] and 'reviews(first:' in ' '.join(args) and 'states: [PENDING]' not in ' '.join(args) and published.exists():
+    r['body'] = published.read_text()
+    r['submittedAt'] = '2026-07-20T12:00:04Z'
+    print(json.dumps({'data': {'viewer': {'login':'review-app[bot]'}, 'repository': {'pullRequest': {
+        'headRefOid': r['commit']['oid'], 'reviews': {'nodes':[r], 'pageInfo': {'hasNextPage':False,'endCursor':None}}}}}}))
+elif args[:2] == ['api', 'repos/acme/widgets/pulls/7/reviews/1'] and published.exists():
+    print(json.dumps({'id':1, 'html_url':r['url'], 'state':r['state'], 'commit_id':r['commit']['oid'],
+        'user':{'login':'review-app[bot]', 'type':'Bot', 'node_id':'BOT_REVIEW_APP'}, 'body':published.read_text()}))
+else:
+    os.execv(str(root / 'ledger-gh'), [str(root / 'ledger-gh')] + args)
+"#);
+    let body = stub.tempdir.path().join("report.md");
+    fs::write(&body, r["body"].as_str().unwrap()).unwrap();
+    let args = [
+        "--provider",
+        "github",
+        "--repo",
+        "acme/widgets",
+        "--format",
+        "json",
+        "pr",
+        "review",
+        "7",
+        "--submit-review",
+        "--decision",
+        "comments-only",
+        "--expected-head",
+        HEAD,
+        "--comment-file",
+        body.to_str().unwrap(),
+        "--lens",
+        "testing",
+    ];
+    let out = run_forge_cli(&stub, &args);
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    assert!(
+        fs::read_to_string(stub.tempdir.path().join("published-body"))
+            .unwrap()
+            .contains(&seeded[0].record_digest)
+    );
+    assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+    let reviewer = stub.env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "2");
+    let out = run_forge_cli(&reviewer, &args);
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    assert!(
+        fs::read_to_string(reviewer.tempdir.path().join("published-body"))
+            .unwrap()
+            .contains(&refresh.record_digest)
+    );
+    let out = check(&reviewer, HEAD);
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+}
+
+#[test]
+fn base_refresh_refuses_different_reviewer_unchanged_base_and_stale_tip() {
+    let mut h = handoff(None);
+    h.reviewer_digest = review_state::sha256_digest(REVIEWER_UUID.as_bytes());
+    let seeded = records(h, Some(HEAD));
+    let tip = &seeded.last().unwrap().record_digest;
+    for (reviewer, base, expected_tip, actor, kind) in [
+        (
+            OTHER_COORDINATOR_UUID,
+            HEAD,
+            tip.as_str(),
+            "worker-session",
+            "review_handover_required",
+        ),
+        (
+            REVIEWER_UUID,
+            OLD,
+            tip.as_str(),
+            "worker-session",
+            "review_handover_required",
+        ),
+        (
+            REVIEWER_UUID,
+            HEAD,
+            "none",
+            "worker-session",
+            "review_state_conflict",
+        ),
+        (
+            REVIEWER_UUID,
+            HEAD,
+            tip.as_str(),
+            "another-worker",
+            "review_writer_conflict",
+        ),
+    ] {
+        let stub = fixture(HEAD, &seeded, vec![])
+            .env("PROVIDER_BASE", base)
+            .env("AGENT_REVIEWER_SESSION", "")
+            .env("AGENT_SESSION_ID", actor);
+        assert_refusal(
+            &assign_handoff(&stub, reviewer, base, expected_tip, true),
+            65,
+            kind,
+        );
+    }
+}
+
+#[test]
+fn assignment_rechecks_provider_head_base_and_tip_before_posting() {
+    let mut h = handoff(None);
+    h.reviewer_digest = review_state::sha256_digest(REVIEWER_UUID.as_bytes());
+    let seeded = records(h, Some(HEAD));
+    for changed in ["head", "base", "tip"] {
+        let stub = fixture(HEAD, &seeded, vec![])
+            .env("PROVIDER_BASE", HEAD)
+            .env("AGENT_REVIEWER_SESSION", "");
+        let inner = stub.tempdir.path().join("gh-inner");
+        fs::rename(stub.tempdir.path().join("gh"), &inner).unwrap();
+        let script = format!(
+            r#"#!/usr/bin/env python3
+import json, os, pathlib, subprocess, sys
+root = pathlib.Path(__file__).parent
+args = sys.argv[1:]
+kind = {changed:?}
+is_target = (kind == 'head' and args[:2] == ['pr', 'view']) or (kind == 'base' and args[:2] == ['api', 'repos/acme/widgets/pulls/7']) or (kind == 'tip' and 'comments(first:' in ' '.join(args))
+counter = root / 'scope-read'
+if is_target and counter.exists():
+    if kind == 'base': print('{OLD}')
+    else:
+        result = subprocess.run([str(root / 'gh-inner')] + args, capture_output=True, text=True, check=True)
+        data = json.loads(result.stdout)
+        if kind == 'head': data['headRefOid'] = '{OLD}'
+        else: data['data']['repository']['pullRequest']['comments']['nodes'].pop()
+        print(json.dumps(data))
+    sys.exit(0)
+if is_target: counter.touch()
+os.execv(str(root / 'gh-inner'), [str(root / 'gh-inner')] + args)
+"#
+        );
+        let stub = stub.gh_stub(&script);
+        let out = assign_handoff(
+            &stub,
+            REVIEWER_UUID,
+            HEAD,
+            &seeded.last().unwrap().record_digest,
+            false,
+        );
+        assert_refusal(
+            &out,
+            65,
+            if changed == "base" {
+                "review_scope_changed"
+            } else {
+                "review_state_conflict"
+            },
+        );
+        assert!(
+            !fs::read_to_string(stub.tempdir.path().join("calls.log"))
+                .unwrap()
+                .contains("--method POST")
+        );
+    }
 }
 
 #[test]

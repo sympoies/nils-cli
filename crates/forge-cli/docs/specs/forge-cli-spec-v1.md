@@ -744,8 +744,20 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   different sessions. Only opaque session digests, the configured public
   native-review author, and commit SHAs reach the provider; selectors and
   machine addresses stay private. Initial assignment generation is one.
+  When the provider base moves, the recorded coordinator may repeat `assign`
+  for the same reviewer digest and exact public author at the current base,
+  head, and retained tip without surrender. This scope refresh advances the
+  assignment generation and preserves findings/history. It requires a fresh
+  reviewer-owned observation and publication; old-generation writes and old
+  reports never satisfy the new interval. A different reviewer or author still
+  requires surrender or explicit recovery, as does reassignment at the same base.
 - `inspect <id> [--expected-head <sha>] [--review-author <login>]` validates the
   supplied head and any existing assignment before private mailbox handoff.
+  Base drift returns success with `status: review-scope-changed`, the current
+  provider `base_sha`, and the unchanged persisted `handoff`, `handoff_digest`,
+  and exact durable `state_tip_digest`. This exposes coordinator/generation
+  details for recovery without admitting stale review evidence. Explicit head,
+  reviewer, and author mismatches still fail closed.
   An unassigned result is bootstrap discovery, not admission; append and verify
   the assignment before sending private evidence.
   `check <id> --expected-head <sha>` requires a reviewer-owned closed observation
@@ -756,6 +768,15 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   same timestamp second fails closed. Long summaries use bounded native-body
   read-back with verified identity and head. A later blocked report supersedes
   an earlier pass.
+  Live designated `pr review --submit-review` binds both summary-only and
+  threaded native reports to the admitted handoff record with the opaque marker
+  `<!-- forge-cli:review-handoff:v1 <handoff-digest> -->`. This binding is captured
+  before publication, so an old-generation report that lands after a handover
+  cannot authorize the new interval even if its timestamp is newer. Generation
+  two and later require exactly one matching binding; existing first-generation
+  reports without a marker remain compatible. A present marker must match the
+  current handoff in every generation. Reassigned reviewers must publish through
+  a CLI that supplies the binding; timestamps alone no longer admit those reports.
 - `surrender <id> --expected-head <sha> --expected-state <digest>` is a
   reviewer-owned relinquishment at the current assignment generation.
   Ordinary reassignment requires this explicit surrender; inspection alone
@@ -766,7 +787,9 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   generation. The parent owns mailbox transport, bounded waits, and liveness
   evidence; the CLI never guesses reviewer availability. Surrendered or revoked
   control fails with `designated_reviewer_unavailable`, never self-review.
-  The current recorded coordinator may assign the next generation.
+  Recovery captures the current provider head/base even after base drift.
+  The current recorded coordinator may assign the next generation using the
+  durable `state_tip_digest` returned by recovery or fresh inspection.
 - Successor takeover uses `recover <id> --reason coordinator-retired
   --coordinator-session <recorded-session-id>[@machine] --base-sha <current-base>
   --expected-head <current-head> --expected-state <exact-tip>`. The selector
@@ -807,13 +830,17 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   Nonempty `ignored_stale_records` reports records superseded by recovery.
   `--dry-run` performs read-only admission and reports prospective ownership
   while retaining the observed durable tip.
+  Before assignment or recovery appends, tip/ownership and provider head/base
+  are reread. Surrender can retain a stale base so the reviewer can relinquish
+  the old interval after integration.
 
 `AGENT_SESSION_ID` fences the invoking session; routing metadata does not grant
 provider authorization. Reviewer appends and native publication also require
 `AGENT_REVIEW_ASSIGNMENT_GENERATION` equal to the retained assignment generation.
-The final append rereads ownership, generation, tip, and head. If recovery and
-an old-generation write both reach the provider, the explicit higher-generation
-recovery wins; stale children and descendants are ignored and reported, never
+The final append rereads ownership, generation, tip, and head. If recovery or a
+same-reviewer scope refresh races an old-generation write and both reach the
+provider, the unique higher-generation interval wins; stale children and
+descendants are ignored and reported, never
 silently merged. Other competing children still fail closed. A repair before
 the first designated observation is rejected as `review_repair_unobserved`.
 The first owned observation appends even at an unchanged head and preserves
