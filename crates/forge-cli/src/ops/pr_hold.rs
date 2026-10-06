@@ -117,7 +117,7 @@ fn read_base_config<R: BackendRunner>(
         Provider::GitLab => format!(
             "query ForgeHoldConfig{{project(fullPath:{}){{repository{{blobs(paths:[\".forge-cli.toml\"],ref:{}){{nodes{{rawBlob}} pageInfo{{hasNextPage}}}}}}}}}}",
             quote(repo),
-            quote(&format!("refs/heads/{base}"))
+            quote(base)
         ),
         Provider::Local => return Err(unavailable()),
     };
@@ -242,6 +242,8 @@ fn parse_labels(provider: Provider, value: &serde_json::Value) -> Result<Vec<&st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::BackendSuccess;
+    use crate::provider::DetectionSource;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
@@ -285,5 +287,34 @@ mod tests {
             parse_labels(Provider::GitLab, &json!({"labels":[]})).unwrap(),
             Vec::<&str>::new()
         );
+    }
+
+    #[test]
+    fn gitlab_base_config_query_uses_bare_branch_name() {
+        struct QueryRunner;
+        impl BackendRunner for QueryRunner {
+            fn run(&self, call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+                let query_arg = call
+                    .plan_argv()
+                    .into_iter()
+                    .find(|arg| arg.starts_with("query="))
+                    .expect("GraphQL query argument");
+                let query = query_arg.strip_prefix("query=").unwrap();
+                assert!(query.contains("ref:\"main\""), "query was {query}");
+                assert!(!query.contains("refs/heads/main"), "query was {query}");
+                Ok(BackendSuccess {
+                    stdout: r#"{"data":{"project":{"repository":{"blobs":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}"#.into(),
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        let ctx = ProviderContext {
+            provider: Provider::GitLab,
+            host: "gitlab.example.com".into(),
+            source: DetectionSource::Flag,
+            repo: Some("group/project".into()),
+        };
+        assert!(read_base_config(&QueryRunner, &ctx, "group/project", "main").is_ok());
     }
 }
