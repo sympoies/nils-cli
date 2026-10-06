@@ -261,6 +261,7 @@ case "$1 $2" in
   "api graphql")
     case "$*" in
 {extra_graphql_cases}
+      *"ForgeHoldConfig"*) printf '%s\n' '{{"data":{{"repository":{{"object":null}}}}}}' ;;
       *"ForgeMergePolicy"*) printf '%s\n' '{merge_policy_json}' ;;
       *"authorAssociation body createdAt"*) printf '%s\n' '{{"data":{{"viewer":{{"login":"maintainer"}},"repository":{{"pullRequest":{{"comments":{{"nodes":[{state_nodes}],"pageInfo":{{"hasNextPage":false,"endCursor":null}}}}}}}}}}}}' ;;
       *"reviews(first:"*) {review_query} ;;
@@ -352,6 +353,7 @@ EOF
 EOF
     fi
     ;;
+  "api graphql") printf '%s\n' '{{"data":{{"project":{{"repository":{{"blobs":{{"nodes":[],"pageInfo":{{"hasNextPage":false}}}}}}}}}}}}' ;;
   "api --hostname")
     case "$*" in
       *"projects/group%2Fproject/pipelines/99/jobs?per_page=100"*)
@@ -2451,7 +2453,8 @@ fn pr_merge_rereads_the_freeze_immediately_before_the_merge() {
     let merged = stub.tempdir.path().join("github-merged");
     let calls = stub.tempdir.path().join("policy-calls");
     let extra = format!(
-        r#"      *"ForgeMergePolicy"*)
+        r#"      *"ForgeHoldConfig"*) printf '%s\n' '{{"data":{{"repository":{{"object":null}}}}}}' ;;
+      *"ForgeMergePolicy"*)
         count=0
         if [ -f {calls} ]; then count=$(cat {calls}); fi
         count=$((count + 1))
@@ -2854,4 +2857,131 @@ fn pr_merge_hold_gitlab_uses_the_same_compatibility_labels() {
         );
         assert!(!merged.exists());
     }
+}
+
+#[test]
+fn pr_merge_hold_head_config_cannot_remove_base_configured_holds() {
+    for queue in [false, true] {
+        let repo = make_github_repo(Some("[merge]\nhold_labels = [\"release::blocked\"]\n"));
+        let repo_path = repo.path().join("repo");
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&repo_path)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["branch", "-f", "fixture-base"]);
+        git(&["fetch", ".", "fixture-base:refs/remotes/origin/main"]);
+        fs::write(
+            repo_path.join(".forge-cli.toml"),
+            "[merge]\nhold_labels = []\n",
+        )
+        .unwrap();
+        git(&["add", ".forge-cli.toml"]);
+        git(&["commit", "-q", "-m", "remove head hold configuration"]);
+        let stub = StubEnv::new();
+        let merged = stub.tempdir.path().join("github-merged");
+        let enqueued = stub.tempdir.path().join("enqueued");
+        let response = serde_json::json!({"data":{"repository":{"object":{"text":"[merge]\nhold_labels = [\"release::blocked\"]\n"}}}}).to_string();
+        let body = github_hold_stub(&stub, "release::blocked", false, queue, false)
+            .replace(r#"{"data":{"repository":{"object":null}}}"#, &response);
+        let stub = stub.gh_stub(&body);
+        let out = run_github_merge(&stub, &repo_path, &[]);
+        assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+        assert_eq!(
+            parse_envelope(&out.stdout)["error"]["code"],
+            "pr_hold_active"
+        );
+        assert!(!merged.exists());
+        assert!(!enqueued.exists());
+    }
+}
+
+#[test]
+fn pr_merge_hold_reads_current_provider_base_config_instead_of_stale_local_refs() {
+    for queue in [false, true] {
+        let repo = make_github_repo(None);
+        let stub = StubEnv::new();
+        let merged = stub.tempdir.path().join("github-merged");
+        let enqueued = stub.tempdir.path().join("enqueued");
+        let response = serde_json::json!({"data":{"repository":{"object":{"text":"[merge]\nhold_labels = [\"release::blocked\"]\n"}}}}).to_string();
+        let body = github_hold_stub(&stub, "release::blocked", false, queue, false)
+            .replace(r#"{"data":{"repository":{"object":null}}}"#, &response);
+
+        let stub = stub.gh_stub(&body);
+        let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
+        assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+        assert_eq!(
+            parse_envelope(&out.stdout)["error"]["code"],
+            "pr_hold_active"
+        );
+        assert!(!merged.exists());
+        assert!(!enqueued.exists());
+    }
+}
+
+#[test]
+fn pr_merge_hold_base_policy_read_fails_closed() {
+    for response in [
+        "null",
+        r#"{"data":{"repository":{}}}"#,
+        r#"{"data":{"repository":{"object":null}},"errors":[{"message":"partial"}]}"#,
+    ] {
+        let repo = make_github_repo(None);
+        let stub = StubEnv::new();
+        let merged = stub.tempdir.path().join("github-merged");
+        let body = github_merge_stub(&stub, "", "", true)
+            .replace(r#"{"data":{"repository":{"object":null}}}"#, response);
+        let stub = stub.gh_stub(&body);
+        let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
+        assert_eq!(out.code, 69, "stdout={}\nstderr={}", out.stdout, out.stderr);
+        assert_eq!(
+            parse_envelope(&out.stdout)["error"]["code"],
+            "pr_hold_labels_unavailable"
+        );
+        assert!(!merged.exists());
+    }
+}
+
+#[test]
+fn pr_merge_hold_added_to_provider_base_during_gates_blocks_enqueue() {
+    let repo = make_github_repo(None);
+    let stub = StubEnv::new();
+    let merged = stub.tempdir.path().join("github-merged");
+    let enqueued = stub.tempdir.path().join("enqueued");
+    let config_reads = stub.tempdir.path().join("hold-config-reads");
+    let label_reads = stub.tempdir.path().join("hold-reads");
+    let response = serde_json::json!({"data":{"repository":{"object":{"text":"[merge]\nhold_labels = [\"release::blocked\"]\n"}}}}).to_string();
+    let body = github_hold_stub(&stub, "release::blocked", false, true, false).replace(
+        r#"printf '%s\n' '{"data":{"repository":{"object":null}}}'"#,
+        &format!(
+            r#"count=0
+if [ -f {reads} ]; then count=$(cat {reads}); fi
+count=$((count + 1)); printf '%s\n' "$count" > {reads}
+if [ "$count" -eq 1 ]; then
+  printf '%s\n' '{{"data":{{"repository":{{"object":null}}}}}}'
+else
+  printf '%s\n' '{response}'
+fi"#,
+            reads = config_reads.display()
+        ),
+    );
+    let stub = stub.gh_stub(&body);
+    let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
+    assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "pr_hold_active"
+    );
+    assert_eq!(fs::read_to_string(config_reads).unwrap().trim(), "2");
+    assert_eq!(fs::read_to_string(label_reads).unwrap().trim(), "2");
+    assert!(!merged.exists());
+    assert!(!enqueued.exists());
 }

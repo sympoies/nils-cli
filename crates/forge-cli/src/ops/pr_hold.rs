@@ -30,9 +30,16 @@ pub(crate) fn ensure_clear<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
     id: u64,
+    base: &str,
     hold_labels: &[String],
 ) -> Result<(), ForgeError> {
     let repo = ctx.repo.as_deref().ok_or_else(unavailable)?;
+    let mut hold_labels = hold_labels.to_vec();
+    for label in read_base_config(runner, ctx, repo, base)?.resolve_hold_labels() {
+        if !hold_labels.contains(&label) {
+            hold_labels.push(label);
+        }
+    }
     let call = match ctx.provider {
         Provider::GitHub => {
             // REST pagination avoids the bounded labels connection in gh pr view.
@@ -58,7 +65,7 @@ pub(crate) fn ensure_clear<R: BackendRunner>(
     let value: serde_json::Value =
         serde_json::from_str(&output.stdout).map_err(|_| unavailable())?;
     let labels = parse_labels(ctx.provider, &value)?;
-    for label in hold_labels {
+    for label in &hold_labels {
         if labels.contains(&label.as_str()) {
             return Err(ForgeError::validation(
                 SCHEMA,
@@ -73,11 +80,113 @@ pub(crate) fn ensure_clear<R: BackendRunner>(
     Ok(())
 }
 
+fn read_base_config<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    repo: &str,
+    base: &str,
+) -> Result<ForgeConfig, ForgeError> {
+    let quote = |value: &str| serde_json::to_string(value).expect("string serialization");
+    let query = match ctx.provider {
+        Provider::GitHub => {
+            let (owner, name) = repo.split_once('/').ok_or_else(unavailable)?;
+            format!(
+                "query ForgeHoldConfig{{repository(owner:{},name:{}){{object(expression:{}){{... on Blob{{text}}}}}}}}",
+                quote(owner),
+                quote(name),
+                quote(&format!("refs/heads/{base}:.forge-cli.toml"))
+            )
+        }
+        Provider::GitLab => format!(
+            "query ForgeHoldConfig{{project(fullPath:{}){{repository{{blobs(paths:[\".forge-cli.toml\"],ref:{}){{nodes{{rawBlob}} pageInfo{{hasNextPage}}}}}}}}}}",
+            quote(repo),
+            quote(&format!("refs/heads/{base}"))
+        ),
+        Provider::Local => return Err(unavailable()),
+    };
+    let mut argv = vec![
+        OsString::from("api"),
+        OsString::from("graphql"),
+        OsString::from("-f"),
+        OsString::from(format!("query={query}")),
+    ];
+    match ctx.provider {
+        Provider::GitHub => ctx.push_github_api_hostname(&mut argv),
+        Provider::GitLab => {
+            argv.push("--hostname".into());
+            argv.push(ctx.host.clone().into());
+        }
+        Provider::Local => return Err(unavailable()),
+    }
+    let call = BackendCall::new(BackendProgram::for_provider(ctx.provider), argv);
+    let output = runner.run(&call).map_err(|_| unavailable())?;
+    let value: serde_json::Value =
+        serde_json::from_str(&output.stdout).map_err(|_| unavailable())?;
+    if value
+        .get("errors")
+        .is_some_and(|errors| errors.as_array().is_none_or(|errors| !errors.is_empty()))
+    {
+        return Err(unavailable());
+    }
+    let contents = match ctx.provider {
+        Provider::GitHub => {
+            let repository = value
+                .pointer("/data/repository")
+                .and_then(|v| v.as_object())
+                .ok_or_else(unavailable)?;
+            let object = repository.get("object").ok_or_else(unavailable)?;
+            if object.is_null() {
+                None
+            } else {
+                Some(
+                    object
+                        .get("text")
+                        .and_then(|text| text.as_str())
+                        .ok_or_else(unavailable)?,
+                )
+            }
+        }
+        Provider::GitLab => {
+            let blobs = value
+                .pointer("/data/project/repository/blobs")
+                .ok_or_else(unavailable)?;
+            if blobs
+                .pointer("/pageInfo/hasNextPage")
+                .and_then(|v| v.as_bool())
+                != Some(false)
+            {
+                return Err(unavailable());
+            }
+            let nodes = blobs
+                .get("nodes")
+                .and_then(|nodes| nodes.as_array())
+                .ok_or_else(unavailable)?;
+            match nodes.as_slice() {
+                [] => None,
+                [node] => Some(
+                    node.get("rawBlob")
+                        .and_then(|text| text.as_str())
+                        .ok_or_else(unavailable)?,
+                ),
+                _ => return Err(unavailable()),
+            }
+        }
+        Provider::Local => return Err(unavailable()),
+    };
+    let cfg = match contents {
+        Some(contents) => ForgeConfig::parse_content(contents).map_err(|_| ForgeError::validation(SCHEMA,
+            "invalid_hold_labels_config", "the current base .forge-cli.toml cannot be parsed; ask the maintainer to repair it before merging", None))?,
+        None => ForgeConfig::default(),
+    };
+    validate_config(&cfg)?;
+    Ok(cfg)
+}
+
 fn unavailable() -> ForgeError {
     ForgeError::unavailable(
         SCHEMA,
         "pr_hold_labels_unavailable",
-        "cannot verify the complete current PR/MR hold labels; refresh provider access and retry before merging or enqueueing",
+        "cannot verify the current base hold policy and complete PR/MR labels; refresh provider access and retry before merging or enqueueing",
         None,
     )
 }

@@ -467,7 +467,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         ));
     }
 
-    pr_hold::ensure_clear(runner, ctx, args.id, settings.hold_labels)?;
+    pr_hold::ensure_clear(runner, ctx, args.id, &pr.base, settings.hold_labels)?;
 
     // Rule 6 — default branch protection (unless explicitly overridden).
     let repo = fetch_repo_view(runner, ctx)?;
@@ -622,7 +622,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
 
     // Fresh, complete label read after the other gates, shared by direct merge
     // and queue enqueue. A new head never clears a provider hold.
-    pr_hold::ensure_clear(runner, ctx, args.id, settings.hold_labels)?;
+    pr_hold::ensure_clear(runner, ctx, args.id, &pr.base, settings.hold_labels)?;
 
     // All gates clear — invoke the backend, or hand the verified head to the
     // required merge queue and wait for it to land.

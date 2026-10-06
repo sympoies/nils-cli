@@ -1863,7 +1863,10 @@ backend implementations cannot diverge.
     final read and mutation; this gate does not remove already queued entries.
     `[merge].hold_labels` configures additional names; global and repository
     lists are combined with the three compatibility defaults, which cannot be
-    removed. Invalid entries fail with `invalid_hold_labels_config` (`DATA 65`).
+    removed. The current provider base branch
+    configuration is read fresh at both gates and also applies, including
+    cross-repository targets; a PR head cannot remove its configured holds.
+    Unavailable or malformed base policy reads fail closed. Invalid entries fail with `invalid_hold_labels_config` (`DATA 65`).
     Error details include typed `retryable`, `next_action`, and `recovery` fields;
     callers must branch on those fields and the error code, not message text.
 

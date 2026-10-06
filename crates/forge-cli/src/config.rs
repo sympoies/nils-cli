@@ -218,6 +218,11 @@ pub struct ForgeConfig {
 }
 
 impl ForgeConfig {
+    /// Parse provider-owned configuration without filesystem fallback.
+    pub(crate) fn parse_content(contents: &str) -> Result<Self, toml::de::Error> {
+        toml::from_str::<Value>(contents).map(|value| parse_value(&value))
+    }
+
     /// Search upward from `start_dir` (inclusive) for `.forge-cli.toml`,
     /// stopping at `git_toplevel` (inclusive). Both paths must be absolute.
     /// If `git_toplevel` is `None`, the loader walks all the way up to the
