@@ -7927,50 +7927,114 @@ mod tests {
 
     #[test]
     fn three_windows_of_exact_events_stay_ingestible_and_recent_replays_deduplicate() {
-        let tmp = tempfile::TempDir::new().expect("tempdir");
+        // The checked owner also removes the nested session fixture on panic.
+        // Keep the existing shared session helper's TempDir interface.
+        let owner = nils_test_support::tempdir::ScopedTempDir::new();
+        let tmp = tempfile::tempdir_in(owner.path()).expect("session fixture");
+        let started = Instant::now();
+        let check_deadline = |index: usize| {
+            assert!(
+                started.elapsed() < Duration::from_secs(60),
+                "three replay windows exceeded the 60 s deadline at event {index}"
+            );
+        };
         let (context, created) = test_session(&tmp);
-        let runtime_id = created
-            .record
-            .runtime
-            .as_ref()
-            .expect("runtime")
-            .launch_id
-            .clone();
+        let runtime = created.record.runtime.as_ref().expect("runtime");
+        let runtime_id = &runtime.launch_id;
         let exact = |index: usize| {
             let mut current = event(TurnEventKind::Progress, &format!("window-{index}"));
-            current.runtime_id.clone_from(&runtime_id);
+            current.runtime_id.clone_from(runtime_id);
             current.provider_turn_id = Some(format!("turn-{index}"));
             current
         };
+        let ingest = |index: usize| {
+            check_deadline(index);
+            let result = ingest_event_with_lock(
+                &context,
+                &created.record.id,
+                exact(index),
+                ActivityLockMode::Timed(Duration::from_secs(1)),
+                EventAdmission::Generic,
+            )
+            .expect("exact-horizon event is accepted");
+            check_deadline(index);
+            result
+        };
+        let dir = session_dir(&context, &created.record.id);
+        let snapshot_path = dir.join(ACTIVITY_FILE);
+        let replay_path = dir.join(ACTIVITY_REPLAY_FILE);
         // Past the third boundary, so the last window spans both tables.
         let total = 3 * MAX_DEDUPE_EVENTS + MAX_DEDUPE_EVENTS / 2;
-        for index in 0..total {
-            let result = ingest_event(&context, &created.record.id, exact(index))
-                .expect("every exact-horizon event in one runtime is accepted");
-            assert!(!result.duplicate, "event {index} is new");
-        }
-        let dir = session_dir(&context, &created.record.id);
-        assert_eq!(
-            read_document(&dir.join(ACTIVITY_FILE))
-                .expect("snapshot")
-                .seen_event_count,
-            total
-        );
-        for index in total - MAX_DEDUPE_EVENTS..total {
-            let replay =
-                ingest_event(&context, &created.record.id, exact(index)).expect("recent replay");
+        for start in (0..total).step_by(MAX_DEDUPE_EVENTS) {
+            let end = (start + MAX_DEDUPE_EVENTS).min(total);
+            // Exercise real ingestion at every rotation, including reuse of
+            // both full tables. Seed the interior as a persisted fixture:
+            // thousands of durable snapshot/journal commits made this a
+            // storage benchmark rather than a bounded replay regression.
+            assert!(!ingest(start).duplicate, "event {start} is new");
+            if start > 0 {
+                assert!(ingest(start - 1).duplicate, "the previous window survives");
+            }
+            if start >= 2 * MAX_DEDUPE_EVENTS {
+                let evicted = exact(start - 2 * MAX_DEDUPE_EVENTS);
+                assert!(
+                    !replay_contains(
+                        &replay_path,
+                        runtime_id,
+                        runtime.generation,
+                        start + 1,
+                        &event_dedupe_key(runtime_id, &evicted.event_id),
+                    )
+                    .expect("evicted replay probe"),
+                    "rotation evicts the window two back"
+                );
+            }
+            let table_path = replay_table_path(&replay_path, replay_table(start));
+            let mut table = fs::read(&table_path).expect("initialized replay table");
+            for index in start + 1..end - 1 {
+                check_deadline(index);
+                let key = event_dedupe_key(runtime_id, &exact(index).event_id);
+                let offset = (0..REPLAY_SLOT_COUNT)
+                    .map(|probe| replay_slot(&key, probe) as usize)
+                    .find(|&offset| {
+                        table[offset..offset + REPLAY_SLOT_BYTES]
+                            .iter()
+                            .all(|byte| *byte == 0)
+                    })
+                    .expect("free slot at half load");
+                table[offset..offset + REPLAY_SLOT_BYTES].copy_from_slice(&key);
+            }
+            fs::write(&table_path, table).expect("full-window replay fixture");
+            let mut snapshot = read_document(&snapshot_path).expect("activity snapshot");
+            snapshot.seen_event_count = end - 1;
+            write_document(&snapshot_path, &mut snapshot).expect("full-window snapshot");
+            assert!(!ingest(end - 1).duplicate, "the last event is new");
+            assert_eq!(
+                read_document(&snapshot_path)
+                    .expect("snapshot")
+                    .seen_event_count,
+                end
+            );
             assert!(
-                replay.duplicate,
+                ingest(start).duplicate,
+                "the first event survives a full table"
+            );
+        }
+        for index in total - MAX_DEDUPE_EVENTS..total {
+            assert!(
+                ingest(index).duplicate,
                 "event {index} is inside the replay window"
             );
         }
         let two_windows_back = MAX_DEDUPE_EVENTS + 1;
         assert!(
-            !ingest_event(&context, &created.record.id, exact(two_windows_back))
-                .expect("old replay")
-                .duplicate,
+            !ingest(two_windows_back).duplicate,
             "event {two_windows_back} left the replay window"
         );
+        check_deadline(total);
+        drop(created);
+        drop(tmp);
+        owner.close().expect("remove replay-window fixture");
     }
 
     #[test]
