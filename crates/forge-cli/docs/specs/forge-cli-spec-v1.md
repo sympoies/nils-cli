@@ -2003,17 +2003,22 @@ Role split (documented in `forge-cli search --help`): `issue list` / `pr list`
 filter by structured fields within one repo, `inbox` is the personal cross-repo
 work queue, and `search` is full-text and reverse-reference query.
 
-All three subcommands are single-repo scoped: the repo slug comes from `--repo
-owner/name` or the detected forge remote. Every item is the shared normalized
+Unqualified queries and `refs-to` use `--repo owner/name` or the detected forge
+remote. When no explicit `--repo` is provided, `issues` and `prs` queries with
+`org:`, `user:`, or `repo:` qualifiers keep their query scope and omit the
+implicit repository filter. Under managed identity they resolve the principal
+against its sole distinct profile; ambiguity fails before credential probes.
+An explicit `--repo` always keeps normal repository identity rules. Every item is the shared normalized
 `SearchItem`: `kind` (`issue` | `pr`), `number`, `url`, `title`, `state`,
-`repo`, and `matched_field` (best-effort; `null` when the provider does not
+`repo`, `updated_at`, `labels` (names), and `matched_field` (best-effort; `null` when the provider does not
 report which field matched, which the GitHub path never does).
 
 - `search issues <query>` emits `cli.forge-cli.search.issues.v1` and
   `search prs <query>` emits `cli.forge-cli.search.prs.v1`, each with
   `data.provider`, `data.host`, `data.repo`, `data.query`, `data.match_fields`,
   `data.limit`, `data.item_count`, `data.limited`, and normalized `data.items[]`.
-  They run `gh search <issues|prs> <query> --repo <slug> --match <fields>
+  Query-scoped searches have `data.repo=""`; each item retains its repository.
+  They run `gh search <issues|prs> <query> [--repo <slug>] --match <fields>
   --limit <n> --json …`. The `--repo` value is always the raw `owner/name`
   slug; the resolved authority is selected separately through the call-local
   `GH_HOST` binding. `--match` defaults to `title,body,comments` and is
@@ -2427,3 +2432,24 @@ and `glab mr create …` invocations are removed.
 - Gitea / Forgejo backend — would require a new third backend or a
   Forge-API client. Deliberately deferred until a concrete user
   surfaces.
+
+## Automation read metadata
+
+- `issue list` items include `body` and nullable `updated_at`. GitHub CLI and
+  labeled REST list paths both populate them; GitLab maps `description` and
+  `updated_at`.
+- `issue view` includes nullable `closed_at` and `state_reason`. GitHub state
+  reasons are normalized to lowercase (for example `completed` or
+  `not_planned`); GitLab has no equivalent state reason and returns `null`.
+- GitHub `repo view` includes `default_branch_head_sha`, fetched from the
+  default branch commit REST endpoint using the same invocation identity and
+  authority. Other providers return `null`. Delivery macros retain their
+  existing repository metadata lookup and do not require a commit read.
+  GitHub dry-run retains the initial `data.plan` and adds `data.follow_up.plan`
+  for the commit read; `<encoded_default_branch>` (and unresolved owner/name
+  when necessary) is a dependency placeholder, resolved by the first live read.
+- The canonical PR metadata-and-checks read is two calls:
+  `forge-cli pr view ID --repo owner/repo --format json`, then
+  `forge-cli pr checks ID --repo owner/repo --format json`.
+  Checks are a separate snapshot; consumers should use `head_sha` from PR view
+  when they need to bind later decisions to a particular head.

@@ -2078,7 +2078,7 @@ pub struct ActivitySummaryArgs {
 }
 
 /// `search` subtree. Free-text / reverse-reference query over forge issues and
-/// PRs, scoped to a single repository. GitHub-only in v1; GitLab / Local hit a
+/// PRs, scoped by explicit query qualifiers or a repository. GitHub-only in v1; GitLab / Local hit a
 /// structured `provider_unsupported` seam.
 #[derive(Subcommand, Debug)]
 pub enum SearchCommand {

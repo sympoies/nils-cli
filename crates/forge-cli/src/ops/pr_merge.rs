@@ -1165,6 +1165,7 @@ mod tests {
 
     fn repo_with(default: &str, methods: Vec<&'static str>) -> RepoViewPayload {
         RepoViewPayload {
+            default_branch_head_sha: None,
             provider: "github",
             owner: "acme".into(),
             name: "widgets".into(),

@@ -556,6 +556,92 @@ printf '[]'
     }
 
     #[test]
+    fn identity_repo_view_commit_read_binds_host_and_principal() {
+        let f = cross_repo_fixture(&POLICY.replace("github.com", "enterprise.example"));
+        fs::write(&f.gh, r#"#!/bin/sh
+[ "$GH_HOST" = enterprise.example ] || exit 96
+[ "$GH_ENTERPRISE_TOKEN" = "$FIXTURE_ACCOUNT_A_CREDENTIAL" ] || exit 95
+[ -z "$GH_TOKEN" ] || exit 94
+case "$1:$2" in
+ api:user) printf '{"login":"account-a"}'; exit 0;;
+esac
+printf 'read\n' >> "$FIXTURE_CALL_LOG"
+case "$*" in
+ 'repo view enterprise.example/sandbox/widget --json name,owner,defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,url') printf '%s' '{"owner":{"login":"sandbox"},"name":"widget","url":"https://enterprise.example/sandbox/widget","defaultBranchRef":{"name":"feature/example"}}';;
+ 'api --hostname enterprise.example repos/sandbox/widget/commits/feature%2Fexample') printf '%s' '{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}';;
+ *) echo "unexpected argv: $*" >&2; exit 97;;
+esac
+"#).unwrap();
+        let out = f
+            .command()
+            .current_dir(f.home.path())
+            .args([
+                "--provider",
+                "github",
+                "--host",
+                "enterprise.example",
+                "repo",
+                "view",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(
+            v["data"]["default_branch_head_sha"],
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(
+            fs::read_to_string(f.home.path().join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
+        assert!(f.audit().lines().all(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            v["profile_id"] == "account-a"
+                && v["target"]["host"] == "enterprise.example"
+                && v["target"]["repo"] == "sandbox/widget"
+        }));
+    }
+
+    #[test]
+    fn identity_org_search_uses_cross_repo_profile_and_refuses_ambiguity() {
+        for (policy, expected) in [(single_profile_policy(), 0), (POLICY.to_string(), 65)] {
+            let f = cross_repo_fixture(&policy);
+            let out = f
+                .bare_command()
+                .current_dir(f.home.path())
+                .args([
+                    "--provider",
+                    "github",
+                    "search",
+                    "issues",
+                    "org:sandbox org:example is:issue is:open",
+                ])
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(expected),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            if expected == 65 {
+                assert!(String::from_utf8_lossy(&out.stdout).contains("identity_target_ambiguous"));
+                assert!(!f.home.path().join("calls").exists());
+            }
+        }
+    }
+
+    #[test]
     fn identity_cross_repo_ambiguity_names_candidates_and_repo_recovery() {
         let f = cross_repo_fixture(POLICY);
         let out = f

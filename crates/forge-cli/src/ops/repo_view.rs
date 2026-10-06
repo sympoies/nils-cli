@@ -33,7 +33,24 @@ pub struct RepoViewPayload {
     pub name: String,
     pub url: String,
     pub default_branch: String,
+    pub default_branch_head_sha: Option<String>,
     pub merge_methods_allowed: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct RepoViewDryRun {
+    #[serde(flatten)]
+    metadata: DryRunPayload,
+    /// Deferred until the metadata call resolves the default branch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    follow_up: Option<DryRunPayload>,
+}
+
+fn commit_call(ctx: &ProviderContext, repo: &str, encoded_branch: &str) -> BackendCall {
+    let mut argv = vec![OsString::from("api")];
+    ctx.push_github_api_hostname(&mut argv);
+    argv.push(format!("repos/{repo}/commits/{encoded_branch}").into());
+    BackendCall::new(BackendProgram::Gh, argv).with_host(ctx.provider, &ctx.host)
 }
 
 /// CLI entry point.
@@ -60,16 +77,67 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
 
     if global.dry_run {
         let call = build_call(&ctx);
-        let payload = DryRunPayload::new(ctx.provider, &call);
+        let payload = RepoViewDryRun {
+            metadata: DryRunPayload::new(ctx.provider, &call),
+            follow_up: (ctx.provider == Provider::GitHub).then(|| {
+                DryRunPayload::new(
+                    ctx.provider,
+                    &commit_call(
+                        &ctx,
+                        ctx.repo
+                            .as_deref()
+                            .unwrap_or("<resolved_owner>/<resolved_name>"),
+                        "<encoded_default_branch>",
+                    ),
+                )
+            }),
+        };
         return Ok(emit_success(
             schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
             payload,
             format,
-            |p| println!("would run: {plan}", plan = p.plan.join(" ")),
+            |p| {
+                println!("would run: {}", p.metadata.plan.join(" "));
+                if let Some(next) = &p.follow_up {
+                    println!("then, using resolved metadata: {}", next.plan.join(" "));
+                }
+            },
         ));
     }
 
-    let payload = compute(runner, &ctx)?;
+    let mut payload = compute(runner, &ctx)?;
+    if ctx.provider == Provider::GitHub {
+        let branch: String = payload
+            .default_branch
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                    (b as char).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        let output = runner.run(&commit_call(
+            &ctx,
+            &format!("{}/{}", payload.owner, payload.name),
+            &branch,
+        ))?;
+        let value: serde_json::Value = serde_json::from_str(output.stdout.trim()).map_err(|e| {
+            ForgeError::software(
+                schema(),
+                "default branch commit JSON is invalid",
+                Some(e.to_string()),
+            )
+        })?;
+        payload.default_branch_head_sha = Some(
+            value
+                .get("sha")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| missing("sha"))?
+                .to_string(),
+        );
+    }
     Ok(emit_success(
         schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
         payload,
@@ -193,6 +261,7 @@ fn parse_github(stdout: &str, ctx: &ProviderContext) -> Result<RepoViewPayload, 
         name,
         url,
         default_branch,
+        default_branch_head_sha: None,
         merge_methods_allowed: methods,
     })
 }
@@ -253,6 +322,7 @@ fn parse_gitlab(stdout: &str, ctx: &ProviderContext) -> Result<RepoViewPayload, 
         name,
         url,
         default_branch,
+        default_branch_head_sha: None,
         merge_methods_allowed: methods,
     })
 }

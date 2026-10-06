@@ -26,6 +26,7 @@ struct RepoViewPayload {
     name: String,
     url: String,
     default_branch: String,
+    default_branch_head_sha: Option<String>,
     merge_methods_allowed: Vec<&'static str>,
 }
 
@@ -41,6 +42,8 @@ struct IssueListItem {
     url: String,
     state: &'static str,
     title: String,
+    body: String,
+    updated_at: Option<String>,
     labels: Vec<String>,
     author: Option<String>,
     assignees: Vec<String>,
@@ -90,6 +93,7 @@ pub(crate) fn run_repo_view(global: &GlobalFlags, format: OutputFormat) -> Resul
         methods.push("rebase");
     }
     let payload = RepoViewPayload {
+        default_branch_head_sha: None,
         provider: client.name().to_string(),
         owner: raw
             .pointer("/owner/login")
@@ -227,6 +231,15 @@ fn parse_issue(raw: &serde_json::Value) -> Result<IssueListItem, ForgeError> {
         _ => return Err(missing("issue list", "state")),
     };
     Ok(IssueListItem {
+        body: raw
+            .get("body")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        updated_at: raw
+            .get("updated_at")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         number: raw
             .get("number")
             .and_then(serde_json::Value::as_u64)

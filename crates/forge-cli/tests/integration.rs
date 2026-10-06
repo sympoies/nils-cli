@@ -36,6 +36,7 @@ mod integration {
     mod pr_wait_checks;
     mod provider_registry;
     mod rate_limit_gate;
+    mod read_metadata;
     mod repo_bootstrap;
     mod repo_bootstrap_github;
     mod repo_freeze;
