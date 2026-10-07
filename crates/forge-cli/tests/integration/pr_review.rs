@@ -4700,3 +4700,45 @@ fn specialist_reviewable_is_bound_before_provider_calls() {
         assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
     }
 }
+
+#[test]
+fn specialist_reviewable_validate_without_repo_stays_local() {
+    let report = "<!-- agent-kit:specialist-review-report:v1 -->\n## Review Report\n\n- Reviewable: VALUE\n- Lens: testing\n- Lens verdict: pass\n- Scope: local validation\n- Evidence reviewed: isolated fixture\n\n| Finding | Severity | Confidence | Evidence | Recommendation |\n| --- | --- | ---: | --- | --- |\n| No findings | none | 0.00 | fixture | none |\n";
+    for (value, expected_code) in [
+        ("PR #44", 0),
+        ("#44", 0),
+        ("PR #45", 65),
+        ("acme/widgets#44", 65),
+    ] {
+        let stub = StubEnv::new();
+        let capture = stub.tempdir.path().join("calls.log");
+        let stub = stub.gh_stub(&github_review_stub(&capture.to_string_lossy()));
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--format",
+                "json",
+                "pr",
+                "review",
+                "validate",
+                "44",
+                "--specialist-report",
+                "--comment",
+                &report.replace("VALUE", value),
+            ],
+        );
+        assert_eq!(out.code, expected_code, "{} {}", out.stdout, out.stderr);
+        let envelope = parse_envelope(&out.stdout);
+        if expected_code == 65 {
+            assert_eq!(envelope["error"]["code"], "reviewable_mismatch");
+        } else {
+            assert_eq!(
+                envelope["schema_version"],
+                "cli.forge-cli.pr.review.validate.v1"
+            );
+        }
+        assert_backend_not_invoked(&capture);
+    }
+}

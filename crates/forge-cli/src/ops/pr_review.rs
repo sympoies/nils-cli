@@ -930,8 +930,11 @@ fn run_validate_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         if ctx.provider == Provider::GitHub
             && let Some(id) = args.id
         {
-            let (owner, name) = github_owner_name(&ctx)?;
-            let url = format!("https://{}/{owner}/{name}/pull/{id}", ctx.host);
+            let url = ctx
+                .repo
+                .as_ref()
+                .map(|repo| format!("https://{}/{repo}/pull/{id}", ctx.host))
+                .unwrap_or_default();
             validate_reviewable(&body, &ctx, id, &url)?;
         }
     }
@@ -3405,7 +3408,7 @@ pub(crate) fn validate_reviewable(
         .filter_map(|line| line.trim().strip_prefix("- Reviewable:").map(str::trim))
         .collect::<Vec<_>>();
     if values.len() == 1
-        && (values[0] == url
+        && ((!url.is_empty() && values[0] == url)
             || values[0] == format!("PR #{number}")
             || values[0] == format!("#{number}")
             || ctx
