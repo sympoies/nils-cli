@@ -630,7 +630,7 @@ pub(crate) fn ensure_published<R: BackendRunner>(
         if publication_is_known_other_interval(chain, &body) {
             continue;
         }
-        if let Err(error) = pr_review::validate_reviewable(&body, ctx, number, url) {
+        if let Err(error) = pr_review::validate_reviewable(&body, ctx, number, url, Some(head)) {
             return Err(ForgeError::validation(
                 schema(),
                 "awaiting_designated_review",

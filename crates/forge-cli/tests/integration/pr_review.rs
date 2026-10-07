@@ -4682,6 +4682,10 @@ fn specialist_reviewable_is_bound_before_provider_calls() {
         }
     }
     for value in [
+        "PR #44 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "#44 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "acme/widgets#44 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "https://github.com/acme/widgets/pull/44 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "https://github.com/acme/widgets/pull/44",
         "PR #44",
         "#44",
@@ -4716,8 +4720,16 @@ fn specialist_reviewable_validate_without_repo_stays_local() {
     for (value, expected_code) in [
         ("PR #44", 0),
         ("#44", 0),
+        ("PR #44 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0),
+        ("#44 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0),
+        ("PR #44 at abcd", 65),
         ("PR #45", 65),
+        ("PR #45 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 65),
         ("acme/widgets#44", 65),
+        (
+            "acme/widgets#44 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            65,
+        ),
     ] {
         let stub = StubEnv::new();
         let capture = stub.tempdir.path().join("calls.log");
@@ -4777,4 +4789,52 @@ fn confirmed_null_after_a_created_thread_preserves_the_pending_review() {
     assert!(!calls.contains("submitPullRequestReview(input:"), "{calls}");
     assert!(capture.with_extension("log.pending-body").exists());
     assert!(capture.with_extension("log.finding-body-0").exists());
+}
+
+#[test]
+fn qualified_specialist_reviewable_is_bound_to_publication_head_before_provider_calls() {
+    let report = "<!-- agent-kit:specialist-review-report:v1 -->\n## Review Report\n\n- Reviewable: PR #44 at HEAD\n- Lens: testing\n- Lens verdict: pass\n- Scope: publication\n- Evidence reviewed: fixture\n\n| Finding | Severity | Confidence | Evidence | Recommendation |\n| --- | --- | ---: | --- | --- |\n| No findings | none | 0.00 | fixture | none |\n";
+    let expected = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    for claimed in [expected, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] {
+        let stub = StubEnv::new();
+        let capture = stub.tempdir.path().join("calls.log");
+        let stub = stub.gh_stub(&github_review_stub(&capture.to_string_lossy()));
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--repo",
+                "acme/widgets",
+                "--format",
+                "json",
+                "--dry-run",
+                "pr",
+                "review",
+                "44",
+                "--submit-review",
+                "--decision",
+                "approve",
+                "--expected-head",
+                expected,
+                "--specialist-report",
+                "--comment",
+                &report.replace("HEAD", claimed),
+            ],
+        );
+        assert_eq!(
+            out.code,
+            if claimed == expected { 0 } else { 65 },
+            "{} {}",
+            out.stdout,
+            out.stderr
+        );
+        if claimed != expected {
+            assert_eq!(
+                parse_envelope(&out.stdout)["error"]["code"],
+                "reviewable_mismatch"
+            );
+        }
+        assert_backend_not_invoked(&capture);
+    }
 }
