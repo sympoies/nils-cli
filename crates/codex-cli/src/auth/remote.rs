@@ -710,8 +710,8 @@ mod tests {
         );
 
         assert_eq!(
-            infer_secret_name_for_target(&secrets.join("sym.json")).as_deref(),
-            Some("sym")
+            infer_secret_name_for_target(&secrets.join("omega.json")).as_deref(),
+            Some("omega")
         );
     }
 
