@@ -70,3 +70,5 @@ artifacts, and release/publish procedures live in the
 `AGENTS.md` owns agent-specific repository rules. Plans, discussions, reports,
 and the development log are retained evidence; they do not override current
 source, schemas, policy, or canonical runbooks.
+
+<!-- Disposable review-thread transport probe for PR #2186; do not merge. -->
