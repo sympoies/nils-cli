@@ -125,12 +125,21 @@ fn fixture_with_native(
     let ledger = json!({"data":{"viewer":{"login":"review-app[bot]"},
         "repository":{"pullRequest":{"comments":{"nodes":comments,
             "pageInfo":{"hasNextPage":false,"endCursor":null}}}}}});
-    let native = reviews.last().map(|r| {
-        json!({"id":r["databaseId"],"html_url":r["url"],
-        "state":r["state"],"commit_id":r["commit"]["oid"],
-        "user":{"login":r["author"]["login"], "type":r["author"]["__typename"], "node_id":r["author"]["id"]},"body":r["body"]})
-    });
-    let native = native_override.or(native).unwrap_or(Value::Null);
+    let native_cases = reviews
+        .iter()
+        .map(|r| {
+            let native = native_override.clone().unwrap_or_else(|| {
+                json!({"id":r["databaseId"],"html_url":r["url"],
+                "state":r["state"],"commit_id":r["commit"]["oid"],
+                "user":{"login":r["author"]["login"], "type":r["author"]["__typename"], "node_id":r["author"]["id"]},"body":r["body"]})
+            });
+            let id = r["databaseId"].as_u64().unwrap();
+            format!(
+                "  \"api repos/acme/widgets/pulls/7/reviews/{id}\") cat <<'JSON'\n{native}\nJSON\n    exit 0 ;;"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let summaries = json!({"data":{"viewer":{"login":"review-app[bot]"},
         "repository":{"pullRequest":{"headRefOid":head,"reviews":{"nodes":reviews,
             "pageInfo":{"hasNextPage":false,"endCursor":null}}}}}});
@@ -150,10 +159,7 @@ case "$1 $2" in
 JSON
     exit 0 ;;
   "api repos/acme/widgets/pulls/7") echo "${{PROVIDER_BASE:-{OLD}}}"; exit 0 ;;
-  "api repos/acme/widgets/pulls/7/reviews/"*) cat <<'JSON'
-{native}
-JSON
-    exit 0 ;;
+{native_cases}
   "api graphql")
     case "$*" in
       *'states: [PENDING]'*) cat <<'JSON'
@@ -1909,6 +1915,116 @@ fn scope_refresh_requires_publication_after_the_new_handoff() {
         } else {
             assert_refusal(&out, 65, "awaiting_designated_review");
         }
+    }
+}
+
+fn refreshed_publication_records() -> (Vec<ReviewStateRecord>, String, String) {
+    let mut h = handoff(None);
+    let mut seeded = records(h.clone(), Some(HEAD));
+    let old_binding = seeded[0].record_digest.clone();
+    h.assignment_generation = 2;
+    h.base_sha = HEAD.into();
+    let refresh = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        HEAD,
+        2,
+        Some(seeded.last().unwrap().record_digest.clone()),
+        ReviewStatePayload::ReviewHandoff { handoff: h },
+    )
+    .unwrap();
+    let current_binding = refresh.record_digest.clone();
+    let state = review_state::observe_review_loop(None, HEAD, &[])
+        .unwrap()
+        .state;
+    let observation = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        HEAD,
+        3,
+        Some(current_binding.clone()),
+        ReviewStatePayload::ReviewLoop { state },
+    )
+    .unwrap()
+    .with_assignment_generation(Some(2))
+    .unwrap();
+    seeded.extend([refresh, observation]);
+    (seeded, old_binding, current_binding)
+}
+
+fn bound_publication(id: u64, at: &str, verdict: &str, binding: &str) -> Value {
+    let mut r = review(HEAD, verdict);
+    r["id"] = json!(format!("REVIEW_{id}"));
+    r["databaseId"] = json!(id);
+    r["url"] = json!(format!(
+        "https://github.com/acme/widgets/pull/7#pullrequestreview-{id}"
+    ));
+    r["submittedAt"] = json!(at);
+    r["body"] = json!(format!(
+        "{}\n<!-- forge-cli:review-handoff:v1 {binding} -->",
+        r["body"].as_str().unwrap()
+    ));
+    r
+}
+
+#[test]
+fn delayed_old_interval_report_does_not_hide_current_interval_approval() {
+    let (seeded, old_binding, current_binding) = refreshed_publication_records();
+    let current = bound_publication(1, "2026-07-20T12:00:04Z", "pass", &current_binding);
+    let delayed = bound_publication(2, "2026-07-20T12:00:05Z", "pass", &old_binding);
+    for reviews in [
+        vec![current.clone(), delayed.clone()],
+        vec![delayed.clone(), current.clone()],
+    ] {
+        let stub = fixture(HEAD, &seeded, reviews)
+            .env("PROVIDER_BASE", HEAD)
+            .env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "2");
+        let output = check(&stub, HEAD);
+        assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
+        let calls = fs::read_to_string(stub.tempdir.path().join("calls.log")).unwrap();
+        assert!(calls.contains("repos/acme/widgets/pulls/7/reviews/2"));
+        assert!(calls.contains("repos/acme/widgets/pulls/7/reviews/1"));
+    }
+}
+
+#[test]
+fn newer_current_or_ambiguous_interval_report_cannot_reuse_earlier_pass() {
+    let (seeded, old_binding, current_binding) = refreshed_publication_records();
+    for invalid in [
+        "blocked",
+        "malformed-report",
+        "unbound",
+        "malformed-binding",
+        "duplicate",
+        "conflicting",
+        "unknown",
+    ] {
+        let passing = bound_publication(1, "2026-07-20T12:00:04Z", "pass", &current_binding);
+        let mut newer = bound_publication(2, "2026-07-20T12:00:05Z", "pass", &current_binding);
+        let body = newer["body"].as_str().unwrap();
+        newer["body"] = json!(match invalid {
+            "blocked" => body.replace("- Lens verdict: pass", "- Lens verdict: blocked"),
+            "malformed-report" => body.replace("- Lens: testing maintainability", "missing lens"),
+            "unbound" => review(HEAD, "pass")["body"].as_str().unwrap().to_string(),
+            "malformed-binding" => body.replace(&current_binding, "sha256:not-a-digest"),
+            "duplicate" =>
+                format!("{body}\n<!-- forge-cli:review-handoff:v1 {current_binding} -->"),
+            "conflicting" => format!("{body}\n<!-- forge-cli:review-handoff:v1 {old_binding} -->"),
+            "unknown" => body.replace(
+                &current_binding,
+                &review_state::sha256_digest(b"unknown interval")
+            ),
+            _ => unreachable!(),
+        });
+        let stub = fixture(HEAD, &seeded, vec![passing, newer])
+            .env("PROVIDER_BASE", HEAD)
+            .env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "2");
+        assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+        let calls = fs::read_to_string(stub.tempdir.path().join("calls.log")).unwrap();
+        assert!(
+            !calls.contains("repos/acme/widgets/pulls/7/reviews/1"),
+            "{invalid}: {calls}"
+        );
     }
 }
 

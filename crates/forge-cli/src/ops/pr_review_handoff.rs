@@ -223,6 +223,35 @@ fn publication_matches_interval(chain: &review_state::ReviewStateChain, body: &s
             .is_some_and(|digest| markers[0] == format!("{PUBLICATION_BINDING_PREFIX}{digest} -->"))
 }
 
+// A delayed report can be ignored only when its single canonical binding
+// identifies a different handoff already retained in this verified chain.
+fn publication_is_known_other_interval(chain: &review_state::ReviewStateChain, body: &str) -> bool {
+    let mut markers = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with(PUBLICATION_BINDING_PREFIX));
+    let Some(marker) = markers.next() else {
+        return false;
+    };
+    if markers.next().is_some() {
+        return false;
+    }
+    let Some(digest) = marker
+        .strip_prefix(PUBLICATION_BINDING_PREFIX)
+        .and_then(|value| value.strip_suffix(" -->"))
+    else {
+        return false;
+    };
+    Some(digest) != latest_handoff_digest(chain)
+        && chain.records.iter().any(|record| {
+            record.record_digest == digest
+                && matches!(
+                    record.payload,
+                    review_state::ReviewStatePayload::ReviewHandoff { .. }
+                )
+        })
+}
+
 pub(crate) fn is_assigned(chain: &review_state::ReviewStateChain) -> bool {
     latest(chain).is_some() || std::env::var("AGENT_REVIEWER_SESSION").is_ok_and(|v| !v.is_empty())
 }
@@ -583,18 +612,25 @@ pub(crate) fn ensure_published<R: BackendRunner>(
                 "handoff publication timestamp is missing or invalid",
             )
         })?;
-    let review = reviews
+    let mut candidates = reviews
         .current_head_reviews
         .iter()
         .filter(|r| matches_designated_author(r, &handoff.review_author) && r.commit_sha == head)
-        .max_by_key(|r| (&r.submitted_at, r.database_id));
-    let passing = if let Some(r) = review {
+        .collect::<Vec<_>>();
+    candidates.sort_unstable_by(|a, b| {
+        (&b.submitted_at, b.database_id).cmp(&(&a.submitted_at, a.database_id))
+    });
+    let mut passing = false;
+    for r in candidates {
         let body = if r.summary_truncated || r.author_type.as_deref() == Some("Bot") {
             read_complete_report(runner, ctx, number, r, &handoff.review_author)?
         } else {
             r.summary.clone()
         };
-        pr_review::validate_specialist_review_report(&body).is_ok()
+        if publication_is_known_other_interval(chain, &body) {
+            continue;
+        }
+        passing = pr_review::validate_specialist_review_report(&body).is_ok()
             && publication_matches_interval(chain, &body)
             && body.lines().any(|l| {
                 let Some(value) = l.trim().strip_prefix("- Reviewable: ") else {
@@ -617,10 +653,11 @@ pub(crate) fn ensure_published<R: BackendRunner>(
                     l.trim(),
                     "- Lens verdict: pass" | "- Lens verdict: follow-up-pass"
                 )
-            })
-    } else {
-        false
-    };
+            });
+        // The newest report not proven to belong to an older interval owns
+        // the verdict, including blocked, malformed or unbound reports.
+        break;
+    }
     if !passing {
         return Err(fail(
             "awaiting_designated_review",

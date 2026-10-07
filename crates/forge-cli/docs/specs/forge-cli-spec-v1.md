@@ -763,19 +763,23 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   `check <id> --expected-head <sha>` requires a reviewer-owned closed observation
   after handover and a canonical native report bound to the same PR, base,
   head, and appointed author. GitHub login comparison is case-insensitive.
-  The latest appointed-author review must be `COMMENTED` or `APPROVED`, have
-  a `pass` or `follow-up-pass` verdict, and postdate handover. A report in the
-  same timestamp second fails closed. Long summaries use bounded native-body
-  read-back with verified identity and head. A later blocked report supersedes
-  an earlier pass.
+  Reviews are considered newest-first. A report is skipped only when its
+  single canonical binding identifies a different handoff retained in the
+  verified chain. The newest remaining appointed-author review must be
+  `COMMENTED` or `APPROVED`, have a `pass` or `follow-up-pass` verdict, and
+  postdate handover. A report in the same timestamp second fails closed. Long
+  summaries use bounded native-body read-back with verified identity and head.
+  A newer current-interval blocked or malformed report supersedes an earlier
+  pass. Unbound later-generation reports and ambiguous, malformed or unknown
+  bindings are not skipped.
   Live designated `pr review --submit-review` binds both summary-only and
   threaded native reports to the admitted handoff record with the opaque marker
   `<!-- forge-cli:review-handoff:v1 <handoff-digest> -->`. This binding is captured
   before publication, so an old-generation report that lands after a handover
   cannot authorize the new interval even if its timestamp is newer. Generation
   two and later require exactly one matching binding; existing first-generation
-  reports without a marker remain compatible. A present marker must match the
-  current handoff in every generation. Reassigned reviewers must publish through
+  reports without a marker remain compatible. The selected report's present
+  marker must match the current handoff in every generation. Reassigned reviewers must publish through
   a CLI that supplies the binding; timestamps alone no longer admit those reports.
 - `surrender <id> --expected-head <sha> --expected-state <digest>` is a
   reviewer-owned relinquishment at the current assignment generation.
