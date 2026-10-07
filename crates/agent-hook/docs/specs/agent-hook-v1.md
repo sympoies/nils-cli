@@ -1504,7 +1504,7 @@ apply its non-denying failure posture when the registry is unavailable.
 - `69`: required provider/setup resource or lock is temporarily unavailable.
 - `75`: concurrency/lock contention suitable for bounded retry.
 
-Claude permission activity carries an optional runtime-scoped `attention_tool_id`
-for PermissionRequest and general tool progress/PermissionDenied. The opaque
-token correlates tool names without retaining names or input. PermissionDenied
-is observational; it cannot enforce a provider decision.
+Claude PermissionDenied is observational progress and is registered by managed
+Claude setup. It reports auto-mode denial, not a manual dialog denial. Permission
+requests and tool progress retain no tool-name correlation metadata; same-turn
+terminal evidence owns conservative permission-latch clearance.

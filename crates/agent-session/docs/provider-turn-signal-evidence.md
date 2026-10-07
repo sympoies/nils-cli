@@ -416,11 +416,13 @@ are never lifecycle input and never enter activity persistence.
 
 The [official hooks reference](https://code.claude.com/docs/en/hooks#permissionrequest),
 checked on 2026-10-07 through Claude Code 2.1.289, exposes no approval-resolved
-hook and no tool_use_id on PermissionRequest. A single conservative request can
-clear only on same-runtime, same-prompt, same-tool later progress or denial.
-Multiple requests and unrelated evidence stay latched. Only opaque runtime-scoped
-tool tokens are retained; request input and tool names are discarded. Known
-approvals clear at same-turn Stop; StopFailure is terminal. PreToolUse occurs
-before permission checks, so long tools can retain attention until their first
-matching later event. This is an event bound, not an approval-time guarantee.
-Managed policy must register observational PermissionDenied alongside its decoder.
+hook and no tool_use_id on PermissionRequest. Tool progress cannot safely clear
+a conservative latch: parallel calls can share both tool name and input. Known
+approvals clear at same-turn Stop; mismatched or missing prompt identity,
+clarification and ambiguous overflow remain conservative. StopFailure is terminal.
+PermissionDenied reports only auto-mode denial; a manual dialog denial has no
+resolution hook. Observing denial cannot resolve an unrelated open approval.
+No tool-name or input fingerprint is retained. Clearance is bounded by the
+earliest unambiguous terminal signal, not elapsed time from approval during a
+long tool. Managed policy must register observational PermissionDenied alongside
+its supporting decoder before deployment.
