@@ -261,7 +261,8 @@ The daemon sets `messaging_supported` to `true` only when all hold:
 The aggregator may additionally require its own registration check, so that
 the aggregated value has the exact `agent-session.remote-peers.v1` meaning. The
 value describes whether the target can receive, never whether the caller may
-send; a cross-principal send is still rejected by the relay ownership checks.
+send. A cross-owner send is rejected unless the relay has an explicit allowance
+for both owners. A board row never authorizes a message.
 
 ## Extensions
 
