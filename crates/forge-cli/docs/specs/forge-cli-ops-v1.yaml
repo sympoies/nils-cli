@@ -626,12 +626,16 @@ operations:
       - no_local_path # optional reply note
       - no_agent_attribution # optional reply note
       - review_thread_pr_mismatch # live GitHub only: --thread must belong to <id> before mutation
+      - review_snapshot_incomplete # root comment id and viewer permissions must be available
+      - review_thread_resolve_forbidden # unresolved thread: permission checked before an optional reply
     backends:
-      # With a note: the reply mutation runs first, then resolve. Without a
+      # Bind the root comment id and check resolution permission before writes.
+      # With a note: REST reply runs first, then resolve. Without a
       # note: only resolve. resolveReviewThread is idempotent — resolving an
       # already-resolved thread succeeds rather than erroring.
       github:
-        - { program: gh, argv: [api, graphql, "--hostname <host when host != github.com>", -f, "query=<addPullRequestReviewThreadReply>", -f, "tid={thread}", -f, "body={note_or_file}"] }  # only when --note/--note-file given
+        - { program: gh, argv: [api, graphql, "--hostname <host when host != github.com>", -f, "query=<root comment id and resolution permission>", -f, "tid={thread}"] }
+        - { program: gh, argv: [api, "repos/{repo}/pulls/{id}/comments/{root_comment_id}/replies", "--hostname <host when host != github.com>", --method, POST, -f, "body={note_or_file}"] }  # only when --note/--note-file given
         - { program: gh, argv: [api, graphql, "--hostname <host when host != github.com>", -f, "query=<resolveReviewThread>", -f, "tid={thread}"] }
       gitlab: unsupported  # no GitHub-shaped thread-mutation surface in v1 → provider_unsupported (USAGE 64)
       # local: no thread model → provider_unsupported (USAGE 64).
@@ -641,6 +645,9 @@ operations:
         thread_id: string
         resolved: bool
         replied: bool
+        target_plan?: list<string> # offline dry-run only
+        root_comment_id_source?: string # offline dry-run: /data/node/comments/nodes/0/fullDatabaseId
+    notes: "REST replies can create empty native COMMENTED reviews. Designated admission skips them only after complete body/actor readback and bounded comments prove no root inline comments. Dry-run leaves ${root_comment_id} unbound."
 
   - id: pr.review-threads.reply
     schema_version: cli.forge-cli.pr.review-threads.reply.v1
@@ -654,8 +661,11 @@ operations:
       - no_local_path # reply body
       - no_agent_attribution # reply body
       - review_thread_pr_mismatch # live GitHub only: --thread must belong to <id> before mutation
+      - review_snapshot_incomplete # root comment id and viewer permissions must be available
     backends:
-      github: { program: gh, argv: [api, graphql, "--hostname <host when host != github.com>", -f, "query=<addPullRequestReviewThreadReply>", -f, "tid={thread}", -f, "body={body_or_file}"] }
+      github:
+        - { program: gh, argv: [api, graphql, "--hostname <host when host != github.com>", -f, "query=<root comment id and resolution permission>", -f, "tid={thread}"] }
+        - { program: gh, argv: [api, "repos/{repo}/pulls/{id}/comments/{root_comment_id}/replies", "--hostname <host when host != github.com>", --method, POST, -f, "body={body_or_file}"] }
       gitlab: unsupported  # provider_unsupported (USAGE 64)
       # local: provider_unsupported (USAGE 64).
     output:
@@ -663,6 +673,9 @@ operations:
         provider: enum<github>
         thread_id: string
         comment_url: string
+        target_plan?: list<string> # offline dry-run only
+        root_comment_id_source?: string # offline dry-run: /data/node/comments/nodes/0/fullDatabaseId
+    notes: "REST replies can create empty native COMMENTED reviews. Designated admission verifies their provenance before preserving an earlier canonical report. Dry-run leaves ${root_comment_id} unbound."
 
   - id: pr.reviews
     schema_version: cli.forge-cli.pr.reviews.v1
