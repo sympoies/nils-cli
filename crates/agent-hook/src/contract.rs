@@ -746,6 +746,7 @@ pub fn supported_event(product: Product, event: &str) -> bool {
             "SessionStart"
                 | "UserPromptSubmit"
                 | "PermissionRequest"
+                | "PermissionDenied"
                 | "PreToolUse"
                 | "PostToolUse"
                 | "PostToolUseFailure"
@@ -814,6 +815,7 @@ pub fn matcher_input_field(product: Product, event: &str) -> Option<&'static str
             Product::Codex | Product::Claude | Product::Dsh,
             "PermissionRequest" | "PreToolUse" | "PostToolUse" | "PostToolUseFailure",
         ) => Some("tool_name"),
+        (Product::Claude, "PermissionDenied") => Some("tool_name"),
         (Product::Codex | Product::Claude, "PreCompact") | (Product::Codex, "PostCompact") => {
             Some("trigger")
         }

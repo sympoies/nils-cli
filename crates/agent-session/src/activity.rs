@@ -294,6 +294,8 @@ pub(crate) struct StreamTurnState {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct PendingAttention {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    permission_tool_id: Option<String>,
     kind: String,
     requested_at: String,
     #[serde(default)]
@@ -441,6 +443,8 @@ pub(crate) struct TurnEvent {
     pub(crate) attention_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) attention_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) attention_tool_id: Option<String>,
     #[serde(skip)]
     attention_correlation_ambiguous: bool,
     #[serde(skip)]
@@ -512,6 +516,7 @@ pub(crate) fn ingest_codex_app_server_failure_with_kind(
             attention_correlation_ambiguous: false,
             attention_correlation_exact: false,
             completion_candidate: false,
+            attention_tool_id: None,
             confidence: Confidence::Authoritative,
             // `provider_hook` is the stable v1 wire value for authoritative,
             // provider-structured evidence, including the app-server protocol.
@@ -578,6 +583,7 @@ pub(crate) fn ingest_codex_app_server_attention(
             attention_correlation_ambiguous: false,
             attention_correlation_exact: true,
             completion_candidate: false,
+            attention_tool_id: None,
             confidence: Confidence::Authoritative,
             // `provider_hook` is the stable v1 wire value for all structured
             // provider evidence, including the app-server protocol.
@@ -1214,6 +1220,7 @@ fn semantic_event_key(event: &TurnEvent) -> String {
         },
         event.attention_kind.as_deref().unwrap_or(""),
         correlated_attention_id,
+        event.attention_tool_id.as_deref().unwrap_or(""),
     ] {
         digest.update(value.as_bytes());
         digest.update(b"\0");
@@ -2599,6 +2606,13 @@ fn ingest_event_with_lock(
         .provider_turn_id
         .as_deref()
         .map(|value| normalize_provider_identifier(active_runtime_id, agent, "turn", value))
+        .transpose()?;
+    event.attention_tool_id = event
+        .attention_tool_id
+        .as_deref()
+        .map(|value| {
+            normalize_provider_identifier(active_runtime_id, agent, "permission-tool", value)
+        })
         .transpose()?;
     let expected_provider_session_id = record
         .provider_resume
@@ -4147,6 +4161,10 @@ fn provider_specs(agent: AgentKind) -> Vec<ProviderSpec> {
                 matcher: None,
             },
             ProviderSpec {
+                event: "PermissionDenied",
+                matcher: None,
+            },
+            ProviderSpec {
                 event: "PreToolUse",
                 matcher: None,
             },
@@ -4998,6 +5016,19 @@ fn open_provider_turn(document: &mut ActivityDocument, provider_turn_id: Option<
     });
 }
 
+fn claude_event_matches_open_turn(document: &ActivityDocument, event: &TurnEvent) -> bool {
+    event.provider == "claude"
+        && event.source_kind == SourceKind::ProviderHook
+        && event.provider_turn_id.as_ref().is_some_and(|turn| {
+            document
+                .state
+                .current_turn
+                .as_ref()
+                .and_then(|current| current.provider_turn_id.as_ref())
+                == Some(turn)
+        })
+}
+
 fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool {
     if matches!(
         event.kind,
@@ -5054,6 +5085,7 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool 
                 if document.pending_attention.len() < MAX_PENDING_ATTENTION {
                     document.pending_attention.push(PendingAttention {
                         id: attention_id.to_string(),
+                        permission_tool_id: event.attention_tool_id.clone(),
                         kind,
                         requested_at: at.to_string(),
                         certainty: if event.attention_correlation_exact {
@@ -5107,6 +5139,18 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool 
                 };
         }
         TurnEventKind::Progress => {
+            if claude_event_matches_open_turn(document, event)
+                && document.pending_attention.len() == 1
+                && document.overflow_attention.is_none()
+                && event.attention_tool_id.as_ref().is_some_and(|tool| {
+                    let pending = &document.pending_attention[0];
+                    pending.kind == "approval"
+                        && pending.permission_tool_id.as_deref() == Some(tool.as_str())
+                })
+            {
+                document.pending_attention.clear();
+                refresh_attention(document);
+            }
             if document.state.current_turn.is_none() {
                 document.state.current_turn = Some(CurrentTurn {
                     provider_turn_id: event.provider_turn_id.clone(),
@@ -5126,6 +5170,16 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool 
             }
         }
         TurnEventKind::StopObserved => {
+            // Stop ends same-turn permission UI even if another hook continues.
+            if claude_event_matches_open_turn(document, event) {
+                document
+                    .pending_attention
+                    .retain(|pending| pending.kind != "approval");
+                refresh_attention(document);
+                if document.pending_attention.is_empty() && document.overflow_attention.is_none() {
+                    document.state.phase = TurnPhase::Working;
+                }
+            }
             // Matching Stop hooks run concurrently. Only an inactive Stop with
             // no background tasks is a candidate, and later events cancel it.
             if event.completion_candidate
