@@ -75,13 +75,19 @@ fn write_executable_sets_unix_mode() {
     assert_eq!(mode & 0o111, 0o111);
 }
 
-/// The kernel keeps a script's inode text-busy while any process holds it
-/// open for write, and `execve` of it fails with ETXTBSY. A sibling test
-/// thread that forks while a fixture writer's descriptor is still open
+/// On Linux the kernel keeps a script's inode text-busy while any process
+/// holds it open for write, so `execve` of it fails with ETXTBSY; a sibling
+/// test thread that forks while a fixture writer's descriptor is still open
 /// inherits that descriptor, which is how a freshly written fixture ends up
-/// busy at pre-warm time (sympoies/nils-cli#2170). Hold the descriptor
-/// across the probe so the failure is reproducible on demand.
-#[cfg(unix)]
+/// busy at pre-warm time (sympoies/nils-cli#2170). Hold the descriptor across
+/// the probe so the failure is reproducible on demand.
+///
+/// This ETXTBSY-on-exec behavior is Linux-specific: on macOS `execve` of a
+/// write-open shebang script succeeds instead of failing, so reproducing the
+/// busy state (and the #2170 flake itself) is a Linux phenomenon. The other
+/// regressions in this file exercise the atomic install itself and run on
+/// every unix target.
+#[cfg(target_os = "linux")]
 #[test]
 fn exec_reports_executable_file_busy_while_the_script_is_open_for_write() {
     use std::io::ErrorKind;
