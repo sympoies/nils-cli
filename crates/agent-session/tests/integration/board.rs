@@ -66,6 +66,20 @@ fn fake_tmux(root: &Path) -> PathBuf {
     )
     .expect("fake tmux");
     fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).expect("fake tmux mode");
+    // Pre-warm the fixture: the first exec of a freshly written script pays a
+    // host EDR/filesystem cold-start tail that can exceed the product's bounded
+    // termination-probe budget, turning the probe into verification-failed
+    // (sympoies/nils-cli#2131). Exec it once here so the product's first exec
+    // runs warm. The script's `display-message` path is side-effect-free and
+    // exits 1 by design, which is the fixture's "session absent" answer.
+    let prewarm = Command::new(&bin)
+        .arg("display-message")
+        .output()
+        .expect("prewarm fake tmux");
+    assert!(
+        prewarm.status.code() == Some(1),
+        "fake tmux prewarm exited unexpectedly: {prewarm:?}"
+    );
     bin
 }
 
