@@ -720,7 +720,7 @@ mod tests {
         let lock = GlobalStateLock::new();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let auth_file = dir.path().join("auth.json");
-        let secret_file = dir.path().join("gamania.json");
+        let secret_file = dir.path().join("acct1.json");
         let cache_dir = dir.path().join("cache");
         std::fs::create_dir_all(&cache_dir).expect("cache");
 
@@ -757,7 +757,7 @@ mod tests {
         let lock = GlobalStateLock::new();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let auth_file = dir.path().join("auth.json");
-        let secret_file = dir.path().join("gamania.json");
+        let secret_file = dir.path().join("acct1.json");
 
         let active = auth_json(PAYLOAD_BETA, "refresh_beta", "2025-01-19T12:34:56Z");
         let refreshed = auth_json(PAYLOAD_ALPHA, "refresh_new", "2025-01-20T12:34:56Z");
