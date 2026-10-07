@@ -2569,3 +2569,50 @@ and `glab mr create …` invocations are removed.
   `forge-cli pr checks ID --repo owner/repo --format json`.
   Checks are a separate snapshot; consumers should use `head_sha` from PR view
   when they need to bind later decisions to a particular head.
+
+## Repository inventory and security reads
+
+These commands are GitHub-only and read-only; other providers return
+`provider_unsupported`. Every API call uses the detected authority and the
+invocation's managed identity. Provider permission errors remain errors.
+
+- `repo list --org ORGANIZATION [--source] [--no-archived] [--limit N]`
+  emits `cli.forge-cli.repo.list.v1`: `provider`, `host`, `org`, `limit`,
+  `limited`, and `items`. Each item contains `name`, `full_name`, `url`,
+  `private`, `fork`, `archived`, nullable `default_branch`, and nullable
+  `updated_at`. Source selection uses GitHub's `type=sources`; archived
+  filtering happens before the limit. Pages are fetched until the filtered
+  limit is reached or results are exhausted. The default limit is 100.
+  Organization inventory has no checkout-repository scope; omit `--repo`.
+  Managed principals must select a sole distinct profile, following the
+  repository-independent read rules; ambiguity fails before credential probes.
+- `security alerts list --repo owner/repo --kind
+  dependabot|code-scanning|secret-scanning [--state STATE] [--limit N]`
+  emits `cli.forge-cli.security.alerts.list.v1`: `provider`, `host`, `repo`,
+  `kind`, `state`, `limit`, `limited`, and `items`. Items contain `number`,
+  `state`, `url`, nullable `title`, `severity`, `created_at`, `updated_at`,
+  `dismissed_at`, `fixed_at`, and `resolved_at`. The default state is `open`
+  and the default limit is 100; pagination honors larger limits. Dependabot
+  reads use `--include` to extract the next page's opaque `after` cursor from
+  the HTTP `Link` header, and never send the unsupported numbered `page`
+  parameter. The cursor is decoded and sent on another request bound to the
+  selected repository and authority; pagination stops at the requested limit
+  or when no next link remains. Code and secret scanning use numbered pages.
+  See [GitHub's Dependabot alert parameters](https://docs.github.com/en/rest/dependabot/alerts#list-dependabot-alerts-for-a-repository).
+  Dependabot
+  accepts `open`, `dismissed`, `fixed`, and `auto_dismissed`; code scanning
+  accepts `open`, `dismissed`, and `fixed`; secret scanning accepts `open`
+  and `resolved`. `all` omits the provider state filter. Incompatible states
+  fail with `alert_state_invalid`. Alert output selects safe metadata fields
+  and never includes scanned secret values or code snippets.
+- `security settings view --repo owner/repo` emits
+  `cli.forge-cli.security.settings.view.v1`: `provider`, `host`, `repo`, and
+  nullable `security_and_analysis`. A missing block means the provider did
+  not expose settings to this identity; it does not mean features are disabled.
+  GitHub requires appropriate repository or organization permissions to expose
+  that block. See the [GitHub repository API](https://docs.github.com/en/rest/repos/repos).
+- Security reads use explicit or remote-derived repository identity rules,
+  including credential, actor, permission, and repository coverage checks.
+- `--dry-run` emits the first page's exact `data.plan` without calling the
+  backend. `limited=true` indicates the returned count reached the requested
+  bound; it does not prove that more results exist.

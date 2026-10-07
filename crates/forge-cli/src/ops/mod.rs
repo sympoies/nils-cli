@@ -56,4 +56,6 @@ pub mod search;
 pub mod comment;
 pub(crate) mod github_write;
 pub mod release;
+pub mod repo_list;
+pub mod security;
 pub mod workflow;

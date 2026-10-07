@@ -42,6 +42,7 @@ mod integration {
     mod repo_bootstrap_github;
     mod repo_freeze;
     mod repo_push_default;
+    mod repo_security;
     mod repo_view;
     mod required_check_gate;
     mod search;

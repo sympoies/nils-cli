@@ -1470,6 +1470,50 @@ operations:
         default_branch_head_sha: nullable<string>
         merge_methods_allowed: list<enum<squash|merge|rebase>>
 
+  - id: repo.list
+    schema_version: cli.forge-cli.repo.list.v1
+    summary: Read bounded GitHub organization repository inventory.
+    inputs:
+      - { name: --org, type: string, required: true }
+      - { name: --source, type: bool, default: false }
+      - { name: --no-archived, type: bool, default: false }
+      - { name: --limit, type: integer, default: 100 }
+    backends:
+      github: { program: gh, argv: [api, "{optional_hostname}", -X, GET, "orgs/{org}/repos", -f, "type={all|sources}", -f, per_page=100, -f, "page={page}"], env: { GH_HOST: "{resolved_authority}" } }
+      gitlab: provider_unsupported
+      local: provider_unsupported
+    output:
+      data: { provider, host, org, limit, limited, items }
+    notes: "Repository-independent principal selection; reject --repo. Filter archived rows before applying limit; continue pages until filtered limit or exhaustion. Items: name, full_name, url, private, fork, archived, default_branch, updated_at."
+
+  - id: security.alerts.list
+    schema_version: cli.forge-cli.security.alerts.list.v1
+    summary: Read repository security alert metadata without scanned secret values.
+    inputs:
+      - { name: --kind, type: enum<dependabot|code-scanning|secret-scanning>, required: true }
+      - { name: --state, type: string, default: open }
+      - { name: --limit, type: integer, default: 100 }
+    backends:
+      github: { program: gh, argv: [api, "{optional_hostname}", -X, GET, "repos/{repo}/{kind}/alerts", "{optional_state_fields}", -f, per_page=100, "{pagination_fields}"], env: { GH_HOST: "{resolved_authority}" } }
+      # pagination_fields: Dependabot uses --include, then optional -f after=<decoded Link cursor>; other kinds use -f page=N.
+      gitlab: provider_unsupported
+      local: provider_unsupported
+    output:
+      data: { provider, host, repo, kind, state, limit, limited, items }
+    notes: "Repository principal rules apply. States are kind-specific; all omits the filter. Bounded reads: Dependabot follows Link rel=next via decoded after cursors, never page=N; other alert kinds use numbered pages. Stop at the limit or exhausted pages; explicit metadata allowlist excludes secret values and code snippets."
+
+  - id: security.settings.view
+    schema_version: cli.forge-cli.security.settings.view.v1
+    summary: Read repository security feature settings.
+    inputs: []
+    backends:
+      github: { program: gh, argv: [api, "{optional_hostname}", "repos/{repo}"], env: { GH_HOST: "{resolved_authority}" } }
+      gitlab: provider_unsupported
+      local: provider_unsupported
+    output:
+      data: { provider, host, repo, security_and_analysis }
+    notes: "Repository principal rules apply. Missing security_and_analysis is null, not a disabled-state claim."
+
   - id: repo.push-default
     schema_version: cli.forge-cli.repo.push-default.v1
     summary: Deliver exactly one explicitly authorized signed commit to the remote default branch without force.

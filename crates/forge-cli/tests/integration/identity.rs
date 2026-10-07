@@ -642,6 +642,78 @@ esac
     }
 
     #[test]
+    fn identity_org_repository_list_uses_sole_profile_and_refuses_ambiguity() {
+        for (policy, expected) in [(single_profile_policy(), 0), (POLICY.to_string(), 65)] {
+            let f = cross_repo_fixture(&policy);
+            let out = f
+                .bare_command()
+                .current_dir(f.home.path())
+                .args(["--provider", "github", "repo", "list", "--org", "sandbox"])
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(expected),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            if expected == 65 {
+                assert!(String::from_utf8_lossy(&out.stdout).contains("identity_target_ambiguous"));
+                assert!(!f.home.path().join("calls").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn identity_security_reads_use_repository_rules_and_no_credential_fallback() {
+        for args in [
+            vec!["security", "alerts", "list", "--kind", "dependabot"],
+            vec!["security", "settings", "view"],
+        ] {
+            for missing in [false, true] {
+                let f = cross_repo_fixture(POLICY);
+                let script = fs::read_to_string(&f.gh).unwrap().replace(
+                    "*) printf '[]';;",
+                    r#"*) case "$*" in
+ 'api -X GET repos/sandbox/widget/dependabot/alerts -f state=open -f per_page=100 --include') printf 'HTTP/2.0 200 OK\n\n[]';;
+ 'api repos/sandbox/widget') printf '{"security_and_analysis":{"secret_scanning":{"status":"enabled"}}}';;
+ *) echo "unexpected security read: $*" >&2; exit 97;;
+esac;;"#,
+                );
+                fs::write(&f.gh, script).unwrap();
+                let mut command = f.command();
+                command
+                    .current_dir(f.home.path())
+                    .args(["--provider", "github"])
+                    .args(&args);
+                if missing {
+                    command.env_remove("FIXTURE_ACCOUNT_A_CREDENTIAL");
+                }
+                let out = command.output().unwrap();
+                assert_eq!(
+                    out.status.code(),
+                    Some(if missing { 65 } else { 0 }),
+                    "{}",
+                    String::from_utf8_lossy(&out.stdout)
+                );
+                if missing {
+                    assert!(
+                        String::from_utf8_lossy(&out.stdout)
+                            .contains("identity_credential_missing")
+                    );
+                    assert!(!f.home.path().join("calls").exists());
+                } else {
+                    assert!(f.home.path().join("calls").exists());
+                    assert!(f.audit().lines().all(|line| {
+                        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+                        v["profile_id"] == "account-a" && v["target"]["repo"] == "sandbox/widget"
+                    }));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn identity_cross_repo_ambiguity_names_candidates_and_repo_recovery() {
         let f = cross_repo_fixture(POLICY);
         let out = f

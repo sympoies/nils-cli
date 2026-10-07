@@ -2470,6 +2470,24 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--org=[Organization login; this read ignores the checkout repository]:ORG:_default' \
+'--limit=[Maximum matching repositories to return]:LIMIT:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--source[Include only source repositories (exclude forks)]' \
+'--no-archived[Exclude archived repositories before applying the limit]' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
 (bootstrap)
 _arguments "${_arguments_options[@]}" : \
 '--owner-kind=[Whether the repository owner is the authenticated user or an organization]:OWNER_KIND:(user org)' \
@@ -2629,6 +2647,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (bootstrap)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -2658,6 +2680,223 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(security)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_forge-cli__subcmd__security_commands" \
+"*::: :->security" \
+&& ret=0
+
+    case $state in
+    (security)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-security-command-$line[1]:"
+        case $line[1] in
+            (alerts)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_forge-cli__subcmd__security__subcmd__alerts_commands" \
+"*::: :->alerts" \
+&& ret=0
+
+    case $state in
+    (alerts)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-security-alerts-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--kind=[Security alert family]:KIND:(dependabot code-scanning secret-scanning)' \
+'--state=[Provider state filter; all omits the state parameter]:STATE:(open dismissed fixed auto_dismissed resolved all)' \
+'--limit=[Maximum alerts to return]:LIMIT:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__security__subcmd__alerts__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-security-alerts-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(settings)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_forge-cli__subcmd__security__subcmd__settings_commands" \
+"*::: :->settings" \
+&& ret=0
+
+    case $state in
+    (settings)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-security-settings-command-$line[1]:"
+        case $line[1] in
+            (view)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__security__subcmd__settings__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-security-settings-help-command-$line[1]:"
+        case $line[1] in
+            (view)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__security__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-security-help-command-$line[1]:"
+        case $line[1] in
+            (alerts)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__security__subcmd__help__subcmd__alerts_commands" \
+"*::: :->alerts" \
+&& ret=0
+
+    case $state in
+    (alerts)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-security-help-alerts-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(settings)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__security__subcmd__help__subcmd__settings_commands" \
+"*::: :->settings" \
+&& ret=0
+
+    case $state in
+    (settings)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-security-help-settings-command-$line[1]:"
+        case $line[1] in
+            (view)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3395,6 +3634,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (bootstrap)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -3424,6 +3667,62 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(security)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__help__subcmd__security_commands" \
+"*::: :->security" \
+&& ret=0
+
+    case $state in
+    (security)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-help-security-command-$line[1]:"
+        case $line[1] in
+            (alerts)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__help__subcmd__security__subcmd__alerts_commands" \
+"*::: :->alerts" \
+&& ret=0
+
+    case $state in
+    (alerts)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-help-security-alerts-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(settings)
+_arguments "${_arguments_options[@]}" : \
+":: :_forge-cli__subcmd__help__subcmd__security__subcmd__settings_commands" \
+"*::: :->settings" \
+&& ret=0
+
+    case $state in
+    (settings)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:forge-cli-help-security-settings-command-$line[1]:"
+        case $line[1] in
+            (view)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3514,6 +3813,7 @@ _forge-cli_commands() {
 'inbox:Personal cross-repo work inbox' \
 'search:Full-text / reverse-reference search over issues and PRs' \
 'repo:Repository helpers' \
+'security:GitHub security alert and configuration reads' \
 'identity:Explain or verify context-based forge identity selection' \
 'auth:Backend authentication helpers' \
 'operation-effect:Describe the effect of one exact typed forge-cli invocation' \
@@ -3682,6 +3982,7 @@ _forge-cli__subcmd__help_commands() {
 'inbox:Personal cross-repo work inbox' \
 'search:Full-text / reverse-reference search over issues and PRs' \
 'repo:Repository helpers' \
+'security:GitHub security alert and configuration reads' \
 'identity:Explain or verify context-based forge identity selection' \
 'auth:Backend authentication helpers' \
 'operation-effect:Describe the effect of one exact typed forge-cli invocation' \
@@ -4189,6 +4490,7 @@ _forge-cli__subcmd__help__subcmd__release__subcmd__upload_commands() {
 _forge-cli__subcmd__help__subcmd__repo_commands() {
     local commands; commands=(
 'view:Resolve the repo slug, default branch, and supported merge methods' \
+'list:List GitHub organization repositories' \
 'bootstrap:Create or adopt an empty GitHub repository, or create a private Forgejo repository' \
 'push-default:Deliver one signed commit to the default branch with a normal fast-forward push' \
 'freeze:Start, end, or report a GitHub merge freeze (an open \`merge-freeze\` issue)' \
@@ -4224,6 +4526,11 @@ _forge-cli__subcmd__help__subcmd__repo__subcmd__freeze__subcmd__status_commands(
     local commands; commands=()
     _describe -t commands 'forge-cli help repo freeze status commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__help__subcmd__repo__subcmd__list_commands] )) ||
+_forge-cli__subcmd__help__subcmd__repo__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help repo list commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__help__subcmd__repo__subcmd__push-default_commands] )) ||
 _forge-cli__subcmd__help__subcmd__repo__subcmd__push-default_commands() {
     local commands; commands=()
@@ -4257,6 +4564,38 @@ _forge-cli__subcmd__help__subcmd__search__subcmd__prs_commands() {
 _forge-cli__subcmd__help__subcmd__search__subcmd__refs-to_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help search refs-to commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__security_commands] )) ||
+_forge-cli__subcmd__help__subcmd__security_commands() {
+    local commands; commands=(
+'alerts:Read repository security alerts without scanned secret values' \
+'settings:Read repository security feature settings' \
+    )
+    _describe -t commands 'forge-cli help security commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__security__subcmd__alerts_commands] )) ||
+_forge-cli__subcmd__help__subcmd__security__subcmd__alerts_commands() {
+    local commands; commands=(
+'list:List alerts, bounded by --limit (default\: 100)' \
+    )
+    _describe -t commands 'forge-cli help security alerts commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__security__subcmd__alerts__subcmd__list_commands] )) ||
+_forge-cli__subcmd__help__subcmd__security__subcmd__alerts__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help security alerts list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__security__subcmd__settings_commands] )) ||
+_forge-cli__subcmd__help__subcmd__security__subcmd__settings_commands() {
+    local commands; commands=(
+'view:View security_and_analysis; null means unavailable to this identity' \
+    )
+    _describe -t commands 'forge-cli help security settings commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__security__subcmd__settings__subcmd__view_commands] )) ||
+_forge-cli__subcmd__help__subcmd__security__subcmd__settings__subcmd__view_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help security settings view commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__workflow_commands] )) ||
 _forge-cli__subcmd__help__subcmd__workflow_commands() {
@@ -5378,6 +5717,7 @@ _forge-cli__subcmd__release__subcmd__upload_commands() {
 _forge-cli__subcmd__repo_commands() {
     local commands; commands=(
 'view:Resolve the repo slug, default branch, and supported merge methods' \
+'list:List GitHub organization repositories' \
 'bootstrap:Create or adopt an empty GitHub repository, or create a private Forgejo repository' \
 'push-default:Deliver one signed commit to the default branch with a normal fast-forward push' \
 'freeze:Start, end, or report a GitHub merge freeze (an open \`merge-freeze\` issue)' \
@@ -5449,6 +5789,7 @@ _forge-cli__subcmd__repo__subcmd__freeze__subcmd__status_commands() {
 _forge-cli__subcmd__repo__subcmd__help_commands() {
     local commands; commands=(
 'view:Resolve the repo slug, default branch, and supported merge methods' \
+'list:List GitHub organization repositories' \
 'bootstrap:Create or adopt an empty GitHub repository, or create a private Forgejo repository' \
 'push-default:Deliver one signed commit to the default branch with a normal fast-forward push' \
 'freeze:Start, end, or report a GitHub merge freeze (an open \`merge-freeze\` issue)' \
@@ -5490,6 +5831,11 @@ _forge-cli__subcmd__repo__subcmd__help__subcmd__help_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli repo help help commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__repo__subcmd__help__subcmd__list_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo help list commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__repo__subcmd__help__subcmd__push-default_commands] )) ||
 _forge-cli__subcmd__repo__subcmd__help__subcmd__push-default_commands() {
     local commands; commands=()
@@ -5499,6 +5845,11 @@ _forge-cli__subcmd__repo__subcmd__help__subcmd__push-default_commands() {
 _forge-cli__subcmd__repo__subcmd__help__subcmd__view_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli repo help view commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__repo__subcmd__list_commands] )) ||
+_forge-cli__subcmd__repo__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli repo list commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__repo__subcmd__push-default_commands] )) ||
 _forge-cli__subcmd__repo__subcmd__push-default_commands() {
@@ -5564,6 +5915,115 @@ _forge-cli__subcmd__search__subcmd__prs_commands() {
 _forge-cli__subcmd__search__subcmd__refs-to_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli search refs-to commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security_commands] )) ||
+_forge-cli__subcmd__security_commands() {
+    local commands; commands=(
+'alerts:Read repository security alerts without scanned secret values' \
+'settings:Read repository security feature settings' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli security commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__alerts_commands] )) ||
+_forge-cli__subcmd__security__subcmd__alerts_commands() {
+    local commands; commands=(
+'list:List alerts, bounded by --limit (default\: 100)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli security alerts commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__alerts__subcmd__help_commands] )) ||
+_forge-cli__subcmd__security__subcmd__alerts__subcmd__help_commands() {
+    local commands; commands=(
+'list:List alerts, bounded by --limit (default\: 100)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli security alerts help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__alerts__subcmd__help__subcmd__help_commands] )) ||
+_forge-cli__subcmd__security__subcmd__alerts__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli security alerts help help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__alerts__subcmd__help__subcmd__list_commands] )) ||
+_forge-cli__subcmd__security__subcmd__alerts__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli security alerts help list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__alerts__subcmd__list_commands] )) ||
+_forge-cli__subcmd__security__subcmd__alerts__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli security alerts list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__help_commands] )) ||
+_forge-cli__subcmd__security__subcmd__help_commands() {
+    local commands; commands=(
+'alerts:Read repository security alerts without scanned secret values' \
+'settings:Read repository security feature settings' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli security help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__help__subcmd__alerts_commands] )) ||
+_forge-cli__subcmd__security__subcmd__help__subcmd__alerts_commands() {
+    local commands; commands=(
+'list:List alerts, bounded by --limit (default\: 100)' \
+    )
+    _describe -t commands 'forge-cli security help alerts commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__help__subcmd__alerts__subcmd__list_commands] )) ||
+_forge-cli__subcmd__security__subcmd__help__subcmd__alerts__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli security help alerts list commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__help__subcmd__help_commands] )) ||
+_forge-cli__subcmd__security__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli security help help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__help__subcmd__settings_commands] )) ||
+_forge-cli__subcmd__security__subcmd__help__subcmd__settings_commands() {
+    local commands; commands=(
+'view:View security_and_analysis; null means unavailable to this identity' \
+    )
+    _describe -t commands 'forge-cli security help settings commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__help__subcmd__settings__subcmd__view_commands] )) ||
+_forge-cli__subcmd__security__subcmd__help__subcmd__settings__subcmd__view_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli security help settings view commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__settings_commands] )) ||
+_forge-cli__subcmd__security__subcmd__settings_commands() {
+    local commands; commands=(
+'view:View security_and_analysis; null means unavailable to this identity' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli security settings commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__settings__subcmd__help_commands] )) ||
+_forge-cli__subcmd__security__subcmd__settings__subcmd__help_commands() {
+    local commands; commands=(
+'view:View security_and_analysis; null means unavailable to this identity' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'forge-cli security settings help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__settings__subcmd__help__subcmd__help_commands] )) ||
+_forge-cli__subcmd__security__subcmd__settings__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli security settings help help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__settings__subcmd__help__subcmd__view_commands] )) ||
+_forge-cli__subcmd__security__subcmd__settings__subcmd__help__subcmd__view_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli security settings help view commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__security__subcmd__settings__subcmd__view_commands] )) ||
+_forge-cli__subcmd__security__subcmd__settings__subcmd__view_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli security settings view commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__workflow_commands] )) ||
 _forge-cli__subcmd__workflow_commands() {

@@ -72,6 +72,9 @@ pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
     let cross_repository = matches!(
         &cli.command,
         Some(Command::Inbox(_))
+            | Some(Command::Repo(RepoArgs {
+                command: Some(RepoCommand::List(_))
+            }))
             | Some(Command::Activity(ActivityArgs {
                 command: Some(
                     ActivityCommand::Commits(_)
