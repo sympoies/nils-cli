@@ -1231,3 +1231,5 @@ fn guarded_send_probe_delays_ingestion_without_dropping_event() {
         TurnPhase::Working
     );
 }
+
+mod claude_permission;

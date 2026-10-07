@@ -185,24 +185,6 @@ pub(super) fn normalize_provider_hook(
                 .get("background_tasks")
                 .and_then(Value::as_array)
                 .is_some_and(Vec::is_empty),
-        attention_tool_id: if agent == AgentKind::Claude
-            && !exact_clarification
-            && matches!(
-                event_name,
-                "PermissionRequest"
-                    | "PreToolUse"
-                    | "PostToolUse"
-                    | "PostToolUseFailure"
-                    | "PermissionDenied"
-            ) {
-            optional_hook_string(raw, "tool_name")?
-                .map(|tool| {
-                    projected_provider_identifier(runtime_id, agent, "permission-tool", tool)
-                })
-                .transpose()?
-        } else {
-            None
-        },
         confidence,
         source_kind: SourceKind::ProviderHook,
         provider_time: None,
@@ -269,7 +251,6 @@ pub(super) fn normalize_provider_notification(
         attention_correlation_ambiguous: false,
         attention_correlation_exact: false,
         completion_candidate: false,
-        attention_tool_id: None,
         confidence: Confidence::Authoritative,
         source_kind: SourceKind::ProviderHook,
         provider_time: None,

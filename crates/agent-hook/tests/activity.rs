@@ -120,7 +120,7 @@ fn lifecycle_activity_uses_the_typed_cli_with_metadata_only_json() {
 }
 
 #[test]
-fn claude_permission_tool_projection_is_opaque_and_denial_is_observational() {
+fn claude_permission_denial_is_observational_without_tool_metadata() {
     let policy = PROMPT_ID_POLICY.replace(
         "[\"Stop\", \"PermissionRequest\"]",
         "[\"PermissionRequest\", \"PermissionDenied\", \"PostToolUse\"]",
@@ -134,7 +134,6 @@ fn claude_permission_tool_projection_is_opaque_and_denial_is_observational() {
     )
     .unwrap();
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
-    let mut tool_token = None;
     for name in ["PermissionRequest", "PermissionDenied", "PostToolUse"] {
         let payload = serde_json::json!({"hook_event_name": name, "session_id": "session-1",
             "prompt_id": "turn-1", "tool_name": "Bash", "tool_input": {"command": "private-command"}}).to_string();
@@ -151,13 +150,7 @@ fn claude_permission_tool_projection_is_opaque_and_denial_is_observational() {
         assert_eq!(result.code, 0, "{}", result.stderr_text());
         let serialized = fs::read_to_string(&input).unwrap();
         let event: serde_json::Value = serde_json::from_str(&serialized).unwrap();
-        let token = event["attention_tool_id"].as_str().unwrap().to_string();
-        assert!(token.starts_with("local:v1:"));
-        if let Some(expected) = tool_token.as_ref() {
-            assert_eq!(&token, expected);
-        } else {
-            tool_token = Some(token);
-        }
+        assert!(event.get("attention_tool_id").is_none());
         assert!(!serialized.contains("private-command"));
         assert!(!serialized.contains("Bash"));
         if name == "PermissionDenied" {
