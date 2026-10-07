@@ -28,7 +28,7 @@ fn lock_env() -> MutexGuard<'static, ()> {
 
 fn write_stub(dir: &TempDir, body: &str) -> PathBuf {
     let path = dir.path().join("gh");
-    fs::write(&path, body).expect("write gh stub");
+    fs::write(&path, super::support::check_gate_fixture::adapt(body)).expect("write gh stub");
     let mut perm = fs::metadata(&path).expect("metadata").permissions();
     perm.set_mode(0o755);
     fs::set_permissions(&path, perm).expect("chmod");

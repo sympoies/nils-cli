@@ -749,7 +749,7 @@ esac
         sentinel = sentinel.display(),
     );
     let path = stub.tempdir.path().join("gh");
-    fs::write(&path, body).expect("write gh stub");
+    fs::write(&path, super::support::check_gate_fixture::adapt(&body)).expect("write gh stub");
     let mut perm = fs::metadata(&path).expect("metadata").permissions();
     perm.set_mode(0o755);
     fs::set_permissions(&path, perm).expect("chmod");
@@ -884,7 +884,7 @@ esac
         review_state_node = review_state_node,
     );
     let path = stub.tempdir.path().join("gh");
-    fs::write(&path, body).expect("write gh stub");
+    fs::write(&path, super::support::check_gate_fixture::adapt(&body)).expect("write gh stub");
     let mut perm = fs::metadata(&path).expect("metadata").permissions();
     perm.set_mode(0o755);
     fs::set_permissions(&path, perm).expect("chmod");
@@ -959,7 +959,7 @@ esac
         create_sentinel = create_sentinel.display(),
         list_args = list_args.display(),
     );
-    stub.write_stub("gh", &body)
+    stub.write_gate_stub(&body)
 }
 
 /// Full-chain stub whose post-merge `pr view` reports a closing-keyword
@@ -1092,7 +1092,7 @@ esac
         close_sentinel = close_sentinel.display(),
     );
     let path = stub.tempdir.path().join("gh");
-    fs::write(&path, body).expect("write gh stub");
+    fs::write(&path, super::support::check_gate_fixture::adapt(&body)).expect("write gh stub");
     let mut perm = fs::metadata(&path).expect("metadata").permissions();
     perm.set_mode(0o755);
     fs::set_permissions(&path, perm).expect("chmod");

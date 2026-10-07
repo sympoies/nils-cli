@@ -245,7 +245,7 @@ fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
     let mut workflows_probed = false;
 
     loop {
-        let snapshot = pr_checks::snapshot(runner, global, ctx, snapshot_args)?;
+        let snapshot = pr_checks::snapshot_for_gate(runner, global, ctx, snapshot_args)?;
         let snapshot = gate_visible_checks_when_none_required(ctx, snapshot_args, snapshot);
         let snapshot = with_duration(snapshot, ms_between(start, clock.now()));
         ever_saw_a_check =
@@ -516,7 +516,12 @@ mod tests {
     fn make_ctx(p: Provider) -> ProviderContext {
         ProviderContext {
             provider: p,
-            host: "example.com".into(),
+            host: if p == Provider::GitHub {
+                "github.com"
+            } else {
+                "example.com"
+            }
+            .into(),
             source: DetectionSource::Flag,
             repo: None,
         }
@@ -549,18 +554,68 @@ mod tests {
     }
 
     impl BackendRunner for StubRunner {
-        fn run(&self, _call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+        fn run(&self, call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+            if let Some(mut body) = gate_metadata(call) {
+                if call.argv.get(1).is_some_and(|a| a == "graphql")
+                    && self.outputs.borrow().iter().all(|s| s == "[]")
+                {
+                    body =
+                        r#"{"data":{"repository":{"ref":{"branchProtectionRule":null}}}}"#.into();
+                }
+                return Ok(BackendSuccess {
+                    stdout: body,
+                    stderr: String::new(),
+                });
+            }
             let mut outs = self.outputs.borrow_mut();
             let next = if outs.is_empty() {
                 String::new()
             } else {
                 outs.remove(0)
             };
+            let next = if call
+                .argv
+                .get(1)
+                .is_some_and(|a| a.to_string_lossy().contains("/check-runs?"))
+            {
+                if !outs.is_empty() {
+                    outs.remove(0);
+                }
+                gate_runs(&next)
+            } else {
+                next
+            };
             Ok(BackendSuccess {
                 stdout: next,
                 stderr: String::new(),
             })
         }
+    }
+
+    fn gate_metadata(call: &BackendCall) -> Option<String> {
+        let argv: Vec<_> = call.argv.iter().map(|a| a.to_string_lossy()).collect();
+        if argv.first()? == "pr" && argv.get(1)? == "view" {
+            return Some(r#"{"headRefOid":"head","baseRefName":"main","url":"https://github.com/acme/widgets/pull/1"}"#.into());
+        }
+        let endpoint = argv.get(1)?;
+        if endpoint == "graphql" {
+            return Some(r#"{"data":{"repository":{"ref":{"branchProtectionRule":{"requiredStatusChecks":[{"context":"build","app":null}]}}}}}"#.into());
+        }
+        if endpoint.contains("/rules/branches/") {
+            return Some("[]".into());
+        }
+        if endpoint.contains("/status?") {
+            return Some(r#"{"statuses":[],"total_count":0}"#.into());
+        }
+        None
+    }
+    fn gate_runs(body: &str) -> String {
+        let rows: serde_json::Value = serde_json::from_str(body).unwrap_or(json!([]));
+        let runs: Vec<_> = rows.as_array().unwrap().iter().map(|r| {
+            let bucket = r["bucket"].as_str().unwrap_or("pending");
+            json!({"name": r["name"], "status": if bucket == "pending" {"in_progress"} else {"completed"}, "conclusion": match bucket {"pass" => Some("success"), "fail" => Some("failure"), _ => None}})
+        }).collect();
+        json!({"total_count":runs.len(),"check_runs":runs}).to_string()
     }
 
     /// Test clock with a manually-advanced now() and a sleep() that advances
@@ -860,7 +915,23 @@ mod tests {
 
     impl BackendRunner for WorkflowProbeRunner {
         fn run(&self, call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
-            if call.argv.first().map(|a| a.as_os_str()) == Some("api".as_ref()) {
+            if let Some(mut body) = gate_metadata(call) {
+                if call.argv.get(1).is_some_and(|a| a == "graphql")
+                    && self.checks.borrow().iter().all(|s| s == "[]")
+                {
+                    body =
+                        r#"{"data":{"repository":{"ref":{"branchProtectionRule":null}}}}"#.into();
+                }
+                return Ok(BackendSuccess {
+                    stdout: body,
+                    stderr: String::new(),
+                });
+            }
+            if call
+                .argv
+                .get(1)
+                .is_some_and(|a| a.to_string_lossy().contains("/actions/workflows?"))
+            {
                 *self.probes.borrow_mut() += 1;
                 assert_eq!(
                     call.argv[1],
@@ -880,8 +951,11 @@ mod tests {
             } else {
                 checks[0].clone()
             };
+            if checks.len() > 1 {
+                checks.remove(0);
+            }
             Ok(BackendSuccess {
-                stdout: next,
+                stdout: gate_runs(&next),
                 stderr: String::new(),
             })
         }

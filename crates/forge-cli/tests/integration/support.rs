@@ -205,3 +205,16 @@ pub fn parse_envelope(stdout: &str) -> serde_json::Value {
         .unwrap_or_else(|| panic!("no JSON envelope in stdout: {stdout:?}"));
     serde_json::from_str(line).unwrap_or_else(|e| panic!("invalid JSON: {e}; stdout={stdout:?}"))
 }
+
+#[path = "check_gate_fixture.rs"]
+pub(crate) mod check_gate_fixture;
+
+impl StubEnv {
+    pub fn write_gate_stub(&self, body: &str) -> PathBuf {
+        self.write_stub("gh", &check_gate_fixture::adapt(body))
+    }
+    pub fn gh_gate_stub(self, body: &str) -> Self {
+        let path = self.write_gate_stub(body);
+        self.env("FORGE_CLI_GH_BIN", path.to_string_lossy())
+    }
+}

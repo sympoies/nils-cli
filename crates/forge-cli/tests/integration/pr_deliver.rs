@@ -17,7 +17,7 @@ const FORBIDDEN_STUB: &str = "#!/bin/sh\necho 'should not run during dry-run' >&
 
 #[test]
 fn pr_deliver_strict_labels_dry_run_rejects_missing_catalog_before_provider() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli(
         &stub,
         &[
@@ -47,7 +47,7 @@ fn pr_deliver_strict_labels_dry_run_rejects_missing_catalog_before_provider() {
 
 #[test]
 fn pr_deliver_strict_labels_live_rejects_missing_catalog_before_provider() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli(
         &stub,
         &[
@@ -79,7 +79,7 @@ fn pr_deliver_strict_labels_valid_catalog_passes_dry_run_for_supported_providers
     let (_catalog_tempdir, catalog) = write_label_catalog();
 
     for provider in ["github", "gitlab"] {
-        let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+        let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
         let out = run_forge_cli(
             &stub,
             &[
@@ -114,7 +114,7 @@ fn pr_deliver_strict_labels_valid_catalog_passes_dry_run_for_supported_providers
 
 #[test]
 fn pr_deliver_dry_run_lists_all_eight_steps_in_order() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli(
         &stub,
         &[
@@ -192,7 +192,7 @@ fn pr_deliver_dry_run_rejects_invalid_enabled_review_convergence_config() {
         "[review_convergence]\nrequire = true\nquiet_period = \"3601s\"\n",
     )
     .expect("write config");
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
 
     let out = run_forge_cli_in(
         &stub,
@@ -222,7 +222,7 @@ fn pr_deliver_dry_run_rejects_invalid_enabled_review_convergence_config() {
 #[test]
 fn pr_deliver_github_dry_run_exposes_enabled_review_convergence() {
     let repo = TempDir::new().expect("tempdir");
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
 
     let out = run_forge_cli_in(
         &stub,
@@ -322,7 +322,7 @@ fn pr_deliver_dry_run_no_merge_ignores_review_convergence_config() {
         "[review_convergence]\nrequire = true\nquiet_period = \"3601s\"\n",
     )
     .expect("write config");
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
 
     let out = run_forge_cli_in(
         &stub,
@@ -352,7 +352,7 @@ fn pr_deliver_dry_run_no_merge_ignores_review_convergence_config() {
 
 #[test]
 fn pr_deliver_dry_run_no_merge_excludes_ready_and_merge() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli(
         &stub,
         &[
@@ -396,7 +396,7 @@ fn pr_deliver_dry_run_no_merge_excludes_ready_and_merge() {
 
 #[test]
 fn pr_deliver_dry_run_method_override_threads_through_merge_plan() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli(
         &stub,
         &[
@@ -441,7 +441,7 @@ fn pr_deliver_dry_run_reports_local_preflight_without_backend() {
     // FORBIDDEN_STUB exits 99 if the gh backend is ever invoked. A bad body
     // must surface in data.local_preflight without aborting (dry-run exits 0)
     // and without calling the provider.
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli(
         &stub,
         &[
@@ -525,7 +525,7 @@ fn pr_deliver_help_lists_every_documented_flag() {
 
 #[test]
 fn pr_deliver_dry_run_threads_labels_into_create_step() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli(
         &stub,
         &[

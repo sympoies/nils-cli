@@ -11,6 +11,8 @@
 //! for the gating decision but still reports them under `data.checks`. The
 //! aggregate `data.state` derives from the gating subset.
 
+mod github_gate;
+
 use std::collections::HashSet;
 use std::ffi::OsString;
 
@@ -189,6 +191,21 @@ pub fn snapshot<R: BackendRunner>(
         Provider::GitHub => snapshot_github(runner, ctx, args),
         Provider::GitLab => pr_checks_gitlab::snapshot(runner, ctx, args),
         Provider::Local => snapshot_local(global, ctx, args),
+    }
+}
+
+/// Gate-only snapshot: GitHub requires both exact-head rows and the complete
+/// configured required set. The one-shot read keeps its existing rollup contract.
+pub(crate) fn snapshot_for_gate<R: BackendRunner>(
+    runner: &R,
+    global: &GlobalFlags,
+    ctx: &ProviderContext,
+    args: &PrChecksArgs,
+) -> Result<PrChecksPayload, ForgeError> {
+    if ctx.provider == Provider::GitHub {
+        github_gate::snapshot(runner, ctx, args)
+    } else {
+        snapshot(runner, global, ctx, args)
     }
 }
 

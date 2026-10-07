@@ -420,7 +420,7 @@ esac
 
 #[test]
 fn pr_merge_dry_run_renders_squash_plan_with_delete_branch() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli_in(
         &stub,
         &[
@@ -457,7 +457,7 @@ fn pr_merge_expected_head_rejects_provider_drift_before_mutation() {
     let stub = StubEnv::new();
     let merged = stub.tempdir.path().join("github-merged");
     let body = github_merge_stub(&stub, "", "", false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -494,7 +494,7 @@ fn pr_merge_expected_base_rejects_provider_drift_before_mutation() {
     let stub = StubEnv::new();
     let merged = stub.tempdir.path().join("github-merged");
     let body = github_merge_stub(&stub, "", "", false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -528,7 +528,7 @@ fn pr_merge_expected_head_allows_the_matching_provider_head() {
     let stub = StubEnv::new();
     let merged = stub.tempdir.path().join("github-merged");
     let body = github_merge_stub(&stub, "", "", true);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -554,7 +554,7 @@ fn pr_merge_expected_head_allows_the_matching_provider_head() {
 
 #[test]
 fn pr_merge_github_dry_run_exposes_enabled_review_convergence() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli_in(
         &stub,
         &[
@@ -604,7 +604,7 @@ fn pr_merge_gitlab_dry_run_rejects_enabled_review_convergence() {
 
 #[test]
 fn pr_merge_dry_run_method_override_uses_merge_flag() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli_in(
         &stub,
         &[
@@ -635,7 +635,7 @@ fn pr_merge_dry_run_method_override_uses_merge_flag() {
 
 #[test]
 fn pr_merge_keep_branch_drops_delete_branch_in_dry_run_plan() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli_in(
         &stub,
         &[
@@ -676,7 +676,7 @@ fn pr_merge_keep_branch_conflicts_with_config_delete_branch_true() {
     .expect("write config");
     fs::create_dir_all(repo.path().join(".git")).expect("fake .git");
 
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli_in(
         &stub,
         &[
@@ -757,7 +757,7 @@ mode = "observed"
     let repo_path = tempdir.path().join("repo");
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, "", "", false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -800,7 +800,7 @@ timeout = "20m"
     let repo_path = tempdir.path().join("repo");
     let stub = StubEnv::new();
     let body = github_merge_stub_with_ledger(&stub, "", "", false, None);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -835,7 +835,7 @@ timeout = "20m"
     let repo_path = tempdir.path().join("repo");
     let stub = StubEnv::new();
     let body = github_merge_stub_with_ledger(&stub, "", "", true, Some(review_loop_marker(true)));
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -872,7 +872,7 @@ timeout = "20m"
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, "", "", false)
         .replace("\"headRefOid\":\"head123\",\"title\"", "\"title\"");
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -913,7 +913,7 @@ timeout = "20m"
     let repo_path = tempdir.path().join("repo");
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, "", "", true);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -943,7 +943,7 @@ fn pr_merge_blocks_current_head_native_changes_requested() {
     let review = r#"{"id":"PRR_1","databaseId":1,"url":"https://github.com/acme/widgets/pull/7#pullrequestreview-1","author":{"login":"reviewer"},"state":"CHANGES_REQUESTED","commit":{"oid":"head123"},"submittedAt":"2026-07-14T04:00:00Z","body":"free-form prose is not parsed"}"#;
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, review, "", false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -979,7 +979,7 @@ fn pr_merge_rejects_a_native_review_without_commit_oid() {
     let review = r#"{"id":"PRR_missing_commit","databaseId":8,"url":"https://github.com/acme/widgets/pull/7#pullrequestreview-8","author":{"login":"reviewer"},"state":"CHANGES_REQUESTED","commit":null,"submittedAt":"2026-07-14T04:00:00Z","body":"must fail closed"}"#;
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, review, "", false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1030,7 +1030,7 @@ timeout = "20m"
     let body = github_merge_stub(&stub, "", "", false);
     let stub = stub
         .env("XDG_CONFIG_HOME", xdg_config.to_string_lossy())
-        .gh_stub(&body);
+        .gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1093,7 +1093,7 @@ timeout = "20m"
 fn pr_merge_explicit_review_convergence_rejects_non_table_section() {
     let tempdir = make_github_repo(Some("review_convergence = \"not-a-table\"\n"));
     let repo_path = tempdir.path().join("repo");
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1125,7 +1125,7 @@ fn pr_merge_explicit_review_convergence_rejects_non_table_section() {
 fn pr_merge_explicit_review_convergence_rejects_malformed_config_file() {
     let tempdir = make_github_repo(Some("[review_convergence\nrequire = true\n"));
     let repo_path = tempdir.path().join("repo");
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1169,7 +1169,7 @@ mode = "observed"
     let review = r#"{"id":"PRR_stale","databaseId":2,"url":"https://github.com/acme/widgets/pull/7#pullrequestreview-2","author":{"login":"example-review-bot[bot]"},"state":"CHANGES_REQUESTED","commit":{"oid":"old-head"},"submittedAt":"2026-07-14T03:00:00Z","body":"stale finding"}"#;
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, review, "", false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1214,7 +1214,7 @@ mode = "observed"
     let review = r#"{"id":"PRR_comment","databaseId":3,"url":"https://github.com/acme/widgets/pull/7#pullrequestreview-3","author":{"login":"example-review-bot[bot]"},"state":"COMMENTED","commit":{"oid":"head123"},"submittedAt":"2026-07-14T04:00:00Z","body":"REQUEST CHANGES: this prose must not be parsed"}"#;
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, review, "", false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1264,7 +1264,7 @@ mode = "observed"
     )
     .expect("second review response");
     let body = github_merge_stub(&stub, initial, "", false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1311,7 +1311,7 @@ mode = "observed"
     )
     .expect("second review response");
     let body = github_merge_stub(&stub, initial, "", false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1358,7 +1358,7 @@ mode = "observed"
     )
     .expect("second review response");
     let body = github_merge_stub(&stub, initial, "", false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1389,7 +1389,7 @@ fn pr_merge_review_convergence_keeps_unresolved_thread_gate_authoritative() {
     let thread = r#"{"id":"PRRT_1","isResolved":false,"isOutdated":false,"path":"src/lib.rs","diffSide":"RIGHT","line":10,"originalLine":10,"originalStartLine":null,"startDiffSide":null,"startLine":null,"subjectType":"LINE","comments":{"nodes":[{"id":"PRRC_1","author":{"login":"reviewer"},"body":"please address","createdAt":"2026-07-14T04:00:00Z","url":"https://github.com/acme/widgets/pull/7#discussion_r1"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}"#;
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, "", thread, false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1423,7 +1423,7 @@ fn pr_merge_github_outdated_thread_is_dispositioned_stale_and_merges() {
     let thread = r#"{"id":"PRRT_stale","isResolved":false,"isOutdated":true,"path":"src/lib.rs","diffSide":"RIGHT","line":10,"originalLine":10,"originalStartLine":null,"startDiffSide":null,"startLine":null,"subjectType":"LINE","comments":{"nodes":[{"id":"PRRC_9","author":{"login":"quality-bot"},"body":"nit: rename this local","createdAt":"2026-07-14T04:00:00Z","url":"https://github.com/acme/widgets/pull/7#discussion_r9"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}"#;
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, "", thread, false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1481,7 +1481,7 @@ fn pr_merge_github_mixed_outdated_and_live_thread_still_blocks() {
     let thread_nodes = format!("{outdated},{live}");
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, "", &thread_nodes, false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1723,7 +1723,7 @@ fn pr_merge_github_refuses_a_head_with_no_checks_at_all() {
     let stub = StubEnv::new();
     let merged = stub.tempdir.path().join("github-merged");
     let body = github_merge_stub_with_checks(&stub, "", "", true, None, NO_CHECKS);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1758,7 +1758,7 @@ fn pr_merge_github_allow_no_checks_bypasses_rule_eight_and_records_the_reason() 
     let stub = StubEnv::new();
     let merged = stub.tempdir.path().join("github-merged");
     let body = github_merge_stub_with_checks(&stub, "", "", true, None, NO_CHECKS);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1811,7 +1811,7 @@ fn pr_merge_github_repo_declared_no_checks_merges_and_records_the_reason() {
     let stub = StubEnv::new();
     let merged = stub.tempdir.path().join("github-merged");
     let body = github_merge_stub_with_checks(&stub, "", "", true, None, NO_CHECKS);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1850,7 +1850,7 @@ fn pr_merge_ignores_a_no_checks_declaration_for_a_different_repo() {
     let stub = StubEnv::new();
     let merged = stub.tempdir.path().join("github-merged");
     let body = github_merge_stub_with_checks(&stub, "", "", true, None, NO_CHECKS);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1906,7 +1906,7 @@ fn pr_merge_ignores_a_no_checks_declaration_absent_from_the_base_branch() {
     let stub = StubEnv::new();
     let merged = stub.tempdir.path().join("github-merged");
     let body = github_merge_stub_with_checks(&stub, "", "", true, None, NO_CHECKS);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1938,7 +1938,7 @@ fn pr_merge_omits_the_no_checks_reason_when_the_bypass_was_not_used() {
 
     let stub = StubEnv::new();
     let body = github_merge_stub(&stub, "", "", true);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_forge_cli_in(
         &stub,
@@ -1969,7 +1969,7 @@ fn pr_merge_omits_the_no_checks_reason_when_the_bypass_was_not_used() {
 fn pr_merge_allow_no_checks_requires_a_reason() {
     let tempdir = make_github_repo(None);
     let repo_path = tempdir.path().join("repo");
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
 
     let out = run_forge_cli_in(
         &stub,
@@ -2119,7 +2119,7 @@ fn pr_merge_refuses_an_active_merge_freeze_before_mutation() {
         ACTIVE_FREEZE_POLICY,
         "",
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2152,7 +2152,7 @@ fn pr_merge_bypasses_a_named_freeze_and_records_the_reason() {
         ACTIVE_FREEZE_POLICY,
         "",
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(
         &stub,
@@ -2194,7 +2194,7 @@ fn pr_merge_bypass_must_name_every_active_freeze() {
         ACTIVE_FREEZE_POLICY,
         "",
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(
         &stub,
@@ -2217,7 +2217,7 @@ fn pr_merge_bypass_must_name_every_active_freeze() {
 
 #[test]
 fn pr_merge_allow_merge_freeze_requires_a_reason() {
-    let stub = StubEnv::new().gh_stub(FORBIDDEN_STUB);
+    let stub = StubEnv::new().gh_gate_stub(FORBIDDEN_STUB);
     let out = run_forge_cli_in(
         &stub,
         &[
@@ -2256,7 +2256,7 @@ fn pr_merge_enqueues_when_the_base_requires_a_merge_queue() {
         MERGE_QUEUE_POLICY,
         &extra,
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2291,7 +2291,7 @@ fn pr_merge_reports_a_pull_request_dequeued_by_the_merge_queue() {
         SQUASH_QUEUE_POLICY,
         extra,
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2323,7 +2323,7 @@ fn pr_merge_rejects_an_explicit_method_the_merge_queue_does_not_use() {
         SQUASH_QUEUE_POLICY,
         &extra,
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &["--method", "rebase"]);
 
@@ -2367,7 +2367,7 @@ fn pr_merge_fails_closed_when_the_policy_read_returns_graphql_errors() {
         r#"{"data":null,"errors":[{"message":"Something went wrong"}]}"#,
         "",
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2389,7 +2389,7 @@ fn pr_merge_fails_closed_when_the_policy_read_has_no_repository() {
     let stub = StubEnv::new();
     let merged = stub.tempdir.path().join("github-merged");
     let body = github_policy_stub(&stub, r#"{"data":{"repository":null}}"#, "");
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2413,7 +2413,7 @@ fn pr_merge_treats_a_host_without_the_merge_queue_schema_as_queueless() {
         r#"{"errors":[{"message":"Field \u0027mergeQueue\u0027 doesn\u0027t exist on type \u0027Repository\u0027"},{"message":"Field \u0027isInMergeQueue\u0027 doesn\u0027t exist on type \u0027PullRequest\u0027"}]}"#,
         extra,
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2433,7 +2433,7 @@ fn pr_merge_still_honors_a_freeze_on_a_host_without_the_merge_queue_schema() {
         r#"{"errors":[{"message":"Field \u0027mergeQueue\u0027 doesn\u0027t exist on type \u0027Repository\u0027"}]}"#,
         extra,
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2466,7 +2466,7 @@ fn pr_merge_rereads_the_freeze_immediately_before_the_merge() {
         open = NO_MERGE_POLICY,
     );
     let body = github_policy_stub(&stub, NO_MERGE_POLICY, &extra);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2496,7 +2496,7 @@ fn pr_merge_resumes_a_pull_request_already_in_the_merge_queue() {
         r#"{"data":{"repository":{"mergeQueue":{"configuration":{"mergeMethod":"SQUASH"}},"issues":{"nodes":[]},"pullRequest":{"id":"PR_node7","isInMergeQueue":true,"state":"OPEN"}}}}"#,
         &extra,
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2523,7 +2523,7 @@ fn pr_merge_does_not_enqueue_a_pull_request_the_queue_already_merged() {
         r#"{"data":{"repository":{"mergeQueue":{"configuration":{"mergeMethod":"SQUASH"}},"issues":{"nodes":[]},"pullRequest":{"id":"PR_node7","isInMergeQueue":false,"state":"MERGED"}}}}"#,
         &extra,
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2542,7 +2542,7 @@ fn pr_merge_reports_an_enqueue_graphql_error_as_rejected() {
     let stub = StubEnv::new();
     let extra = r#"      *"ForgeEnqueuePullRequest"*) printf '%s\n' '{"data":{"enqueuePullRequest":null},"errors":[{"message":"Pull request is not mergeable"}]}' ;;"#;
     let body = github_policy_stub(&stub, SQUASH_QUEUE_POLICY, extra);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
 
     let out = run_github_merge(&stub, &repo_path, &[]);
 
@@ -2584,7 +2584,7 @@ fn assigned_live_merge_refuses_before_backend_without_published_review() {
     let script = github_merge_stub_with_ledger(&stub, "", "", true, Some(record.marker().unwrap()))
         .replace("head123", head);
     let stub = stub
-        .gh_stub(&script)
+        .gh_gate_stub(&script)
         .env("AGENT_REVIEWER_SESSION", "reviewer-session")
         .env("AGENT_SESSION_ID", "worker-session");
     let out = run_forge_cli_in(
@@ -2664,7 +2664,7 @@ fn assert_github_hold_blocks(label: &str, late: bool, queue: bool, new_head: boo
     let enqueued = stub.tempdir.path().join("enqueued");
     let reads = stub.tempdir.path().join("hold-reads");
     let body = github_hold_stub(&stub, label, late, queue, new_head);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
     let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
     assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
     let env = parse_envelope(&out.stdout);
@@ -2713,7 +2713,7 @@ fn pr_merge_hold_survives_a_changed_head() {
     let enqueued = stub.tempdir.path().join("enqueued");
     let reads = stub.tempdir.path().join("hold-reads");
     let body = github_hold_stub(&stub, "state::do-not-merge", false, false, false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
     let before = run_github_merge(&stub, &repo.path().join("repo"), &[]);
     assert_eq!(before.code, 65);
     assert_eq!(
@@ -2752,7 +2752,7 @@ fn pr_merge_hold_removed_by_owner_allows_a_fresh_attempt() {
     let merged = stub.tempdir.path().join("github-merged");
     let reads = stub.tempdir.path().join("hold-reads");
     let body = github_hold_stub(&stub, "control::hold", false, false, false);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
     let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
     assert_eq!(
         parse_envelope(&out.stdout)["error"]["code"],
@@ -2760,7 +2760,7 @@ fn pr_merge_hold_removed_by_owner_allows_a_fresh_attempt() {
     );
     fs::write(
         stub.tempdir.path().join("gh"),
-        github_merge_stub(&stub, "", "", true),
+        super::support::check_gate_fixture::adapt(&github_merge_stub(&stub, "", "", true)),
     )
     .unwrap();
     let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
@@ -2785,7 +2785,7 @@ fn pr_merge_hold_read_failure_blocks_the_final_merge_attempt() {
             let labels = serde_json::json!([[{"name":"control::hold"}]]).to_string();
             let body = github_hold_stub(&stub, "control::hold", true, queue, false)
                 .replace(&format!("printf '%s\\n' '{labels}'"), response);
-            let stub = stub.gh_stub(&body);
+            let stub = stub.gh_gate_stub(&body);
             let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
             assert_eq!(out.code, 69, "stdout={}\nstderr={}", out.stdout, out.stderr);
             let env = parse_envelope(&out.stdout);
@@ -2805,7 +2805,7 @@ fn pr_merge_hold_cannot_be_bypassed_by_a_repo_freeze_override() {
     let merged = stub.tempdir.path().join("github-merged");
     let body = github_hold_stub(&stub, "control::hold", false, false, false)
         .replace(NO_MERGE_POLICY, ACTIVE_FREEZE_POLICY);
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
     let out = run_github_merge(
         &stub,
         &repo.path().join("repo"),
@@ -2892,7 +2892,7 @@ fn pr_merge_hold_head_config_cannot_remove_base_configured_holds() {
         let response = serde_json::json!({"data":{"repository":{"object":{"text":"[merge]\nhold_labels = [\"release::blocked\"]\n"}}}}).to_string();
         let body = github_hold_stub(&stub, "release::blocked", false, queue, false)
             .replace(r#"{"data":{"repository":{"object":null}}}"#, &response);
-        let stub = stub.gh_stub(&body);
+        let stub = stub.gh_gate_stub(&body);
         let out = run_github_merge(&stub, &repo_path, &[]);
         assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
         assert_eq!(
@@ -2915,7 +2915,7 @@ fn pr_merge_hold_reads_current_provider_base_config_instead_of_stale_local_refs(
         let body = github_hold_stub(&stub, "release::blocked", false, queue, false)
             .replace(r#"{"data":{"repository":{"object":null}}}"#, &response);
 
-        let stub = stub.gh_stub(&body);
+        let stub = stub.gh_gate_stub(&body);
         let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
         assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
         assert_eq!(
@@ -2941,7 +2941,7 @@ fn pr_merge_rejects_malformed_provider_base_merge_section_before_mutation() {
         .to_string();
         let body = github_hold_stub(&stub, "unused::hold", false, queue, false)
             .replace(r#"{"data":{"repository":{"object":null}}}"#, &response);
-        let stub = stub.gh_stub(&body);
+        let stub = stub.gh_gate_stub(&body);
         let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
 
         outcomes.push((
@@ -2975,7 +2975,7 @@ fn pr_merge_hold_base_policy_read_fails_closed() {
         let merged = stub.tempdir.path().join("github-merged");
         let body = github_merge_stub(&stub, "", "", true)
             .replace(r#"{"data":{"repository":{"object":null}}}"#, response);
-        let stub = stub.gh_stub(&body);
+        let stub = stub.gh_gate_stub(&body);
         let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
         assert_eq!(out.code, 69, "stdout={}\nstderr={}", out.stdout, out.stderr);
         assert_eq!(
@@ -3009,7 +3009,7 @@ fi"#,
             reads = config_reads.display()
         ),
     );
-    let stub = stub.gh_stub(&body);
+    let stub = stub.gh_gate_stub(&body);
     let out = run_github_merge(&stub, &repo.path().join("repo"), &[]);
     assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
     assert_eq!(
