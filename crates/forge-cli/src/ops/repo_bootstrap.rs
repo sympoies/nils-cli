@@ -7,7 +7,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::{Deserialize, Serialize};
@@ -959,6 +959,7 @@ pub fn run(
                 &receipt.files,
                 &receipt.message,
                 &receipt.default_branch,
+                &snapshot.clone_url,
             )? {
                 Some(sha) => sha,
                 None => create_signed_root(
@@ -966,6 +967,7 @@ pub fn run(
                     &receipt.files,
                     &receipt.message,
                     &receipt.default_branch,
+                    &snapshot.clone_url,
                 )?,
             };
             receipt.local_sha = Some(sha.clone());
@@ -1201,6 +1203,7 @@ fn create_signed_root(
     files: &[ReceiptFile],
     message: &str,
     branch: &str,
+    clone_url: &str,
 ) -> Result<String, ForgeError> {
     create_private_dir(checkout)?;
     require_success(
@@ -1247,10 +1250,26 @@ fn create_signed_root(
         "failed to stage the explicit bootstrap files",
     )?;
 
-    author_signed_root(checkout, message)
+    author_signed_root(checkout, message, clone_url)
 }
 
-fn author_signed_root(checkout: &Path, message: &str) -> Result<String, ForgeError> {
+fn author_signed_root(
+    checkout: &Path,
+    message: &str,
+    clone_url: &str,
+) -> Result<String, ForgeError> {
+    // The real commit boundary resolves the authoring identity from the checkout's
+    // remote. Bind it to the provider-validated target before initial or resumed
+    // authoring, without writing author or signing configuration.
+    require_success(
+        run_git(
+            checkout,
+            &["config", "--local", "remote.origin.url", clone_url],
+            &[],
+        )?,
+        "bootstrap_git_target_failed",
+        "failed to bind the managed bootstrap checkout to its repository target",
+    )?;
     let semantic = semantic_commit_bin();
     let semantic_args = [
         OsString::from("commit"),
@@ -1313,6 +1332,7 @@ fn recover_signed_root(
     files: &[ReceiptFile],
     message: &str,
     branch: &str,
+    clone_url: &str,
 ) -> Result<Option<String>, ForgeError> {
     let metadata = match fs::symlink_metadata(checkout) {
         Ok(metadata) => metadata,
@@ -1350,7 +1370,7 @@ fn recover_signed_root(
     let head = run_git(checkout, &["rev-parse", "--verify", "HEAD^{commit}"], &[])?;
     if !head.success {
         validate_staged_partial_checkout(checkout, files)?;
-        return author_signed_root(checkout, message).map(Some);
+        return author_signed_root(checkout, message, clone_url).map(Some);
     }
     let sha = head.stdout.trim().to_string();
     if validate_oid(&sha).is_err() {
@@ -1584,7 +1604,88 @@ fn push_once(
     if let Some(token) = auth.token {
         env.push((OsString::from(GITHUB_PUSH_TOKEN_ENV), OsString::from(token)));
     }
-    run_git(checkout, &args, &env)
+    let identity_args = ["push", "--", clone_url, &refspec];
+    run_git_push_with_identity(checkout, &args, &identity_args, &env)
+}
+
+fn run_git_push_with_identity(
+    checkout: &Path,
+    args: &[&str],
+    identity_args: &[&str],
+    fallback_env: &[(OsString, OsString)],
+) -> Result<ProcessResult, ForgeError> {
+    let executable = git_bin();
+    let started = Instant::now();
+    let mut command = Command::new(&executable);
+    command.arg("-C").arg(checkout).args(args);
+    let identity = nils_common::forge_identity::prepare_git_with_deadline(
+        &mut command,
+        Some(checkout),
+        identity_args,
+        started.checked_add(PROCESS_TIMEOUT),
+    )
+    .map_err(bootstrap_identity_error)?;
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never");
+    if identity.is_none() {
+        for (key, value) in fallback_env {
+            command.env(key, value);
+        }
+    }
+    let remaining = PROCESS_TIMEOUT.saturating_sub(started.elapsed());
+    if remaining.is_zero() {
+        return Err(unavailable(
+            "bootstrap_process_timeout",
+            "identity preparation exhausted the bootstrap push deadline",
+            None,
+        ));
+    }
+    let mut output = output_with_limits(&mut command, Some(remaining), PROCESS_OUTPUT_LIMIT)
+        .map_err(|error| match error {
+            ProcessOutputError::Io(error) => unavailable(
+                "bootstrap_process_unavailable",
+                format!(
+                    "failed to launch '{}': {error}",
+                    executable.to_string_lossy()
+                ),
+                None,
+            ),
+            ProcessOutputError::Timeout { .. } => unavailable(
+                "bootstrap_process_timeout",
+                "Git push exceeded the 120 second deadline",
+                None,
+            ),
+            ProcessOutputError::OutputLimit { .. } => unavailable(
+                "bootstrap_process_output_limit",
+                "Git push exceeded the output bound",
+                None,
+            ),
+        })?;
+    if let Some(identity) = &identity {
+        identity.redact_output(&mut output);
+        identity
+            .finish(output.status.success(), None)
+            .map_err(bootstrap_identity_error)?;
+    }
+    Ok(ProcessResult {
+        success: output.status.success(),
+        code: output.status.code().unwrap_or(-1),
+        http_status: None,
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: redact_and_tail(&String::from_utf8_lossy(&output.stderr)),
+    })
+}
+
+fn bootstrap_identity_error(error: nils_common::forge_identity::Error) -> ForgeError {
+    if matches!(
+        error.code,
+        "identity_probe_timeout" | "identity_probe_output_limit"
+    ) {
+        ForgeError::unavailable(error_schema(), error.code, error.to_string(), None)
+    } else {
+        ForgeError::validation(error_schema(), error.code, error.to_string(), None)
+    }
 }
 
 fn write_askpass(state_dir: &Path) -> Result<PathBuf, ForgeError> {
