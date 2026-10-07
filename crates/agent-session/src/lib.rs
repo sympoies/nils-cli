@@ -394,6 +394,7 @@ fn coordination_command_name(command: &Command) -> Option<&'static str> {
             cli::BrokerCommand::Heartbeat(_) => "broker-heartbeat",
         }),
         Command::Message(args) => Some(match &args.command {
+            cli::MessageCommand::Audit(_) => "message-audit",
             cli::MessageCommand::Peers(_) => "message-peers",
             cli::MessageCommand::Delivery(_) => "message-delivery",
             cli::MessageCommand::ServiceSend(_) => "message-service-send",
@@ -441,6 +442,7 @@ fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("broker", "adopt") => Some("broker-adopt"),
             ("broker", "reconcile") => Some("broker-reconcile"),
             ("broker", "stop") => Some("broker-stop"),
+            ("message", "audit") => Some("message-audit"),
             ("message", "send") => Some("message-send"),
             ("message", "peers") => Some("message-peers"),
             ("message", "delivery") => Some("message-delivery"),
@@ -504,6 +506,7 @@ fn command_format(command: &Command) -> OutputFormat {
             cli::BrokerCommand::Heartbeat(args) => args.format,
         },
         Command::Message(args) => match &args.command {
+            cli::MessageCommand::Audit(args) => args.format,
             cli::MessageCommand::Peers(args) => args.format,
             cli::MessageCommand::Delivery(args) => args.format,
             cli::MessageCommand::ServiceSend(args) => args.format,

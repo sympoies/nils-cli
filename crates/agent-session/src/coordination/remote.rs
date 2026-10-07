@@ -14,6 +14,7 @@ use crate::{CliContext, CliError};
 
 const JOURNAL_VERSION: &str = "agent-session.federation-journal.v2";
 const EXTENDED_JOURNAL_VERSION: &str = "agent-session.federation-journal.v3";
+const AUDIT_JOURNAL_VERSION: &str = "agent-session.federation-journal.v4";
 const LEGACY_JOURNAL_VERSION: &str = "agent-session.federation-journal.v1";
 const JOURNAL_FILE: &str = "federation-journal.json";
 const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
@@ -190,6 +191,10 @@ pub(crate) struct Outbox {
     pub state: String,
     pub attempts: u64,
     pub next_attempt_epoch: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt_at_epoch: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_changed_at_epoch: Option<i64>,
     pub receipt: Option<Value>,
     pub reason: Option<String>,
 }
@@ -205,6 +210,9 @@ impl Outbox {
             sender: self.envelope.from.clone(),
             recipient: self.envelope.to.clone(),
             expires_at_epoch: self.envelope.expires_at_epoch,
+            created_at_epoch: Some(self.envelope.created_at_epoch),
+            last_attempt_at_epoch: self.last_attempt_at_epoch,
+            state_changed_at_epoch: self.state_changed_at_epoch,
             request_digest: self.request_digest.clone(),
             idempotency_key: self.idempotency_key.clone(),
             state: self.state.clone(),
@@ -230,6 +238,12 @@ struct Retained {
     sender: Origin,
     recipient: Address,
     expires_at_epoch: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_at_epoch: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_attempt_at_epoch: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state_changed_at_epoch: Option<i64>,
     request_digest: String,
     idempotency_key: String,
     state: String,
@@ -341,7 +355,7 @@ fn read_journal(context: &CliContext) -> Result<Journal, CliError> {
         Ok(bytes) => {
             let journal: Journal = serde_json::from_slice(&bytes).map_err(|_| journal_error())?;
             let supported = match journal.schema_version.as_str() {
-                JOURNAL_VERSION | EXTENDED_JOURNAL_VERSION => true,
+                JOURNAL_VERSION | EXTENDED_JOURNAL_VERSION | AUDIT_JOURNAL_VERSION => true,
                 LEGACY_JOURNAL_VERSION => journal.retained.is_empty(),
                 _ => false,
             };
@@ -379,6 +393,16 @@ impl LockedJournal {
         self.write(&bytes)
     }
     fn encode(&mut self) -> Result<Vec<u8>, CliError> {
+        self.registry.compact(now_epoch());
+        let audit = self.registry.schema_version == AUDIT_JOURNAL_VERSION
+            || self.registry.remote_outbox.iter().any(|entry| {
+                entry.last_attempt_at_epoch.is_some() || entry.state_changed_at_epoch.is_some()
+            })
+            || self.registry.retained.iter().any(|entry| {
+                entry.created_at_epoch.is_some()
+                    || entry.last_attempt_at_epoch.is_some()
+                    || entry.state_changed_at_epoch.is_some()
+            });
         let extended = self.registry.schema_version == EXTENDED_JOURNAL_VERSION
             || self.registry.remote_outbox.iter().any(|entry| {
                 entry.envelope.category.is_some() || entry.envelope.forwarding.is_some()
@@ -388,13 +412,14 @@ impl LockedJournal {
                 .retained
                 .iter()
                 .any(|entry| entry.category.is_some() || entry.forwarding.is_some());
-        self.registry.schema_version = if extended {
+        self.registry.schema_version = if audit {
+            AUDIT_JOURNAL_VERSION
+        } else if extended {
             EXTENDED_JOURNAL_VERSION
         } else {
             JOURNAL_VERSION
         }
         .into();
-        self.registry.compact(now_epoch());
         serde_json::to_vec(&self.registry).map_err(|_| journal_error())
     }
     fn write(&self, bytes: &[u8]) -> Result<(), CliError> {
@@ -413,14 +438,20 @@ fn encode_sender(address: &Address) -> String {
     format!("{SENDER_PREFIX}{encoded}")
 }
 pub(crate) fn sender_address(message: &super::mailbox::StoredMessage) -> Option<Address> {
-    let encoded = message.sender_session_id.strip_prefix(SENDER_PREFIX)?;
+    sender_address_metadata(&message.sender_session_id, &message.sender_incarnation)
+}
+pub(super) fn sender_address_metadata(
+    sender_id: &str,
+    sender_incarnation: &str,
+) -> Option<Address> {
+    let encoded = sender_id.strip_prefix(SENDER_PREFIX)?;
     let (machine, session_id): (String, String) = serde_json::from_str(encoded).ok()?;
     let address = Address {
         machine,
         session_id,
-        session_incarnation: message.sender_incarnation.clone(),
+        session_incarnation: sender_incarnation.to_string(),
     };
-    (encode_sender(&address) == message.sender_session_id).then_some(address)
+    (encode_sender(&address) == sender_id).then_some(address)
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -513,37 +544,41 @@ fn local_daemon_error(value: &Value) -> CliError {
         details,
     )
 }
+pub(super) fn relay_reason_code(code: &str) -> Option<&'static str> {
+    [
+        "unauthorized",
+        "ownership-unknown",
+        "origin-forbidden",
+        "principal-forbidden",
+        "machine-forbidden",
+        "federation-disabled",
+        "coordination-unauthorized",
+        "ownership-not-found",
+        "ownership-mismatch",
+        "session-incarnation-conflict",
+        "message-not-found",
+        "remote-messaging-unsupported",
+        "remote-message-invalid",
+        "quota-exceeded",
+        "rate-limited",
+        "idempotency-key-conflict",
+        "message-expired",
+        "message-revision-conflict",
+        "message-category-conflict",
+        "message-forward-loop",
+        "message-forward-depth-exceeded",
+        "message-forward-invalid",
+    ]
+    .into_iter()
+    .find(|known| *known == code)
+}
 /// Relay refusals keep only allowlisted codes and the content-free quota fields.
 fn relay_error(value: &Value) -> CliError {
     let code = value
         .pointer("/error/code")
         .and_then(Value::as_str)
         .unwrap_or("remote-messaging-unavailable");
-    let code = match code {
-        "unauthorized"
-        | "ownership-unknown"
-        | "origin-forbidden"
-        | "principal-forbidden"
-        | "machine-forbidden"
-        | "federation-disabled"
-        | "coordination-unauthorized"
-        | "ownership-not-found"
-        | "ownership-mismatch"
-        | "session-incarnation-conflict"
-        | "message-not-found"
-        | "remote-messaging-unsupported"
-        | "remote-message-invalid"
-        | "quota-exceeded"
-        | "rate-limited"
-        | "idempotency-key-conflict"
-        | "message-expired"
-        | "message-revision-conflict"
-        | "message-category-conflict"
-        | "message-forward-loop"
-        | "message-forward-depth-exceeded"
-        | "message-forward-invalid" => code,
-        _ => "remote-messaging-unavailable",
-    };
+    let code = relay_reason_code(code).unwrap_or("remote-messaging-unavailable");
     let details = (code == "quota-exceeded")
         .then(|| value.pointer("/error/details").and_then(Value::as_object))
         .flatten()
@@ -996,6 +1031,8 @@ where
         state: "queued".into(),
         attempts: 0,
         next_attempt_epoch: now,
+        last_attempt_at_epoch: None,
+        state_changed_at_epoch: Some(now),
         receipt: None,
         reason: None,
     };
@@ -1074,7 +1111,8 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
     };
     for item in items {
         let now = now_epoch();
-        let result = if item.envelope.expires_at_epoch <= now {
+        let relay_attempted = item.envelope.expires_at_epoch > now;
+        let result = if !relay_attempted {
             Err(CliError::data(
                 "delivery-unknown",
                 "remote delivery expired without a confirmed receipt",
@@ -1098,6 +1136,10 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
         else {
             continue;
         };
+        let previous_state = current.state.clone();
+        if relay_attempted {
+            current.last_attempt_at_epoch = Some(now);
+        }
         current.attempts = current.attempts.saturating_add(1);
         current.next_attempt_epoch = now_epoch().saturating_add(RETRY_SECS);
         let unreachable = matches!(
@@ -1140,6 +1182,9 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
                     .into();
                 }
             }
+        }
+        if current.state != previous_state {
+            current.state_changed_at_epoch = Some(now_epoch());
         }
         if unreachable {
             // Envelopes that already failed share one probe per retry interval
@@ -1918,6 +1963,8 @@ mod tests {
                 state: "queued".into(),
                 attempts,
                 next_attempt_epoch: now_epoch(),
+                last_attempt_at_epoch: None,
+                state_changed_at_epoch: None,
                 receipt: None,
                 reason: Some("remote-messaging-unavailable".into()),
             });
@@ -1934,6 +1981,54 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn audit_expiry_without_relay_attempt_preserves_unknown_attempt_time() {
+        let (_temp, context) = fixture();
+        let mut item = own_outbox("audit-expired", "queued");
+        item.envelope.expires_at_epoch = now_epoch() - 1;
+        let mut journal = lock_journal(&context).unwrap();
+        journal.registry.remote_outbox.push(item);
+        journal.save().unwrap();
+        drop(journal);
+        drain(&context, &config()).unwrap();
+        let locked = lock_journal(&context).unwrap();
+        let entry = &locked.registry.retained[0];
+        assert_eq!(entry.state, "delivery-unknown");
+        assert_eq!(entry.last_attempt_at_epoch, None);
+        assert!(entry.state_changed_at_epoch.is_some());
+    }
+
+    #[test]
+    fn audit_terminal_compaction_preserves_known_times_and_prior_unknowns() {
+        let (_temp, context) = fixture();
+        let mut item = own_outbox("audit-times", "delivered");
+        item.last_attempt_at_epoch = Some(101);
+        item.state_changed_at_epoch = Some(102);
+        let created = item.envelope.created_at_epoch;
+        let mut journal = lock_journal(&context).unwrap();
+        journal.registry.remote_outbox.push(item);
+        journal.save().unwrap();
+        drop(journal);
+        let locked = lock_journal(&context).unwrap();
+        assert_eq!(locked.registry.schema_version, AUDIT_JOURNAL_VERSION);
+        let retained = &locked.registry.retained[0];
+        assert_eq!(retained.created_at_epoch, Some(created));
+        assert_eq!(retained.last_attempt_at_epoch, Some(101));
+        assert_eq!(retained.state_changed_at_epoch, Some(102));
+        let mut prior = serde_json::to_value(retained).unwrap();
+        for key in [
+            "created_at_epoch",
+            "last_attempt_at_epoch",
+            "state_changed_at_epoch",
+        ] {
+            prior.as_object_mut().unwrap().remove(key);
+        }
+        let prior: Retained = serde_json::from_value(prior).unwrap();
+        assert_eq!(prior.created_at_epoch, None);
+        assert_eq!(prior.last_attempt_at_epoch, None);
+        assert_eq!(prior.state_changed_at_epoch, None);
+    }
+
     #[test]
     fn federation_config_credential_and_transport_matrix() {
         use nils_test_support::{EnvGuard, GlobalStateLock};
@@ -2131,6 +2226,8 @@ mod tests {
             state: "delivered".into(),
             attempts: 1,
             next_attempt_epoch: now_epoch(),
+            last_attempt_at_epoch: None,
+            state_changed_at_epoch: None,
             receipt: None,
             reason: None,
         });
@@ -2304,6 +2401,8 @@ mod tests {
             state: "queued".into(),
             attempts: 0,
             next_attempt_epoch: now_epoch(),
+            last_attempt_at_epoch: None,
+            state_changed_at_epoch: None,
             receipt: None,
             reason: None,
         });
@@ -2362,6 +2461,8 @@ mod tests {
             state: "queued".into(),
             attempts: 1,
             next_attempt_epoch: 0,
+            last_attempt_at_epoch: None,
+            state_changed_at_epoch: None,
             receipt: None,
             reason: None,
         });
@@ -2467,6 +2568,8 @@ mod tests {
             state: state.into(),
             attempts: u64::from(delivered),
             next_attempt_epoch: now_epoch(),
+            last_attempt_at_epoch: None,
+            state_changed_at_epoch: None,
             reason: None,
         }
     }
@@ -2749,6 +2852,8 @@ mod tests {
                 state: state.into(),
                 attempts: 1,
                 next_attempt_epoch: 0,
+                last_attempt_at_epoch: None,
+                state_changed_at_epoch: None,
                 receipt: None,
                 reason: None,
             };
@@ -2830,6 +2935,8 @@ mod tests {
                 state: "delivery-unknown".into(),
                 attempts: 1,
                 next_attempt_epoch: 0,
+                last_attempt_at_epoch: None,
+                state_changed_at_epoch: None,
                 receipt: None,
                 reason: Some("session-incarnation-conflict".into()),
             });

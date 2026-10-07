@@ -34,14 +34,17 @@ impl Origin {
     }
 }
 pub(crate) fn sender_origin(message: &mailbox::StoredMessage) -> Option<Origin> {
-    let encoded = message.sender_session_id.strip_prefix(SENDER_PREFIX)?;
+    sender_origin_metadata(&message.sender_session_id, &message.sender_incarnation)
+}
+pub(super) fn sender_origin_metadata(sender_id: &str, generation: &str) -> Option<Origin> {
+    let encoded = sender_id.strip_prefix(SENDER_PREFIX)?;
     let (machine, service_id) = serde_json::from_str(encoded).ok()?;
     let origin = Origin {
         machine,
         service_id,
-        service_generation: message.sender_incarnation.clone(),
+        service_generation: generation.to_string(),
     };
-    (origin.valid() && origin.stored_id() == message.sender_session_id).then_some(origin)
+    (origin.valid() && origin.stored_id() == sender_id).then_some(origin)
 }
 pub(crate) fn is_service_sender(id: &str) -> bool {
     id.starts_with(SENDER_PREFIX)

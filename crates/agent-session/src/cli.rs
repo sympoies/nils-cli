@@ -747,6 +747,8 @@ pub struct MessageArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum MessageCommand {
+    /// Audit owner mailbox metadata across inbox incarnations and source deliveries.
+    Audit(MessageAuditArgs),
     /// Discover authorized remote mailbox recipients through the local daemon.
     Peers(MessagePeersArgs),
     /// Inspect durable remote delivery; delivered means saved, not read or accepted.
@@ -769,6 +771,24 @@ pub enum MessageCommand {
     Wait(MessageWaitArgs),
     /// Claim the authenticated recipient's pending fixed mailbox reminder once.
     Reminder(MessageReminderArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct MessageAuditArgs {
+    /// Unread or queued age threshold in seconds (strictly older).
+    #[arg(long, default_value_t = 300)]
+    pub older_than: u64,
+    /// Maximum metadata records per page (1..=100).
+    #[arg(long, default_value_t = 50)]
+    pub limit: usize,
+    /// Resume a page with the same filters.
+    #[arg(long)]
+    pub cursor: Option<String>,
+    /// Include healthy metadata for joining source and destination observations.
+    #[arg(long)]
+    pub include_healthy: bool,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, Args)]

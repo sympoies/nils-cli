@@ -1,0 +1,196 @@
+{
+  "registry": {
+    "schema_version": "agent-session.coordination-registry.v2",
+    "brokers": {
+      "stopped": {
+        "session_id": "stopped",
+        "incarnation": "current-incarnation",
+        "capability_digest": "TOKEN_CANARY",
+        "generation": 1,
+        "state": "stopped",
+        "heartbeat_at": "1970-01-01T00:03:20Z",
+        "heartbeat_epoch": 200,
+        "runtime_identity": {
+          "private": "PATH_CANARY"
+        }
+      }
+    },
+    "messages": [
+      {
+        "schema_version": "agent-session.message.v1",
+        "message_id": "overdue",
+        "sender_session_id": "remote:[\"source\",\"sender\"]",
+        "sender_incarnation": "sender-incarnation",
+        "recipient_session_id": "stopped",
+        "recipient_incarnation": "current-incarnation",
+        "state": "unread",
+        "revision": 1,
+        "reply_to": null,
+        "reply_depth": 0,
+        "created_at": "1970-01-01T00:03:20Z",
+        "created_at_epoch": 200,
+        "remote_created_at_epoch": 100,
+        "expires_at": "2100-01-01T00:00:00Z",
+        "expires_at_epoch": 4102444800,
+        "category": "report",
+        "body_bytes": 11,
+        "body": "BODY_CANARY"
+      },
+      {
+        "schema_version": "agent-session.message.v1",
+        "message_id": "accepted-then-stopped",
+        "sender_session_id": "remote:[\"source\",\"sender\"]",
+        "sender_incarnation": "sender-incarnation",
+        "recipient_session_id": "stopped",
+        "recipient_incarnation": "current-incarnation",
+        "state": "read",
+        "revision": 1,
+        "reply_to": null,
+        "reply_depth": 0,
+        "created_at": "1970-01-01T00:03:20Z",
+        "created_at_epoch": 200,
+        "remote_created_at_epoch": 100,
+        "expires_at": "2100-01-01T00:00:00Z",
+        "expires_at_epoch": 4102444800,
+        "category": "report",
+        "body_bytes": 11,
+        "body": "BODY_CANARY"
+      },
+      {
+        "schema_version": "agent-session.message.v1",
+        "message_id": "old-incarnation",
+        "sender_session_id": "remote:[\"source\",\"sender\"]",
+        "sender_incarnation": "sender-incarnation",
+        "recipient_session_id": "stopped",
+        "recipient_incarnation": "prior-incarnation",
+        "state": "unread",
+        "revision": 1,
+        "reply_to": null,
+        "reply_depth": 0,
+        "created_at": "1970-01-01T00:03:20Z",
+        "created_at_epoch": 200,
+        "remote_created_at_epoch": 100,
+        "expires_at": "2100-01-01T00:00:00Z",
+        "expires_at_epoch": 4102444800,
+        "category": "report",
+        "body_bytes": 11,
+        "body": "BODY_CANARY"
+      },
+      {
+        "schema_version": "agent-session.message.v1",
+        "message_id": "missing",
+        "sender_session_id": "remote:[\"source\",\"sender\"]",
+        "sender_incarnation": "sender-incarnation",
+        "recipient_session_id": "missing",
+        "recipient_incarnation": "current-incarnation",
+        "state": "unread",
+        "revision": 1,
+        "reply_to": null,
+        "reply_depth": 0,
+        "created_at": "1970-01-01T00:03:20Z",
+        "created_at_epoch": 200,
+        "remote_created_at_epoch": 100,
+        "expires_at": "2100-01-01T00:00:00Z",
+        "expires_at_epoch": 4102444800,
+        "category": "report",
+        "body_bytes": 11,
+        "body": "BODY_CANARY"
+      },
+      {
+        "schema_version": "agent-session.message.v1",
+        "message_id": "acknowledged",
+        "sender_session_id": "remote:[\"source\",\"sender\"]",
+        "sender_incarnation": "sender-incarnation",
+        "recipient_session_id": "stopped",
+        "recipient_incarnation": "current-incarnation",
+        "state": "acknowledged",
+        "revision": 1,
+        "reply_to": null,
+        "reply_depth": 0,
+        "created_at": "1970-01-01T00:03:20Z",
+        "created_at_epoch": 200,
+        "remote_created_at_epoch": 100,
+        "expires_at": "2100-01-01T00:00:00Z",
+        "expires_at_epoch": 4102444800,
+        "category": "report",
+        "body_bytes": 11,
+        "body": "BODY_CANARY"
+      }
+    ],
+    "notifications": {
+      "receipt": {
+        "schema_version": "agent-session.notification-generation.v1",
+        "target_session_id": "stopped",
+        "target_incarnation": "current-incarnation",
+        "state": "prompt_submitted",
+        "generation": 1,
+        "notified_generation": 1,
+        "queued_at_epoch": 200,
+        "attempted_at_epoch": 201,
+        "updated_at_epoch": 201,
+        "last_reason": "REASON_CANARY"
+      }
+    },
+    "receipts": {
+      "secret": {
+        "outcome": "BODY_CANARY"
+      }
+    }
+  },
+  "journal": {
+    "schema_version": "agent-session.federation-journal.v2",
+    "remote_outbox": [
+      {
+        "envelope": {
+          "schema_version": "agent-session.remote-message.v1",
+          "message_id": "queued",
+          "from": {
+            "machine": "source",
+            "session_id": "sender",
+            "session_incarnation": "sender-incarnation"
+          },
+          "to": {
+            "machine": "remote-destination",
+            "session_id": "stopped",
+            "session_incarnation": "current-incarnation"
+          },
+          "body": "BODY_CANARY",
+          "body_sha256": "HASH_CANARY",
+          "created_at_epoch": 100,
+          "expires_at_epoch": 4102444800,
+          "reply_to": null,
+          "reply_depth": 0
+        },
+        "request_digest": "HASH_CANARY",
+        "idempotency_key": "TOKEN_CANARY",
+        "state": "queued",
+        "attempts": 2,
+        "next_attempt_epoch": 300,
+        "receipt": null,
+        "reason": "remote-messaging-unavailable"
+      }
+    ],
+    "retained": [
+      {
+        "message_id": "failed-delivery",
+        "sender": {
+          "machine": "source",
+          "session_id": "sender",
+          "session_incarnation": "sender-incarnation"
+        },
+        "recipient": {
+          "machine": "remote-destination",
+          "session_id": "stopped",
+          "session_incarnation": "current-incarnation"
+        },
+        "expires_at_epoch": 4102444800,
+        "request_digest": "HASH_CANARY",
+        "idempotency_key": "TOKEN_CANARY",
+        "state": "rejected",
+        "attempts": 1,
+        "reason": "origin-forbidden",
+        "persisted_at_epoch": null
+      }
+    ]
+  }
+}

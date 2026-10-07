@@ -1265,10 +1265,11 @@ and maximum-depth (16) checks.
 
 Federation never changes the local coordination registry schema or session runtime.
 Source envelopes live in the private `coordination/federation-journal.json`,
-schema `agent-session.federation-journal.v2` (`remote_outbox` plus `retained`),
+schema `agent-session.federation-journal.v2` (`remote_outbox` plus `retained`)
+or the timestamp-bearing v4 described in [Mail audit v1](mail-audit-v1.md),
 bounded to 32 MiB, 2048 queued envelopes and 16384 identities. A v1 journal is read
-and rewritten as v2 on the next write; releases that only know v1 fail closed on
-a v2 journal.
+and rewritten to a supported successor on the next write; releases that do not
+know the stored successor fail closed.
 A dedicated private `coordination/federation-journal.lock` serializes journal
 reads/writes with the same bounded, owner-checked file locking rules as the registry.
 Authorization uses session then registry then journal lock order. Journal-only
@@ -1597,7 +1598,9 @@ shape and replay digests. Tagged/forwarded session transport uses
 without extensions and v2 with category/provenance; it rejects version/field
 mismatches. Existing authenticated submission/relay/ingress routes are retained.
 Extended outbox records use `agent-session.federation-journal.v3`, retaining
-body-free audit data; unextended journals retain v2, and v1/v2 remain readable.
+body-free category/provenance data. New source timestamp metadata uses journal
+v4; existing v1/v2/v3 remain readable. See [Mail audit v1](mail-audit-v1.md)
+for read-only owner projections and timestamp compatibility.
 
 Old tolerant projection readers can still read additive JSON; old stored
 messages project as uncategorized. Old strict remote endpoints or validating

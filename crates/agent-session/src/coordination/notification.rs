@@ -841,7 +841,7 @@ fn normalize_current(receipt: &mut NotificationReceipt, now: i64) {
     receipt.last_reason = receipt.last_reason.as_deref().map(safe_reason);
 }
 
-fn safe_reason(reason: &str) -> String {
+pub(super) fn safe_reason(reason: &str) -> String {
     match reason {
         "notification-pending"
         | "notification-attempting"
