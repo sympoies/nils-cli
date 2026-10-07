@@ -111,6 +111,16 @@ fn fixture_with_native(
     reviews: Vec<Value>,
     native_override: Option<Value>,
 ) -> StubEnv {
+    fixture_with_native_and_comments(head, records, reviews, native_override, None)
+}
+
+fn fixture_with_native_and_comments(
+    head: &str,
+    records: &[ReviewStateRecord],
+    reviews: Vec<Value>,
+    native_override: Option<Value>,
+    comments_override: Option<Value>,
+) -> StubEnv {
     let stub = StubEnv::new();
     let comments: Vec<Value> = records
         .iter()
@@ -138,8 +148,11 @@ fn fixture_with_native(
                 "user":{"login":r["author"]["login"], "type":r["author"]["__typename"], "node_id":r["author"]["id"]},"body":r["body"]})
             });
             let id = r["databaseId"].as_u64().unwrap();
+            let comments = comments_override.clone().unwrap_or_else(|| {
+                json!([{"pull_request_review_id":id, "commit_id":head, "in_reply_to_id":9}])
+            });
             format!(
-                "  \"api repos/acme/widgets/pulls/7/reviews/{id}\") cat <<'JSON'\n{native}\nJSON\n    exit 0 ;;"
+                "  \"api repos/acme/widgets/pulls/7/reviews/{id}\") cat <<'JSON'\n{native}\nJSON\n    exit 0 ;;\n  \"api repos/acme/widgets/pulls/7/reviews/{id}/comments?per_page=100&page=1\") cat <<'JSON'\n{comments}\nJSON\n    exit 0 ;;"
             )
         })
         .collect::<Vec<_>>()
@@ -345,6 +358,164 @@ fn newer_blocked_review_cannot_reuse_earlier_pass() {
         vec![passing, blocked],
     );
     assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+}
+
+#[test]
+fn thread_reply_review_empty_comments_preserve_published_approval() {
+    // GitHub creates an empty COMMENTED review for both a REST thread reply
+    // and the reply posted by resolve --note. Neither replaces the report.
+    for actor in ["reviewer-user", "review-app[bot]"] {
+        for replies in [1, 2] {
+            let mut owner = handoff(None);
+            owner.review_author = actor.into();
+            let mut approved = review(HEAD, "pass");
+            approved["state"] = json!("APPROVED");
+            if actor == "reviewer-user" {
+                approved["author"] = json!({
+                    "login": actor, "__typename": "User", "id": "USER_REVIEWER"
+                });
+            }
+            let mut reviews = vec![approved.clone()];
+            for index in 0..replies {
+                let mut reply = approved.clone();
+                reply["id"] = json!(format!("REVIEW_REPLY_{index}"));
+                reply["databaseId"] = json!(index + 2);
+                reply["url"] = json!(format!(
+                    "https://github.com/acme/widgets/pull/7#pullrequestreview-{}",
+                    index + 2
+                ));
+                reply["state"] = json!("COMMENTED");
+                reply["body"] = json!("");
+                reply["submittedAt"] = json!(format!("2026-07-20T12:00:0{}Z", index + 3));
+                reviews.push(reply);
+            }
+            let stub = fixture(HEAD, &records(owner, Some(HEAD)), reviews);
+            let output = check(&stub, HEAD);
+            assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
+            assert_eq!(parse_envelope(&output.stdout)["data"]["status"], "reviewed");
+        }
+    }
+}
+
+#[test]
+fn thread_reply_review_substantive_comment_still_rejects_earlier_pass() {
+    let mut approved = review(HEAD, "pass");
+    approved["state"] = json!("APPROVED");
+    let mut comment = review(HEAD, "pass");
+    comment["databaseId"] = json!(2);
+    comment["body"] = json!("A substantive review without a canonical report.");
+    comment["submittedAt"] = json!("2026-07-20T12:00:03Z");
+    let stub = fixture(
+        HEAD,
+        &records(handoff(None), Some(HEAD)),
+        vec![approved, comment],
+    );
+    assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+}
+
+#[test]
+fn thread_reply_review_empty_other_states_cannot_reuse_earlier_pass() {
+    for state in ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"] {
+        let mut approved = review(HEAD, "pass");
+        approved["state"] = json!("APPROVED");
+        let mut newer = review(HEAD, "pass");
+        newer["databaseId"] = json!(2);
+        newer["state"] = json!(state);
+        newer["body"] = json!("");
+        newer["submittedAt"] = json!("2026-07-20T12:00:03Z");
+        let stub = fixture(
+            HEAD,
+            &records(handoff(None), Some(HEAD)),
+            vec![approved, newer],
+        );
+        assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+    }
+}
+
+#[test]
+fn thread_reply_review_inline_comments_and_incomplete_provenance_fail_closed() {
+    let mut approved = review(HEAD, "pass");
+    approved["state"] = json!("APPROVED");
+    let mut empty = review(HEAD, "pass");
+    empty["databaseId"] = json!(2);
+    empty["body"] = json!("");
+    empty["submittedAt"] = json!("2026-07-20T12:00:03Z");
+    for (comments, error) in [
+        (
+            json!([{"pull_request_review_id":2,"commit_id":HEAD}]),
+            "awaiting_designated_review",
+        ),
+        (json!([{"in_reply_to_id":9}]), "review_snapshot_incomplete"),
+        (
+            json!([{"pull_request_review_id":3,"commit_id":HEAD,"in_reply_to_id":9}]),
+            "review_snapshot_incomplete",
+        ),
+        (
+            json!({"message":"incomplete"}),
+            "review_snapshot_incomplete",
+        ),
+        (
+            json!(vec![
+                json!({"pull_request_review_id":2,"commit_id":HEAD,"in_reply_to_id":9});
+                100
+            ]),
+            "review_snapshot_incomplete",
+        ),
+    ] {
+        let stub = fixture_with_native_and_comments(
+            HEAD,
+            &records(handoff(None), Some(HEAD)),
+            vec![approved.clone(), empty.clone()],
+            None,
+            Some(comments),
+        );
+        assert_refusal(&check(&stub, HEAD), 65, error);
+    }
+}
+
+#[test]
+fn thread_reply_review_incomplete_native_body_or_identity_fails_closed() {
+    let mut approved = review(HEAD, "pass");
+    approved["state"] = json!("APPROVED");
+    let mut empty = review(HEAD, "pass");
+    empty["databaseId"] = json!(2);
+    empty["body"] = json!("");
+    empty["submittedAt"] = json!("2026-07-20T12:00:03Z");
+    for field in ["body", "author", "head"] {
+        let mut native = json!({
+            "id":2, "html_url":empty["url"], "state":"COMMENTED", "commit_id":HEAD,
+            "user":{"login":"review-app[bot]","type":"Bot","node_id":"BOT_REVIEW_APP"},
+            "body":""
+        });
+        match field {
+            "body" => native["body"] = Value::Null,
+            "author" => native["user"]["node_id"] = json!("OTHER_BOT"),
+            "head" => native["commit_id"] = json!(OLD),
+            _ => unreachable!(),
+        }
+        let stub = fixture_with_native(
+            HEAD,
+            &records(handoff(None), Some(HEAD)),
+            vec![approved.clone(), empty.clone()],
+            Some(native),
+        );
+        assert_refusal(&check(&stub, HEAD), 65, "review_snapshot_incomplete");
+    }
+}
+
+#[test]
+fn thread_reply_review_other_author_or_head_cannot_satisfy_admission() {
+    for field in ["author", "head"] {
+        let mut empty = review(HEAD, "pass");
+        empty["body"] = json!("");
+        if field == "author" {
+            empty["author"]["login"] = json!("other-review-app[bot]");
+        } else {
+            empty["commit"]["oid"] = json!(OLD);
+        }
+        let stub = fixture(HEAD, &records(handoff(None), Some(HEAD)), vec![empty]);
+        assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
+    }
 }
 
 #[test]
