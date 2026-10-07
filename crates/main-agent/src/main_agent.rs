@@ -4282,6 +4282,7 @@ fn run_worker_start_single_input(
         let started = agent_session::internal::start_session_with_create_guard(
             context,
             cli::StartArgs {
+                title_mode: "auto".into(),
                 // A synchronous `main-agent` invocation does not retain the
                 // daemon-owned Codex control handle. Keep this launch on the
                 // bounded raw path until worker creation crosses a typed

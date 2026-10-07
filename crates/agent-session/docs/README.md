@@ -17,6 +17,8 @@ or integrating a specific subsystem.
 
 ## Stable contracts
 
+- [Session display metadata v1](specs/session-display-metadata-v1.md): explicit
+  roles, persisted auto/pinned titles, and exact-session revision-fenced updates.
 - [Serve API v1](specs/serve-api-v1.md): HTTP and WebSocket endpoints,
   response/authentication rules, launch profiles, and session survival.
 - [Session retitle v2](specs/session-retitle-v2.md): bounded title context,

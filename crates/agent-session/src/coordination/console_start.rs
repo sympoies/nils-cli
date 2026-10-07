@@ -292,6 +292,7 @@ pub(crate) fn cli_start(
         .map_err(|_| unreachable())?
         .pop_if_empty()
         .extend(["sessions", caller.as_str(), "console-start", "v1"]);
+    let requested_pinned = session["title_mode"] == "pinned";
     let mut request = json!({ "session": session });
     if let Some(machine) = machine {
         request["machine"] = json!(machine);
@@ -315,6 +316,17 @@ pub(crate) fn cli_start(
     let body = read_json(response)
         .ok_or_else(|| unavailable("the local daemon's console start answer is unreadable"))?;
     if status.is_success() {
+        if requested_pinned
+            && body["session"]["id"].is_string()
+            && (body["session"]["title_mode"] != "pinned"
+                || body["session"]["display_revision"].as_u64().is_none())
+        {
+            return Err(CliError::runtime(
+                "title-mode-unconfirmed",
+                "the created session did not confirm pinned title mode; inspect it before retrying",
+                Some(json!({"created_session_id":body["session"]["id"],"safe_to_retry":false})),
+            ));
+        }
         return (body["schema_version"] == RESULT_SCHEMA && body["session"]["id"].is_string())
             .then_some(body)
             .ok_or_else(|| unavailable("the console start answered with an unsupported result"));

@@ -1487,3 +1487,10 @@ Disconnect only releases terminal transport, preserving tmux, cwd and commands.
 Provider prompt subscriptions report unsupported. Shells do not participate in
 provider resume, retitle, accounts, voice or history. This interface requires
 working daemon and network access; it is not an independent recovery channel.
+
+### Display metadata and title mode
+
+See [Session display metadata v1](session-display-metadata-v1.md) for additive
+`title_mode` / `display_revision` session fields and authenticated
+`POST /sessions/{exact-id}/display-metadata`. Existing title edits remain
+available while pinned; model retitle is blocked until mode returns to auto.

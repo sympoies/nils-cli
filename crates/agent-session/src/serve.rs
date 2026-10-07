@@ -1260,6 +1260,10 @@ fn router(state: Arc<ServeState>) -> Router {
         .route("/retitle/readiness", get(retitle_readiness_handler))
         .route("/clipboard/unwrap/v1", post(clipboard_unwrap_handler))
         .route("/sessions/{id}/retitle", post(session_retitle_handler))
+        .route(
+            "/sessions/{id}/display-metadata",
+            post(display_metadata_handler),
+        )
         .route("/retitle/v3/readiness", get(retitle_v3_readiness_handler))
         .route(
             "/sessions/{id}/retitle-v3/readiness",
@@ -2566,6 +2570,9 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "idempotency-key-conflict"
         | "idempotency-key-reused"
         | "retitle-turn-conflict"
+        | "display-revision-conflict"
+        | "display-role-bound"
+        | "title-mode-pinned"
         | "retitle-state-conflict"
         | "retitle-v3-state-conflict"
         | "retitle-v3-turn-conflict"
@@ -3442,6 +3449,8 @@ struct MaintenanceQuery {
 struct CreateBody {
     agent: String,
     #[serde(default)]
+    title_mode: crate::display_metadata::TitleMode,
+    #[serde(default)]
     coordination_mode: cli::CoordinationMode,
     agent_profile: Option<String>,
     cwd: Option<String>,
@@ -3857,6 +3866,39 @@ struct ClipboardCancellation(Arc<AtomicBool>);
 impl Drop for ClipboardCancellation {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+async fn display_metadata_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Result<Json<crate::display_metadata::Update>, JsonRejection>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(_) => {
+            return envelope_err(CliError::usage(
+                "invalid-json-body",
+                "display metadata request body is invalid",
+                None,
+            ));
+        }
+    };
+    let context = state.context.clone();
+    let tmux = state.tmux_bin.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::display_metadata::update(&context, &id, body)
+            .map(|record| crate::session_view(&context, &record, None, Some(&tmux)))
+    })
+    .await
+    {
+        Ok(Ok(session)) => envelope_ok(json!({"machine":state.machine,"session":session})),
+        Ok(Err(error)) => envelope_err(error),
+        Err(_) => join_err(),
     }
 }
 
@@ -4913,7 +4955,10 @@ impl AutomaticRetitleTracker {
 }
 
 fn automatic_retitle_candidate(session: &SessionView) -> Option<AutomaticRetitleCandidate> {
-    if session.status != "running" || session.provider_resume.is_none() {
+    if session.title_mode == crate::display_metadata::TitleMode::Pinned
+        || session.status != "running"
+        || session.provider_resume.is_none()
+    {
         return None;
     }
     let incarnation = session.session_incarnation.as_deref()?;
@@ -5494,6 +5539,7 @@ async fn history_resume_handler(
                 start_dsh_history_resume_session(
                     &context,
                     DshHistoryResumeArgs {
+                        title_mode: restored.title_mode,
                         provider_resume_id: history.provider_session_id,
                         cwd: PathBuf::from(history.cwd),
                         history_root: dsh_history.root.clone(),
@@ -5536,6 +5582,7 @@ async fn history_resume_handler(
                 start_provider_resume_session(
                     &context,
                     ProviderResumeImportArgs {
+                        title_mode: restored.title_mode,
                         agent,
                         provider_resume_id: history.provider_session_id,
                         title: history.title,
@@ -5575,6 +5622,7 @@ async fn history_resume_handler(
 
 /// Managed identity a history resume restores.
 struct RestoredHistoryIdentity {
+    title_mode: crate::display_metadata::TitleMode,
     /// The archived session id, when the archive recorded one and it is free.
     id: Option<String>,
     title_state: Option<crate::SessionTitleState>,
@@ -5608,7 +5656,11 @@ fn history_resume_identity(
         )
         .is_ok()
     });
-    Ok(RestoredHistoryIdentity { id, title_state })
+    Ok(RestoredHistoryIdentity {
+        id,
+        title_state,
+        title_mode: history.archived_title_mode,
+    })
 }
 
 fn live_managed_session_for_history(context: &CliContext, history_id: &str) -> Option<String> {
@@ -6762,6 +6814,7 @@ async fn create_handler(
             ));
         }
         let args = ProviderResumeImportArgs {
+            title_mode: body.title_mode,
             agent,
             provider_resume_id,
             title,
@@ -6840,6 +6893,11 @@ async fn create_handler(
         None
     };
     let args = cli::StartArgs {
+        title_mode: match body.title_mode {
+            crate::display_metadata::TitleMode::Auto => "auto",
+            crate::display_metadata::TitleMode::Pinned => "pinned",
+        }
+        .into(),
         app_server_managed: true,
         provider_stop_canary: false,
         provider_stop_canary_assignment_id: None,
@@ -20201,6 +20259,9 @@ esac
             &["resume", "resume-session-id"],
         );
         let mut record = load_session_record(&context, "archived-owner").unwrap();
+        record
+            .extra
+            .insert("title_mode".to_string(), json!("pinned"));
         record.title = Some("Saved topic - Saved activity".to_string());
         record.title_state = Some(
             serde_json::from_value(json!({
@@ -20231,6 +20292,10 @@ esac
         assert_eq!(archived.session_id.as_deref(), Some("archived-owner"));
         assert_eq!(archived.title.as_deref(), record.title.as_deref());
         assert_eq!(archived.title_state, record.title_state);
+        assert_eq!(
+            serde_json::to_value(&archived).unwrap()["title_mode"],
+            "pinned"
+        );
         let catalog = HistoryCatalog::new(
             vec![provider_history::HistorySource {
                 provider: "codex".to_string(),
@@ -20249,6 +20314,10 @@ esac
         let restored = history_resume_identity(&context, &history).unwrap();
         assert_eq!(restored.id.as_deref(), Some("archived-owner"));
         assert_eq!(restored.title_state, record.title_state);
+        assert_eq!(
+            restored.title_mode,
+            crate::display_metadata::TitleMode::Pinned
+        );
 
         // A title that no longer renders from its state keeps the title alone.
         let mut edited = history.clone();
@@ -20442,6 +20511,7 @@ esac
         provider_history::write_archive(
             &provider_history::archive_root(tmp.path()),
             &provider_history::ArchivedSession {
+                title_mode: crate::display_metadata::TitleMode::Pinned,
                 schema_version: "agent-session.history-archive.v1".to_string(),
                 history_id: id.clone(),
                 provider: "dsh".to_string(),
@@ -20472,6 +20542,7 @@ esac
         assert_eq!(status, StatusCode::OK, "body={body}");
         let managed_id = body["data"]["session"]["id"].as_str().unwrap();
         assert_eq!(managed_id, "kept-dsh");
+        assert_eq!(body["data"]["session"]["title_mode"], "pinned");
         assert_eq!(
             body["data"]["session"]["title"],
             "Kept topic - Kept activity"
@@ -20492,6 +20563,7 @@ esac
             .unwrap(),
         )
         .unwrap();
+        assert_eq!(record["title_mode"], "pinned");
         assert_eq!(record["provider_resume"]["provider"], "dsh");
         assert_eq!(record["provider_resume"]["session_id"], "dsh-one");
         assert_eq!(
@@ -20531,6 +20603,13 @@ esac
             state_dir: tmp.path().to_path_buf(),
             host: None,
         };
+        let restored_record = crate::load_session_record(&context, managed_id).unwrap();
+        assert_eq!(
+            crate::display_metadata::require_auto(&restored_record)
+                .unwrap_err()
+                .code(),
+            "title-mode-pinned"
+        );
         let error = crate::activity::ingest_event(&context, managed_id, mismatched)
             .expect_err("a resumed DSH runtime must reject another provider identity");
         assert_eq!(error.code(), "provider-session-id-mismatch");
@@ -22927,6 +23006,52 @@ esac
         assert_eq!(record["lineage"], expected_lineage);
         assert_eq!(record["work"], expected_work);
 
+        // Fresh creates persist the explicit pin and the default-auto control.
+        for (id, extra, mode) in [
+            ("create-mode-auto", json!({}), "auto"),
+            (
+                "create-mode-pinned",
+                json!({"title_mode":"pinned"}),
+                "pinned",
+            ),
+        ] {
+            let (status, body) = call(router(st.clone()), create(id, extra)).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["data"]["session"]["title_mode"], mode);
+            assert_eq!(body["data"]["session"]["display_revision"], 0);
+            let stored = load_session_record(&st.context, id).unwrap();
+            assert_eq!(stored.extra["title_mode"], mode);
+        }
+
+        let (status, body) = call(
+            router(st.clone()),
+            create(
+                "domain-parented",
+                json!({
+                    "role":"domain-coordinator", "lineage": {
+                        "parent":parent, "root":root, "depth":1,
+                        "starter":{"kind":"session", "via":"console"}
+                    }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["code"], "role-requires-root");
+        assert_eq!(
+            body["error"]["message"],
+            "role domain-coordinator needs a root start: use --no-parent, or a start with no parent"
+        );
+        assert!(!tmp.path().join("sessions/domain-parented").exists());
+        let (status, body) = call(
+            router(st.clone()),
+            create("domain-root", json!({"role":"domain-coordinator"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["session"]["role"], "domain-coordinator");
+        assert_eq!(body["data"]["session"]["lineage"]["parent"], Value::Null);
+
         // Without a stated lineage the session is an operator root over HTTP.
         let (status, body) = call(router(st.clone()), create("lineage-root", json!({}))).await;
         assert_eq!(status, StatusCode::OK, "body={body}");
@@ -23494,6 +23619,7 @@ esac
                     "agent": "codex",
                     "id": "imported-codex",
                     "provider_resume_id": "external-codex-id",
+                    "title_mode": "pinned",
                     "title_state": {
                         "topic": "Imported Codex",
                         "topic_source": "user",
@@ -23507,6 +23633,8 @@ esac
         assert_eq!(status, StatusCode::OK, "body={body}");
         let session = &body["data"]["session"];
         assert_eq!(session["id"], "imported-codex");
+        assert_eq!(session["title_mode"], "pinned");
+        assert_eq!(session["display_revision"], 0);
         assert_eq!(session["agent"], "codex");
         assert_eq!(session["title"], "Imported Codex #317");
         assert_eq!(session["title_state"]["topic"], "Imported Codex");
@@ -23555,6 +23683,7 @@ esac
             &fs::read(tmp.path().join("sessions/imported-codex/session.json")).unwrap(),
         )
         .unwrap();
+        assert_eq!(record["title_mode"], "pinned");
         assert_eq!(record["runtime"]["kind"], codex_app_server::RUNTIME_KIND);
         assert_eq!(
             record["runtime"][codex_app_server::PROTOCOL_KEY],
@@ -23594,12 +23723,15 @@ esac
 
         assert_eq!(status, StatusCode::OK, "body={body}");
         let session = &body["data"]["session"];
+        assert_eq!(session["title_mode"], "auto");
+        assert_eq!(session["display_revision"], 0);
         assert_eq!(session["auto_resume"]["supported"], false);
         assert_eq!(session["codex_account"]["supported"], false);
         let record: Value = serde_json::from_slice(
             &fs::read(tmp.path().join("sessions/standalone-codex/session.json")).unwrap(),
         )
         .unwrap();
+        assert_eq!(record["title_mode"], "auto");
         assert_eq!(record["runtime"]["kind"], "tmux");
         let calls = fs::read_to_string(log).unwrap();
         assert!(
@@ -27807,6 +27939,226 @@ esac
         assert!(
             !calls.contains("new-session"),
             "non-resumable sessions must not create tmux runtimes: {calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn display_metadata_preserves_immutable_forge_role_binding() {
+        use pretty_assertions::assert_eq;
+        for role in [Some("reviewer"), None] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            seed_session_with_runtime(tmp.path(), "bound-display", "codex", "hs-bound-display");
+            let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+            let mut original = load_session_record(&st.context, "bound-display").unwrap();
+            original.role = role.map(str::to_string);
+            original.lineage = Some(
+                serde_json::from_value(json!({
+                    "schema_version":"agent-session.session-lineage.v1", "machine":MACHINE,
+                    "parent":null, "root":{"machine":MACHINE,"session_id":original.id,
+                        "session_created_at":original.created_at}, "depth":0,
+                    "starter":{"kind":"operator","via":"cli"},
+                    "forge_context":{"initiator":"operator","role":role}
+                }))
+                .unwrap(),
+            );
+            crate::write_session_record(&st.context, &original).unwrap();
+            let path = tmp.path().join("sessions/bound-display/session.json");
+            let before = fs::read(&path).unwrap();
+            let launch = crate::forge_identity::context_of(&original)
+                .unwrap()
+                .unwrap();
+            let requested_role = if role.is_some() { "tester" } else { "reviewer" };
+            let (status, body) = call(
+                router(st.clone()),
+                post_json(
+                    "/sessions/bound-display/display-metadata",
+                    Some(TOKEN),
+                    json!({
+                        "expected_session_created_at":original.created_at, "expected_revision":0,
+                        "role":requested_role, "title_mode":"pinned"
+                    }),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT, "{body}");
+            assert_eq!(body["error"]["code"], "display-role-bound");
+            assert_eq!(body["error"]["details"]["retryable"], false);
+            assert_eq!(body["error"]["details"]["next_action"], "start_new_session");
+            assert_eq!(fs::read(&path).unwrap(), before);
+            let record = load_session_record(&st.context, &original.id).unwrap();
+            assert_eq!(
+                crate::forge_identity::context_of(&record).unwrap().unwrap(),
+                launch
+            );
+            assert!(
+                crate::lineage::LineageSeed::child_of(MACHINE, MACHINE, &record, "session", "cli")
+                    .is_ok()
+            );
+
+            // The same role and mode-only edits remain legal on bound sessions.
+            let mut request = json!({"expected_session_created_at":original.created_at,
+                "expected_revision":0, "title_mode":"pinned"});
+            if let Some(role) = role {
+                request["role"] = json!(role);
+            }
+            let (status, body) = call(
+                router(st.clone()),
+                post_json(
+                    "/sessions/bound-display/display-metadata",
+                    Some(TOKEN),
+                    request.clone(),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["data"]["session"]["title_mode"], "pinned");
+            assert_eq!(body["data"]["session"]["display_revision"], 1);
+            let updated = load_session_record(&st.context, &original.id).unwrap();
+            assert_eq!(updated.role, original.role);
+            assert_eq!(
+                serde_json::to_value(&updated.lineage).unwrap(),
+                serde_json::to_value(&original.lineage).unwrap()
+            );
+            assert_eq!(
+                crate::forge_identity::context_of(&updated)
+                    .unwrap()
+                    .unwrap(),
+                launch
+            );
+            assert!(
+                crate::lineage::LineageSeed::child_of(MACHINE, MACHINE, &updated, "session", "cli")
+                    .is_ok()
+            );
+            request["expected_revision"] = json!(1);
+            let before_noop = fs::read(&path).unwrap();
+            let (status, body) = call(
+                router(st),
+                post_json(
+                    "/sessions/bound-display/display-metadata",
+                    Some(TOKEN),
+                    request,
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["data"]["session"]["display_revision"], 1);
+            assert_eq!(fs::read(&path).unwrap(), before_noop);
+        }
+    }
+
+    #[tokio::test]
+    async fn display_metadata_domain_coordinator_requires_root_without_writing() {
+        use pretty_assertions::assert_eq;
+        let tmp = tempfile::TempDir::new().unwrap();
+        seed_session_with_runtime(tmp.path(), "domain-display", "codex", "hs-domain-display");
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let mut record = load_session_record(&st.context, "domain-display").unwrap();
+        let reference = json!({"machine":"fixture-machine","session_id":"parent-session",
+            "session_created_at":"2000-01-01T00:00:00Z"});
+        record.lineage = Some(
+            serde_json::from_value(json!({
+                "schema_version":"agent-session.session-lineage.v1", "machine":MACHINE,
+                "parent":reference, "root":reference, "depth":1,
+                "starter":{"kind":"session","via":"cli"}
+            }))
+            .unwrap(),
+        );
+        crate::write_session_record(&st.context, &record).unwrap();
+        let path = tmp.path().join("sessions/domain-display/session.json");
+        let before = fs::read(&path).unwrap();
+        let (status, body) = call(
+            router(st),
+            post_json(
+                "/sessions/domain-display/display-metadata",
+                Some(TOKEN),
+                json!({
+                    "expected_session_created_at":record.created_at, "expected_revision":0,
+                    "role":"domain-coordinator", "title_mode":"pinned"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["code"], "role-requires-root");
+        assert_eq!(
+            body["error"]["message"],
+            "role domain-coordinator needs a root start: use --no-parent, or a start with no parent"
+        );
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn display_metadata_is_exact_authenticated_fenced_and_persistent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        seed_session_with_runtime(tmp.path(), "display", "codex", "hs-display");
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let original = load_session_record(&st.context, "display").unwrap();
+        let original_title = original.title.clone();
+        for token in [None, Some(TOKEN)] {
+            let (status, body) = call(
+                router(st.clone()),
+                post_json("/sessions/display/display-metadata", token, json!({})),
+            )
+            .await;
+            assert_eq!(
+                status,
+                if token.is_none() {
+                    StatusCode::UNAUTHORIZED
+                } else {
+                    StatusCode::BAD_REQUEST
+                }
+            );
+            assert_eq!(body["schema_version"], "cli.agent-session.serve.v1");
+        }
+        let request = json!({"expected_session_created_at":"2000-01-01T00:00:00Z",
+            "expected_revision":0, "role":"reviewer", "title_mode":"pinned"});
+        let (status, _) = call(
+            router(st.clone()),
+            post_json("/sessions/display/display-metadata", None, request.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, body) = call(
+            router(st.clone()),
+            post_json(
+                "/sessions/display/display-metadata",
+                Some(TOKEN),
+                request.clone(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["session"]["role"], "reviewer");
+        assert_eq!(body["data"]["session"]["title_mode"], "pinned");
+        assert_eq!(body["data"]["session"]["display_revision"], 1);
+        let record = load_session_record(&st.context, "display").unwrap();
+        assert_eq!(record.extra["title_mode"], "pinned");
+        assert_eq!(record.title_revision, original.title_revision + 1);
+        assert_eq!(record.runtime.as_ref().unwrap().launch_id, "launch-display");
+        let (status, _) = call(
+            router(st.clone()),
+            post_json("/sessions/display/display-metadata", Some(TOKEN), request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _) = call(router(st.clone()), post_json("/sessions/dis/display-metadata", Some(TOKEN), json!({"expected_session_created_at":"2000-01-01T00:00:00Z", "expected_revision":1,"title_mode":"auto"}))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, body) = call(router(st.clone()), post_json("/sessions/display/display-metadata", Some(TOKEN), json!({"expected_session_created_at":"2000-01-01T00:00:00Z", "expected_revision":1,"title_mode":"auto"}))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["session"]["title_mode"], "auto");
+        assert_eq!(body["data"]["session"]["role"], "reviewer");
+        let record = load_session_record(&st.context, "display").unwrap();
+        assert_eq!(record.title_revision, original.title_revision + 2);
+        let (status, body) = call(router(st.clone()), post_json("/sessions/display/retitle", Some(TOKEN), json!({
+            "schema_version":"agent-session.session-retitle.request.v2", "trigger":"manual",
+            "idempotency_key":"stale-display-mode-request", "expected_session_incarnation":"launch-display",
+            "expected_title_revision":original.title_revision
+        }))).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "title-revision-conflict");
+        assert_eq!(
+            load_session_record(&st.context, "display").unwrap().title,
+            original_title
         );
     }
 

@@ -65,6 +65,8 @@ pub(crate) struct DshHistorySource {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ArchivedSession {
+    #[serde(default)]
+    pub(crate) title_mode: crate::display_metadata::TitleMode,
     pub(crate) schema_version: String,
     pub(crate) history_id: String,
     pub(crate) provider: String,
@@ -97,6 +99,8 @@ pub(crate) struct StarredSession {
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct HistorySession {
+    #[serde(skip)]
+    pub(crate) archived_title_mode: crate::display_metadata::TitleMode,
     pub(crate) id: String,
     pub(crate) provider: String,
     pub(crate) provider_session_id: String,
@@ -371,6 +375,10 @@ impl HistoryCatalog {
                 if id == history_id {
                     let archive = read_archive(&self.archives_root, &id);
                     return Ok(HistorySession {
+                        archived_title_mode: archive
+                            .as_ref()
+                            .map(|archive| archive.title_mode)
+                            .unwrap_or_default(),
                         id,
                         provider: "dsh".to_string(),
                         provider_session_id: item.provider_session_id,
@@ -1109,6 +1117,7 @@ fn scan_catalog(
                 session.title = archive.title.clone();
                 session.archived_session_id = archive.session_id.clone();
                 session.archived_title_state = archive.title_state.clone();
+                session.archived_title_mode = archive.title_mode;
                 session.cwd = archive.cwd.clone();
                 session.repo_name = repo_name(&archive.cwd);
                 session.archived_at = Some(archive.archived_at.clone());
@@ -1161,6 +1170,7 @@ fn scan_catalog(
                 continue;
             }
             sessions.push(HistorySession {
+                archived_title_mode: Default::default(),
                 id: id.clone(),
                 provider: "dsh".to_string(),
                 provider_session_id: item.provider_session_id,
@@ -1638,6 +1648,7 @@ fn inspect_history_file(
     let first_user_prompt_preview =
         first_prompt(path, &source.provider, &provider_session_id, deadline);
     Some(HistorySession {
+        archived_title_mode: Default::default(),
         id,
         provider: source.provider.clone(),
         provider_session_id,
@@ -3292,6 +3303,7 @@ mod tests {
 
     fn history_session(id: &str, updated_at: &str) -> HistorySession {
         HistorySession {
+            archived_title_mode: Default::default(),
             id: id.to_string(),
             provider: "codex".to_string(),
             provider_session_id: id.to_string(),
@@ -3544,6 +3556,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         write_archive(
             &archives,
             &ArchivedSession {
+                title_mode: crate::display_metadata::TitleMode::Pinned,
                 schema_version: "agent-session.history-archive.v1".to_string(),
                 history_id: history_id.clone(),
                 provider: "codex".to_string(),
@@ -3578,10 +3591,21 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         );
         assert_eq!(session.archived_session_id.as_deref(), Some("managed-abc"));
         assert_eq!(session.archived_title_state, Some(title_state));
+        assert_eq!(
+            session.archived_title_mode,
+            crate::display_metadata::TitleMode::Pinned
+        );
         // The managed identity is resume input, not part of the history API.
         let listed = serde_json::to_value(&session).unwrap();
         assert!(listed.get("archived_session_id").is_none());
         assert!(listed.get("archived_title_state").is_none());
+        assert!(listed.get("archived_title_mode").is_none());
+        let mut old_archive =
+            serde_json::to_value(read_archive(&catalog.archives_root, &history_id).unwrap())
+                .unwrap();
+        old_archive.as_object_mut().unwrap().remove("title_mode");
+        let old: ArchivedSession = serde_json::from_value(old_archive).unwrap();
+        assert_eq!(old.title_mode, crate::display_metadata::TitleMode::Auto);
     }
 
     #[test]
@@ -5302,6 +5326,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         let id = stable_history_id("codex", Some("profile-a"), "provider-id");
         let mut snapshot = CatalogSnapshot {
             sessions: vec![HistorySession {
+                archived_title_mode: Default::default(),
                 id: id.clone(),
                 provider: "codex".to_string(),
                 provider_session_id: "provider-id".to_string(),
@@ -5744,6 +5769,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         write_archive(
             &archives,
             &ArchivedSession {
+                title_mode: Default::default(),
                 schema_version: "agent-session.history-archive.v1".into(),
                 history_id: profile_a_id.clone(),
                 provider: "codex".into(),
@@ -5813,6 +5839,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         write_archive(
             &archives,
             &ArchivedSession {
+                title_mode: Default::default(),
                 schema_version: "agent-session.history-archive.v1".into(),
                 history_id: stable_history_id("codex", None, "missing"),
                 provider: "codex".into(),
@@ -5852,6 +5879,7 @@ printf '%s\n' '{"schema_version":"dsh-runtime-kit.history.v1","data":[]}'
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("archives");
         let mut archive = ArchivedSession {
+            title_mode: Default::default(),
             schema_version: "agent-session.history-archive.v1".to_string(),
             history_id: stable_history_id("codex", None, "abc"),
             provider: "codex".to_string(),

@@ -747,6 +747,7 @@ fn refresh_admitted_once(
     expected: Option<&RetitleV3FenceInput>,
 ) -> Result<RetitleV3Response, CliError> {
     let observed = load_session_record(context, id)?;
+    crate::display_metadata::require_auto(&observed)?;
     let mut memory = memory_from_record(&observed)?;
     let existing_receipt = memory
         .receipts
@@ -1176,6 +1177,7 @@ pub(crate) fn claim_provider_inference(
 ) -> Result<ProviderClaim, CliError> {
     let mut authority = lock_exact_session_authority(context, id)?
         .ok_or_else(|| v3_error("session-not-found", "session does not exist"))?;
+    crate::display_metadata::require_auto(&authority.record)?;
     let mut memory = memory_from_record(&authority.record)?;
     let selected = selected_operation(&memory).map(|receipt| receipt.operation_hash.clone());
     let index = memory
@@ -1453,6 +1455,7 @@ pub(crate) fn commit_inference(
     let changed =
         authority.record.title != title || authority.record.title_state.as_ref() != Some(&state);
     if changed {
+        crate::display_metadata::require_auto(&authority.record)?;
         authority.record.title = title;
         authority.record.title_state = Some(state);
         authority.record.title_revision = authority
@@ -3728,6 +3731,39 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::Instant;
 
+    #[test]
+    fn pinned_title_blocks_refresh_before_history_or_provider_work() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let mut record = fixture_record("pinned", Some("Operator title"));
+        record.extra.insert("title_mode".into(), json!("pinned"));
+        std::fs::create_dir_all(tmp.path().join("sessions/pinned")).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        let catalog = HistoryCatalog::new(
+            Vec::new(),
+            tmp.path().join("archives"),
+            tmp.path().join("stars"),
+        );
+        let error = refresh_admitted_once(
+            &context,
+            &catalog,
+            "pinned",
+            "operation",
+            "digest",
+            "automatic",
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "title-mode-pinned");
+        assert_eq!(
+            load_session_record(&context, "pinned").unwrap().title,
+            record.title
+        );
+    }
+
     fn message(id: &str, role: &str, text: &str, human_prompt: bool) -> HistoryMessage {
         HistoryMessage {
             id: id.to_string(),
@@ -3735,6 +3771,172 @@ mod tests {
             text: text.to_string(),
             timestamp: None,
             human_prompt,
+        }
+    }
+
+    #[test]
+    fn pinned_title_blocks_provider_claim_without_writing() {
+        use pretty_assertions::assert_eq;
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "pinned-claim";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            Some("Operator title"),
+            &codex_row("user", "Repair title fences", "turn-one"),
+        );
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 1, 0)).unwrap();
+        let record = load_session_record(&context, id).unwrap();
+        crate::display_metadata::update(
+            &context,
+            id,
+            crate::display_metadata::Update {
+                expected_session_created_at: record.created_at,
+                expected_revision: 0,
+                role: None,
+                title_mode: Some(crate::display_metadata::TitleMode::Pinned),
+            },
+        )
+        .unwrap();
+        let path = context
+            .state_dir
+            .join(format!("sessions/{id}/session.json"));
+        let before = fs::read(&path).unwrap();
+        let error =
+            claim_provider_inference(&context, id, &accepted.operation_hash, "blocked-claim")
+                .err()
+                .expect("a pinned operation must not be claimed");
+        assert_eq!(error.code(), "title-mode-pinned");
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn pinned_title_blocks_provider_commit_even_with_matching_title_revision() {
+        use pretty_assertions::assert_eq;
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "pinned-commit";
+        let (context, catalog, _) = fixture(
+            tmp.path(),
+            id,
+            Some("Operator title"),
+            &codex_row("user", "Repair title fences", "turn-one"),
+        );
+        let accepted = refresh_once(&context, &catalog, id, &request(id, 1, 0)).unwrap();
+        let inference = match claim_provider_inference(
+            &context,
+            id,
+            &accepted.operation_hash,
+            "provider-claim",
+        )
+        .unwrap()
+        {
+            ProviderClaim::Claimed(inference) => inference,
+            _ => panic!("provider inference must be claimed"),
+        };
+        // Isolate the commit's mode check from the revision fence: a persisted
+        // pinned record must refuse the write even when other fences match.
+        let mut record = load_session_record(&context, id).unwrap();
+        record.extra.insert("title_mode".into(), json!("pinned"));
+        crate::write_session_record(&context, &record).unwrap();
+        let path = context
+            .state_dir
+            .join(format!("sessions/{id}/session.json"));
+        let before = fs::read(&path).unwrap();
+        let error = commit_inference(
+            &context,
+            &catalog,
+            id,
+            &inference,
+            SessionTitleState {
+                topic: Some("Repaired title fences".into()),
+                topic_source: crate::SessionTitleTopicSource::Auto,
+                references: Vec::new(),
+                activity: None,
+                extra: BTreeMap::new(),
+            },
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "title-mode-pinned");
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn title_mode_updates_fence_provider_commit_after_pin_and_reenable() {
+        use pretty_assertions::assert_eq;
+        for reenable in [true, false] {
+            let tmp = tempfile::tempdir().unwrap();
+            let id = "mode-commit";
+            let (context, catalog, _) = fixture(
+                tmp.path(),
+                id,
+                Some("Operator title"),
+                &codex_row("user", "Repair title fences", "turn-one"),
+            );
+            let accepted = refresh_once(&context, &catalog, id, &request(id, 1, 0)).unwrap();
+            let inference = match claim_provider_inference(
+                &context,
+                id,
+                &accepted.operation_hash,
+                "provider-claim",
+            )
+            .unwrap()
+            {
+                ProviderClaim::Claimed(inference) => inference,
+                _ => panic!("provider inference must be claimed"),
+            };
+            let original = load_session_record(&context, id).unwrap();
+            let pinned = crate::display_metadata::update(
+                &context,
+                id,
+                crate::display_metadata::Update {
+                    expected_session_created_at: original.created_at.clone(),
+                    expected_revision: 0,
+                    role: None,
+                    title_mode: Some(crate::display_metadata::TitleMode::Pinned),
+                },
+            )
+            .unwrap();
+            assert_eq!(pinned.title_revision, original.title_revision + 1);
+            if reenable {
+                let auto = crate::display_metadata::update(
+                    &context,
+                    id,
+                    crate::display_metadata::Update {
+                        expected_session_created_at: original.created_at.clone(),
+                        expected_revision: 1,
+                        role: None,
+                        title_mode: Some(crate::display_metadata::TitleMode::Auto),
+                    },
+                )
+                .unwrap();
+                assert_eq!(auto.title_revision, original.title_revision + 2);
+                assert_eq!(
+                    crate::display_metadata::title_mode(&auto),
+                    crate::display_metadata::TitleMode::Auto
+                );
+            }
+            let path = context
+                .state_dir
+                .join(format!("sessions/{id}/session.json"));
+            let before = fs::read(&path).unwrap();
+            let error = commit_inference(
+                &context,
+                &catalog,
+                id,
+                &inference,
+                SessionTitleState {
+                    topic: Some("Repaired title fences".into()),
+                    topic_source: crate::SessionTitleTopicSource::Auto,
+                    references: Vec::new(),
+                    activity: None,
+                    extra: BTreeMap::new(),
+                },
+                &[],
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "retitle-v3-state-conflict");
+            assert_eq!(fs::read(path).unwrap(), before);
         }
     }
 
