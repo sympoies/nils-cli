@@ -1,0 +1,18 @@
+{
+  "schema_version": "claude-cli.diag.rate-limits.v1",
+  "command": "diag rate-limits",
+  "mode": "async",
+  "ok": false,
+  "results": [
+    {
+      "provider": "claude",
+      "name": "alpha",
+      "target_file": "alpha.json",
+      "status": "error",
+      "ok": false,
+      "source": "network",
+      "reason_code": "auth_required",
+      "error": { "code": "missing-access-token", "message": "SECRET-MARKER" }
+    }
+  ]
+}

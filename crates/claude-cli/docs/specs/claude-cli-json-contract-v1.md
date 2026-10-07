@@ -185,6 +185,20 @@ Claude limit-reset programs. Results from `--cached` or a cache fallback, and
 failed results, omit it. A network body without either program reports both
 as `null`, so absence always means the value was not read.
 
+Live `--async --format json` collection normally falls back to stale cached
+windows after a profile request fails. A machine consumer that needs each
+profile's live failure and reason can set
+`CLAUDE_RATE_LIMITS_ASYNC_JSON_NO_CACHE_FALLBACK=1`; async JSON then keeps that
+profile's failed result instead of replacing it with cached windows. This does
+not change `--cached` reads or text output.
+
+Async JSON also includes the active Claude Code login when its access token is
+not already represented by a saved profile. Its result name is `active` unless
+that nickname is already used by a saved profile, in which case an unused
+`active-login` name is used. It can therefore return the active login even
+when the saved-profile directory is absent or empty. Without a readable active
+login, missing or empty profile storage remains a discovery error.
+
 ```json
 {
   "juniper_tide": {

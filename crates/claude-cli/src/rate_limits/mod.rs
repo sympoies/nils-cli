@@ -16,6 +16,7 @@ pub(crate) mod status;
 use anyhow::Result;
 use chrono::{Local, TimeZone, Utc};
 use nils_common::diag_output;
+use nils_common::env as shared_env;
 use nils_common::provider_usage::ProviderUsageReason;
 use nils_common::rate_limits::driver::{self, CacheFallbackPolicy};
 use nils_common::rate_limits::schema::{self, LOCAL_DATETIME, LOCAL_DATETIME_WITH_OFFSET};
@@ -45,6 +46,7 @@ const FIVE_HOUR_MINUTES: i64 = 300;
 const WEEKLY_MINUTES: i64 = 10_080;
 /// Row and cache name of an active login that no profile holds.
 const ACTIVE_NAME: &str = "active";
+const ASYNC_JSON_NO_CACHE_FALLBACK_ENV: &str = "CLAUDE_RATE_LIMITS_ASYNC_JSON_NO_CACHE_FALLBACK";
 
 static CLAUDE_SPEC: ProviderSpec = ProviderSpec {
     provider: "claude",
@@ -130,6 +132,39 @@ impl RateLimitsProvider for ClaudeRateLimits {
         store::secret_dir().unwrap_or_default()
     }
 
+    fn async_json_targets(
+        &self,
+    ) -> std::result::Result<Vec<PathBuf>, driver::TargetDiscoveryError> {
+        let secret_dir = self.secret_dir();
+        let profile_dir_missing = std::fs::metadata(&secret_dir)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+        let active = read_active_login().ok();
+        let active_path = active.as_ref().and_then(|_| store::credentials_file());
+        let mut targets =
+            match driver::collect_json_targets_from_dir(&CLAUDE_SPEC, &secret_dir, true) {
+                Ok(targets) => targets,
+                Err(error) if profile_dir_missing || error.1.contains("no secrets found") => {
+                    return match active_path {
+                        Some(path) => Ok(vec![path]),
+                        None => Err(error),
+                    };
+                }
+                Err(error) => return Err(error),
+            };
+
+        if let (Some(active), Some(active_path)) = (active, active_path) {
+            let represented = targets.iter().any(|target| {
+                read_profile_login(target)
+                    .is_ok_and(|profile| profile.access_token == active.access_token)
+            });
+            if !represented {
+                targets.push(active_path);
+            }
+        }
+        targets.sort();
+        Ok(targets)
+    }
+
     fn identity(&self, target: &Path) -> TargetIdentity {
         TargetIdentity {
             provider: "claude".to_string(),
@@ -152,6 +187,11 @@ impl RateLimitsProvider for ClaudeRateLimits {
         cached: bool,
         fallback: CacheFallbackPolicy,
     ) -> RateLimitResult {
+        let fallback = if shared_env::env_truthy(ASYNC_JSON_NO_CACHE_FALLBACK_ENV) && !cached {
+            CacheFallbackPolicy::NoWindow
+        } else {
+            fallback
+        };
         json_result(self, target, cached, fallback)
     }
 
@@ -693,14 +733,37 @@ fn target_name(target: &Path) -> String {
         return ACTIVE_NAME.to_string();
     };
     let secret_dir = store::secret_dir().unwrap_or_default();
-    driver::collect_json_targets_from_dir(&CLAUDE_SPEC, &secret_dir, false)
-        .unwrap_or_default()
-        .into_iter()
-        .find(|profile| {
-            read_profile_login(profile).is_ok_and(|login| login.access_token == active.access_token)
+    let profiles =
+        driver::collect_json_targets_from_dir(&CLAUDE_SPEC, &secret_dir, false).unwrap_or_default();
+    if let Some(profile) = profiles.iter().find(|profile| {
+        read_profile_login(profile).is_ok_and(|login| login.access_token == active.access_token)
+    }) {
+        return target_name(profile);
+    }
+
+    let profile_names = profiles
+        .iter()
+        .map(|profile| {
+            target_file_name(profile)
+                .trim_end_matches(".json")
+                .to_string()
         })
-        .map(|profile| target_name(&profile))
-        .unwrap_or_else(|| ACTIVE_NAME.to_string())
+        .collect::<Vec<_>>();
+    if !profile_names.iter().any(|name| name == ACTIVE_NAME) {
+        return ACTIVE_NAME.to_string();
+    }
+
+    if !profile_names.iter().any(|name| name == "active-login") {
+        return "active-login".to_string();
+    }
+    let mut suffix = 2_u64;
+    loop {
+        let candidate = format!("active-login-{suffix}");
+        if !profile_names.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
 }
 
 fn target_file_name(target: &Path) -> String {

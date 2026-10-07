@@ -117,7 +117,11 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> CmdOutput {
-        let output = run(args, &self.options());
+        self.run_with_options(args, &self.options())
+    }
+
+    fn run_with_options(&self, args: &[&str], options: &CmdOptions) -> CmdOutput {
+        let output = run(args, options);
         for text in [stdout(&output), stderr(&output)] {
             for secret in TOKEN_NAMES
                 .iter()
@@ -468,6 +472,17 @@ fn diag_rate_limits_async_json_falls_back_to_cache_and_cached_mode_stays_offline
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
     assert_eq!(payload["results"], json!([alpha_result("cache-fallback")]));
 
+    let strict = fx
+        .options()
+        .with_env("CLAUDE_RATE_LIMITS_ASYNC_JSON_NO_CACHE_FALLBACK", "true");
+    let output = fx.run_with_options(&["diag", "rate-limits", "--async", "--json"], &strict);
+    assert_exit(&output, 1);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["results"][0]["ok"], false);
+    assert_eq!(payload["results"][0]["reason_code"], "rate_limited");
+    assert_eq!(payload["results"][0]["source"], "network");
+
     fx.requests();
     let output = fx.run(&["diag", "rate-limits", "--cached", "alpha"]);
     assert_exit(&output, 0);
@@ -477,6 +492,104 @@ fn diag_rate_limits_async_json_falls_back_to_cache_and_cached_mode_stays_offline
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
     assert_eq!(payload["results"][0]["source"], "cache");
     assert!(fx.requests().is_empty());
+}
+
+#[test]
+fn diag_rate_limits_async_json_includes_unprofiled_active_login() {
+    let fx = Fixture::new();
+    fx.write_active_login("access-alpha", FUTURE_MS);
+
+    let output = fx.run(&["diag", "rate-limits", "--async", "--format", "json"]);
+
+    assert_exit(&output, 0);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["mode"], "async");
+    assert_eq!(payload["results"].as_array().unwrap().len(), 1);
+    assert_eq!(payload["results"][0]["name"], "active");
+    assert_eq!(payload["results"][0]["ok"], true);
+}
+
+#[test]
+fn diag_rate_limits_async_json_includes_unmatched_active_login_once() {
+    let fx = Fixture::new();
+    fx.write_profile("beta", "access-beta", FUTURE_MS);
+    fx.write_active_login("access-alpha", FUTURE_MS);
+
+    let output = fx.run(&["diag", "rate-limits", "--async", "--format", "json"]);
+
+    assert_exit(&output, 1);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["results"].as_array().unwrap().len(), 2);
+    assert!(
+        payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|result| { result["name"] == "active" && result["ok"] == true })
+    );
+    assert!(
+        payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|result| { result["name"] == "beta" && result["ok"] == false })
+    );
+}
+
+#[test]
+fn diag_rate_limits_async_json_keeps_active_identity_distinct_from_profile() {
+    let fx = Fixture::new();
+    fx.write_profile("active", "access-beta", FUTURE_MS);
+    fx.write_active_login("access-alpha", FUTURE_MS);
+
+    let output = fx.run(&["diag", "rate-limits", "--async", "--format", "json"]);
+
+    assert_exit(&output, 1);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    let results = payload["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    assert!(
+        results
+            .iter()
+            .any(|result| { result["name"] == "active" && result["ok"] == false })
+    );
+    assert!(
+        results
+            .iter()
+            .any(|result| { result["name"] == "active-login" && result["ok"] == true })
+    );
+}
+
+#[test]
+fn diag_rate_limits_async_json_fails_discovery_without_profiles_or_active_login() {
+    let fx = Fixture::new();
+
+    let output = fx.run(&["diag", "rate-limits", "--async", "--format", "json"]);
+    assert_exit(&output, 1);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "secret-discovery-failed");
+
+    std::fs::create_dir_all(fx.secret_dir()).expect("secret dir");
+    let output = fx.run(&["diag", "rate-limits", "--async", "--format", "json"]);
+    assert_exit(&output, 1);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "secret-discovery-failed");
+}
+
+#[test]
+fn diag_rate_limits_async_json_does_not_hide_invalid_profile_storage() {
+    let fx = Fixture::new();
+    fx.write_active_login("access-alpha", FUTURE_MS);
+    std::fs::write(fx.secret_dir(), "not a directory").expect("invalid secret dir");
+
+    let output = fx.run(&["diag", "rate-limits", "--async", "--format", "json"]);
+
+    assert_exit(&output, 1);
+    let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["code"], "secret-discovery-failed");
 }
 
 #[test]

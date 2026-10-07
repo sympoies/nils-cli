@@ -17,14 +17,14 @@
     "provider": "claude",
     "account": null,
     "label": "Claude",
-    "ok": true,
+    "ok": false,
     "stale": true,
     "plan": null,
     "windows": [],
     "updated_at": null,
-    "note": "Sign in to Claude to view usage.",
-    "error": null,
-    "reason_code": "auth_required",
+    "note": "Claude usage is unavailable right now.",
+    "error": "Claude usage is unavailable right now.",
+    "reason_code": "service_unavailable",
     "reset_credits": null
   }
 ]

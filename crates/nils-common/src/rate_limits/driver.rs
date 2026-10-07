@@ -130,6 +130,11 @@ pub trait RateLimitsProvider: Sync {
     fn json_targets(&self) -> std::result::Result<Vec<PathBuf>, TargetDiscoveryError> {
         collect_json_targets_from_dir(self.spec(), &self.secret_dir(), true)
     }
+    /// Targets used by the async JSON collection mode. Providers may include
+    /// an active credential that is not represented in their profile store.
+    fn async_json_targets(&self) -> std::result::Result<Vec<PathBuf>, TargetDiscoveryError> {
+        self.json_targets()
+    }
     fn identity(&self, target: &Path) -> TargetIdentity;
     /// Clears the provider cache for `-c`.
     fn clear_cache(&self) -> std::result::Result<(), String>;
@@ -316,7 +321,7 @@ fn run_async_json_mode<P: RateLimitsProvider>(provider: &P, args: &RunOptions) -
         return Ok(1);
     }
 
-    let targets = match provider.json_targets() {
+    let targets = match provider.async_json_targets() {
         Ok(value) => value,
         Err((code, message, details)) => {
             diag_output::emit_error(

@@ -45,7 +45,7 @@
   },
   {
     "provider": "claude",
-    "account": null,
+    "account": "alpha",
     "label": "Claude",
     "ok": true,
     "stale": false,
