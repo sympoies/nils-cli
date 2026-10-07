@@ -1207,6 +1207,9 @@ fn semantic_event_key(event: &TurnEvent) -> String {
         digest.update(value.as_bytes());
         digest.update(b"\0");
     }
+    if event.kind == TurnEventKind::StopObserved {
+        digest.update([u8::from(event.completion_candidate)]);
+    }
     format!("sha256:{}", hex_digest(digest.finalize()))
 }
 
@@ -6210,6 +6213,32 @@ mod tests {
             json!({"hook_event_name": "UserPromptSubmit"}),
             json!({"hook_event_name": "Stop", "stop_hook_active": false, "background_tasks": []}),
             json!({"hook_event_name": "PreToolUse", "tool_name": "Bash"}),
+        ] {
+            let mut raw = raw;
+            raw["session_id"] = json!("session-1");
+            raw["turn_id"] = json!("turn-1");
+            let event = normalize_provider_hook(AgentKind::Claude, None, runtime, &raw)
+                .unwrap()
+                .unwrap();
+            ingest_event(&context, &created.record.id, event).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(1100));
+        assert_eq!(
+            state_for_view(&context, &created.record).unwrap().phase,
+            TurnPhase::Working
+        );
+    }
+
+    #[test]
+    fn claude_reentrant_stop_cancels_completion_candidate() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+        activate_runtime(&context, &created.record).unwrap();
+        let runtime = &created.record.runtime.as_ref().unwrap().launch_id;
+        for raw in [
+            json!({"hook_event_name": "UserPromptSubmit"}),
+            json!({"hook_event_name": "Stop", "stop_hook_active": false, "background_tasks": []}),
+            json!({"hook_event_name": "Stop", "stop_hook_active": true, "background_tasks": []}),
         ] {
             let mut raw = raw;
             raw["session_id"] = json!("session-1");
