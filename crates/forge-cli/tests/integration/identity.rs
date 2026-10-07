@@ -672,7 +672,14 @@ esac
         ] {
             for missing in [false, true] {
                 let f = cross_repo_fixture(POLICY);
-                let script = fs::read_to_string(&f.gh).unwrap().replace("*) printf '[]';;", "api:repos/sandbox/widget) printf '{\"security_and_analysis\":{\"secret_scanning\":{\"status\":\"enabled\"}}}';;\n *) printf '[]';;");
+                let script = fs::read_to_string(&f.gh).unwrap().replace(
+                    "*) printf '[]';;",
+                    r#"*) case "$*" in
+ 'api -X GET repos/sandbox/widget/dependabot/alerts -f state=open -f per_page=100 --include') printf 'HTTP/2.0 200 OK\n\n[]';;
+ 'api repos/sandbox/widget') printf '{"security_and_analysis":{"secret_scanning":{"status":"enabled"}}}';;
+ *) echo "unexpected security read: $*" >&2; exit 97;;
+esac;;"#,
+                );
                 fs::write(&f.gh, script).unwrap();
                 let mut command = f.command();
                 command
