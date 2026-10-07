@@ -90,6 +90,8 @@ struct ActivityEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     provider_turn_id: Option<String>,
     kind: &'static str,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    completion_candidate: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     failure_reason: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -822,6 +824,7 @@ pub fn normalize_activity_event(
             provider_session_id: Some(provider_session_id),
             provider_turn_id: Some(subject.turn.to_string()),
             kind,
+            completion_candidate: false,
             failure_reason: None,
             attention_id: None,
             attention_kind: None,
@@ -982,6 +985,13 @@ pub fn normalize_activity_event(
         provider_session_id,
         provider_turn_id,
         kind,
+        completion_candidate: request.product == Product::Claude
+            && request.event == "Stop"
+            && object.get("stop_hook_active").and_then(Value::as_bool) == Some(false)
+            && object
+                .get("background_tasks")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty),
         failure_reason,
         attention_id,
         attention_kind,

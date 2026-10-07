@@ -339,6 +339,8 @@ struct ActivityDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pending_journal: Option<JournalEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_completion: Option<JournalEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     runtime_unhealthy_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     operator_provider_turn_receipts: Vec<OperatorProviderTurnReceipt>,
@@ -421,6 +423,8 @@ pub(crate) struct TurnEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) provider_turn_id: Option<String>,
     pub(crate) kind: TurnEventKind,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) completion_candidate: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) failure_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -497,6 +501,7 @@ pub(crate) fn ingest_codex_app_server_failure_with_kind(
             attention_kind: None,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: false,
+            completion_candidate: false,
             confidence: Confidence::Authoritative,
             // `provider_hook` is the stable v1 wire value for authoritative,
             // provider-structured evidence, including the app-server protocol.
@@ -562,6 +567,7 @@ pub(crate) fn ingest_codex_app_server_attention(
             attention_kind,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: true,
+            completion_candidate: false,
             confidence: Confidence::Authoritative,
             // `provider_hook` is the stable v1 wire value for all structured
             // provider evidence, including the app-server protocol.
@@ -1390,6 +1396,7 @@ fn activity_document_for_runtime(
         provider_session_id: provider_session_for_runtime(record, runtime_id)?,
         last_event_at: None,
         pending_journal: None,
+        pending_completion: None,
         runtime_unhealthy_reason: None,
         operator_provider_turn_receipts: Vec::new(),
         extra,
@@ -1810,10 +1817,11 @@ pub fn state_for_view(context: &CliContext, record: &SessionRecord) -> Option<Tu
         return None;
     }
     match read_document(&path) {
-        Ok(document)
+        Ok(mut document)
             if activity_matches_runtime(&document, record)
                 && replay_matches_document(&dir, &document) =>
         {
+            settle_claude_completion(&mut document, &now());
             Some(document.state)
         }
         Ok(_) | Err(_) => Some(unknown_state_with_reason(
@@ -2761,6 +2769,7 @@ fn ingest_event_with_lock(
             duplicate: true,
         });
     }
+    settle_claude_completion(&mut document, &received_at);
     reduce(&mut document, &event, &received_at);
     document.last_event_at = Some(received_at.clone());
     if matches!(event.source_kind, SourceKind::ProviderHook) {
@@ -3741,7 +3750,7 @@ pub(crate) fn doctor(
                 ),
                 AgentKind::Claude => (
                     "partial",
-                    "idle_prompt is observed completion; general PreToolUse reactivates continued work, while uncorrelated SubagentStop is ignored and raw Stop remains non-final because other hooks may continue",
+                    "qualifying Stop completes after a one-second quiet window; idle_prompt confirms completion; general PreToolUse reactivates continued work and SubagentStop is ignored",
                     "AskUserQuestion uses exact runtime-scoped tool_use_id correlation; Elicitation uses exact elicitation_id when both callbacks provide it and otherwise latches conservatively; other PermissionRequest and configured notification signals remain conservative latches",
                     "Claude settings hooks compose additively and execute with the user's permissions",
                     "Run activity setup --agent claude --dry-run and then --apply",
@@ -4995,6 +5004,7 @@ mod tests {
             attention_kind: None,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: false,
+            completion_candidate: false,
             confidence: Confidence::Observed,
             source_kind: SourceKind::ProviderHook,
             provider_time: None,
@@ -5019,6 +5029,7 @@ mod tests {
             provider_session_id: None,
             last_event_at: None,
             pending_journal: None,
+            pending_completion: None,
             runtime_unhealthy_reason: None,
             operator_provider_turn_receipts: Vec::new(),
             extra: Map::new(),
@@ -6129,6 +6140,90 @@ mod tests {
 
     fn test_session(tmp: &tempfile::TempDir) -> (CliContext, crate::CreatedRecord) {
         test_session_for_agent(tmp, AgentKind::Codex)
+    }
+
+    #[test]
+    fn claude_stop_completion_without_idle_prompt() {
+        for (event_name, stop_fields, expected) in [
+            (
+                "Stop",
+                json!({"stop_hook_active": false, "background_tasks": []}),
+                TurnPhase::Waiting,
+            ),
+            (
+                "Stop",
+                json!({"stop_hook_active": true, "background_tasks": []}),
+                TurnPhase::Working,
+            ),
+            (
+                "Stop",
+                json!({"stop_hook_active": false, "background_tasks": [{"id": "task-1"}]}),
+                TurnPhase::Working,
+            ),
+            ("Stop", json!({}), TurnPhase::Working),
+            (
+                "StopFailure",
+                json!({"error": "server_error"}),
+                TurnPhase::Waiting,
+            ),
+        ] {
+            let tmp = tempfile::TempDir::new().expect("tempdir");
+            let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+            activate_runtime(&context, &created.record).expect("activate");
+            let runtime = &created.record.runtime.as_ref().expect("runtime").launch_id;
+            let hook = |name: &str, fields: Value| {
+                let mut raw = json!({"hook_event_name": name, "session_id": "session-1", "turn_id": "turn-1"});
+                raw.as_object_mut()
+                    .unwrap()
+                    .extend(fields.as_object().unwrap().clone());
+                normalize_provider_hook(AgentKind::Claude, None, runtime, &raw)
+                    .unwrap()
+                    .unwrap()
+            };
+            ingest_event(
+                &context,
+                &created.record.id,
+                hook("UserPromptSubmit", json!({})),
+            )
+            .unwrap();
+            let initial =
+                ingest_event(&context, &created.record.id, hook(event_name, stop_fields)).unwrap();
+            if event_name == "Stop" {
+                assert_eq!(initial.turn_state.phase, TurnPhase::Working);
+            }
+            std::thread::sleep(Duration::from_millis(1100));
+            let state = state_for_view(&context, &created.record).unwrap();
+            assert_eq!(state.phase, expected, "{event_name}");
+            if expected == TurnPhase::Waiting {
+                assert!(state.current_turn.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn claude_stop_continuation_cancels_completion_candidate() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+        activate_runtime(&context, &created.record).unwrap();
+        let runtime = &created.record.runtime.as_ref().unwrap().launch_id;
+        for raw in [
+            json!({"hook_event_name": "UserPromptSubmit"}),
+            json!({"hook_event_name": "Stop", "stop_hook_active": false, "background_tasks": []}),
+            json!({"hook_event_name": "PreToolUse", "tool_name": "Bash"}),
+        ] {
+            let mut raw = raw;
+            raw["session_id"] = json!("session-1");
+            raw["turn_id"] = json!("turn-1");
+            let event = normalize_provider_hook(AgentKind::Claude, None, runtime, &raw)
+                .unwrap()
+                .unwrap();
+            ingest_event(&context, &created.record.id, event).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(1100));
+        assert_eq!(
+            state_for_view(&context, &created.record).unwrap().phase,
+            TurnPhase::Working
+        );
     }
 
     #[test]
@@ -9191,6 +9286,18 @@ mod tests {
 }
 
 fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Result<(), CliError> {
+    if event.completion_candidate
+        && !(event.provider == "claude"
+            && event.kind == TurnEventKind::StopObserved
+            && event.source_kind == SourceKind::ProviderHook
+            && event.confidence == Confidence::Observed)
+    {
+        return Err(CliError::data(
+            "activity-completion-candidate-invalid",
+            "completion candidates require an observed Claude provider Stop",
+            None,
+        ));
+    }
     let schema_supported = event.schema_version == TURN_EVENT_VERSION
         || (admission == EventAdmission::CodexProtocol
             && event.schema_version == CODEX_PROTOCOL_TURN_EVENT_VERSION);
@@ -9367,7 +9474,36 @@ fn open_provider_turn(document: &mut ActivityDocument, provider_turn_id: Option<
     });
 }
 
+/// Completion is a deterministic projection of the latest qualifying Stop.
+/// Reads never write activity; the next accepted event materializes the same
+/// settled state before reduction. Any event inside the quiet window cancels it.
+fn settle_claude_completion(document: &mut ActivityDocument, at: &str) {
+    let Some(pending) = document.pending_completion.as_ref() else {
+        return;
+    };
+    let Some(deadline) = pending
+        .received_at
+        .parse::<jiff::Timestamp>()
+        .ok()
+        .and_then(|time| time.checked_add(jiff::SignedDuration::from_secs(1)).ok())
+    else {
+        return;
+    };
+    if !at
+        .parse::<jiff::Timestamp>()
+        .is_ok_and(|time| time >= deadline)
+    {
+        return;
+    }
+    let mut completion = pending.event.clone();
+    completion.kind = TurnEventKind::TurnCompleted;
+    completion.completion_candidate = false;
+    reduce(document, &completion, &deadline.to_string());
+    document.state.diagnostic = None;
+}
+
 fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
+    document.pending_completion = None;
     let previous_phase = document.state.phase.clone();
     let mut source = provider_source(event);
     source.extra = document.state.source.extra.clone();
@@ -9487,8 +9623,20 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
             }
         }
         TurnEventKind::StopObserved => {
-            // A raw Stop can race another matching hook that continues the turn.
-            // Retain it in the journal/revision, but never fabricate Waiting.
+            // Matching Stop hooks run concurrently. Only an inactive Stop with
+            // no background tasks is a candidate, and later events cancel it.
+            if event.completion_candidate
+                && document.state.current_turn.as_ref().is_some_and(|turn| {
+                    event.provider_turn_id.is_none()
+                        || turn.provider_turn_id.is_none()
+                        || event.provider_turn_id == turn.provider_turn_id
+                })
+            {
+                document.pending_completion = Some(JournalEntry {
+                    received_at: at.to_string(),
+                    event: event.clone(),
+                });
+            }
         }
         TurnEventKind::TurnCompleted | TurnEventKind::TurnFailed => {
             let requires_exact_open_turn = event.provider == AgentKind::Codex.as_str()

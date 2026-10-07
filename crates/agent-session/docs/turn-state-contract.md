@@ -34,7 +34,9 @@ Required fields:
 
 Optional allowlisted fields are `provider_session_id`, `provider_turn_id`,
 `failure_reason`, `attention_id`, `attention_kind`, `source_kind`, and
-`provider_time`. Unknown
+`provider_time`, and optional `completion_candidate`. The latter is admitted only
+on observed Claude provider-hook `stop_observed` events and contains no raw hook
+payload. Unknown
 keys fail parsing. Identifiers are bounded, non-empty, and control-free.
 `attention_requested` requires an opaque correlation id and one of `approval`,
 `clarification`, `authentication`, or `other`; `attention_cleared` requires the
@@ -259,8 +261,19 @@ progress because it identifies a completed subagent without correlating that
 callback to active parent work; a late background callback must not resurrect a
 genuinely waiting parent turn. Positive progress never clears pending attention.
 
-Raw Claude `Stop` remains journal evidence and does not change the public
-`TurnPhase` by itself. The coordination notification controller applies a
+Claude `Stop` with explicit `stop_hook_active: false` and an empty
+`background_tasks` array carries `completion_candidate: true`. After one second
+without a newer accepted event, session views project observed `waiting` and a
+completed last turn, including when the composer contains a draft. Missing or
+malformed fields, active stop hooks, and background tasks remain non-final.
+Reads use a deterministic deadline and do not write activity; the next accepted
+event materializes the settled state before reduction. Any event inside the
+window cancels the candidate; later continuation progress reopens `working`.
+`StopFailure` remains immediately terminal and authoritative. `idle_prompt` is
+late observed confirmation, not the completion dependency. The confidence stays
+observed because another concurrent hook can continue after the quiet window.
+The support floor is Claude Code 2.1.206; the hooks contract was checked through
+2.1.289 against the [official reference](https://code.claude.com/docs/en/hooks#stop). The coordination notification controller applies a
 narrower input-safety rule: an exact-runtime `Stop` may authorize only the
 fixed body-free mailbox prompt after a short debounce with no later provider
 hook, no pending attention, and no attached tmux client. Any later provider
