@@ -93,6 +93,8 @@ pub enum Command {
     WorkContext(WorkContextArgs),
     /// Inspect or recover the per-session coordination broker.
     Broker(BrokerArgs),
+    /// Authenticate the current managed session and its runtime-issued checkpoint.
+    Readiness(ReadinessArgs),
     /// Exchange bounded private coordination mailbox messages.
     Message(MessageArgs),
     /// Attach and inspect bounded public metadata for one managed session.
@@ -116,6 +118,12 @@ pub enum Command {
     Delete(DeleteArgs),
     /// Print shell completion script.
     Completion(CompletionArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ReadinessArgs {
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, Args)]

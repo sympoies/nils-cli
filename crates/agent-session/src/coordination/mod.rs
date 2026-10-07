@@ -8,6 +8,7 @@ mod forwarding;
 pub mod mailbox;
 mod notification;
 pub use notification::NotificationProjection;
+pub mod readiness;
 pub(crate) mod remote;
 pub(crate) mod server;
 pub(crate) mod service;

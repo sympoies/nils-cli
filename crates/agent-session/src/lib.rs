@@ -352,6 +352,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Activity(args) => run_activity(&context, args),
         Command::WorkContext(args) => coordination::run_work_context(&context, args),
         Command::Broker(args) => coordination::run_broker(&context, args),
+        Command::Readiness(args) => coordination::readiness::run(&context, args),
         Command::Message(args) => coordination::run_message(&context, args),
         Command::Metadata(args) => metadata::run_metadata(&context, args),
         Command::Lineage(args) => lineage::run_lineage(&context, args),
@@ -371,6 +372,7 @@ fn dispatch(cli: Cli) -> i32 {
 
 fn coordination_command_name(command: &Command) -> Option<&'static str> {
     match command {
+        Command::Readiness(_) => Some("readiness"),
         Command::WorkContext(args) => Some(match &args.command {
             cli::WorkContextCommand::Status(_) => "work-context-status",
             cli::WorkContextCommand::Set(_) => "work-context-set",
@@ -421,6 +423,17 @@ fn coordination_command_name(command: &Command) -> Option<&'static str> {
 }
 
 fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
+    let mut root_args = args.iter().skip(1);
+    while let Some(arg) = root_args.next() {
+        match arg.to_str()? {
+            "--state-dir" | "--host" => {
+                root_args.next()?;
+            }
+            arg if arg.starts_with("--state-dir=") || arg.starts_with("--host=") => {}
+            "readiness" => return Some("readiness"),
+            _ => break,
+        }
+    }
     args.windows(2).find_map(|pair| {
         let group = pair[0].to_str()?;
         let leaf = pair[1].to_str()?;
@@ -464,6 +477,7 @@ fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
 
 fn command_format(command: &Command) -> OutputFormat {
     match command {
+        Command::Readiness(args) => args.format,
         Command::Start(args) => args.format,
         Command::Run(args) => args.format,
         Command::List(args) => args.format,
