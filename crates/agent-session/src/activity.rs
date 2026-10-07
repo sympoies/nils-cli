@@ -1834,6 +1834,31 @@ pub fn state_for_view(context: &CliContext, record: &SessionRecord) -> Option<Tu
     }
 }
 
+/// Read-only scheduling hint for the same runtime-fenced completion projection.
+/// A refresh at this deadline still re-reads state, so later hooks can cancel it.
+pub(crate) fn completion_deadline_for_view(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Option<jiff::Timestamp> {
+    if crate::dsh_external::is_external_record(record) {
+        return None;
+    }
+    let dir = session_dir(context, &record.id);
+    if let Some(runtime) = &record.runtime
+        && !matches!(
+            runtime_unhealthy_marker(&dir, &runtime.launch_id, runtime.generation),
+            RuntimeUnhealthyStatus::Absent
+        )
+    {
+        return None;
+    }
+    let document = read_document(&dir.join(ACTIVITY_FILE)).ok()?;
+    if !activity_matches_runtime(&document, record) || !replay_matches_document(&dir, &document) {
+        return None;
+    }
+    claude_completion_deadline(&document)
+}
+
 /// The turn identity observed immediately before a terminal-delivered prompt.
 /// Acknowledging that prompt means seeing a turn this snapshot did not already
 /// contain, so progress on a turn that was already running can never be
@@ -9503,6 +9528,17 @@ fn open_provider_turn(document: &mut ActivityDocument, provider_turn_id: Option<
     });
 }
 
+fn claude_completion_deadline(document: &ActivityDocument) -> Option<jiff::Timestamp> {
+    document
+        .pending_completion
+        .as_ref()?
+        .received_at
+        .parse::<jiff::Timestamp>()
+        .ok()?
+        .checked_add(jiff::SignedDuration::from_secs(1))
+        .ok()
+}
+
 /// Completion is a deterministic projection of the latest qualifying Stop.
 /// Reads never write activity; the next accepted event materializes the same
 /// settled state before reduction. Any event inside the quiet window cancels it.
@@ -9510,12 +9546,7 @@ fn settle_claude_completion(document: &mut ActivityDocument, at: &str) {
     let Some(pending) = document.pending_completion.as_ref() else {
         return;
     };
-    let Some(deadline) = pending
-        .received_at
-        .parse::<jiff::Timestamp>()
-        .ok()
-        .and_then(|time| time.checked_add(jiff::SignedDuration::from_secs(1)).ok())
-    else {
+    let Some(deadline) = claude_completion_deadline(document) else {
         return;
     };
     if !at
