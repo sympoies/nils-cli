@@ -2714,3 +2714,22 @@ fn retired_coordinator_takeover_binds_the_selected_lifecycle_source() {
         }
     }
 }
+
+#[test]
+fn rejected_published_reviewable_names_review_and_field() {
+    let mut malformed = review(HEAD, "pass");
+    malformed["body"] = json!(
+        malformed["body"]
+            .as_str()
+            .unwrap()
+            .replace("Reviewable: PR #7", "Reviewable: PR #7 at aaaaaaa")
+    );
+    let stub = fixture(HEAD, &records(handoff(None), Some(HEAD)), vec![malformed]);
+    let out = check(&stub, HEAD);
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+    let env = parse_envelope(&out.stdout);
+    assert_eq!(env["error"]["code"], "awaiting_designated_review");
+    let error = env["error"].to_string();
+    assert!(error.contains("Reviewable"), "{error}");
+    assert!(error.contains("REVIEW_1"), "{error}");
+}

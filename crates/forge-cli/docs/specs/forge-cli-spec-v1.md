@@ -772,6 +772,9 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   A newer current-interval blocked or malformed report supersedes an earlier
   pass. Unbound later-generation reports and ambiguous, malformed or unknown
   bindings are not skipped.
+  Admission applies the same exact Reviewable target binding as publication.
+  A rejected report returns `awaiting_designated_review` with detail
+  `review_id=<id>; field=Reviewable; cause=<validation message>`.
   Live designated `pr review --submit-review` binds both summary-only and
   threaded native reports to the admitted handoff record with the opaque marker
   `<!-- forge-cli:review-handoff:v1 <handoff-digest> -->`. This binding is captured
@@ -1071,6 +1074,11 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   closed `pass|findings|blocked|follow-up-pass` verdict vocabulary, and the
   canonical findings table with at least one exactly-five-cell row. Generic
   review comments omit this flag and remain valid.
+  On GitHub, the report must contain exactly one Reviewable value identifying
+  the selected PR: its URL, `PR #N`, `#N`, or `owner/repo#N`. These values
+  are compared exactly. A target mismatch returns `reviewable_mismatch`
+  (`DATA 65`) before provider access. Non-GitHub publication keeps the
+  canonical format checks without this GitHub target binding.
   Non-empty is not sufficient: a field whose whole value is one of the
   renderer's placeholders (`not provided`, `unspecified`, `no input files`) is
   rejected with `invalid_specialist_review_report`. `review-specialists` no
@@ -1267,7 +1275,12 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
 - With `--specialist-report`, the preflight also applies the canonical marker,
   field, verdict, and findings-table validation described above. A mismatch
   returns `invalid_specialist_review_report` (`DATA 65`) before diff or provider
-  access.
+  access. On GitHub when an `id` is supplied, the same target binding as
+  publication applies and a target mismatch returns `reviewable_mismatch`
+  (`DATA 65`). Without a repository slug, the local preflight accepts only
+  `PR #N` and `#N`; it does not require a repository or read a provider to
+  build the URL and repository-qualified forms. Without an `id`, or for a
+  non-GitHub provider, only canonical format/content validation applies.
 - Without `--check-diff`, validation is local-only and works for GitHub, GitLab,
   and Local provider contexts. This is the format/content dry-run path for
   agents that want to validate `review-report.md` and `review-threads.json`
