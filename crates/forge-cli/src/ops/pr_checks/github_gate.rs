@@ -161,11 +161,20 @@ fn requirements<R: BackendRunner>(
         }
     }
     let base = url::form_urlencoded::byte_serialize(head.base.as_bytes()).collect::<String>();
-    let rules = api(
+    let rules = match api(
         runner,
         ctx,
         format!("repos/{}/rules/branches/{base}?per_page=100", head.repo),
-    )?;
+    ) {
+        Ok(rules) => rules,
+        Err(error) if is_free_plan_rules_limitation(&error) => {
+            eprintln!(
+                "note: GitHub repository rules are unavailable for this repository plan; using GraphQL branch protection requirements"
+            );
+            return Ok(required);
+        }
+        Err(error) => return Err(error),
+    };
     let rules = rules
         .as_array()
         .ok_or_else(|| invalid("base branch rules"))?;
@@ -193,6 +202,16 @@ fn requirements<R: BackendRunner>(
         }
     }
     Ok(required)
+}
+
+fn is_free_plan_rules_limitation(error: &ForgeError) -> bool {
+    error.kind() == "backend_error"
+        && error.detail().is_some_and(|detail| {
+            detail.contains("(HTTP 403)")
+                && detail.contains(
+                    "Upgrade to GitHub Pro or make this repository public to enable this feature.",
+                )
+        })
 }
 
 pub(super) fn snapshot<R: BackendRunner>(
