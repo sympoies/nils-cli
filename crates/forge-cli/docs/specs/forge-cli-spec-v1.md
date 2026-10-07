@@ -1143,7 +1143,8 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   review comments omit this flag and remain valid.
   On GitHub, the report must contain exactly one Reviewable value identifying
   the selected PR: its URL, `PR #N`, `#N`, or `owner/repo#N`, optionally
-  followed by ` at <full commit SHA>` (40 hexadecimal digits). References
+  followed by a space and `at <full commit SHA>` (40 hexadecimal digits).
+  References
   are compared exactly. Offline validation checks the qualifier syntax;
   publication with `--expected-head` also requires it to match that head.
   A target, syntax, or head mismatch returns `reviewable_mismatch`
