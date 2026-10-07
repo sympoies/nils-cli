@@ -1,4 +1,5 @@
 pub(crate) mod advisory;
+pub(crate) mod audit;
 pub(crate) mod broker;
 pub mod claims;
 pub(crate) mod console_start;
@@ -303,6 +304,7 @@ pub(crate) fn run_broker(context: &CliContext, args: cli::BrokerArgs) -> i32 {
 
 pub(crate) fn run_message(context: &CliContext, args: cli::MessageArgs) -> i32 {
     let (command, format, result) = match args.command {
+        MessageCommand::Audit(args) => ("message-audit", args.format, audit::cli(context, args)),
         MessageCommand::Peers(args) => (
             "message-peers",
             args.format,

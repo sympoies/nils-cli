@@ -670,7 +670,21 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:agent-session-message-command-$line[1]:"
         case $line[1] in
-            (peers)
+            (audit)
+_arguments "${_arguments_options[@]}" : \
+'--older-than=[Unread or queued age threshold in seconds (strictly older)]:OLDER_THAN:_default' \
+'--limit=[Maximum metadata records per page (1..=100)]:LIMIT:_default' \
+'--cursor=[Resume a page with the same filters]:CURSOR:_default' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'--include-healthy[Include healthy metadata for joining source and destination observations]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(peers)
 _arguments "${_arguments_options[@]}" : \
 '--session=[Authenticated source session id]:SESSION:_default' \
 '--capability-file=[]:PATH:_files' \
@@ -1242,6 +1256,7 @@ _agent-session__subcmd__logs_commands() {
 (( $+functions[_agent-session__subcmd__message_commands] )) ||
 _agent-session__subcmd__message_commands() {
     local commands; commands=(
+'audit:Audit owner mailbox metadata across inbox incarnations and source deliveries' \
 'peers:Discover authorized remote mailbox recipients through the local daemon' \
 'delivery:Inspect durable remote delivery; delivered means saved, not read or accepted' \
 'send:Send one bounded private message and schedule an eventual fixed notification' \
@@ -1260,6 +1275,11 @@ _agent-session__subcmd__message_commands() {
 _agent-session__subcmd__message__subcmd__ack_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session message ack commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__message__subcmd__audit_commands] )) ||
+_agent-session__subcmd__message__subcmd__audit_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session message audit commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__message__subcmd__delivery_commands] )) ||
 _agent-session__subcmd__message__subcmd__delivery_commands() {

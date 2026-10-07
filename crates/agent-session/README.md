@@ -1,5 +1,14 @@
 # agent-session
 
+Audit one configured state root without reading message bodies:
+
+```sh
+agent-session message audit --older-than 300 --format json
+```
+
+The [mail audit contract](docs/specs/mail-audit-v1.md) documents pagination,
+operator authentication, anomaly codes and source/destination metadata joins.
+
 ## Overview
 
 `agent-session` starts and manages tmux-backed Codex, Claude Code, and DSH sessions for mobile handoff workflows. It is designed for

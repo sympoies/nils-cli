@@ -139,6 +139,9 @@ _agent__session() {
             agent__session__message,ack)
                 cmd="agent__session__message__ack"
                 ;;
+            agent__session__message,audit)
+                cmd="agent__session__message__audit"
+                ;;
             agent__session__message,delivery)
                 cmd="agent__session__message__delivery"
                 ;;
@@ -1442,7 +1445,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__message)
-            opts="-h --state-dir --host --help peers delivery send forward service-send inbox show ack reply wait reminder"
+            opts="-h --state-dir --host --help audit peers delivery send forward service-send inbox show ack reply wait reminder"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1501,6 +1504,47 @@ _agent__session() {
                     return 0
                     ;;
                 --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__message__audit)
+            opts="-h --older-than --limit --cursor --include-healthy --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --older-than)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --limit)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --cursor)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

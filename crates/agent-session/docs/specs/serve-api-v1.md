@@ -47,6 +47,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `POST /sessions/{id}/broker/{adopt,reconcile}/v1` | Bearer + capability; retained transition alias for the v2 authorization contract | [Coordination HTTP coverage](session-coordination-v1.md#http-coverage) |
 | `POST /sessions/{id}/operations/{lease_id}/operator-reconcile/v1` | Bearer; explicit confirmed operator attestation | [Coordination HTTP coverage](session-coordination-v1.md#http-coverage) |
 | `POST /sessions/{id}/activity/provider-turn/operator-reconcile/v1` | Bearer only; explicit confirmed inactive attestation | [Provider-turn reconciliation](session-coordination-v1.md#operator-provider-turn-reconciliation) |
+| `GET /coordination/messages/audit/v1` | Operator bearer | [Mail audit v1](mail-audit-v1.md) |
 | `GET and POST /sessions/{id}/messages/v1` | Bearer + capability | [Coordination HTTP coverage](session-coordination-v1.md#http-coverage) |
 | `GET /sessions/{id}/messages/{message_id}/v1` | Bearer + capability | [Coordination HTTP coverage](session-coordination-v1.md#http-coverage) |
 | `POST /sessions/{id}/messages/{message_id}/{ack,reply}/v1` | Bearer + capability | [Coordination HTTP coverage](session-coordination-v1.md#http-coverage) |

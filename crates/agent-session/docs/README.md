@@ -53,6 +53,8 @@ or integrating a specific subsystem.
   the `launch.agent = "dsh"` worker transport owned by the external
   dsh-runtime-kit plugin — capabilities probe, external launch contract, and
   the liveness sidecar.
+- [Mail audit v1](specs/mail-audit-v1.md): owner-only, paginated mailbox
+  metadata, anomalies, source journal and notification evidence.
 
 ## Evidence and migration reports
 

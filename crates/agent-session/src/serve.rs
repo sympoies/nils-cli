@@ -1209,6 +1209,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
 
 fn router(state: Arc<ServeState>) -> Router {
     Router::new()
+        .route(crate::coordination::audit::ROUTE, get(mail_audit_handler))
         .route(
             crate::coordination::service::ROUTE,
             post(service_mailbox_handler),
@@ -12268,6 +12269,40 @@ async fn remote_submit_handler(
         Err(_) => join_err(),
     }
 }
+async fn mail_audit_handler(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    query: Result<
+        Query<crate::coordination::audit::Query>,
+        axum::extract::rejection::QueryRejection,
+    >,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(_) => {
+            return envelope_err(CliError::usage(
+                "mail-audit-query-invalid",
+                "mail audit query is invalid",
+                None,
+            ));
+        }
+    };
+    let context = state.context.clone();
+    let machine = state.machine.clone();
+    match tokio::task::spawn_blocking(move || {
+        crate::coordination::audit::snapshot(&context, &machine, query)
+    })
+    .await
+    {
+        Ok(Ok(value)) => envelope_ok(value),
+        Ok(Err(error)) => envelope_err(error),
+        Err(_) => join_err(),
+    }
+}
+
 async fn remote_peers_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
@@ -35125,6 +35160,82 @@ exit 0
         perms.set_mode(0o755);
         std::fs::set_permissions(&bin, perms).unwrap();
         bin
+    }
+
+    #[tokio::test]
+    async fn mail_audit_owner_endpoint_is_body_free_read_only_and_authenticates_operator() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/coordination/mail-audit-v1.json"
+        ))
+        .unwrap();
+        let root = tmp.path().join("coordination");
+        fs::create_dir_all(&root).unwrap();
+        let registry = root.join("registry.json");
+        let journal = root.join("federation-journal.json");
+        for (path, value) in [
+            (&registry, &fixture["registry"]),
+            (&journal, &fixture["journal"]),
+        ] {
+            nils_common::fs::write_atomic(path, &serde_json::to_vec(value).unwrap(), 0o600)
+                .unwrap();
+        }
+        let before = (fs::read(&registry).unwrap(), fs::read(&journal).unwrap());
+        for token in [None, Some("session-capability-is-not-operator-authority")] {
+            let (status, _) = call(
+                router(st.clone()),
+                get_auth(crate::coordination::audit::ROUTE, token),
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+        let (status, body) = call(
+            router(st.clone()),
+            get_auth(crate::coordination::audit::ROUTE, Some(TOKEN)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["data"]["schema_version"],
+            "agent-session.mail-audit.v1"
+        );
+        for canary in [
+            "BODY_CANARY",
+            "TOKEN_CANARY",
+            "HASH_CANARY",
+            "PATH_CANARY",
+            "REASON_CANARY",
+        ] {
+            assert!(!body.to_string().contains(canary), "{canary}");
+        }
+        let local = crate::coordination::audit::snapshot(
+            &st.context,
+            &st.machine,
+            crate::coordination::audit::Query::default(),
+        )
+        .unwrap();
+        assert_eq!(body["data"]["records"], local["records"]);
+        assert_eq!(
+            before,
+            (fs::read(&registry).unwrap(), fs::read(&journal).unwrap())
+        );
+        for query in [
+            "?limit=0",
+            "?include_healthy=invalid",
+            "?body=true",
+            "?cursor=invalid",
+        ] {
+            let (status, _) = call(
+                router(st.clone()),
+                get_auth(
+                    &format!("{}{}", crate::coordination::audit::ROUTE, query),
+                    Some(TOKEN),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
     }
 
     #[tokio::test]
