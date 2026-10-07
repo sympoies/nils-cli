@@ -34,7 +34,7 @@ const CLAUDE_RESET_CLI_COMMAND: &str = "auth reset-rate-limits";
 const REFRESH_ENV: &str = "AGENT_SESSION_USAGE_V1_REFRESH_SECONDS";
 const RESET_ACCOUNTS_ENV: &str = "AGENT_SESSION_CODEX_RESET_ACCOUNTS";
 const CLAUDE_RESET_ACCOUNTS_ENV: &str = "AGENT_SESSION_CLAUDE_RESET_ACCOUNTS";
-const CLAUDE_INNER_TIMEOUT_ENV: &str = "CLAUDE_PROMPT_SEGMENT_CLAUDE_TIMEOUT_SECONDS";
+const CLAUDE_DIAG_NO_CACHE_FALLBACK_ENV: &str = "CLAUDE_RATE_LIMITS_ASYNC_JSON_NO_CACHE_FALLBACK";
 
 /// A completed snapshot is served as fresh for this long; the next read after
 /// it starts one background refresh.
@@ -52,8 +52,6 @@ const REFRESH_WAIT: Duration = Duration::from_secs(7);
 /// served as the last snapshot with a refreshing note.
 const RESET_RESPONSE_BUDGET: Duration = Duration::from_secs(6);
 const HELPER_TIMEOUT: Duration = Duration::from_secs(30);
-/// `claude-cli` may fall back to a PTY probe; leave room to kill it cleanly.
-const CLAUDE_INNER_TIMEOUT_SECONDS: u64 = 25;
 const RESET_TIMEOUT: Duration = Duration::from_secs(30);
 /// `claude-cli` may probe the Claude Code version (3 seconds), reads status
 /// (`CLAUDE_RESET_STATUS_SECONDS`), and then posts once
@@ -247,17 +245,15 @@ impl Entry {
         }
     }
 
-    /// No completed refresh to show: Codex reports a failure, Claude a
-    /// degraded sign-in or availability state, as the replaced helper did.
+    /// No completed refresh to show, whether the failure came from a provider
+    /// or its helper.
     fn unavailable(provider: Provider, reason: ProviderUsageReason) -> Self {
         let message = reason_message(provider, reason);
-        let mut entry = Self::new(provider, provider == Provider::Claude);
+        let mut entry = Self::new(provider, false);
         entry.stale = true;
         entry.note = Some(message);
+        entry.error = Some(message);
         entry.reason = Some(reason);
-        if provider == Provider::Codex {
-            entry.error = Some(message);
-        }
         entry
     }
 
@@ -520,6 +516,15 @@ const CODEX_DIAG_ARGS: &[&str] = &[
     "json",
     "--no-refresh-auth",
 ];
+const CLAUDE_DIAG_ARGS: &[&str] = &[
+    "diag",
+    "rate-limits",
+    "--async",
+    "--format",
+    "json",
+    "--jobs",
+    "16",
+];
 
 /// `(key, label, window_minutes)` for a codex-cli window label: `Weekly`, or a
 /// provider duration such as `5h` or `1d`.
@@ -676,100 +681,102 @@ fn refresh_codex() -> Refresh {
 
 // --- Claude ----------------------------------------------------------------------
 
-fn claude_windows(result: &Value) -> Vec<Value> {
-    result
+fn claude_diag_entry(result: &Value, now: i64) -> Option<Entry> {
+    let account = result.get("name").and_then(Value::as_str)?;
+    if !valid_nickname(account) {
+        return None;
+    }
+
+    let successful = result.get("ok").and_then(Value::as_bool) == Some(true)
+        && result.get("status").and_then(Value::as_str) == Some("ok");
+    if !successful {
+        let reason = helper_reason(result).unwrap_or(ProviderUsageReason::Unknown);
+        let message = reason_message(Provider::Claude, reason);
+        let mut entry = Entry::unavailable(Provider::Claude, reason);
+        entry.account = Some(account.to_string());
+        entry.ok = false;
+        entry.error = Some(message);
+        return Some(entry);
+    }
+
+    let mut entry = Entry::new(Provider::Claude, true);
+    entry.account = Some(account.to_string());
+    let source = result.get("source").and_then(Value::as_str);
+    entry.updated_at = (source == Some("network")).then_some(now);
+    entry.stale = entry.updated_at.is_none();
+    entry.plan = result
+        .get("plan")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            result
+                .get("raw_usage")
+                .and_then(|raw| raw.get("plan_type"))
+                .and_then(Value::as_str)
+        })
+        .filter(|plan| safe_token(plan, 64, b"._-"))
+        .map(str::to_string);
+    entry.windows = result
         .get("windows")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|raw| {
-            let key = raw
-                .get("key")
-                .and_then(Value::as_str)
-                .filter(|key| safe_token(key, 32, b"_-"))?;
-            let label = raw
-                .get("label")
-                .and_then(Value::as_str)
-                .filter(|label| safe_token(label, 32, b" ._-"))
-                .unwrap_or(key);
-            let minutes = raw
-                .get("window_minutes")
-                .and_then(Value::as_number)
-                .filter(|minutes| minutes.as_f64().is_some_and(|v| v.is_finite() && v > 0.0))
-                .cloned();
-            let resets_at = epoch_field(raw.get("resets_at_epoch"))
-                .or_else(|| epoch_field(raw.get("resets_at")));
-            Some(window(
-                key,
-                label,
+            let label = raw.get("label").and_then(Value::as_str)?;
+            let label = Value::String(label.to_string());
+            codex_window(
+                Some(&label),
                 percent_field(raw.get("used_percent")),
-                minutes,
-                resets_at,
-            ))
+                epoch_field(raw.get("reset_at_epoch")),
+            )
         })
         .take(MAX_WINDOWS)
-        .collect()
-}
-
-fn claude_entry(result: &Value, now: i64) -> Entry {
-    let reason = reason_code(result.get("reason_code"));
-    let windows = claude_windows(result);
-    let stale = result.get("stale").and_then(Value::as_bool) == Some(true);
-    let mut entry = Entry::new(Provider::Claude, true);
-    entry.reason = reason;
-    entry.plan = result
-        .get("plan")
-        .and_then(Value::as_str)
-        .filter(|plan| safe_token(plan, 64, b"._-"))
-        .map(str::to_string);
-    entry.updated_at =
-        epoch_field(result.get("updated_at")).or((!stale && !windows.is_empty()).then_some(now));
-    let reason_note = reason.map(|reason| reason_message(Provider::Claude, reason));
-    if windows.is_empty() {
+        .collect();
+    if entry.windows.is_empty() {
         entry.stale = true;
-        entry.note = reason_note.or(Some(CLAUDE_NOTE_NO_WINDOWS));
-    } else {
-        entry.stale = stale;
-        entry.note = reason_note.or(stale.then_some(CLAUDE_NOTE_STALE_LAST_GOOD));
-        entry.windows = windows;
+        entry.updated_at = None;
+        entry.note = Some(CLAUDE_NOTE_NO_WINDOWS);
+    } else if entry.stale {
+        entry.note = Some(CLAUDE_NOTE_STALE_LAST_GOOD);
     }
-    entry
+    Some(entry)
 }
 
 fn parse_claude(output: &HelperOutput, now: i64) -> Refresh {
     let Ok(value) = serde_json::from_slice::<Value>(&output.stdout) else {
         return Refresh::Failed(ProviderUsageReason::ServiceUnavailable);
     };
-    let result = value.get("result").filter(|result| result.is_object());
-    if output.status == Some(0)
-        && value.get("ok").and_then(Value::as_bool) == Some(true)
-        && let Some(result) = result
+    if value.get("schema_version").and_then(Value::as_str) != Some("claude-cli.diag.rate-limits.v1")
+        || value.get("command").and_then(Value::as_str) != Some("diag rate-limits")
+        || !matches!(
+            value.get("mode").and_then(Value::as_str),
+            Some("all" | "async")
+        )
     {
-        return Refresh::Completed(vec![claude_entry(result, now)]);
+        return Refresh::Failed(ProviderUsageReason::ServiceUnavailable);
     }
-    // A failed run is still a completed answer when it classified a reason,
-    // such as a signed-out account.
-    match result
-        .and_then(helper_reason)
-        .or_else(|| helper_reason(&value))
-    {
-        Some(reason) => Refresh::Completed(vec![Entry::unavailable(Provider::Claude, reason)]),
-        None => Refresh::Failed(ProviderUsageReason::ServiceUnavailable),
+    let entries: Vec<Entry> = value
+        .get("results")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|result| claude_diag_entry(result, now))
+        .take(MAX_ACCOUNTS)
+        .collect();
+    if entries.is_empty() {
+        return Refresh::Failed(
+            helper_reason(&value).unwrap_or(ProviderUsageReason::ServiceUnavailable),
+        );
     }
+    // The diag command returns a per-account status and may exit nonzero when
+    // only some profiles failed; retain each account's independent outcome.
+    Refresh::Completed(entries)
 }
 
 fn refresh_claude() -> Refresh {
-    let inner = std::env::var(CLAUDE_INNER_TIMEOUT_ENV)
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .filter(|seconds| *seconds > 0)
-        .map_or(CLAUDE_INNER_TIMEOUT_SECONDS, |seconds| {
-            seconds.min(CLAUDE_INNER_TIMEOUT_SECONDS)
-        });
     match run_helper(
         "claude-cli",
-        &["usage", "--format", "json", "--source", "auto"],
-        &[(CLAUDE_INNER_TIMEOUT_ENV, inner.to_string())],
+        CLAUDE_DIAG_ARGS,
+        &[(CLAUDE_DIAG_NO_CACHE_FALLBACK_ENV, "1".to_string())],
         HELPER_TIMEOUT,
         HELPER_OUTPUT_LIMIT,
     ) {

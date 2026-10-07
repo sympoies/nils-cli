@@ -1,0 +1,57 @@
+{
+  "schema_version": "claude-cli.diag.rate-limits.v1",
+  "command": "diag rate-limits",
+  "mode": "async",
+  "ok": false,
+  "results": [
+    {
+      "provider": "claude",
+      "name": "alpha",
+      "target_file": "alpha.json",
+      "status": "ok",
+      "ok": true,
+      "source": "network",
+      "plan": "max",
+      "windows": [
+        { "label": "5h", "used_percent": 25.0, "reset_at_epoch": 4102462800 },
+        { "label": "Weekly", "used_percent": 40.0, "reset_at_epoch": 4102963200 }
+      ]
+    },
+    {
+      "provider": "claude",
+      "name": "bravo",
+      "target_file": "bravo.json",
+      "status": "error",
+      "ok": false,
+      "source": "network",
+      "reason_code": "auth_expired",
+      "error": {
+        "code": "request-failed",
+        "message": "expired credentials in /srv/SECRET-MARKER/bravo.json"
+      }
+    },
+    {
+      "provider": "claude",
+      "name": "charlie",
+      "target_file": "charlie.json",
+      "status": "error",
+      "ok": false,
+      "source": "network",
+      "error": {
+        "code": "request-failed",
+        "message": "unclassified provider failure /srv/SECRET-MARKER/charlie.json"
+      }
+    },
+    {
+      "provider": "claude",
+      "name": "delta",
+      "target_file": "delta.json",
+      "status": "ok",
+      "ok": true,
+      "source": "cache-fallback",
+      "windows": [
+        { "label": "5h", "used_percent": 11, "reset_at_epoch": 4102462800 }
+      ]
+    }
+  ]
+}

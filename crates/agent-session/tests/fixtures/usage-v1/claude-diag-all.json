@@ -1,0 +1,21 @@
+{
+  "schema_version": "claude-cli.diag.rate-limits.v1",
+  "command": "diag rate-limits",
+  "mode": "async",
+  "ok": true,
+  "results": [
+    {
+      "provider": "claude",
+      "name": "alpha",
+      "target_file": "alpha.json",
+      "status": "ok",
+      "ok": true,
+      "source": "network",
+      "plan": "max",
+      "windows": [
+        { "label": "5h", "used_percent": 25.0, "reset_at_epoch": 4102462800 },
+        { "label": "Weekly", "used_percent": 40.0, "reset_at_epoch": 4102963200 }
+      ]
+    }
+  ]
+}

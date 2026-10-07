@@ -1019,16 +1019,30 @@ synthetic fixtures under `tests/fixtures/usage-v1/` pin that projection.
   all-failed account list also stays per-account. That run also refreshes the
   shared rate-limit cache that `codex-cli account select` reads, so an account
   selection within the cache TTL does no provider fetch.
-- Claude contributes one entry (`account: null`) from
-  `claude-cli usage --format json --source auto`. A result without windows,
-  such as a signed-out account, stays `ok: true` with `stale: true`, a fixed
-  `note`, and its `reason_code`.
+- Claude contributes one entry per valid profile nickname from
+  `claude-cli diag rate-limits --async --format json --jobs 16`. The bounded
+  parallel run disables cache fallback on profile failures so an old healthy
+  cache cannot mask the failed account's reason. A successful network result
+  is a fresh `ok: true` entry with that nickname in `account`. The active
+  Claude Code login is also included when its access token is not already
+  represented by a saved profile. It uses `account: "active"` unless that
+  nickname is already used by a profile, in which case it uses an unused
+  `active-login` nickname; an optional
+  helper-supplied plan is retained only when it is a bounded token. A
+  profile-level failure is an `ok: false`, `stale: true` entry
+  with the account nickname, a fixed `error` and `note`, and its classified
+  `reason_code`; an unclassified profile failure uses `unknown`. A successful
+  result without windows remains `ok: true` and stale with a fixed `note`.
+  A successful no-window result may use the helper's cached fallback; these
+  cached results are stale and their windows are hidden because the helper
+  does not expose the cache timestamp.
 - A helper can fail to run, time out after 30 seconds, or return an unusable
   document. If the provider has no earlier success, or its last success is
   600 seconds old or more, it is then reported as one entry with
   `account: null`, `stale: true`, and a `reason_code` of `service_unavailable`,
   `timeout`, or the helper's own classified reason. That entry replaces any
-  per-account entries. Codex marks it `ok: false`.
+  per-account entries because the helper did not provide a usable account
+  inventory. Both providers mark it `ok: false` and include a fixed `error`.
 - `reason_code` is always `null` or one of `auth_required`, `auth_expired`,
   `billing_past_due`, `subscription_inactive`, `organization_disabled`,
   `permission_denied`, `rate_limited`, `service_unavailable`, `timeout`, or

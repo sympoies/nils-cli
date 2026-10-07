@@ -79,11 +79,11 @@ impl Stubs {
             ),
             (
                 "claude-cli",
-                &[("usage", "claude-usage"), ("auth", "claude-reset")][..],
+                &[("diag", "claude-diag"), ("auth", "claude-reset")][..],
             ),
         ] {
             let mut script = format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\nprintf 'timeouts post=%s status=%s\\n' \"$CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS\" \"$CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS\" >> '{env_log}'\ncase \"$1\" in\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\nprintf 'timeouts post=%s status=%s\\n' \"$CLAUDE_RATE_LIMITS_RESET_MAX_TIME_SECONDS\" \"$CLAUDE_PROMPT_SEGMENT_MAX_TIME_SECONDS\" >> '{env_log}'\nprintf 'diag_no_cache_fallback=%s\\n' \"$CLAUDE_RATE_LIMITS_ASYNC_JSON_NO_CACHE_FALLBACK\" >> '{env_log}'\ncase \"$1\" in\n",
                 log = stubs.log_path(program).display(),
                 env_log = stubs.dir.join(format!("{program}.env.log")).display()
             );
@@ -101,11 +101,7 @@ impl Stubs {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("stub mode");
         }
         stubs.answer("codex-diag", &fixture("codex-diag-all.json"), 0);
-        stubs.answer(
-            "claude-usage",
-            &fresh_claude(fixture("claude-usage.json")),
-            0,
-        );
+        stubs.answer("claude-diag", &fixture("claude-diag-all.json"), 0);
         stubs.answer("codex-reset", &fixture("codex-reset-cli.json"), 0);
         stubs.answer("claude-reset", &fixture("claude-reset-cli.json"), 0);
         stubs
@@ -155,11 +151,6 @@ fn diag_with_alpha_credits(count: u64) -> Value {
 
 fn alpha_credits(body: &Value) -> Value {
     body["data"]["usage"]["providers"][0]["reset_credits"]["available_count"].clone()
-}
-
-fn fresh_claude(mut body: Value) -> Value {
-    body["result"]["updated_at"] = json!(now_epoch());
-    body
 }
 
 /// Kills its serve on drop, so a failed assertion cannot orphan a daemon.
@@ -367,13 +358,15 @@ fn usage_v1_projects_provider_clis_into_the_edge_contract() {
         vec!["diag rate-limits --all --format json --no-refresh-auth"]
     );
     assert_eq!(
-        stubs.calls("claude-cli", "usage"),
-        vec!["usage --format json --source auto"]
+        stubs.calls("claude-cli", "diag"),
+        vec!["diag rate-limits --async --format json --jobs 16"]
     );
+    let claude_env = fs::read_to_string(stubs.dir.join("claude-cli.env.log")).unwrap();
+    assert!(claude_env.contains("diag_no_cache_fallback=1"));
 }
 
 #[test]
-fn usage_v1_keeps_healthy_codex_and_claude_when_other_accounts_fail() {
+fn usage_v1_keeps_healthy_codex_when_other_accounts_fail() {
     let (tmp, stubs) = setup();
     let mut diag = fixture("codex-diag-all.json");
     diag["ok"] = json!(false);
@@ -415,10 +408,87 @@ fn usage_v1_keeps_healthy_codex_and_claude_when_other_accounts_fail() {
 }
 
 #[test]
+fn usage_v1_keeps_healthy_codex_and_claude_when_other_accounts_fail() {
+    let (tmp, stubs) = setup();
+    stubs.answer("claude-diag", &fixture("claude-diag-mixed.json"), 1);
+    let serve = Serve::spawn(tmp.path(), &stubs, &[]);
+    let since = now_epoch();
+
+    let body = serve.usage("/usage/v1");
+    let providers = body["data"]["usage"]["providers"].as_array().unwrap();
+
+    assert_eq!(providers.len(), 7);
+    assert_eq!(providers[0]["account"], "alpha");
+    assert_eq!(providers[0]["ok"], true);
+    assert_eq!(providers[1]["account"], "bravo");
+    assert_eq!(providers[1]["ok"], false);
+    assert_eq!(providers[3]["account"], "alpha");
+    assert_eq!(providers[3]["ok"], true);
+    assert_eq!(providers[3]["windows"].as_array().unwrap().len(), 2);
+    assert_eq!(providers[4]["account"], "bravo");
+    assert_eq!(providers[4]["ok"], false);
+    assert_eq!(providers[4]["reason_code"], "auth_expired");
+    assert_eq!(providers[5]["account"], "charlie");
+    assert_eq!(providers[5]["ok"], false);
+    assert_eq!(providers[5]["reason_code"], "unknown");
+    assert_eq!(providers[6]["account"], "delta");
+    assert_eq!(providers[6]["ok"], true);
+    assert_eq!(providers[6]["stale"], true);
+    assert_eq!(providers[6]["updated_at"], Value::Null);
+    assert_eq!(providers[6]["windows"], json!([]));
+    assert_eq!(
+        providers[6]["note"],
+        "Showing last known Claude usage (live fetch is failing)."
+    );
+    assert_eq!(providers[3]["plan"], "max");
+    assert_eq!(
+        providers[4]["error"],
+        "Your Claude sign-in has expired. Sign in again."
+    );
+    assert!(
+        providers[5]["error"]
+            .as_str()
+            .unwrap()
+            .contains("unavailable")
+    );
+    for index in [0, 2, 3] {
+        let updated_at = providers[index]["updated_at"]
+            .as_i64()
+            .expect("healthy timestamp");
+        assert!((since - 1..=now_epoch() + 1).contains(&updated_at));
+    }
+    assert_eq!(
+        stubs.calls("claude-cli", "diag"),
+        vec!["diag rate-limits --async --format json --jobs 16"]
+    );
+    assert!(!body.to_string().contains("SECRET-MARKER"));
+}
+
+#[test]
 fn usage_v1_reports_fixed_reason_codes_when_a_provider_is_unavailable() {
     let (tmp, stubs) = setup();
     stubs.answer("codex-diag", &fixture("codex-diag-failed.json"), 1);
-    stubs.answer("claude-usage", &fixture("claude-usage-signed-out.json"), 0);
+    stubs.answer("claude-diag", &fixture("claude-diag-signed-out.json"), 1);
+    let serve = Serve::spawn(tmp.path(), &stubs, &[]);
+
+    let body = serve.usage("/usage/v1");
+
+    let providers = body["data"]["usage"]["providers"].as_array().unwrap();
+    let claude = providers
+        .iter()
+        .find(|entry| entry["provider"] == "claude")
+        .unwrap();
+    assert_eq!(claude["account"], "alpha");
+    assert_eq!(claude["ok"], false);
+    assert_eq!(claude["reason_code"], "auth_required");
+    assert_eq!(claude["note"], "Sign in to Claude to view usage.");
+}
+
+#[test]
+fn usage_v1_reports_provider_unavailable_when_claude_helper_has_no_account_results() {
+    let (tmp, stubs) = setup();
+    stubs.answer("codex-diag", &fixture("codex-diag-failed.json"), 1);
+    stubs.answer("claude-diag", &json!({}), 1);
     let serve = Serve::spawn(tmp.path(), &stubs, &[]);
 
     let body = serve.usage("/usage/v1");
@@ -438,12 +508,12 @@ fn usage_v1_serves_the_cached_snapshot_until_a_refresh_is_forced() {
     let second = serve.usage("/usage/v1");
     assert_eq!(first, second);
     assert_eq!(stubs.calls("codex-cli", "diag").len(), 1);
-    assert_eq!(stubs.calls("claude-cli", "usage").len(), 1);
+    assert_eq!(stubs.calls("claude-cli", "diag").len(), 1);
 
     stubs.answer("codex-diag", &diag_with_alpha_credits(1), 0);
     let forced = serve.usage("/usage/v1?refresh=1");
     assert_eq!(stubs.calls("codex-cli", "diag").len(), 2);
-    assert_eq!(stubs.calls("claude-cli", "usage").len(), 2);
+    assert_eq!(stubs.calls("claude-cli", "diag").len(), 2);
     assert_eq!(forced["data"]["usage"]["providers"][0]["stale"], false);
     assert_eq!(alpha_credits(&forced), 1);
 }
@@ -853,7 +923,7 @@ fn claude_reset_redeems_once_and_replays_the_recorded_outcome() {
     let (tmp, stubs) = setup();
     let serve = claude_reset_serve(&tmp, &stubs);
     serve.usage("/usage/v1");
-    assert_eq!(stubs.calls("claude-cli", "usage").len(), 1);
+    assert_eq!(stubs.calls("claude-cli", "diag").len(), 1);
     let request = claude_request("alpha", "cedar_ember", RESET_KEY);
 
     let (status, text) = serve.post("/claude/reset/v1", Some(TOKEN), &request);
@@ -868,7 +938,7 @@ fn claude_reset_redeems_once_and_replays_the_recorded_outcome() {
         )]
     );
     // A recorded reset refreshes the Claude usage slot.
-    stubs.wait_for_calls("claude-cli", "usage", 2);
+    stubs.wait_for_calls("claude-cli", "diag", 2);
 
     // Same key, account, and program: replay without a second redemption.
     let (status, text) = serve.post("/claude/reset/v1", Some(TOKEN), &request);
