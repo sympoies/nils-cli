@@ -185,8 +185,11 @@ provenance. This is uncertainty, not confirmed `interrupted` or `waiting`: the
 open turn and last-turn outcome remain intact. Runtime launch/generation and
 activity revision fence both samples; a new prompt or any newer hook invalidates
 them. A working indicator, attention, draft, missing marker, stale sample, or
-runtime replacement cannot produce this projection. A ready serve activity broker refreshes on a 15-second timer even without
+runtime replacement cannot produce this projection. A ready serve activity
+broker refreshes on a 15-second timer even without
 hooks or HTTP polling, and completed shadow writes refresh stream snapshots.
+Sample timestamp changes alone update the cache without broadcasting a new
+snapshot; changed rules or turn-state projections still reach subscribers.
 Sampling is throttled to once per 15 seconds for each runtime, including across
 activity revisions, giving a nominal bound of 30 seconds plus collection and
 stream debounce latency. One-shot CLI views read only the cache. No observer or

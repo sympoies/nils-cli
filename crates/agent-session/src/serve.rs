@@ -1671,6 +1671,7 @@ impl ActivityEventLog {
         let mut state = self.state.lock().expect("activity event state lock");
         let unchanged = state.latest_sessions == sessions;
         if unchanged {
+            state.latest_sessions = sessions;
             state.latest_observed_at = activity_observed_at();
             if !state.latest_snapshot_oversized {
                 state.cached_snapshot = None;
@@ -18925,6 +18926,81 @@ esac
         .expect("canonical Agent Console producer fixture");
 
         assert_eq!(serde_json::to_value(event).unwrap(), expected);
+    }
+
+    #[test]
+    fn activity_stream_shadow_resampling_does_not_broadcast_unchanged_state() {
+        let mut turn = test_stream_turn_state(7, "2026-10-07T00:00:00Z");
+        turn.source.provider = Some("claude".into());
+        turn.shadow_observation = Some(crate::activity::StreamShadowObservationView {
+            observer_version: "terminal-shadow.v1".into(),
+            rule_id: "claude_working_indicator".into(),
+            observed_at: "2026-10-07T00:00:00Z".into(),
+            projection: "working".into(),
+            disagrees: false,
+        });
+        let session = ActivityStreamSession {
+            id: "shadow-session".into(),
+            turn_state: Some(turn),
+        };
+        let log = ActivityEventLog::new(MACHINE.into(), vec![session.clone()]);
+        let initial_sequence = log.sequence.load(Ordering::SeqCst);
+        let mut resampled = session;
+        resampled
+            .turn_state
+            .as_mut()
+            .unwrap()
+            .shadow_observation
+            .as_mut()
+            .unwrap()
+            .observed_at = "2026-10-07T00:00:15Z".into();
+        log.publish_snapshot(vec![resampled.clone()]);
+        assert_eq!(
+            log.sequence.load(Ordering::SeqCst),
+            initial_sequence,
+            "resampling an identical rule broadcast a full snapshot"
+        );
+        assert_eq!(
+            log.state.lock().unwrap().latest_sessions,
+            vec![resampled.clone()]
+        );
+        assert_eq!(
+            log.state.lock().unwrap().latest_sessions[0]
+                .turn_state
+                .as_ref()
+                .unwrap()
+                .shadow_observation
+                .as_ref()
+                .unwrap()
+                .observed_at,
+            "2026-10-07T00:00:15Z"
+        );
+        let state = resampled.turn_state.as_mut().unwrap();
+        state.phase = crate::activity::TurnPhase::Unknown;
+        state.phase_changed_at = "2026-10-07T00:00:15Z".into();
+        state.diagnostic = Some(crate::activity::StreamActivityDiagnosticView {
+            reason: "interrupted_suspected".into(),
+        });
+        log.publish_snapshot(vec![resampled.clone()]);
+        assert_eq!(
+            log.sequence.load(Ordering::SeqCst),
+            initial_sequence + 1,
+            "an actual phase change must reach stream subscribers"
+        );
+        resampled
+            .turn_state
+            .as_mut()
+            .unwrap()
+            .shadow_observation
+            .as_mut()
+            .unwrap()
+            .rule_id = "claude_unmatched".into();
+        log.publish_snapshot(vec![resampled]);
+        assert_eq!(
+            log.sequence.load(Ordering::SeqCst),
+            initial_sequence + 2,
+            "changed diagnostic evidence must reach stream subscribers"
+        );
     }
 
     #[tokio::test]
