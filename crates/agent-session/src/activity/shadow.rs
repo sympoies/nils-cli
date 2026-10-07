@@ -33,6 +33,10 @@ struct ShadowDocument {
     runtime_id: String,
     runtime_generation: u64,
     observation: ShadowObservationView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    activity_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    interrupt_since: Option<String>,
 }
 
 struct ShadowLock(fs::File);
@@ -69,10 +73,16 @@ pub(crate) fn annotate_for_view(
 
     let dir = session_dir(context, &record.id);
     let path = dir.join(SHADOW_FILE);
-    let cached = read_current(&path, record);
+    let sampled_state = state.clone();
+    let cached = read_current(&path, record).filter(|cached| {
+        cached
+            .activity_revision
+            .is_none_or(|revision| revision == state.revision)
+    });
     if let Some(cached) = cached.as_ref() {
         state.shadow_observation =
             Some(with_disagreement(cached.observation.clone(), &state.phase));
+        project_interrupt_uncertainty(record, cached, &mut state);
     }
     if cached
         .as_ref()
@@ -86,17 +96,64 @@ pub(crate) fn annotate_for_view(
             context.clone(),
             record.clone(),
             tmux_bin.to_path_buf(),
-            state.phase.clone(),
+            sampled_state,
         );
     }
     state
+}
+
+fn project_interrupt_uncertainty(
+    record: &SessionRecord,
+    cached: &ShadowDocument,
+    state: &mut TurnState,
+) {
+    if record.agent != "claude"
+        || state.phase != TurnPhase::Working
+        || cached.activity_revision != Some(state.revision)
+        || cached.observation.rule_id != "claude_interrupt_marker"
+        || !is_recent(&cached.observation.observed_at, SAMPLE_INTERVAL_SECONDS * 2)
+        || state
+            .current_turn
+            .as_ref()
+            .is_none_or(|turn| turn.attention.is_some())
+    {
+        return;
+    }
+    let Some(deadline) = cached
+        .interrupt_since
+        .as_deref()
+        .and_then(|since| since.parse::<Timestamp>().ok())
+        .and_then(|since| {
+            since
+                .checked_add(jiff::SignedDuration::from_secs(SAMPLE_INTERVAL_SECONDS))
+                .ok()
+        })
+    else {
+        return;
+    };
+    if !cached
+        .observation
+        .observed_at
+        .parse::<Timestamp>()
+        .is_ok_and(|observed| observed >= deadline)
+    {
+        return;
+    }
+    state.phase = TurnPhase::Unknown;
+    state.phase_changed_at = deadline.to_string();
+    state.source.kind = super::SourceKind::TerminalHeuristic;
+    state.source.confidence = super::Confidence::Inferred;
+    state.diagnostic = Some(super::ActivityDiagnosticView {
+        reason: "interrupted_suspected".to_string(),
+        extra: serde_json::Map::new(),
+    });
 }
 
 fn schedule_sample(
     context: CliContext,
     record: SessionRecord,
     tmux_bin: std::path::PathBuf,
-    phase: TurnPhase,
+    state: TurnState,
 ) {
     let Some(permit) = sampler_permit() else {
         return;
@@ -108,12 +165,14 @@ fn schedule_sample(
         let Some(_lock) = acquire_shadow_lock(&dir) else {
             return;
         };
-        if read_current(&path, &record).is_some_and(|cached| {
+        let previous = read_current(&path, &record)
+            .filter(|cached| cached.activity_revision == Some(state.revision));
+        if previous.as_ref().is_some_and(|cached| {
             is_recent(&cached.observation.observed_at, SAMPLE_INTERVAL_SECONDS)
         }) {
             return;
         }
-        let observation = sample(&record, &tmux_bin, &phase);
+        let observation = sample(&record, &tmux_bin, &state.phase);
         let Ok(current) = crate::load_session_record(&context, &record.id) else {
             return;
         };
@@ -126,14 +185,31 @@ fn schedule_sample(
         if runtime.launch_id != sampled_runtime.launch_id
             || runtime.generation != sampled_runtime.generation
             || current.tmux_session != record.tmux_session
+            || super::state_for_view(&context, &current)
+                .is_none_or(|current| current.revision != state.revision)
         {
             return;
         }
+        let interrupt_since = (observation.rule_id == "claude_interrupt_marker").then(|| {
+            previous
+                .as_ref()
+                .filter(|previous| {
+                    previous.observation.rule_id == "claude_interrupt_marker"
+                        && is_recent(
+                            &previous.observation.observed_at,
+                            SAMPLE_INTERVAL_SECONDS * 2,
+                        )
+                })
+                .and_then(|previous| previous.interrupt_since.clone())
+                .unwrap_or_else(|| observation.observed_at.clone())
+        });
         let document = ShadowDocument {
             schema_version: SHADOW_DOCUMENT_VERSION.to_string(),
             runtime_id: runtime.launch_id.clone(),
             runtime_generation: runtime.generation,
             observation,
+            activity_revision: Some(state.revision),
+            interrupt_since,
         };
         if let Ok(bytes) = serde_json::to_vec_pretty(&document) {
             let _ = write_atomic(&path, &bytes, SECRET_FILE_MODE);
@@ -171,6 +247,15 @@ fn acquire_shadow_lock(dir: &Path) -> Option<ShadowLock> {
 fn eligible(provider: &str, status: &str, state: &TurnState) -> bool {
     if status != "running" || !matches!(provider, "claude" | "codex") {
         return false;
+    }
+    if provider == "claude"
+        && state.phase == TurnPhase::Working
+        && state
+            .current_turn
+            .as_ref()
+            .is_some_and(|turn| turn.attention.is_none())
+    {
+        return true;
     }
     if state.phase == TurnPhase::Unknown {
         return true;
@@ -281,6 +366,16 @@ fn classify<'a>(provider: &str, title: &str, bottom: &str) -> (&'a str, &'a str)
         }
         "claude" if bottom.contains("esc to interrupt") => ("working", "claude_working_indicator"),
         "claude"
+            if bottom.contains("interrupted · what should claude do instead?")
+                && bottom
+                    .lines()
+                    .rev()
+                    .take(3)
+                    .any(|line| matches!(line.trim(), "❯" | ">")) =>
+        {
+            ("unknown", "claude_interrupt_marker")
+        }
+        "claude"
             if bottom.lines().rev().take(3).any(|line| {
                 let line = line.trim_start();
                 line.starts_with('❯') || line.starts_with("> ")
@@ -368,6 +463,96 @@ mod tests {
     }
 
     #[test]
+    fn claude_interrupt_marker_with_idle_composer_is_explicit_uncertainty() {
+        assert_eq!(
+            classify(
+                "claude",
+                "Claude",
+                "Interrupted · What should Claude do instead?\n❯ "
+            ),
+            ("unknown", "claude_interrupt_marker")
+        );
+        assert_eq!(
+            classify(
+                "claude",
+                "Claude",
+                "Interrupted · What should Claude do instead?\nWorking… esc to interrupt\n❯ "
+            ),
+            ("working", "claude_working_indicator")
+        );
+        assert_eq!(
+            classify(
+                "claude",
+                "Claude",
+                "Interrupted · What should Claude do instead?\n❯ draft"
+            ),
+            ("waiting", "claude_prompt_visible")
+        );
+    }
+
+    #[test]
+    fn claude_sustained_interrupt_projection_is_turn_and_runtime_fenced() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record = record("interrupt", "launch-a", 1);
+        record.agent = "claude".to_string();
+        write_record(&context, &record);
+        let working = state(json!({
+            "schema_version": "agent-session.turn-state.v1", "phase": "working",
+            "phase_changed_at": now(), "revision": 10,
+            "source": {"kind": "provider_hook", "provider": "claude", "confidence": "observed"},
+            "semantic_event": {"kind": "progress", "observed_at": now()},
+            "current_turn": {"provider_turn_id": "turn-1", "started_at": now()}
+        }));
+        let earlier = Timestamp::now()
+            .checked_sub(jiff::SignedDuration::from_secs(20))
+            .unwrap()
+            .to_string();
+        let path = session_dir(&context, &record.id).join(SHADOW_FILE);
+        let mut cached = json!({
+            "schema_version": SHADOW_DOCUMENT_VERSION, "runtime_id": "launch-a", "runtime_generation": 1,
+            "activity_revision": 10, "interrupt_since": earlier,
+            "observation": {"observer_version": SHADOW_VERSION, "rule_id": "claude_interrupt_marker",
+                "observed_at": now(), "projection": "unknown", "disagrees": false}
+        });
+        let view = |state: TurnState, fixture: &serde_json::Value| {
+            fs::write(&path, serde_json::to_vec(fixture).unwrap()).unwrap();
+            annotate_for_view(
+                &context,
+                &record,
+                "running",
+                Path::new("unused-tmux"),
+                state,
+                false,
+            )
+        };
+        let uncertain = view(working.clone(), &cached);
+        assert_eq!(uncertain.phase, TurnPhase::Unknown);
+        assert_eq!(
+            uncertain.diagnostic.as_ref().unwrap().reason,
+            "interrupted_suspected"
+        );
+        assert!(uncertain.current_turn.is_some());
+        assert!(uncertain.last_turn.is_none());
+        let mut next_prompt = working.clone();
+        next_prompt.revision += 1;
+        next_prompt.current_turn.as_mut().unwrap().provider_turn_id = Some("turn-2".to_string());
+        assert_eq!(view(next_prompt, &cached).phase, TurnPhase::Working);
+        cached["runtime_id"] = json!("old-launch");
+        assert_eq!(view(working.clone(), &cached).phase, TurnPhase::Working);
+        cached["runtime_id"] = json!("launch-a");
+        cached["interrupt_since"] = json!(now());
+        assert_eq!(view(working.clone(), &cached).phase, TurnPhase::Working);
+        cached["interrupt_since"] = json!(earlier);
+        cached["observation"]["rule_id"] = json!("claude_working_indicator");
+        cached["observation"]["projection"] = json!("working");
+        assert_eq!(view(working, &cached).phase, TurnPhase::Working);
+    }
+
+    #[test]
     fn classifier_uses_bounded_rule_ids_without_returning_content() {
         assert_eq!(
             classify("codex", "Action Required", "private prompt"),
@@ -439,6 +624,8 @@ mod tests {
             schema_version: SHADOW_DOCUMENT_VERSION.to_string(),
             runtime_id: "launch-a".to_string(),
             runtime_generation: 1,
+            activity_revision: None,
+            interrupt_since: None,
             observation: ShadowObservationView {
                 observer_version: SHADOW_VERSION.to_string(),
                 rule_id: "codex_prompt_visible".to_string(),

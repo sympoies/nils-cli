@@ -632,6 +632,7 @@ pub(crate) fn stream_projection(state: &TurnState) -> StreamTurnState {
                         | "provider_projection_unavailable"
                         | "runtime_activity_unhealthy"
                         | "activity_state_unavailable"
+                        | "interrupted_suspected"
                 )
             })
             .map(|diagnostic| StreamActivityDiagnosticView {

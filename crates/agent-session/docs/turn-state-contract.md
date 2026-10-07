@@ -170,14 +170,26 @@ therefore deserialize conservatively.
 Optional `diagnostic.reason` values are producer-owned allowlisted codes:
 `completion_evidence_pending`, `attention_authority_mismatch`,
 `provider_projection_unavailable`, `runtime_activity_unhealthy`, and
-`activity_state_unavailable`. Free-form provider or runtime errors never cross
+`activity_state_unavailable`, and `interrupted_suspected`. Free-form provider or runtime errors never cross
 the session-view or stream boundary.
 
-Optional `shadow_observation` is diagnostics-only. It contains
+Optional `shadow_observation` is ordinarily diagnostics-only. It contains
 `observer_version`, a bounded `rule_id`, daemon `observed_at`, one of
 `working`, `needs_input`, `waiting`, or `unknown`, and a `disagrees` flag. It
-never changes phase, completion, attention correlation, auto-resume, or any
-other automation condition.
+never confirms completion, clears attention, or authorizes automation.
+
+For Claude only, two consecutive samples of the interrupt marker with an empty
+idle composer, at least 15 seconds apart, may project `phase: unknown` with
+`diagnostic.reason: interrupted_suspected` and inferred terminal-heuristic
+provenance. This is uncertainty, not confirmed `interrupted` or `waiting`: the
+open turn and last-turn outcome remain intact. Runtime launch/generation and
+activity revision fence both samples; a new prompt or any newer hook invalidates
+them. A working indicator, attention, draft, missing marker, stale sample, or
+runtime replacement cannot produce this projection. The serve collector samples
+open Claude working turns every 15 seconds, giving a nominal bound of 30 seconds
+plus collection latency. One-shot CLI views read only the cache. No observer or
+serve collector means this signal is unavailable. Claude has no interrupt hook
+and [Stop excludes user interrupts](https://code.claude.com/docs/en/hooks#stop).
 
 ## Attention correlation authority
 
@@ -426,7 +438,8 @@ reducer, persistence, replay, and public projection.
 
 The `activity/shadow.rs` observer samples only running Claude or Codex sessions
 whose structured evidence is unknown, at least five minutes old, or has been
-missing for at least five minutes. The long-lived serve collector schedules
+missing for at least five minutes, plus open Claude working turns for the
+interrupt-uncertainty rule. The long-lived serve collector schedules
 sampling in detached bounded workers and immediately returns cached metadata;
 one-shot CLI views only read that cache and never start work that could be lost
 at process exit. Sampling runs outside the activity-ingestion lock, uses a
