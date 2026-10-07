@@ -23,9 +23,11 @@ const GLAB_REPO_VIEW_JSON: &str = r#"{
   "squash_option": "default_on"
 }"#;
 
+fn with_commit(script: String) -> String {
+    script.replacen("#!/bin/sh\n", "#!/bin/sh\nif [ \"$1\" = api ]; then printf '{\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}\n'; exit 0; fi\n", 1)
+}
+
 fn stdout_stub(body: &str) -> String {
-    // Single-line "$@" passthrough silenced; we only need stdout to carry the
-    // canned JSON.
     format!("#!/bin/sh\ncat <<'EOF'\n{body}\nEOF\n")
 }
 
@@ -39,7 +41,7 @@ fn argv_bound_stub(expected: &str, body: &str) -> String {
 
 #[test]
 fn repo_view_github_normalizes_envelope() {
-    let stub = StubEnv::new().gh_stub(&stdout_stub(GH_REPO_VIEW_JSON));
+    let stub = StubEnv::new().gh_stub(&with_commit(stdout_stub(GH_REPO_VIEW_JSON)));
     let out = run_forge_cli(
         &stub,
         &["--provider", "github", "--format", "json", "repo", "view"],
@@ -59,7 +61,7 @@ fn repo_view_github_normalizes_envelope() {
 #[test]
 fn repo_view_github_enterprise_binds_host_in_positional_locator() {
     let expected = "repo view internal.ghe.com/sympoies/nils-cli --json name,owner,defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,url";
-    let stub = StubEnv::new().gh_stub(&argv_bound_stub(expected, GH_REPO_VIEW_JSON));
+    let stub = StubEnv::new().gh_stub(&with_commit(argv_bound_stub(expected, GH_REPO_VIEW_JSON)));
     let out = run_forge_cli(
         &stub,
         &[
@@ -87,7 +89,7 @@ fn repo_view_github_custom_authority_retains_port_and_binds_environment() {
          [ \"$*\" = \"{expected}\" ] || {{ echo \"unexpected argv: $*\" >&2; exit 97; }}\n\
          cat <<'EOF'\n{GH_REPO_VIEW_JSON}\nEOF\n"
     );
-    let stub = StubEnv::new().gh_stub(&script);
+    let stub = StubEnv::new().gh_stub(&with_commit(script));
     let out = run_forge_cli(
         &stub,
         &[
@@ -230,7 +232,7 @@ fn repo_view_gitlab_normalizes_envelope() {
 
 #[test]
 fn repo_view_parity_envelope_modulo_provider_and_url_host() {
-    let gh = StubEnv::new().gh_stub(&stdout_stub(GH_REPO_VIEW_JSON));
+    let gh = StubEnv::new().gh_stub(&with_commit(stdout_stub(GH_REPO_VIEW_JSON)));
     let glab = StubEnv::new().glab_stub(&stdout_stub(GLAB_REPO_VIEW_JSON));
     let gh_out = run_forge_cli(
         &gh,

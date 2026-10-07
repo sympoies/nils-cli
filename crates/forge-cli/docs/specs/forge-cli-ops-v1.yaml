@@ -124,6 +124,10 @@ validations_catalog:
     rule: "when --strict-labels is set, every selected label exists in --label-catalog, applies to the target, and exclusive groups do not conflict"
     error_kind: label_unknown | label_not_applicable | label_group_conflict | label_catalog_missing
     exit: DATA
+  query_repo_scope:
+    rule: "Search query org/user/repo qualifiers own scope without explicit --repo; otherwise resolve the explicit repository or same-authority remote"
+    error_kind: repo_required
+    exit: DATA
   repo_required:
     rule: "repository-scoped operations resolve a single repository from --repo or a same-authority detected forge remote; explicit --host never borrows a repository from another authority"
     error_kind: repo_required
@@ -1103,7 +1107,7 @@ operations:
     inputs:
       - { name: <id>, type: integer, required: true }
     backends:
-      github: { program: gh,   argv: [issue, view, "{id}", --json, "number,url,state,title,labels,assignees,body"] }
+      github: { program: gh,   argv: [issue, view, "{id}", --json, "number,url,state,title,labels,assignees,body,closedAt,stateReason"] }
       gitlab: { program: glab, argv: [issue, view, "{id}", -F, json] }
 
   - id: issue.list
@@ -1117,11 +1121,11 @@ operations:
       - { name: --limit,    type: integer,               default: 30 }
     validations: []
     backends:
-      github: { program: gh,   argv: [issue, list, --json, "number,url,state,title,labels,author,assignees"] }
+      github: { program: gh,   argv: [issue, list, --json, "number,url,state,title,labels,author,assignees,body,updatedAt"] }
       gitlab: { program: glab, argv: [issue, list, -F, json] }
     output:
       data:
-        items: list<{ number, url, state, title, labels, author, assignees }>
+        items: list<{ number, url, state, title, body, updated_at, labels, author, assignees }>
 
   - id: issue.edit
     schema_version: cli.forge-cli.issue.edit.v1
@@ -1370,7 +1374,17 @@ operations:
     summary: Resolve repo slug, default branch, default merge method.
     inputs: []
     backends:
-      github: { program: gh,   argv: [repo, view, "{slug-or-host/slug}", --json, "name,owner,defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,url"], env: { GH_HOST: "{resolved_authority}" } }
+      github:
+        program: gh
+        argv: [repo, view, "{slug-or-host/slug}", --json, "name,owner,defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,url"]
+        env: { GH_HOST: "{resolved_authority}" }
+        follow_up:
+          program: gh
+          argv: [api, "{optional_hostname_flag_and_authority}", "repos/{resolved_owner}/{resolved_name}/commits/{encoded_default_branch}"]
+          env: { GH_HOST: "{resolved_authority}" }
+          output: { default_branch_head_sha: "sha" }
+          dry_run: "data.follow_up.plan uses metadata placeholders; no backend is invoked"
+          notes: "Atom-only; delivery macros keep their metadata-only lookup. GitLab and named-provider SHA fields are null."
       gitlab: { program: glab, argv: [repo, view, "{slug-or-https://host/slug}", -F, json], env: { GITLAB_HOST: "{resolved_authority}" } }
     output:
       data:
@@ -1378,6 +1392,7 @@ operations:
         name: string
         url: string
         default_branch: string
+        default_branch_head_sha: nullable<string>
         merge_methods_allowed: list<enum<squash|merge|rebase>>
 
   - id: repo.push-default
@@ -1513,7 +1528,7 @@ operations:
 
   # SearchItem (shared across the three search envelopes):
   #   { kind: enum<issue|pr>, number, url, title, state, repo,
-  #     matched_field: optional<string> }   # matched_field is null on the gh path
+  #     updated_at: optional<string>, labels: list<string>, matched_field: optional<string> }   # matched_field is null on the gh path
 
   - id: search.issues
     schema_version: cli.forge-cli.search.issues.v1
@@ -1523,9 +1538,9 @@ operations:
       - { name: --match, type: list<enum<title|body|comments>>, default: [title, body, comments] }
       - { name: --limit, type: integer,                         default: 30 }
     validations:
-      - repo_required
+      - query_repo_scope
     backends:
-      github: { program: gh, argv: [search, issues, "{query}", --repo, "{raw_owner/name_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest"], env: { GH_HOST: "{resolved_authority}" } }
+      github: { program: gh, argv: [search, issues, "{query}", "{optional_repo_flag_and_raw_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest,updatedAt,labels"], env: { GH_HOST: "{resolved_authority}" } }
       gitlab: provider_unsupported   # search is GitHub-only in v1
       local:  provider_unsupported
     output:
@@ -1539,7 +1554,7 @@ operations:
         item_count: integer
         limited: bool
         items: list<SearchItem>
-    notes: "Single-repo scoped via --repo or a same-authority detected remote. gh search receives the raw owner/name slug through --repo while GH_HOST selects the resolved authority separately. GitLab/Local return provider_unsupported, never a silent empty result."
+    notes: "Query org/user/repo qualifiers omit implicit --repo; otherwise scoped via --repo or a same-authority detected remote. gh search receives the raw owner/name slug through --repo while GH_HOST selects the resolved authority separately. GitLab/Local return provider_unsupported, never a silent empty result."
 
   - id: search.prs
     schema_version: cli.forge-cli.search.prs.v1
@@ -1549,9 +1564,9 @@ operations:
       - { name: --match, type: list<enum<title|body|comments>>, default: [title, body, comments] }
       - { name: --limit, type: integer,                         default: 30 }
     validations:
-      - repo_required
+      - query_repo_scope
     backends:
-      github: { program: gh, argv: [search, prs, "{query}", --repo, "{raw_owner/name_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest"], env: { GH_HOST: "{resolved_authority}" } }
+      github: { program: gh, argv: [search, prs, "{query}", "{optional_repo_flag_and_raw_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest,updatedAt,labels"], env: { GH_HOST: "{resolved_authority}" } }
       gitlab: provider_unsupported
       local:  provider_unsupported
     output:

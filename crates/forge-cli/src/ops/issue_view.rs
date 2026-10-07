@@ -22,8 +22,9 @@ use crate::rate_limit::default_runner;
 pub const SCHEMA: &str = "issue.view";
 pub const SCHEMA_VERSION: u32 = 1;
 
-const GH_JSON_FIELDS: &str = "number,url,state,title,labels,assignees,body";
-const GH_JSON_FIELDS_WITH_COMMENTS: &str = "number,url,state,title,labels,assignees,body,comments";
+const GH_JSON_FIELDS: &str = "number,url,state,title,labels,assignees,body,closedAt,stateReason";
+const GH_JSON_FIELDS_WITH_COMMENTS: &str =
+    "number,url,state,title,labels,assignees,body,closedAt,stateReason,comments";
 
 /// One issue comment, normalized across providers.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -43,6 +44,8 @@ pub struct IssueViewPayload {
     pub state: &'static str,
     pub title: String,
     pub body: String,
+    pub closed_at: Option<String>,
+    pub state_reason: Option<String>,
     pub labels: Vec<String>,
     pub assignees: Vec<String>,
     /// Populated only when the caller passed `--with-comments`; the empty
@@ -264,6 +267,14 @@ fn parse_github(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
+        closed_at: value
+            .get("closedAt")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        state_reason: value
+            .get("stateReason")
+            .and_then(|v| v.as_str())
+            .map(str::to_ascii_lowercase),
         labels: github_name_list(value, "labels"),
         assignees: github_assignees(value),
         comments,
@@ -292,6 +303,11 @@ fn parse_gitlab(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
+        closed_at: value
+            .get("closed_at")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        state_reason: None,
         labels: gitlab_label_list(value),
         assignees: gitlab_assignees(value),
         comments: Vec::new(),

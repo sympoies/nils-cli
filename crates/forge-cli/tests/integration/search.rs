@@ -6,17 +6,17 @@ use super::support::{StubEnv, parse_envelope, run_forge_cli, run_forge_cli_in};
 
 const GH_SEARCH_STUB: &str = r#"#!/bin/sh
 case "$*" in
-  "search issues rumdl --repo acme/widget --match title,body,comments --limit 30 --json number,title,url,state,repository,isPullRequest")
+  "search issues rumdl --repo acme/widget --match title,body,comments --limit 30 --json number,title,url,state,repository,isPullRequest,updatedAt,labels")
     cat <<'JSON'
 [{"number":7,"title":"ratelimit retry only in the body","url":"https://github.com/acme/widget/issues/7","state":"open","isPullRequest":false,"repository":{"nameWithOwner":"acme/widget"}},{"number":9,"title":"a referencing pull request","url":"https://github.com/acme/widget/pull/9","state":"closed","isPullRequest":true,"repository":{"nameWithOwner":"acme/widget"}}]
 JSON
     ;;
-  "search prs cache --repo acme/widget --match title --limit 5 --json number,title,url,state,repository,isPullRequest")
+  "search prs cache --repo acme/widget --match title --limit 5 --json number,title,url,state,repository,isPullRequest,updatedAt,labels")
     cat <<'JSON'
 [{"number":12,"title":"add cache layer","url":"https://github.com/acme/widget/pull/12","state":"open","isPullRequest":true,"repository":{"nameWithOwner":"acme/widget"}}]
 JSON
     ;;
-  "search issues nomatch --repo acme/widget --match title,body,comments --limit 30 --json number,title,url,state,repository,isPullRequest")
+  "search issues nomatch --repo acme/widget --match title,body,comments --limit 30 --json number,title,url,state,repository,isPullRequest,updatedAt,labels")
     printf '[]\n'
     ;;
   *)
@@ -228,7 +228,7 @@ if [ "$GH_HOST" != "internal.ghe.com" ]; then
   exit 96
 fi
 case "$*" in
-  "search issues rumdl --repo acme/widget --match title,body,comments --limit 30 --json number,title,url,state,repository,isPullRequest")
+  "search issues rumdl --repo acme/widget --match title,body,comments --limit 30 --json number,title,url,state,repository,isPullRequest,updatedAt,labels")
     printf '[]\n'
     ;;
   *)

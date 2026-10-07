@@ -8,10 +8,11 @@
 //! Local return explicit `provider_unsupported` errors until their backend
 //! mappings exist — never a silent empty result.
 //!
-//! `search` is single-repo scoped: the repo slug comes from `--repo
+//! Unqualified `search` is single-repo scoped: the repo slug comes from `--repo
 //! owner/name` when present, otherwise it is derived from the detected forge
 //! remote. The slug is always pushed as `--repo <slug>` so `gh search`
-//! (global by default) stays bounded to one repository.
+//! (global by default) stays bounded to one repository. Qualified organization,
+//! user, or repository queries omit that implicit override.
 
 use std::ffi::OsString;
 
@@ -24,7 +25,7 @@ use crate::cli::{
 };
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
-use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
+use crate::provider::{Provider, ProviderContext, detect, detect_unscoped, git_remote_url};
 use crate::rate_limit::default_runner;
 
 const SCHEMA_VERSION: u32 = 1;
@@ -32,7 +33,7 @@ const SCHEMA_VERSION: u32 = 1;
 const GITHUB_SEARCH_LIMIT: u32 = 1000;
 /// `--json` field set requested from `gh search issues|prs`. `repository`
 /// gives per-item fidelity; `isPullRequest` lets one parser tag `kind`.
-const SEARCH_JSON_FIELDS: &str = "number,title,url,state,repository,isPullRequest";
+const SEARCH_JSON_FIELDS: &str = "number,title,url,state,repository,isPullRequest,updatedAt,labels";
 
 /// Which `gh search` noun a request maps to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +96,46 @@ pub struct SearchItem {
     /// Field the hit matched on. Best-effort: `None` when the provider does
     /// not report which field matched (the `gh search` path never does).
     pub matched_field: Option<String>,
+    pub updated_at: Option<String>,
+    pub labels: Vec<String>,
+}
+
+/// Query-provided organization, user, or repository qualifiers own search scope.
+pub(crate) fn query_scoped(command: &SearchCommand) -> bool {
+    let query = match command {
+        SearchCommand::Issues(args) | SearchCommand::Prs(args) => &args.query,
+        SearchCommand::RefsTo(_) => return false,
+    };
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut term_start = true;
+    for (index, character) in query.char_indices() {
+        if escaped {
+            escaped = false;
+            term_start = false;
+        } else if character == '\\' {
+            escaped = true;
+            term_start = false;
+        } else if character == '"' {
+            quoted = !quoted;
+            term_start = false;
+        } else if character.is_whitespace() && !quoted {
+            term_start = true;
+        } else {
+            if term_start
+                && !quoted
+                && ["org:", "user:", "repo:"].iter().any(|prefix| {
+                    query[index..].strip_prefix(prefix).is_some_and(|value| {
+                        value.chars().next().is_some_and(|c| !c.is_whitespace())
+                    })
+                })
+            {
+                return true;
+            }
+            term_start = false;
+        }
+    }
+    false
 }
 
 pub fn run(
@@ -113,15 +154,28 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     format: OutputFormat,
     remote_url_lookup: F,
 ) -> Result<i32, ForgeError> {
-    let ctx = detect(
-        global.provider_hint(),
-        &global.remote,
-        global.repo.as_deref(),
-        &remote_url_lookup,
-    )?;
+    let ctx = if global.repo.is_none() && query_scoped(&command) {
+        detect_unscoped(
+            global.provider_hint(),
+            &global.remote,
+            None,
+            &remote_url_lookup,
+        )?
+    } else {
+        detect(
+            global.provider_hint(),
+            &global.remote,
+            global.repo.as_deref(),
+            &remote_url_lookup,
+        )?
+    };
     match ctx.provider {
         Provider::GitHub => {
-            let repo_slug = resolve_repo_slug(&ctx, &global.remote, &remote_url_lookup)?;
+            let repo_slug = if global.repo.is_none() && query_scoped(&command) {
+                String::new()
+            } else {
+                resolve_repo_slug(&ctx, &global.remote, &remote_url_lookup)?
+            };
             run_github(runner, global, &ctx, &repo_slug, command, format)
         }
         Provider::GitLab | Provider::Local => Err(provider_unsupported(&ctx, &command)),
@@ -226,8 +280,8 @@ query($owner: String!, $name: String!, $number: Int!, $first: Int!) {
 fragment xref on CrossReferencedEvent {
   source {
     __typename
-    ... on Issue { number url title state repository { nameWithOwner } }
-    ... on PullRequest { number url title state repository { nameWithOwner } }
+    ... on Issue { number url title state updatedAt labels(first:100) { nodes { name } } repository { nameWithOwner } }
+    ... on PullRequest { number url title state updatedAt labels(first:100) { nodes { name } } repository { nameWithOwner } }
   }
 }
 "#;
@@ -451,6 +505,25 @@ fn parse_refs_to_item(source: &serde_json::Value) -> Result<SearchItem, ForgeErr
             .map(str::to_string)
             .ok_or_else(|| missing("source.repository.nameWithOwner"))?,
         matched_field: None,
+        updated_at: source
+            .get("updatedAt")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        labels: source
+            .pointer("/labels/nodes")
+            .and_then(|v| v.as_array())
+            .map(|labels| {
+                labels
+                    .iter()
+                    .filter_map(|label| {
+                        label
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -495,12 +568,10 @@ fn build_github_search_call(
     match_fields: &[SearchMatchField],
     limit: u32,
 ) -> BackendCall {
-    let argv = vec![
+    let mut argv = vec![
         OsString::from("search"),
         OsString::from(kind.gh_noun()),
         OsString::from(query),
-        OsString::from("--repo"),
-        OsString::from(repo_locator),
         OsString::from("--match"),
         OsString::from(match_csv(match_fields)),
         OsString::from("--limit"),
@@ -508,6 +579,12 @@ fn build_github_search_call(
         OsString::from("--json"),
         OsString::from(SEARCH_JSON_FIELDS),
     ];
+    if !repo_locator.is_empty() {
+        argv.splice(
+            3..3,
+            [OsString::from("--repo"), OsString::from(repo_locator)],
+        );
+    }
     BackendCall::new(BackendProgram::Gh, argv)
 }
 
@@ -646,6 +723,25 @@ fn parse_search_item(
             .map(str::to_string)
             .unwrap_or_else(|| repo_slug.to_string()),
         matched_field: None,
+        updated_at: raw
+            .get("updatedAt")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        labels: raw
+            .get("labels")
+            .and_then(|v| v.as_array())
+            .map(|labels| {
+                labels
+                    .iter()
+                    .filter_map(|label| {
+                        label
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -807,7 +903,7 @@ mod tests {
                 "--limit",
                 "30",
                 "--json",
-                "number,title,url,state,repository,isPullRequest",
+                "number,title,url,state,repository,isPullRequest,updatedAt,labels",
             ]
         );
     }
@@ -834,7 +930,7 @@ mod tests {
                 "--limit",
                 "5",
                 "--json",
-                "number,title,url,state,repository,isPullRequest",
+                "number,title,url,state,repository,isPullRequest,updatedAt,labels",
             ]
         );
     }

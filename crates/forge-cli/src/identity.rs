@@ -2,7 +2,7 @@
 use crate::backend::{BackendCall, BackendProgram};
 use crate::cli::{
     ActivityArgs, ActivityCommand, BINARY, Cli, Command, GlobalFlags, IdentityCommand, RepoArgs,
-    RepoCommand,
+    RepoCommand, SearchArgs,
 };
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
@@ -89,7 +89,8 @@ pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
                         | ActivityCommand::Summary(_)
                 )
             }))
-    ) && global.repo.is_none();
+    ) && global.repo.is_none()
+        || matches!(&cli.command, Some(Command::Search(SearchArgs { command: Some(command) })) if global.repo.is_none() && crate::ops::search::query_scoped(command));
     let target = if cross_repository {
         let host = if matches!(&cli.command, Some(Command::Inbox(_))) {
             if global

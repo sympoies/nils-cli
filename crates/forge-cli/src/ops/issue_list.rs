@@ -23,7 +23,7 @@ use crate::rate_limit::default_runner;
 const SCHEMA: &str = "issue.list";
 const SCHEMA_VERSION: u32 = 1;
 
-const GH_JSON_FIELDS: &str = "number,url,state,title,labels,author,assignees";
+const GH_JSON_FIELDS: &str = "number,url,state,title,labels,author,assignees,body,updatedAt";
 
 /// Envelope payload for `cli.forge-cli.issue.list.v1`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -33,14 +33,15 @@ pub struct IssueListPayload {
 }
 
 /// One row in the issue list envelope. Mirrors `IssueViewPayload`
-/// minus the body field — list endpoints do not return issue bodies
-/// on either backend.
+/// including body and the last provider update timestamp.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct IssueListItem {
     pub number: u64,
     pub url: String,
     pub state: &'static str,
     pub title: String,
+    pub body: String,
+    pub updated_at: Option<String>,
     pub labels: Vec<String>,
     pub author: Option<String>,
     pub assignees: Vec<String>,
@@ -352,6 +353,15 @@ fn parse_item_github_rest(raw: &serde_json::Value) -> Result<IssueListItem, Forg
             Provider::GitHub,
         )?,
         title: required_str(raw, "title")?,
+        body: raw
+            .get("body")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        updated_at: raw
+            .get("updated_at")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         labels: github_name_list(raw, "labels"),
         author: raw
             .get("user")
@@ -402,6 +412,15 @@ fn parse_item(raw: &serde_json::Value, ctx: &ProviderContext) -> Result<IssueLis
                 ctx.provider,
             )?,
             title: required_str(raw, "title")?,
+            body: raw
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            updated_at: raw
+                .get("updatedAt")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
             labels: github_name_list(raw, "labels"),
             author: raw
                 .get("author")
@@ -420,6 +439,15 @@ fn parse_item(raw: &serde_json::Value, ctx: &ProviderContext) -> Result<IssueLis
                 ctx.provider,
             )?,
             title: required_str(raw, "title")?,
+            body: raw
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            updated_at: raw
+                .get("updated_at")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
             labels: gitlab_label_list(raw),
             author: raw
                 .get("author")
