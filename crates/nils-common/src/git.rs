@@ -194,11 +194,12 @@ pub struct GitRemoteUrl {
 
 /// Canonicalize a Git provider host for repository identity comparisons.
 ///
-/// GitHub exposes `ssh.github.com` as an SSH transport alias for
-/// `github.com`; transport-only changes must not change repository identity.
+/// Forge providers expose SSH transport aliases; transport-only changes must
+/// not change repository identity.
 pub fn canonical_git_host(host: &str) -> String {
     match host.trim().to_ascii_lowercase().as_str() {
         "ssh.github.com" => "github.com".to_string(),
+        "altssh.gitlab.com" => "gitlab.com".to_string(),
         host => host.to_string(),
     }
 }

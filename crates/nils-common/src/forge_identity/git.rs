@@ -161,7 +161,26 @@ pub fn target_for_remote(cwd: Option<&Path>, remote: &str, push: bool) -> Result
     }
     let parsed =
         crate::git::parse_git_remote_url(url).ok_or(Error::new("identity_target_unknown"))?;
-    let target = Target::new(&parsed.host, &parsed.path)?;
+    let parsed_host = crate::git::canonical_git_host(&parsed.host);
+    let policy = load()?;
+    let is_gitlab = parsed_host == "gitlab.com"
+        || policy.as_ref().is_some_and(|policy| {
+            policy
+                .policy
+                .gitlab_hosts
+                .iter()
+                .any(|host| host == &parsed_host)
+        });
+    if !is_gitlab && parsed.path.matches('/').count() > 1 {
+        return Err(Error::new(
+            "identity_gitlab_host_not_configured_add_gitlab_hosts",
+        ));
+    }
+    let target = if is_gitlab {
+        Target::new_gitlab(&parsed_host, &parsed.path)?
+    } else {
+        Target::new(&parsed_host, &parsed.path)?
+    };
     if url.contains(['\n', '\r', '?', '#']) {
         return Err(Error::new("identity_transport_override"));
     }

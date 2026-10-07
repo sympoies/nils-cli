@@ -39,13 +39,18 @@ that principal's list. No implicit principal or cross-principal delegation exist
 
 `version = 1` is required. Unknown fields, unsupported versions, malformed target
 keys, missing references, duplicate rule IDs, and invalid selectors refuse.
-Repository keys are lowercase `host/owner/repository`; organization keys are
-`host/owner`. Hosts have no userinfo, port, scheme, or path. The GitHub SSH hostname
-alias canonicalizes to the API hostname. Configuration contains metadata and
+Repository keys are lowercase `host/owner/repository`; GitLab keys may include
+nested groups as `host/group/subgroup/project`. Organization keys are `host/owner`
+for GitHub and `host/group[/subgroup...]` for GitLab. Hosts have no userinfo, port,
+scheme, or path. The GitHub SSH hostname alias canonicalizes to the API hostname.
+Lowercase self-hosted GitLab authorities must be listed in the root `gitlab_hosts` setting;
+`gitlab.com` is recognized without configuration. An unknown self-hosted authority
+reports that `gitlab_hosts` must be configured. Configuration contains metadata and
 credential **reference names**, never tokens or private keys.
 
 ```toml
 version = 1
+gitlab_hosts = ["gitlab.example.invalid"]
 
 [credentials.contributor]
 kind = "gh_user"
@@ -204,8 +209,9 @@ writes are disabled under managed identity because existing snapshots have no
 principal/profile binding. Repository bootstrap
 continues to refuse under policy; it has no root-bootstrap identity contract. An explicit API target may be used outside a checkout. If Git
 checkout metadata is present but cannot resolve, the operation refuses rather than
-ignoring managed-path rules. Other forge providers refuse protected network operations
-under this GitHub policy; the local file-backed provider remains local.
+ignoring managed-path rules. GitLab target resolution is supported for Git-based
+identity selection, including nested project paths; protected API operations remain
+limited to GitHub. The local file-backed provider remains local.
 
 Git transport resolves the actual selected remote or explicit URL and uses
 `pushurl` for pushes. Multiple URLs refuse. Authoring selects `branch.pushRemote`,
@@ -278,6 +284,7 @@ Typed refusal codes include `identity_policy_invalid`, `identity_policy_version`
 `identity_principal_missing`, `identity_principal_unknown`,
 `identity_repository_unknown`, `identity_rule_ambiguous`, `identity_path_conflict`,
 `identity_operation_denied`, `identity_target_unknown`, `identity_target_ambiguous`,
+`identity_gitlab_host_not_configured_add_gitlab_hosts`,
 `identity_credential_missing`, `identity_actor_unavailable`,
 `identity_actor_mismatch`, `identity_app_repository_missing`,
 `identity_signing_key_missing`, `identity_commit_mismatch`, and transport/override

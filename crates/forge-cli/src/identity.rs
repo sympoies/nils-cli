@@ -44,6 +44,30 @@ fn error(e: identity::Error) -> ForgeError {
         None,
     )
 }
+fn target_for_context(
+    provider: Provider,
+    host: &str,
+    repo: &str,
+    policy: &identity::LoadedPolicy,
+) -> identity::Result<Target> {
+    match provider {
+        Provider::GitHub => Target::new(host, repo),
+        Provider::GitLab
+            if host.eq_ignore_ascii_case("gitlab.com")
+                || policy
+                    .policy
+                    .gitlab_hosts
+                    .iter()
+                    .any(|configured| configured.eq_ignore_ascii_case(host)) =>
+        {
+            Target::new_gitlab(host, repo)
+        }
+        Provider::GitLab => Err(identity::Error::new(
+            "identity_gitlab_host_not_configured_add_gitlab_hosts",
+        )),
+        Provider::Local => Err(identity::Error::new("identity_provider_unsupported")),
+    }
+}
 pub fn scope(cli: &Cli, global: &GlobalFlags) -> Result<Scope, ForgeError> {
     let none = || Scope(None);
     if matches!(
@@ -271,7 +295,7 @@ fn run_inner(
                 identity::target_for_remote(None, &remote, operation != Operation::GitRead)
                     .map_err(error)?;
             let ctx = detect(global.provider_hint(), &remote, None, |_| Some(url.clone()))?;
-            if ctx.provider != Provider::GitHub {
+            if ctx.provider == Provider::Local {
                 return Err(error(identity::Error::new("identity_provider_unsupported")));
             }
             if ctx.host != target.host {
@@ -285,14 +309,13 @@ fn run_inner(
                 global.repo.as_deref(),
                 git_remote_url,
             )?;
-            if ctx.provider != Provider::GitHub {
-                return Err(error(identity::Error::new("identity_provider_unsupported")));
-            }
-            Target::new(
+            target_for_context(
+                ctx.provider,
                 &ctx.host,
                 ctx.repo
                     .as_deref()
                     .ok_or_else(|| error(identity::Error::new("identity_target_unknown")))?,
+                &policy,
             )
             .map_err(error)?
         };
