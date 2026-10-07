@@ -229,26 +229,29 @@ pub(super) fn snapshot<R: BackendRunner>(
     for row in runs_rows {
         let check = parse_github_rest_check_run(row, false)?;
         let app = row.pointer("/app/id").and_then(|v| v.as_i64());
-        rows.push((check, app));
+        rows.push((check, app, false));
     }
     for row in status_rows {
-        rows.push((parse_github_rest_status(row, false)?, None));
+        rows.push((parse_github_rest_status(row, false)?, None, true));
     }
     let required = requirements(runner, ctx, &head)?;
     let mut missing_checks = Vec::new();
     for requirement in required {
         let mut found = false;
-        for (check, app) in &mut rows {
-            if check.name == requirement.name && requirement.app.is_none_or(|id| *app == Some(id)) {
-                check.required = true;
-                found = true;
+        for (check, app, is_status) in &mut rows {
+            if check.name == requirement.name {
+                let matches_app = requirement.app.is_none_or(|id| *app == Some(id));
+                // A same-name commit status must pass too, but cannot replace
+                // the check run from the configured App.
+                check.required |= matches_app || *is_status;
+                found |= matches_app;
             }
         }
         if !found {
             missing_checks.push(pending(&requirement.name));
         }
     }
-    let mut checks: Vec<_> = rows.into_iter().map(|(check, _)| check).collect();
+    let mut checks: Vec<_> = rows.into_iter().map(|(check, _, _)| check).collect();
     checks.extend(missing_checks);
     if json_total_count_exceeds_len(&runs, runs_rows.len())
         || json_total_count_exceeds_len(&statuses, status_rows.len())

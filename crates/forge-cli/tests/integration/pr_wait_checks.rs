@@ -751,6 +751,63 @@ mod configured_gate {
         };
         assert_eq!(gate(&f).unwrap_err().kind(), "checks_pending");
     }
+    fn app_bound_status_fixture(state: &str, app: serde_json::Value) -> Fixture {
+        Fixture {
+            protection: serde_json::json!({"requiredStatusChecks":[{"context":"test","app":{"databaseId":2}}]}),
+            runs: serde_json::json!({"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success","app":app}]}),
+            statuses: serde_json::json!({"total_count":1,"statuses":[{"context":"test","state":state}]}),
+            ..Fixture::default()
+        }
+    }
+
+    fn wait(f: &Fixture) -> WaitOutcome {
+        let (global, ctx) = context();
+        let args = PrWaitChecksArgs {
+            id: "42".into(),
+            timeout: Duration::ZERO,
+            interval: Duration::ZERO,
+            required_only: true,
+            allow_no_checks: false,
+        };
+        compute(f, &FixedClock, &global, &ctx, &args).unwrap()
+    }
+
+    #[test]
+    fn failed_same_name_status_blocks_app_bound_wait_and_merge() {
+        for state in ["failure", "error"] {
+            let f = app_bound_status_fixture(state, serde_json::json!({"id":2}));
+            assert!(matches!(wait(&f), WaitOutcome::Failed(_)), "{state}");
+            assert_eq!(gate(&f).unwrap_err().kind(), "checks_failed");
+        }
+    }
+
+    #[test]
+    fn pending_same_name_status_blocks_app_bound_wait_and_merge() {
+        let f = app_bound_status_fixture("pending", serde_json::json!({"id":2}));
+        assert!(matches!(wait(&f), WaitOutcome::TimedOut(_)));
+        assert_eq!(gate(&f).unwrap_err().kind(), "checks_pending");
+    }
+
+    #[test]
+    fn successful_same_name_check_and_status_both_count_as_required() {
+        let f = app_bound_status_fixture("success", serde_json::json!({"id":2}));
+        let WaitOutcome::Success(payload) = wait(&f) else {
+            panic!("both successful rows must allow the wait to finish");
+        };
+        assert_eq!(payload.required_count, 2);
+        assert!(payload.checks.iter().all(|check| check.required));
+        assert_eq!(gate(&f).unwrap().required_count, 2);
+    }
+
+    #[test]
+    fn successful_status_cannot_replace_a_check_from_the_required_app() {
+        for app in [serde_json::json!({"id":1}), serde_json::Value::Null] {
+            let f = app_bound_status_fixture("success", app);
+            assert!(matches!(wait(&f), WaitOutcome::TimedOut(_)));
+            assert_eq!(gate(&f).unwrap_err().kind(), "checks_pending");
+        }
+    }
+
     #[test]
     fn commit_status_can_satisfy_an_unbound_required_context() {
         let f = Fixture {
