@@ -4,7 +4,7 @@
 //! the new binary, without touching the tmux sessions it already launched.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -235,11 +235,21 @@ fn serve_bounds_the_drain_when_a_request_stays_open() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let install = Install::new(&tmp.path().join("prefix"));
     let mut serve = Serve::spawn(tmp.path(), &install, SCOPED);
-    // An unfinished request holds graceful shutdown open, as a long-lived
-    // attach or activity stream would, so only the drain deadline ends it.
+    // Wait until the server is reading an unfinished request body before
+    // replacing the binary. An incomplete header alone can still be queued
+    // in the listener when graceful shutdown starts, so it does not prove an
+    // in-flight request will hold the drain open.
     let mut held = TcpStream::connect(serve.addr).expect("held connection");
-    held.write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n")
-        .expect("partial request");
+    held.set_read_timeout(Some(Duration::from_secs(15)))
+        .expect("held response deadline");
+    held.write_all(
+        b"POST /sessions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\nExpect: 100-continue\r\n\r\n",
+    )
+    .expect("request headers");
+    let mut interim = [0_u8; 25];
+    held.read_exact(&mut interim).expect("server accepts body");
+    assert_eq!(&interim, b"HTTP/1.1 100 Continue\r\n\r\n");
+    held.write_all(b"{").expect("partial request body");
 
     let replaced_at = Instant::now();
     install.replace();
