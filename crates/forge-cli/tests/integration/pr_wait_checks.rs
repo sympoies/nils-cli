@@ -641,6 +641,7 @@ mod configured_gate {
         runs: serde_json::Value,
         statuses: serde_json::Value,
         refuse_rules: bool,
+        rules_error: Option<&'static str>,
         graphql_errors: bool,
     }
     impl Default for Fixture {
@@ -652,6 +653,7 @@ mod configured_gate {
                 runs: serde_json::json!({"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success","app":{"id":1}}]}),
                 statuses: serde_json::json!({"total_count":0,"statuses":[]}),
                 refuse_rules: false,
+                rules_error: None,
                 graphql_errors: false,
             }
         }
@@ -671,6 +673,13 @@ mod configured_gate {
                     value
                 }
                 ("api", e) if e.contains("/rules/branches/") => {
+                    if let Some(message) = self.rules_error {
+                        return Err(ForgeError::backend_error(
+                            "test",
+                            "provider command failed",
+                            Some(message.into()),
+                        ));
+                    }
                     if self.refuse_rules {
                         return Err(ForgeError::validation(
                             "test",
@@ -732,6 +741,35 @@ mod configured_gate {
             ..Fixture::default()
         };
         assert_eq!(gate(&f).unwrap_err().kind(), "checks_pending");
+    }
+
+    #[test]
+    fn free_plan_rules_403_falls_back_to_graphql_branch_protection() {
+        const PLAN_LIMITATION: &str = "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
+        let f = Fixture {
+            protection: serde_json::json!({"requiredStatusChecks":[{"context":"test","app":null}]}),
+            rules_error: Some(PLAN_LIMITATION),
+            ..Fixture::default()
+        };
+        assert!(gate(&f).is_ok());
+
+        let missing_graphql_requirement = Fixture {
+            rules_error: Some(PLAN_LIMITATION),
+            ..Fixture::default()
+        };
+        assert_eq!(
+            gate(&missing_graphql_requirement).unwrap_err().kind(),
+            "checks_pending"
+        );
+    }
+
+    #[test]
+    fn unrelated_rules_403_stays_fail_closed() {
+        let f = Fixture {
+            rules_error: Some("gh: Resource not accessible by integration (HTTP 403)"),
+            ..Fixture::default()
+        };
+        assert_eq!(gate(&f).unwrap_err().kind(), "backend_error");
     }
     #[test]
     fn required_workflow_rule_cannot_pass_with_only_optional_checks() {
