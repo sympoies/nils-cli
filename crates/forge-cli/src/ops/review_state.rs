@@ -706,7 +706,8 @@ pub fn parse_chain<'a>(
                     || (next
                         && handoff.returned_reason.is_none()
                         && !old.surrendered
-                        && old.returned_reason.is_none())
+                        && old.returned_reason.is_none()
+                        && !super::pr_review_handoff::valid_scope_refresh(old, handoff))
                     || record.assignment_generation != Some(handoff.assignment_generation)
                 {
                     return Err(state_conflict(
@@ -774,7 +775,8 @@ pub fn parse_chain<'a>(
                 if handoff.assignment_generation == next_generation
                     && (handoff.coordinator_digest == active.coordinator_digest
                         || super::pr_review_handoff::valid_coordinator_transfer(active, handoff))
-                    && handoff.returned_reason.is_some()
+                    && (handoff.returned_reason.is_some()
+                        || super::pr_review_handoff::valid_scope_refresh(active, handoff))
                     && by_digest[*key].assignment_generation == Some(next_generation))
             })
             .collect();

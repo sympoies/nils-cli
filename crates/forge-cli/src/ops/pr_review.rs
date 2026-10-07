@@ -430,7 +430,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         Vec::new()
     };
 
-    let body = if let Some(native_review_url) = native_review_url.as_deref() {
+    let mut body = if let Some(native_review_url) = native_review_url.as_deref() {
         build_review_metadata_body(
             ctx.provider,
             id,
@@ -445,7 +445,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             "--comment-file",
         )?
     };
-    let body_present = !body.trim().is_empty();
+    let mut body_present = !body.trim().is_empty();
     // GitHub permits a body-less APPROVE review, so the empty-body guard is
     // relaxed only for a native approve submission. Every other case — outcome
     // comments, and native COMMENT / REQUEST_CHANGES reviews (GitHub requires a
@@ -738,6 +738,10 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         let repository = github_owner_name(&ctx).map(|(o, n)| format!("{o}/{n}"))?;
         let chain = read_review_state_chain(runner, &ctx, &repository, id)?;
         super::pr_review_handoff::ensure_writer(&chain)?;
+        if args.submit_review {
+            body = super::pr_review_handoff::bind_native_report(&chain, &body);
+            body_present = !body.trim().is_empty();
+        }
         if let (Some(review_id), Some(native_review_url), Some(native_review_author)) = (
             native_review_id,
             native_review_url.as_deref(),
@@ -2280,13 +2284,15 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
     }
     if let review_state::ReviewStatePayload::ReviewHandoff { handoff } = &payload {
         super::pr_review_handoff::ensure_handoff_append(&before.chain, handoff)?;
-        if handoff.coordinator_transfer.is_some() {
+        // Assignment and recovery bind a new interval to the current provider
+        // scope. Surrender deliberately retains the old scope for recovery.
+        if !handoff.surrendered {
             let current = super::pr_view::compute(runner, ctx, number)?;
             if current.head_sha.as_deref() != Some(expected_head) {
                 return Err(ForgeError::validation(
                     schema_err(),
                     "review_state_conflict",
-                    "provider head changed before coordinator takeover",
+                    "provider head changed before review handoff",
                     None,
                 ));
             }
@@ -2294,7 +2300,7 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
                 return Err(ForgeError::validation(
                     schema_err(),
                     "review_scope_changed",
-                    "provider base changed before coordinator takeover",
+                    "provider base changed before review handoff",
                     None,
                 ));
             }

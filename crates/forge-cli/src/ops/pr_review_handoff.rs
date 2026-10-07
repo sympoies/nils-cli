@@ -15,6 +15,7 @@ use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
 
 const SCHEMA: &str = "pr.review-handoff";
+const PUBLICATION_BINDING_PREFIX: &str = "<!-- forge-cli:review-handoff:v1 ";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -178,6 +179,79 @@ pub(crate) fn latest(chain: &review_state::ReviewStateChain) -> Option<&ReviewHa
         })
 }
 
+fn latest_handoff_digest(chain: &review_state::ReviewStateChain) -> Option<&str> {
+    chain.records.iter().rev().find_map(|record| {
+        matches!(
+            record.payload,
+            review_state::ReviewStatePayload::ReviewHandoff { .. }
+        )
+        .then_some(record.record_digest.as_str())
+    })
+}
+
+/// Capture the admitted interval before publication. A provider mutation may
+/// race a handover, so timestamps alone cannot prove which interval wrote it.
+pub(crate) fn bind_native_report(chain: &review_state::ReviewStateChain, body: &str) -> String {
+    let Some(digest) = latest_handoff_digest(chain) else {
+        return body.to_string();
+    };
+    let summary = body
+        .lines()
+        .filter(|line| !line.trim().starts_with(PUBLICATION_BINDING_PREFIX))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "{}\n\n{PUBLICATION_BINDING_PREFIX}{digest} -->",
+        summary.trim_end()
+    )
+}
+
+fn publication_matches_interval(chain: &review_state::ReviewStateChain, body: &str) -> bool {
+    let markers: Vec<_> = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with(PUBLICATION_BINDING_PREFIX))
+        .collect();
+    if markers.is_empty() {
+        // Keep original first-generation reports readable across an upgrade.
+        // Every handover/refresh must prove its own publication, even when a
+        // an older writer started before the new interval was assigned.
+        return latest(chain).is_some_and(|h| h.assignment_generation == 1);
+    }
+    markers.len() == 1
+        && latest_handoff_digest(chain)
+            .is_some_and(|digest| markers[0] == format!("{PUBLICATION_BINDING_PREFIX}{digest} -->"))
+}
+
+// A delayed report can be ignored only when its single canonical binding
+// identifies a different handoff already retained in this verified chain.
+fn publication_is_known_other_interval(chain: &review_state::ReviewStateChain, body: &str) -> bool {
+    let mut markers = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with(PUBLICATION_BINDING_PREFIX));
+    let Some(marker) = markers.next() else {
+        return false;
+    };
+    if markers.next().is_some() {
+        return false;
+    }
+    let Some(digest) = marker
+        .strip_prefix(PUBLICATION_BINDING_PREFIX)
+        .and_then(|value| value.strip_suffix(" -->"))
+    else {
+        return false;
+    };
+    Some(digest) != latest_handoff_digest(chain)
+        && chain.records.iter().any(|record| {
+            record.record_digest == digest
+                && matches!(
+                    record.payload,
+                    review_state::ReviewStatePayload::ReviewHandoff { .. }
+                )
+        })
+}
+
 pub(crate) fn is_assigned(chain: &review_state::ReviewStateChain) -> bool {
     latest(chain).is_some() || std::env::var("AGENT_REVIEWER_SESSION").is_ok_and(|v| !v.is_empty())
 }
@@ -303,7 +377,10 @@ pub(crate) fn ensure_handoff_append(
             ));
         }
         if Some(next.assignment_generation) != old.assignment_generation.checked_add(1)
-            || (next.returned_reason.is_none() && !old.surrendered && old.returned_reason.is_none())
+            || (next.returned_reason.is_none()
+                && !old.surrendered
+                && old.returned_reason.is_none()
+                && !valid_scope_refresh(old, next))
         {
             return Err(fail(
                 "review_handover_required",
@@ -317,6 +394,21 @@ pub(crate) fn ensure_handoff_append(
         ));
     }
     Ok(())
+}
+
+/// A moved base may start a fresh interval for the same reviewer and author.
+/// It never transfers ownership or admits an old observation/publication.
+pub(crate) fn valid_scope_refresh(old: &ReviewHandoff, next: &ReviewHandoff) -> bool {
+    !old.surrendered
+        && old.returned_reason.is_none()
+        && !next.surrendered
+        && next.returned_reason.is_none()
+        && next.coordinator_transfer.is_none()
+        && next.coordinator_digest == old.coordinator_digest
+        && next.reviewer_digest == old.reviewer_digest
+        && next.review_author == old.review_author
+        && next.base_sha != old.base_sha
+        && Some(next.assignment_generation) == old.assignment_generation.checked_add(1)
 }
 
 /// A transfer is a recovery, never an assignment or a reviewer publication.
@@ -520,18 +612,26 @@ pub(crate) fn ensure_published<R: BackendRunner>(
                 "handoff publication timestamp is missing or invalid",
             )
         })?;
-    let review = reviews
+    let mut candidates = reviews
         .current_head_reviews
         .iter()
         .filter(|r| matches_designated_author(r, &handoff.review_author) && r.commit_sha == head)
-        .max_by_key(|r| (&r.submitted_at, r.database_id));
-    let passing = if let Some(r) = review {
+        .collect::<Vec<_>>();
+    candidates.sort_unstable_by(|a, b| {
+        (&b.submitted_at, b.database_id).cmp(&(&a.submitted_at, a.database_id))
+    });
+    let mut passing = false;
+    for r in candidates {
         let body = if r.summary_truncated || r.author_type.as_deref() == Some("Bot") {
             read_complete_report(runner, ctx, number, r, &handoff.review_author)?
         } else {
             r.summary.clone()
         };
-        pr_review::validate_specialist_review_report(&body).is_ok()
+        if publication_is_known_other_interval(chain, &body) {
+            continue;
+        }
+        passing = pr_review::validate_specialist_review_report(&body).is_ok()
+            && publication_matches_interval(chain, &body)
             && body.lines().any(|l| {
                 let Some(value) = l.trim().strip_prefix("- Reviewable: ") else {
                     return false;
@@ -553,10 +653,11 @@ pub(crate) fn ensure_published<R: BackendRunner>(
                     l.trim(),
                     "- Lens verdict: pass" | "- Lens verdict: follow-up-pass"
                 )
-            })
-    } else {
-        false
-    };
+            });
+        // The newest report not proven to belong to an older interval owns
+        // the verdict, including blocked, malformed or unbound reports.
+        break;
+    }
     if !passing {
         return Err(fail(
             "awaiting_designated_review",
@@ -733,12 +834,6 @@ pub fn run(
                 require_head(head, expected)?;
             }
             if let Some(h) = latest(&chain) {
-                if h.base_sha != base {
-                    return Err(fail(
-                        "review_scope_changed",
-                        "provider base changed since assignment",
-                    ));
-                }
                 if assignment_digest()?
                     .as_ref()
                     .is_some_and(|digest| digest != &h.reviewer_digest)
@@ -751,7 +846,9 @@ pub fn run(
                         "configured reviewer or author differs from the persisted handoff",
                     ));
                 }
-                status = if h.returned_reason.is_some() {
+                status = if h.base_sha != base {
+                    "review-scope-changed"
+                } else if h.returned_reason.is_some() {
                     "returned-to-coordinator"
                 } else if h.surrendered {
                     "surrendered"
@@ -808,12 +905,6 @@ pub fn run(
                     "base SHA or public review author is invalid",
                 ));
             }
-            if latest(&chain).is_some_and(|h| !h.surrendered && h.returned_reason.is_none()) {
-                return Err(fail(
-                    "review_handover_required",
-                    "ordinary reassignment requires reviewer-owned surrender",
-                ));
-            }
             let generation = latest(&chain)
                 .map(|h| h.assignment_generation)
                 .unwrap_or(0)
@@ -832,7 +923,7 @@ pub fn run(
                     "designated reviewer must be a different session from the worker",
                 ));
             }
-            proposed = Some(ReviewHandoff {
+            let next = ReviewHandoff {
                 coordinator_digest: coordinator,
                 reviewer_digest: reviewer,
                 review_author: a.review_author.clone(),
@@ -842,7 +933,16 @@ pub fn run(
                 assignment_generation: generation,
                 surrendered: false,
                 coordinator_transfer: None,
-            });
+            };
+            if latest(&chain).is_some_and(|h| {
+                !h.surrendered && h.returned_reason.is_none() && !valid_scope_refresh(h, &next)
+            }) {
+                return Err(fail(
+                    "review_handover_required",
+                    "ordinary reassignment requires reviewer-owned surrender",
+                ));
+            }
+            proposed = Some(next);
         }
         PrReviewHandoffCommand::Surrender(a) => {
             require_head(head, &a.expected_head)?;
@@ -929,6 +1029,8 @@ pub fn run(
             })?;
             h.returned_reason = Some(a.reason.clone());
             h.surrendered = false;
+            h.base_sha = base.clone();
+            h.assigned_head = head.to_string();
             proposed = Some(h);
         }
     }
