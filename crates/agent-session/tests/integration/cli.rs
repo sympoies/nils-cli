@@ -24,10 +24,12 @@ fn run(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
 }
 
 fn write_executable(path: &Path, body: &str) {
-    fs::write(path, body).expect("write executable");
-    let mut permissions = fs::metadata(path).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).expect("chmod executable");
+    // Install the fixture atomically (sibling temp, sync, close, rename) so the
+    // final path is never observed open-for-write. A sibling test thread that
+    // forks while the writer's descriptor is still open would otherwise inherit
+    // that write descriptor, and the pre-warm exec of the freshly written script
+    // fails with ETXTBSY (sympoies/nils-cli#2170).
+    nils_test_support::fs::write_executable(path, body);
 }
 
 /// Restores a directory's mode when the enclosing scope ends.
