@@ -250,3 +250,122 @@ fn sibling_or_skip_panics_for_a_stale_sibling_instead_of_skipping() {
 
     bin::sibling_or_skip("nts-stale-skip", "nils-stale");
 }
+
+/// Write and execute on the same thread while sibling threads spawn unrelated
+/// processes. No thread rewrites the fixture during its exec: only a sibling
+/// fork inheriting the writer descriptor can keep the inode text-busy.
+#[cfg(target_os = "linux")]
+#[test]
+fn fixture_exec_retries_while_sibling_threads_spawn() {
+    use std::io::ErrorKind;
+    use std::process::Command;
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::thread;
+
+    let temp = TempDir::new().expect("fixture directory");
+    let path = temp.path().join("tool");
+    let running = Arc::new(AtomicBool::new(true));
+    let barrier = Arc::new(Barrier::new(9));
+    let siblings: Vec<_> = (0..8)
+        .map(|_| {
+            let running = Arc::clone(&running);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                let mut spawns = 0;
+                while running.load(Ordering::Relaxed) {
+                    assert!(
+                        Command::new("/bin/true")
+                            .status()
+                            .expect("sibling spawn")
+                            .success()
+                    );
+                    spawns += 1;
+                }
+                spawns
+            })
+        })
+        .collect();
+    barrier.wait();
+
+    let mut busy_attempts = 0;
+    let mut failures = 0;
+    for _ in 0..1000 {
+        nils_test_support::fs::write_executable(&path, "#!/bin/sh\nprintf 'warm'\n");
+        let result = cmd::retry_executable_file_busy(|| {
+            let result = Command::new(&path).output();
+            if result
+                .as_ref()
+                .is_err_and(|error| error.kind() == ErrorKind::ExecutableFileBusy)
+            {
+                busy_attempts += 1;
+            }
+            result
+        });
+        match result {
+            Ok(output) if output.status.success() && output.stdout == b"warm" => {}
+            _ => failures += 1,
+        }
+    }
+    running.store(false, Ordering::Relaxed);
+    let spawns: usize = siblings
+        .into_iter()
+        .map(|sibling| sibling.join().expect("sibling thread"))
+        .sum();
+    eprintln!(
+        "1000 write-then-exec iterations; {spawns} sibling spawns; {busy_attempts} busy attempts; {failures} failures"
+    );
+    assert!(spawns > 0, "sibling spawns exercised");
+    assert_eq!(failures, 0, "fixture exec succeeds despite sibling forks");
+}
+
+#[test]
+fn fixture_exec_returns_other_errors_without_retrying() {
+    let temp = TempDir::new().expect("fixture directory");
+    let missing = temp.path().join("missing");
+    let mut attempts = 0;
+    let error = cmd::retry_executable_file_busy(|| {
+        attempts += 1;
+        std::process::Command::new(&missing).output()
+    })
+    .expect_err("missing program fails");
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    assert_eq!(attempts, 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn fixture_exec_preserves_nonzero_exit_without_retrying() {
+    let mut attempts = 0;
+    let output = cmd::retry_executable_file_busy(|| {
+        attempts += 1;
+        std::process::Command::new("/bin/sh")
+            .args(["-c", "printf output; printf error >&2; exit 7"])
+            .output()
+    })
+    .expect("fixture runs");
+    assert_eq!(output.status.code(), Some(7));
+    assert_eq!(output.stdout, b"output");
+    assert_eq!(output.stderr, b"error");
+    assert_eq!(attempts, 1);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn fixture_exec_bounds_persistent_executable_file_busy() {
+    let temp = TempDir::new().expect("fixture directory");
+    let path = temp.path().join("tool");
+    nils_test_support::fs::write_executable(&path, "#!/bin/sh\nexit 0\n");
+    let _writer = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("hold writer");
+    let started = std::time::Instant::now();
+    let error = cmd::retry_executable_file_busy(|| std::process::Command::new(&path).output())
+        .expect_err("persistent busy error reaches the caller");
+    assert_eq!(error.kind(), std::io::ErrorKind::ExecutableFileBusy);
+    assert!(started.elapsed() >= std::time::Duration::from_secs(5));
+}

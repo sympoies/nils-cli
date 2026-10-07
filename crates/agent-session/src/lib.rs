@@ -25471,10 +25471,12 @@ fi
         // kill step, which is the hang under test (sympoies/nils-cli#2131).
         // Use `display-message` (not `if-shell`) so the wrapper descendant this
         // test asserts is reaped is not spawned by the pre-warm.
-        let prewarm = std::process::Command::new(&tmux)
-            .arg("display-message")
-            .output()
-            .expect("prewarm fake tmux");
+        let prewarm = nils_test_support::cmd::retry_executable_file_busy(|| {
+            std::process::Command::new(&tmux)
+                .arg("display-message")
+                .output()
+        })
+        .expect("prewarm fake tmux");
         assert!(
             prewarm.status.success(),
             "fake tmux prewarm failed: {}",
@@ -25784,10 +25786,12 @@ fi
         // graceful-shutdown path under test (sympoies/nils-cli#2131).
         // Use `display-message` (not `if-shell`) so the pre-warm call log does
         // not contain the `send-keys`/`kill-session` tokens this test inspects.
-        let prewarm = std::process::Command::new(&tmux)
-            .arg("display-message")
-            .output()
-            .expect("prewarm fake tmux");
+        let prewarm = nils_test_support::cmd::retry_executable_file_busy(|| {
+            std::process::Command::new(&tmux)
+                .arg("display-message")
+                .output()
+        })
+        .expect("prewarm fake tmux");
         assert!(
             prewarm.status.success(),
             "fake tmux prewarm failed: {}",
@@ -25890,10 +25894,12 @@ exit 42
         // verified-TUI-exit path under test (sympoies/nils-cli#2131).
         // Use `display-message` (not `if-shell`) so the pre-warm call log does
         // not contain the `send-keys`/`kill-session` tokens this test inspects.
-        let prewarm = std::process::Command::new(&tmux)
-            .arg("display-message")
-            .output()
-            .expect("prewarm fake tmux");
+        let prewarm = nils_test_support::cmd::retry_executable_file_busy(|| {
+            std::process::Command::new(&tmux)
+                .arg("display-message")
+                .output()
+        })
+        .expect("prewarm fake tmux");
         assert!(
             prewarm.status.success(),
             "fake tmux prewarm failed: {}",
@@ -26359,24 +26365,12 @@ exit 42
             // A sibling test's fork can briefly hold this stub's write
             // descriptor, which makes exec fail with ETXTBSY. Run it once with a
             // retry so the probe below cannot read that as an unreadable version.
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            loop {
-                match std::process::Command::new(&runner)
+            nils_test_support::cmd::retry_executable_file_busy(|| {
+                std::process::Command::new(&runner)
                     .arg("--version")
                     .output()
-                {
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::ExecutableFileBusy
-                            && std::time::Instant::now() < deadline =>
-                    {
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
-                    result => {
-                        result.expect("fake systemd-run stub runs");
-                        break;
-                    }
-                }
-            }
+            })
+            .expect("fake systemd-run stub runs");
             assert_eq!(
                 super::tmux_scope(runner).literal_arguments,
                 expected,

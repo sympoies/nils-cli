@@ -399,3 +399,28 @@ fn run_impl_os(bin: &Path, args: &[&OsStr], options: &CmdOptions, dir: Option<&P
         stderr: output.stderr,
     }
 }
+
+/// Run a fixture command with a bounded retry for transient `ExecutableFileBusy`.
+///
+/// A sibling fork can retain the freshly written fixture's writable descriptor
+/// briefly. Retry that setup race for up to five seconds, sleeping ten
+/// milliseconds between attempts. Other errors and successful invocations
+/// (including nonzero exit statuses) return immediately. This bounds retries,
+/// not the duration of the command itself; product probe budgets are unchanged.
+/// The closure may call `output`, `status`, or `spawn` on a configured command.
+pub fn retry_executable_file_busy<T>(
+    mut exec: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match exec() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            result => return result,
+        }
+    }
+}

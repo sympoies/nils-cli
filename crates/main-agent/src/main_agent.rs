@@ -26082,11 +26082,13 @@ mod tests {
         // tail for a freshly written script; the caller deadline then
         // reaches the reader phase this test's admission assertions
         // model.
-        let warmup = Command::new(&fake_git)
-            .current_dir(repository)
-            .arg("diff")
-            .output()
-            .expect("pre-warm file-reader git fixture");
+        let warmup = nils_test_support::cmd::retry_executable_file_busy(|| {
+            Command::new(&fake_git)
+                .current_dir(repository)
+                .arg("diff")
+                .output()
+        })
+        .expect("pre-warm file-reader git fixture");
         assert!(
             warmup.status.success(),
             "pre-warm file-reader git fixture exits cleanly"
@@ -26168,11 +26170,13 @@ mod tests {
         // call's launches do not race the host's cold-start tail for a
         // freshly written script; the window then covers launch latency and
         // the FIFO open only.
-        let warmup = Command::new(&special_git)
-            .current_dir(repository)
-            .arg("diff")
-            .output()
-            .expect("pre-warm special git fixture");
+        let warmup = nils_test_support::cmd::retry_executable_file_busy(|| {
+            Command::new(&special_git)
+                .current_dir(repository)
+                .arg("diff")
+                .output()
+        })
+        .expect("pre-warm special git fixture");
         assert!(
             warmup.status.success(),
             "pre-warm special git fixture exits cleanly"
@@ -26355,9 +26359,9 @@ mod tests {
             .current_dir(repository)
             .arg("diff")
             .stdout(Stdio::piped());
-        let mut warmup = warmup_command
-            .spawn()
-            .expect("pre-warm continuous output fixture");
+        let mut warmup =
+            nils_test_support::cmd::retry_executable_file_busy(|| warmup_command.spawn())
+                .expect("pre-warm continuous output fixture");
         let mut first_byte = [0_u8; 1];
         warmup
             .stdout

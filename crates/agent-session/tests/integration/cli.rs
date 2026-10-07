@@ -564,24 +564,13 @@ exit 0
 }
 
 fn prewarm_fake_tmux(bin: &Path, log: &Path) -> std::process::Output {
-    // A sibling fork can briefly inherit the script's writable descriptor.
-    // Retry only that setup race before the product's bounded probe runs.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        match Command::new(bin)
+    nils_test_support::cmd::retry_executable_file_busy(|| {
+        Command::new(bin)
             .arg("version")
             .env("AGENT_SESSION_FAKE_TMUX_LOG", log)
             .output()
-        {
-            Err(error)
-                if error.kind() == io::ErrorKind::ExecutableFileBusy
-                    && Instant::now() < deadline =>
-            {
-                thread::sleep(Duration::from_millis(10));
-            }
-            result => return result.expect("prewarm fake tmux"),
-        }
-    }
+    })
+    .expect("prewarm fake tmux")
 }
 
 #[test]
@@ -12721,23 +12710,13 @@ impl RealTmuxServer {
         // A sibling test forking while the script was open for writing makes
         // exec fail with ETXTBSY until that child execs. Run it once, retrying,
         // so neither this test nor agent-session hits that window later.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            match Command::new(&wrapper)
+        nils_test_support::cmd::retry_executable_file_busy(|| {
+            Command::new(&wrapper)
                 .arg("-V")
                 .stdout(Stdio::null())
                 .status()
-            {
-                Ok(_) => break,
-                Err(error)
-                    if error.kind() == io::ErrorKind::ExecutableFileBusy
-                        && Instant::now() < deadline =>
-                {
-                    thread::sleep(Duration::from_millis(20));
-                }
-                Err(error) => panic!("run tmux wrapper: {error}"),
-            }
-        }
+        })
+        .expect("run tmux wrapper");
         Some(Self { wrapper })
     }
 
