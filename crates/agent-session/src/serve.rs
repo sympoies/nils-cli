@@ -2259,16 +2259,13 @@ fn activity_notify_event_root_lost(event: &NotifyEvent, sessions_root: &Path) ->
 }
 
 fn activity_notify_event_relevant(event: &NotifyEvent) -> bool {
-    let shadow_only = !event.paths.is_empty()
+    let temporary_shadow_only = !event.paths.is_empty()
         && event.paths.iter().all(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    name == crate::activity::shadow::SHADOW_FILE
-                        || name.starts_with(".activity.shadow.json.tmp-")
-                })
+                .is_some_and(|name| name.starts_with(".activity.shadow.json.tmp-"))
         });
-    if shadow_only {
+    if temporary_shadow_only {
         return false;
     }
     let known_snapshot_path = event.paths.iter().any(|path| {
@@ -2277,7 +2274,10 @@ fn activity_notify_event_relevant(event: &NotifyEvent) -> bool {
             .is_some_and(|name| {
                 matches!(
                     name,
-                    "activity.json" | "activity.unhealthy.json" | "session.json"
+                    "activity.json"
+                        | "activity.unhealthy.json"
+                        | "session.json"
+                        | "activity.shadow.json"
                 )
             })
     });
@@ -2370,6 +2370,9 @@ async fn activity_change_loop_inner(
 ) {
     let mut lifecycle_rx = lifecycle.subscribe();
     let mut last_refresh_started_at = None;
+    let mut shadow_poll = tokio::time::interval(Duration::from_secs(15));
+    shadow_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    shadow_poll.tick().await;
     loop {
         let change = tokio::select! {
             biased;
@@ -2382,6 +2385,7 @@ async fn activity_change_loop_inner(
                 continue;
             }
             change = changes.recv() => change,
+            _ = shadow_poll.tick() => Some(ActivityChange::Refresh),
         };
         let Some(change) = change else {
             degrade_activity_broker(
@@ -14407,7 +14411,7 @@ mod tests {
     }
 
     #[test]
-    fn shadow_sidecar_replacements_do_not_trigger_activity_refresh_feedback() {
+    fn completed_shadow_sidecars_refresh_activity_but_temporary_writes_do_not() {
         let shadow_replace = NotifyEvent::new(EventKind::Modify(notify::event::ModifyKind::Name(
             notify::event::RenameMode::Both,
         )))
@@ -14417,7 +14421,14 @@ mod tests {
         .add_path(PathBuf::from(
             "/state/sessions/example/activity.shadow.json",
         ));
-        assert!(!activity_notify_event_relevant(&shadow_replace));
+        assert!(activity_notify_event_relevant(&shadow_replace));
+        let temporary = NotifyEvent::new(EventKind::Modify(notify::event::ModifyKind::Data(
+            notify::event::DataChange::Any,
+        )))
+        .add_path(PathBuf::from(
+            "/state/sessions/example/.activity.shadow.json.tmp-1-2-0",
+        ));
+        assert!(!activity_notify_event_relevant(&temporary));
 
         let session_replace = NotifyEvent::new(EventKind::Modify(notify::event::ModifyKind::Name(
             notify::event::RenameMode::Both,
@@ -19795,6 +19806,47 @@ esac
         change_task.abort();
         let _ = change_task.await;
         (starts, samples)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn activity_refresh_timer_collects_without_hooks_or_http_polling() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let broker = ActivityBroker::for_test(MACHINE);
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed_calls = calls.clone();
+        let collector: SessionCollector = Arc::new(move |_, _| {
+            observed_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Vec::new())
+        });
+        let (_tx, rx) = mpsc::channel(1);
+        let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+        let task = tokio::spawn(activity_change_loop_inner(
+            broker.log.clone(),
+            broker.lifecycle.clone(),
+            collector,
+            CliContext {
+                state_dir: tmp.path().to_path_buf(),
+                host: None,
+            },
+            PathBuf::from("unused-tmux"),
+            rx,
+            ActivityChangeLoopControls {
+                refresh_started: Some(started_tx),
+                watch_rearm: None,
+            },
+        ));
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        tokio::time::advance(Duration::from_millis(15_500)).await;
+        let refreshed = tokio::time::timeout(Duration::from_secs(1), started_rx.recv()).await;
+        task.abort();
+        let _ = task.await;
+        assert!(
+            refreshed.is_ok(),
+            "serve did not collect after the timer elapsed"
+        );
     }
 
     #[tokio::test(start_paused = true)]

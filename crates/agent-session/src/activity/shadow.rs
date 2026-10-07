@@ -74,12 +74,12 @@ pub(crate) fn annotate_for_view(
     let dir = session_dir(context, &record.id);
     let path = dir.join(SHADOW_FILE);
     let sampled_state = state.clone();
-    let cached = read_current(&path, record).filter(|cached| {
+    let cached = read_current(&path, record);
+    if let Some(cached) = cached.as_ref().filter(|cached| {
         cached
             .activity_revision
             .is_none_or(|revision| revision == state.revision)
-    });
-    if let Some(cached) = cached.as_ref() {
+    }) {
         state.shadow_observation =
             Some(with_disagreement(cached.observation.clone(), &state.phase));
         project_interrupt_uncertainty(record, cached, &mut state);
@@ -165,8 +165,7 @@ fn schedule_sample(
         let Some(_lock) = acquire_shadow_lock(&dir) else {
             return;
         };
-        let previous = read_current(&path, &record)
-            .filter(|cached| cached.activity_revision == Some(state.revision));
+        let previous = read_current(&path, &record);
         if previous.as_ref().is_some_and(|cached| {
             is_recent(&cached.observation.observed_at, SAMPLE_INTERVAL_SECONDS)
         }) {
@@ -194,7 +193,8 @@ fn schedule_sample(
             previous
                 .as_ref()
                 .filter(|previous| {
-                    previous.observation.rule_id == "claude_interrupt_marker"
+                    previous.activity_revision == Some(state.revision)
+                        && previous.observation.rule_id == "claude_interrupt_marker"
                         && is_recent(
                             &previous.observation.observed_at,
                             SAMPLE_INTERVAL_SECONDS * 2,
@@ -547,9 +547,153 @@ mod tests {
         cached["interrupt_since"] = json!(now());
         assert_eq!(view(working.clone(), &cached).phase, TurnPhase::Working);
         cached["interrupt_since"] = json!(earlier);
+        let mut attention = working.clone();
+        attention.current_turn.as_mut().unwrap().attention = Some(
+            serde_json::from_value(json!({
+                "kind": "approval", "requested_at": now(), "pending_count": 1,
+                "certainty": "conservative"
+            }))
+            .unwrap(),
+        );
+        assert_eq!(view(attention, &cached).phase, TurnPhase::Working);
         cached["observation"]["rule_id"] = json!("claude_working_indicator");
         cached["observation"]["projection"] = json!("working");
         assert_eq!(view(working, &cached).phase, TurnPhase::Working);
+    }
+
+    #[test]
+    fn claude_shadow_writer_sustains_resets_and_throttles_across_revisions() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record = record("writer", "launch-a", 1);
+        record.agent = "claude".to_string();
+        write_record(&context, &record);
+        crate::activity::activate_runtime(&context, &record).unwrap();
+        let progress = |name: &str| {
+            let event: super::super::TurnEvent = serde_json::from_value(json!({
+                "schema_version": "agent-session.turn-event.v1", "event_id": name,
+                "runtime_id": "launch-a", "provider": "claude", "provider_turn_id": name,
+                "kind": "progress", "confidence": "observed", "source_kind": "provider_hook"
+            }))
+            .unwrap();
+            crate::activity::ingest_event(&context, &record.id, event).unwrap();
+        };
+        progress("start");
+        let counter = tmp.path().join("captures");
+        let tmux = tmp.path().join("fake-tmux");
+        fs::write(&tmux, format!(
+            "#!/bin/sh\ncase \"$1\" in\n display-message) printf 'Claude\\n' ;;\n capture-pane) printf 'capture\\n' >> {}; printf 'Interrupted · What should Claude do instead?\\n❯ \\n' ;;\nesac\n",
+            shell_words::quote(counter.to_str().unwrap()),
+        )).unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let path = session_dir(&context, &record.id).join(SHADOW_FILE);
+        let collect = || {
+            annotate_for_view(
+                &context,
+                &record,
+                "running",
+                &tmux,
+                crate::activity::state_for_view(&context, &record).unwrap(),
+                true,
+            )
+        };
+        collect();
+        let first = wait_for_shadow(&path, &record);
+        assert_eq!(
+            first.interrupt_since.as_ref(),
+            Some(&first.observation.observed_at)
+        );
+        progress("next-progress");
+        collect();
+        thread::sleep(Duration::from_millis(80));
+        assert_eq!(
+            fs::read_to_string(&counter).unwrap().lines().count(),
+            1,
+            "a newer revision bypassed the sampling throttle"
+        );
+
+        let age = |mut document: ShadowDocument, seconds: i64| {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let _lock = loop {
+                if let Some(lock) = acquire_shadow_lock(&session_dir(&context, &record.id)) {
+                    break lock;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "sampler did not release its lock"
+                );
+                thread::sleep(Duration::from_millis(10));
+            };
+            let earlier = Timestamp::now()
+                .checked_sub(jiff::SignedDuration::from_secs(seconds))
+                .unwrap()
+                .to_string();
+            document.observation.observed_at = earlier.clone();
+            document.interrupt_since = Some(earlier.clone());
+            fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+            earlier
+        };
+        age(first, 20);
+        collect();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let second = loop {
+            let document = read_current(&path, &record).unwrap();
+            if is_recent(&document.observation.observed_at, 2) {
+                break document;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(
+            second.interrupt_since.as_ref(),
+            Some(&second.observation.observed_at),
+            "a new hook must reset the sustained window"
+        );
+        let since = age(second, 20);
+        collect();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let third = loop {
+            let document = read_current(&path, &record).unwrap();
+            if is_recent(&document.observation.observed_at, 2) {
+                break document;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(third.interrupt_since.as_deref(), Some(since.as_str()));
+        let mut state = crate::activity::state_for_view(&context, &record).unwrap();
+        project_interrupt_uncertainty(&record, &third, &mut state);
+        assert_eq!(state.phase, TurnPhase::Unknown);
+        age(third, 40);
+        assert_eq!(
+            annotate_for_view(
+                &context,
+                &record,
+                "running",
+                &tmux,
+                crate::activity::state_for_view(&context, &record).unwrap(),
+                false
+            )
+            .phase,
+            TurnPhase::Working
+        );
+        collect();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let reset = loop {
+            let document = read_current(&path, &record).unwrap();
+            if is_recent(&document.observation.observed_at, 2) {
+                break document;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(
+            reset.interrupt_since.as_ref(),
+            Some(&reset.observation.observed_at)
+        );
     }
 
     #[test]

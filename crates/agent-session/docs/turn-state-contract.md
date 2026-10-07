@@ -169,9 +169,9 @@ therefore deserialize conservatively.
 
 Optional `diagnostic.reason` values are producer-owned allowlisted codes:
 `completion_evidence_pending`, `attention_authority_mismatch`,
-`provider_projection_unavailable`, `runtime_activity_unhealthy`, and
-`activity_state_unavailable`, and `interrupted_suspected`. Free-form provider or runtime errors never cross
-the session-view or stream boundary.
+`provider_projection_unavailable`, `runtime_activity_unhealthy`,
+`activity_state_unavailable`, and `interrupted_suspected`. Free-form provider or
+runtime errors never cross the session-view or stream boundary.
 
 Optional `shadow_observation` is ordinarily diagnostics-only. It contains
 `observer_version`, a bounded `rule_id`, daemon `observed_at`, one of
@@ -185,9 +185,11 @@ provenance. This is uncertainty, not confirmed `interrupted` or `waiting`: the
 open turn and last-turn outcome remain intact. Runtime launch/generation and
 activity revision fence both samples; a new prompt or any newer hook invalidates
 them. A working indicator, attention, draft, missing marker, stale sample, or
-runtime replacement cannot produce this projection. The serve collector samples
-open Claude working turns every 15 seconds, giving a nominal bound of 30 seconds
-plus collection latency. One-shot CLI views read only the cache. No observer or
+runtime replacement cannot produce this projection. A ready serve activity broker refreshes on a 15-second timer even without
+hooks or HTTP polling, and completed shadow writes refresh stream snapshots.
+Sampling is throttled to once per 15 seconds for each runtime, including across
+activity revisions, giving a nominal bound of 30 seconds plus collection and
+stream debounce latency. One-shot CLI views read only the cache. No observer or
 serve collector means this signal is unavailable. Claude has no interrupt hook
 and [Stop excludes user interrupts](https://code.claude.com/docs/en/hooks#stop).
 
