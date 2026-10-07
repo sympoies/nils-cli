@@ -838,7 +838,8 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   A newer current-interval blocked or malformed report supersedes an earlier
   pass. Unbound later-generation reports and ambiguous, malformed or unknown
   bindings are not skipped.
-  Admission applies the same exact Reviewable target binding as publication.
+  Admission applies the same exact Reviewable reference binding as publication.
+  An optional full-SHA qualifier must match the native review's current head.
   A rejected report returns `awaiting_designated_review` with detail
   `review_id=<id>; field=Reviewable; cause=<validation message>`.
   Live designated `pr review --submit-review` binds both summary-only and
@@ -1141,8 +1142,11 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   canonical findings table with at least one exactly-five-cell row. Generic
   review comments omit this flag and remain valid.
   On GitHub, the report must contain exactly one Reviewable value identifying
-  the selected PR: its URL, `PR #N`, `#N`, or `owner/repo#N`. These values
-  are compared exactly. A target mismatch returns `reviewable_mismatch`
+  the selected PR: its URL, `PR #N`, `#N`, or `owner/repo#N`, optionally
+  followed by ` at <full commit SHA>` (40 hexadecimal digits). References
+  are compared exactly. Offline validation checks the qualifier syntax;
+  publication with `--expected-head` also requires it to match that head.
+  A target, syntax, or head mismatch returns `reviewable_mismatch`
   (`DATA 65`) before provider access. Non-GitHub publication keeps the
   canonical format checks without this GitHub target binding.
   Non-empty is not sufficient: a field whose whole value is one of the
@@ -1158,16 +1162,6 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   paths, which has no fixed spelling and is indistinguishable from a legitimate
   citation of those same files. Rejecting it here would need a heuristic; the
   renderer refusing to emit it is the durable fix.
-- GitHub specialist reports with a selected PR must use a `Reviewable` value
-  of `PR #<number>`, `#<number>`, `<repository>#<number>`, or the canonical PR URL.
-  Each form may be followed by a space and `at <full commit SHA>` (40 hexadecimal
-  digits).
-  Offline `pr review validate` checks the reference and SHA syntax; publication
-  with `--expected-head` also requires the qualifier to match that head, and
-  designated-review admission requires it to match the native review's current
-  head. Abbreviated SHAs, extra text, other PRs, and other repositories fail
-  with `reviewable_mismatch` before publication. Admission retains its
-  `awaiting_designated_review` error with the rejected review ID and field.
 - `--metadata-only --expected-head <sha> --native-review-url <url>
   --native-review-author <login>`
   (GitHub-only) records concise
@@ -1354,7 +1348,8 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   access. On GitHub when an `id` is supplied, the same target binding as
   publication applies and a target mismatch returns `reviewable_mismatch`
   (`DATA 65`). Without a repository slug, the local preflight accepts only
-  `PR #N` and `#N`; it does not require a repository or read a provider to
+  `PR #N` and `#N`, with the same optional full-SHA syntax check; it does
+  not require a repository or read a provider to
   build the URL and repository-qualified forms. Without an `id`, or for a
   non-GitHub provider, only canonical format/content validation applies.
 - Without `--check-diff`, validation is local-only and works for GitHub, GitLab,

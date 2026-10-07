@@ -470,7 +470,7 @@ operations:
     #   expected_review_head_requires_submit_review (DATA 65) — --expected-head without --submit-review or --metadata-only
     #   github_review_head_changed (DATA 65) — the provider head differs from --expected-head; returned before native review or metadata mutation
     #   invalid_specialist_review_report (DATA 65) — --specialist-report body lacks the canonical marker, required fields/verdict, or findings table
-    #   reviewable_mismatch (DATA 65) — GitHub specialist report must have exactly one Reviewable equal to the PR URL, PR #N, #N, or owner/repo#N before provider access (exact comparison)
+    #   reviewable_mismatch (DATA 65) — GitHub specialist report must have exactly one Reviewable reference equal to the PR URL, PR #N, #N, or owner/repo#N, optionally followed by at <full 40-hex SHA>; a qualifier must match --expected-head when supplied, before provider access
     #   native_review_url_required (DATA 65) — --metadata-only without --native-review-url
     #   native_review_author_required (DATA 65) — --metadata-only without --native-review-author
     #   invalid_native_review_url (DATA 65) — native review URL does not bind to this GitHub repository and PR
@@ -556,7 +556,7 @@ operations:
     # Op-specific error kinds:
     #   invalid_review_thread_spec (DATA 65) — malformed, oversized, or locally invalid thread spec fields
     #   invalid_specialist_review_report (DATA 65) — body lacks the canonical specialist marker, fields/verdict, or findings table
-    #   reviewable_mismatch (DATA 65) — with GitHub and <id>, same exact target binding as publication; without a repo slug only PR #N and #N are accepted, without <id> or on non-GitHub only canonical format is checked
+    #   reviewable_mismatch (DATA 65) — with GitHub and <id>, same exact target binding as publication; without a repo slug only PR #N and #N are accepted, with an optional full-SHA syntax check, without <id> or on non-GitHub only canonical format is checked
     #   review_validate_id_required (DATA 65) — --check-diff without <id>
     #   review_thread_file_not_changed (DATA 65) — a thread spec path is absent from the live GitHub PR file list
     #   review_thread_line_not_in_diff (DATA 65) — a line thread points at a line that is not commentable on the requested diff side
@@ -877,7 +877,7 @@ operations:
       repo_resolution: "--repo owner/name or recognised GitHub remote"
     validations:
       - designated_review_handoff
-      # Published specialist Reviewable uses the same exact target binding as pr.review; mismatch returns awaiting_designated_review with detail review_id=<id>; field=Reviewable; cause=<validation message>.
+      # Published specialist Reviewable uses the same exact reference binding as pr.review; an optional full-SHA qualifier must match the native review head; mismatch returns awaiting_designated_review with detail review_id=<id>; field=Reviewable; cause=<validation message>.
     backends:
       github:
         argv: ["gh", "api", "graphql"]

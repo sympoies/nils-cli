@@ -4720,8 +4720,16 @@ fn specialist_reviewable_validate_without_repo_stays_local() {
     for (value, expected_code) in [
         ("PR #44", 0),
         ("#44", 0),
+        ("PR #44 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0),
+        ("#44 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0),
+        ("PR #44 at abcd", 65),
         ("PR #45", 65),
+        ("PR #45 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 65),
         ("acme/widgets#44", 65),
+        (
+            "acme/widgets#44 at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            65,
+        ),
     ] {
         let stub = StubEnv::new();
         let capture = stub.tempdir.path().join("calls.log");
