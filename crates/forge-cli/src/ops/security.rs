@@ -108,14 +108,19 @@ fn alerts(
     }
     let version = schema_version_for(BINARY, "security.alerts.list", 1);
     if global.dry_run {
-        return dry_run(version, ctx, alert_call(ctx, repo, &args, 1), format);
+        return dry_run(version, ctx, alert_call(ctx, repo, &args, 1, None), format);
     }
     let runner = default_runner();
     let mut items = Vec::new();
     let mut page = 1u32;
+    let mut after = None;
     loop {
-        let output = runner.run(&alert_call(ctx, repo, &args, page))?;
-        let value = parse(&output.stdout)?;
+        let output = runner.run(&alert_call(ctx, repo, &args, page, after.as_deref()))?;
+        let (value, next) = if matches!(args.kind, SecurityAlertKind::Dependabot) {
+            dependabot_page(&output.stdout)?
+        } else {
+            (parse(&output.stdout)?, None)
+        };
         let rows = value.as_array().ok_or_else(|| {
             ForgeError::software(schema(), "security alert JSON must be an array", None)
         })?;
@@ -148,10 +153,18 @@ fn alerts(
                 resolved_at: text(row, "/resolved_at"),
             });
         }
-        if items.len() >= args.limit as usize || rows.len() < 100 {
+        if items.len() >= args.limit as usize {
             break;
         }
-        page += 1;
+        if matches!(args.kind, SecurityAlertKind::Dependabot) {
+            let Some(next) = next else { break };
+            after = Some(next);
+        } else {
+            if rows.len() < 100 {
+                break;
+            }
+            page += 1;
+        }
     }
     let payload = Alerts {
         provider: "github",
@@ -180,6 +193,7 @@ fn alert_call(
     repo: &str,
     args: &SecurityAlertListArgs,
     page: u32,
+    after: Option<&str>,
 ) -> BackendCall {
     let mut argv = api_argv(ctx);
     argv.extend([
@@ -190,13 +204,60 @@ fn alert_call(
     if args.state != "all" {
         argv.extend(["-f".into(), format!("state={}", args.state).into()]);
     }
-    argv.extend([
-        "-f".into(),
-        "per_page=100".into(),
-        "-f".into(),
-        format!("page={page}").into(),
-    ]);
+    argv.extend(["-f".into(), "per_page=100".into()]);
+    if matches!(args.kind, SecurityAlertKind::Dependabot) {
+        argv.push("--include".into());
+        if let Some(after) = after {
+            argv.extend(["-f".into(), format!("after={after}").into()]);
+        }
+    } else {
+        argv.extend(["-f".into(), format!("page={page}").into()]);
+    }
     BackendCall::new(BackendProgram::Gh, argv).with_host(ctx.provider, &ctx.host)
+}
+
+fn dependabot_page(stdout: &str) -> Result<(serde_json::Value, Option<String>), ForgeError> {
+    let (headers, body) = stdout
+        .split_once("\r\n\r\n")
+        .or_else(|| stdout.split_once("\n\n"))
+        .ok_or_else(|| {
+            ForgeError::software(schema(), "Dependabot response omitted HTTP headers", None)
+        })?;
+    let mut next = None;
+    for line in headers.lines() {
+        let Some((name, links)) = line.split_once(':') else {
+            continue;
+        };
+        if !name.eq_ignore_ascii_case("link") {
+            continue;
+        }
+        for link in links.split(',') {
+            let mut parts = link.trim().split(';');
+            let target = parts.next().unwrap_or_default().trim();
+            if !parts.any(|part| part.trim() == "rel=\"next\"") {
+                continue;
+            }
+            // Read only the opaque cursor; the next request keeps the selected
+            // repository and authority instead of following the provider URL.
+            next = target
+                .strip_prefix('<')
+                .and_then(|target| target.strip_suffix('>'))
+                .and_then(|target| url::Url::parse(target).ok())
+                .and_then(|target| {
+                    target.query_pairs().find_map(|(key, value)| {
+                        (key == "after" && !value.is_empty()).then(|| value.into_owned())
+                    })
+                });
+            if next.is_none() {
+                return Err(ForgeError::software(
+                    schema(),
+                    "Dependabot next-page link omitted a valid after cursor",
+                    None,
+                ));
+            }
+        }
+    }
+    Ok((parse(body)?, next))
 }
 fn settings(
     ctx: &ProviderContext,

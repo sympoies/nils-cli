@@ -1494,12 +1494,13 @@ operations:
       - { name: --state, type: string, default: open }
       - { name: --limit, type: integer, default: 100 }
     backends:
-      github: { program: gh, argv: [api, "{optional_hostname}", -X, GET, "repos/{repo}/{kind}/alerts", "{optional_state_fields}", -f, per_page=100, -f, "page={page}"], env: { GH_HOST: "{resolved_authority}" } }
+      github: { program: gh, argv: [api, "{optional_hostname}", -X, GET, "repos/{repo}/{kind}/alerts", "{optional_state_fields}", -f, per_page=100, "{pagination_fields}"], env: { GH_HOST: "{resolved_authority}" } }
+      # pagination_fields: Dependabot uses --include, then optional -f after=<decoded Link cursor>; other kinds use -f page=N.
       gitlab: provider_unsupported
       local: provider_unsupported
     output:
       data: { provider, host, repo, kind, state, limit, limited, items }
-    notes: "Repository principal rules apply. States are kind-specific; all omits the filter. Bounded page reads; explicit metadata allowlist excludes secret values and code snippets."
+    notes: "Repository principal rules apply. States are kind-specific; all omits the filter. Bounded reads: Dependabot follows Link rel=next via decoded after cursors, never page=N; other alert kinds use numbered pages. Stop at the limit or exhausted pages; explicit metadata allowlist excludes secret values and code snippets."
 
   - id: security.settings.view
     schema_version: cli.forge-cli.security.settings.view.v1

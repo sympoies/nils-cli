@@ -46,10 +46,20 @@ esac
 #[test]
 fn repo_security_alerts_all_kinds_are_typed_and_omit_secret_values() {
     for kind in ["dependabot", "code-scanning", "secret-scanning"] {
+        let pagination = if kind == "dependabot" {
+            "--include"
+        } else {
+            "-f page=1"
+        };
+        let headers = if kind == "dependabot" {
+            "printf 'HTTP/2.0 200 OK\\n\\n'\n"
+        } else {
+            ""
+        };
         let script = format!(
             r#"#!/bin/sh
-[ "$*" = 'api -X GET repos/acme/widget/{kind}/alerts -f state=open -f per_page=100 -f page=1' ] || {{ echo "unexpected argv: $*" >&2; exit 97; }}
-printf '%s\n' '[{{"number":7,"state":"open","html_url":"https://github.com/acme/widget/security/alerts/7","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z","secret":"SCANNED_FIXTURE_CANARY_DO_NOT_EMIT","secret_type_display_name":"Example credential","security_advisory":{{"summary":"Example vulnerability","severity":"high"}},"rule":{{"description":"Example rule","severity":"warning"}}}}]'
+[ "$*" = 'api -X GET repos/acme/widget/{kind}/alerts -f state=open -f per_page=100 {pagination}' ] || {{ echo "unexpected argv: $*" >&2; exit 97; }}
+{headers}printf '%s\n' '[{{"number":7,"state":"open","html_url":"https://github.com/acme/widget/security/alerts/7","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z","secret":"SCANNED_FIXTURE_CANARY_DO_NOT_EMIT","secret_type_display_name":"Example credential","security_advisory":{{"summary":"Example vulnerability","severity":"high"}},"rule":{{"description":"Example rule","severity":"warning"}}}}]'
 "#
         );
         let stub = StubEnv::new().gh_stub(&script);
@@ -152,9 +162,14 @@ fn repo_security_alert_pagination_honors_large_limits() {
     let script = format!(
         r#"#!/bin/sh
 case "$*" in
- *page=1) printf '%s' '{first}';;
- *page=2) printf '%s' '{second}';;
- *) exit 97;;
+ *' -f page='*) echo 'HTTP 400: Pagination using the page parameter is not supported' >&2; exit 1;;
+ 'api -X GET repos/acme/widget/dependabot/alerts -f state=open -f per_page=100 --include')
+   printf '%s\r\n' 'HTTP/2.0 200 OK' 'lInK: <https://api.github.com/repos/acme/widget/dependabot/alerts?per_page=100&after=cursor%2Btwo%2F%3D>; rel="next"' ''
+   printf '%s' '{first}';;
+ 'api -X GET repos/acme/widget/dependabot/alerts -f state=open -f per_page=100 --include -f after=cursor+two/=')
+   printf '%s\n' 'HTTP/2.0 200 OK' ''
+   printf '%s' '{second}';;
+ *) echo "unexpected argv: $*" >&2; exit 97;;
 esac
 "#
     );
@@ -303,8 +318,18 @@ fn repo_security_alert_states_follow_each_provider_kind_contract() {
             } else {
                 format!(" -f state={state}")
             };
+            let pagination = if kind == "dependabot" {
+                "--include"
+            } else {
+                "-f page=1"
+            };
+            let headers = if kind == "dependabot" {
+                "printf 'HTTP/2.0 200 OK\\n\\n'\n"
+            } else {
+                ""
+            };
             format!(
-                "#!/bin/sh\n[ \"$*\" = 'api -X GET repos/acme/widget/{kind}/alerts{state_arg} -f per_page=100 -f page=1' ] || exit 97\nprintf '[]'\n"
+                "#!/bin/sh\n[ \"$*\" = 'api -X GET repos/acme/widget/{kind}/alerts{state_arg} -f per_page=100 {pagination}' ] || exit 97\n{headers}printf '[]'\n"
             )
         } else {
             "#!/bin/sh\necho backend-called >&2\nexit 97\n".to_string()

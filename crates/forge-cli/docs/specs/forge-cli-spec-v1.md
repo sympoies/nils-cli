@@ -2587,6 +2587,13 @@ invocation's managed identity. Provider permission errors remain errors.
   `state`, `url`, nullable `title`, `severity`, `created_at`, `updated_at`,
   `dismissed_at`, `fixed_at`, and `resolved_at`. The default state is `open`
   and the default limit is 100; pagination honors larger limits. Dependabot
+  reads use `--include` to extract the next page's opaque `after` cursor from
+  the HTTP `Link` header, and never send the unsupported numbered `page`
+  parameter. The cursor is decoded and sent on another request bound to the
+  selected repository and authority; pagination stops at the requested limit
+  or when no next link remains. Code and secret scanning use numbered pages.
+  See [GitHub's Dependabot alert parameters](https://docs.github.com/en/rest/dependabot/alerts#list-dependabot-alerts-for-a-repository).
+  Dependabot
   accepts `open`, `dismissed`, `fixed`, and `auto_dismissed`; code scanning
   accepts `open`, `dismissed`, and `fixed`; secret scanning accepts `open`
   and `resolved`. `all` omits the provider state filter. Incompatible states
