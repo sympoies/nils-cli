@@ -411,3 +411,16 @@ stale, but cannot block a prompt, tool call, approval, or completion.
 The connection-scoped `provider-prompt.v1` title channel remains independent.
 Its prompt text, attach events, reconnect behavior, queue drops, and event ids
 are never lifecycle input and never enter activity persistence.
+
+## Claude permission resolution addendum
+
+The [official hooks reference](https://code.claude.com/docs/en/hooks#permissionrequest),
+checked on 2026-10-07 through Claude Code 2.1.289, exposes no approval-resolved
+hook and no tool_use_id on PermissionRequest. A single conservative request can
+clear only on same-runtime, same-prompt, same-tool later progress or denial.
+Multiple requests and unrelated evidence stay latched. Only opaque runtime-scoped
+tool tokens are retained; request input and tool names are discarded. Known
+approvals clear at same-turn Stop; StopFailure is terminal. PreToolUse occurs
+before permission checks, so long tools can retain attention until their first
+matching later event. This is an event bound, not an approval-time guarantee.
+Managed policy must register observational PermissionDenied alongside its decoder.

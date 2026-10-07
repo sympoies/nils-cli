@@ -284,6 +284,8 @@ pub(crate) struct StreamTurnState {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct PendingAttention {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    permission_tool_id: Option<String>,
     kind: String,
     requested_at: String,
     #[serde(default)]
@@ -427,6 +429,8 @@ pub(crate) struct TurnEvent {
     pub(crate) attention_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) attention_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) attention_tool_id: Option<String>,
     #[serde(skip)]
     attention_correlation_ambiguous: bool,
     #[serde(skip)]
@@ -497,6 +501,7 @@ pub(crate) fn ingest_codex_app_server_failure_with_kind(
             attention_kind: None,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: false,
+            attention_tool_id: None,
             confidence: Confidence::Authoritative,
             // `provider_hook` is the stable v1 wire value for authoritative,
             // provider-structured evidence, including the app-server protocol.
@@ -562,6 +567,7 @@ pub(crate) fn ingest_codex_app_server_attention(
             attention_kind,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: true,
+            attention_tool_id: None,
             confidence: Confidence::Authoritative,
             // `provider_hook` is the stable v1 wire value for all structured
             // provider evidence, including the app-server protocol.
@@ -1197,6 +1203,7 @@ fn semantic_event_key(event: &TurnEvent) -> String {
         },
         event.attention_kind.as_deref().unwrap_or(""),
         correlated_attention_id,
+        event.attention_tool_id.as_deref().unwrap_or(""),
     ] {
         digest.update(value.as_bytes());
         digest.update(b"\0");
@@ -2564,6 +2571,13 @@ fn ingest_event_with_lock(
         .provider_turn_id
         .as_deref()
         .map(|value| normalize_provider_identifier(active_runtime_id, agent, "turn", value))
+        .transpose()?;
+    event.attention_tool_id = event
+        .attention_tool_id
+        .as_deref()
+        .map(|value| {
+            normalize_provider_identifier(active_runtime_id, agent, "permission-tool", value)
+        })
         .transpose()?;
     let expected_provider_session_id = record
         .provider_resume
@@ -4179,6 +4193,10 @@ fn provider_specs(agent: AgentKind) -> Vec<ProviderSpec> {
                 matcher: None,
             },
             ProviderSpec {
+                event: "PermissionDenied",
+                matcher: None,
+            },
+            ProviderSpec {
                 event: "PreToolUse",
                 matcher: None,
             },
@@ -4995,6 +5013,7 @@ mod tests {
             attention_kind: None,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: false,
+            attention_tool_id: None,
             confidence: Confidence::Observed,
             source_kind: SourceKind::ProviderHook,
             provider_time: None,
@@ -6129,6 +6148,76 @@ mod tests {
 
     fn test_session(tmp: &tempfile::TempDir) -> (CliContext, crate::CreatedRecord) {
         test_session_for_agent(tmp, AgentKind::Codex)
+    }
+
+    #[test]
+    fn claude_permission_latch_preserves_parallel_requests_and_wrong_turn() {
+        for parallel_tool in ["Bash", "Read"] {
+            let mut document = document();
+            let hook = |name: &str, tool: &str, turn: &str| {
+                normalize_provider_hook(AgentKind::Claude, None, "runtime-1", &json!({
+                    "hook_event_name": name, "session_id": "session-1", "prompt_id": turn, "tool_name": tool,
+                })).unwrap().unwrap()
+            };
+            for event in [
+                hook("UserPromptSubmit", "Bash", "turn-1"),
+                hook("PermissionRequest", "Bash", "turn-1"),
+                hook("PermissionRequest", parallel_tool, "turn-1"),
+                hook("PostToolUse", "Bash", "turn-1"),
+            ] {
+                reduce(&mut document, &event, "2026-10-07T00:00:00Z");
+            }
+            assert_eq!(document.state.phase, TurnPhase::NeedsInput);
+            assert_eq!(document.pending_attention.len(), 2);
+            let public = serde_json::to_string(&document.state).unwrap();
+            assert!(!public.contains("permission_tool_id"));
+        }
+        let mut document = document();
+        for raw in [
+            json!({"hook_event_name": "UserPromptSubmit", "prompt_id": "turn-1"}),
+            json!({"hook_event_name": "PermissionRequest", "prompt_id": "turn-1", "tool_name": "Bash"}),
+            json!({"hook_event_name": "PostToolUse", "prompt_id": "other-turn", "tool_name": "Bash"}),
+        ] {
+            let event = normalize_provider_hook(AgentKind::Claude, None, "runtime-1", &raw)
+                .unwrap()
+                .unwrap();
+            reduce(&mut document, &event, "2026-10-07T00:00:00Z");
+        }
+        assert_eq!(document.state.phase, TurnPhase::NeedsInput);
+    }
+
+    #[test]
+    fn claude_permission_latch_clears_only_matching_same_turn_tool() {
+        for (event_name, tool, expected) in [
+            ("PostToolUse", "Bash", TurnPhase::Working),
+            ("PostToolUseFailure", "Bash", TurnPhase::Working),
+            ("PreToolUse", "Bash", TurnPhase::Working),
+            ("PermissionDenied", "Bash", TurnPhase::Working),
+            ("PostToolUse", "Read", TurnPhase::NeedsInput),
+            ("Stop", "Bash", TurnPhase::Working),
+        ] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+            activate_runtime(&context, &created.record).unwrap();
+            let runtime = &created.record.runtime.as_ref().unwrap().launch_id;
+            for (name, tool) in [
+                ("UserPromptSubmit", "Bash"),
+                ("PermissionRequest", "Bash"),
+                (event_name, tool),
+            ] {
+                let raw = json!({"hook_event_name": name, "session_id": "session-1", "prompt_id": "turn-1", "tool_name": tool});
+                if let Some(event) =
+                    normalize_provider_hook(AgentKind::Claude, None, runtime, &raw).unwrap()
+                {
+                    ingest_event(&context, &created.record.id, event).unwrap();
+                }
+            }
+            assert_eq!(
+                state_for_view(&context, &created.record).unwrap().phase,
+                expected,
+                "{event_name}/{tool}"
+            );
+        }
     }
 
     #[test]
@@ -9191,6 +9280,19 @@ mod tests {
 }
 
 fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Result<(), CliError> {
+    if event.attention_tool_id.is_some()
+        && !(event.provider == "claude"
+            && event.source_kind == SourceKind::ProviderHook
+            && (event.kind == TurnEventKind::Progress
+                || (event.kind == TurnEventKind::AttentionRequested
+                    && event.attention_kind.as_deref() == Some("approval"))))
+    {
+        return Err(CliError::data(
+            "activity-attention-tool-invalid",
+            "attention tool correlation requires Claude permission or progress evidence",
+            None,
+        ));
+    }
     let schema_supported = event.schema_version == TURN_EVENT_VERSION
         || (admission == EventAdmission::CodexProtocol
             && event.schema_version == CODEX_PROTOCOL_TURN_EVENT_VERSION);
@@ -9211,6 +9313,7 @@ fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Result<(), Cl
         ("provider_session_id", event.provider_session_id.as_deref()),
         ("provider_turn_id", event.provider_turn_id.as_deref()),
         ("attention_id", event.attention_id.as_deref()),
+        ("attention_tool_id", event.attention_tool_id.as_deref()),
     ] {
         if let Some(value) = value
             && (value.is_empty()
@@ -9367,6 +9470,19 @@ fn open_provider_turn(document: &mut ActivityDocument, provider_turn_id: Option<
     });
 }
 
+fn claude_event_matches_open_turn(document: &ActivityDocument, event: &TurnEvent) -> bool {
+    event.provider == "claude"
+        && event.source_kind == SourceKind::ProviderHook
+        && event.provider_turn_id.as_ref().is_some_and(|turn| {
+            document
+                .state
+                .current_turn
+                .as_ref()
+                .and_then(|current| current.provider_turn_id.as_ref())
+                == Some(turn)
+        })
+}
+
 fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
     let previous_phase = document.state.phase.clone();
     let mut source = provider_source(event);
@@ -9415,6 +9531,7 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
                 if document.pending_attention.len() < MAX_PENDING_ATTENTION {
                     document.pending_attention.push(PendingAttention {
                         id: attention_id.to_string(),
+                        permission_tool_id: event.attention_tool_id.clone(),
                         kind,
                         requested_at: at.to_string(),
                         certainty: if event.attention_correlation_exact {
@@ -9468,6 +9585,18 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
                 };
         }
         TurnEventKind::Progress => {
+            if claude_event_matches_open_turn(document, event)
+                && document.pending_attention.len() == 1
+                && document.overflow_attention.is_none()
+                && event.attention_tool_id.as_ref().is_some_and(|tool| {
+                    let pending = &document.pending_attention[0];
+                    pending.kind == "approval"
+                        && pending.permission_tool_id.as_deref() == Some(tool.as_str())
+                })
+            {
+                document.pending_attention.clear();
+                refresh_attention(document);
+            }
             if document.state.current_turn.is_none() {
                 document.state.current_turn = Some(CurrentTurn {
                     provider_turn_id: event.provider_turn_id.clone(),
@@ -9487,8 +9616,17 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
             }
         }
         TurnEventKind::StopObserved => {
-            // A raw Stop can race another matching hook that continues the turn.
-            // Retain it in the journal/revision, but never fabricate Waiting.
+            // Stop ends same-turn permission UI even if another hook continues.
+            if claude_event_matches_open_turn(document, event) {
+                document
+                    .pending_attention
+                    .retain(|pending| pending.kind != "approval");
+                refresh_attention(document);
+                if document.pending_attention.is_empty() && document.overflow_attention.is_none() {
+                    document.state.phase = TurnPhase::Working;
+                }
+            }
+            // Completion remains owned by the provider completion adapter.
         }
         TurnEventKind::TurnCompleted | TurnEventKind::TurnFailed => {
             let requires_exact_open_turn = event.provider == AgentKind::Codex.as_str()

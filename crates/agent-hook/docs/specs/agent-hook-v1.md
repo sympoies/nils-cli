@@ -178,7 +178,7 @@ Supported canonical events are:
   `PostToolUse`, `PostToolUseFailure`, `PreCompact`, `PostCompact`,
   `SubagentStart`, `SubagentStop`, and `Stop`.
 - Claude: `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `PreToolUse`,
-  `PostToolUse`, `PostToolUseFailure`, `PreCompact`, `Stop`, `StopFailure`,
+  `PostToolUse`, `PostToolUseFailure`, `PreCompact`, `PermissionDenied`, `Stop`, `StopFailure`,
   `Notification`, `SubagentStart`, `SubagentStop`, `Elicitation`, and
   `ElicitationResult`.
 - DSH: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`,
@@ -1503,3 +1503,8 @@ apply its non-denying failure posture when the registry is unavailable.
 - `65`: invalid config, policy, provider input, drift, or recovery data.
 - `69`: required provider/setup resource or lock is temporarily unavailable.
 - `75`: concurrency/lock contention suitable for bounded retry.
+
+Claude permission activity carries an optional runtime-scoped `attention_tool_id`
+for PermissionRequest and general tool progress/PermissionDenied. The opaque
+token correlates tool names without retaining names or input. PermissionDenied
+is observational; it cannot enforce a provider decision.

@@ -96,6 +96,8 @@ struct ActivityEvent {
     attention_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     attention_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attention_tool_id: Option<String>,
     confidence: &'static str,
     source_kind: &'static str,
 }
@@ -825,6 +827,7 @@ pub fn normalize_activity_event(
             failure_reason: None,
             attention_id: None,
             attention_kind: None,
+            attention_tool_id: None,
             confidence: "observed",
             source_kind: "provider_hook",
         };
@@ -890,9 +893,12 @@ pub fn normalize_activity_event(
         (Product::Claude, "PostToolUse" | "PostToolUseFailure", _, true) => {
             ("attention_cleared", None, "observed")
         }
-        (Product::Claude, "PreToolUse" | "PostToolUse" | "PostToolUseFailure", _, false) => {
-            ("progress", None, "observed")
-        }
+        (
+            Product::Claude,
+            "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "PermissionDenied",
+            _,
+            false,
+        ) => ("progress", None, "observed"),
         (Product::Claude, "Elicitation", _, _) => (
             "attention_requested",
             Some(
@@ -985,6 +991,22 @@ pub fn normalize_activity_event(
         failure_reason,
         attention_id,
         attention_kind,
+        attention_tool_id: if request.product == Product::Claude
+            && !exact_clarification
+            && matches!(
+                request.event.as_str(),
+                "PermissionRequest"
+                    | "PreToolUse"
+                    | "PostToolUse"
+                    | "PostToolUseFailure"
+                    | "PermissionDenied"
+            ) {
+            optional_provider_id(object, "tool_name")?.map(|tool| {
+                projected_provider_id(runtime_id, request.product, "permission-tool", tool)
+            })
+        } else {
+            None
+        },
         confidence,
         source_kind: "provider_hook",
     };
