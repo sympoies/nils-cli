@@ -365,14 +365,7 @@ fn classify<'a>(provider: &str, title: &str, bottom: &str) -> (&'a str, &'a str)
             ("needs_input", "claude_permission_form")
         }
         "claude" if bottom.contains("esc to interrupt") => ("working", "claude_working_indicator"),
-        "claude"
-            if bottom.contains("interrupted · what should claude do instead?")
-                && bottom
-                    .lines()
-                    .rev()
-                    .take(3)
-                    .any(|line| matches!(line.trim(), "❯" | ">")) =>
-        {
+        "claude" if claude_interrupt_composer_is_empty(&bottom) => {
             ("unknown", "claude_interrupt_marker")
         }
         "claude"
@@ -387,6 +380,22 @@ fn classify<'a>(provider: &str, title: &str, bottom: &str) -> (&'a str, &'a str)
         "claude" => ("unknown", "claude_unmatched"),
         _ => ("unknown", "provider_unsupported"),
     }
+}
+
+fn claude_interrupt_composer_is_empty(bottom: &str) -> bool {
+    let Some((_, after_marker)) =
+        bottom.rsplit_once("interrupted · what should claude do instead?")
+    else {
+        return false;
+    };
+    // Renderer footers and padding may follow the composer. Only the latest
+    // composer after the marker may establish idleness; an older one cannot.
+    after_marker
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| line.starts_with('❯') || *line == ">" || line.starts_with("> "))
+        .is_some_and(|line| matches!(line, "❯" | ">"))
 }
 
 pub(super) fn disagrees(phase: &TurnPhase, projection: &str) -> bool {
@@ -409,7 +418,7 @@ fn with_disagreement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_ne};
     use serde_json::{Map, json};
     use std::time::Instant;
 
@@ -487,6 +496,65 @@ mod tests {
                 "Interrupted · What should Claude do instead?\n❯ draft"
             ),
             ("waiting", "claude_prompt_visible")
+        );
+    }
+
+    fn interrupted_pane_with_footer(composer: &str) -> String {
+        format!(
+            "Interrupted · What should Claude do instead?\n❯ {composer}\n\
+             ────────────────────\n\
+             Model: default · effort: normal\n\
+             Working directory: <workspace>\n\
+             Context: 10% · cache: enabled\n\
+             Customizations: 1\n\
+             Tools: 1 command\n\
+             Tokens: 100\n\
+             Permission mode: default · ? for shortcuts\n{}",
+            "\n".repeat(8)
+        )
+    }
+
+    #[test]
+    fn claude_interrupt_marker_tolerates_renderer_footer_and_padding() {
+        let pane = interrupted_pane_with_footer("");
+        assert!(!pane.lines().rev().take(3).any(|line| line.trim() == "❯"));
+        assert_eq!(
+            classify("claude", "Claude", &pane),
+            ("unknown", "claude_interrupt_marker")
+        );
+    }
+
+    #[test]
+    fn claude_interrupt_footer_preserves_latest_composer_and_work_guards() {
+        let draft = interrupted_pane_with_footer("draft");
+        let earlier_empty_composer = format!("❯ \n{draft}");
+        let draft_after_empty =
+            "Interrupted · What should Claude do instead?\n❯ \n❯ draft\nModel: default\n";
+        let empty_before_marker =
+            "❯ \nInterrupted · What should Claude do instead?\nModel: default\n";
+        for pane in [
+            &draft,
+            &earlier_empty_composer,
+            draft_after_empty,
+            empty_before_marker,
+        ] {
+            assert_ne!(
+                classify("claude", "Claude", pane).1,
+                "claude_interrupt_marker"
+            );
+        }
+        let idle = interrupted_pane_with_footer("");
+        assert_eq!(
+            classify(
+                "claude",
+                "Claude",
+                &format!("Working… esc to interrupt\n{idle}")
+            ),
+            ("working", "claude_working_indicator")
+        );
+        assert_eq!(
+            classify("claude", "Claude", &format!("Allow this action?\n{idle}")),
+            ("needs_input", "claude_permission_form")
         );
     }
 
@@ -585,8 +653,9 @@ mod tests {
         let counter = tmp.path().join("captures");
         let tmux = tmp.path().join("fake-tmux");
         fs::write(&tmux, format!(
-            "#!/bin/sh\ncase \"$1\" in\n display-message) printf 'Claude\\n' ;;\n capture-pane) printf 'capture\\n' >> {}; printf 'Interrupted · What should Claude do instead?\\n❯ \\n' ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n display-message) printf 'Claude\\n' ;;\n capture-pane) printf 'capture\\n' >> {}; printf '%s' {} ;;\nesac\n",
             shell_words::quote(counter.to_str().unwrap()),
+            shell_words::quote(&interrupted_pane_with_footer("")),
         )).unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
         let path = session_dir(&context, &record.id).join(SHADOW_FILE);
