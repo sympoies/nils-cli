@@ -281,7 +281,7 @@ fn run_inner(
         signing_key_verified: false,
     };
     if let Some(policy) = policy {
-        let target = if global.repo.is_none()
+        let (target, provider) = if global.repo.is_none()
             && matches!(
                 operation,
                 Operation::GitRead | Operation::GitPush | Operation::Commit
@@ -301,7 +301,7 @@ fn run_inner(
             if ctx.host != target.host {
                 return Err(error(identity::Error::new("identity_target_ambiguous")));
             }
-            target
+            (target, ctx.provider)
         } else {
             let ctx = detect(
                 global.provider_hint(),
@@ -309,7 +309,7 @@ fn run_inner(
                 global.repo.as_deref(),
                 git_remote_url,
             )?;
-            target_for_context(
+            let target = target_for_context(
                 ctx.provider,
                 &ctx.host,
                 ctx.repo
@@ -317,8 +317,12 @@ fn run_inner(
                     .ok_or_else(|| error(identity::Error::new("identity_target_unknown")))?,
                 &policy,
             )
-            .map_err(error)?
+            .map_err(error)?;
+            (target, ctx.provider)
         };
+        if doctor && provider != Provider::GitHub {
+            return Err(error(identity::Error::new("identity_provider_unsupported")));
+        }
         let path = identity::managed_path_optional(None).map_err(error)?;
         let selection = policy
             .select(&target, path.as_deref(), operation)

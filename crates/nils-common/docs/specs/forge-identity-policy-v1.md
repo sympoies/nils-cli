@@ -41,7 +41,10 @@ that principal's list. No implicit principal or cross-principal delegation exist
 keys, missing references, duplicate rule IDs, and invalid selectors refuse.
 Repository keys are lowercase `host/owner/repository`; GitLab keys may include
 nested groups as `host/group/subgroup/project`. Organization keys are `host/owner`
-for GitHub and `host/group[/subgroup...]` for GitLab. Hosts have no userinfo, port,
+for GitHub and `host/group[/subgroup...]` for GitLab. An organization key matches
+only the immediate parent namespace of a project: `host/group` does not match a
+project at `host/group/subgroup/project`; that project is matched by
+`host/group/subgroup`. Hosts have no userinfo, port,
 scheme, or path. The GitHub SSH hostname alias canonicalizes to the API hostname.
 Lowercase self-hosted GitLab authorities must be listed in the root `gitlab_hosts` setting;
 `gitlab.com` is recognized without configuration. An unknown self-hosted authority

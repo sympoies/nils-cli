@@ -173,16 +173,26 @@ fn identity_strict_policy_errors_never_echo_source_canary() {
 
 #[test]
 fn gitlab_targets_allow_nested_groups_but_github_targets_remain_two_components() {
-    assert_eq!(
-        Policy::parse(&FIXTURE.replacen(
-            "version = 1",
-            "version = 1\ngitlab_hosts = ['GitLab.example.invalid']",
-            1,
-        ))
-        .unwrap_err()
-        .code,
-        "identity_policy_invalid"
-    );
+    for hosts in [
+        "['GitLab.example.invalid']",
+        "['gitlab.example.invalid', 'gitlab.example.invalid']",
+        "['github.com']",
+        "['gitlab.com']",
+        "['altssh.gitlab.com']",
+        "['gitlab.example.invalid:8443']",
+    ] {
+        assert_eq!(
+            Policy::parse(&FIXTURE.replacen(
+                "version = 1",
+                &format!("version = 1\ngitlab_hosts = {hosts}"),
+                1,
+            ))
+            .unwrap_err()
+            .code,
+            "identity_policy_invalid",
+            "accepted gitlab_hosts value {hosts}"
+        );
+    }
     assert_eq!(
         Target::new_gitlab("gitlab.example.invalid", "group/subgroup/project")
             .unwrap()
@@ -234,6 +244,18 @@ fn nested_gitlab_organization_rules_match_only_their_namespace() {
             .unwrap()
             .matched_rule,
         "contributor-widget"
+    );
+    let parent_only = Policy::parse(&text.replace(
+        "gitlab.example.invalid/group/subgroup",
+        "gitlab.example.invalid/group",
+    ))
+    .unwrap();
+    assert_eq!(
+        parent_only
+            .resolve("contributor", &matching, None, Operation::Commit)
+            .unwrap_err()
+            .code,
+        "identity_repository_unknown"
     );
     let sibling = Target::new_gitlab("gitlab.example.invalid", "group/other/project").unwrap();
     assert_eq!(
@@ -510,6 +532,21 @@ mod execution {
                 .unwrap_err()
                 .code,
             "identity_gitlab_host_not_configured_add_gitlab_hosts"
+        );
+        raw_git(
+            repo.path(),
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/group/subgroup/project.git",
+            ],
+        );
+        assert_eq!(
+            identity::target_for_remote(Some(repo.path()), "origin", false)
+                .unwrap_err()
+                .code,
+            "identity_target_invalid"
         );
     }
     #[test]
@@ -850,6 +887,40 @@ mod execution {
                 )
             );
         }
+        raw_git(
+            repo.path(),
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/sandbox/widget.git",
+            ],
+        );
+        let github_output = git::run_output_in(
+            repo.path(),
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                "feat: GitHub identity fixture",
+            ],
+        )
+        .unwrap();
+        assert!(
+            github_output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&github_output.stderr)
+        );
+        assert!(
+            git::run_output_in(repo.path(), &["verify-commit", "HEAD"])
+                .unwrap()
+                .status
+                .success()
+        );
+        assert_eq!(
+            raw_git(repo.path(), &["log", "-1", "--format=%ae|%ce|%GF"]).trim(),
+            format!("contributor-a@example.invalid|contributor-a@example.invalid|{fingerprint}")
+        );
         let audit =
             fs::read_to_string(home.path().join("state/forge-cli/identity-audit.jsonl")).unwrap();
         assert!(audit.contains("execution_succeeded"));

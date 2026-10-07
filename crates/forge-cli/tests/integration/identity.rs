@@ -767,6 +767,12 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
             "{}",
             String::from_utf8_lossy(&out.stdout)
         );
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["data"]["selection"]["matched_rule"], "nested-project");
+        assert_eq!(
+            value["data"]["selection"]["target"]["repo"],
+            "group/subgroup/project"
+        );
     }
 
     #[test]
@@ -821,6 +827,53 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
             "{}",
             String::from_utf8_lossy(&out.stdout)
         );
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(
+            value["data"]["selection"]["matched_rule"],
+            "gitlab-com-project"
+        );
+        assert_eq!(value["data"]["selection"]["target"]["host"], "gitlab.com");
+        assert_eq!(
+            value["data"]["selection"]["target"]["repo"],
+            "group/subgroup/project"
+        );
+    }
+
+    #[test]
+    fn identity_doctor_rejects_gitlab_before_gh_authentication() {
+        let policy = format!(
+            "{}\n\n[[rules]]\nid='nested-project'\nprincipal='contributor'\nrepo='gitlab.example.invalid/group/subgroup/project'\nprofile='account-a'\n",
+            POLICY.replacen(
+                "version = 1",
+                "version = 1\ngitlab_hosts = ['gitlab.example.invalid']",
+                1
+            )
+        );
+        let f = Fixture::new(&policy);
+        fs::write(
+            &f.gh,
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FIXTURE_CALL_LOG\"\nexit 91\n",
+        )
+        .unwrap();
+        let out = f
+            .bare_command()
+            .args([
+                "--provider",
+                "gitlab",
+                "--host",
+                "gitlab.example.invalid",
+                "--repo",
+                "group/subgroup/project",
+                "identity",
+                "doctor",
+                "--operation",
+                "commit",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(65));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("identity_provider_unsupported"));
+        assert!(!f.home.path().join("calls").exists());
     }
 
     #[test]

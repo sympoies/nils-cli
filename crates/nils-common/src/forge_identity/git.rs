@@ -171,7 +171,7 @@ pub fn target_for_remote(cwd: Option<&Path>, remote: &str, push: bool) -> Result
                 .iter()
                 .any(|host| host == &parsed_host)
         });
-    if !is_gitlab && parsed.path.matches('/').count() > 1 {
+    if parsed_host != "github.com" && !is_gitlab && parsed.path.matches('/').count() > 1 {
         return Err(Error::new(
             "identity_gitlab_host_not_configured_add_gitlab_hosts",
         ));
