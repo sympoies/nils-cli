@@ -151,6 +151,9 @@ struct PrReviewDryRunPayload {
     native_review_verification_plan: Option<Vec<String>>,
     planned_review_threads: usize,
     target_plan: Option<Vec<String>>,
+    /// Mandatory diff admission before a threaded native review writes state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diff_plan: Option<Vec<String>>,
     thread_plan: Vec<Vec<String>>,
     submit_plan: Option<Vec<String>>,
 }
@@ -627,6 +630,11 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         } else {
             (None, None, None)
         };
+        let diff_plan = if thread_specs.is_empty() {
+            None
+        } else {
+            Some(build_github_pr_files_call(&ctx, id)?.plan_argv())
+        };
         let issue_plan = mirror_issue.map(|issue| {
             let mirror_url = native_review_url
                 .as_deref()
@@ -659,6 +667,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                 native_review_verification_plan,
                 planned_review_threads: thread_specs.len(),
                 target_plan,
+                diff_plan,
                 thread_plan,
                 submit_plan,
             },
@@ -695,6 +704,12 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                     println!(
                         "would verify review transaction state: {plan}",
                         plan = plan.join(" ")
+                    );
+                }
+                if let Some(diff) = p.diff_plan.as_ref() {
+                    println!(
+                        "would validate thread anchors against diff: {}",
+                        diff.join(" ")
                     );
                 }
                 if let Some(target) = p.target_plan.as_ref() {
@@ -1514,6 +1529,8 @@ fn submit_github_review_with_threads<R: BackendRunner>(
         specs,
         route_lenses,
     } = request;
+    // Admission must finish before a receipt or pending review is written.
+    validate_review_threads_against_github_diff(runner, ctx, number, specs)?;
     let (owner, name) = github_owner_name(ctx)?;
     let target_output = runner.run(&build_github_review_target_call(ctx, owner, name, number))?;
     let target = parse_github_review_target(&target_output)?;
