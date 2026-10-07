@@ -25455,27 +25455,28 @@ fi
         let pane = TestProcessGroup::spawn();
         let descendant_pid = tmp.path().join("descendant.pid");
         let tmux = tmp.path().join("tmux-timeout-descendant");
-        // Install the fixture atomically (sibling temp, sync, close, rename) so
-        // its pre-warm exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(
+        fs::write(
             &tmux,
-            &format!(
+            format!(
                 "#!/bin/sh\n{}if [ \"$1\" = if-shell ]; then sleep 30 & printf '%s\\n' \"$!\" > {}; wait; fi\nexit 0\n",
                 deletion_identity_script(&context, &record, pane.pid()),
                 shell_words::quote(&descendant_pid.to_string_lossy()),
             ),
-            0o700,
-        );
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
         // The initial probe is the script's first launch, whose cold-start tail
         // cannot guarantee fitting the bounded probe budget under load; exec it
         // once here so the product's probe runs warm and the flow reaches the
         // kill step, which is the hang under test (sympoies/nils-cli#2131).
         // Use `display-message` (not `if-shell`) so the wrapper descendant this
         // test asserts is reaped is not spawned by the pre-warm.
-        let prewarm = std::process::Command::new(&tmux)
-            .arg("display-message")
-            .output()
-            .expect("prewarm fake tmux");
+        let prewarm = nils_test_support::cmd::retry_executable_file_busy(|| {
+            std::process::Command::new(&tmux)
+                .arg("display-message")
+                .output()
+        })
+        .expect("prewarm fake tmux");
         assert!(
             prewarm.status.success(),
             "fake tmux prewarm failed: {}",
@@ -25769,27 +25770,28 @@ fi
         let mut pane = TestProcessGroup::spawn();
         let tmux = tmp.path().join("tmux-profiled-graceful-delete");
         let calls = tmp.path().join("tmux-profiled-graceful-delete.calls");
-        // Install the fixture atomically (sibling temp, sync, close, rename) so
-        // its pre-warm exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(
+        fs::write(
             &tmux,
-            &format!(
+            format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {calls}\n{identity}if [ \"$1\" = has-session ]; then exit 0; fi\nif [ \"$1\" = if-shell ]; then exit 0; fi\nexit 42\n",
                 calls = calls.display(),
                 identity = deletion_identity_script(&context, &record, pane.pid()),
             ),
-            0o700,
-        );
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
         // The initial probe is the script's first launch, whose cold-start tail
         // cannot guarantee fitting the bounded probe budget under load; exec it
         // once here so the product's probe runs warm and the flow reaches the
         // graceful-shutdown path under test (sympoies/nils-cli#2131).
         // Use `display-message` (not `if-shell`) so the pre-warm call log does
         // not contain the `send-keys`/`kill-session` tokens this test inspects.
-        let prewarm = std::process::Command::new(&tmux)
-            .arg("display-message")
-            .output()
-            .expect("prewarm fake tmux");
+        let prewarm = nils_test_support::cmd::retry_executable_file_busy(|| {
+            std::process::Command::new(&tmux)
+                .arg("display-message")
+                .output()
+        })
+        .expect("prewarm fake tmux");
         assert!(
             prewarm.status.success(),
             "fake tmux prewarm failed: {}",
@@ -25852,11 +25854,9 @@ fi
             .path()
             .join("tmux-profiled-graceful-delete-success.calls");
         let stopped = tmp.path().join("tmux-profiled-graceful-delete-stopped");
-        // Install the fixture atomically (sibling temp, sync, close, rename) so
-        // its pre-warm exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(
+        fs::write(
             &tmux,
-            &format!(
+            format!(
                 r#"#!/bin/sh
 printf '%s\n' "$*" >> {calls}
 if [ -f {stopped} ] && {{ [ "$1" = display-message ] || [ "$1" = has-session ]; }}; then
@@ -25885,18 +25885,21 @@ exit 42
                 identity = deletion_identity_script(&context, &record, pane.pid()),
                 pane_pid = pane.pid(),
             ),
-            0o700,
-        );
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
         // The initial probe is the script's first launch, whose cold-start tail
         // cannot guarantee fitting the bounded probe budget under load; exec it
         // once here so the product's probe runs warm and the flow reaches the
         // verified-TUI-exit path under test (sympoies/nils-cli#2131).
         // Use `display-message` (not `if-shell`) so the pre-warm call log does
         // not contain the `send-keys`/`kill-session` tokens this test inspects.
-        let prewarm = std::process::Command::new(&tmux)
-            .arg("display-message")
-            .output()
-            .expect("prewarm fake tmux");
+        let prewarm = nils_test_support::cmd::retry_executable_file_busy(|| {
+            std::process::Command::new(&tmux)
+                .arg("display-message")
+                .output()
+        })
+        .expect("prewarm fake tmux");
         assert!(
             prewarm.status.success(),
             "fake tmux prewarm failed: {}",
@@ -26362,24 +26365,12 @@ exit 42
             // A sibling test's fork can briefly hold this stub's write
             // descriptor, which makes exec fail with ETXTBSY. Run it once with a
             // retry so the probe below cannot read that as an unreadable version.
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            loop {
-                match std::process::Command::new(&runner)
+            nils_test_support::cmd::retry_executable_file_busy(|| {
+                std::process::Command::new(&runner)
                     .arg("--version")
                     .output()
-                {
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::ExecutableFileBusy
-                            && std::time::Instant::now() < deadline =>
-                    {
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
-                    result => {
-                        result.expect("fake systemd-run stub runs");
-                        break;
-                    }
-                }
-            }
+            })
+            .expect("fake systemd-run stub runs");
             assert_eq!(
                 super::tmux_scope(runner).literal_arguments,
                 expected,

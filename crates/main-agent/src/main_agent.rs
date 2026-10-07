@@ -25852,11 +25852,9 @@ mod tests {
             ),
         )
         .expect("initial output size");
-        // Install the fixture atomically (sibling temp, sync, close, rename) so
-        // its exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(
+        fs::write(
             &fake_git,
-            &format!(
+            format!(
                 "#!/bin/sh\n\
                  if [ \"$1\" = \"diff\" ]; then\n\
                    case \" $* \" in\n\
@@ -25874,8 +25872,10 @@ mod tests {
                  fi\n",
                 output_size_file.display()
             ),
-            0o700,
-        );
+        )
+        .expect("boundary git");
+        fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o700))
+            .expect("boundary git mode");
 
         let half = WORKTREE_FINGERPRINT_MAX_BYTES / 2;
         let cases = [
@@ -25947,9 +25947,9 @@ mod tests {
             list_script.push_str(&format!("printf '%s\\\\0' '{name}'\n"));
         }
         list_script.push_str("fi\n");
-        // Install the fixture atomically (sibling temp, sync, close, rename) so
-        // its exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(&fake_git, &list_script, 0o700);
+        fs::write(&fake_git, list_script).expect("large-list git");
+        fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o700))
+            .expect("large-list git mode");
 
         let started = Instant::now();
         assert_eq!(
@@ -25976,13 +25976,13 @@ mod tests {
         git_stdout(repository, &["init", "--quiet"]);
         let script_dir = tempfile::TempDir::new().expect("stalled git directory");
         let fake_git = script_dir.path().join("git");
-        // Install the fixture atomically (sibling temp, sync, close, rename) so
-        // its exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(
+        fs::write(
             &fake_git,
             "#!/bin/sh\nif [ \"$1\" = \"ls-files\" ]; then sleep 10; fi\n",
-            0o700,
-        );
+        )
+        .expect("stalled git");
+        fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o700))
+            .expect("stalled git mode");
         let idle_deadline = Instant::now() + Duration::from_secs(1);
         while ACTIVE_FINGERPRINT_PROCESSES.load(Ordering::Acquire) != 0
             && Instant::now() < idle_deadline
@@ -26069,24 +26069,26 @@ mod tests {
         fs::write(repository.join("blocked.txt"), b"blocked").expect("untracked file");
         let script_dir = tempfile::TempDir::new().expect("file-reader git directory");
         let fake_git = script_dir.path().join("git");
-        // Install the fixture atomically (sibling temp, sync, close, rename) so
-        // its pre-warm exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(
+        fs::write(
             &fake_git,
             "#!/bin/sh\nif [ \"$1\" = \"ls-files\" ]; then printf 'blocked.txt\\0'; fi\n",
-            0o700,
-        );
+        )
+        .expect("file-reader git");
+        fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o700))
+            .expect("file-reader git mode");
 
         // Exec the fixture once outside the measured window so the
         // fingerprint call's launches do not race the host's cold-start
         // tail for a freshly written script; the caller deadline then
         // reaches the reader phase this test's admission assertions
         // model.
-        let warmup = Command::new(&fake_git)
-            .current_dir(repository)
-            .arg("diff")
-            .output()
-            .expect("pre-warm file-reader git fixture");
+        let warmup = nils_test_support::cmd::retry_executable_file_busy(|| {
+            Command::new(&fake_git)
+                .current_dir(repository)
+                .arg("diff")
+                .output()
+        })
+        .expect("pre-warm file-reader git fixture");
         assert!(
             warmup.status.success(),
             "pre-warm file-reader git fixture exits cleanly"
@@ -26157,22 +26159,24 @@ mod tests {
         );
         let special_script_dir = tempfile::TempDir::new().expect("special git directory");
         let special_git = special_script_dir.path().join("git");
-        // Install the fixture atomically (sibling temp, sync, close, rename) so
-        // its pre-warm exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(
+        fs::write(
             &special_git,
             "#!/bin/sh\nif [ \"$1\" = \"ls-files\" ]; then printf 'special.fifo\\0'; fi\n",
-            0o700,
-        );
+        )
+        .expect("special git");
+        fs::set_permissions(&special_git, fs::Permissions::from_mode(0o700))
+            .expect("special git mode");
         // Exec the fixture once outside the measured window so the product
         // call's launches do not race the host's cold-start tail for a
         // freshly written script; the window then covers launch latency and
         // the FIFO open only.
-        let warmup = Command::new(&special_git)
-            .current_dir(repository)
-            .arg("diff")
-            .output()
-            .expect("pre-warm special git fixture");
+        let warmup = nils_test_support::cmd::retry_executable_file_busy(|| {
+            Command::new(&special_git)
+                .current_dir(repository)
+                .arg("diff")
+                .output()
+        })
+        .expect("pre-warm special git fixture");
         assert!(
             warmup.status.success(),
             "pre-warm special git fixture exits cleanly"
@@ -26196,13 +26200,11 @@ mod tests {
         let outside = tempfile::TempDir::new().expect("outside directory");
         fs::write(outside.path().join("secret"), "outside\n").expect("outside fixture");
         symlink(outside.path(), repository.join("escape")).expect("parent symlink fixture");
-        // Re-install the fixture atomically (sibling temp, sync, close, rename) so
-        // the re-exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(
+        fs::write(
             &special_git,
             "#!/bin/sh\nif [ \"$1\" = \"ls-files\" ]; then printf 'escape/secret\\0'; fi\n",
-            0o700,
-        );
+        )
+        .expect("parent symlink git");
         assert_eq!(
             worktree_material_fingerprint_with_git(
                 repository,
@@ -26216,9 +26218,8 @@ mod tests {
 
         let script_dir = tempfile::TempDir::new().expect("fake git directory");
         let fake_git = script_dir.path().join("git");
-        // Install the fixture atomically (sibling temp, sync, close, rename) so
-        // its exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(&fake_git, "#!/bin/sh\nsleep 1\n", 0o700);
+        fs::write(&fake_git, "#!/bin/sh\nsleep 1\n").expect("fake git");
+        fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o700)).expect("fake git mode");
         assert_eq!(
             worktree_material_fingerprint_with_git(
                 repository,
@@ -26251,17 +26252,17 @@ mod tests {
             let escaped_git = escaped_script_dir.path().join("git");
             let escaped_pid = escaped_script_dir.path().join("escaped.pid");
             let escaped_ready = escaped_script_dir.path().join("escaped.ready");
-            // Install the fixture atomically (sibling temp, sync, close, rename) so
-            // its exec never observes it open-for-write (sympoies/nils-cli#2170).
-            nils_test_support::fs::write_executable_with_mode(
+            fs::write(
                 &escaped_git,
-                &format!(
+                format!(
                     "#!/bin/sh\nsetsid sh -c 'echo $$ > \"{}\"; touch \"{}\"; sleep 10' &\nexit 0\n",
                     escaped_pid.display(),
                     escaped_ready.display()
                 ),
-                0o700,
-            );
+            )
+            .expect("escaped descendant git");
+            fs::set_permissions(&escaped_git, fs::Permissions::from_mode(0o700))
+                .expect("escaped descendant git mode");
             let mut escaped_command = Command::new(&escaped_git);
             escaped_command.current_dir(repository).arg("diff");
             let started = Instant::now();
@@ -26298,18 +26299,18 @@ mod tests {
             let grouped_git = grouped_script_dir.path().join("git");
             let grouped_pid = grouped_script_dir.path().join("grouped.pid");
             let grouped_ready = grouped_script_dir.path().join("grouped.ready");
-            // Install the fixture atomically (sibling temp, sync, close, rename) so
-            // its exec never observes it open-for-write (sympoies/nils-cli#2170).
-            nils_test_support::fs::write_executable_with_mode(
+            fs::write(
                 &grouped_git,
-                &format!(
+                format!(
                     "#!/bin/sh\nsh -c 'echo $$ > \"{}\"; touch \"{}\"; sleep 10' &\nwhile [ ! -f \"{}\" ]; do :; done\nexit 0\n",
                     grouped_pid.display(),
                     grouped_ready.display(),
                     grouped_ready.display()
                 ),
-                0o700,
-            );
+            )
+            .expect("same-group descendant git");
+            fs::set_permissions(&grouped_git, fs::Permissions::from_mode(0o700))
+                .expect("same-group descendant git mode");
             let mut grouped_command = Command::new(&grouped_git);
             grouped_command.current_dir(repository).arg("diff");
             let started = Instant::now();
@@ -26345,13 +26346,10 @@ mod tests {
         let streaming_script_dir =
             tempfile::TempDir::new().expect("continuous output git directory");
         let streaming_git = streaming_script_dir.path().join("git");
-        // Install the fixture atomically (sibling temp, sync, close, rename) so
-        // its pre-warm exec never observes it open-for-write (sympoies/nils-cli#2170).
-        nils_test_support::fs::write_executable_with_mode(
-            &streaming_git,
-            "#!/bin/sh\nexec yes 0123456789abcdef\n",
-            0o700,
-        );
+        fs::write(&streaming_git, "#!/bin/sh\nexec yes 0123456789abcdef\n")
+            .expect("continuous output git");
+        fs::set_permissions(&streaming_git, fs::Permissions::from_mode(0o700))
+            .expect("continuous output git mode");
         // Pre-warm the exec chain (script to `yes`) outside the measured
         // window: the first exec of a freshly written script can pay a host
         // cold-start tail. The first output byte proves `yes` is running
@@ -26361,9 +26359,9 @@ mod tests {
             .current_dir(repository)
             .arg("diff")
             .stdout(Stdio::piped());
-        let mut warmup = warmup_command
-            .spawn()
-            .expect("pre-warm continuous output fixture");
+        let mut warmup =
+            nils_test_support::cmd::retry_executable_file_busy(|| warmup_command.spawn())
+                .expect("pre-warm continuous output fixture");
         let mut first_byte = [0_u8; 1];
         warmup
             .stdout

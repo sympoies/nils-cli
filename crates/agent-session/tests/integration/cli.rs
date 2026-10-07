@@ -24,12 +24,10 @@ fn run(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
 }
 
 fn write_executable(path: &Path, body: &str) {
-    // Install the fixture atomically (sibling temp, sync, close, rename) so the
-    // final path is never observed open-for-write. A sibling test thread that
-    // forks while the writer's descriptor is still open would otherwise inherit
-    // that write descriptor, and the pre-warm exec of the freshly written script
-    // fails with ETXTBSY (sympoies/nils-cli#2170).
-    nils_test_support::fs::write_executable(path, body);
+    fs::write(path, body).expect("write executable");
+    let mut permissions = fs::metadata(path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).expect("chmod executable");
 }
 
 /// Restores a directory's mode when the enclosing scope ends.
@@ -566,24 +564,13 @@ exit 0
 }
 
 fn prewarm_fake_tmux(bin: &Path, log: &Path) -> std::process::Output {
-    // A sibling fork can briefly inherit the script's writable descriptor.
-    // Retry only that setup race before the product's bounded probe runs.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        match Command::new(bin)
+    nils_test_support::cmd::retry_executable_file_busy(|| {
+        Command::new(bin)
             .arg("version")
             .env("AGENT_SESSION_FAKE_TMUX_LOG", log)
             .output()
-        {
-            Err(error)
-                if error.kind() == io::ErrorKind::ExecutableFileBusy
-                    && Instant::now() < deadline =>
-            {
-                thread::sleep(Duration::from_millis(10));
-            }
-            result => return result.expect("prewarm fake tmux"),
-        }
-    }
+    })
+    .expect("prewarm fake tmux")
 }
 
 #[test]
@@ -12723,23 +12710,13 @@ impl RealTmuxServer {
         // A sibling test forking while the script was open for writing makes
         // exec fail with ETXTBSY until that child execs. Run it once, retrying,
         // so neither this test nor agent-session hits that window later.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            match Command::new(&wrapper)
+        nils_test_support::cmd::retry_executable_file_busy(|| {
+            Command::new(&wrapper)
                 .arg("-V")
                 .stdout(Stdio::null())
                 .status()
-            {
-                Ok(_) => break,
-                Err(error)
-                    if error.kind() == io::ErrorKind::ExecutableFileBusy
-                        && Instant::now() < deadline =>
-                {
-                    thread::sleep(Duration::from_millis(20));
-                }
-                Err(error) => panic!("run tmux wrapper: {error}"),
-            }
-        }
+        })
+        .expect("run tmux wrapper");
         Some(Self { wrapper })
     }
 
