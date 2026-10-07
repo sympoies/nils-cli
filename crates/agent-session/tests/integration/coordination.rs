@@ -18478,6 +18478,7 @@ impl StoppedPostClaimFixture {
         ]
     }
 
+    #[cfg(target_os = "linux")]
     fn run_reconcile(&self) -> CmdOutput {
         run_main_agent(&self.checkout, &self.reconcile_args(), &self.envs())
     }
@@ -19125,8 +19126,10 @@ fn main_agent_post_claim_stopped_worker_fails_closed_without_exact_runtime_proof
     // Diagnosis may refresh observation evidence and materialize its owner-local
     // read-only capability. Freeze the complete authority tree immediately
     // before crossing the rejected reconciliation mutation boundary.
+    // Prepare the fixture environment first: it refreshes session heartbeats.
+    let reconcile_env = fixture.envs();
     let session_before_unverified = session_authority_snapshot(&worker_session_dir);
-    let reconciled = fixture.run_reconcile();
+    let reconciled = run_main_agent(&fixture.checkout, &fixture.reconcile_args(), &reconcile_env);
     assert_eq!(reconciled.code, 1, "outcome={}", reconciled.stdout_text());
     assert_eq!(
         reconciled.stdout_json()["error"]["code"],
@@ -19149,8 +19152,10 @@ fn main_agent_post_claim_stopped_worker_fails_closed_without_exact_runtime_proof
     for command in ["supervise", "diagnose"] {
         assert_fail_closed_diagnosis(command);
     }
+    let reconcile_env = fixture.envs();
     let session_before_missing_identity = session_authority_snapshot(&worker_session_dir);
-    let missing_identity_reconcile = fixture.run_reconcile();
+    let missing_identity_reconcile =
+        run_main_agent(&fixture.checkout, &fixture.reconcile_args(), &reconcile_env);
     assert_eq!(
         missing_identity_reconcile.code,
         1,
