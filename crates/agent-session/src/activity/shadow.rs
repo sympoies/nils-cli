@@ -390,12 +390,19 @@ fn claude_interrupt_composer_is_empty(bottom: &str) -> bool {
     };
     // Renderer footers and padding may follow the composer. Only the latest
     // composer after the marker may establish idleness; an older one cannot.
-    after_marker
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| line.starts_with('❯') || *line == ">" || line.starts_with("> "))
-        .is_some_and(|line| matches!(line, "❯" | ">"))
+    let mut next_nonempty = None;
+    for line in after_marker.lines().rev().map(str::trim) {
+        if line.starts_with('❯') || line == ">" || line.starts_with("> ") {
+            // A multiline draft can start with an empty row. Any text before
+            // the lower composer separator prevents an idle observation.
+            return matches!(line, "❯" | ">")
+                && next_nonempty.is_none_or(|next: &str| next.chars().all(|ch| ch == '─'));
+        }
+        if !line.is_empty() {
+            next_nonempty = Some(line);
+        }
+    }
+    false
 }
 
 pub(super) fn disagrees(phase: &TurnPhase, projection: &str) -> bool {
@@ -527,6 +534,7 @@ mod tests {
     #[test]
     fn claude_interrupt_footer_preserves_latest_composer_and_work_guards() {
         let draft = interrupted_pane_with_footer("draft");
+        let multiline_draft = interrupted_pane_with_footer("\n  draft continuation");
         let earlier_empty_composer = format!("❯ \n{draft}");
         let draft_after_empty =
             "Interrupted · What should Claude do instead?\n❯ \n❯ draft\nModel: default\n";
@@ -534,6 +542,7 @@ mod tests {
             "❯ \nInterrupted · What should Claude do instead?\nModel: default\n";
         for pane in [
             &draft,
+            &multiline_draft,
             &earlier_empty_composer,
             draft_after_empty,
             empty_before_marker,
