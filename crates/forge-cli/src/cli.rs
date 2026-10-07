@@ -226,6 +226,12 @@ pub enum Command {
     Pr(PrArgs),
     /// Issue lifecycle.
     Issue(IssueArgs),
+    /// GitHub releases and release assets.
+    Release(ReleaseArgs),
+    /// GitHub workflow dispatch.
+    Workflow(WorkflowArgs),
+    /// Edit or delete a native GitHub comment by database id.
+    Comment(CommentArgs),
     /// Personal activity across forge repositories.
     Activity(ActivityArgs),
     /// Repository label catalog audit and ensure operations.
@@ -252,6 +258,116 @@ pub enum Command {
     OperationEffect(OperationEffectArgs),
     /// Emit shell-completion scripts.
     Completion(CompletionArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ReleaseArgs {
+    #[command(subcommand)]
+    pub command: ReleaseCommand,
+}
+#[derive(Subcommand, Debug)]
+pub enum ReleaseCommand {
+    /// Create a release with explicit title and notes.
+    Create(ReleaseCreateArgs),
+    /// Upload files to an existing release.
+    Upload(ReleaseUploadArgs),
+}
+#[derive(Args, Debug)]
+pub struct ReleaseCreateArgs {
+    pub tag: String,
+    #[arg(long)]
+    pub title: String,
+    /// Markdown notes file; use - to read stdin.
+    #[arg(long)]
+    pub notes_file: String,
+    #[arg(long)]
+    pub target: Option<String>,
+    #[arg(long)]
+    pub verify_tag: bool,
+    #[arg(long)]
+    pub draft: bool,
+    #[arg(long)]
+    pub prerelease: bool,
+    /// Explicitly mark (or do not mark) this release as latest.
+    #[arg(long)]
+    pub latest: Option<bool>,
+    /// Optional release asset files.
+    pub assets: Vec<PathBuf>,
+}
+#[derive(Args, Debug)]
+pub struct ReleaseUploadArgs {
+    pub tag: String,
+    #[arg(required = true)]
+    pub assets: Vec<PathBuf>,
+    /// Replace existing release assets with the same name.
+    #[arg(long)]
+    pub clobber: bool,
+}
+#[derive(Args, Debug)]
+pub struct WorkflowArgs {
+    #[command(subcommand)]
+    pub command: WorkflowCommand,
+}
+#[derive(Subcommand, Debug)]
+pub enum WorkflowCommand {
+    /// Dispatch one workflow on an explicit branch or tag.
+    Dispatch(WorkflowDispatchArgs),
+}
+#[derive(Args, Debug)]
+pub struct WorkflowDispatchArgs {
+    /// Workflow id or file name (not an interactive name search).
+    pub workflow: String,
+    #[arg(long = "ref")]
+    pub git_ref: String,
+    /// Literal workflow input KEY=VALUE (repeatable; @ values are not files).
+    #[arg(long = "input", short = 'f', conflicts_with = "inputs_file")]
+    pub inputs: Vec<String>,
+    /// JSON object of string inputs; use - to read stdin.
+    #[arg(long)]
+    pub inputs_file: Option<String>,
+}
+#[derive(Args, Debug)]
+pub struct CommentArgs {
+    #[command(subcommand)]
+    pub command: CommentCommand,
+}
+#[derive(Subcommand, Debug)]
+pub enum CommentCommand {
+    /// Replace the body of an issue/PR timeline or review comment.
+    Edit(CommentEditArgs),
+    /// Delete an issue/PR timeline or review comment.
+    Delete(CommentDeleteArgs),
+}
+#[derive(Clone, Copy, Debug, ValueEnum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommentKind {
+    /// Issue and PR timeline comments.
+    Issue,
+    /// Pull request review (diff) comments.
+    Review,
+}
+#[derive(Args, Debug)]
+pub struct CommentEditArgs {
+    #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+    pub id: u64,
+    #[arg(long, value_enum, default_value = "issue")]
+    pub kind: CommentKind,
+    #[arg(
+        long,
+        required_unless_present = "body_file",
+        conflicts_with = "body_file"
+    )]
+    pub body: Option<String>,
+    /// Markdown body file; use - to read stdin.
+    #[arg(long)]
+    pub body_file: Option<String>,
+}
+#[derive(Args, Debug)]
+pub struct CommentDeleteArgs {
+    #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+    pub id: u64,
+    #[arg(long, value_enum, default_value = "issue")]
+    pub kind: CommentKind,
 }
 
 #[derive(Args, Debug)]
@@ -2448,6 +2564,9 @@ pub fn dispatch(args: Vec<OsString>) -> i32 {
     }
 
     let result = match cli.command {
+        Some(Command::Release(args)) => ops::release::run(&global, args.command, format),
+        Some(Command::Workflow(args)) => ops::workflow::run(&global, args.command, format),
+        Some(Command::Comment(args)) => ops::comment::run(&global, args.command, format),
         Some(Command::Identity(args)) => {
             crate::identity::run(&global, args.command, format, cli.remote_explicit)
         }

@@ -6,10 +6,11 @@ use nils_common::execution_effect::{
 };
 
 use crate::cli::{
-    ActivityArgs, AuthArgs, AuthCommand, Cli, Command, IdentityArgs, IdentityCommand, InboxArgs,
-    InboxCommand, IssueArgs, IssueCommand, IssueTrackerCommand, LabelArgs, LabelCommand, PrArgs,
-    PrCommand, PrPendingReviewCommand, PrReviewCommand, PrReviewHandoffCommand,
-    PrReviewLoopCommand, RepoArgs, RepoCommand, ReviewThreadsCommand, SearchArgs,
+    ActivityArgs, AuthArgs, AuthCommand, Cli, Command, CommentCommand, IdentityArgs,
+    IdentityCommand, InboxArgs, InboxCommand, IssueArgs, IssueCommand, IssueTrackerCommand,
+    LabelArgs, LabelCommand, PrArgs, PrCommand, PrPendingReviewCommand, PrReviewCommand,
+    PrReviewHandoffCommand, PrReviewLoopCommand, ReleaseCommand, RepoArgs, RepoCommand,
+    ReviewThreadsCommand, SearchArgs, WorkflowCommand,
 };
 
 pub fn run(argv: Vec<OsString>, format: OutputFormat) -> i32 {
@@ -47,6 +48,32 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
     let read = Effect::ReadOnly;
     let mutation = Effect::Mutation;
     match &cli.command {
+        Some(Command::Release(args)) => (
+            match args.command {
+                ReleaseCommand::Create(_) => "release.create",
+                ReleaseCommand::Upload(_) => "release.upload",
+            },
+            mutation,
+            ProviderEffect::NetworkWrite,
+            Vec::new(),
+        ),
+        Some(Command::Workflow(args)) => (
+            match args.command {
+                WorkflowCommand::Dispatch(_) => "workflow.dispatch",
+            },
+            mutation,
+            ProviderEffect::NetworkWrite,
+            Vec::new(),
+        ),
+        Some(Command::Comment(args)) => (
+            match args.command {
+                CommentCommand::Edit(_) => "comment.edit",
+                CommentCommand::Delete(_) => "comment.delete",
+            },
+            mutation,
+            ProviderEffect::NetworkWrite,
+            Vec::new(),
+        ),
         Some(Command::Auth(AuthArgs {
             command: Some(AuthCommand::Status),
         })) => ("auth.status", read, network, vec!["provider_auth"]),

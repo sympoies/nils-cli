@@ -34,6 +34,7 @@ mod integration {
     mod pr_review_loop;
     mod pr_reviews;
     mod pr_wait_checks;
+    mod provider_mutations;
     mod provider_registry;
     mod rate_limit_gate;
     mod read_metadata;
