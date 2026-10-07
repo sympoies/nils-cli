@@ -1611,7 +1611,7 @@ fn replace_stable_cli(
         {
             let entry = entry
                 .map_err(|_| backend_error("unable to inspect stable CLI runtime libraries"))?;
-            if !entry.path().extension().is_some_and(|ext| ext == "dylib") {
+            if entry.path().extension().is_none_or(|ext| ext != "dylib") {
                 continue;
             }
             reject_symlink_components(&entry.path())?;
