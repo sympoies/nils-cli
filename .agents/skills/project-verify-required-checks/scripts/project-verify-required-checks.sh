@@ -139,6 +139,8 @@ fi
 
 cd "$repo_root"
 
+source "$repo_root/scripts/ci/test-env.sh"
+
 run() {
   local -a cmd=( "$@" )
   echo "+ ${cmd[*]}"
@@ -164,7 +166,7 @@ run_doc_tests() {
     echo "skip: cargo test --workspace --doc (NILS_CLI_SKIP_DOCTESTS=1)"
     return 0
   fi
-  run cargo test --workspace --doc
+  run_test cargo test --workspace --doc
 }
 
 run bash scripts/ci/docs-placement-audit.sh --strict
@@ -177,6 +179,7 @@ if [[ "$docs_only" -eq 1 ]]; then
   exit 0
 fi
 
+run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/install-local-release-binaries.test.sh
 run bash scripts/ci/tests/completion-freshness-audit.test.sh
 run bash scripts/ci/tests/completion-flag-parity-audit.test.sh
@@ -205,7 +208,7 @@ run zsh -f tests/zsh/completion.test.zsh
 run cargo fmt --all -- --check
 run cargo clippy --all-targets --all-features -- -D warnings
 if [[ "$test_runner" == "nextest" ]]; then
-  run cargo nextest run --profile ci --workspace
+  run_test cargo nextest run --profile ci --workspace
   run_doc_tests
 elif [[ "$test_runner" == "llvm-cov" ]]; then
   # One instrumented run both gates the tests and measures coverage, so a
@@ -213,12 +216,12 @@ elif [[ "$test_runner" == "llvm-cov" ]]; then
   # --no-fail-fast keeps the full failure inventory, as the coverage gate did.
   run rm -rf target/coverage
   run mkdir -p target/coverage
-  run cargo llvm-cov nextest --profile ci --workspace --no-fail-fast \
+  run_test cargo llvm-cov nextest --profile ci --workspace --no-fail-fast \
     --lcov --output-path target/coverage/lcov.info \
     --fail-under-lines "${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"
   run_doc_tests
 else
-  run cargo test --workspace
+  run_test cargo test --workspace
 fi
 
 echo "ok: all nils-cli checks passed"

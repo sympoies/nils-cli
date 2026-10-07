@@ -108,6 +108,8 @@ if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
 fi
 cd "$repo_root"
 
+source "$repo_root/scripts/ci/test-env.sh"
+
 verify_script="./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh"
 if [[ ! -f "$verify_script" ]]; then
   echo "error: missing required checks script: $verify_script" >&2
@@ -189,8 +191,8 @@ fi
 coverage_fail_under="${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"
 
 run mkdir -p target/coverage
-run cargo llvm-cov nextest --profile ci --workspace --no-fail-fast --lcov --output-path target/coverage/lcov.info --fail-under-lines "$coverage_fail_under"
+run_test cargo llvm-cov nextest --profile ci --workspace --no-fail-fast --lcov --output-path target/coverage/lcov.info --fail-under-lines "$coverage_fail_under"
 run bash scripts/ci/coverage-summary.sh target/coverage/lcov.info
-run cargo test --workspace --doc
+run_test cargo test --workspace --doc
 
 echo "ok: full CI/parity checks + coverage gate passed"

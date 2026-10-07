@@ -109,6 +109,8 @@ if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
 fi
 cd "$repo_root"
 
+source "$repo_root/scripts/ci/test-env.sh"
+
 run() {
   local -a cmd=( "$@" )
   echo "+ ${cmd[*]}"
@@ -460,6 +462,7 @@ done
 # `mem::forget`). Any Rust change can introduce one, so run it unconditionally.
 require_cmd rg
 run bash scripts/ci/tempdir-leak-audit.sh
+run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/tempdir-leak-audit.test.sh
 run bash scripts/ci/tests/tempdir-leak-probe.test.sh
 
@@ -479,15 +482,15 @@ if [[ "$mode" == "workspace" ]]; then
     # the suite through the probe: it is the only detector for temp-directory
     # leaks whose cleanup *did* run (a late background write that re-creates the
     # tree, or a lock placed beside the fixture instead of inside it).
-    run cargo nextest run --profile ci --workspace --no-run
+    run_test cargo nextest run --profile ci --workspace --no-run
     # git-cli-test-worker.<euid> is a deliberate per-user cache of private worker
     # binaries: a fixed name, contents keyed by source digest, reused across runs
     # so concurrent readers see a stable inode. Bounded, so it is not a leak.
-    run bash scripts/ci/tempdir-leak-probe.sh --allow 'git-cli-test-worker.*' \
+    run_test bash scripts/ci/tempdir-leak-probe.sh --allow 'git-cli-test-worker.*' \
       -- --profile ci --workspace
-    run cargo test --workspace --doc
+    run_test cargo test --workspace --doc
   else
-    run cargo test --workspace
+    run_test cargo test --workspace
   fi
   echo "ok: local-fast workspace Rust gate passed"
   exit 0
@@ -508,12 +511,12 @@ run cargo build "${package_args[@]}" --bins
 
 for package in "${packages[@]}"; do
   if [[ "$test_runner" == "nextest" ]]; then
-    run cargo nextest run --profile ci -p "$package"
+    run_test cargo nextest run --profile ci -p "$package"
     if package_has_doctest "$package"; then
-      run cargo test -p "$package" --doc
+      run_test cargo test -p "$package" --doc
     fi
   else
-    run cargo test -p "$package"
+    run_test cargo test -p "$package"
   fi
 done
 
