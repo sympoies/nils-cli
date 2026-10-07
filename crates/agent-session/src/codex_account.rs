@@ -2286,7 +2286,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             .unwrap()
             .expect("automatic failover identity");
 
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "sym").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "omega").unwrap();
 
         assert!(
             begin_next_apply_if_unchanged(
@@ -2303,7 +2303,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         let next = view_for_record(&current)
             .next
             .expect("explicit intent remains queued for the live idle probe");
-        assert_eq!(next.account.as_deref(), Some("sym"));
+        assert_eq!(next.account.as_deref(), Some("omega"));
         assert_eq!(next.state, "queued");
     }
 
@@ -2651,9 +2651,9 @@ esac
         let (context, record) = persisted_bound(&tmp);
         queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
         let view =
-            queue_next_account(&context, &record.id, "runtime-binding-fixture", "sym").unwrap();
+            queue_next_account(&context, &record.id, "runtime-binding-fixture", "omega").unwrap();
         let next = view.next.expect("superseding next intent present");
-        assert_eq!(next.account.as_deref(), Some("sym"));
+        assert_eq!(next.account.as_deref(), Some("omega"));
         assert_eq!(next.revision, 2);
         assert_eq!(next.state, "queued");
     }
@@ -2710,7 +2710,7 @@ esac
         let tmp = tempfile::TempDir::new().unwrap();
         let (context, record) = persisted_bound(&tmp);
         queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "sym").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "omega").unwrap();
 
         let error = cancel_next_account(
             &context,
@@ -2724,14 +2724,14 @@ esac
         let next = view_for_record(&reload(&context, &record.id))
             .next
             .expect("newer intent must remain");
-        assert_eq!(next.account.as_deref(), Some("sym"));
+        assert_eq!(next.account.as_deref(), Some("omega"));
         assert_eq!(next.revision, 2);
 
         cancel_next_account(
             &context,
             &record.id,
             "runtime-binding-fixture",
-            Some("sym"),
+            Some("omega"),
             Some(2),
         )
         .unwrap();
@@ -2751,7 +2751,7 @@ esac
 
         let absent = next_account_identity(&reload(&context, &record.id)).unwrap();
         assert!(absent.is_none());
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "sym").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "omega").unwrap();
         let overwrite = queue_next_account_if_unchanged(
             &context,
             &record.id,
@@ -2765,17 +2765,17 @@ esac
         let newer = next_account_identity(&reload(&context, &record.id))
             .unwrap()
             .expect("newer intent");
-        assert_eq!(newer.account, "sym");
+        assert_eq!(newer.account, "omega");
 
         cancel_next_account(
             &context,
             &record.id,
             "runtime-binding-fixture",
-            Some("sym"),
+            Some("omega"),
             Some(newer.revision),
         )
         .unwrap();
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "sym").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "omega").unwrap();
         let replacement = next_account_identity(&reload(&context, &record.id))
             .unwrap()
             .expect("replacement intent");
@@ -3042,7 +3042,7 @@ esac
             .expect("queued apply")
             .intent_id
             .expect("intent id");
-        queue_next_account(&context, &record.id, "runtime-binding-fixture", "sym").unwrap();
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "omega").unwrap();
         let error = finish_next_apply(
             &context,
             &record.id,
@@ -3056,7 +3056,7 @@ esac
         assert_eq!(error.code(), "codex-account-next-superseded");
         let view = view_for_record(&reload(&context, &record.id));
         assert_eq!(view.selected_account.as_deref(), Some("acct1"));
-        assert_eq!(view.next.unwrap().account.as_deref(), Some("sym"));
+        assert_eq!(view.next.unwrap().account.as_deref(), Some("omega"));
     }
 
     #[test]

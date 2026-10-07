@@ -9867,7 +9867,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             &context,
             &record.id,
             &record.runtime.as_ref().unwrap().launch_id,
-            "sym",
+            "omega",
         )
         .unwrap();
         drop(broker);
@@ -10067,7 +10067,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
                     &queue_context,
                     &queue_id,
                     &queue_launch_id,
-                    "sym",
+                    "omega",
                 ))
                 .unwrap();
         });
@@ -10106,7 +10106,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
                 .next
                 .as_ref()
                 .and_then(|next| next.account.as_deref()),
-            Some("sym")
+            Some("omega")
         );
         queue.join().unwrap();
         tui.send(Message::Text(
@@ -10187,7 +10187,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         }
         let launch_id = &record.runtime.as_ref().unwrap().launch_id;
         crate::codex_account::queue_next_account_with_unbound(
-            &context, &record.id, launch_id, "sym",
+            &context, &record.id, launch_id, "omega",
         )
         .expect("the account selection may remain queued while the runtime is unhealthy");
         assert!(
@@ -10221,7 +10221,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         bind_thread(&record, "thread-a").unwrap();
         let launch_id = &record.runtime.as_ref().unwrap().launch_id;
         crate::codex_account::queue_next_account_with_unbound(
-            &context, &record.id, launch_id, "sym",
+            &context, &record.id, launch_id, "omega",
         )
         .unwrap();
         let applying = crate::codex_account::begin_next_apply(&context, &record.id, launch_id)
@@ -10305,7 +10305,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             &context,
             &record.id,
             &record.runtime.as_ref().unwrap().launch_id,
-            "sym",
+            "omega",
         )
         .unwrap();
 
@@ -10395,7 +10395,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$account" in
-  acct1|sym) ;;
+  acct1|omega) ;;
   *) exit 2 ;;
 esac
 printf '%s\n' "$account" >> "$calls"
@@ -10562,8 +10562,8 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             .await;
             let next_login = receive_json(&mut socket).await;
             assert_eq!(next_login["method"], "account/login/start");
-            assert_eq!(next_login["params"]["accessToken"], "token-sym");
-            assert_eq!(next_login["params"]["chatgptAccountId"], "workspace-sym");
+            assert_eq!(next_login["params"]["accessToken"], "token-omega");
+            assert_eq!(next_login["params"]["chatgptAccountId"], "workspace-omega");
             respond(
                 &mut socket,
                 &next_login,
@@ -10580,8 +10580,13 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             ready,
         ));
         assert!(handle.usage().await.unwrap().authoritative);
-        crate::codex_account::queue_next_account(&context, &record.id, "runtime-apply-next", "sym")
-            .unwrap();
+        crate::codex_account::queue_next_account(
+            &context,
+            &record.id,
+            "runtime-apply-next",
+            "omega",
+        )
+        .unwrap();
         handle.apply_next().await.unwrap();
         let active_view = crate::codex_account::view_for_record(
             &crate::load_session_record(&context, &record.id).unwrap(),
@@ -10647,7 +10652,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         let applied_view = crate::codex_account::view_for_record(
             &crate::load_session_record(&context, &record.id).unwrap(),
         );
-        assert_eq!(applied_view.selected_account.as_deref(), Some("sym"));
+        assert_eq!(applied_view.selected_account.as_deref(), Some("omega"));
         assert!(applied_view.next.is_none());
         assert!(
             readiness.await,
@@ -10656,7 +10661,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         server.await.unwrap();
         let persisted = crate::load_session_record(&context, &record.id).unwrap();
         let view = crate::codex_account::view_for_record(&persisted);
-        assert_eq!(view.selected_account.as_deref(), Some("sym"));
+        assert_eq!(view.selected_account.as_deref(), Some("omega"));
         assert!(view.next.is_none());
         assert_eq!(
             persisted
@@ -10706,7 +10711,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         );
         assert_eq!(
             fs::read_to_string(&broker_calls).unwrap(),
-            "acct1\nsym\n",
+            "acct1\nomega\n",
             "the real fake broker resolves exactly the initial and requested account once"
         );
         drop(handle);
@@ -11225,7 +11230,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$account" in
-  acct1|sym) ;;
+  acct1|omega) ;;
   *) exit 2 ;;
 esac
 printf '%s\n' "$account" >> "$calls"
@@ -11282,7 +11287,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             StructuredFailureKind::UsageExhausted,
         )
         .unwrap();
-        crate::codex_account::queue_auto_failover_locked(&context, &mut record, "sym").unwrap();
+        crate::codex_account::queue_auto_failover_locked(&context, &mut record, "omega").unwrap();
         record = crate::codex_account::prepare_control_reconnect(
             &context,
             &record.id,
@@ -11338,7 +11343,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
                 failover_login["method"], "account/login/start",
                 "an authoritative structured terminal failure must not depend on a live idle probe"
             );
-            assert_eq!(failover_login["params"]["accessToken"], "token-sym");
+            assert_eq!(failover_login["params"]["accessToken"], "token-omega");
             respond(
                 &mut socket,
                 &failover_login,
@@ -11361,7 +11366,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
 
         let persisted = crate::load_session_record(&context, &record.id).unwrap();
         let view = crate::codex_account::view_for_record(&persisted);
-        assert_eq!(view.selected_account.as_deref(), Some("sym"));
+        assert_eq!(view.selected_account.as_deref(), Some("omega"));
         assert!(view.next.is_none());
     }
 
@@ -11768,7 +11773,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
                 &queue_context,
                 &queue_id,
                 &queue_launch_id,
-                "sym",
+                "omega",
             );
             queued_tx.send(result).unwrap();
         });
@@ -12615,7 +12620,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
                 &queue_context,
                 &queue_id,
                 &queue_launch_id,
-                "sym",
+                "omega",
             );
             queued_tx.send(result).unwrap();
         });
@@ -13477,7 +13482,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             &context,
             id,
             "runtime-control",
-            "sym",
+            "omega",
         )
         .expect("queue the next account during the active turn");
         let projected_turn_id = crate::activity::projected_codex_turn_identifier(

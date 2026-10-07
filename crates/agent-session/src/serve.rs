@@ -25440,7 +25440,7 @@ esac
     async fn codex_account_switch_routes_the_nickname_to_the_exact_runtime_control() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "sym"]);
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "omega"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "account-switch").unwrap();
@@ -25517,7 +25517,7 @@ esac
     async fn codex_account_switch_queues_during_a_working_turn_without_control_dispatch() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "sym"]);
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "omega"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-queued");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let mut record = load_session_record(&st.context, "account-switch-queued").unwrap();
@@ -25560,13 +25560,13 @@ esac
             put_json(
                 "/sessions/account-switch-queued/account",
                 Some(TOKEN),
-                json!({ "account": "sym", "expected_session_incarnation": launch_id }),
+                json!({ "account": "omega", "expected_session_incarnation": launch_id }),
             ),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "body={body}");
         assert_eq!(body["data"]["codex_account"]["selected_account"], "acct1");
-        assert_eq!(body["data"]["codex_account"]["next"]["account"], "sym");
+        assert_eq!(body["data"]["codex_account"]["next"]["account"], "omega");
         assert_eq!(body["data"]["codex_account"]["next"]["state"], "queued");
         assert!(matches!(
             commands.try_recv(),
@@ -25576,7 +25576,7 @@ esac
         let persisted = load_session_record(&st.context, &record.id).unwrap();
         let view = crate::codex_account::view_for_record(&persisted);
         assert_eq!(view.selected_account.as_deref(), Some("acct1"));
-        assert_eq!(view.next.unwrap().account.as_deref(), Some("sym"));
+        assert_eq!(view.next.unwrap().account.as_deref(), Some("omega"));
     }
 
     #[tokio::test]
@@ -25584,8 +25584,8 @@ esac
         let lock = GlobalStateLock::new();
         let _no_claude = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
-        // The broker lists `sym` but not the bound `acct1`.
-        let listing = codex_listing_broker(&lock, tmp.path(), &["sym"]);
+        // The broker lists `omega` but not the bound `acct1`.
+        let listing = codex_listing_broker(&lock, tmp.path(), &["omega"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-reselect");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let mut record = load_session_record(&st.context, "account-switch-reselect").unwrap();
@@ -25629,9 +25629,9 @@ esac
             )
         };
 
-        let (status, body) = call(router(st.clone()), switch("sym")).await;
+        let (status, body) = call(router(st.clone()), switch("omega")).await;
         assert_eq!(status, StatusCode::OK, "body={body}");
-        assert_eq!(body["data"]["codex_account"]["next"]["account"], "sym");
+        assert_eq!(body["data"]["codex_account"]["next"]["account"], "omega");
 
         // Re-selecting the bound account must not consult the broker list: a
         // failing broker that records any call replaces the listing one.
@@ -25673,7 +25673,7 @@ esac
     async fn codex_account_switch_queues_an_unbound_session_during_a_working_turn() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "sym"]);
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "omega"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "unbound-account-switch-queued");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "unbound-account-switch-queued").unwrap();
@@ -25704,7 +25704,7 @@ esac
             put_json(
                 "/sessions/unbound-account-switch-queued/account",
                 Some(TOKEN),
-                json!({ "account": "sym", "expected_session_incarnation": launch_id }),
+                json!({ "account": "omega", "expected_session_incarnation": launch_id }),
             ),
         )
         .await;
@@ -25724,7 +25724,7 @@ esac
                 "/sessions/unbound-account-switch-queued/account",
                 Some(TOKEN),
                 json!({
-                    "account": "sym",
+                    "account": "omega",
                     "expected_session_incarnation": launch_id,
                     "supports_unbound_account_queue": true
                 }),
@@ -25735,7 +25735,7 @@ esac
         assert_eq!(body["data"]["session_incarnation"], launch_id);
         assert_eq!(body["data"]["codex_account"]["state"], "unbound");
         assert_eq!(body["data"]["codex_account"]["revision"], 0);
-        assert_eq!(body["data"]["codex_account"]["next"]["account"], "sym");
+        assert_eq!(body["data"]["codex_account"]["next"]["account"], "omega");
         assert_eq!(body["data"]["codex_account"]["next"]["state"], "queued");
         assert!(matches!(
             commands.try_recv(),
@@ -25789,7 +25789,7 @@ esac
     async fn codex_account_switch_serializes_full_id_and_prefix_as_one_transaction() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "sym"]);
+        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "omega"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch-serialized");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let record = load_session_record(&st.context, "account-switch-serialized").unwrap();
@@ -25851,7 +25851,7 @@ esac
                 "/sessions/account-switch-ser/account",
                 Some(TOKEN),
                 json!({
-                    "account": "sym",
+                    "account": "omega",
                     "expected_session_incarnation": second_launch_id
                 }),
             ),
@@ -25889,7 +25889,7 @@ esac
         else {
             panic!("second switch sent an unexpected control command");
         };
-        assert_eq!(second_account, "sym");
+        assert_eq!(second_account, "omega");
         assert_eq!(second_revision, 2);
         second_response
             .send(Ok(crate::codex_account::CodexAccountView {
@@ -25920,10 +25920,17 @@ esac
         let launch_id = seed_codex_app_server_session(tmp.path(), "create-binding-race");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
         let mut record = load_session_record(&st.context, "create-binding-race").unwrap();
-        crate::codex_account::set_initial_binding(&mut record, Some("sym")).unwrap();
+        crate::codex_account::set_initial_binding(&mut record, Some("omega")).unwrap();
         crate::write_session_record(&st.context, &record).unwrap();
-        crate::codex_account::finish_binding(&st.context, &record.id, &launch_id, "sym", 1, Ok(()))
-            .unwrap();
+        crate::codex_account::finish_binding(
+            &st.context,
+            &record.id,
+            &launch_id,
+            "omega",
+            1,
+            Ok(()),
+        )
+        .unwrap();
 
         let response = wait_for_account_binding(&st, &record.id, &launch_id, "acct1", 1)
             .await
@@ -26040,7 +26047,7 @@ esac
         .unwrap();
         let account_a = crate::codex_account::binding_snapshot(&record);
 
-        crate::codex_account::begin_switch_binding(&context, &record.id, &launch_id, "sym")
+        crate::codex_account::begin_switch_binding(&context, &record.id, &launch_id, "omega")
             .unwrap();
         let mut submissions = 0;
         let outcome = auto_resume::tick_for_runtime_and_binding(
@@ -31125,7 +31132,7 @@ esac
     async fn account_cli_codex_switch_binds_for_the_next_prompt() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
-        let broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "sym"]);
+        let broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "omega"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "codex-cli");
         let tmux = minimal_tmux(tmp.path());
         let context = CliContext {
@@ -31150,22 +31157,22 @@ esac
         assert_eq!(shown["codex_account"]["selected_account"], "acct1");
         assert!(shown.get("claude_account").is_none(), "{shown}");
 
-        let stale = switch("sym", Some("stale-incarnation")).unwrap_err();
+        let stale = switch("omega", Some("stale-incarnation")).unwrap_err();
         assert_eq!(stale.code(), "codex-account-session-incarnation-conflict");
         let unlisted = switch("delta", None).unwrap_err();
         assert_eq!(unlisted.code(), "codex-account-unknown");
 
-        let bound = switch("sym", None).unwrap();
+        let bound = switch("omega", None).unwrap();
         assert_eq!(bound["session_incarnation"], launch_id.as_str());
         assert_eq!(bound["codex_account"]["selected_account"], "acct1");
-        assert_eq!(bound["codex_account"]["next"]["account"], "sym");
+        assert_eq!(bound["codex_account"]["next"]["account"], "omega");
         assert_eq!(bound["codex_account"]["next"]["state"], "queued");
         let persisted = load_session_record(&context, "codex-cli").unwrap();
         assert_eq!(
             crate::codex_account::pending_next_apply(&persisted)
                 .unwrap()
                 .map(|(account, _)| account),
-            Some("sym".to_string()),
+            Some("omega".to_string()),
             "the daemon's control connection applies it at the idle boundary"
         );
         assert!(
@@ -31182,7 +31189,7 @@ esac
 
         drop(broker);
         let _no_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
-        let unsupported = switch("sym", None).unwrap_err();
+        let unsupported = switch("omega", None).unwrap_err();
         assert_eq!(unsupported.code(), "codex-account-unsupported");
     }
 
@@ -37270,7 +37277,7 @@ exit 0
             &state.context,
             &beta.id,
             &launch_id,
-            "sym",
+            "omega",
         )
         .expect("queue next account during the active turn");
 

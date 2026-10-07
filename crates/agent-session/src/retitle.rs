@@ -4441,7 +4441,7 @@ mod tests {
     fn provider_config_accepts_subscription_deepseek_local_and_command_shapes() {
         for (raw, kind) in [
             (
-                r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex"}"#,
+                r#"{"provider":"codex_subscription","account":"omega","codex_bin":"/usr/bin/codex"}"#,
                 "codex_subscription",
             ),
             (
@@ -4473,7 +4473,7 @@ mod tests {
         assert!(dynamic.is_ok());
 
         for invalid in [
-            r#"{"provider":"codex_subscription","account":"sym","account_selection":"default_with_capacity","codex_bin":"/usr/bin/codex"}"#,
+            r#"{"provider":"codex_subscription","account":"omega","account_selection":"default_with_capacity","codex_bin":"/usr/bin/codex"}"#,
             r#"{"provider":"codex_subscription","account_selection":"unknown","codex_bin":"/usr/bin/codex"}"#,
             r#"{"provider":"codex_subscription","codex_bin":"/usr/bin/codex"}"#,
             // The account is a broker nickname, so it follows the shared rule.
@@ -4488,12 +4488,12 @@ mod tests {
     #[test]
     fn provider_config_accepts_a_bounded_local_fallback_after_codex_luna() {
         let config = RetitleConfig::parse(
-            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low","timeout_ms":20000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":100000,"max_output_tokens":160,"temperature":0,"json_response":true}}"#,
+            r#"{"provider":"codex_subscription","account":"omega","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low","timeout_ms":20000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":100000,"max_output_tokens":160,"temperature":0,"json_response":true}}"#,
         );
         assert!(config.is_ok());
 
         let over_budget = RetitleConfig::parse(
-            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","timeout_ms":45000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":120000}}"#,
+            r#"{"provider":"codex_subscription","account":"omega","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","timeout_ms":45000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":120000}}"#,
         );
         assert_eq!(over_budget.unwrap_err(), "config_invalid");
 
@@ -4971,7 +4971,7 @@ esac
     #[test]
     fn clipboard_turn_uses_a_separate_bounded_schema_and_task_instruction() {
         let config = RetitleConfig::parse(
-            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-6-luna","reasoning_effort":"low"}"#,
+            r#"{"provider":"codex_subscription","account":"omega","codex_bin":"/usr/bin/codex","model":"gpt-6-luna","reasoning_effort":"low"}"#,
         )
         .unwrap();
         let params = codex_thread_start_params_for_task(
@@ -5058,7 +5058,7 @@ esac
     #[test]
     fn codex_thread_start_applies_the_configured_reasoning_effort() {
         let config = RetitleConfig::parse(
-            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low"}"#,
+            r#"{"provider":"codex_subscription","account":"omega","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low"}"#,
         )
         .unwrap();
         let params = codex_thread_start_params_for_task(

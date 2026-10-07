@@ -258,12 +258,12 @@ fn auth_refresh_remote_uses_active_matching_secret_name_over_default() {
     fs::create_dir_all(&cache).expect("cache dir");
     fs::create_dir_all(&secrets).expect("secrets dir");
 
-    let sym_auth = format!(
-        r#"{{"tokens":{{"access_token":"stale-sym","id_token":"{}","refresh_token":"stale-refresh","account_id":"acct_sym"}},"last_refresh":"2025-01-19T12:34:56Z"}}"#,
+    let omega_auth = format!(
+        r#"{{"tokens":{{"access_token":"stale-omega","id_token":"{}","refresh_token":"stale-refresh","account_id":"acct_omega"}},"last_refresh":"2025-01-19T12:34:56Z"}}"#,
         token(PAYLOAD_ALPHA)
     );
-    fs::write(&auth_file, &sym_auth).expect("write auth");
-    fs::write(secrets.join("sym.json"), &sym_auth).expect("write sym secret");
+    fs::write(&auth_file, &omega_auth).expect("write auth");
+    fs::write(secrets.join("omega.json"), &omega_auth).expect("write omega secret");
 
     let args_file = dir.path().join("ssh-args.txt");
     write_exe(
@@ -277,7 +277,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
     );
 
     let remote_payload = format!(
-        r#"{{"tokens":{{"access_token":"{}","id_token":"{}","account_id":"acct_sym"}},"last_refresh":"2025-01-20T12:34:56Z"}}"#,
+        r#"{{"tokens":{{"access_token":"{}","id_token":"{}","account_id":"acct_omega"}},"last_refresh":"2025-01-20T12:34:56Z"}}"#,
         ACCESS_TOKEN, ID_TOKEN
     );
     let output = run_with_path_prepend(
@@ -300,7 +300,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
     assert_exit(&output, 0);
 
     let captured_args = fs::read_to_string(&args_file).expect("read ssh args");
-    assert!(captured_args.contains("--name sym"));
+    assert!(captured_args.contains("--name omega"));
     assert!(!captured_args.contains("--name acct1"));
     assert!(captured_args.contains("--refresh"));
 
@@ -308,7 +308,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
     assert_eq!(payload["command"], "auth refresh");
     assert_eq!(payload["ok"], true);
     assert_eq!(payload["result"]["remote_sync"], true);
-    assert_eq!(payload["result"]["remote_name"], "sym");
+    assert_eq!(payload["result"]["remote_name"], "omega");
 
     let applied: Value =
         serde_json::from_str(&fs::read_to_string(&auth_file).expect("read auth file"))
