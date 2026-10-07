@@ -87,6 +87,21 @@ pub(crate) fn update(
     }
     if role
         .as_ref()
+        .is_some_and(|role| record.role.as_ref() != Some(role))
+        && crate::forge_identity::context_of(record)?.is_some()
+    {
+        return Err(CliError::data(
+            "display-role-bound",
+            "a forge-bound session's role is fixed at launch; start a new session to change it",
+            Some(json!({
+                "retryable": false,
+                "next_action": "start_new_session",
+                "recovery": {"strategy": "new_launch_role"}
+            })),
+        ));
+    }
+    if role
+        .as_ref()
         .is_none_or(|role| record.role.as_ref() == Some(role))
         && request
             .title_mode

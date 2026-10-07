@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 
 use super::cli::{fake_agent, fake_tmux};
@@ -778,4 +778,51 @@ fn forge_launch_context_is_recorded_once_and_managed_rebinding_is_refused() {
         out.stdout_json()["error"]["code"],
         "forge-initiator-rebind-forbidden"
     );
+}
+
+#[test]
+fn start_persists_title_mode_and_projects_default_auto() {
+    let fixture = Fixture::new();
+    for (id, args, mode) in [
+        ("mode-default", vec![], "auto"),
+        ("mode-pinned", vec!["--title-mode", "pinned"], "pinned"),
+    ] {
+        let view = fixture.started(id, &args, None);
+        assert_eq!(view["title_mode"], mode);
+        assert_eq!(view["display_revision"], 0);
+        let record = fixture.record(id);
+        assert_eq!(record["title_mode"], mode);
+    }
+}
+
+#[test]
+fn domain_coordinator_start_requires_root_and_names_the_requested_role() {
+    let fixture = Fixture::new();
+    let parent = fixture.started("domain-parent", &[], None);
+    let record = fixture.record("domain-parent");
+    let launch = record["runtime"]["launch_id"].as_str().unwrap();
+    let output = fixture.start(
+        "domain-child",
+        &["--role", "domain-coordinator"],
+        Some(("domain-parent", launch)),
+    );
+    assert_eq!(output.stdout_json()["error"]["code"], "role-requires-root");
+    assert_eq!(
+        output.stdout_json()["error"]["message"],
+        "role domain-coordinator needs a root start: use --no-parent, or a start with no parent"
+    );
+    assert_ne!(output.code, 0);
+    assert!(
+        !Path::new(&fixture.state)
+            .join("sessions/domain-child")
+            .exists()
+    );
+    let root = fixture.started(
+        "domain-root",
+        &["--no-parent", "--role", "domain-coordinator"],
+        Some(("domain-parent", launch)),
+    );
+    assert_eq!(root["role"], "domain-coordinator");
+    assert_eq!(root["lineage"]["parent"], Value::Null);
+    assert_eq!(parent["title_mode"], "auto");
 }

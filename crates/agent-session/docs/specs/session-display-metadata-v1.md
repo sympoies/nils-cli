@@ -46,6 +46,12 @@ A successful update returns the ordinary session view in the authenticated
 `cli.agent-session.serve.v1` envelope, including the persisted mode, role and
 revision. An unchanged value at the current revision is a no-op.
 
+A session with an immutable `lineage.forge_context` keeps its launch role.
+Changing that role, including assigning a role when the binding has none,
+returns `display-role-bound` (HTTP 409) without writing any part of the request.
+Start a new session to use another bound role. Requests retaining the same role
+and title-mode-only updates remain available and preserve the forge context.
+
 A changed mode also advances `title_revision`, invalidating every admitted v2/v3
 retitle result even if the operator subsequently re-enables auto. Retitle checks
 pinned mode before admission and again under its commit authority; failure is
