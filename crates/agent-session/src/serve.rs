@@ -2637,7 +2637,7 @@ pub(crate) fn status_json(status: StatusCode, code: &str, message: &str) -> Resp
         .into_response()
 }
 
-fn join_err() -> Response {
+pub(crate) fn join_err() -> Response {
     envelope_err(CliError::runtime(
         "serve-task-failed",
         "internal task failed",
@@ -5501,11 +5501,26 @@ async fn history_resume_handler(
         return response;
     }
     let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = history_resume_handler_inner(State(state), headers, AxPath(id.clone())).await;
+    crate::lifecycle::response(&context, &id, "import", before, response).await
+}
+
+async fn history_resume_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
     let tmux_bin = state.tmux_bin.clone();
     let catalog = state.history_catalog.clone();
     let profiles = state.launch_profiles.clone();
     let machine = state.machine.clone();
     let result = tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("import");
         let history = catalog.resolve_fresh(&id).map_err(history_resume_catalog_error)?;
         let expected_id = provider_history::stable_history_id(
             &history.provider,
@@ -6706,6 +6721,38 @@ async fn buffer_handler(
 async fn create_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
+    Json(mut body): Json<CreateBody>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let operation = if body.provider_resume_id.is_some() {
+        "import"
+    } else {
+        "create"
+    };
+    let id = match crate::lifecycle::start_id(
+        &state.context,
+        body.id.as_deref(),
+        AgentKind::from_name(&body.agent).unwrap_or(AgentKind::Codex),
+        match &body.title {
+            CreateTitleInput::Value(title) => Some(title.as_str()),
+            _ => None,
+        },
+    ) {
+        Ok(id) => id,
+        Err(error) => return envelope_err(error),
+    };
+    body.id = Some(id.clone());
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = create_handler_inner(State(state), headers, Json(body)).await;
+    crate::lifecycle::response(&context, &id, operation, before, response).await
+}
+
+async fn create_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
     Json(body): Json<CreateBody>,
 ) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
@@ -6844,6 +6891,7 @@ async fn create_handler(
             format: nils_common::cli_contract::OutputFormat::Json,
         };
         return match tokio::task::spawn_blocking(move || {
+            let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
             start_provider_resume_session(&context, args)
         })
         .await
@@ -6857,6 +6905,7 @@ async fn create_handler(
     }
     let explicit_account = body.codex_account;
     let (selected_account, selection_source) = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
         resolve_initial_codex_account(agent, explicit_account)
     })
     .await
@@ -6870,6 +6919,7 @@ async fn create_handler(
     let claude_account = if agent == AgentKind::Claude && launch_profile.is_none() {
         let explicit_claude_account = body.claude_account;
         match tokio::task::spawn_blocking(move || {
+            let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
             crate::claude_account::resolve_initial_account(explicit_claude_account)
         })
         .await
@@ -6955,10 +7005,11 @@ async fn create_handler(
         format: nils_common::cli_contract::OutputFormat::Json,
     };
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
         crate::start_session_with_claude_account(
             &context,
             args,
-            StartFailureDisposition::ReturnSession,
+            StartFailureDisposition::ReturnError,
             crate::PromptDelivery::ResilientBeforeSubmit,
             claude_account,
         )
@@ -7438,6 +7489,22 @@ async fn session_account_handler(
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response =
+        session_account_handler_inner(State(state), headers, AxPath(id.clone()), Json(body)).await;
+    crate::lifecycle::response(&context, &id, "account-switch", before, response).await
+}
+
+async fn session_account_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    Json(body): Json<AccountSwitchBody>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
     let Some(expected_session_incarnation) = body
         .expected_session_incarnation
         .as_deref()
@@ -7452,6 +7519,7 @@ async fn session_account_handler(
     let resolve_context = state.context.clone();
     let requested_id = id.clone();
     let resolved_record = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         load_session_record(&resolve_context, &requested_id)
     })
     .await
@@ -7483,6 +7551,7 @@ async fn session_account_handler(
     let precheck_account = body.account.clone();
     let expected_session_incarnation = expected_session_incarnation.to_string();
     let launch_id = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         crate::session_account::codex_switch_precheck(
             &record,
             &expected_session_incarnation,
@@ -7508,6 +7577,7 @@ async fn session_account_handler(
     let begin_account = body.account.clone();
     let supports_unbound_account_queue = body.supports_unbound_account_queue;
     let revision = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         crate::codex_account::begin_switch_binding(
             &begin_context,
             &begin_id,
@@ -7528,6 +7598,7 @@ async fn session_account_handler(
             let queue_launch_id = launch_id.clone();
             let queue_account = body.account.clone();
             return match tokio::task::spawn_blocking(move || {
+                let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
                 crate::session_account::codex_queue_switch(
                     &queue_context,
                     &queue_id,
@@ -7562,6 +7633,7 @@ async fn session_account_handler(
             let finish_launch_id = launch_id.clone();
             let finish_account = body.account.clone();
             let _ = tokio::task::spawn_blocking(move || {
+                let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
                 crate::codex_account::finish_binding(
                     &finish_context,
                     &finish_id,
@@ -7591,6 +7663,7 @@ async fn claude_account_switch_handler(
     let context = state.context.clone();
     let tmux_bin = state.tmux_bin.clone();
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         crate::session_account::claude_switch_locked(
             &context,
             &id,
@@ -9371,6 +9444,20 @@ async fn resume_handler(
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = resume_handler_inner(State(state), headers, AxPath(id.clone())).await;
+    crate::lifecycle::response(&context, &id, "resume", before, response).await
+}
+
+async fn resume_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
     }
@@ -9378,6 +9465,7 @@ async fn resume_handler(
     let tmux = state.tmux_bin.clone();
     let launch_profiles = state.launch_profiles.clone();
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("resume");
         validate_launch_profile_resume(&context, &id, &launch_profiles)?;
         resume_session_by_id(&context, &id, &tmux)
     })
@@ -9856,6 +9944,21 @@ async fn delete_handler(
     AxPath(id): AxPath<String>,
     query: Result<Query<DeleteQuery>, QueryRejection>,
 ) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = delete_handler_inner(State(state), headers, AxPath(id.clone()), query).await;
+    crate::lifecycle::response(&context, &id, "delete", before, response).await
+}
+
+async fn delete_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    query: Result<Query<DeleteQuery>, QueryRejection>,
+) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
     }
@@ -9871,6 +9974,7 @@ async fn delete_handler(
     let delete_id = id.clone();
     let machine = state.machine.clone();
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("delete");
         crate::delete_session_guarding_children(
             &context,
             &machine,
@@ -9899,6 +10003,21 @@ async fn archive_handler(
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = archive_handler_inner(State(state), headers, AxPath(id.clone()), body).await;
+    crate::lifecycle::response(&context, &id, "delete", before, response).await
+}
+
+async fn archive_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Result<Json<ArchiveBody>, JsonRejection>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
     let Json(body) = match body {
         Ok(body) => body,
         Err(_) => {
@@ -9915,6 +10034,7 @@ async fn archive_handler(
     let response_machine = machine.clone();
     let starred = body.starred;
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("delete");
         let children =
             crate::lineage::guard_children(&context, &machine, &id, body.orphan_children)?;
         let (archive, mut deleted) = archive_session_with_expected_incarnation(
@@ -12527,6 +12647,24 @@ mod tests {
 
         assert!(old.exists());
         assert!(identity.changed());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_http_refusal_keeps_exact_error_and_records_pre_engine_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let st = state(tmp.path(), Some(TOKEN), PathBuf::from("/unavailable/tmux"));
+        let (status, body) = call(
+            router(st.clone()),
+            post_json("/sessions/missing/resume", Some(TOKEN), json!({})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let cause = crate::load_session_record(&st.context, "missing").unwrap_err();
+        assert_eq!(body["error"]["code"], cause.code());
+        assert_eq!(body["error"]["message"], cause.message());
+        let journal = crate::lifecycle::read(&st.context, "missing", 100).unwrap();
+        assert_eq!(journal["records"].as_array().unwrap().len(), 1);
+        assert_eq!(journal["records"][0]["caller"]["kind"], "serve");
     }
 
     #[tokio::test]
@@ -22868,7 +23006,7 @@ esac
         );
 
         let (status, body) = call(
-            router(st),
+            router(st.clone()),
             post_json(
                 "/sessions",
                 Some(TOKEN),
@@ -22908,6 +23046,17 @@ esac
                 .and_then(|runtime| runtime.extra.get("agent_profile_graceful_shutdown"))
                 .and_then(Value::as_str),
             Some("double-ctrl-c")
+        );
+        let id = body["data"]["session"]["id"].as_str().unwrap();
+        let journal = crate::lifecycle::read(&st.context, id, 100).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        assert_eq!(
+            rows.iter().filter(|r| r["operation"] == "create").count(),
+            1
+        );
+        assert_eq!(
+            rows.iter().find(|r| r["operation"] == "create").unwrap()["result"]["ok"],
+            true
         );
     }
 
@@ -24072,6 +24221,7 @@ esac
                 Some(TOKEN),
                 json!({
                     "agent": "codex",
+                    "id": "import-failure",
                     "provider_resume_id": "missing-codex-id"
                 }),
             ),
@@ -24083,6 +24233,13 @@ esac
             body["error"]["details"]["provider_resume_id"],
             "missing-codex-id"
         );
+        let journal = crate::lifecycle::read(&st.context, "import-failure", 100).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["operation"], "import");
+        assert_eq!(rows[0]["caller"]["kind"], "serve");
+        assert_eq!(rows[0]["result"]["code"], body["error"]["code"]);
+        assert!(!journal.to_string().contains("missing-codex-id"));
     }
 
     #[tokio::test]

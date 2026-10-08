@@ -6,6 +6,9 @@ or integrating a specific subsystem.
 
 ## Operator runbooks
 
+- [Lifecycle incident evidence](runbooks/lifecycle-journal.md): bounded per-session
+  lifecycle records, refusal proof steps, retention, and runtime exit observations.
+
 - [Work coordination](runbooks/work-coordination.md): coordination modes,
   declared paths, authority boundaries, advisory flow, and enforce flow.
 - [Main Agent orchestration](runbooks/main-agent-orchestration.md): complete

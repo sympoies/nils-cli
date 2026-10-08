@@ -719,6 +719,9 @@ pub struct BrokerRecoveryArgs {
 
 #[derive(Debug, Args)]
 pub struct BrokerStopArgs {
+    /// Exit status observed by the owning runtime wrapper.
+    #[arg(long, hide = true)]
+    pub exit_code: Option<i32>,
     /// Managed session id whose broker is being stopped.
     #[arg(long)]
     pub session: String,
@@ -1213,6 +1216,9 @@ pub struct AttachArgs {
 
 #[derive(Debug, Args)]
 pub struct LogsArgs {
+    /// Read bounded lifecycle records instead of terminal content; works after delete.
+    #[arg(long)]
+    pub lifecycle: bool,
     /// Session id.
     #[arg(value_name = "ID")]
     pub id: String,

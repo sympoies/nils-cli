@@ -1494,3 +1494,12 @@ See [Session display metadata v1](session-display-metadata-v1.md) for additive
 `title_mode` / `display_revision` session fields and authenticated
 `POST /sessions/{exact-id}/display-metadata`. Existing title edits remain
 available while pinned; model retitle is blocked until mode returns to auto.
+
+
+## Lifecycle failure evidence
+
+Authenticated create, provider-history import, resume, account-switch and delete
+operations write the bounded [lifecycle journal](../runbooks/lifecycle-journal.md).
+A failed runtime launch returns `ok: false` with the same typed error code and
+message as the session engine. A retained failed session is available through
+session reads; its presence does not turn the failed operation into success.

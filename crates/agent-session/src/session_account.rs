@@ -74,6 +74,18 @@ pub(crate) fn switch(
     expected_incarnation: Option<&str>,
     tmux_bin: &Path,
 ) -> Result<SessionAccount, CliError> {
+    crate::lifecycle::attempt(context, id, "account-switch", || {
+        switch_unjournaled(context, id, account, expected_incarnation, tmux_bin)
+    })
+}
+
+pub(crate) fn switch_unjournaled(
+    context: &CliContext,
+    id: &str,
+    account: &str,
+    expected_incarnation: Option<&str>,
+    tmux_bin: &Path,
+) -> Result<SessionAccount, CliError> {
     let record = load_session_record(context, id)?;
     let current = launch_id(&record);
     let expected = expected_incarnation
