@@ -76,6 +76,7 @@ Exit codes:
 USAGE
 }
 
+original_args=("$@")
 docs_only=0
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -139,6 +140,10 @@ fi
 
 cd "$repo_root"
 
+if [[ "$docs_only" -eq 0 && "${NILS_CLI_GATE_ACTIVE:-0}" != "1" ]]; then
+  exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh" "${original_args[@]}"
+fi
+
 source "$repo_root/scripts/ci/test-env.sh"
 
 run() {
@@ -179,6 +184,7 @@ if [[ "$docs_only" -eq 1 ]]; then
   exit 0
 fi
 
+run python3 scripts/ci/tests/gate-resources.test.py
 run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/install-local-release-binaries.test.sh
 run bash scripts/ci/tests/completion-freshness-audit.test.sh

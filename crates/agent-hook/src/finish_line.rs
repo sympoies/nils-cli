@@ -33,6 +33,8 @@ use crate::error::HookError;
 
 mod acceptance;
 mod owner;
+#[cfg(target_os = "linux")]
+mod resources;
 
 const STATE_SCHEMA: &str = "agent-hook.finish-line.state.v1";
 const MAX_RELEASE_TOMBSTONES: usize = 64;
@@ -2479,8 +2481,10 @@ fn execute_validation_command_platform(
             command.to_string(),
         ],
     };
+    let permit = resources::RunnerPermit::acquire(unit)?;
     let mut control = ContainedRunnerControlFile::create()?;
-    let contained = sealed_contained_runner_config(repo_root, argv, control.nonce.clone())?;
+    let contained =
+        sealed_contained_runner_config(repo_root, argv, control.nonce.clone(), permit.limit)?;
     let executable_source = format!("/proc/{}/exe", std::process::id());
     let executable = fs::canonicalize(std::env::current_exe().map_err(|_| {
         finish_line_unavailable(
@@ -2501,6 +2505,8 @@ fn execute_validation_command_platform(
         .args(["--user", "--quiet", "--wait", "--pipe"])
         .arg(format!("--unit={unit}"))
         .args(contained_unit_properties(runner))
+        .args(resources::memory_properties()?)
+        .args(resources::slice_argument()?)
         .arg(format!(
             "--property=OpenFile={executable_source}:nils-runner:read-only"
         ))
@@ -2934,12 +2940,17 @@ fn sealed_contained_runner_config(
     repo_root: &Path,
     argv: Vec<String>,
     control_nonce: String,
+    runner_limit: usize,
 ) -> Result<SealedContainedRunnerConfig, HookError> {
     let config = ContainedRunnerConfig {
         schema_version: CONTAINED_RUNNER_SCHEMA.to_string(),
         cwd: repo_root.to_path_buf(),
         argv,
-        environment: contained_environment(),
+        environment: {
+            let mut environment = contained_environment();
+            resources::bound_environment(&mut environment, runner_limit)?;
+            environment
+        },
         supervisor_pid: std::process::id(),
         control_nonce,
     };

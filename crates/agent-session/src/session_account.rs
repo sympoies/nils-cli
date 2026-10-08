@@ -176,7 +176,7 @@ pub(crate) fn resume_after_switch_stop(
                 && crate::session_status(context, tmux_bin, &record) == "stopped"
                 && match crate::persisted_tmux_runtime_identity(&record) {
                     Ok(Some(identity)) => crate::verify_stopped_tmux_runtime(
-                        tmux_bin, &identity, std::time::Duration::ZERO,
+                        tmux_bin, &record.tmux_session, &identity, std::time::Duration::ZERO,
                     ).is_ok(),
                     Ok(None) => crate::runtime_is_proven_never_launched(&record),
                     Err(_) => false,

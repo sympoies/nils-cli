@@ -143,6 +143,8 @@ pub(crate) fn prepare_in_dir(session_dir: &Path) -> Result<(), CliError> {
 pub(crate) struct PreviousRuntimeEvidence {
     record: SessionRecord,
     status: crate::CoordinationRuntimeStatus,
+    #[cfg(target_os = "macos")]
+    stopped_broker_identity: Option<crate::TmuxRuntimeIdentity>,
 }
 
 pub(crate) fn capture_previous_runtime(
@@ -153,13 +155,30 @@ pub(crate) fn capture_previous_runtime(
         .ok()
         .map(|incarnation| legacy_runtime_status(record, &incarnation, tmux_bin))
         .unwrap_or(crate::CoordinationRuntimeStatus::Unknown);
+    #[cfg(target_os = "macos")]
+    let stopped_broker_identity = crate::persisted_tmux_runtime_identity(record)
+        .ok()
+        .flatten()
+        .filter(|identity| {
+            status == crate::CoordinationRuntimeStatus::Stopped
+                && identity.macos_boot_id == crate::capture_macos_boot_id()
+                && identity.macos_boot_id.is_some()
+                && crate::verified_tmux_status_with_timeout(
+                    tmux_bin,
+                    &identity.session_id,
+                    crate::DELETE_TERMINATION_VERIFY_TIMEOUT,
+                ) == "stopped"
+                && macos_process_group_is_empty(identity)
+        });
     PreviousRuntimeEvidence {
         record: record.clone(),
         status,
+        #[cfg(target_os = "macos")]
+        stopped_broker_identity,
     }
 }
 
-/// Positive process evidence wins; Linux retains namespace and boot checks.
+/// Positive current-boot process evidence wins; Linux retains namespace checks.
 /// Missing, invalid, or incarnation-mismatched persisted evidence stays unknown.
 fn legacy_process_runtime_status(
     record: &SessionRecord,
@@ -172,6 +191,9 @@ fn legacy_process_runtime_status(
     let Ok(Some(identity)) = crate::persisted_tmux_runtime_identity(record) else {
         return Unknown;
     };
+    if crate::runtime_is_from_prior_boot(&identity) {
+        return Stopped;
+    }
     #[cfg(target_os = "linux")]
     let status = crate::coordination_process_runtime_status(&identity);
     #[cfg(not(target_os = "linux"))]
@@ -186,7 +208,8 @@ fn legacy_process_runtime_status(
     }
 }
 
-/// A stopped process boundary also needs the exact old tmux target absent.
+/// Prior-boot evidence proves absence; otherwise a stopped process boundary
+/// also needs the exact managed tmux name absent.
 /// This probe runs before any replacement is launched (or during stop retirement).
 fn legacy_runtime_status(
     record: &SessionRecord,
@@ -198,12 +221,12 @@ fn legacy_runtime_status(
     if status != Stopped {
         return status;
     }
-    let Ok(Some(identity)) = crate::persisted_tmux_runtime_identity(record) else {
-        return Unknown;
-    };
+    if crate::recorded_runtime_is_from_prior_boot(record) {
+        return Stopped;
+    }
     match crate::verified_tmux_status_with_timeout(
         tmux_bin,
-        &identity.session_id,
+        &format!("={}", record.tmux_session),
         crate::DELETE_TERMINATION_VERIFY_TIMEOUT,
     )
     .as_str()
@@ -214,12 +237,141 @@ fn legacy_runtime_status(
     }
 }
 
+// This additional proof is local to replacement/retirement. Generic macOS
+// coordination evidence remains conservative when only a process group is absent.
+#[cfg(target_os = "macos")]
+fn stopped_macos_broker_matches_previous(
+    context: &CliContext,
+    broker: &BrokerRecord,
+    prior: &PreviousRuntimeEvidence,
+) -> bool {
+    let Some(identity) = prior.stopped_broker_identity.as_ref() else {
+        return false;
+    };
+    let Ok(Some(record_identity)) = crate::persisted_tmux_runtime_identity(&prior.record) else {
+        return false;
+    };
+    let Some(broker_identity) = broker
+        .runtime_identity
+        .as_ref()
+        .and_then(|value| serde_json::from_value::<crate::TmuxRuntimeIdentity>(value.clone()).ok())
+    else {
+        return false;
+    };
+    broker.state == "stopped"
+        && broker.capability_digest.is_empty()
+        && fs::symlink_metadata(capability_path(
+            context,
+            &broker.session_id,
+            &broker.incarnation,
+        ))
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        && broker.session_id == prior.record.id
+        && incarnation(&prior.record).is_ok_and(|value| value == broker.incarnation)
+        && prior
+            .record
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.generation == broker.generation)
+        && identity.launch_id.as_deref() == Some(broker.incarnation.as_str())
+        && broker.runtime_identity.as_ref()
+            == prior.record.extra.get(crate::DELETE_TMUX_IDENTITY_KEY)
+        && broker_identity == *identity
+        && record_identity == *identity
+        && prior.status == crate::CoordinationRuntimeStatus::Stopped
+        && macos_process_group_is_empty(identity)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_process_group_is_empty(identity: &crate::TmuxRuntimeIdentity) -> bool {
+    macos_process_group_absence_probe(identity).is_ok()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_process_group_absence_probe(identity: &crate::TmuxRuntimeIdentity) -> Result<(), String> {
+    let Some(group) = identity.process_group_id.filter(|group| *group > 1) else {
+        return Err("process-group-id: missing or invalid".to_string());
+    };
+    if crate::process_group_status(group) != crate::ProcessGroupStatus::Stopped {
+        return Err("signal-before-snapshot: ESRCH not observed".to_string());
+    }
+    let mut command = Command::new("/bin/ps");
+    command.env("LC_ALL", "C").args(["-axo", "pid=,pgid="]);
+    process_group_snapshot_is_empty(command, group)?;
+    if crate::process_group_status(group) != crate::ProcessGroupStatus::Stopped {
+        return Err("signal-after-snapshot: ESRCH not observed".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+const PROCESS_GROUP_SNAPSHOT_MAX_BYTES: usize = 1024 * 1024;
+
+#[cfg(any(target_os = "macos", test))]
+fn process_group_snapshot_is_empty(command: Command, group: libc::pid_t) -> Result<(), String> {
+    let output = crate::run_output_with_timeout_and_strict_cap(
+        command,
+        crate::DELETE_TERMINATION_VERIFY_TIMEOUT,
+        PROCESS_GROUP_SNAPSHOT_MAX_BYTES,
+    )
+    .map_err(|error| {
+        format!(
+            "ps-execution: error_kind={:?}; byte_count=unavailable; overflow={}",
+            error.kind(),
+            error.kind() == std::io::ErrorKind::InvalidData
+        )
+    })?;
+    if !output.status.success() {
+        return Err(format!(
+            "ps-exit: status={:?}; byte_count={}; overflow=false",
+            output.status.code(),
+            output.stdout.len()
+        ));
+    }
+    if !process_group_absent_from_ps(&output.stdout, group) {
+        return Err(format!(
+            "ps-snapshot: absent group not proven; status=0; byte_count={}; overflow=false",
+            output.stdout.len()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn process_group_absent_from_ps(output: &[u8], group: libc::pid_t) -> bool {
+    let Ok(output) = std::str::from_utf8(output) else {
+        return false;
+    };
+    let mut rows = 0;
+    for line in output.lines().filter(|line| !line.trim().is_empty()) {
+        let mut fields = line.split_whitespace();
+        let Some(pid) = fields
+            .next()
+            .and_then(|value| value.parse::<libc::pid_t>().ok())
+        else {
+            return false;
+        };
+        let Some(pgid) = fields
+            .next()
+            .and_then(|value| value.parse::<libc::pid_t>().ok())
+        else {
+            return false;
+        };
+        if pid < 0 || pgid < 0 || fields.next().is_some() || pgid == group {
+            return false;
+        }
+        rows += 1;
+    }
+    rows > 0
+}
+
 pub(crate) fn provision(context: &CliContext, record: &SessionRecord) -> Result<PathBuf, CliError> {
     provision_with_previous(context, record, None)
 }
 
 /// Resume retains the old record before the new pane identity overwrites it.
-/// Only a broker from an older release without its own identity may use this evidence.
+/// Brokers without a recorded identity use the snapshot; revoked macOS brokers require
+/// their own identity to match the exact pre-launch stopped proof.
 pub(crate) fn provision_with_previous(
     context: &CliContext,
     record: &SessionRecord,
@@ -253,6 +405,8 @@ pub(crate) fn provision_with_previous(
         .get(&record.id)
         .filter(|broker| broker.incarnation != incarnation)
         .cloned();
+    #[cfg(target_os = "macos")]
+    let mut used_stopped_macos_proof = false;
     if let Some(previous) = previous_broker.as_ref() {
         let heartbeat_live = heartbeat_fresh(
             context,
@@ -260,7 +414,8 @@ pub(crate) fn provision_with_previous(
             &previous.incarnation,
             previous.heartbeat_epoch,
         );
-        let previous_runtime_status = previous
+        #[allow(unused_mut)]
+        let mut previous_runtime_status = previous
             .runtime_identity
             .as_ref()
             .map(crate::coordination_runtime_status_for_identity)
@@ -282,6 +437,15 @@ pub(crate) fn provision_with_previous(
                     })
                     .unwrap_or(crate::CoordinationRuntimeStatus::Unknown)
             });
+        #[cfg(target_os = "macos")]
+        if previous_runtime_status == crate::CoordinationRuntimeStatus::Unknown
+            && prior_record.is_some_and(|prior| {
+                stopped_macos_broker_matches_previous(context, previous, prior)
+            })
+        {
+            previous_runtime_status = crate::CoordinationRuntimeStatus::Stopped;
+            used_stopped_macos_proof = true;
+        }
         if heartbeat_live || previous_runtime_status == crate::CoordinationRuntimeStatus::Running {
             if previous.lost_since_epoch.is_some() {
                 if let Some(previous) = locked.registry.brokers.get_mut(&record.id) {
@@ -373,6 +537,21 @@ pub(crate) fn provision_with_previous(
             &claim.session_incarnation,
             claim,
         )?;
+    }
+    #[cfg(target_os = "macos")]
+    if used_stopped_macos_proof
+        && !previous_broker
+            .as_ref()
+            .zip(prior_record)
+            .is_some_and(|(previous, prior)| {
+                stopped_macos_broker_matches_previous(context, previous, prior)
+            })
+    {
+        return Err(CliError::runtime(
+            "coordination-runtime-unverified",
+            "the prior coordination runtime failed the macOS stopped process-boundary recheck",
+            None,
+        ));
     }
     write_atomic(&path, token.as_bytes(), SECRET_FILE_MODE).map_err(|_| unavailable())?;
     let checkpoint_path = checkpoint_path_for_state(&context.state_dir, &record.id, &incarnation);
@@ -611,6 +790,10 @@ pub(crate) fn retire_after_verified_stop(
         .get(&record.id)
         .filter(|broker| broker.incarnation == incarnation)
         .is_some_and(|broker| {
+            #[cfg(target_os = "macos")]
+            if stopped_macos_broker_matches_previous(context, broker, &previous_runtime) {
+                return true;
+            }
             broker
                 .runtime_identity
                 .as_ref()
@@ -1566,6 +1749,26 @@ pub(crate) mod test_support {
         group
     }
 
+    /// A stopped-boundary fixture verified by the real platform probes.
+    pub(crate) fn verified_absent_process_group() -> libc::pid_t {
+        let group = exited_process_group();
+        assert_eq!(
+            crate::process_group_status(group),
+            crate::ProcessGroupStatus::Stopped,
+            "fixture process-group signal probe must report ESRCH: group={group}"
+        );
+        #[cfg(target_os = "macos")]
+        {
+            let identity =
+                serde_json::from_value::<crate::TmuxRuntimeIdentity>(process_group_identity(group))
+                    .unwrap();
+            super::macos_process_group_absence_probe(&identity).expect(
+                "fixture complete PID/PGID enumeration and signal recheck must prove absence",
+            );
+        }
+        group
+    }
+
     /// Runtime identity evidence for `process_group` in this pid namespace.
     pub(crate) fn process_group_identity(process_group: libc::pid_t) -> Value {
         #[cfg(target_os = "linux")]
@@ -1894,6 +2097,59 @@ mod tests {
         record
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn generation_two_legacy_broker_capture_ignores_recycled_numeric_selector() {
+        use pretty_assertions::assert_eq;
+        for prior_boot in [true, false] {
+            let temporary = tempfile::TempDir::new().unwrap();
+            let context = CliContext {
+                state_dir: temporary.path().to_path_buf(),
+                host: None,
+            };
+            let tmux = temporary.path().join("tmux");
+            fs::write(
+                &tmux,
+                "#!/bin/sh\nif [ \"$3\" = '$7' ]; then exit 0; fi\nprintf '%s\\n' \"can't find session: fixture\" >&2\nexit 1\n",
+            )
+            .unwrap();
+            fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+            let identity =
+                test_support::process_group_identity(test_support::exited_process_group());
+            let mut prior = seed_retirable_broker(&context, identity.clone());
+            prior.runtime.as_mut().unwrap().generation = 2;
+            let mut identity = identity;
+            identity["launch_id"] = json!("old");
+            identity["session_id"] = json!("$7");
+            if prior_boot {
+                let boot = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+                assert_ne!(crate::linux_boot_id().unwrap(), boot);
+                identity["pid_namespace"]["boot_id"] = json!(boot);
+            }
+            prior
+                .extra
+                .insert("delete_tmux_identity".to_string(), identity);
+            crate::write_session_record(&context, &prior).unwrap();
+            test_support::make_legacy_broker(&context, &prior.id, false);
+            let mut locked = lock_registry(&context).unwrap();
+            locked
+                .registry
+                .brokers
+                .get_mut(&prior.id)
+                .unwrap()
+                .generation = 2;
+            locked.save().unwrap();
+            drop(locked);
+
+            let captured = capture_previous_runtime(&prior, &tmux);
+            assert_eq!(captured.status, crate::CoordinationRuntimeStatus::Stopped);
+            let mut replacement = prior.clone();
+            replacement.runtime.as_mut().unwrap().generation = 3;
+            replacement.runtime.as_mut().unwrap().launch_id = "new".to_string();
+            provision_with_previous(&context, &replacement, Some(&captured)).unwrap();
+        }
+    }
+
     #[test]
     fn legacy_replacement_keeps_live_unknown_and_broker_owned_evidence_fenced() {
         use pretty_assertions::assert_eq;
@@ -2068,6 +2324,214 @@ mod tests {
             .code(),
             "coordination-runtime-unverified"
         );
+    }
+
+    #[test]
+    fn stopped_broker_process_group_requires_complete_empty_enumeration() {
+        assert!(process_group_absent_from_ps(b" 1 1\n 2 1\n 3 3\n", 7));
+        for output in [
+            b"".as_slice(),
+            b"1 1\n2 7\n",
+            b"1 1\n2 invalid\n",
+            b"1 1\n2\n",
+            b"1 1 extra\n",
+            b"1 -1\n",
+            b"\xff",
+        ] {
+            assert!(!process_group_absent_from_ps(output, 7), "{output:?}");
+        }
+    }
+
+    #[test]
+    fn stopped_broker_process_group_snapshot_rejects_a_truncated_prefix() {
+        let temporary = tempfile::TempDir::new().unwrap();
+        let path = temporary.path().join("snapshot");
+        // The old 4 KiB cap ends exactly between rows, hiding a live member.
+        fs::write(&path, format!("{}2 7\n", "1 1\n".repeat(1024))).unwrap();
+        let mut command = Command::new("cat");
+        command.arg(path);
+        let error = process_group_snapshot_is_empty(command, 7).unwrap_err();
+        assert!(error.starts_with("ps-snapshot:"), "{error}");
+    }
+
+    #[test]
+    fn stopped_broker_process_group_snapshot_rejects_overflow() {
+        let temporary = tempfile::TempDir::new().unwrap();
+        let path = temporary.path().join("snapshot");
+        fs::write(
+            &path,
+            "1 1\n".repeat(PROCESS_GROUP_SNAPSHOT_MAX_BYTES / 4 + 1),
+        )
+        .unwrap();
+        let mut command = Command::new("cat");
+        command.arg(path);
+        let error = process_group_snapshot_is_empty(command, 7).unwrap_err();
+        assert!(error.starts_with("ps-execution:"), "{error}");
+        assert!(error.contains("overflow=true"), "{error}");
+    }
+
+    #[test]
+    fn stopped_broker_process_group_snapshot_accepts_complete_output_at_the_cap() {
+        let temporary = tempfile::TempDir::new().unwrap();
+        let path = temporary.path().join("snapshot");
+        fs::write(&path, "1 1\n".repeat(PROCESS_GROUP_SNAPSHOT_MAX_BYTES / 4)).unwrap();
+        let mut command = Command::new("cat");
+        command.arg(path);
+        process_group_snapshot_is_empty(command, 7).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn same_boot_stopped_broker_retires_and_replaces_the_exact_runtime() {
+        use pretty_assertions::assert_eq;
+        let temporary = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: temporary.path().join("state"),
+            host: None,
+        };
+        let tmux = temporary.path().join("tmux");
+        fs::write(
+            &tmux,
+            "#!/bin/sh\nprintf '%s\\n' \"can't find session: fixture\" >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut identity =
+            test_support::process_group_identity(test_support::verified_absent_process_group());
+        identity["macos_boot_id"] = json!(crate::capture_macos_boot_id().unwrap());
+        identity["launch_id"] = json!("old");
+        let mut prior = seed_retirable_broker(&context, identity.clone());
+        prior
+            .extra
+            .insert("delete_tmux_identity".to_string(), identity);
+        crate::write_session_record(&context, &prior).unwrap();
+        assert!(heartbeat_fresh(&context, "session", "old", 0));
+        retire_after_verified_stop(&context, &prior, &tmux).unwrap();
+        assert!(!heartbeat_fresh(&context, "session", "old", 0));
+        let captured = capture_previous_runtime(&prior, &tmux);
+        let mut replacement = prior.clone();
+        let runtime = replacement.runtime.as_mut().unwrap();
+        runtime.launch_id = "replacement".to_string();
+        runtime.generation = 2;
+        assert!(provision_with_previous(&context, &replacement, Some(&captured)).is_ok());
+        assert_eq!(
+            lock_registry(&context).unwrap().registry.brokers["session"].generation,
+            2
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn same_boot_stopped_broker_refuses_unverified_or_mismatched_replacement() {
+        use pretty_assertions::assert_eq;
+        for mutation in [
+            "identity",
+            "missing-boot",
+            "invalid-boot",
+            "extra-field",
+            "null-field",
+            "session",
+            "incarnation",
+            "generation",
+            "capability-file",
+            "capability-digest",
+            "ready-state",
+            "managed-live",
+            "numeric-live",
+            "tmux-unknown",
+            "live-group",
+            "fresh-heartbeat",
+        ] {
+            let temporary = tempfile::TempDir::new().unwrap();
+            let context = CliContext {
+                state_dir: temporary.path().join("state"),
+                host: None,
+            };
+            let tmux = temporary.path().join("tmux");
+            fs::write(
+                &tmux,
+                "#!/bin/sh\nprintf '%s\\n' \"can't find session: fixture\" >&2\nexit 1\n",
+            )
+            .unwrap();
+            fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+            let group = if mutation == "live-group" {
+                unsafe { libc::getpgrp() }
+            } else {
+                test_support::verified_absent_process_group()
+            };
+            let mut identity = test_support::process_group_identity(group);
+            identity["macos_boot_id"] = json!(crate::capture_macos_boot_id().unwrap());
+            identity["launch_id"] = json!("old");
+            if mutation == "missing-boot" {
+                identity.as_object_mut().unwrap().remove("macos_boot_id");
+            } else if mutation == "invalid-boot" {
+                identity["macos_boot_id"] = json!("invalid");
+            }
+            let mut prior = seed_retirable_broker(&context, identity.clone());
+            prior
+                .extra
+                .insert("delete_tmux_identity".to_string(), identity);
+            crate::write_session_record(&context, &prior).unwrap();
+            revoke(&context, &prior).unwrap();
+            if mutation != "fresh-heartbeat" {
+                fs::remove_file(super::super::heartbeat_path(&context.state_dir, &prior.id))
+                    .unwrap();
+            }
+            if mutation == "managed-live" {
+                fs::write(&tmux, "#!/bin/sh\n[ \"$3\" = '=agent-session' ] && exit 0\nprintf '%s\\n' \"can't find session: fixture\" >&2\nexit 1\n").unwrap();
+            } else if mutation == "numeric-live" {
+                fs::write(&tmux, "#!/bin/sh\n[ \"$3\" = '$1' ] && exit 0\nprintf '%s\\n' \"can't find session: fixture\" >&2\nexit 1\n").unwrap();
+            } else if mutation == "tmux-unknown" {
+                fs::write(&tmux, "#!/bin/sh\nexit 2\n").unwrap();
+            }
+            let mut captured = capture_previous_runtime(&prior, &tmux);
+            {
+                let mut locked = lock_registry(&context).unwrap();
+                let broker = locked.registry.brokers.get_mut(&prior.id).unwrap();
+                match mutation {
+                    "identity" => {
+                        broker.runtime_identity.as_mut().unwrap()["pane_id"] = json!("%2")
+                    }
+                    "extra-field" => {
+                        broker.runtime_identity.as_mut().unwrap()["future_boundary"] =
+                            json!("unverified")
+                    }
+                    "null-field" => {
+                        broker.runtime_identity.as_mut().unwrap()["pane_start_time"] = Value::Null
+                    }
+                    "session" => captured.record.id = "other".to_string(),
+                    "incarnation" => {
+                        captured.record.runtime.as_mut().unwrap().launch_id = "other".to_string()
+                    }
+                    "generation" => broker.generation = 9,
+                    "capability-digest" => broker.capability_digest = "retained".to_string(),
+                    "ready-state" => broker.state = "ready".to_string(),
+                    "capability-file" => {
+                        prepare(&context, &prior).unwrap();
+                        fs::write(capability_path(&context, &prior.id, "old"), b"retained")
+                            .unwrap();
+                    }
+                    _ => {}
+                }
+                locked.save().unwrap();
+            }
+            let mut replacement = prior.clone();
+            replacement.runtime.as_mut().unwrap().launch_id = "replacement".to_string();
+            replacement.runtime.as_mut().unwrap().generation = 2;
+            let error =
+                provision_with_previous(&context, &replacement, Some(&captured)).unwrap_err();
+            let expected = if matches!(mutation, "live-group" | "fresh-heartbeat") {
+                "session-incarnation-conflict"
+            } else {
+                "coordination-runtime-unverified"
+            };
+            assert_eq!(error.code(), expected, "{mutation}");
+            assert_eq!(
+                lock_registry(&context).unwrap().registry.brokers[&prior.id].incarnation,
+                "old",
+                "{mutation}"
+            );
+        }
     }
 
     /// A verified stop kills the heartbeat writer with the runtime, but its last
