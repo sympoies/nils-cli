@@ -178,15 +178,18 @@ Optional `shadow_observation` is ordinarily diagnostics-only. It contains
 `working`, `needs_input`, `waiting`, or `unknown`, and a `disagrees` flag. It
 never confirms completion, clears attention, or authorizes automation.
 
-For Claude only, two consecutive samples of the interrupt marker with an empty
-idle composer, at least 15 seconds apart, may project `phase: unknown` with
+For Claude and Codex, two consecutive samples of the provider interrupt marker,
+at least 15 seconds apart, may project `phase: unknown` with
 `diagnostic.reason: interrupted_suspected` and inferred terminal-heuristic
 provenance. This is uncertainty, not confirmed `interrupted` or `waiting`: the
 open turn and last-turn outcome remain intact. Runtime launch/generation and
 activity revision fence both samples; a new prompt or any newer hook invalidates
-them. A working indicator, attention, draft, missing marker, stale sample, or
-runtime replacement cannot produce this projection. A ready serve activity
-broker refreshes on a 15-second timer even without
+them. Claude requires an empty idle composer; its drafts cannot produce this
+projection. Codex uses the `Conversation interrupted` marker; plain composer
+text cannot distinguish a placeholder from a draft and supplies no completion
+or waiting evidence. A working indicator, attention, missing marker, stale
+sample, or runtime replacement cannot produce this projection. A ready serve
+activity broker refreshes on a 15-second timer even without
 hooks or HTTP polling, and completed shadow writes refresh stream snapshots.
 Sample timestamp changes alone update the cache without broadcasting a new
 snapshot; changed rules or turn-state projections still reach subscribers.
@@ -443,8 +446,8 @@ reducer, persistence, replay, and public projection.
 
 The `activity/shadow.rs` observer samples only running Claude or Codex sessions
 whose structured evidence is unknown, at least five minutes old, or has been
-missing for at least five minutes, plus open Claude working turns for the
-interrupt-uncertainty rule. The long-lived serve collector schedules
+missing for at least five minutes, plus open Claude or Codex working turns for
+the interrupt-uncertainty rule. The long-lived serve collector schedules
 sampling in detached bounded workers and immediately returns cached metadata;
 one-shot CLI views only read that cache and never start work that could be lost
 at process exit. Sampling runs outside the activity-ingestion lock, uses a
