@@ -186,7 +186,15 @@ Help, plan-only inspection, and the explicit docs-only lane do not take a slot.
 | `CARGO_BUILD_JOBS` | `1` | Cargo compilation concurrency, including coverage compilation; clamped to the runner maximum. |
 | `NILS_CLI_GATE_MEMORY_MAX_GIB` | `16` | Linux aggregate hard memory cap per gate. |
 | `NILS_CLI_GATE_MEMORY_HIGH_GIB` | `75%` of the hard cap, rounded down, minimum `1` | Linux memory throttle threshold (`12` GiB with defaults). |
-| `NILS_CLI_GATE_MIN_AVAILABLE_GIB` | `20` | Linux admission requires at least this much `MemAvailable`; waits within the same timeout. |
+| `NILS_CLI_GATE_MIN_AVAILABLE_GIB` | `20` | Linux admission requires at least this much `MemAvailable`; waits within the same timeout. A floor above `MemTotal` fails immediately. |
+
+These defaults intentionally serialize ordinary `agent-hook` finish-line
+workloads across checkouts, including small commands. The 16 GiB no-swap cap
+and bounded one-hour admission wait are the default resource policy. Configure
+the shared runner and gate limits together to permit additional concurrency.
+If the admission floor exceeds the host's total memory, the wrapper rejects it
+before joining FIFO; lower the floor and memory caps together on a smaller
+dedicated host.
 
 The default expected peak **budget** for a complete gate is 12–16 GiB,
 including compilation, linking, tests, and their contained services. This is a
@@ -206,8 +214,9 @@ contained services also use `OOMPolicy=kill`.
 Missing containment fails closed. The outer wrapper stops the slice when the
 gate exits, including after a memory failure. On macOS the memory scope and
 `MemAvailable` admission floor are documented no-ops; semaphore and Cargo/test
-limits still apply. This fallback does not change `agent-hook`'s Linux-only
-contained-execution support.
+limits still apply. Interrupting the macOS supervisor terminates its workload
+process group before releasing admission. This fallback does not change
+`agent-hook`'s Linux-only contained-execution support.
 
 Use consistent semaphore and runner settings across callers on the same host.
 For example, on a host with capacity reserved for two gates:
@@ -228,6 +237,9 @@ the total cap. A complete gate already inside a contained runner requires
 `NILS_CLI_RUNNER_MAX` of at least two and fails immediately otherwise. Use
 `NEXTEST_TEST_THREADS=1` with a runner cap of two for a nested gate with one
 test workload at a time.
+On a host with fewer than eight CPUs, the derived runner maximum is one;
+set `NILS_CLI_RUNNER_MAX=2` explicitly when a finish-line contained command
+must run a complete gate, while retaining a lower test-thread setting.
 For two gates that themselves run as contained commands, a runner cap of four
 allows both outer units and their child workloads; keep
 `NEXTEST_TEST_THREADS=2`, `RUST_TEST_THREADS=2`, and `CARGO_BUILD_JOBS=1`
@@ -240,6 +252,9 @@ create independent pools. Keep that directory consistent across callers.
 `NILS_CLI_GATE_ACTIVE`, `NILS_CLI_GATE_SLICE`, and
 `NILS_CLI_CONTAINED_RUNNER_ACTIVE` are internal wrapper state;
 ordinary callers should leave them unset.
+`NILS_CLI_LOCAL_FAST_PLAN` is an internal one-use planning handoff, removed
+before checks run; local-fast resolves docs-only, no-change and usage-error
+paths before entering the complete-gate queue.
 
 The dedicated hosted CI lanes explicitly use two runners. Linux uses a smaller
 reservation (2 GiB available at admission, 12 GiB hard cap), leaving room for

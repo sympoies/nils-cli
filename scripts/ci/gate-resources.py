@@ -35,11 +35,19 @@ def positive(name, default, maximum=86400):
     return value
 
 
-def available_memory():
+def memory_bytes(field):
     for line in Path('/proc/meminfo').read_text().splitlines():
-        if line.startswith('MemAvailable:'):
+        if line.startswith(f'{field}:'):
             return int(line.split()[1]) * 1024
-    raise RuntimeError('MemAvailable is unavailable; cannot admit a gate safely')
+    raise RuntimeError(f'{field} is unavailable; cannot admit a gate safely')
+
+
+def available_memory():
+    return memory_bytes('MemAvailable')
+
+
+def total_memory():
+    return memory_bytes('MemTotal')
 
 
 def runner_limit(cpus, memory):
@@ -198,6 +206,24 @@ def slice_command(slice_name, high, maximum):
             'MemorySwapMax=0']
 
 
+def stop_process_group(worker):
+    try:
+        os.killpg(worker.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        worker.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    finally:
+        # The leader may have exited while a descendant ignores SIGTERM.
+        try:
+            os.killpg(worker.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        worker.wait()
+
+
 def run_gate(command, linux):
     maximum = positive('NILS_CLI_GATE_MEMORY_MAX_GIB', 16, 1048576)
     high = positive('NILS_CLI_GATE_MEMORY_HIGH_GIB', max(1, maximum * 3 // 4), maximum)
@@ -208,6 +234,9 @@ def run_gate(command, linux):
                        available_memory() if linux else 8 * GIB), 64)
     if linux and threads == 1 and os.environ.get('NILS_CLI_CONTAINED_RUNNER_ACTIVE') == '1':
         raise RuntimeError('a complete gate inside a contained runner requires NILS_CLI_RUNNER_MAX>=2')
+    if linux and minimum * GIB > total_memory():
+        raise RuntimeError('NILS_CLI_GATE_MIN_AVAILABLE_GIB exceeds host memory capacity; '
+                           'lower the admission floor and memory caps for a smaller dedicated host')
     jobs = min(threads, positive('CARGO_BUILD_JOBS', 1, 64))
     # Respect more restrictive caller test settings, and bound both runners.
     nextest = positive('NEXTEST_TEST_THREADS', threads, 1048576)
@@ -230,7 +259,14 @@ def run_gate(command, linux):
                   file=sys.stderr)
             # Retain crash ownership in the foreground worker only. Its child
             # command closes unrelated FDs before background helpers can fork.
-            return subprocess.call(worker, pass_fds=(lease.slot.fileno(),))
+            foreground = subprocess.Popen(worker, start_new_session=True,
+                                          pass_fds=(lease.slot.fileno(),))
+            try:
+                return foreground.wait()
+            except BaseException:
+                # Retain admission while stopping every process in this gate.
+                stop_process_group(foreground)
+                raise
         os.environ['NILS_CLI_GATE_SLICE'] = slice_name
         scoped = scope_command(worker, slice_name, high, maximum)
         try:

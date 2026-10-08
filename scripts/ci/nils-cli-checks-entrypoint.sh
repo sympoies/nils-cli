@@ -124,12 +124,6 @@ if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
 fi
 cd "$repo_root"
 
-# Protect all executing code gates, including changed-scope validation. Help,
-# docs-only checks and plan inspection do not launch compile/test workloads.
-if [[ "${NILS_CLI_GATE_ACTIVE:-0}" != "1" && "$docs_only" -eq 0 && "$plan_only" -eq 0 ]]; then
-  exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/scripts/ci/nils-cli-checks-entrypoint.sh" "${original_args[@]}"
-fi
-
 source "$repo_root/scripts/ci/test-env.sh"
 
 verify_script="./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh"
@@ -184,6 +178,12 @@ if [[ "$use_xvfb" -eq 1 ]]; then
     exit 2
   fi
   cmd=(xvfb-run -a "${cmd[@]}")
+fi
+
+# Local-fast owns admission after planning its mode. Full code gates enter
+# here; docs-only checks and usage failures do not launch compile/test work.
+if [[ "${NILS_CLI_GATE_ACTIVE:-0}" != "1" && "$docs_only" -eq 0 ]]; then
+  exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "$bash_bin" "$repo_root/scripts/ci/nils-cli-checks-entrypoint.sh" "${original_args[@]}"
 fi
 
 run "${cmd[@]}"

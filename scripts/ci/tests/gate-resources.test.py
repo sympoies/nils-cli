@@ -26,7 +26,77 @@ def hold_slot(directory, started):
     lease.close()
 
 
+def wait_until(predicate, timeout=5):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(.02)
+    return predicate()
+
+
+def process_running(pid):
+    result = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    return result.returncode == 0 and any(
+        line.strip() and not line.strip().startswith('Z') for line in result.stdout.splitlines())
+
+
 class GateUnits(unittest.TestCase):
+    def test_impossible_memory_floor_fails_before_queueing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {'XDG_STATE_HOME': directory}, clear=True), \
+                 patch.object(resources, 'available_memory', return_value=32 * resources.GIB), \
+                 patch.object(resources, 'total_memory', return_value=8 * resources.GIB, create=True), \
+                 patch.object(resources, 'GateSemaphore') as semaphore, \
+                 patch.object(resources.subprocess, 'call', return_value=0), \
+                 patch.object(resources.subprocess, 'run'):
+                with self.assertRaisesRegex(RuntimeError, 'NILS_CLI_GATE_MIN_AVAILABLE_GIB.*capacity'):
+                    resources.run_gate(['true'], True)
+                semaphore.assert_not_called()
+            self.assertFalse(list(Path(directory).rglob('queue-*.lock')))
+
+    def test_mac_sigterm_stops_workload_and_descendant_before_readmission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            helper = root / 'gate-resources.py'
+            helper.write_text('import sys\nsys.platform = "darwin"\n' +
+                              (ROOT / 'scripts/ci/gate-resources.py').read_text())
+            parent_pid, descendant_pid = root / 'parent.pid', root / 'descendant.pid'
+            descendant = ('import os, signal, sys, time; from pathlib import Path; '
+                          'signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+                          'Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(30)')
+            workload = ('import os, subprocess, sys, time; from pathlib import Path; '
+                        'Path(sys.argv[1]).write_text(str(os.getpid())); '
+                        'subprocess.Popen([sys.executable, "-c", sys.argv[3], sys.argv[2]]); '
+                        'time.sleep(30)')
+            state = root / 'state'
+            env = dict(os.environ, NILS_CLI_RESOURCE_STATE_DIR=str(state), NILS_CLI_GATE_SLOTS='1')
+            supervisor = subprocess.Popen(
+                [sys.executable, str(helper), '--', sys.executable, '-c', workload,
+                 str(parent_pid), str(descendant_pid), descendant], env=env,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                self.assertTrue(wait_until(lambda: parent_pid.exists() and descendant_pid.exists()))
+                pids = [int(path.read_text()) for path in (parent_pid, descendant_pid)]
+                supervisor.terminate()
+                self.assertEqual(supervisor.wait(timeout=8), 143)
+                self.assertFalse(any(map(process_running, pids)),
+                                 'workload survives supervisor termination')
+                lease = resources.GateSemaphore(state, 1).acquire(.5)
+                self.assertFalse(any(map(process_running, pids)))
+                lease.close()
+            finally:
+                for path in (parent_pid, descendant_pid):
+                    if path.exists():
+                        try:
+                            os.kill(int(path.read_text()), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                if supervisor.poll() is None:
+                    supervisor.kill()
+                supervisor.wait(timeout=5)
+
     def test_nested_single_slot_gate_fails_before_launch(self):
         with tempfile.TemporaryDirectory() as directory:
             env = {'XDG_STATE_HOME': directory, 'NILS_CLI_RUNNER_MAX': '1',
@@ -124,12 +194,14 @@ class GateUnits(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             env = {'XDG_STATE_HOME': directory, 'NILS_CLI_RUNNER_MAX': '2',
                    'NEXTEST_TEST_THREADS': '32', 'RUST_TEST_THREADS': '1', 'CARGO_BUILD_JOBS': '64'}
-            with patch.dict(os.environ, env, clear=True), patch.object(resources.subprocess, 'call', return_value=0) as call:
+            with patch.dict(os.environ, env, clear=True), patch.object(resources.subprocess, 'Popen') as launch:
+                launch.return_value.wait.return_value = 0
                 self.assertEqual(resources.run_gate(['true'], False), 0)
                 self.assertEqual(os.environ['NEXTEST_TEST_THREADS'], '2')
                 self.assertEqual(os.environ['RUST_TEST_THREADS'], '1')
                 self.assertEqual(os.environ['CARGO_BUILD_JOBS'], '2')
-                self.assertTrue(call.call_args.kwargs['pass_fds'])
+                self.assertTrue(launch.call_args.kwargs['pass_fds'])
+                self.assertTrue(launch.call_args.kwargs['start_new_session'])
 
     def test_ticket_publication_is_serialized_with_queue_scans(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -172,6 +244,7 @@ class GateUnits(unittest.TestCase):
                     resources.GateSemaphore(resources.state_directory(), 1).acquire(.1)
             with patch.dict(os.environ, env, clear=True), \
                  patch.object(resources, 'available_memory', return_value=32 * resources.GIB), \
+                 patch.object(resources, 'total_memory', return_value=32 * resources.GIB), \
                  patch.object(resources.subprocess, 'call', return_value=0), \
                  patch.object(resources.subprocess, 'run', side_effect=cleanup):
                 self.assertEqual(resources.run_gate(['true'], True), 0)
@@ -203,6 +276,72 @@ class GateUnits(unittest.TestCase):
 
 
 class GateIntegration(unittest.TestCase):
+    def make_repository(self, root):
+        ci = root / 'scripts/ci'
+        ci.mkdir(parents=True)
+        (ci / 'lib').mkdir()
+        for name in ('nils-cli-checks-entrypoint.sh', 'nils-cli-local-fast.sh', 'test-env.sh'):
+            shutil.copy(ROOT / 'scripts/ci' / name, ci / name)
+        shutil.copy(ROOT / 'scripts/ci/lib/doc_classify.py', ci / 'lib/doc_classify.py')
+        verify = root / '.agents/skills/project-verify-required-checks/scripts'
+        verify.mkdir(parents=True)
+        (verify / 'project-verify-required-checks.sh').write_text('touch "$DOCS_CALLED"\n')
+        (ci / 'gate-resources.py').write_text(
+            'import os, sys; from pathlib import Path; '
+            'Path(os.environ["GATE_CALLED"]).write_text("called"); sys.exit(71)\n')
+        subprocess.run(['git', 'init', '-q', str(root)], check=True)
+        return dict(os.environ, NILS_CLI_GATE_ACTIVE='0',
+                    GATE_CALLED=str(root / 'gate-called'), DOCS_CALLED=str(root / 'docs-called'))
+
+    def test_local_fast_noncode_modes_and_usage_error_bypass_admission(self):
+        cases = [(['--changed-file', 'README.md'], 0, 'docs-only'),
+                 (['--changed-file', ''], 0, 'none'),
+                 (['--with-coverage'], 2, None)]
+        for arguments, expected, mode in cases:
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.make_repository(root)
+                result = subprocess.run(
+                    ['bash', 'scripts/ci/nils-cli-checks-entrypoint.sh', '--local-fast', *arguments],
+                    cwd=root, env=env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                self.assertFalse((root / 'gate-called').exists(), 'noncode mode tried admission')
+                if mode:
+                    self.assertIn(f'LOCAL_FAST_MODE={mode}', result.stdout)
+                if mode == 'docs-only':
+                    self.assertTrue((root / 'docs-called').exists())
+
+    def test_direct_code_gate_plans_once_without_temporary_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.make_repository(root)
+            temporary = root / 'temporary'
+            temporary.mkdir()
+            binaries = root / 'bin'
+            binaries.mkdir()
+            cargo = binaries / 'cargo'
+            cargo.write_text(
+                '#!/usr/bin/env python3\nimport json, os; from pathlib import Path\n'
+                'with Path(os.environ["METADATA_CALLS"]).open("a") as log: log.write("metadata\\n")\n'
+                'print(json.dumps({"packages":[{"name":"example", "manifest_path":'
+                'str(Path.cwd()/"crates/example/Cargo.toml"), "targets":[]}]}))\n')
+            cargo.chmod(0o755)
+            (root / 'scripts/ci/gate-resources.py').write_text(
+                'import os, subprocess, sys; from pathlib import Path\n'
+                'Path(os.environ["GATE_CALLED"]).write_text("called")\n'
+                'env = dict(os.environ, NILS_CLI_GATE_ACTIVE="1")\n'
+                'sys.exit(subprocess.call(sys.argv[2:] + ["--plan-only"], env=env))\n')
+            env.update(PATH=str(binaries) + os.pathsep + env['PATH'], TMPDIR=str(temporary),
+                       METADATA_CALLS=str(root / 'metadata-calls'))
+            result = subprocess.run(
+                ['bash', 'scripts/ci/nils-cli-local-fast.sh', '--changed-file', 'crates/example/src/lib.rs'],
+                cwd=root, env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((root / 'gate-called').exists())
+            self.assertEqual((root / 'metadata-calls').read_text().splitlines(), ['metadata'])
+            self.assertEqual(result.stdout.count('LOCAL_FAST_MODE=packages'), 1)
+            self.assertFalse(list(temporary.glob('nils-cli-local-fast.*')))
+
     def test_second_gate_waits(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -212,9 +351,11 @@ class GateIntegration(unittest.TestCase):
                 source = ROOT / 'scripts/ci' / name
                 if source.exists():
                     shutil.copy(source, root / 'scripts/ci' / name)
-            (root / '.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh').touch()
-            (root / 'scripts/ci/nils-cli-local-fast.sh').write_text(
-                'touch "$STARTED/$LABEL"\nsleep 1\n')
+            (root / '.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh').write_text(
+                'touch "$STARTED/$LABEL"\n'
+                'if [[ "$LABEL" == "first" ]]; then\n'
+                '  while [[ ! -f "$STARTED/release" ]]; do sleep .02; done\n'
+                'fi\n')
             subprocess.run(['git', 'init', '-q', str(root)], check=True)
             # Exercise real admission with the macOS no-op memory path. This
             # test-only copied helper selects that runtime; production detects
@@ -226,22 +367,33 @@ class GateIntegration(unittest.TestCase):
                        NILS_CLI_GATE_SLOTS='1',
                        NILS_CLI_GATE_TIMEOUT_SECONDS='5', NILS_CLI_GATE_ACTIVE='0',
                        NILS_CLI_RESOURCE_STATE_DIR=str(root / 'state/resources'))
-            command = ['bash', 'scripts/ci/nils-cli-checks-entrypoint.sh', '--local-fast',
-                       '--changed-file', 'path --plan-only marker.rs']
+            command = ['bash', 'scripts/ci/nils-cli-checks-entrypoint.sh', '--fixture',
+                       'path --plan-only marker.rs']
             with subprocess.Popen(command, cwd=root, env=dict(env, LABEL='first'),
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE) as first:
-                deadline = time.monotonic() + 4
-                while not (root / 'first').exists() and time.monotonic() < deadline:
-                    time.sleep(.02)
-                self.assertTrue((root / 'first').exists(), 'first gate never started')
-                with subprocess.Popen(command, cwd=root, env=dict(env, LABEL='second'),
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE) as second:
-                    time.sleep(.2)
-                    self.assertFalse((root / 'second').exists(),
-                                     'second gate started while first held the host slot')
-                    self.assertEqual(first.wait(timeout=5), 0)
-                    self.assertEqual(second.wait(timeout=5), 0)
-                    self.assertTrue((root / 'second').exists())
+                try:
+                    self.assertTrue(wait_until(lambda: (root / 'first').exists()),
+                                    'first gate never started')
+                    with subprocess.Popen(command, cwd=root, env=dict(env, LABEL='second'),
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE) as second:
+                        try:
+                            tickets = lambda: list((root / 'state/resources').glob('queue-*.lock'))
+                            self.assertTrue(wait_until(lambda: tickets() or (root / 'second').exists()))
+                            self.assertFalse((root / 'second').exists(),
+                                             'second gate started while first held the host slot')
+                            self.assertTrue(tickets(), 'second caller never reached the queue')
+                            (root / 'release').touch()
+                            self.assertEqual(first.wait(timeout=5), 0)
+                            self.assertEqual(second.wait(timeout=5), 0)
+                            self.assertTrue((root / 'second').exists())
+                        finally:
+                            (root / 'release').touch()
+                            if second.poll() is None:
+                                second.terminate()
+                finally:
+                    (root / 'release').touch()
+                    if first.poll() is None:
+                        first.terminate()
 
 
 if __name__ == '__main__':

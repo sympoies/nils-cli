@@ -124,11 +124,6 @@ run() {
   fi
 }
 
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nils-cli-local-fast.XXXXXX")"
-trap 'rm -rf "$tmp_dir"' EXIT
-changed_file_list="$tmp_dir/changed-files.txt"
-plan_file="$tmp_dir/plan.tsv"
-
 collect_changed_files() {
   if [[ "${#forced_changed_files[@]}" -gt 0 ]]; then
     printf '%s\n' "${forced_changed_files[@]}" | sed '/^$/d' | sort -u
@@ -150,9 +145,15 @@ collect_changed_files() {
   } | sed '/^$/d' | sort -u
 }
 
-collect_changed_files >"$changed_file_list"
-
-python3 - "$repo_root" "$changed_file_list" >"$plan_file" <<'PY'
+# Consume the plan once across the admission re-exec. Keep it private to this
+# handoff, and do not pass it to audits or Cargo children.
+if [[ "${NILS_CLI_GATE_ACTIVE:-0}" == "1" && -n "${NILS_CLI_LOCAL_FAST_PLAN:-}" ]]; then
+  plan="$NILS_CLI_LOCAL_FAST_PLAN"
+  unset NILS_CLI_LOCAL_FAST_PLAN
+else
+  unset NILS_CLI_LOCAL_FAST_PLAN
+  changed_input="$(collect_changed_files)"
+  plan="$(python3 - "$repo_root" "$changed_input" <<'PY'
 import json
 import pathlib
 import shutil
@@ -160,10 +161,9 @@ import subprocess
 import sys
 
 repo = pathlib.Path(sys.argv[1])
-changed_path = pathlib.Path(sys.argv[2])
 changed = [
     line.strip()
-    for line in changed_path.read_text(encoding="utf-8").splitlines()
+    for line in sys.argv[2].splitlines()
     if line.strip()
 ]
 
@@ -302,6 +302,8 @@ for reason in sorted(set(workspace_reasons)):
 for shell_file in sorted(set(shell_files)):
     emit("shell", shell_file)
 PY
+)"
+fi
 
 mode=""
 docs_checks=0
@@ -327,7 +329,7 @@ while IFS=$'\t' read -r key value; do
     changed) changed_files+=("$value") ;;
     shell) shell_files+=("$value") ;;
   esac
-done <"$plan_file"
+done <<<"$plan"
 
 if [[ -z "$mode" ]]; then
   echo "error: local-fast planner did not emit a mode" >&2
@@ -357,6 +359,13 @@ print_plan() {
     echo "LOCAL_FAST_SHELL=$shell_file"
   done
 }
+
+# Decide noncode modes before admission, and reuse this exact plan in the
+# admitted worker. Planning uses no temporary directory or EXIT trap.
+if [[ "$plan_only" -eq 0 && "${NILS_CLI_GATE_ACTIVE:-0}" != "1" &&
+      ( "$mode" == "packages" || "$mode" == "workspace" ) ]]; then
+  NILS_CLI_LOCAL_FAST_PLAN="$plan" exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/scripts/ci/nils-cli-local-fast.sh" "${original_args[@]}"
+fi
 
 print_plan
 
@@ -438,10 +447,6 @@ case "$mode" in
     exit 1
     ;;
 esac
-
-if [[ "${NILS_CLI_GATE_ACTIVE:-0}" != "1" ]]; then
-  exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/scripts/ci/nils-cli-local-fast.sh" "${original_args[@]}"
-fi
 
 if [[ "$docs_checks" -eq 1 ]]; then
   run_docs_checks
