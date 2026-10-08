@@ -71,13 +71,10 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-runtime/docs/determinism.md`
 - `crates/agent-session/docs/provider-turn-signal-evidence.md`
 - `crates/agent-session/docs/reports/agent-session-completion-migration-contract.md`
-- `crates/agent-session/docs/runbooks/main-agent-orchestration.md`
 - `crates/agent-session/docs/runbooks/serve-daemon.md`
 - `crates/agent-session/docs/runbooks/work-coordination.md`
 - `crates/agent-session/docs/specs/activity-stream-v1.md`
 - `crates/agent-session/docs/specs/control-plane-observation-v1.md`
-- `crates/agent-session/docs/specs/main-agent-dsh-external-runtime-v1.md`
-- `crates/agent-session/docs/specs/main-agent-orchestration-v1.md`
 - `crates/agent-session/docs/specs/mail-audit-v1.md`
 - `crates/agent-session/docs/specs/serve-api-v1.md`
 - `crates/agent-session/docs/specs/session-board-v1.md`
@@ -156,7 +153,6 @@ Top-level crate READMEs (one per workspace member, 43 total):
 - `crates/github-app-cli/README.md`
 - `crates/image-processing/README.md`
 - `crates/macos-agent/README.md`
-- `crates/main-agent/README.md`
 - `crates/memo/README.md`
 - `crates/nils-build-info/README.md`
 - `crates/nils-common/README.md`
@@ -202,7 +198,6 @@ Crate `docs/README.md` index files (one per workspace member, 43 total):
 - `crates/github-app-cli/docs/README.md`
 - `crates/image-processing/docs/README.md`
 - `crates/macos-agent/docs/README.md`
-- `crates/main-agent/docs/README.md`
 - `crates/memo/docs/README.md`
 - `crates/nils-build-info/docs/README.md`
 - `crates/nils-common/docs/README.md`

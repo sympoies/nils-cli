@@ -229,7 +229,6 @@ pub(crate) fn provision_with_previous(
     record: &SessionRecord,
     prior_record: Option<&PreviousRuntimeEvidence>,
 ) -> Result<PathBuf, CliError> {
-    crate::orchestration::ensure_session_not_quarantined(context, record)?;
     prepare(context, record)?;
     let incarnation = incarnation(record)?;
     let runtime = crate::coordination_runtime_evidence(context, record).ok();
@@ -249,8 +248,6 @@ pub(crate) fn provision_with_previous(
     // Close the race where provisioning passes the optimistic filesystem check
     // immediately before Main persists a session authority fence, then waits
     // for the coordination lock while Main seals the old broker.
-    crate::orchestration::ensure_session_not_authority_quarantined(context, record)?;
-    crate::orchestration::ensure_session_not_runtime_stop_fenced(context, record)?;
     let previous_broker = locked
         .registry
         .brokers
@@ -366,18 +363,6 @@ pub(crate) fn provision_with_previous(
     let previous_checkpoint = previous_broker.as_ref().map(|broker| {
         checkpoint_path_for_state(&context.state_dir, &record.id, &broker.incarnation)
     });
-    for claim in locked.registry.claims.iter().filter(|claim| {
-        claim.session_id == record.id
-            && claim.session_incarnation != incarnation
-            && claim.state == "active"
-    }) {
-        super::ensure_claim_mutation_not_fenced(
-            context,
-            &record.id,
-            &claim.session_incarnation,
-            claim,
-        )?;
-    }
     write_atomic(&path, token.as_bytes(), SECRET_FILE_MODE).map_err(|_| unavailable())?;
     let checkpoint_path = checkpoint_path_for_state(&context.state_dir, &record.id, &incarnation);
     let checkpoint_created = match prepare_checkpoint_file(&checkpoint_path) {
@@ -512,31 +497,10 @@ pub(crate) fn ensure_ready(context: &CliContext, record: &SessionRecord) -> Resu
     Ok(())
 }
 
-fn revoke_locked(
-    context: &CliContext,
-    record: &SessionRecord,
-    enforce_runtime_stop_fence: bool,
-) -> Result<(), CliError> {
+pub(crate) fn revoke(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
     let now = now_epoch();
     let current_incarnation = incarnation(record).ok();
     let mut locked = lock_registry(context)?;
-    if enforce_runtime_stop_fence {
-        crate::orchestration::ensure_session_not_runtime_stop_fenced(context, record)?;
-    }
-    for claim in locked.registry.claims.iter().filter(|claim| {
-        claim.session_id == record.id
-            && current_incarnation
-                .as_deref()
-                .is_some_and(|current| current == claim.session_incarnation)
-            && claim.state == "active"
-    }) {
-        super::ensure_claim_mutation_not_fenced(
-            context,
-            &record.id,
-            &claim.session_incarnation,
-            claim,
-        )?;
-    }
     if let Some(broker) = locked.registry.brokers.get_mut(&record.id)
         && current_incarnation
             .as_deref()
@@ -588,10 +552,6 @@ fn revoke_locked(
         ));
     }
     Ok(())
-}
-
-pub(crate) fn revoke(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
-    revoke_locked(context, record, false)
 }
 
 /// Retire the coordination incarnation of a runtime the caller just verified
@@ -673,13 +633,6 @@ pub(crate) fn forget_revoked_failed_launch(
     Ok(())
 }
 
-fn revoke_unless_runtime_stop_fenced(
-    context: &CliContext,
-    record: &SessionRecord,
-) -> Result<(), CliError> {
-    revoke_locked(context, record, true)
-}
-
 fn pause_broker_stop_for_test() -> Result<(), CliError> {
     #[cfg(debug_assertions)]
     if let Some(directory) =
@@ -726,9 +679,8 @@ fn remove_advisory_state_for_incarnation(
 pub(crate) fn stop(context: &CliContext, args: BrokerStopArgs) -> Result<Value, CliError> {
     let (record, _) =
         authenticate_from_file(context, &args.session, args.capability_file.as_deref())?;
-    crate::orchestration::ensure_session_not_runtime_stop_fenced(context, &record)?;
     pause_broker_stop_for_test()?;
-    revoke_unless_runtime_stop_fenced(context, &record)?;
+    revoke(context, &record)?;
     Ok(json!({
         "schema_version": BROKER_VERSION,
         "session_id": record.id,
@@ -1200,7 +1152,6 @@ pub(crate) fn run_heartbeat_sidecar(
     let started = Instant::now();
     let mut established_owner = false;
     let mut observed_stopped = false;
-    let mut activated_external_broker = false;
     let mut provider_session_lease = None;
     loop {
         let record = match crate::load_session_record(context, &args.session) {
@@ -1273,18 +1224,6 @@ pub(crate) fn run_heartbeat_sidecar(
             SECRET_FILE_MODE,
         )
         .map_err(|_| unavailable())?;
-        // An external-runtime lane has no launcher of ours to activate its
-        // broker. `main-agent worker start` can only provision it: at that
-        // point neither the lane's runtime evidence nor this heartbeat exists,
-        // and `activate_ready` requires both. The first live beat is therefore
-        // the earliest moment readiness is provable, and without activating
-        // here the broker stays `starting` forever — every authenticated worker
-        // call, starting with `main-agent bootstrap`, fails
-        // `coordination-unauthorized`. Tmux launches keep their existing
-        // launcher-driven activation and never reach this branch.
-        if !activated_external_broker && crate::dsh_external::is_external_record(&record) {
-            activated_external_broker = activate_ready(context, &record).is_ok()
-        }
         thread::sleep(Duration::from_secs(2));
     }
     if established_owner
@@ -1295,9 +1234,8 @@ pub(crate) fn run_heartbeat_sidecar(
             .runtime
             .as_ref()
             .is_some_and(|runtime| runtime.generation == args.generation)
-        && crate::orchestration::ensure_session_not_runtime_stop_fenced(context, &record).is_ok()
     {
-        let _ = revoke_unless_runtime_stop_fenced(context, &record);
+        let _ = revoke(context, &record);
     }
     Ok(json!({
         "schema_version": BROKER_VERSION,

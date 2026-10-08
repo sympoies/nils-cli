@@ -259,15 +259,6 @@ for path in changed:
     else:
         workspace_reasons.append(f"unclassified workspace path changed: {path}")
 
-# Packages whose tests drive each other's binaries: the agent-session integration
-# tests run `main-agent`, which ships from nils-main-agent, and `main-agent`
-# launches `agent-session` workers. Select them together so neither is validated
-# against a missing or stale sibling.
-coupled_packages = [{"nils-agent-session", "nils-main-agent"}]
-for group in coupled_packages:
-    if packages & group:
-        packages |= group
-
 if not changed:
     mode = "none"
 elif workspace_reasons:

@@ -22,18 +22,11 @@ prompt, then return a short tmux attach command for the user to continue from Te
 | Package name | `nils-agent-session` |
 | Binary name  | `agent-session`      |
 
-The `main-agent` binary ships from the sibling
-[`nils-main-agent`](../main-agent/README.md) package. It drives this crate's
-session engine and orchestration registry, whose contracts and runbooks stay
-documented here.
-
 ## Documentation map
 
 - Start here for positioning, common commands, and links: this README.
 - Operate collision awareness and work permissions:
   [Work coordination](docs/runbooks/work-coordination.md).
-- Run durable Main Agent and interactive worker lifecycles:
-  [Main Agent orchestration](docs/runbooks/main-agent-orchestration.md).
 - Deploy the HTTP/WebSocket control plane:
   [Serve daemon operations](docs/runbooks/serve-daemon.md).
 - Integrate stable schemas and state machines:
@@ -44,7 +37,6 @@ documented here.
   [Session lineage and work v1](docs/specs/session-lineage-work-v1.md),
   [Session coordination v1](docs/specs/session-coordination-v1.md),
   [Session board v1](docs/specs/session-board-v1.md),
-  [Main Agent orchestration v1](docs/specs/main-agent-orchestration-v1.md),
   [turn-state contract](docs/turn-state-contract.md), and
   [activity stream v1](docs/specs/activity-stream-v1.md).
 - Browse every crate-local document by purpose:
@@ -88,65 +80,15 @@ agent-session logs <id>
 agent-session readiness --format json
 agent-session delete <id>
 agent-session completion zsh
-main-agent capabilities --provider codex --format json
-main-agent packet-schema --format json
-main-agent self readiness --format json
-main-agent init --packet-file objective.json --if-absent --idempotency-key init-001 --format json
-main-agent self show --format json
-main-agent self recover --idempotency-key recover-controller-001 --format json
-main-agent rehydrate --format markdown
-main-agent status --format json
-main-agent worker start --assignment-file assignment.json --if-run-revision 1 --idempotency-key start-001 --format json
-main-agent worker supervise ASSIGNMENT_ID --format json
-main-agent worker diagnose ASSIGNMENT_ID --format json
-main-agent worker guidance-reconcile ASSIGNMENT_ID --if-revision 3 --idempotency-key guidance-001 --format json
-main-agent worker account-handoff ASSIGNMENT_ID --account ACCOUNT --if-revision 3 --authorize-account-change --idempotency-key account-001 --format json
-main-agent worker submit-recovery ASSIGNMENT_ID --if-revision 2 --timeout 5s --idempotency-key recover-001 --format json
-main-agent worker reconcile-recovery ASSIGNMENT_ID --if-revision 3 --idempotency-key reconcile-001 --format json
-main-agent worker stop-runtime ASSIGNMENT_ID --worker-incarnation WORKER_INCARNATION --if-revision 3 --idempotency-key stop-001 --format json
-main-agent worker stop-claimed-runtime ASSIGNMENT_ID --worker-incarnation WORKER_INCARNATION --if-revision 3 --idempotency-key stop-claimed-001 --format json
-main-agent worker reconcile-stopped ASSIGNMENT_ID --if-revision 3 --reason "worker runtime stopped after claim acquisition" --idempotency-key reconcile-stopped-001 --format json
-main-agent worker cancel ASSIGNMENT_ID --if-revision 3 --reason "pre-claim bootstrap failure" --idempotency-key cancel-001 --format json
-main-agent worker reassign ASSIGNMENT_ID --assignment-file replacement.json --if-revision 3 --reason "pre-claim bootstrap failure" --idempotency-key reassign-001 --format json
-main-agent worker list --format json
-main-agent checkpoint --file checkpoint.json --if-revision 2 --idempotency-key checkpoint-001 --format json
-main-agent completion zsh
 ```
 
-`main-agent` is the typed, authenticated facade for durable Main Agent runs and
-managed-worker relationships. Private objective and assignment packets are
-read only through the current session capability; ordinary `agent-session`
-list/serve/activity projections expose bounded relationship metadata only.
-Compatibility-sensitive callers must require
-`main-agent.capabilities.v1` to advertise
-`main-agent.runtime-checkpoint-file.v1` and
-`runtime-kit.checkpoint-write-admission.v1`, with `compatible:true`. The second
-capability is derived for the requested Codex or Claude provider from the
-installed sibling `agent-hook` inventory's
-bundle version `2026.07.28.1` or newer and its locked
-`agent-session.coordination.v1` rules, so the probe rejects a mixed
-CLI/runtime-hook deployment. It additionally requires that provider's
-converged doctor record and executes its installed handler's versioned
-capability self-probe, so a new policy with stale or missing handler code also
-fails closed without requiring the other provider to be installed. The
-bundle-version boundary identifies the first policy whose paired handler admits
-the checkpoint write; the package version alone does not prove this API.
-Before `init` or any managed mutation, `main-agent self readiness` verifies the
-current incarnation's exact `AGENT_SESSION_CHECKPOINT_FILE` binding and trusted
-mode-0600 file. A pre-deployment incarnation fails closed with
-`runtime-checkpoint-unavailable` and must be resumed or restarted.
-Authenticated worker `bootstrap --format json` returns a private
-`checkpoint_file` bound to the current runtime incarnation. Write later
-checkpoint objects to that pre-created mode-0600 file and pass the same path to
-`main-agent checkpoint --file`; do not allocate a separate worker checkpoint
-path under a repository or project output tree.
-Follow the [Main Agent orchestration runbook](docs/runbooks/main-agent-orchestration.md)
-for packet examples, revision and retry rules, interactive worker acceptance,
-resume/rebind, relationship transfers, and terminal cleanup.
-The top-level relationship and lifecycle commands are `collaborate`, `borrow`,
-`handoff`, `adopt`, `close`, and `closeout`; `packet-schema` prints a valid
-objective-packet example for `init`. Use `completion <bash|zsh>` on either
-binary to generate its shell completion script.
+`agent-session readiness --format json` authenticates the current managed runtime
+and verifies its exact runtime-issued checkpoint file. It does not acquire a claim
+or authorize mutations. Ordinary claims and admission remain separate.
+
+Retired orchestration registries and sidecars are ignored. Session records retain
+unknown metadata through ordinary rewrites without projecting it or restoring
+mode authority. Retirement does not migrate or delete durable state.
 
 `metadata attach` is a bounded state-owner primitive, not an approval system or
 an arbitrary session-record editor. It accepts one owner-private
@@ -157,181 +99,6 @@ projection; raw metadata values, prompts, logs, provider credentials, runtime
 identities, request paths, and raw idempotency keys are excluded. See the
 [Session public metadata v1 contract](docs/specs/session-public-metadata-v1.md)
 for the exact limits, replay semantics, and stable error codes.
-
-In particular, fresh worker launch first validates that `launch.cwd` is an existing canonical
-directory. Fresh Codex launch also requires explicit trust for that exact
-directory in the active Codex configuration; missing or unverifiable trust
-fails with typed guidance before assignment persistence or provider launch.
-The canonical verified Codex configuration directory is bound into the pending
-receipt, session record, and provider environment, so a long-lived service
-cannot preflight one configuration and launch against another. A durable
-controller-claim operation fence blocks claim release from the final authority
-check through child attachment. The runtime never accepts provider trust
-automatically. In addition,
-bare single-assignment `worker start` defaults to waiting up to 5 minutes for
-the typed readiness proof; select explicit `--await-ready 0` for launch-only
-behavior. Batch launch remains transport-only so its bounded lane count cannot
-multiply readiness deadlines. Its parent
-idempotency receipt binds the sorted lane names and raw packet digests before
-any lane starts; exact replay resumes incomplete lanes, including transient or
-ambiguous child failures reconciled through the lane receipt, while membership,
-rename, order, or byte drift conflicts before launch. A nonzero wait
-persists one fixed readiness deadline and leased finalizer, so concurrent exact
-replays join the same attempt and return the same final receipt. The receipt
-also persists the automatic recovery reservation and its reserved/sending/sent
-substage in the same locked commit that reserves the attempt, so a stale
-finalizer cannot reserve recovery after a successor takes over. Finalizer
-takeover continues the same attempt and never repeats an Enter with an
-ambiguous outcome. The short takeover lease is extended beyond
-the pane-input timeout only while `sending` is in flight. A fresh
-Codex or Claude worker that remains `starting` receives at most one
-runtime-owned recovery Enter; automatic and explicit recovery share one durable
-attempt reservation, and prompt load, paste, and Enter each occur at most once
-for a completed start stage. An exact retry can replace only a matching record
-that durably proves tmux was never launched. The serialized send
-boundary rechecks exact worker, activity, broker, claim, and operation evidence
-immediately before input, then revalidates the reserving Main Agent
-session/incarnation and its run/assignment ownership while preserving the
-coordination-to-orchestration lock order. Broker evidence must be
-incarnation-matched, ready, fresh, and backed by the matching private
-capability. Explicit recovery stores
-a provisional replay receipt. Every manager-owned assignment mutation is
-fenced until the bounded attempt resolves or a newer worker checkpoint proves
-that input was consumed. An interrupted automatic reservation can be adopted
-for observation, but adoption never sends input or revokes a potentially live
-sender. An unknown send outcome remains mutation-fenced while that incarnation
-may still act. `worker reconcile-recovery` is the explicit non-resend terminal
-escape: it succeeds only while holding the exact worker record and
-coordination-quiescence guards after proving the runtime/tmux command stopped,
-the worker claim absent, operations quiescent, and Main Agent authority still
-active. Stopped proof combines every persisted cgroup, process-session, and
-process-group source: live evidence dominates, unavailable evidence fails
-closed, and `Stopped` requires every available source to prove absence. Before
-recording `reconciled`, the command atomically persists a session-owned
-exact-incarnation quarantine marker that rejects session resume, maintenance
-resume, work-context claim, bootstrap, checkpoint, and equivalent
-execution-authority restoration without coupling unrelated sessions to the
-orchestration registry. A retry after marker persistence adopts the matching
-durable marker before completing the registry transition. Guarded cancellation of that
-absorbing terminal record reacquires the
-same stopped-runtime and quiescence boundaries and therefore remains available
-after the exact worker broker has stopped and cleared its capability. Otherwise
-it fails closed. Cancellation also revalidates the exact Main Agent claim while
-holding coordination quiescence through the orchestration commit. A newer
-authenticated worker checkpoint can also resolve the attempt. Its provisional receipt stays
-resumable: an exact-key retry observes the same attempt without resending and
-may upgrade the receipt once that checkpoint or a definitive failure resolves
-the outcome.
-`main-agent quick` includes the canonical readiness wait in its parent
-idempotency contract while continuing to recognize historical parent and
-`{parent}-worker` child receipts during rolling upgrades.
-Readiness still requires the interactive worker to
-be visible, attachable, authenticated, and checkpointed after that reservation.
-An authoritative completed or failed provider turn ends the wait early when no
-checkpoint exists. Use `worker supervise` as the repeatable macro-first health
-check; it combines assignment, activity, claim, operation, and clean-worktree
-evidence into a typed classification and deterministic next action. Missing,
-corrupt, or identity-mismatched evidence fails closed as `worker_unreachable`
-or `evidence_unavailable`. `worker reassign` performs only a proven-safe
-pre-claim cancellation, guarded retirement, and distinct clean replacement
-launch. Its exact retry resumes after the last completed stage without
-repeating it. If a macro stops, continue from `last_proven_safe_state` with
-`worker diagnose`, `submit-recovery`, `cancel`, or `retire`; never resend the
-prompt, inject a second Enter, or accept a trust, update, authentication,
-permission, or MCP dialog automatically.
-
-Supervision persists a privacy-safe, bounded material worktree fingerprint:
-porcelain status, staged and unstaged binary diffs, and bounded untracked
-path/content evidence. Continued edits to an already-modified file and
-deletion-only changes therefore reset progress age; unavailable, oversized, or
-non-regular material fails closed. Broker-heartbeat staleness is classified
-separately from work-context expiry. `coordination_broker_stale` routes recovery
-to the target session's exact authenticated broker owner;
-`edit_authority_stale` requests a bounded recheck; only
-`claim_renewal_required` asks the worker to renew its own claim.
-
-When the final durable `worker-start` receipt proves bounded readiness ended
-with `worker-checkpoint-timeout`, the exact worker is still live, no worker
-claim or operation exists, and no recovery send is `attempting`,
-supervision returns `readiness_stop_required` in the additive v3 diagnose,
-supervise, and recovery-action envelopes. Its executable Main-owned action is
-revision- and exact-incarnation-fenced `worker stop-runtime`. The command
-first persists a session-owned exact-worker fence, then commits the
-per-assignment stopping reservation and seals only that worker's coordination
-authority. Both global registries are released before stopping the verified
-runtime process boundary. It sends no provider input and preserves the
-assignment, session record, and worktree. The session-owned fence denies
-CLI/HTTP/maintenance resume, broker, claim, bootstrap, and checkpoint authority
-until guarded retirement deletes the stopped session. Its `in_progress` state
-also blocks every non-owner assignment mutation during marker-first recovery;
-verified termination advances it to `stopped` before the assignment
-reservation is cleared. If the recorded Main controller becomes unavailable
-after reservation, authenticated orphan `adopt` transfers only the exact
-fence, reservation, and progress replay authority to an active successor Main.
-Successive orphan transfers may advance only the ownership revision; the
-original stop revision and every other stop identity remain immutable.
-An account-handoff reservation must be completed or cancelled before the stop is advertised.
-After an interrupted admitted stop, supervision reports
-`readiness_stop_in_progress` until exact replay converges. A following
-supervision read must classify the stopped lane as `pre_claim_failure`;
-ordinary guarded cancel/retire or a distinct reassign then owns
-terminalization. A failed submit-recovery record alone never authorizes the
-stop, and an unknown `attempting` send remains on the stopped-runtime `worker
-reconcile-recovery` path.
-
-For a `working` worker that is authoritatively idle while its exact
-assignment-derived claim remains active, `worker stop-claimed-runtime` is the
-separate post-claim stop-only action. It requires the exact assignment
-revision, worker incarnation, running runtime identity, worker claim,
-authoritative activity boundary, broker/work context, and zero active or
-uncertain operations. It persists a session-owned fence before stopping the
-runtime, so the launch wrapper's clean broker shutdown cannot release the
-claim. A narrow mutation fence holds the exact controller and worker claim
-tuples stable while leaving unrelated coordination available across the
-bounded runtime stop and its post-stop proof. It sends no provider input and preserves the `working` assignment,
-session, worktree, and claim for `worker reconcile-stopped`. Interrupted
-execution is projected as `claimed_runtime_stop_in_progress` in the additive
-v5 diagnose/supervise/recovery-action envelopes and must be resumed only with
-the returned exact argv. If the owning Main dies after the stop completes,
-orphan `adopt` rebinds both persistent stop identities to the successor while
-retaining the original controller and revision lineage, so successor
-`reconcile-stopped` and exact terminal worker deletion remain available.
-
-`main-agent self recover` is the ownership-qualified controller recovery macro.
-It proves the current caller is the exact Main Agent incarnation with an
-unchanged live runtime, active claim, matching broker identity, and no active or
-uncertain operation, then adopts the existing broker recovery primitive. A
-healthy broker is an idempotent no-op. There is no ambiguous top-level
-`recover`, and the command never changes accounts, resumes or replaces the
-provider, resends a prompt, sends Enter, or clears an operation fence.
-
-Resume bootstrap retains `previous_worker`, moves only unread/unexpired guidance
-from the exact current controller to the new worker incarnation, and preserves
-the message ID and unread state with bounded forwarding provenance.
-`worker guidance-reconcile` is the revision-fenced idempotent repair action when
-supervision still reports stale-incarnation guidance; it never exposes a body
-or marks worker consumption.
-
-For an app-server-managed Codex worker with typed account and auto-resume
-controls, `worker account-handoff` is the revision-fenced, explicitly authorized
-macro that queues the allowlisted account, waits for the exact incumbent
-incarnation to apply it, verifies the binding, and re-arms structured
-continuation. It never uses `/logout` or raw terminal input. A raw worker has no
-public restart flag: unsupported handoff fails closed and reports the stable
-`agent-session.codex-managed-account-handoff.v1` capability required from a
-daemon-launched managed worker, without changing the account or runtime. A
-bounded raw rate-limit diagnostic is attempted only after both provider and
-material progress are truly stale, and only for an exact durable
-selected-account provenance; ambient authentication is never treated as
-account identity.
-
-Handoff moves the assignment run and primary manager atomically under the
-source coordination guard. It refuses upstream or reverse dependency edges
-that would become cross-run. `worker message` revalidates the exact run,
-primary manager, worker, and active sender claim while holding the same
-coordination-to-orchestration lock order through mailbox persistence. Handoff
-also revalidates that claim from its retained coordination guard, so released
-or stale source authority cannot mutate after the initial check.
 
 `send` pushes input to a live session: literal text (`--text` / `--text-stdin`) and/or repeatable named keys
 (`--key enter|escape|backspace|c-c|up|down|left|shift-left|right|tab`), so codex/claude approval prompts and terminal editing
@@ -351,8 +118,7 @@ types; `--key` alone presses keys as before.
 latest provider conversation implicitly. Runtime metadata is persisted before launch so hooks see the new generation,
 and the immutable tmux session/pane identity is persisted before a successful start or resume returns. Resume first
 proves the current and every retained prior launch identity stopped, so a surviving provider process cannot be hidden by
-a new runtime generation. A worker carrying a stopped-recovery quarantine
-cannot resume into a new runtime generation.
+a new runtime generation.
 An older stopped record without that proof returns the same non-retryable manual-verification action as deletion; only
 a generation durably marked as never launched can resume without a runtime identity. If tmux launch fails, the prior
 runtime and activity snapshot are restored only after any possibly launched replacement is verified stopped. An

@@ -1827,7 +1827,7 @@ mod tests {
         )
         .expect("heartbeat");
         let mut locked = lock_registry(&context).expect("registry");
-        locked.registry.schema_version = super::super::CLAIM_FENCE_REGISTRY_VERSION.into();
+        locked.registry.schema_version = super::super::LEGACY_REGISTRY_VERSION.into();
         super::super::ensure_fingerprint_key(&mut locked.registry);
         locked.registry.brokers.insert(
             "recipient".into(),
@@ -2279,7 +2279,7 @@ mod tests {
                 .expect("pre-remote")
                 .registry
                 .schema_version,
-            super::super::CLAIM_FENCE_REGISTRY_VERSION
+            super::super::LEGACY_REGISTRY_VERSION
         );
         let message = envelope();
         let id = message.message_id.clone();
@@ -2290,7 +2290,7 @@ mod tests {
         let mut locked = lock_registry(&context).expect("reloaded");
         assert_eq!(
             locked.registry.schema_version,
-            super::super::CLAIM_FENCE_REGISTRY_VERSION
+            super::super::LEGACY_REGISTRY_VERSION
         );
         assert_eq!(locked.registry.messages.len(), 1);
         assert_eq!(
@@ -2318,7 +2318,7 @@ mod tests {
             .save()
             .expect("local rewrite preserves existing schema");
         drop(locked);
-        super::super::ensure_recovery_registry_schema(&context).expect("existing facade supported");
+        super::super::lock_registry_observational(&context).expect("existing registry supported");
         let projection = nils_common::coordination_projection::load(&context.state_dir);
         assert!(
             projection.is_ok(),
@@ -2363,7 +2363,7 @@ mod tests {
         assert!(locked.registry.messages.is_empty());
         assert_eq!(
             locked.registry.schema_version,
-            super::super::CLAIM_FENCE_REGISTRY_VERSION
+            super::super::LEGACY_REGISTRY_VERSION
         );
     }
     #[test]
@@ -2547,7 +2547,7 @@ mod tests {
         locked.save().expect("local write unaffected");
         drop(locked);
         assert_eq!(fs::read(path).expect("journal retained"), bytes);
-        super::super::ensure_recovery_registry_schema(&context)
+        super::super::lock_registry_observational(&context)
             .expect("existing reader still available");
     }
     fn own_outbox(key: &str, state: &str) -> Outbox {

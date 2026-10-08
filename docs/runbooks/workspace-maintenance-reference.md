@@ -241,7 +241,7 @@ release-quality verification (total line coverage must stay `>= 85.00%`).
 In CI, the `test_macos` job runs the workspace tests once under
 `NILS_CLI_TEST_RUNNER=llvm-cov`, which enforces the floor, and the `coverage`
 job publishes the summary from that run's LCOV artifact.
-The Linux cgroup containment and provider-stop canaries run in their own
+The Linux cgroup containment checks run in their own
 `test_containment` job beside `test`; `coverage` requires it to succeed.
 Normal local development does not need to run coverage before opening a PR:
 

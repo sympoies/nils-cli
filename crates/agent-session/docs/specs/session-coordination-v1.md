@@ -248,50 +248,14 @@ canonicalized like any other, and `head` must be a bounded Git branch name
 (1-255 bytes; no whitespace, control characters, `..`, `//`, `@{`, or any of
 `~^:?*[\`; no leading `-`, `/`, or `.`; no trailing `/`, `.`, or `.lock`).
 At most 16 entries are accepted.
-A pull-request target is covered only by the private pull-request head grant
-described below; generic claims cannot cover one. An admitted lease records the
-canonical entries as `pull_request_targets`, which is omitted when empty. An
-uncovered target fails with `uncovered-mutation-scope`, and an invalid one with
-`invalid-scope`.
-
-An opaque checkout-local shell effect has one narrowly defined coverage rule.
-When `operation` is exactly `shell`, the target set is exactly one
-`repository` target with value `.`, and `checkouts` contains exactly one
-matching repository binding, `admit` fingerprints that checkout. The target is
-covered only when authenticated Main Agent worker bootstrap minted a private
-checkout-shell grant on the exact assignment-derived claim, the claim names
-the repository, and its existing worktree fingerprint matches the binding.
-Generic `work-context claim` and `set` cannot request or observe that grant;
-public work-context projections omit it, and older records deserialize it as
-absent. This does not add a scope kind, widen the claim to repository scope,
-cover explicit path targets, or authorize a different checkout. Missing,
-mismatched, or additional bindings fail normal scope coverage.
-
-The grant is an explicit coordination permission for an opaque effect in the
-worker's isolated checkout, not a filesystem sandbox or user authorization.
-Path scopes continue to describe semantic lane ownership and conflict, while
-the checkout lease prevents simultaneous physical writers. A worker remains
-untrusted: its final diff must be checked against the assignment scopes, and
-an adversarial same-user process requires an OS security boundary outside this
-contract.
-
-The same authenticated bootstrap mints a private pull-request head grant
-`{repository, head}` on the claim only when the assignment declared that head
-branch, the checkout is on it (an unborn branch counts; a detached HEAD or any
-other branch grants nothing), and the checkout's `origin` resolves to a claimed
-repository. Switching branches and bootstrapping again therefore cannot move
-the grant to another pull request. The grant is stored as `pull_request_head` in
-the private registry, omitted from every public work-context projection, and
-absent from older records. Bootstrap also writes it to an owner-only
-`pull-request-head-grant.json` record in the worker session's coordination
-directory, bound to the exact session, incarnation, and claim id. A release that
-predates the field, such as a broker heartbeat sidecar left running across an
-upgrade, rewrites the shared registry without it; admission then falls back to
-that record, which only the same claim (same session, incarnation, and claim
-id) still carrying the checkout-shell grant and a claimed repository can use. It covers a `pull-request-head` target
-only for that exact repository and head, which lets a worker create, update,
-and review the pull request for its own branch without covering any other
-branch or repository. Generic `work-context claim` and `set` cannot request it.
+Every ordinary target must be explicitly covered by the active claim. An opaque
+checkout-local shell effect requires repository scope; a checkout binding and
+worktree fingerprint do not widen a path claim. Pull-request-head selectors keep
+their typed input grammar but cannot be admitted through retired lane grants;
+callers use the ordinary provider-reference contract for supported mutations.
+Retired checkout-shell and pull-request-head grants are opaque persisted metadata,
+excluded from public projections and ignored by admission. Retired grant sidecars
+and orchestration state are never consulted, rewritten, or deleted automatically.
 
 The runtime-issued checkpoint file follows the same threat boundary. The broker
 pre-creates one exact owner-only regular file for the current incarnation, and
@@ -388,7 +352,7 @@ increments only the activity revision, closes the selected current turn with
 outcome `operator_reconciled`, enters authoritative `waiting`, and records
 `agent-session.operator-provider-turn-reconciliation.v1` provenance
 `server_operator` on the matching completed turn. Later turns and runtime
-activation do not inherit that provenance. The session record, runtime, provider binding, assignment,
+activation do not inherit that provenance. The session record, runtime, provider binding,
 worktree, active claim, broker, mailbox, coordination operations, and all
 provider-side state remain unchanged.
 
@@ -572,12 +536,9 @@ States are `active`, `completing`, `reconcile_pending`, `completed`, `failed`, a
   scope and provider reference is a subset of the authenticated active claim
   before creating a 30-minute lease. Filesystem targets bind each repository to
   a canonical checkout whose `origin` matches the declared repository.
-- Opaque repository effects require an explicit repository scope except for
-  the exact checkout-bound `shell` shape defined above, which may be covered by
-  the private bootstrap-minted claim grant, claim repository, and worktree
-  fingerprint. Symlink,
-  multi-target, origin, and normalized path checks still apply; the exception
-  never covers an explicit edit target or another checkout.
+- Opaque repository effects, including shell operations, require an explicit
+  repository scope covering the canonical checkout. Retired private grants do
+  not widen an active claim.
 - A 30-minute claim does not release a known long operation. Reaching the
   operation safety TTL moves `active` to fail-closed `completing`; it never
   asserts terminality or removes the bound claim's exclusion.
@@ -987,10 +948,6 @@ Transport/store failures retain their existing codes and fail closed.
 Readiness does not acquire a baseline claim or authorize mutations; callers
 retain their own baseline work-context and admission checks.
 
-The existing Main Agent readiness facade uses the same checkpoint verifier
-while retaining its own schemas. Switching consumers to the generic contract
-must precede retirement of that facade.
-
 ## HTTP coverage
 
 The loopback server exposes the raw work-context, broker, and mailbox library
@@ -1044,89 +1001,6 @@ Successful HTTP send and reply envelopes carry the same content-free
 `notification` state/generation/reason projection as CLI and set
 `controller_available: true`. The response schedules work only; it does not
 promise immediate delivery or mark a message read.
-
-## Main-owned pre-claim runtime stop guard
-
-The Main Agent orchestration facade uses an observational coordination guard
-to admit and seal an exact exhausted-readiness worker runtime stop. This guard
-MUST bind the exact worker session/incarnation and exact current Main
-controller session/incarnation plus its claim tuple, which MUST be active and
-unexpired at command admission. It MUST require the worker claim to be absent
-and reject any
-active/completing/reconcile-pending worker operation or a broker bound to a
-different incarnation. While this guard and the orchestration registry are
-briefly held together, the session-owned exact-worker runtime-stop fence is
-committed before the durable per-assignment stopping reservation and
-claim-bound progress receipt. A marker-first interruption is safe for exact
-replay to adopt. Its seal transaction rechecks the
-same admitted tuple and worker quiescence under the same coordination lock,
-then marks only the matching worker broker stopped, clears its capability
-digest, and removes its capability file. Both global registry locks are
-released before external process termination; the exact session lifecycle lock
-and durable assignment reservation remain the narrow fence. Claim expiry after
-the seal cannot restore revoked worker authority; a crash or replay must
-authenticate a currently active, unexpired claim again. The seal does not
-release a worker claim, normalize unrelated registry state, delete session
-state, or touch another session. The session-owned fence remains after result
-finalization and blocks CLI/HTTP/maintenance resume, broker, claim, bootstrap,
-and checkpoint authority until guarded retirement deletes the exact session.
-Its `in_progress` state also fences every non-owner assignment mutation;
-verified termination advances it to `stopped` before orchestration clears the
-assignment reservation.
-When the recorded controller is unavailable, orphan adoption may rebind the
-fence controller only together with the exact orchestration reservation and
-original progress receipt; the worker, request digest, idempotency key, and
-reserved fence revision remain immutable across successive orphan transfers.
-Only the assignment ownership revision advances monotonically.
-
-## Main-owned post-claim runtime stop guard
-
-The post-claim stop-only guard admits an exact `working` worker only when its
-assignment-derived claim is active and unexpired. It binds the exact worker
-session/incarnation, work context, runtime identity, authoritative idle
-activity revision, authoritative broker, zero active or uncertain operations,
-and the exact active, unexpired Main controller claim. Unlike the pre-claim
-guard, it MUST preserve the worker claim and broker record rather than sealing
-them.
-
-While the observational coordination guard is held, orchestration persists a
-session-owned claimed-stop identity, the existing runtime-stop fence, and an
-exact progress idempotency receipt. The identity binds assignment, revision,
-worker, controller, request digest, and original idempotency key; it is an
-independent v1 sidecar, so registry-v3 and runtime-fence-v1 wire shapes remain
-unchanged. Identity-first interruption is sufficient for O(1) exact replay
-projection and blocks competing assignment mutation. The fence blocks every
-authority-restoration ingress, including `broker stop`; therefore a clean
-held-launch exit cannot revoke the broker or release the claim while the
-Main-owned stop is in progress. Global registry locks are released before
-exact runtime termination. Observational reads before and after termination
-MUST prove the same worker claim tuple remains active and unexpired. Immediately
-before termination, the original Main controller claim MUST also remain exact,
-active, and unexpired, and both exact claim TTLs MUST still exceed the full
-bounded termination window. Before releasing the observational coordination guard,
-the command MUST persist independently versioned sidecars for both exact claim
-tuples and acquire the sidecars' shared process-owned OS lock. Every exact
-claim mutation ingress MUST consult its O(1) sidecar and fail closed while the
-exclusive owner lock remains held. The owner lock spans external termination
-and the post-stop claim proof; it has no wall-clock expiry. Because neither the
-sidecars nor their lock live in the coordination registry, an older registry
-writer cannot silently discard the safety fence. The first durable activation
-write upgrades the registry marker from
-`agent-session.coordination-registry.v1` to the wire-compatible but
-fence-aware `agent-session.coordination-registry.v2`; the transition is
-one-way so older claim writers fail closed instead of bypassing the sidecar
-protocol before any manifest or tuple sidecar can be partially published.
-Current projection readers accept both markers, while every v2 writer MUST
-consult the exact-tuple sidecars. A crash after the marker transition but
-before complete sidecar publication is safe for exact replay to reconstruct,
-and no runtime stop may begin until the manifest and both sidecars verify.
-Owner death releases the OS
-lock, after which exact replay may reacquire it and stale sidecars may be
-retired under the coordination lock. An already-stopped replay may finalize under the
-authenticated current controller without repeating termination. The
-identity and session fence remain after the progress receipt becomes terminal
-so only `worker reconcile-stopped` may seal and release the retained worker
-authority before guarded retirement.
 
 ## Public list and glance additions
 

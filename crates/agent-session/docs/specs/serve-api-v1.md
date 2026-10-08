@@ -56,8 +56,6 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `POST /sessions/{id}/{send,prompt,prompt/v2,resume}` | Bearer | This specification |
 | `POST /sessions/{id}/archive` | Bearer | This specification |
 | `GET /sessions/{id}/maintenance` and `POST /sessions/{id}/maintenance/actions` | Bearer | [Session maintenance v1](session-maintenance-v1.md#authentication-and-endpoints), successor [v2](session-maintenance-v2.md#negotiation) |
-| `GET and POST /sessions/{id}/orchestration/group-cleanup` | Bearer | [Main Agent orchestration v1](main-agent-orchestration-v1.md#daemon-owned-group-cleanup) |
-| `GET and POST /sessions/{id}/orchestration/group-archive` | Bearer | [Main Agent orchestration v1](main-agent-orchestration-v1.md#daemon-owned-group-archive) |
 | `PUT /sessions/{id}/account` | Bearer | This specification |
 | `GET /sessions/{id}/auto-resume` | Open | This specification |
 | `PUT and DELETE /sessions/{id}/auto-resume` | Bearer | This specification |
@@ -295,16 +293,9 @@ recorded in `sympoies/nils-cli#1409`.
   [Account brokers](#account-brokers). `codex_account_switch` is additive:
   older daemons omit it, and a Codex session's own
   `codex_account.supported` remains the per-session authority.
-  Sessions report
-  `running`, `stopped`, `unknown`, or `missing` live status plus a boolean `resumable` field and best-effort `repo_name` derived from
-  the recorded `cwd`. `missing` is reported only for an external-runtime record
-  (`runtime.kind = "dsh_external"`) whose owning plugin never attached to the
-  recorded launch; consumers must treat it as "no runtime exists for this
-  launch", never as a terminated runtime that could be resumed. Every
-  external-runtime record reports `resumable: false` — it carries no provider
-  resume identity — and its runtime is owned by the external plugin, so the
-  input path refuses it with `dsh-runtime-plugin-owned`. Resume and input
-  controls belong to that plugin, not to this daemon. New interactive records also expose optional
+  Sessions report `running`, `stopped`, or `unknown` live status plus a boolean
+  `resumable` field and best-effort `repo_name` derived from the recorded `cwd`.
+  New interactive records also expose optional
   `runtime_started_at`, `turn_state`, `last_prompt`, `last_prompt_state`,
   `last_prompt_continuity`, and `startup`; a profiled
   session also
@@ -338,78 +329,6 @@ recorded in `sympoies/nils-cli#1409`.
   Codex/Claude sessions add `last_prompt_state` with one of `current`, `pending`,
   or `unavailable`. `current` may include `last_prompt`; `current` without it
   authoritatively means the caught-up transcript has no eligible user prompt.
-  A managed Main Agent worker does not preview its launch prompt once
-  `main-agent` has bound it to its assignment (`orchestration.role` is
-  `worker`). A prompt identical to the session's own private launch prompt is
-  withheld as `current` without `last_prompt` until a later prompt replaces
-  it. That prompt is the controller-generated bootstrap instruction and names
-  a machine-local executable.
-  `pending` means exact-source discovery, cold recovery, or known append catch-up
-  is in progress and omits the preview rather than reporting a stale cached
-  value. `unavailable` means the exact source cannot currently be used or its
-  continuity was invalidated, and also omits the preview. After continuity
-  invalidation, every caller continues to see `unavailable` until one response
-  can expose an authoritative `current` projection. The response-only opaque
-  `last_prompt_continuity` token is 16-128 URL-safe ASCII characters, is present
-  with eligible states, and rotates whenever exact transcript continuity is
-  lost, including across daemon restarts. Consumers may retain a pending
-  preview only when this token and the runtime identity both match. Sessions
-  without
-  enough runtime/provider identity to be eligible omit both fields. Later list
-  polls use a bounded metadata/continuity check, retain the newest caught-up
-  preview in process memory, and avoid recurring cold scans when the stable
-  registry is at capacity. Rotation, truncation, or identity drift invalidates
-  that memory and forces exact rediscovery. The text is returned in the response
-  only and is never logged or persisted by the daemon; the daemon never guesses
-  a transcript match.
-  `startup` is the metadata-only `agent-session.startup.v1` projection shared by
-  create, list, and glance responses. Its state is `starting`, `ready`, or
-  `failed`; its bounded stage is `record`, `tmux`, `runtime`, `app_server`,
-  `proxy`, `provider_client`, or `initial_connection`.
-  A Codex session whose automatic runtime selection kept the raw TUI adds
-  `runtime_fallback` with one allowlisted reason: `codex-unavailable`,
-  `codex-version-unrecognized`, `codex-version-too-old`,
-  `codex-app-server-transport-unavailable`,
-  `codex-app-server-runtime-dir-unavailable`,
-  `codex-app-server-runtime-dir-unsafe`,
-  `codex-app-server-socket-path-too-long`, or
-  `codex-app-server-runtime-unavailable`. It is absent for an app-server
-  runtime and for an explicit `AGENT_SESSION_CODEX_RUNTIME=raw`.
-  Failed projections add
-  an RFC 3339 `occurred_at` captured from the private failure marker, boolean
-  `retry_safe`, one reviewed message, and one
-  allowlisted code: `runtime-helper-unavailable`, `agent-binary-unavailable`,
-  `working-directory-unavailable`, `terminal-runtime-create-failed`,
-  `app-server-start-failed`, `proxy-start-failed`, `provider-client-exited`,
-  `provider-configuration-rejected`, `startup-timeout`, `startup-exited`, or
-  `claude-account-switch-resume-failed`, or `claude-account-switch-cleanup-incomplete`.
-  A failure whose cleanup could not finish adds a bounded `cleanup` object with
-  `state` of `pending` or `blocked` and one allowlisted `reason`:
-  `session_still_running`, `process_boundary_live`, `runtime_identity_changed`,
-  `runtime_identity_unavailable`, `termination_failed`, `termination_timeout`,
-  `verification_failed`, `cleanup_unavailable`, or `unknown`. `cleanup`
-  is absent when cleanup completed or was never attempted, so a projection that
-  omits it carries no caveat. Cleanup is strictly secondary: it never replaces
-  the primary startup failure, because the original create/start error is what
-  explains the failure and a termination error would hide it. When cleanup does
-  not complete, the session record is deliberately retained rather than removed —
-  a live boundary with no record would be unreachable from the Console — and the
-  runtime is not marked never-launched.
-  Managed launchers retain only bounded stage/failure markers in the record and
-  keep stderr in a private, tail-capped local diagnostic file for startup failures
-  and non-zero Codex provider-client exits after readiness; clean exits discard it.
-  The local `agent-session logs <id>` command can read that diagnostic, but it is
-  never copied into the session projection. Raw argv, environment, provider responses,
-  stderr, prompts, and filesystem paths are never copied into the projection. A
-  record that reached `ready` keeps that state after an ordinary later stop,
-  so consumers must not relabel normal session termination as startup failure.
-  A fresh managed Codex client that exits nonzero before binding its first
-  provider thread reports `provider-client-exited`, even if an earlier view
-  reported `ready` from the initial proxy connection. A resume starts a fresh startup
-  lifecycle for its new runtime generation; synchronous launch rollback restores
-  the prior projection and private diagnostic artifacts. A leftover resume
-  backup from an interrupted process blocks another resume before mutation so
-  the only copy of prior diagnostic state is not silently discarded.
 - `GET /usage` — read-only provider usage report, open on loopback. The serve
   envelope contains `data.usage.schema_version: "agent-session.usage.v1"` and
   provider entries for Codex and Claude. Provider readers are bounded by
@@ -598,34 +517,7 @@ recorded in `sympoies/nils-cli#1409`.
   `PUT /sessions/{id}/account`,
   `PUT /sessions/{id}/auto-resume`, `DELETE /sessions/{id}/auto-resume`,
   `POST /sessions/{id}/attachments?filename=...`,
-  `POST /sessions/{id}/orchestration/group-cleanup`,
-  `POST /sessions/{id}/orchestration/group-archive`,
   `DELETE /sessions/{id}` — writes, require a bearer token.
-- `GET /sessions/{id}/orchestration/group-cleanup` returns an exact,
-  metadata-only cleanup preview for the session's active Main Agent run. The
-  plan is fenced by the Main Agent incarnation, run revision, and a SHA-256
-  plan digest; it lists only workers whose current primary manager is that
-  exact Main Agent. `POST` requires the preview fences, `mode: "safe"|"force"`,
-  and an idempotency key. Safe mode rejects nonterminal assignments. Force mode
-  records those assignments as cancelled before deleting worker sessions.
-  Execution deletes workers first, closes the run only after worker cleanup
-  succeeds, and deletes the Main Agent last. A partial result always reports
-  `main_deleted: false`; clients must preserve the Main Agent card and surface
-  each reported deleted, absent, not-started, or failed worker outcome. Workers
-  not yet attempted after a failure remain live and are omitted from that
-  partial result.
-- `GET /sessions/{id}/orchestration/group-archive` returns the same exact
-  worker-first plan under an additive group-archive envelope. `POST` requires
-  `agent-session.main-agent-group-archive-request.v1` with the same incarnation,
-  run-revision, plan-digest, mode, and idempotency fences. Execution reuses the
-  daemon-owned cleanup lifecycle, but prepares each member's provider-history
-  archive before that exact runtime is stopped and commits it only after
-  deletion succeeds. A missing provider identity or archive write failure
-  leaves that member live, returns a retryable partial cleanup result, and never
-  falls back to archiving the Main Agent alone. Collaborators, borrowed
-  sessions, and workers managed by another Main Agent remain outside the plan.
-  Exact retries resume the durable worker-first cleanup receipt; an interruption
-  after verified deletion cannot lose the already-written archive metadata.
 - `POST /sessions/{id}/prompt` submits exact prompt text through a supported provider control plane. The compatibility route accepts
   `{ "text": "...", "expected_session_incarnation": "launch-id" }`; the incarnation is optional for older clients, and
   a new daemon validates it against the authoritative runtime under the session-record lock before provider dispatch.
