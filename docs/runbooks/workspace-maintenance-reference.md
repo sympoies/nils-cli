@@ -166,6 +166,88 @@ This delegates to `./.agents/skills/project-verify-required-checks/scripts/proje
 It is what CI uses for the full `test` and `test_macos` jobs; it is not the
 default local development loop.
 
+### Gate resource budgets
+
+Executing code gates, including local-fast and direct required-checks script
+calls, share a FIFO semaphore under
+`${XDG_STATE_HOME:-$HOME/.local/state}/nils-cli/resources`. The semaphore is
+shared across worktrees and repositories using this entrypoint for the same
+user on a host. Kernel `flock` ownership and recorded unit quiescence govern admission:
+crashed holders and waiters do not require deleting lock files. A crashed
+supervisor slot remains unavailable while its scope/services are draining. Waiting callers print the holder
+PID and UTC start time every five seconds; admission times out after one hour.
+Help, plan-only inspection, and the explicit docs-only lane do not take a slot.
+
+| Knob | Default | Purpose |
+| --- | --- | --- |
+| `NILS_CLI_GATE_SLOTS` | `1` | Maximum concurrent code gates for the user on this host. |
+| `NILS_CLI_GATE_TIMEOUT_SECONDS` | `3600` | Bounded gate and contained-runner queue wait. |
+| `NILS_CLI_RUNNER_MAX` | `max(1, min(2, CPU count / 4, MemAvailable / 4 GiB))` | Host contained-runner slots and upper bound on nextest/libtest concurrency; integer division. |
+| `CARGO_BUILD_JOBS` | `1` | Cargo compilation concurrency, including coverage compilation; clamped to the runner maximum. |
+| `NILS_CLI_GATE_MEMORY_MAX_GIB` | `16` | Linux aggregate hard memory cap per gate. |
+| `NILS_CLI_GATE_MEMORY_HIGH_GIB` | `75%` of the hard cap, rounded down, minimum `1` | Linux memory throttle threshold (`12` GiB with defaults). |
+| `NILS_CLI_GATE_MIN_AVAILABLE_GIB` | `20` | Linux admission requires at least this much `MemAvailable`; waits within the same timeout. |
+
+The default expected peak **budget** for a complete gate is 12–16 GiB,
+including compilation, linking, tests, and their contained services. This is a
+capacity planning allowance, not a measured guarantee for every toolchain or
+coverage build: two runners receive an allowance of about 4 GiB each, with the
+remaining space for compilation and filesystem cache. Linux caps aggregate
+cgroup-accounted memory at 16 GiB and disables swap for the gate. A workload
+that cannot fit fails its own gate. Observe the gate slice's `MemoryPeak` with
+`systemctl --user show <slice> -p MemoryPeak` while it runs before increasing
+budgets; a failed/collected slice may no longer retain that measurement.
+
+Linux requires cgroup v2 and a working systemd user manager. Each gate runs in a
+user scope; contained services join that scope's unique parent slice so user
+manager launches are included in the aggregate cap. Both the scope and slice
+receive `MemoryHigh`, `MemoryMax`, and `MemorySwapMax=0`; the scope and
+contained services also use `OOMPolicy=kill`.
+Missing containment fails closed. The outer wrapper stops the slice when the
+gate exits, including after a memory failure. On macOS the memory scope and
+`MemAvailable` admission floor are documented no-ops; semaphore and Cargo/test
+limits still apply. This fallback does not change `agent-hook`'s Linux-only
+contained-execution support.
+
+Use consistent semaphore and runner settings across callers on the same host.
+For example, on a host with capacity reserved for two gates:
+
+```bash
+NILS_CLI_GATE_SLOTS=2 NILS_CLI_RUNNER_MAX=2 \
+  NILS_CLI_GATE_MEMORY_MAX_GIB=16 CARGO_BUILD_JOBS=1 \
+  bash scripts/ci/nils-cli-checks-entrypoint.sh
+```
+
+Budget at least `gate slots × memory cap`, plus capacity for interactive work.
+The runner cap is shared across gates; raising gate slots does not multiply it.
+With a cap of at least two, one slot is reserved for admitted-gate children;
+ordinary contained commands use the remaining slots. This prevents queued outer
+gates from consuming all capacity needed by an admitted gate. Gate children
+prefer the reserved slot and may also use any free ordinary slot, preserving
+the total cap. A complete gate already inside a contained runner requires
+`NILS_CLI_RUNNER_MAX` of at least two and fails immediately otherwise. Use
+`NEXTEST_TEST_THREADS=1` with a runner cap of two for a nested gate with one
+test workload at a time.
+For two gates that themselves run as contained commands, a runner cap of four
+allows both outer units and their child workloads; keep
+`NEXTEST_TEST_THREADS=2`, `RUST_TEST_THREADS=2`, and `CARGO_BUILD_JOBS=1`
+to preserve each gate's conservative workload concurrency.
+Caller `NEXTEST_TEST_THREADS` and `RUST_TEST_THREADS` values can lower test
+concurrency; the wrapper clamps higher values to the runner maximum.
+`NILS_CLI_RESOURCE_STATE_DIR` is the resolved host lock directory propagated to
+contained runners, so test fixtures changing `HOME` or `XDG_STATE_HOME` cannot
+create independent pools. Keep that directory consistent across callers.
+`NILS_CLI_GATE_ACTIVE`, `NILS_CLI_GATE_SLICE`, and
+`NILS_CLI_CONTAINED_RUNNER_ACTIVE` are internal wrapper state;
+ordinary callers should leave them unset.
+
+The dedicated hosted CI lanes explicitly use two runners. Linux uses a smaller
+reservation (2 GiB available at admission, 12 GiB hard cap), leaving room for
+the operating system within the [standard hosted runner resources](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). Adjust the
+memory floor and cap together for smaller dedicated runners, rather than
+turning off containment. Raw Cargo invocations are outside gate admission;
+use the entrypoint for complete validation.
+
 ### 3.1 Docs-only changes fast path
 
 If all changed files are documentation-only (`*.md`, `docs/**`, `crates/*/docs/**`, root docs like `README.md` and `DEVELOPMENT.md`):

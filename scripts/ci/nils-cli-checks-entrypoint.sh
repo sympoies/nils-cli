@@ -30,6 +30,14 @@ Options:
   -h, --help         Show this help
 
 Environment:
+  NILS_CLI_GATE_SLOTS                 Concurrent gates per user/host (default: 1).
+  NILS_CLI_GATE_TIMEOUT_SECONDS       Queue timeout (default: 3600).
+  NILS_CLI_RUNNER_MAX                 Contained runners and test threads (default: 1-2,
+                                     derived from CPU count and available memory).
+  CARGO_BUILD_JOBS                   Compilation jobs (default: 1).
+  NILS_CLI_GATE_MEMORY_MAX_GIB         Linux gate memory cap (default: 16).
+  NILS_CLI_GATE_MEMORY_HIGH_GIB        Linux throttle threshold (default: 75% of cap).
+  NILS_CLI_GATE_MIN_AVAILABLE_GIB      Linux admission memory floor (default: 20).
   NILS_CLI_COVERAGE_FAIL_UNDER_LINES
     Override coverage threshold used with --with-coverage (default: 85).
 USAGE
@@ -45,9 +53,11 @@ if ! command -v cargo >/dev/null 2>&1 && [[ -x "${CARGO_HOME:-$HOME/.cargo}/bin/
   export PATH
 fi
 
+original_args=("$@")
 use_xvfb=0
 with_coverage=0
 docs_only=0
+plan_only=0
 local_fast=0
 local_fast_arg_seen=0
 declare -a verify_args=()
@@ -75,7 +85,13 @@ while [[ $# -gt 0 ]]; do
       local_fast_args+=("${1:-}" "${2:-}")
       shift 2
       ;;
-    --base=*|--changed-file=*|--plan-only)
+    --plan-only)
+      plan_only=1
+      local_fast_arg_seen=1
+      local_fast_args+=("$1")
+      shift
+      ;;
+    --base=*|--changed-file=*)
       local_fast_arg_seen=1
       local_fast_args+=("${1:-}")
       shift
@@ -107,6 +123,12 @@ if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
   exit 2
 fi
 cd "$repo_root"
+
+# Protect all executing code gates, including changed-scope validation. Help,
+# docs-only checks and plan inspection do not launch compile/test workloads.
+if [[ "${NILS_CLI_GATE_ACTIVE:-0}" != "1" && "$docs_only" -eq 0 && "$plan_only" -eq 0 ]]; then
+  exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/scripts/ci/nils-cli-checks-entrypoint.sh" "${original_args[@]}"
+fi
 
 source "$repo_root/scripts/ci/test-env.sh"
 

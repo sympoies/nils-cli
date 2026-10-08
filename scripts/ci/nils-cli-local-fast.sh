@@ -45,6 +45,7 @@ if ! command -v cargo >/dev/null 2>&1 && [[ -x "${CARGO_HOME:-$HOME/.cargo}/bin/
   export PATH
 fi
 
+original_args=("$@")
 base="${NILS_CLI_LOCAL_FAST_BASE:-origin/main}"
 plan_only=0
 declare -a forced_changed_files=()
@@ -438,6 +439,10 @@ case "$mode" in
     ;;
 esac
 
+if [[ "${NILS_CLI_GATE_ACTIVE:-0}" != "1" ]]; then
+  exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/scripts/ci/nils-cli-local-fast.sh" "${original_args[@]}"
+fi
+
 if [[ "$docs_checks" -eq 1 ]]; then
   run_docs_checks
 elif [[ "$docs_hygiene" -eq 1 ]]; then
@@ -462,6 +467,7 @@ done
 # `mem::forget`). Any Rust change can introduce one, so run it unconditionally.
 require_cmd rg
 run bash scripts/ci/tempdir-leak-audit.sh
+run python3 scripts/ci/tests/gate-resources.test.py
 run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/tempdir-leak-audit.test.sh
 run bash scripts/ci/tests/tempdir-leak-probe.test.sh
