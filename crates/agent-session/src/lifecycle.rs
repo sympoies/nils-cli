@@ -69,7 +69,7 @@ pub(crate) fn attempt<T>(
         } else {
             "cli"
         },
-        result.as_ref().map(|_| ()).map_err(|e| e),
+        result.as_ref().map(|_| ()),
         None,
     );
     result
