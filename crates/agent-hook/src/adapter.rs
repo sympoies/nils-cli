@@ -890,9 +890,12 @@ pub fn normalize_activity_event(
         (Product::Claude, "PostToolUse" | "PostToolUseFailure", _, true) => {
             ("attention_cleared", None, "observed")
         }
-        (Product::Claude, "PreToolUse" | "PostToolUse" | "PostToolUseFailure", _, false) => {
-            ("progress", None, "observed")
-        }
+        (
+            Product::Claude,
+            "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "PermissionDenied",
+            _,
+            false,
+        ) => ("progress", None, "observed"),
         (Product::Claude, "Elicitation", _, _) => (
             "attention_requested",
             Some(

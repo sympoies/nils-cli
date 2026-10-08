@@ -34,8 +34,8 @@ Required fields:
 
 Optional allowlisted fields are `provider_session_id`, `provider_turn_id`,
 `failure_reason`, `attention_id`, `attention_kind`, `source_kind`, and
-`provider_time`. Unknown
-keys fail parsing. Identifiers are bounded, non-empty, and control-free.
+`provider_time`.
+
 `attention_requested` requires an opaque correlation id and one of `approval`,
 `clarification`, `authentication`, or `other`; `attention_cleared` requires the
 matching id.
@@ -290,8 +290,20 @@ that a permission dialog is actually being shown, so they emit
 `attention_requested` even when the payload reports `permission_mode:
 "bypassPermissions"`. The mode hint does not override the observed prompt;
 bypass mode retains a root/home deletion circuit breaker. Because these
-approvals have no correlated clear event, they keep the conservative latch
-above until completion, a new turn, or a runtime boundary. User-owned or
+approvals have no request-resolution id, correlation remains conservative. A
+same-turn `Stop` clears known approval latches without clearing clarification
+or ambiguous overflow. Missing or mismatched prompt identity remains latched.
+`StopFailure`, completion, new turn, and runtime boundaries clear all attention.
+Tool progress does not clear permission attention: `PreToolUse` precedes the
+permission check, and even same-name or same-input parallel calls cannot be
+correlated to a permission request without a stable shared request id.
+
+There is no approval-resolved hook in the
+[official contract](https://code.claude.com/docs/en/hooks#permissionrequest).
+`PermissionDenied` is observational and fires only on auto-mode denial; a manual
+dialog denial emits no resolution hook and remains latched until same-turn Stop.
+The supported clearance bound is the earliest unambiguous terminal signal,
+not two seconds from approval during a long-running tool. User-owned or
 previously configured `permission_prompt` notification reporters normalize the
 same way, but the managed setup does not install that duplicate source.
 

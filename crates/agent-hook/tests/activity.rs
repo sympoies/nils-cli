@@ -119,6 +119,46 @@ fn lifecycle_activity_uses_the_typed_cli_with_metadata_only_json() {
     }
 }
 
+#[test]
+fn claude_permission_denial_is_observational_without_tool_metadata() {
+    let policy = PROMPT_ID_POLICY.replace(
+        "[\"Stop\", \"PermissionRequest\"]",
+        "[\"PermissionRequest\", \"PermissionDenied\", \"PostToolUse\"]",
+    );
+    let fixture = Fixture::new(&policy);
+    let fake = fixture.root.join("agent-session-fake");
+    let input = fixture.root.join("activity.json");
+    fs::write(
+        &fake,
+        "#!/bin/sh\nif [ \"$2\" = hook ]; then exit 0; fi\ndd of=\"$CAPTURE_STDIN\" status=none\n",
+    )
+    .unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
+    for name in ["PermissionRequest", "PermissionDenied", "PostToolUse"] {
+        let payload = serde_json::json!({"hook_event_name": name, "session_id": "session-1",
+            "prompt_id": "turn-1", "tool_name": "Bash", "tool_input": {"command": "private-command"}}).to_string();
+        let result = fixture.run_with_env(
+            &["dispatch", "--product", "claude", "--format", "json"],
+            Some(&payload),
+            &[
+                ("AGENT_SESSION_BIN", fake.to_str().unwrap()),
+                ("AGENT_SESSION_ID", "managed-session"),
+                ("AGENT_SESSION_RUNTIME_ID", "managed-runtime"),
+                ("CAPTURE_STDIN", input.to_str().unwrap()),
+            ],
+        );
+        assert_eq!(result.code, 0, "{}", result.stderr_text());
+        let serialized = fs::read_to_string(&input).unwrap();
+        let event: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert!(event.get("attention_tool_id").is_none());
+        assert!(!serialized.contains("private-command"));
+        assert!(!serialized.contains("Bash"));
+        if name == "PermissionDenied" {
+            assert_eq!(event["kind"], "progress");
+        }
+    }
+}
+
 const PROMPT_ID_POLICY: &str = r#"schema_version = "agent-hook.policy.v1"
 bundle_id = "runtime-kit"
 version = "2026.07.20.1"
