@@ -9977,6 +9977,157 @@ fn list_marks_missing_tmux_with_resume_identity_as_resumable() {
 }
 
 #[test]
+fn claude_clear_command_preserves_next_turn_and_stop_resume_identity() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let state = tmp.path().join("state");
+    let cwd = tmp.path().join("repo");
+    fs::create_dir_all(&cwd).unwrap();
+    let (tmux, log) = fake_tmux(tmp.path());
+    let agent = fake_agent(tmp.path(), "claude");
+    let session = write_resumable_session_record_with_agent_bin(
+        &state,
+        "clear-lifecycle",
+        "claude",
+        "hs-claude-clear-lifecycle",
+        &cwd,
+        &["--resume", "resume-session-id"],
+        Some(&agent),
+    );
+    let record_path = session.join("session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record.as_object_mut().unwrap().remove("startup");
+    fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let state_arg = state.to_string_lossy().to_string();
+    let tmux_arg = tmux.to_string_lossy().to_string();
+    let log_arg = log.to_string_lossy().to_string();
+    let hook_env = [
+        ("AGENT_SESSION_ID", "clear-lifecycle"),
+        ("AGENT_SESSION_RUNTIME_ID", "never-launched-fixture"),
+        ("AGENT_SESSION_STATE_DIR", state_arg.as_str()),
+    ];
+    let initial = run_with_stdin(
+        tmp.path(),
+        &["activity", "hook", "--agent", "claude"],
+        &hook_env,
+        r#"{"hook_event_name":"SessionStart","source":"clear","session_id":"initial-conversation"}"#,
+    );
+    assert_eq!(initial.code, 0, "{}", initial.stderr_text());
+    let clear_cwd = tmp.path().to_owned();
+    let clear_state = state_arg.clone();
+    let clear_tmux = tmux_arg.clone();
+    let clear_log = log_arg.clone();
+    let clear = thread::spawn(move || {
+        run(
+            &clear_cwd,
+            &[
+                "--state-dir",
+                &clear_state,
+                "clear",
+                "clear-lifecycle",
+                "--expect-idle",
+                "--timeout",
+                "5",
+                "--tmux-bin",
+                &clear_tmux,
+                "--format",
+                "json",
+            ],
+            &[("AGENT_SESSION_FAKE_TMUX_LOG", &clear_log)],
+        )
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !tmux_calls(&log)
+        .iter()
+        .any(|call| call.first().is_some_and(|arg| arg == "send-keys"))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "clear never reached native input"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let observed = run_with_stdin(
+        tmp.path(),
+        &["activity", "hook", "--agent", "claude"],
+        &hook_env,
+        r#"{"hook_event_name":"SessionStart","source":"clear","session_id":"new-conversation"}"#,
+    );
+    assert_eq!(observed.code, 0);
+    let cleared = clear.join().unwrap();
+    assert_eq!(cleared.code, 0, "{}", cleared.stderr_text());
+    let envelope = cleared.stdout_json();
+    assert_eq!(envelope["schema_version"], "cli.agent-session.clear.v1");
+    assert_eq!(
+        data(&envelope)["old_provider_session_id"],
+        "initial-conversation"
+    );
+    assert_eq!(
+        data(&envelope)["new_provider_session_id"],
+        "new-conversation"
+    );
+    assert_eq!(data(&envelope)["support"], "native-hook");
+    for payload in [
+        r#"{"hook_event_name":"UserPromptSubmit","session_id":"new-conversation","prompt_id":"next-turn"}"#,
+        r#"{"hook_event_name":"Notification","notification_type":"idle_prompt","session_id":"new-conversation","prompt_id":"next-turn"}"#,
+    ] {
+        assert_eq!(
+            run_with_stdin(
+                tmp.path(),
+                &["activity", "hook", "--agent", "claude"],
+                &hook_env,
+                payload
+            )
+            .code,
+            0
+        );
+    }
+    let status = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "activity",
+            "status",
+            "clear-lifecycle",
+            "--format",
+            "json",
+        ],
+        &[],
+    )
+    .stdout_json();
+    assert_eq!(data(&status)["turn_state"]["phase"], "waiting");
+    let resumed = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "resume",
+            "clear-lifecycle",
+            "--tmux-bin",
+            &tmux_arg,
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_FAKE_TMUX_LOG", &log_arg),
+            ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
+        ],
+    );
+    assert_eq!(resumed.code, 0, "{}", resumed.stderr_text());
+    let calls = tmux_calls(&log);
+    let launch = calls
+        .iter()
+        .find(|call| call.first().is_some_and(|arg| arg == "new-session"))
+        .unwrap();
+    assert!(
+        launch
+            .windows(2)
+            .any(|args| args == ["--resume", "new-conversation"])
+    );
+    assert!(!launch.iter().any(|arg| arg == "initial-conversation"));
+}
+
+#[test]
 fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");

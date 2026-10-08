@@ -60,6 +60,28 @@ pub(crate) fn project_session_model_hook(
     serde_json::to_vec(&metadata).ok()
 }
 
+/// Private clear identity receipt. It is sent only to the managed lifecycle
+/// helper on stdin, never rendered as activity, model metadata, or diagnostics.
+pub(crate) fn project_conversation_clear_hook(
+    request: &NormalizedRequest,
+    raw: &[u8],
+) -> Option<Vec<u8>> {
+    if request.product != Product::Claude || request.event != "SessionStart" {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(raw).ok()?;
+    if value.get("agent_id").is_some()
+        || value.get("source").and_then(Value::as_str) != Some("clear")
+    {
+        return None;
+    }
+    let session = optional_provider_id(value.as_object()?, "session_id").ok()??;
+    serde_json::to_vec(
+        &json!({"hook_event_name":"SessionStart", "source":"clear", "session_id":session}),
+    )
+    .ok()
+}
+
 pub const MAX_PROVIDER_BYTES: usize = 1024 * 1024;
 const DSH_INGRESS_V1: &str = "agent-hook.dsh-ingress.v1";
 const DSH_INGRESS_V2: &str = "agent-hook.dsh-ingress.v2";
@@ -1535,6 +1557,34 @@ mod tests {
             "tool_input": {"command": command}
         }))
         .expect("provider request")
+    }
+
+    #[test]
+    fn clear_receipt_contains_only_private_identity_and_rejects_subagents() {
+        let raw = serde_json::to_vec(&json!({
+            "hook_event_name":"SessionStart", "source":"clear", "session_id":"fresh-conversation",
+            "cwd":"/private-canary", "prompt":"private-prompt-canary", "model":"model-canary"
+        }))
+        .unwrap();
+        let request = normalize(Product::Claude, None, &raw).unwrap();
+        let receipt = project_conversation_clear_hook(&request, &raw).unwrap();
+        let value: Value = serde_json::from_slice(&receipt).unwrap();
+        assert_eq!(
+            value,
+            json!({"hook_event_name":"SessionStart", "source":"clear", "session_id":"fresh-conversation"})
+        );
+        let mut auxiliary: Value = serde_json::from_slice(&raw).unwrap();
+        auxiliary["agent_id"] = json!("auxiliary");
+        assert!(
+            project_conversation_clear_hook(&request, &serde_json::to_vec(&auxiliary).unwrap())
+                .is_none()
+        );
+        auxiliary.as_object_mut().unwrap().remove("agent_id");
+        auxiliary["source"] = json!("compact");
+        assert!(
+            project_conversation_clear_hook(&request, &serde_json::to_vec(&auxiliary).unwrap())
+                .is_none()
+        );
     }
 
     #[test]
