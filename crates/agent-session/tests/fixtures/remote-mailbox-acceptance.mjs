@@ -96,6 +96,12 @@ try {
   const [alpha,beta,gamma]=hosts;
   assert.equal(JSON.parse(readFileSync(join(alpha.root,'coordination','registry.json'),'utf8')).schema_version,'agent-session.coordination-registry.v2');
   assert.equal((await cli(alpha,['peers','--session',alpha.session])).peers.length,3);checks.push('v2-read-before-federation');
+  const wrongRecipient=await cli(alpha,['send','--from',alpha.session,'--to-machine',beta.machine,'--to',beta.session+'-wrong','--body-file',bodyFile('wrong-recipient','no-op'),'--idempotency-key','wrong-recipient-key'],65);
+  assert.equal(wrongRecipient.error.code,'remote-messaging-unavailable');
+  assert.match(wrongRecipient.error.message,/exact --to session ID and --to-machine/);
+  assert.match(wrongRecipient.error.message,/message peers/);
+  assert(!existsSync(join(alpha.root,'coordination','federation-journal.json')),'refused discovery does not persist an envelope');
+  checks.push('absent-recipient-guidance-through-cli');
   const timed=await send(alpha,beta,'timeout-first');
   const following=await send(alpha,beta,'timeout-following');
   await waitFor(async()=>{const v=await status(alpha,following.message_id);return v.state==='delivered';},'later queued entry bypasses repeated timeout',35000);

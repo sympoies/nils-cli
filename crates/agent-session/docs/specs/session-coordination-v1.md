@@ -1221,6 +1221,14 @@ Peer discovery returns raw `agent-session.remote-peers.v1`, with `peers` contain
 per-session `coordination_mode` and `coordination.coordination_available` determine
 current recipient readiness.
 
+New submissions match the exact machine and session ID from authorized peer
+discovery. An absent address returns `remote-messaging-unavailable` with guidance
+in its message to check both address fields using `message peers`; absence may also mean an
+unavailable host snapshot and does not prove deletion or lack of capability.
+A discovered exact peer whose `messaging_supported` is not true returns
+`remote-messaging-unsupported`. Neither refusal enqueues an envelope. Idempotent
+replay precedes discovery and keeps the original recipient incarnation.
+
 Source outbox submission returns a raw delivery projection (wrapped in the usual
 CLI envelope for CLI callers): `message_id`, `state`, `sender`, `recipient`,
 `attempts`, `reason`, and optional `receipt`. States are `queued`, `delivered`,

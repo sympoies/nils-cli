@@ -639,6 +639,22 @@ fn peers_from(config: &Config, origin: &Origin) -> Result<Value, CliError> {
     Ok(value)
 }
 
+/// Keep only fixed discovery classifications; peer identities and upstream text
+/// never enter the observation spool. Logging cannot change a refusal.
+fn observe_discovery_refusal(context: &CliContext, code: &'static str) {
+    use nils_common::observation::{self, Component, Event, Severity};
+    if let Ok(event) = Event::new(
+        Component::AgentSession,
+        "remote-discovery",
+        code,
+        Severity::Warn,
+        env!("CARGO_PKG_VERSION"),
+        now_epoch(),
+    ) {
+        let _ = observation::append(&context.state_dir, &event);
+    }
+}
+
 pub(crate) fn submit(
     context: &CliContext,
     config: &Config,
@@ -824,23 +840,39 @@ where
         }
         (sender, parent.reply_depth + 1)
     } else {
-        let discovered = peers_from(config, &origin)?;
+        let discovered = peers_from(config, &origin).map_err(|error| {
+            observe_discovery_refusal(context, "peer-discovery-failed");
+            error
+        })?;
         let peer = discovered["peers"]
             .as_array()
             .expect("validated peers")
             .iter()
             .find(|p| {
-                p["machine"] == args.to_machine
-                    && p["session_id"] == args.to_session
-                    && p["messaging_supported"] == true
+                p["machine"] == args.to_machine && p["session_id"] == args.to_session
             })
             .ok_or_else(|| {
+                observe_discovery_refusal(context, "recipient-not-discovered");
                 CliError::data(
-                    "remote-messaging-unsupported",
-                    "remote recipient is not available",
+                    "remote-messaging-unavailable",
+                    "remote recipient is absent from authorized peer discovery; check the exact --to session ID and --to-machine using `agent-session message peers` (unavailable hosts may be omitted)",
                     None,
                 )
             })?;
+        if peer["messaging_supported"] != true {
+            let reason = match peer["messaging_unavailable_reason"].as_str() {
+                Some("daemon-unsupported") => "recipient-daemon-unsupported",
+                Some("coordination-disabled") => "recipient-coordination-disabled",
+                Some("coordination-unavailable") => "recipient-coordination-unavailable",
+                _ => "recipient-messaging-unsupported",
+            };
+            observe_discovery_refusal(context, reason);
+            return Err(CliError::data(
+                "remote-messaging-unsupported",
+                "discovered remote recipient does not currently support messaging",
+                None,
+            ));
+        }
         (
             Address {
                 machine: args.to_machine.clone(),
@@ -1791,6 +1823,154 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     const TOKEN: &str = "fixture-private-session-capability-0000000000001";
+    #[test]
+    fn submit_distinguishes_absent_recipient_from_unsupported_peer() {
+        use std::io::{Read, Write};
+        for (to_machine, to_session, supported, reason, valid_snapshot, expected, observed) in [
+            (
+                "host-b",
+                "wrong-recipient",
+                true,
+                None,
+                true,
+                "remote-messaging-unavailable",
+                "recipient-not-discovered",
+            ),
+            (
+                "wrong-host",
+                "target",
+                true,
+                None,
+                true,
+                "remote-messaging-unavailable",
+                "recipient-not-discovered",
+            ),
+            (
+                "host-b",
+                "target",
+                false,
+                None,
+                true,
+                "remote-messaging-unsupported",
+                "recipient-messaging-unsupported",
+            ),
+            (
+                "host-b",
+                "target",
+                false,
+                Some("daemon-unsupported"),
+                true,
+                "remote-messaging-unsupported",
+                "recipient-daemon-unsupported",
+            ),
+            (
+                "host-b",
+                "target",
+                false,
+                Some("coordination-disabled"),
+                true,
+                "remote-messaging-unsupported",
+                "recipient-coordination-disabled",
+            ),
+            (
+                "host-b",
+                "target",
+                false,
+                Some("coordination-unavailable"),
+                true,
+                "remote-messaging-unsupported",
+                "recipient-coordination-unavailable",
+            ),
+            (
+                "host-b",
+                "target",
+                false,
+                Some("private-upstream-sentinel"),
+                true,
+                "remote-messaging-unsupported",
+                "recipient-messaging-unsupported",
+            ),
+            (
+                "host-b",
+                "target",
+                true,
+                None,
+                false,
+                "remote-messaging-unavailable",
+                "peer-discovery-failed",
+            ),
+        ] {
+            let (_temp, context) = fixture();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut config = config();
+            config.url = format!("http://{}", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = Vec::new();
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let mut bytes = [0; 1024];
+                    let count = stream.read(&mut bytes).unwrap();
+                    assert!(count > 0);
+                    request.extend_from_slice(&bytes[..count]);
+                    assert!(request.len() <= 8192);
+                }
+                assert!(request.starts_with(b"GET /api/coordination/peers/v1?"));
+                let body = json!({
+                    "schema_version": if valid_snapshot { "agent-session.remote-peers.v1" } else { "private-upstream-sentinel" },
+                    "peers": [{"machine": "host-b", "session_id": "target",
+                        "session_incarnation": "target-incarnation", "messaging_supported": supported,
+                        "messaging_unavailable_reason": reason}]
+                }).to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            });
+            let args = Submit {
+                to_machine: to_machine.into(),
+                to_session: to_session.into(),
+                body: "fixture body".into(),
+                idempotency_key: "discovery-key-0001".into(),
+                reply_to: None,
+                expires_in: None,
+                reply_revision: None,
+                expected_recipient_incarnation: None,
+                category: None,
+                forward: None,
+            };
+            let error = submit(&context, &config, "recipient", TOKEN, args).unwrap_err();
+            server.join().unwrap();
+            assert!(
+                lock_journal(&context)
+                    .unwrap()
+                    .registry
+                    .remote_outbox
+                    .is_empty()
+            );
+            assert_eq!(error.code(), expected, "{to_machine}/{to_session}");
+            let events = nils_common::observation::read_recent(&context.state_dir, 0).unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].stage, "remote-discovery");
+            assert_eq!(events[0].code, observed);
+            let recorded = serde_json::to_string(&events).unwrap();
+            for private in [
+                "fixture body",
+                to_machine,
+                to_session,
+                "target-incarnation",
+                "private-upstream-sentinel",
+                TOKEN,
+            ] {
+                assert!(!recorded.contains(private), "observation leaked {private}");
+            }
+        }
+    }
     fn fixture() -> (tempfile::TempDir, CliContext) {
         let temp = tempfile::TempDir::new().expect("private temp root");
         let context = CliContext {
