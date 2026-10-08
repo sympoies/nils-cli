@@ -151,6 +151,28 @@ impl RemovalFixture {
         );
         assert!(Path::new(&self.target).exists());
     }
+    fn cleanup(&self) -> CmdOutput {
+        let options = self
+            .harness
+            .cmd_options(self.repo.path())
+            .with_path_prepend(self.probes.path())
+            .with_env("AGENT_HOME", self.home.path().to_str().unwrap())
+            .with_env(
+                "AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME",
+                self.home.path().join("lease-state").to_str().unwrap(),
+            )
+            .with_env(
+                "AGENT_SESSION_STATE_DIR",
+                self.home.path().join("sessions").to_str().unwrap(),
+            )
+            .with_env("AGENT_SESSION_COORDINATION_MODE", "advisory")
+            .with_stdin_str("y\n");
+        run_with(
+            &self.harness.git_cli_bin(),
+            &["branch", "cleanup", "--remove-worktrees"],
+            &options,
+        )
+    }
     fn commit(&self) {
         fs::write(Path::new(&self.target).join("new.txt"), "new commit").unwrap();
         git(Path::new(&self.target), &["add", "."]);
@@ -207,8 +229,49 @@ fn safe_removal_retains_target_behind_startup_lifecycle_barrier() {
 }
 
 #[test]
+fn safe_removal_branch_cleanup_proves_managed_clean_success_and_dirty_retention() {
+    for dirty in [false, true] {
+        let fixture = RemovalFixture::new();
+        let unfinished = Path::new(&fixture.target).join("unfinished.txt");
+        if dirty {
+            fs::write(&unfinished, "retain").unwrap();
+        }
+        let output = fixture.cleanup();
+        if dirty {
+            assert_ne!(output.code, 0, "{}", output.stdout_text());
+            assert!(
+                output.stderr_text().contains("removal-dirty"),
+                "{}",
+                output.stderr_text()
+            );
+            assert_eq!(fs::read_to_string(unfinished).unwrap(), "retain");
+            assert!(
+                git(fixture.repo.path(), &["branch", "--list", "feat/safe"]).contains("feat/safe")
+            );
+        } else {
+            assert_eq!(
+                output.code,
+                0,
+                "{} {}",
+                output.stdout_text(),
+                output.stderr_text()
+            );
+            assert!(!Path::new(&fixture.target).exists());
+            assert!(
+                git(fixture.repo.path(), &["branch", "--list", "feat/safe"])
+                    .trim()
+                    .is_empty()
+            );
+        }
+    }
+}
+
+#[test]
 fn safe_removal_idle_clean_merged_succeeds_in_advisory() {
     let fixture = RemovalFixture::new();
+    let removed_head = git(Path::new(&fixture.target), &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
     let result = fixture.remove("safe");
     assert_eq!(
         result.code,
@@ -218,6 +281,18 @@ fn safe_removal_idle_clean_merged_succeeds_in_advisory() {
         result.stderr_text()
     );
     assert!(!Path::new(&fixture.target).exists());
+    let receipt = parse_json(&result);
+    assert_eq!(receipt["data"]["removed_branch"], "feat/safe");
+    assert_eq!(receipt["data"]["removed_head"], removed_head);
+    assert_eq!(
+        receipt["data"]["delivery_proof"]["basis"],
+        "remote-default-ancestry"
+    );
+    assert_eq!(receipt["data"]["delivery_proof"]["default_branch"], "main");
+    assert_eq!(
+        receipt["data"]["delivery_proof"]["default_head"],
+        removed_head
+    );
     assert_eq!(
         git(
             fixture.repo.path(),
@@ -259,6 +334,15 @@ fn safe_removal_requires_exact_provider_head_for_squash_merge() {
         if exact {
             assert_eq!(result.code, 0, "{}", result.stdout_text());
             assert!(!Path::new(&fixture.target).exists());
+            let receipt = parse_json(&result);
+            assert_eq!(receipt["data"]["removed_head"], head);
+            assert_eq!(receipt["data"]["removed_branch"], "feat/safe");
+            assert_eq!(
+                receipt["data"]["delivery_proof"]["basis"],
+                "provider-exact-head-merge"
+            );
+            assert_eq!(receipt["data"]["delivery_proof"]["default_branch"], "main");
+            assert_eq!(receipt["data"]["delivery_proof"]["pr_number"], 1);
         } else {
             assert_eq!(
                 parse_json(&result)["error"]["code"],
