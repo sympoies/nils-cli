@@ -111,6 +111,8 @@ fn failure_message(error: &CliError) -> String {
         | "broker recovery requires the exact persisted runtime to be running"
         | "session runtime changed before archive"
         | "the account switch stopped the session but could not resume it; the next account is marked failed and can be retried by resuming"
+        | "operator retirement requires every stopped-runtime proof to pass"
+        | "stopped-runtime proof changed before retirement"
         | "coordination broker is unavailable" => error.message().to_string(),
         _ => "lifecycle operation failed; inspect the returned error code".to_string(),
     }
@@ -126,6 +128,20 @@ fn proof_step(error: &CliError) -> &'static str {
             "heartbeat-fresh" => return "heartbeat-fresh",
             "broker-state" => return "broker-state",
             "process-group-probe" => return "process-group-probe",
+            "session-selector" => return "session-selector",
+            "broker-selector" => return "broker-selector",
+            "runtime-identity" => return "runtime-identity",
+            "same-boot" => return "same-boot",
+            "heartbeat-stale" => return "heartbeat-stale",
+            "tmux-target-absent" => return "tmux-target-absent",
+            "pane-process-absent" => return "pane-process-absent",
+            "process-group-absent" => return "process-group-absent",
+            "prior-runtime-boundaries-absent" => return "prior-runtime-boundaries-absent",
+            "operations-quiescent" => return "operations-quiescent",
+            "claims-unfenced" => return "claims-unfenced",
+            "lifecycle-unfenced" => return "lifecycle-unfenced",
+            "runtime-stopped-proof" => return "runtime-stopped-proof",
+            "capability-present" => return "capability-present",
             _ => {}
         }
     }

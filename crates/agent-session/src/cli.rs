@@ -678,6 +678,8 @@ pub enum BrokerCommand {
     Adopt(BrokerRecoveryArgs),
     /// Reconcile broker and registry state from validated recovery proof.
     Reconcile(BrokerRecoveryArgs),
+    /// Preview or retire an exact runtime stopped outside agent-session.
+    RetireStopped(BrokerRetireStoppedArgs),
     #[command(hide = true)]
     Stop(BrokerStopArgs),
     #[command(hide = true)]
@@ -717,6 +719,35 @@ pub struct BrokerRecoveryArgs {
     pub if_revision: Option<u64>,
     #[arg(long)]
     pub attest_inactive: bool,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct BrokerRetireStoppedArgs {
+    /// Session id; unique prefixes resolve to the canonical id under the lifecycle lock.
+    #[arg(long)]
+    pub session: String,
+    /// Exact persisted runtime incarnation (launch id).
+    #[arg(long)]
+    pub incarnation: String,
+    /// Exact persisted runtime generation.
+    #[arg(long)]
+    pub generation: u64,
+    /// Stable key for replaying the atomic retirement receipt.
+    #[arg(long)]
+    pub idempotency_key: String,
+    /// Required heartbeat age in seconds; minimum 60, maximum 86400.
+    #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(60..=86400))]
+    pub stale_after: u64,
+    /// Commit retirement after every proof passes. Without this flag, preview only.
+    #[arg(long, conflicts_with = "dry_run")]
+    pub apply: bool,
+    /// Explicit read-only preview (also the default).
+    #[arg(long)]
+    pub dry_run: bool,
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub tmux_bin: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }

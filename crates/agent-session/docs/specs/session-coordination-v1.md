@@ -911,6 +911,63 @@ another session or a replaced incarnation is rejected. This security boundary
 does not require a fresh heartbeat, because stale or absent heartbeat evidence
 is the state recovery repairs.
 
+### Operator recovery after an external runtime stop
+
+If a runtime was stopped outside `agent-session` and ordinary `resume` refuses
+its retained broker, use the local owner-only `broker retire-stopped` command.
+This route retires the old broker; it does not launch a runtime or change the
+provider conversation. Ordinary broker liveness proofs remain conservative.
+There is no HTTP route and no runtime capability can authorize this operation.
+
+1. Inspect `agent-session show SESSION --format json` and
+   `agent-session broker status --session SESSION --format json`. Copy the exact
+   persisted `runtime.launch_id` and `runtime.generation`; never guess a tuple.
+2. Preview with those selectors and one stable request key:
+
+   ```sh
+   agent-session broker retire-stopped --session SESSION \
+     --incarnation LAUNCH_ID --generation GENERATION \
+     --idempotency-key REQUEST_KEY --dry-run --format json
+   ```
+
+3. Read every `proofs` row. Apply only when `eligible` is true, using the same
+   command with `--apply` instead of `--dry-run`. Then run
+   `agent-session resume SESSION --format json` to launch the next generation
+   of the retained conversation.
+
+The stable result schema is `agent-session.broker-retirement.v1`. Preview is
+the default, holds the same session lifecycle lock as resume followed by an
+observational coordination lock, and does not run registry maintenance or
+change registry/session bytes. It reports every proof as `{step, passed}`,
+including the selected `stale_after_seconds`. `--stale-after SECONDS` explicitly
+sets the heartbeat threshold (default 600, allowed 60–86400); elapsed time alone
+never proves a runtime stopped. Preview attempts are recorded in the private
+lifecycle journal.
+
+Apply requires exact matching session and broker incarnation/generation and
+persisted runtime identity, current boot evidence, a stale registry heartbeat
+and stale or absent trusted heartbeat file, absent exact tmux target and pane
+process, and positive absence of every recorded process boundary. On Linux this
+requires the same PID namespace and complete process inspection; on macOS it
+requires the same kernel boot UUID, signal-zero absence and a bounded complete
+process-group snapshot. Missing, malformed, permission-denied, live, or reused
+evidence refuses retirement. Prior runtime boundaries must also be absent.
+Unresolved operations (including expired `reconcile_pending` leases), retained
+claim mutation fences, notification submission, authority quarantine, and
+runtime-stop fences refuse apply; resolve them through their owning workflow.
+
+Apply repeats kernel, tmux and heartbeat probes immediately before saving.
+One atomic registry replacement sets the broker to `stopped`, revokes its
+authentication digest, releases its active unfenced claims, removes advisory
+state, and stores the idempotent receipt. The session and provider-resume
+identity remain intact. Private capability, heartbeat and checkpoint removal
+then completes under both locks. `coordination-retirement-cleanup-pending`
+means revocation is committed: replay exactly the same selectors, threshold and
+request key to finish cleanup. A successful replay returns the original receipt
+without a second retirement. Receipts use the existing bounded 24-hour registry
+retention; a different request with a reused key or a replacement generation
+fails closed. Keep the returned receipt as operator evidence.
+
 ## CLI contract
 
 All commands support the global `--state-dir` and command-local `--format
