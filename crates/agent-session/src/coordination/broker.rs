@@ -284,22 +284,57 @@ fn stopped_macos_broker_matches_previous(
 
 #[cfg(target_os = "macos")]
 fn macos_process_group_is_empty(identity: &crate::TmuxRuntimeIdentity) -> bool {
+    macos_process_group_absence_probe(identity).is_ok()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_process_group_absence_probe(identity: &crate::TmuxRuntimeIdentity) -> Result<(), String> {
     let Some(group) = identity.process_group_id.filter(|group| *group > 1) else {
-        return false;
+        return Err("process-group-id: missing or invalid".to_string());
     };
     if crate::process_group_status(group) != crate::ProcessGroupStatus::Stopped {
-        return false;
+        return Err("signal-before-snapshot: ESRCH not observed".to_string());
     }
     let mut command = Command::new("/bin/ps");
     command.env("LC_ALL", "C").args(["-axo", "pid=,pgid="]);
-    let Ok(output) =
-        crate::run_output_with_timeout(command, crate::DELETE_TERMINATION_VERIFY_TIMEOUT)
-    else {
-        return false;
-    };
-    output.status.success()
-        && process_group_absent_from_ps(&output.stdout, group)
-        && crate::process_group_status(group) == crate::ProcessGroupStatus::Stopped
+    process_group_snapshot_is_empty(command, group)?;
+    if crate::process_group_status(group) != crate::ProcessGroupStatus::Stopped {
+        return Err("signal-after-snapshot: ESRCH not observed".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+const PROCESS_GROUP_SNAPSHOT_MAX_BYTES: usize = 1024 * 1024;
+
+#[cfg(any(target_os = "macos", test))]
+fn process_group_snapshot_is_empty(command: Command, group: libc::pid_t) -> Result<(), String> {
+    let output = crate::run_output_with_timeout_and_strict_cap(
+        command,
+        crate::DELETE_TERMINATION_VERIFY_TIMEOUT,
+        PROCESS_GROUP_SNAPSHOT_MAX_BYTES,
+    )
+    .map_err(|error| {
+        format!(
+            "ps-execution: error_kind={:?}; byte_count=unavailable; overflow={}",
+            error.kind(),
+            error.kind() == std::io::ErrorKind::InvalidData
+        )
+    })?;
+    if !output.status.success() {
+        return Err(format!(
+            "ps-exit: status={:?}; byte_count={}; overflow=false",
+            output.status.code(),
+            output.stdout.len()
+        ));
+    }
+    if !process_group_absent_from_ps(&output.stdout, group) {
+        return Err(format!(
+            "ps-snapshot: absent group not proven; status=0; byte_count={}; overflow=false",
+            output.stdout.len()
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -1716,11 +1751,6 @@ pub(crate) mod test_support {
 
     /// A stopped-boundary fixture verified by the real platform probes.
     pub(crate) fn verified_absent_process_group() -> libc::pid_t {
-        // A synthetic identifier avoids depending on a recently reaped PID
-        // staying unused while the fixture launches its probe commands.
-        #[cfg(target_os = "macos")]
-        let group = libc::pid_t::MAX;
-        #[cfg(not(target_os = "macos"))]
         let group = exited_process_group();
         assert_eq!(
             crate::process_group_status(group),
@@ -1732,9 +1762,8 @@ pub(crate) mod test_support {
             let identity =
                 serde_json::from_value::<crate::TmuxRuntimeIdentity>(process_group_identity(group))
                     .unwrap();
-            assert!(
-                super::macos_process_group_is_empty(&identity),
-                "fixture complete PID/PGID enumeration and signal recheck must prove absence: group={group}"
+            super::macos_process_group_absence_probe(&identity).expect(
+                "fixture complete PID/PGID enumeration and signal recheck must prove absence",
             );
         }
         group
@@ -2311,6 +2340,44 @@ mod tests {
         ] {
             assert!(!process_group_absent_from_ps(output, 7), "{output:?}");
         }
+    }
+
+    #[test]
+    fn stopped_broker_process_group_snapshot_rejects_a_truncated_prefix() {
+        let temporary = tempfile::TempDir::new().unwrap();
+        let path = temporary.path().join("snapshot");
+        // The old 4 KiB cap ends exactly between rows, hiding a live member.
+        fs::write(&path, format!("{}2 7\n", "1 1\n".repeat(1024))).unwrap();
+        let mut command = Command::new("cat");
+        command.arg(path);
+        let error = process_group_snapshot_is_empty(command, 7).unwrap_err();
+        assert!(error.starts_with("ps-snapshot:"), "{error}");
+    }
+
+    #[test]
+    fn stopped_broker_process_group_snapshot_rejects_overflow() {
+        let temporary = tempfile::TempDir::new().unwrap();
+        let path = temporary.path().join("snapshot");
+        fs::write(
+            &path,
+            "1 1\n".repeat(PROCESS_GROUP_SNAPSHOT_MAX_BYTES / 4 + 1),
+        )
+        .unwrap();
+        let mut command = Command::new("cat");
+        command.arg(path);
+        let error = process_group_snapshot_is_empty(command, 7).unwrap_err();
+        assert!(error.starts_with("ps-execution:"), "{error}");
+        assert!(error.contains("overflow=true"), "{error}");
+    }
+
+    #[test]
+    fn stopped_broker_process_group_snapshot_accepts_complete_output_at_the_cap() {
+        let temporary = tempfile::TempDir::new().unwrap();
+        let path = temporary.path().join("snapshot");
+        fs::write(&path, "1 1\n".repeat(PROCESS_GROUP_SNAPSHOT_MAX_BYTES / 4)).unwrap();
+        let mut command = Command::new("cat");
+        command.arg(path);
+        process_group_snapshot_is_empty(command, 7).unwrap();
     }
 
     #[cfg(target_os = "macos")]
