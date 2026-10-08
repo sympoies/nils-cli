@@ -515,7 +515,12 @@ Run from inside the session's own tmux session, a Claude switch only queues.
 After stopping, the switch retires the stopped runtime's coordination
 incarnation before resuming. If the resume still fails, it returns
 `claude-account-switch-resume-failed` with the `agent-session resume <id>`
-recovery command; the session is stopped with the account queued. A Codex
+recovery command; the session is stopped with the account queued. On macOS,
+a revoked broker from the same boot may be retired or replaced only when its
+persisted identity exactly matches the prior record, both the managed tmux name
+and numeric target were absent before launch, and a complete process-group
+probe is empty. The group is checked again under the coordination lock before
+replacement. Live, unavailable, or mismatched evidence still refuses recovery. A Codex
 switch needs a running serve daemon to apply; re-selecting the current account
 cancels a queued switch.
 
