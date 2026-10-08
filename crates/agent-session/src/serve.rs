@@ -31193,6 +31193,88 @@ esac
         assert!(view.get("next").is_none());
     }
 
+    #[test]
+    fn claude_stopped_broker_switch_and_failed_switch_retry_preserve_the_conversation() {
+        use crate::coordination::broker::test_support;
+        for failed_switch_retry in [false, true] {
+            let lock = GlobalStateLock::new();
+            let tmp = tempfile::TempDir::new().unwrap();
+            let cwd = tmp.path().join("repo");
+            fs::create_dir_all(&cwd).unwrap();
+            let broker = claude_broker_fixture(&lock, tmp.path());
+            let context = CliContext {
+                state_dir: tmp.path().to_path_buf(),
+                host: None,
+            };
+            seed_bound_claude_session(tmp.path(), "broker-switch", &cwd, "alpha");
+            let mut record = load_session_record(&context, "broker-switch").unwrap();
+            let old = record.runtime.as_ref().unwrap().launch_id.clone();
+            let provider = serde_json::to_value(record.provider_resume.as_ref().unwrap()).unwrap();
+            let mut identity =
+                test_support::process_group_identity(test_support::exited_process_group());
+            identity["launch_id"] = json!(old);
+            #[cfg(target_os = "macos")]
+            {
+                identity["macos_boot_id"] = json!(crate::capture_macos_boot_id().unwrap());
+            }
+            record.extra.remove("tmux_runtime_never_launched");
+            record
+                .extra
+                .insert("delete_tmux_identity".to_string(), identity.clone());
+            crate::claude_account::queue_next(&mut record, "beta").unwrap();
+            if failed_switch_retry {
+                let stopped = record.clone();
+                crate::claude_account::mark_next_resume_failed(
+                    &mut record,
+                    &stopped,
+                    "session-incarnation-conflict",
+                )
+                .unwrap();
+            }
+            crate::write_session_record(&context, &record).unwrap();
+            test_support::seed_live_broker(&context, &record.id, &old, identity);
+            if failed_switch_retry {
+                crate::coordination::revoke(&context, &record).unwrap();
+                fs::remove_file(crate::coordination::heartbeat_path(
+                    &context.state_dir,
+                    &record.id,
+                ))
+                .unwrap();
+            }
+            let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
+            let script = fs::read_to_string(&tmux).unwrap().replace(
+                r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then"#,
+                r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then gate="$(dirname "$heartbeat")/broker-provisioned"; (i=0; while [ ! -f "$gate" ] && [ "$i" -lt 1000 ]; do i=$((i + 1)); sleep 0.01; done; printf '%s:%s\n' "$incarnation" "$(date +%s)" > "$heartbeat"; chmod 600 "$heartbeat") >/dev/null 2>&1 & fi; if false; then"#,
+            );
+            fs::write(&tmux, script).unwrap();
+            if failed_switch_retry {
+                crate::resume_session_locked(&context, record, &tmux)
+                    .expect("documented retry must replace the stopped broker");
+            } else {
+                crate::session_account::resume_after_switch_stop(&context, &record.id, &tmux)
+                    .expect("verified account switch stop must retire its broker");
+            }
+            let resumed = load_session_record(&context, "broker-switch").unwrap();
+            assert_eq!(
+                serde_json::to_value(resumed.provider_resume.as_ref().unwrap()).unwrap(),
+                provider
+            );
+            assert_ne!(resumed.runtime.as_ref().unwrap().launch_id, old);
+            let view =
+                serde_json::to_value(crate::claude_account::view_for_record(&resumed)).unwrap();
+            assert_eq!(view["selected_account"], "beta");
+            assert!(view.get("next").is_none());
+            assert!(
+                fs::read_to_string(tmp.path().join("tmux.log"))
+                    .unwrap()
+                    .contains(&format!(
+                        "CLAUDE_CONFIG_DIR={}",
+                        broker.config_dir("beta").display()
+                    ))
+            );
+        }
+    }
+
     /// The killed runtime's broker still has a fresh heartbeat when the switch
     /// resumes. Without retiring that incarnation first, the resume is refused
     /// as "the prior coordination incarnation is still live" and the session is
