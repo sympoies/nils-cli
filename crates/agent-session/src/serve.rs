@@ -27625,9 +27625,29 @@ esac
     }
 
     #[tokio::test]
-    async fn maintenance_reused_numeric_tmux_offers_fenced_no_signal_record_removal() {
+    async fn maintenance_reused_numeric_tmux_allows_fenced_retry_delete() {
+        assert_fenced_maintenance_removal(false).await;
+        assert_fenced_maintenance_removal(true).await;
+    }
+
+    async fn assert_fenced_maintenance_removal(record_only: bool) {
         let tmp = tempfile::TempDir::new().unwrap();
         let (mut st, calls) = reused_numeric_tmux_fixture(tmp.path());
+        if record_only {
+            // Missing identity evidence still requires the v2 no-signal fallback.
+            let path = tmp.path().join("sessions/reused-numeric-tmux/session.json");
+            let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            record
+                .as_object_mut()
+                .unwrap()
+                .remove("delete_tmux_identity");
+            std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        }
+        let action = if record_only {
+            "remove_console_record"
+        } else {
+            "retry_delete"
+        };
         let provider_root = tmp.path().join("provider/sessions");
         std::fs::create_dir_all(&provider_root).unwrap();
         let provider_history = provider_root.join("rollout.jsonl");
@@ -27683,20 +27703,26 @@ esac
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let preview = &body["data"]["maintenance"];
-        assert_eq!(preview["state"], "blocked", "{preview}");
-        assert_eq!(preview["issue"]["kind"], "runtime_identity_unavailable");
+        if record_only {
+            assert_eq!(preview["state"], "blocked", "{preview}");
+            assert_eq!(preview["issue"]["kind"], "runtime_identity_unavailable");
+        } else {
+            assert_eq!(preview["state"], "healthy", "{preview}");
+            assert!(preview["issue"].is_null());
+            assert_eq!(preview["boundary"]["kind"], "none");
+        }
         assert_eq!(preview["boundary"]["safe_process_count"], 0);
         assert!(
             preview["actions"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|a| a["id"] == "remove_console_record")
+                .any(|a| a["id"] == action)
         );
         let action_route = "/sessions/reused-numeric-tmux/maintenance/actions";
         let mut request = json!({
             "schema_version": "agent-session.session-maintenance.v2", "operation": "delete",
-            "action": "remove_console_record", "expected_session_incarnation": preview["session_incarnation"],
+            "action": action, "expected_session_incarnation": preview["session_incarnation"],
             "expected_session_generation": preview["session_generation"], "expected_preview_digest": preview["preview_digest"],
             "confirmed": false,
         });
@@ -27738,10 +27764,13 @@ esac
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(
-            body["data"]["maintenance_result"]["outcome"],
+        let expected = if record_only {
             "record_removed"
-        );
+        } else {
+            "deleted"
+        };
+        assert_eq!(body["data"]["maintenance_result"]["outcome"], expected);
+        assert_eq!(body["data"]["maintenance_result"]["status"], expected);
         assert!(!tmp.path().join("sessions/reused-numeric-tmux").exists());
         st.history_catalog.invalidate();
         let (status, history_after) =
@@ -27770,7 +27799,7 @@ esac
     }
 
     #[tokio::test]
-    async fn maintenance_reused_numeric_tmux_keeps_record_removal_v2_delete_only() {
+    async fn maintenance_reused_numeric_tmux_uses_safe_retry_in_both_contracts() {
         let tmp = tempfile::TempDir::new().unwrap();
         let (st, _) = reused_numeric_tmux_fixture(tmp.path());
         for (operation, schema) in [
@@ -27784,7 +27813,7 @@ esac
             )).await;
             assert_eq!(status, StatusCode::OK, "{body}");
             let preview = &body["data"]["maintenance"];
-            assert_eq!(preview["state"], "blocked", "{preview}");
+            assert_eq!(preview["state"], "healthy", "{preview}");
             assert!(
                 !preview["actions"]
                     .as_array()
@@ -30981,6 +31010,107 @@ esac
                 .expect("a stopped older broker must permit exact provider resume");
             assert_ne!(result.session_incarnation.as_deref(), Some(old.as_str()));
             assert_eq!(result.session.status, "running");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn generation_two_legacy_broker_resume_ignores_recycled_numeric_selector() {
+        use crate::coordination::broker::test_support;
+        let _lock = GlobalStateLock::new();
+        for prior_boot in [true, false] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let cwd = tmp.path().join("repo");
+            fs::create_dir_all(&cwd).unwrap();
+            let context = CliContext {
+                state_dir: tmp.path().to_path_buf(),
+                host: None,
+            };
+            seed_resumable_session(
+                tmp.path(),
+                "broker-reboot",
+                "codex",
+                "managed-runtime",
+                &cwd,
+                &[
+                    "resume",
+                    "resume-session-id",
+                    "--cd",
+                    cwd.to_str().unwrap(),
+                    "--no-alt-screen",
+                ],
+            );
+            let mut record = load_session_record(&context, "broker-reboot").unwrap();
+            let old = record.runtime.as_ref().unwrap().launch_id.clone();
+            record.runtime.as_mut().unwrap().generation = 2;
+            let mut identity =
+                test_support::process_group_identity(test_support::exited_process_group());
+            identity["launch_id"] = json!(old);
+            identity["session_id"] = json!("$7");
+            if prior_boot {
+                let boot = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+                assert_ne!(crate::linux_boot_id().unwrap(), boot);
+                identity["pid_namespace"]["boot_id"] = json!(boot);
+            }
+            record.extra.remove("tmux_runtime_never_launched");
+            record
+                .extra
+                .insert("delete_tmux_identity".to_string(), identity.clone());
+            crate::write_session_record(&context, &record).unwrap();
+            test_support::seed_live_broker(&context, &record.id, &old, identity);
+            test_support::make_legacy_broker(&context, &record.id, false);
+            let registry_path = tmp.path().join("coordination/registry.json");
+            let mut registry: Value =
+                serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+            registry["brokers"][&record.id]["generation"] = json!(2);
+            assert!(registry["brokers"][&record.id]["runtime_identity"].is_null());
+            fs::write(
+                &registry_path,
+                serde_json::to_vec_pretty(&registry).unwrap(),
+            )
+            .unwrap();
+
+            let log = tmp.path().join("tmux.log");
+            let tmux = resume_tmux(tmp.path(), &log);
+            let script = fs::read_to_string(&tmux).unwrap().replace(
+                "has-session)",
+                "has-session) if [ \"$3\" = '$7' ]; then exit 0; fi;",
+            );
+            fs::write(&tmux, script).unwrap();
+            assert_eq!(
+                crate::verified_tmux_status_with_timeout(&tmux, "$7", Duration::from_secs(1)),
+                "running"
+            );
+            assert_eq!(
+                crate::verified_tmux_status_with_timeout(
+                    &tmux,
+                    "=managed-runtime",
+                    Duration::from_secs(1)
+                ),
+                "stopped"
+            );
+            let provider_resume = serde_json::to_value(&record.provider_resume).unwrap();
+            let result = crate::resume_session_locked(&context, record, &tmux)
+                .unwrap_or_else(|error| panic!("prior_boot={prior_boot}: {error:?}"));
+            assert_eq!(result.session.status, "running");
+            let resumed = load_session_record(&context, "broker-reboot").unwrap();
+            assert_eq!(resumed.runtime.as_ref().unwrap().generation, 3);
+            assert_ne!(resumed.runtime.as_ref().unwrap().launch_id, old);
+            assert_eq!(
+                serde_json::to_value(&resumed.provider_resume).unwrap(),
+                provider_resume
+            );
+            assert_eq!(
+                crate::verified_tmux_status_with_timeout(&tmux, "$7", Duration::from_secs(1)),
+                "running",
+                "the unrelated numeric target must remain live"
+            );
+            assert!(
+                !fs::read_to_string(&log)
+                    .unwrap()
+                    .lines()
+                    .any(|call| call.starts_with("kill-session"))
+            );
         }
     }
 

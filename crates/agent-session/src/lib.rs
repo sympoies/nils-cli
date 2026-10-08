@@ -10773,7 +10773,7 @@ fn resume_session_locked(
     }
     let (provider_resume, agent) = validate_resume_metadata(&record)?;
     let resume_args = provider_resume.resume_args.clone();
-    if recorded_runtime_is_from_prior_macos_boot(&record) {
+    if recorded_runtime_is_from_prior_boot(&record) {
         record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
     }
     let prior_identities = persisted_prior_tmux_runtime_identities(&record).map_err(|reason| {
@@ -10807,9 +10807,10 @@ fn resume_session_locked(
             // termination that was never checked.
             let remaining =
                 DELETE_TERMINATION_VERIFY_TIMEOUT.saturating_sub(verification_started.elapsed());
-            verify_stopped_tmux_runtime(tmux_bin, &identity, remaining).map_err(|reason| {
-                session_termination_error(&record, reason, SessionTerminationOperation::Resume)
-            })?;
+            verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, &identity, remaining)
+                .map_err(|reason| {
+                    session_termination_error(&record, reason, SessionTerminationOperation::Resume)
+                })?;
         }
         None if runtime_is_proven_never_launched(&record) && prior_identities.is_empty() => {}
         None => {
@@ -13243,7 +13244,7 @@ fn session_list_runtime_snapshot(
     if dsh_external::is_external_record(record) {
         return (dsh_external::external_session_status(context, record), None);
     }
-    if recorded_runtime_is_from_prior_macos_boot(record) {
+    if recorded_runtime_is_from_prior_boot(record) {
         return ("stopped".to_string(), None);
     }
     match tmux_snapshots {
@@ -13969,7 +13970,10 @@ enum SessionTerminationFailure {
     RuntimeIdentityChanged,
     RuntimeIdentityMismatch,
     RuntimeIdentityUnavailable,
+    ProcessIdentityUnavailable,
     VerificationFailed,
+    TmuxStatusUnavailable,
+    ProcessStatusUnavailable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14028,8 +14032,12 @@ impl SessionTerminationFailure {
             Self::ProcessStillRunning => "process-still-running",
             Self::RuntimeIdentityChanged => "runtime-identity-changed",
             Self::RuntimeIdentityMismatch => "runtime-identity-mismatch",
-            Self::RuntimeIdentityUnavailable => "runtime-identity-unavailable",
-            Self::VerificationFailed => "verification-failed",
+            Self::RuntimeIdentityUnavailable | Self::ProcessIdentityUnavailable => {
+                "runtime-identity-unavailable"
+            }
+            Self::VerificationFailed
+            | Self::TmuxStatusUnavailable
+            | Self::ProcessStatusUnavailable => "verification-failed",
         }
     }
 
@@ -14041,9 +14049,9 @@ impl SessionTerminationFailure {
             Self::KillFailed => "tmux kill-session failed",
             Self::KillTimeout => "tmux kill-session timed out",
             Self::KillError => "tmux kill-session could not be executed",
-            Self::StillRunning => "tmux session remained live after kill-session",
+            Self::StillRunning => "tmux has-session probe reported a live session",
             Self::ProcessStillRunning => {
-                "the recorded tmux runtime process boundary remained live after kill-session"
+                "the recorded process boundary liveness probe reported surviving processes"
             }
             Self::RuntimeIdentityChanged => {
                 "the managed tmux pane identity changed before kill-session"
@@ -14055,20 +14063,30 @@ impl SessionTerminationFailure {
                 "the recorded tmux runtime identity could not be established"
             }
             Self::VerificationFailed => "tmux session termination could not be verified",
+            Self::TmuxStatusUnavailable => {
+                "tmux has-session probe for the exact managed session name was unavailable"
+            }
+            Self::ProcessStatusUnavailable | Self::ProcessIdentityUnavailable => {
+                "the recorded process boundary liveness probe was unavailable"
+            }
         }
     }
 
     fn retryable(self) -> bool {
         !matches!(
             self,
-            Self::RuntimeIdentityMismatch | Self::RuntimeIdentityUnavailable
+            Self::RuntimeIdentityMismatch
+                | Self::RuntimeIdentityUnavailable
+                | Self::ProcessIdentityUnavailable
         )
     }
 
     fn action(self, operation: SessionTerminationOperation) -> &'static str {
         match self {
             Self::RuntimeIdentityMismatch => "resolve-runtime-identity-mismatch",
-            Self::RuntimeIdentityUnavailable => "manual-runtime-verification-required",
+            Self::RuntimeIdentityUnavailable | Self::ProcessIdentityUnavailable => {
+                "manual-runtime-verification-required"
+            }
             _ => operation.retry_action(),
         }
     }
@@ -14329,7 +14347,7 @@ fn terminate_verified_process_runtime_transaction(
         VerifiedRuntimeTerminationMode::LiveTmux { tmux_bin, .. }
         | VerifiedRuntimeTerminationMode::AlreadyStopped { tmux_bin } => tmux_bin,
     };
-    verify_stopped_tmux_runtime(tmux_bin, identity, remaining)?;
+    verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, identity, remaining)?;
     record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
     write_session_record(context, record)
         .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
@@ -14345,7 +14363,7 @@ fn terminate_tmux_session_with_timeouts(
     verify_timeout: Duration,
     terminate_process_group: bool,
 ) -> Result<(), SessionTerminationFailure> {
-    if recorded_runtime_is_from_prior_macos_boot(record) {
+    if recorded_runtime_is_from_prior_boot(record) {
         record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
         return Ok(());
     }
@@ -14412,7 +14430,7 @@ fn terminate_tmux_session_with_timeouts(
                 let verification_started = Instant::now();
                 verify_stopped_process_runtimes(&prior_identities, verify_timeout)?;
                 let remaining = verify_timeout.saturating_sub(verification_started.elapsed());
-                verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)?;
+                verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, &identity, remaining)?;
                 match persisted_tmux_termination_state(record)? {
                     Some(TmuxTerminationState::FreezePending { .. }) => {
                         return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
@@ -14471,7 +14489,7 @@ fn terminate_tmux_session_with_timeouts(
                     .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
                 let verification_started = Instant::now();
                 let remaining = verify_timeout.saturating_sub(verification_started.elapsed());
-                verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)?;
+                verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, &identity, remaining)?;
                 record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
                 write_session_record(context, record)
                     .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
@@ -14487,7 +14505,7 @@ fn gracefully_shutdown_profiled_tmux_session(
     tmux_bin: &Path,
     verify_timeout: Duration,
 ) -> Result<(), SessionTerminationFailure> {
-    if recorded_runtime_is_from_prior_macos_boot(record) {
+    if recorded_runtime_is_from_prior_boot(record) {
         return Ok(());
     }
     let Some(mode) = session_profile_graceful_shutdown(record)? else {
@@ -14534,10 +14552,13 @@ fn gracefully_shutdown_profiled_tmux_session(
                             remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT),
                         ) == "stopped"
                         {
-                            return verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)
-                                .map_err(|_| {
-                                    SessionTerminationFailure::GracefulShutdownIncomplete
-                                });
+                            return verify_stopped_tmux_runtime(
+                                tmux_bin,
+                                &record.tmux_session,
+                                &identity,
+                                remaining,
+                            )
+                            .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
                         }
                         return Err(SessionTerminationFailure::RuntimeIdentityChanged);
                     }
@@ -14548,10 +14569,13 @@ fn gracefully_shutdown_profiled_tmux_session(
                             remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT),
                         ) == "stopped"
                         {
-                            return verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)
-                                .map_err(|_| {
-                                    SessionTerminationFailure::GracefulShutdownIncomplete
-                                });
+                            return verify_stopped_tmux_runtime(
+                                tmux_bin,
+                                &record.tmux_session,
+                                &identity,
+                                remaining,
+                            )
+                            .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
                         }
                         return Err(reason);
                     }
@@ -14574,8 +14598,13 @@ fn gracefully_shutdown_profiled_tmux_session(
         .as_str()
         {
             "stopped" => {
-                return verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)
-                    .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
+                return verify_stopped_tmux_runtime(
+                    tmux_bin,
+                    &record.tmux_session,
+                    &identity,
+                    remaining,
+                )
+                .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
             }
             "running"
                 if !tmux_pane_identity_matches(
@@ -14593,8 +14622,13 @@ fn gracefully_shutdown_profiled_tmux_session(
                     remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT),
                 ) == "stopped"
                 {
-                    return verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)
-                        .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
+                    return verify_stopped_tmux_runtime(
+                        tmux_bin,
+                        &record.tmux_session,
+                        &identity,
+                        remaining,
+                    )
+                    .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
                 }
                 return Err(SessionTerminationFailure::RuntimeIdentityChanged);
             }
@@ -15824,7 +15858,7 @@ fn coordination_process_runtime_status(identity: &TmuxRuntimeIdentity) -> Proces
 
 #[cfg(not(target_os = "linux"))]
 fn coordination_process_runtime_status(identity: &TmuxRuntimeIdentity) -> ProcessGroupStatus {
-    if runtime_is_from_prior_macos_boot(identity) {
+    if runtime_is_from_prior_boot(identity) {
         return ProcessGroupStatus::Stopped;
     }
     identity
@@ -15928,7 +15962,7 @@ fn macos_prior_boot_proven(recorded: Option<&str>, current: Option<&str>) -> boo
     }
 }
 
-fn runtime_is_from_prior_macos_boot(identity: &TmuxRuntimeIdentity) -> bool {
+fn runtime_is_from_prior_boot(identity: &TmuxRuntimeIdentity) -> bool {
     #[cfg(target_os = "macos")]
     {
         macos_prior_boot_proven(
@@ -15936,28 +15970,42 @@ fn runtime_is_from_prior_macos_boot(identity: &TmuxRuntimeIdentity) -> bool {
             capture_macos_boot_id().as_deref(),
         )
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        if identity.pid_namespace.is_some() {
+            return linux_runtime_pid_namespace_relation(identity)
+                == LinuxPidNamespaceRelation::PriorBoot;
+        }
+        // Older runtime records may only carry boot provenance on the cgroup.
+        identity
+            .control_group
+            .as_ref()
+            .and_then(|group| group.boot_id.as_deref())
+            .filter(|boot_id| valid_linux_boot_id(boot_id))
+            .is_some_and(|boot_id| linux_boot_id().is_ok_and(|current| current != boot_id))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = identity;
         false
     }
 }
 
-fn recorded_runtime_is_from_prior_macos_boot(record: &SessionRecord) -> bool {
+fn recorded_runtime_is_from_prior_boot(record: &SessionRecord) -> bool {
     let Ok(Some(identity)) = persisted_tmux_runtime_identity(record) else {
         return false;
     };
     let Ok(prior) = persisted_prior_tmux_runtime_identities(record) else {
         return false;
     };
-    runtime_is_from_prior_macos_boot(&identity)
+    runtime_is_from_prior_boot(&identity)
         && prior
             .iter()
-            .all(|old| old.same_runtime_target(&identity) && runtime_is_from_prior_macos_boot(old))
+            .all(|old| old.same_runtime_target(&identity) && runtime_is_from_prior_boot(old))
 }
 
 fn process_runtime_status(identity: &TmuxRuntimeIdentity) -> ProcessGroupStatus {
-    if runtime_is_from_prior_macos_boot(identity) {
+    if runtime_is_from_prior_boot(identity) {
         return ProcessGroupStatus::Stopped;
     }
     #[cfg(target_os = "linux")]
@@ -15988,7 +16036,7 @@ fn verify_stopped_process_runtime(
                 return Err(SessionTerminationFailure::ProcessStillRunning);
             }
             ProcessGroupStatus::Unknown => {
-                return Err(SessionTerminationFailure::VerificationFailed);
+                return Err(SessionTerminationFailure::ProcessIdentityUnavailable);
             }
             ProcessGroupStatus::Running => {}
         }
@@ -17633,10 +17681,11 @@ fn verify_stopped_process_runtimes(
 
 fn verify_stopped_tmux_runtime(
     tmux_bin: &Path,
+    tmux_session: &str,
     identity: &TmuxRuntimeIdentity,
     verify_timeout: Duration,
 ) -> Result<(), SessionTerminationFailure> {
-    if runtime_is_from_prior_macos_boot(identity) {
+    if runtime_is_from_prior_boot(identity) {
         return Ok(());
     }
     let started_at = Instant::now();
@@ -17650,9 +17699,13 @@ fn verify_stopped_tmux_runtime(
         // not terminate. One probe is bounded by the probe timeout, so the
         // window still cannot run away.
         let remaining = verify_timeout.saturating_sub(started_at.elapsed());
+        // Numeric selectors are local to a tmux server lifetime and can be
+        // reused after a restart. Only the exact managed name identifies the
+        // session whose absence is being verified; process evidence is checked
+        // independently before allowing lifecycle mutation.
         let tmux_status = verified_tmux_status_with_timeout(
             tmux_bin,
-            &identity.session_id,
+            &exact_tmux_target(tmux_session),
             if remaining.is_zero() {
                 DELETE_TERMINATION_PROBE_TIMEOUT
             } else {
@@ -17676,8 +17729,10 @@ fn verify_stopped_tmux_runtime(
                 SessionTerminationFailure::StillRunning
             } else if observed_tmux_stopped && observed_process_running {
                 SessionTerminationFailure::ProcessStillRunning
+            } else if tmux_status == "unknown" {
+                SessionTerminationFailure::TmuxStatusUnavailable
             } else {
-                SessionTerminationFailure::VerificationFailed
+                SessionTerminationFailure::ProcessStatusUnavailable
             });
         }
         thread::sleep(
@@ -17862,7 +17917,7 @@ pub fn session_status(context: &CliContext, tmux_bin: &Path, record: &SessionRec
     if dsh_external::is_external_record(record) {
         return dsh_external::external_session_status(context, record);
     }
-    if recorded_runtime_is_from_prior_macos_boot(record) {
+    if recorded_runtime_is_from_prior_boot(record) {
         return "stopped".to_string();
     }
     live_status(tmux_bin, &record.tmux_session)
@@ -21635,6 +21690,236 @@ exit 97
         process.stop();
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn generation_two_reboot_ignores_reused_numeric_tmux_selector() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        for operation in ["delete", "archive"] {
+            let id = create_test_record_id(
+                &context,
+                AgentKind::Codex,
+                None,
+                Some(&format!("reboot-{operation}")),
+            );
+            let mut record = load_session_record(&context, &id).unwrap();
+            record.runtime.as_mut().unwrap().generation = 2;
+            let identity: TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
+                "launch_id": record.runtime.as_ref().unwrap().launch_id,
+                "session_id": "$7", "pane_id": "%7", "pane_pid": 2000000000,
+                "process_group_id": 2000000000,
+                "pid_namespace": { "device": 1, "inode": 1,
+                    "boot_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }
+            }))
+            .unwrap();
+            persist_tmux_runtime_identity(&mut record, &identity).unwrap();
+            use sha2::Digest;
+            let mut digest = sha2::Sha256::new();
+            digest.update(context.state_dir.as_os_str().as_encoded_bytes());
+            digest.update([0]);
+            digest.update(record.id.as_bytes());
+            digest.update([0]);
+            digest.update(record.runtime.as_ref().unwrap().launch_id.as_bytes());
+            let namespace: String = digest
+                .finalize()
+                .iter()
+                .take(8)
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            let socket = tmp
+                .path()
+                .join("runtime/agent-session")
+                .join(format!("cx-{namespace}.sock"));
+            let runtime = record.runtime.as_mut().unwrap();
+            runtime.kind = "codex_app_server".to_string();
+            runtime.extra.insert(
+                "codex_app_server_protocol".to_string(),
+                serde_json::json!("v2"),
+            );
+            for (key, path) in [
+                ("codex_app_server_socket", socket.clone()),
+                ("codex_app_server_proxy", socket.with_extension("proxy")),
+                (
+                    "codex_app_server_thread_handoff",
+                    socket.with_extension("thread"),
+                ),
+                (
+                    "codex_app_server_thread_attached",
+                    socket.with_extension("attached"),
+                ),
+            ] {
+                assert!(!path.exists());
+                runtime
+                    .extra
+                    .insert(key.to_string(), serde_json::json!(path));
+            }
+            assert!(super::codex_app_server::runtime_is_supported(&record));
+            record.provider_resume =
+                Some(super::codex_provider_resume(&record, "provider-fixture"));
+            write_session_record(&context, &record).unwrap();
+            let stub = nils_test_support::StubBinDir::new();
+            stub.write_exe(
+                "tmux",
+                r#"#!/bin/sh
+case "$1:$3" in
+has-session:\$7) exit 0 ;;
+esac
+printf '%s\n' "can't find session: $3" >&2
+exit 1
+"#,
+            );
+            let tmux = stub.path().join("tmux");
+            let preview = super::maintenance::preview(
+                &context,
+                &id,
+                &tmux,
+                super::maintenance::MaintenanceOperation::Resume,
+                super::maintenance::MaintenanceContract::V1,
+            )
+            .unwrap();
+            let preview = serde_json::to_value(preview).unwrap();
+            assert_eq!(preview["state"], "healthy");
+            assert_eq!(preview["boundary"]["kind"], "none");
+            assert_eq!(preview["boundary"]["safe_process_count"], 0);
+            super::stop_session_runtime_locked(&context, &mut record, &tmux).unwrap();
+            let deleted = if operation == "archive" {
+                let incarnation = record.runtime.as_ref().unwrap().launch_id.clone();
+                let (archive, deleted) = super::archive_session_with_expected_incarnation(
+                    &context,
+                    &id,
+                    tmux,
+                    &incarnation,
+                )
+                .unwrap();
+                assert_eq!(archive.provider_session_id, "provider-fixture");
+                deleted
+            } else {
+                delete_session_with_timeouts(
+                    &context,
+                    &id,
+                    tmux,
+                    Duration::from_millis(100),
+                    Duration::from_millis(100),
+                )
+                .unwrap()
+            };
+            assert!(deleted.deleted);
+        }
+    }
+
+    #[test]
+    fn absent_managed_name_requires_a_stopped_process_boundary() {
+        let stub = nils_test_support::StubBinDir::new();
+        stub.write_exe(
+            "tmux",
+            r#"#!/bin/sh
+if [ "$3" = '$7' ]; then exit 0; fi
+printf '%s\n' "can't find session: $3" >&2
+exit 1
+"#,
+        );
+        let tmux = stub.path().join("tmux");
+        let mut pane = TestProcessGroup::spawn();
+        let identity: TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
+            "session_id": "$7", "pane_id": "%7", "pane_pid": pane.pid(),
+            "process_group_id": pane.process_group_id
+        }))
+        .unwrap();
+        let result =
+            super::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO);
+        assert_eq!(
+            result,
+            Err(super::SessionTerminationFailure::ProcessStillRunning)
+        );
+        pane.stop();
+        assert!(
+            super::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn stopped_runtime_error_names_the_unavailable_probe() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        let id = create_test_record_id(&context, AgentKind::Codex, None, Some("probe-error"));
+        let record = load_session_record(&context, &id).unwrap();
+        let stub = nils_test_support::StubBinDir::new();
+        stub.write_exe("tmux", "#!/bin/sh\nexit 42\n");
+        let tmux = stub.path().join("tmux");
+        let identity: TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
+            "session_id": "$7", "pane_id": "%7", "pane_pid": 2000000000
+        }))
+        .unwrap();
+        let reason =
+            super::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO)
+                .unwrap_err();
+        assert_eq!(
+            reason,
+            super::SessionTerminationFailure::TmuxStatusUnavailable
+        );
+        let error = super::session_termination_error(
+            &record,
+            reason,
+            super::SessionTerminationOperation::Resume,
+        );
+        assert!(error.0.message.contains("tmux has-session probe"));
+        assert_eq!(
+            error.0.details.as_ref().unwrap()["reason"],
+            "verification-failed"
+        );
+        assert!(session_dir(&context, &id).exists());
+        #[cfg(target_os = "linux")]
+        {
+            let _status = super::tmux_probe_fixture::install_status(
+                &tmux,
+                super::tmux_probe_fixture::Status::Stopped,
+            );
+            let mut unverified = identity;
+            unverified.control_group = Some(super::TmuxControlGroupIdentity {
+                path: "/unverified-boundary".to_string(),
+                device: 1,
+                inode: 1,
+                boot_id: Some(super::linux_boot_id().unwrap()),
+            });
+            let reason = super::verify_stopped_tmux_runtime(
+                &tmux,
+                "managed-fixture",
+                &unverified,
+                Duration::ZERO,
+            )
+            .unwrap_err();
+            assert_eq!(
+                reason,
+                super::SessionTerminationFailure::ProcessStatusUnavailable
+            );
+            let error = super::session_termination_error(
+                &record,
+                reason,
+                super::SessionTerminationOperation::Resume,
+            );
+            assert!(error.0.message.contains("process boundary liveness probe"));
+            assert_eq!(
+                error.0.details.as_ref().unwrap()["reason"],
+                "verification-failed"
+            );
+            assert!(session_dir(&context, &id).exists());
+
+            let reason =
+                super::verify_stopped_process_runtime(&unverified, Duration::ZERO).unwrap_err();
+            let error = super::session_termination_error(
+                &record,
+                reason,
+                super::SessionTerminationOperation::RuntimeStop,
+            );
+            assert!(error.0.message.contains("process boundary liveness probe"));
+            let details = error.0.details.as_ref().unwrap();
+            assert_eq!(details["reason"], "runtime-identity-unavailable");
+            assert_eq!(details["action"], "manual-runtime-verification-required");
+            assert_eq!(details["retryable"], false);
+        }
+    }
+
     /// An exhausted verification window must still observe before it judges.
     ///
     /// The termination transaction hands a sub-step the whole verify budget and
@@ -21682,7 +21967,13 @@ exit 1
 
         let started = Instant::now();
         assert!(
-            super::verify_stopped_tmux_runtime(&tmux_bin, &identity, Duration::ZERO).is_ok(),
+            super::verify_stopped_tmux_runtime(
+                &tmux_bin,
+                "managed-fixture",
+                &identity,
+                Duration::ZERO
+            )
+            .is_ok(),
             "an exhausted window must probe once and confirm the stopped session"
         );
         assert!(
@@ -21731,7 +22022,12 @@ exit 0
         // live or inconclusive probe returns rather than looping. Bounding the
         // elapsed time pins that: without the exit this call would not return.
         let started = Instant::now();
-        let verdict = super::verify_stopped_tmux_runtime(&tmux_bin, &identity, Duration::ZERO);
+        let verdict = super::verify_stopped_tmux_runtime(
+            &tmux_bin,
+            "managed-fixture",
+            &identity,
+            Duration::ZERO,
+        );
         assert_eq!(
             verdict,
             Err(super::SessionTerminationFailure::StillRunning),
@@ -25193,7 +25489,15 @@ fi
             super::coordination_process_runtime_status(&identity),
             super::ProcessGroupStatus::Stopped
         );
-        assert!(super::verify_stopped_tmux_runtime(&tmux, &identity, Duration::ZERO).is_ok());
+        assert!(
+            super::verify_stopped_tmux_runtime(
+                &tmux,
+                &record.tmux_session,
+                &identity,
+                Duration::ZERO
+            )
+            .is_ok()
+        );
         assert!(
             super::gracefully_shutdown_profiled_tmux_session(
                 &context,
@@ -25612,7 +25916,10 @@ fi
         )
         .unwrap_err();
 
-        assert_eq!(error, super::SessionTerminationFailure::VerificationFailed);
+        assert_eq!(
+            error,
+            super::SessionTerminationFailure::TmuxStatusUnavailable
+        );
         assert!(session_dir(&context, &id).exists());
     }
 
@@ -25671,7 +25978,7 @@ fi
         .unwrap_err();
         assert_eq!(
             first_error,
-            super::SessionTerminationFailure::VerificationFailed
+            super::SessionTerminationFailure::TmuxStatusUnavailable
         );
         assert!(session_dir(&context, &id).exists());
 
