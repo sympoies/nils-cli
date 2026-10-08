@@ -26,7 +26,7 @@ If `AGENT_HOME` is unset, the CLI falls back to
 
 - `git-cli worktree add <slug> [--from <ref>] [--kind <kind>] [--format text|json]`
 - `git-cli worktree list [--format text|json]`
-- `git-cli worktree remove <slug-or-path> [--format text|json]`
+- `git-cli worktree remove <slug-or-path> [--safe] [--format text|json]`
 - `git-cli worktree prune [--format text|json]`
 - `git-cli worktree go <slug-or-branch-or-path> [--shell] [--format text|json]`
 
@@ -35,9 +35,26 @@ If `AGENT_HOME` is unset, the CLI falls back to
 `test`->`test/`);
 default `feature`.
 
-`remove` refuses to remove the primary checkout or the current worktree. It uses
-`git worktree remove --force` for linked non-primary worktrees, then prunes stale
-worktree metadata.
+`remove` refuses primary, current, and unmanaged worktrees. It never forces
+removal. Use `git-cli worktree remove <slug-or-path> --safe --format json` from
+outside the target; the explicit flag makes older binaries fail closed before
+legacy force removal. Current binaries always apply the same safety checks.
+
+The cleanup transaction holds the runtime checkout lease lock and agent-session
+registry lock through removal. It requires clean stable checkout/admin identity,
+no Git operation or active checkout lease (including the requester), no live
+session cwd/binding or nonterminal operation, and a complete `lsof` inventory
+with no process cwd or open file under the target. Missing tools, warnings,
+malformed ownership state, lock contention, and unavailable proof retain the
+target. Coordination mode does not waive these checks. Runtime and session state
+roots use their existing environment configuration.
+
+HEAD must be present in the current `origin` default branch, or match the exact
+head of a provider-confirmed merged PR/MR targeting that default branch.
+Remote/default proof is fetched rather than inferred from cached refs; provider
+proof uses `forge-cli`. This also covers squash/rebase merges and deleted remote
+feature branches. Unpushed or unmerged HEADs are retained. Removal leaves the
+local branch intact and prunes stale worktree metadata.
 
 `go` resolves a single worktree (in priority order: exact branch name, explicit
 worktree path, managed slug, then worktree directory basename) and prints its
@@ -81,7 +98,12 @@ workspace envelope:
 
 Error responses use stable `error.code` values such as `branch-exists`,
 `worktree-path-exists`, `worktree-not-found`, `refuse-primary-worktree`, and
-`git-worktree-remove-failed`.
+`removal-dirty`, `removal-unmanaged`, `removal-process-active`,
+`removal-session-active`, `removal-head-undelivered`, `removal-target-changed`,
+`removal-lease-active-or-unavailable`, and `removal-proof-unavailable`.
 
-`git-cli worktree` and `git-cli branch cleanup --remove-worktrees` share one
-worktree listing/removal parser and the git-cli managed path convention.
+`git-cli worktree` and `git-cli branch cleanup --remove-worktrees` share the
+worktree listing parser and managed path convention. Branch batch cleanup routes linked candidates through the same fence and retains
+their branch when proof fails. Agent shell hooks require the explicit sole
+`worktree remove --safe` command before separate branch cleanup, because older
+batch-cleanup binaries cannot attest this contract.
