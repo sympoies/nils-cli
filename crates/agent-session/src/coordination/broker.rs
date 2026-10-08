@@ -1714,6 +1714,32 @@ pub(crate) mod test_support {
         group
     }
 
+    /// A stopped-boundary fixture verified by the real platform probes.
+    pub(crate) fn verified_absent_process_group() -> libc::pid_t {
+        // A synthetic identifier avoids depending on a recently reaped PID
+        // staying unused while the fixture launches its probe commands.
+        #[cfg(target_os = "macos")]
+        let group = libc::pid_t::MAX;
+        #[cfg(not(target_os = "macos"))]
+        let group = exited_process_group();
+        assert_eq!(
+            crate::process_group_status(group),
+            crate::ProcessGroupStatus::Stopped,
+            "fixture process-group signal probe must report ESRCH: group={group}"
+        );
+        #[cfg(target_os = "macos")]
+        {
+            let identity =
+                serde_json::from_value::<crate::TmuxRuntimeIdentity>(process_group_identity(group))
+                    .unwrap();
+            assert!(
+                super::macos_process_group_is_empty(&identity),
+                "fixture complete PID/PGID enumeration and signal recheck must prove absence: group={group}"
+            );
+        }
+        group
+    }
+
     /// Runtime identity evidence for `process_group` in this pid namespace.
     pub(crate) fn process_group_identity(process_group: libc::pid_t) -> Value {
         #[cfg(target_os = "linux")]
@@ -2304,7 +2330,7 @@ mod tests {
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
         let mut identity =
-            test_support::process_group_identity(test_support::exited_process_group());
+            test_support::process_group_identity(test_support::verified_absent_process_group());
         identity["macos_boot_id"] = json!(crate::capture_macos_boot_id().unwrap());
         identity["launch_id"] = json!("old");
         let mut prior = seed_retirable_broker(&context, identity.clone());
@@ -2364,7 +2390,7 @@ mod tests {
             let group = if mutation == "live-group" {
                 unsafe { libc::getpgrp() }
             } else {
-                test_support::exited_process_group()
+                test_support::verified_absent_process_group()
             };
             let mut identity = test_support::process_group_identity(group);
             identity["macos_boot_id"] = json!(crate::capture_macos_boot_id().unwrap());

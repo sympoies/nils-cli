@@ -31211,7 +31211,7 @@ esac
             let old = record.runtime.as_ref().unwrap().launch_id.clone();
             let provider = serde_json::to_value(record.provider_resume.as_ref().unwrap()).unwrap();
             let mut identity =
-                test_support::process_group_identity(test_support::exited_process_group());
+                test_support::process_group_identity(test_support::verified_absent_process_group());
             identity["launch_id"] = json!(old);
             #[cfg(target_os = "macos")]
             {
