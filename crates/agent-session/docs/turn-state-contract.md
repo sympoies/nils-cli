@@ -187,8 +187,10 @@ activity revision fence both samples; a new prompt or any newer hook invalidates
 them. Claude requires an empty idle composer; its drafts cannot produce this
 projection. Codex uses the `Conversation interrupted` marker; plain composer
 text cannot distinguish a placeholder from a draft and supplies no completion
-or waiting evidence. A working indicator, attention, missing marker, stale
-sample, or runtime replacement cannot produce this projection. A ready serve
+or waiting evidence. Claude also recognizes a Running tool status below the
+latest interrupt marker as Working evidence; an earlier tool status cannot mask
+a newer interrupt. A working indicator, attention, missing marker, stale sample,
+or runtime replacement cannot produce this projection. A ready serve
 activity broker refreshes on a 15-second timer even without
 hooks or HTTP polling, and completed shadow writes refresh stream snapshots.
 Sample timestamp changes alone update the cache without broadcasting a new

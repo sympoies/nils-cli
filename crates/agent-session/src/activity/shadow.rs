@@ -372,7 +372,11 @@ fn classify<'a>(provider: &str, title: &str, bottom: &str) -> (&'a str, &'a str)
         {
             ("needs_input", "claude_permission_form")
         }
-        "claude" if bottom.contains("esc to interrupt") => ("working", "claude_working_indicator"),
+        "claude"
+            if bottom.contains("esc to interrupt") || claude_running_tool_is_current(&bottom) =>
+        {
+            ("working", "claude_working_indicator")
+        }
         "claude" if claude_interrupt_composer_is_empty(&bottom) => {
             ("unknown", "claude_interrupt_marker")
         }
@@ -388,6 +392,19 @@ fn classify<'a>(provider: &str, title: &str, bottom: &str) -> (&'a str, &'a str)
         "claude" => ("unknown", "claude_unmatched"),
         _ => ("unknown", "provider_unsupported"),
     }
+}
+
+fn claude_running_tool_is_current(bottom: &str) -> bool {
+    // A Running tool can replace the interrupt affordance while an older
+    // marker remains in capture history. A newer marker must still win.
+    let current = bottom
+        .rsplit_once("interrupted · what should claude do instead?")
+        .map_or(bottom, |(_, after_marker)| after_marker);
+    current.lines().any(|line| {
+        line.trim_start()
+            .strip_prefix('⎿')
+            .is_some_and(|status| status.trim_start().starts_with("running…"))
+    })
 }
 
 fn claude_interrupt_composer_is_empty(bottom: &str) -> bool {
@@ -550,6 +567,28 @@ mod tests {
         assert_eq!(
             classify("codex", "Codex", pane),
             ("working", "codex_working_indicator")
+        );
+    }
+
+    #[test]
+    fn claude_running_tool_after_old_interrupt_marker_stays_working() {
+        // A capture can retain an older interrupt above the fresh tool status.
+        // The visible composer is empty while the foreground tool still runs.
+        let pane = "Interrupted · What should Claude do instead?\n\
+                    ● Bash(command)\n  ⎿ Running…\n❯ \n────────────────────\n";
+        assert_eq!(
+            classify("claude", "Claude", pane),
+            ("working", "claude_working_indicator")
+        );
+    }
+
+    #[test]
+    fn claude_new_interrupt_after_running_tool_preserves_uncertainty() {
+        let pane = "● Bash(command)\n  ⎿ Running…\n\
+                    Interrupted · What should Claude do instead?\n❯ \n";
+        assert_eq!(
+            classify("claude", "Claude", pane),
+            ("unknown", "claude_interrupt_marker")
         );
     }
 
