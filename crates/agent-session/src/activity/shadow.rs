@@ -354,9 +354,7 @@ fn classify<'a>(provider: &str, title: &str, bottom: &str) -> (&'a str, &'a str)
         "codex" if title.contains("action required") => {
             ("needs_input", "codex_action_required_title")
         }
-        "codex" if bottom.contains("working (") && bottom.contains("esc to interrupt") => {
-            ("working", "codex_working_indicator")
-        }
+        "codex" if bottom.contains("esc to interrupt") => ("working", "codex_working_indicator"),
         "codex" if bottom.contains("conversation interrupted") => {
             ("unknown", "codex_interrupt_marker")
         }
@@ -543,6 +541,15 @@ mod tests {
         assert_eq!(
             classify("codex", "Codex", "› Describe a task\n"),
             ("waiting", "codex_prompt_visible")
+        );
+    }
+
+    #[test]
+    fn codex_mutable_working_header_wins_over_stale_interrupt_marker() {
+        let pane = "Thinking (10s • esc to interrupt)\nConversation interrupted\n› \n";
+        assert_eq!(
+            classify("codex", "Codex", pane),
+            ("working", "codex_working_indicator")
         );
     }
 

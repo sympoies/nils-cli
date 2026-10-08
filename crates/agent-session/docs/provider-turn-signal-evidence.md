@@ -428,6 +428,8 @@ long tools, new-prompt races, and stale runtime identity.
 
 Codex's `Conversation interrupted` marker uses the same sustained window and
 runtime/revision/current-turn/attention fences. Action-required titles and active
-working indicators take precedence. Composer text remains uncertainty because
+working indicators take precedence. Codex's visible `esc to interrupt` affordance
+remains working evidence when the renderer changes the work header; a stale
+interruption marker cannot override it. Composer text remains uncertainty because
 plain captures cannot distinguish renderer placeholders from drafts; it never
 confirms completion or waiting. Claude retains its empty-composer requirement.
