@@ -308,10 +308,8 @@ pub(crate) async fn response(
     let target_id = value
         .pointer("/data/session/id")
         .and_then(Value::as_str)
-        .unwrap_or(id);
-    let target = crate::load_session_record(context, target_id)
-        .ok()
-        .or(before);
+        .unwrap_or(id)
+        .to_owned();
     let error = value.get("error").map(|e| {
         CliError::runtime(
             e["code"].as_str().unwrap_or("serve-operation-failed"),
@@ -319,6 +317,8 @@ pub(crate) async fn response(
             e.get("details").cloned(),
         )
     });
+    let context = context.clone();
+    let operation = operation.to_owned();
     let _ = tokio::task::spawn_blocking(move || {
         let target = crate::load_session_record(&context, &target_id)
             .ok()
