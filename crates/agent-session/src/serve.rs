@@ -23434,7 +23434,7 @@ esac
                 .unwrap()
             );
             if malformed_broker_identity {
-                // Present but malformed evidence must not use the legacy
+                // Present but malformed evidence must not use the
                 // compatibility path for a missing runtime identity.
                 broker["runtime_identity"] = json!({});
                 locked.registry = serde_json::from_value(registry).unwrap();
