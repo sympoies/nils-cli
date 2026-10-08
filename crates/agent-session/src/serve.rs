@@ -23293,6 +23293,15 @@ esac
 
     #[tokio::test]
     async fn fresh_profile_session_resume_preserves_context_or_fails_closed_without_proof() {
+        fresh_profile_session_resume_fixture(false).await;
+    }
+
+    #[tokio::test]
+    async fn fresh_profile_session_resume_fails_closed_with_malformed_broker_runtime_identity() {
+        fresh_profile_session_resume_fixture(true).await;
+    }
+
+    async fn fresh_profile_session_resume_fixture(malformed_broker_identity: bool) {
         let lock = GlobalStateLock::new();
         let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
@@ -23409,6 +23418,39 @@ esac
         drop(first_pane);
         let stopped_record = load_session_record(&st.context, "fresh-profile").unwrap();
         crate::coordination::revoke(&st.context, &stopped_record).unwrap();
+        {
+            let mut locked = crate::coordination::lock_registry(&st.context).unwrap();
+            let mut registry = serde_json::to_value(&locked.registry).unwrap();
+            let broker = &mut registry["brokers"]["fresh-profile"];
+            assert_eq!(broker["state"], "stopped");
+            assert_eq!(broker["capability_digest"], "");
+            assert_eq!(
+                broker["runtime_identity"],
+                serde_json::to_value(
+                    crate::persisted_tmux_runtime_identity(&stopped_record)
+                        .unwrap()
+                        .unwrap()
+                )
+                .unwrap()
+            );
+            if malformed_broker_identity {
+                // Present but malformed evidence must not use the legacy
+                // compatibility path for a missing runtime identity.
+                broker["runtime_identity"] = json!({});
+                locked.registry = serde_json::from_value(registry).unwrap();
+                locked.save().unwrap();
+            }
+        }
+        let old_incarnation = crate::coordination::incarnation(&stopped_record).unwrap();
+        let heartbeat = crate::coordination::heartbeat_path(&st.context.state_dir, "fresh-profile");
+        fs::write(&heartbeat, format!("{old_incarnation}:0\n")).unwrap();
+        assert!(heartbeat.exists(), "retain the expired heartbeat sidecar");
+        assert!(!crate::coordination::broker::heartbeat_fresh(
+            &st.context,
+            "fresh-profile",
+            &old_incarnation,
+            0,
+        ));
         fs::remove_file(&running).unwrap();
         let (list_status, list_body) = call(router(st.clone()), get("/sessions")).await;
         assert_eq!(list_status, StatusCode::OK, "body={list_body}");
@@ -23454,8 +23496,8 @@ esac
             calls.contains("resume fresh-provider-id"),
             "managed resume must use the captured provider id: {calls:?}"
         );
-        #[cfg(not(target_os = "linux"))]
-        {
+        let supports_stopped_runtime_proof = cfg!(any(target_os = "linux", target_os = "macos"));
+        if malformed_broker_identity || !supports_stopped_runtime_proof {
             assert_eq!(
                 resume_status,
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -23484,9 +23526,10 @@ esac
                 retained["provider_resume"]["session_id"],
                 "fresh-provider-id"
             );
-        }
-        #[cfg(target_os = "linux")]
-        {
+            let old_runtime = stopped_record.runtime.as_ref().unwrap();
+            assert_eq!(retained["runtime"]["generation"], old_runtime.generation);
+            assert_eq!(retained["runtime"]["launch_id"], old_runtime.launch_id);
+        } else {
             assert_eq!(resume_status, StatusCode::OK, "body={resume_body}");
             assert_eq!(
                 resume_body["data"]["session"]["cwd"],
@@ -23496,6 +23539,28 @@ esac
                 resume_body["data"]["session"]["agent_profile"],
                 "codex-profile"
             );
+            let resumed = &resume_body["data"]["session"];
+            assert_eq!(
+                resumed["provider_resume"]["session_id"],
+                "fresh-provider-id"
+            );
+            let retained: Value = serde_json::from_str(
+                &fs::read_to_string(tmp.path().join("sessions/fresh-profile/session.json"))
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(retained["cwd"], cwd.to_string_lossy().as_ref());
+            assert_eq!(retained["runtime"]["agent_profile"], "codex-profile");
+            assert_eq!(
+                retained["provider_resume"]["session_id"],
+                "fresh-provider-id"
+            );
+            let old_runtime = stopped_record.runtime.as_ref().unwrap();
+            assert_eq!(
+                retained["runtime"]["generation"],
+                old_runtime.generation + 1
+            );
+            assert_ne!(retained["runtime"]["launch_id"], old_runtime.launch_id);
             let terminate = ProcessCommand::new(&tmux)
                 .args([
                     "if-shell",
