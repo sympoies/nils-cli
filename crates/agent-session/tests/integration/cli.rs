@@ -274,33 +274,30 @@ if [ "$1" = "if-shell" ]; then
   exit 0
 fi
 
-if [ "${AGENT_SESSION_FAKE_TMUX_ABSENT_AFTER_KILL:-0}" = "1" ] && { [ "$1" = "display-message" ] || [ "$1" = "has-session" ]; } && [ -f "$AGENT_SESSION_FAKE_TMUX_LOG.killed" ]; then
-  probe_target="$target"
-  if [ "$1" = "has-session" ] && [ -z "$probe_target" ]; then
-    probe_target="${2:-}"
-  fi
-  normalized_target="${probe_target#=}"
+target_was_killed() {
+  normalized_target="${target#=}"
   normalized_target="${normalized_target%%:*}"
+  mapped_session="$(awk -F '\t' -v target="$normalized_target" '$1 == target { value=$2 } END { print value }' "$AGENT_SESSION_FAKE_TMUX_LOG.identities" 2>/dev/null)"
+  [ -f "$AGENT_SESSION_FAKE_TMUX_LOG.killed" ] || return 1
   while IFS= read -r killed_target; do
-    if [ "$killed_target" = "$probe_target" ] || [ "$killed_target" = "$normalized_target" ]; then
-      printf "%s\n" "can't find session: $probe_target" >&2
-      exit 1
+    normalized_killed="${killed_target#=}"
+    normalized_killed="${normalized_killed%%:*}"
+    if [ "$normalized_killed" = "$normalized_target" ] || { [ -n "$mapped_session" ] && [ "$normalized_killed" = "$mapped_session" ]; }; then
+      return 0
     fi
   done < "$AGENT_SESSION_FAKE_TMUX_LOG.killed"
+  return 1
+}
+
+if [ "${AGENT_SESSION_FAKE_TMUX_ABSENT_AFTER_KILL:-0}" = "1" ] && { [ "$1" = "display-message" ] || [ "$1" = "has-session" ]; } && target_was_killed; then
+  printf "%s\n" "can't find session: $target" >&2
+  exit 1
 fi
 
 if [ "$1" = "has-session" ]; then
-  if [ "${AGENT_SESSION_FAKE_TMUX_HAS_SESSION:-1}" = "0" ]; then
+  if [ "${AGENT_SESSION_FAKE_TMUX_HAS_SESSION:-1}" = "0" ] || target_was_killed; then
     printf "%s\n" "can't find session: $target" >&2
     exit 1
-  fi
-  if [ -f "$AGENT_SESSION_FAKE_TMUX_LOG.killed" ]; then
-    while IFS= read -r killed_target; do
-      if [ "$killed_target" = "$target" ]; then
-        printf "%s\n" "can't find session: $target" >&2
-        exit 1
-      fi
-    done < "$AGENT_SESSION_FAKE_TMUX_LOG.killed"
   fi
   exit 0
 fi
@@ -332,6 +329,10 @@ if [ "$1" = "display-message" ]; then
       [ -n "$session_identity" ] || session_identity='$77'
       pane_identity="${AGENT_SESSION_FAKE_TMUX_PANE_ID:-}"
       [ -n "$pane_identity" ] || pane_identity='%77'
+      case "$tmux_name" in
+        ''|'$'*) ;;
+        *) printf '%s\t%s\t%s\t%s\n' "$tmux_name" "$session_identity" "$pane_identity" "$AGENT_SESSION_FAKE_TMUX_PANE_PID" >> "$AGENT_SESSION_FAKE_TMUX_LOG.identities" ;;
+      esac
       printf '%s\t%s\t%s\n' "$session_identity" "$pane_identity" "$AGENT_SESSION_FAKE_TMUX_PANE_PID"
       exit 0
       ;;
@@ -757,6 +758,67 @@ fn fake_tmux_call_log_times_out_behind_a_live_writer() {
     assert!(
         tmux_calls(&log).is_empty(),
         "blocked call must not record an operation"
+    );
+}
+
+#[test]
+fn fake_tmux_numeric_kill_stops_only_the_current_managed_name_alias() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (tmux, log) = fake_tmux(tmp.path());
+    let run = |args: &[&str], absent_after_kill: bool| {
+        Command::new(&tmux)
+            .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+            .env("AGENT_SESSION_FAKE_TMUX_SESSION_ID", "$91")
+            .env("AGENT_SESSION_FAKE_TMUX_PANE_ID", "%91")
+            .env("AGENT_SESSION_FAKE_TMUX_PANE_PID", "2000000000")
+            .env("AGENT_SESSION_FAKE_TMUX_KEEP_PROCESS_GROUP", "1")
+            .env(
+                "AGENT_SESSION_FAKE_TMUX_ABSENT_AFTER_KILL",
+                if absent_after_kill { "1" } else { "0" },
+            )
+            .args(args)
+            .output()
+            .expect("run fake tmux")
+    };
+    assert!(
+        run(
+            &[
+                "display-message",
+                "-p",
+                "-t",
+                "=managed:0.0",
+                "#{session_id}\t#{pane_id}\t#{pane_pid}",
+            ],
+            false,
+        )
+        .status
+        .success()
+    );
+    assert!(run(&["kill-session", "-t", "$91"], false).status.success());
+    for absent_after_kill in [false, true] {
+        let absent = run(&["has-session", "-t", "=managed"], absent_after_kill);
+        assert!(!absent.status.success());
+        assert!(String::from_utf8_lossy(&absent.stderr).contains("can't find session: =managed"));
+        assert!(
+            run(&["has-session", "-t", "=other"], absent_after_kill)
+                .status
+                .success()
+        );
+    }
+    let identities = PathBuf::from(format!("{}.identities", log.display()));
+    use std::io::Write;
+    writeln!(
+        fs::OpenOptions::new()
+            .append(true)
+            .open(identities)
+            .expect("open current identities"),
+        "managed\t$92\t%92\t2000000001"
+    )
+    .expect("append replacement identity");
+    assert!(
+        run(&["has-session", "-t", "=managed"], true)
+            .status
+            .success()
     );
 }
 
@@ -5327,9 +5389,9 @@ fn list_command_and_delete_manage_existing_session() {
             == &vec![
                 "has-session".to_string(),
                 "-t".to_string(),
-                "$77".to_string(),
+                format!("={tmux_session}"),
             ]),
-        "delete must verify the recorded tmux session stopped: {delete_calls:?}"
+        "delete must verify the exact managed tmux session stopped: {delete_calls:?}"
     );
 
     let list_again = run(
@@ -10496,6 +10558,141 @@ fn macos_prior_boot_cli_delete_and_resume_preserve_exact_provider_identity() {
             assert_eq!(resumed["provider_resume"], record["provider_resume"]);
             assert_eq!(resumed["cwd"], record["cwd"]);
             assert_eq!(resumed["delete_tmux_identity"]["macos_boot_id"], current);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn generation_two_prior_boot_cli_resume_and_delete_ignore_reused_selectors() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let state = tmp.path().join("state");
+    let cwd = tmp.path().join("repo");
+    fs::create_dir(&cwd).unwrap();
+    let (tmux, log) = fake_tmux(tmp.path());
+    let agent = fake_agent(tmp.path(), "codex");
+    write_executable(
+        &agent,
+        r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '%s\n' 'codex-cli 0.145.0'; exit 0; fi
+if [ "$1" = app-server ] && [ "$2" = --help ]; then printf '%s\n' '--listen <URL> unix://'; exit 0; fi
+exit 0
+"#,
+    );
+    let runtime_root = tmp.path().join("runtime");
+    fs::create_dir(&runtime_root).unwrap();
+    fs::set_permissions(&runtime_root, fs::Permissions::from_mode(0o700)).unwrap();
+    let old = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    assert_ne!(
+        fs::read_to_string("/proc/sys/kernel/random/boot_id")
+            .unwrap()
+            .trim(),
+        old
+    );
+    for operation in ["resume", "delete"] {
+        let id = format!("reboot-{operation}");
+        let session = write_resumable_session_record_with_agent_bin(
+            &state,
+            &id,
+            "codex",
+            &format!("hs-codex-{id}"),
+            &cwd,
+            &[
+                "resume",
+                "resume-session-id",
+                "--cd",
+                cwd.to_str().unwrap(),
+                "--no-alt-screen",
+            ],
+            Some(&agent),
+        );
+        let artifacts = attach_provider_runtime(
+            tmp.path(),
+            &state,
+            &session,
+            &id,
+            "codex",
+            &format!("hs-codex-{id}"),
+        );
+        for artifact in artifacts {
+            fs::remove_file(artifact).unwrap();
+        }
+        fs::set_permissions(
+            runtime_root.join("agent-session"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        let path = session.join("session.json");
+        let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        record
+            .as_object_mut()
+            .unwrap()
+            .remove("tmux_runtime_never_launched");
+        record["runtime"]["generation"] = json!(2);
+        record["delete_tmux_identity"] = json!({
+            "launch_id": record["runtime"]["launch_id"], "session_id": "$7", "pane_id": "%7",
+            "pane_pid": 2000000000, "process_group_id": 2000000000,
+            "pid_namespace": {"device": 1, "inode": 1, "boot_id": old}
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        fs::write(&log, b"").unwrap();
+        let output = run(
+            tmp.path(),
+            &[
+                "--state-dir",
+                state.to_str().unwrap(),
+                operation,
+                &id,
+                "--tmux-bin",
+                tmux.to_str().unwrap(),
+                "--format",
+                "json",
+            ],
+            &[
+                ("AGENT_SESSION_FAKE_TMUX_LOG", log.to_str().unwrap()),
+                ("AGENT_SESSION_FAKE_TMUX_ABSENT_BEFORE_LAUNCH", "1"),
+                ("XDG_RUNTIME_DIR", runtime_root.to_str().unwrap()),
+                ("AGENT_SESSION_CODEX_RUNTIME", "app-server"),
+            ],
+        );
+        assert_eq!(
+            output.code,
+            0,
+            "{operation}: {} {}",
+            output.stdout_text(),
+            output.stderr_text()
+        );
+        let calls = tmux_calls(&log);
+        assert!(!calls.iter().any(|call| {
+            call.first().is_some_and(|arg| {
+                matches!(arg.as_str(), "kill-session" | "if-shell" | "send-keys")
+            })
+        }));
+        if operation == "delete" {
+            assert!(!session.exists());
+            assert!(
+                calls.is_empty(),
+                "prior-boot delete must not probe reused IDs: {calls:?}"
+            );
+        } else {
+            let resumed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(resumed["runtime"]["generation"], 3);
+            assert_eq!(resumed["runtime"]["kind"], "codex_app_server");
+            assert_eq!(resumed["runtime"]["codex_app_server_protocol"], "v2");
+            for key in [
+                "codex_app_server_socket",
+                "codex_app_server_proxy",
+                "codex_app_server_thread_handoff",
+                "codex_app_server_thread_attached",
+            ] {
+                assert!(Path::new(resumed["runtime"][key].as_str().unwrap()).is_absolute());
+                assert_ne!(resumed["runtime"][key], record["runtime"][key]);
+            }
+            assert_ne!(
+                resumed["runtime"]["launch_id"],
+                record["runtime"]["launch_id"]
+            );
+            assert_eq!(resumed["provider_resume"], record["provider_resume"]);
         }
     }
 }

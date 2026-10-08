@@ -27625,9 +27625,29 @@ esac
     }
 
     #[tokio::test]
-    async fn maintenance_reused_numeric_tmux_offers_fenced_no_signal_record_removal() {
+    async fn maintenance_reused_numeric_tmux_allows_fenced_retry_delete() {
+        assert_fenced_maintenance_removal(false).await;
+        assert_fenced_maintenance_removal(true).await;
+    }
+
+    async fn assert_fenced_maintenance_removal(record_only: bool) {
         let tmp = tempfile::TempDir::new().unwrap();
         let (mut st, calls) = reused_numeric_tmux_fixture(tmp.path());
+        if record_only {
+            // Missing identity evidence still requires the v2 no-signal fallback.
+            let path = tmp.path().join("sessions/reused-numeric-tmux/session.json");
+            let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            record
+                .as_object_mut()
+                .unwrap()
+                .remove("delete_tmux_identity");
+            std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        }
+        let action = if record_only {
+            "remove_console_record"
+        } else {
+            "retry_delete"
+        };
         let provider_root = tmp.path().join("provider/sessions");
         std::fs::create_dir_all(&provider_root).unwrap();
         let provider_history = provider_root.join("rollout.jsonl");
@@ -27683,20 +27703,26 @@ esac
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let preview = &body["data"]["maintenance"];
-        assert_eq!(preview["state"], "blocked", "{preview}");
-        assert_eq!(preview["issue"]["kind"], "runtime_identity_unavailable");
+        if record_only {
+            assert_eq!(preview["state"], "blocked", "{preview}");
+            assert_eq!(preview["issue"]["kind"], "runtime_identity_unavailable");
+        } else {
+            assert_eq!(preview["state"], "healthy", "{preview}");
+            assert!(preview["issue"].is_null());
+            assert_eq!(preview["boundary"]["kind"], "none");
+        }
         assert_eq!(preview["boundary"]["safe_process_count"], 0);
         assert!(
             preview["actions"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|a| a["id"] == "remove_console_record")
+                .any(|a| a["id"] == action)
         );
         let action_route = "/sessions/reused-numeric-tmux/maintenance/actions";
         let mut request = json!({
             "schema_version": "agent-session.session-maintenance.v2", "operation": "delete",
-            "action": "remove_console_record", "expected_session_incarnation": preview["session_incarnation"],
+            "action": action, "expected_session_incarnation": preview["session_incarnation"],
             "expected_session_generation": preview["session_generation"], "expected_preview_digest": preview["preview_digest"],
             "confirmed": false,
         });
@@ -27738,10 +27764,13 @@ esac
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(
-            body["data"]["maintenance_result"]["outcome"],
+        let expected = if record_only {
             "record_removed"
-        );
+        } else {
+            "deleted"
+        };
+        assert_eq!(body["data"]["maintenance_result"]["outcome"], expected);
+        assert_eq!(body["data"]["maintenance_result"]["status"], expected);
         assert!(!tmp.path().join("sessions/reused-numeric-tmux").exists());
         st.history_catalog.invalidate();
         let (status, history_after) =
@@ -27770,7 +27799,7 @@ esac
     }
 
     #[tokio::test]
-    async fn maintenance_reused_numeric_tmux_keeps_record_removal_v2_delete_only() {
+    async fn maintenance_reused_numeric_tmux_uses_safe_retry_in_both_contracts() {
         let tmp = tempfile::TempDir::new().unwrap();
         let (st, _) = reused_numeric_tmux_fixture(tmp.path());
         for (operation, schema) in [
@@ -27784,7 +27813,7 @@ esac
             )).await;
             assert_eq!(status, StatusCode::OK, "{body}");
             let preview = &body["data"]["maintenance"];
-            assert_eq!(preview["state"], "blocked", "{preview}");
+            assert_eq!(preview["state"], "healthy", "{preview}");
             assert!(
                 !preview["actions"]
                     .as_array()
