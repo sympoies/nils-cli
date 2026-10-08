@@ -342,6 +342,10 @@ fn safe_removal_requires_exact_provider_head_for_squash_merge() {
                 "provider-exact-head-merge"
             );
             assert_eq!(receipt["data"]["delivery_proof"]["default_branch"], "main");
+            assert_eq!(
+                receipt["data"]["delivery_proof"]["default_head"],
+                git(fixture._remote.path(), &["rev-parse", "refs/heads/main"]).trim()
+            );
             assert_eq!(receipt["data"]["delivery_proof"]["pr_number"], 1);
         } else {
             assert_eq!(
