@@ -242,6 +242,9 @@ jobs:
 
       - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, tempdir-leak-audit, test-stale-audit)
         env:
+          NILS_CLI_GATE_MIN_AVAILABLE_GIB: "2"
+          NILS_CLI_GATE_MEMORY_MAX_GIB: "12"
+          NILS_CLI_RUNNER_MAX: "2"
           NILS_CLI_TEST_RUNNER: nextest
           # A skip here would mean a lane that builds every binary lost coverage
           # silently; make it fatal instead. See `bin::sibling_or_skip`.
@@ -448,6 +451,7 @@ jobs:
       # suite on a second macOS runner.
       - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, tempdir-leak-audit, test-stale-audit)
         env:
+          NILS_CLI_RUNNER_MAX: "2"
           NILS_CLI_TEST_RUNNER: llvm-cov
           # The stale-test and completion freshness/parity audits give the same
           # answer on every OS, and the Linux `test` job runs them. Here they

@@ -40501,6 +40501,9 @@ fn main_agent_worker_start_reports_checkout_preclaim_failure_as_not_ready() {
     let bootstrap_key = format!("bootstrap-{}", &bootstrap_digest[..32]);
     let enter_hook = tmp.path().join("bootstrap-mismatch-on-second-enter");
     let enter_hook_output = tmp.path().join("bootstrap-mismatch-on-second-enter.json");
+    let enter_hook_complete = tmp
+        .path()
+        .join("bootstrap-mismatch-on-second-enter.complete");
     fs::write(
         &enter_hook,
         format!(
@@ -40530,6 +40533,7 @@ status=$?
 set -e
 [ "$status" -eq 65 ]
 grep -q worker-bootstrap-checkout-mismatch {output}
+: > {complete}
 "#,
             state_dir = state_dir.display(),
             worker_checkout = worker_checkout.display(),
@@ -40537,6 +40541,7 @@ grep -q worker-bootstrap-checkout-mismatch {output}
             main_agent = crate::main_agent_bin().display(),
             bootstrap_key = bootstrap_key,
             output = enter_hook_output.display(),
+            complete = enter_hook_complete.display(),
         ),
     )
     .expect("enter hook");
@@ -40561,7 +40566,7 @@ grep -q worker-bootstrap-checkout-mismatch {output}
             "--if-run-revision",
             "1",
             "--await-ready",
-            "2s",
+            "10s",
             "--idempotency-key",
             "worker-start-checkout-preclaim-0001",
             "--format",
@@ -40577,6 +40582,16 @@ grep -q worker-bootstrap-checkout-mismatch {output}
         ],
         &codex_home,
         &[&worker_checkout],
+    );
+    // The fake Enter hook runs asynchronously. Finish its writes before any
+    // assertion can unwind and remove the fixture, including a failed attempt.
+    let hook_deadline = Instant::now() + Duration::from_secs(12);
+    while !enter_hook_complete.exists() && Instant::now() < hook_deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        enter_hook_complete.exists(),
+        "bootstrap hook did not finish"
     );
     assert_eq!(started.code, 0, "stderr={}", started.stderr_text());
     let readiness = &data(&started)["readiness"];
