@@ -159,7 +159,7 @@ pub(crate) fn capture_previous_runtime(
     }
 }
 
-/// Positive process evidence wins; Linux retains namespace and boot checks.
+/// Positive current-boot process evidence wins; Linux retains namespace checks.
 /// Missing, invalid, or incarnation-mismatched persisted evidence stays unknown.
 fn legacy_process_runtime_status(
     record: &SessionRecord,
@@ -172,6 +172,9 @@ fn legacy_process_runtime_status(
     let Ok(Some(identity)) = crate::persisted_tmux_runtime_identity(record) else {
         return Unknown;
     };
+    if crate::runtime_is_from_prior_boot(&identity) {
+        return Stopped;
+    }
     #[cfg(target_os = "linux")]
     let status = crate::coordination_process_runtime_status(&identity);
     #[cfg(not(target_os = "linux"))]
@@ -186,7 +189,8 @@ fn legacy_process_runtime_status(
     }
 }
 
-/// A stopped process boundary also needs the exact old tmux target absent.
+/// Prior-boot evidence proves absence; otherwise a stopped process boundary
+/// also needs the exact managed tmux name absent.
 /// This probe runs before any replacement is launched (or during stop retirement).
 fn legacy_runtime_status(
     record: &SessionRecord,
@@ -198,12 +202,12 @@ fn legacy_runtime_status(
     if status != Stopped {
         return status;
     }
-    let Ok(Some(identity)) = crate::persisted_tmux_runtime_identity(record) else {
-        return Unknown;
-    };
+    if crate::recorded_runtime_is_from_prior_boot(record) {
+        return Stopped;
+    }
     match crate::verified_tmux_status_with_timeout(
         tmux_bin,
-        &identity.session_id,
+        &format!("={}", record.tmux_session),
         crate::DELETE_TERMINATION_VERIFY_TIMEOUT,
     )
     .as_str()
@@ -1892,6 +1896,59 @@ mod tests {
         .expect("record");
         test_support::seed_live_broker(context, "session", "old", runtime_identity);
         record
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn generation_two_legacy_broker_capture_ignores_recycled_numeric_selector() {
+        use pretty_assertions::assert_eq;
+        for prior_boot in [true, false] {
+            let temporary = tempfile::TempDir::new().unwrap();
+            let context = CliContext {
+                state_dir: temporary.path().to_path_buf(),
+                host: None,
+            };
+            let tmux = temporary.path().join("tmux");
+            fs::write(
+                &tmux,
+                "#!/bin/sh\nif [ \"$3\" = '$7' ]; then exit 0; fi\nprintf '%s\\n' \"can't find session: fixture\" >&2\nexit 1\n",
+            )
+            .unwrap();
+            fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+            let identity =
+                test_support::process_group_identity(test_support::exited_process_group());
+            let mut prior = seed_retirable_broker(&context, identity.clone());
+            prior.runtime.as_mut().unwrap().generation = 2;
+            let mut identity = identity;
+            identity["launch_id"] = json!("old");
+            identity["session_id"] = json!("$7");
+            if prior_boot {
+                let boot = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+                assert_ne!(crate::linux_boot_id().unwrap(), boot);
+                identity["pid_namespace"]["boot_id"] = json!(boot);
+            }
+            prior
+                .extra
+                .insert("delete_tmux_identity".to_string(), identity);
+            crate::write_session_record(&context, &prior).unwrap();
+            test_support::make_legacy_broker(&context, &prior.id, false);
+            let mut locked = lock_registry(&context).unwrap();
+            locked
+                .registry
+                .brokers
+                .get_mut(&prior.id)
+                .unwrap()
+                .generation = 2;
+            locked.save().unwrap();
+            drop(locked);
+
+            let captured = capture_previous_runtime(&prior, &tmux);
+            assert_eq!(captured.status, crate::CoordinationRuntimeStatus::Stopped);
+            let mut replacement = prior.clone();
+            replacement.runtime.as_mut().unwrap().generation = 3;
+            replacement.runtime.as_mut().unwrap().launch_id = "new".to_string();
+            provision_with_previous(&context, &replacement, Some(&captured)).unwrap();
+        }
     }
 
     #[test]
