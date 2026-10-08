@@ -174,6 +174,13 @@ pub(super) fn normalize_provider_hook(
         attention_kind: attention_kind.map(str::to_string),
         attention_correlation_ambiguous,
         attention_correlation_exact: exact_clarification || exact_elicitation,
+        completion_candidate: agent == AgentKind::Claude
+            && event_name == "Stop"
+            && raw.get("stop_hook_active").and_then(Value::as_bool) == Some(false)
+            && raw
+                .get("background_tasks")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty),
         confidence,
         source_kind: SourceKind::ProviderHook,
         provider_time: None,
@@ -239,6 +246,7 @@ pub(super) fn normalize_provider_notification(
         attention_kind: None,
         attention_correlation_ambiguous: false,
         attention_correlation_exact: false,
+        completion_candidate: false,
         confidence: Confidence::Authoritative,
         source_kind: SourceKind::ProviderHook,
         provider_time: None,
