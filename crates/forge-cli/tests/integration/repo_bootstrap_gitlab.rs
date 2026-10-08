@@ -2,7 +2,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 
 use super::support::{CmdOutput, StubEnv, parse_envelope, run_forge_cli};
 
@@ -38,6 +38,7 @@ impl Fixture {
         }
         let glab = stub.write_stub("glab", r#"#!/bin/sh
 if [ "$1" = config ]; then
+  [ "${GL_TEST_FAIL_TOKEN:-}" != yes ] || exit 1
   [ "$*" = 'config get token --host gitlab.example.com' ] || exit 9
   printf '%s\n' 'fixture-token-value'; exit 0
 fi
@@ -71,11 +72,13 @@ case "$endpoint" in
     [ -f "$GL_TEST_REMOTE_SHA" ] || missing
     header '200 OK'; printf '{"name":"trunk/topic","commit":{"id":"%s"}}\n' "$(cat "$GL_TEST_REMOTE_SHA")" ;;
   projects/team%2Fsub%2Fwidgets/repository/branches*)
+    [ -f "$GL_TEST_REMOTE_SHA" ] || [ "${GL_TEST_TAGS:-[]}" != '[]' ] || missing
     header '200 OK'
     if [ -f "$GL_TEST_REMOTE_SHA" ]; then
       printf '[{"name":"trunk/topic","commit":{"id":"%s"}}]\n' "$(cat "$GL_TEST_REMOTE_SHA")"
     else printf '%s\n' '[]'; fi ;;
   projects/team%2Fsub%2Fwidgets/repository/tags*)
+    [ -f "$GL_TEST_REMOTE_SHA" ] || [ "${GL_TEST_TAGS:-[]}" != '[]' ] || missing
     header '200 OK'
     if [ -f "$GL_TEST_REMOTE_SHA" ] && [ "${GL_TEST_TAG_AFTER_PUSH:-}" = yes ]; then
       printf '%s\n' '[{"name":"other"}]'
@@ -330,6 +333,28 @@ fn gitlab_bootstrap_never_repeats_an_indeterminate_first_push_on_resume() {
     assert_eq!(
         git.lines()
             .filter(|line| line.contains("push --porcelain"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn gitlab_bootstrap_resumes_after_credential_lookup_failure_before_push() {
+    let mut fixture = Fixture::new(false);
+    fixture.stub = fixture.stub.env("GL_TEST_FAIL_TOKEN", "yes");
+    assert_ne!(fixture.run(false, false, false).code, 0);
+    assert!(
+        !fs::read_to_string(&fixture.git_log)
+            .unwrap()
+            .contains("push ")
+    );
+    fixture.stub = fixture.stub.env("GL_TEST_FAIL_TOKEN", "no");
+    success(fixture.run(false, true, false));
+    assert_eq!(
+        fs::read_to_string(&fixture.git_log)
+            .unwrap()
+            .lines()
+            .filter(|line| line.contains("push "))
             .count(),
         1
     );

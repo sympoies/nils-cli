@@ -1042,20 +1042,21 @@ pub fn run(
                     None,
                 ));
             }
+            let askpass = write_askpass(&state_dir)?;
+            let auth = PushAuth {
+                token_env: client.token_env(),
+                username: client.push_username(&authenticated_login),
+                token: client.push_token()?,
+            };
             receipt.push_attempted = true;
             persist_receipt(&receipt_path, &receipt)?;
-            let askpass = write_askpass(&state_dir)?;
             let push = push_once(
                 &checkout,
                 &snapshot.clone_url,
                 &receipt.default_branch,
                 &local_sha,
                 &askpass,
-                PushAuth {
-                    token_env: client.token_env(),
-                    username: client.push_username(&authenticated_login),
-                    token: client.push_token()?,
-                },
+                auth,
             )?;
             let observed = client.branch_sha(client.branch_optional(
                 &owner,

@@ -147,16 +147,22 @@ impl GitlabClient {
         owner: &str,
         repo: &str,
         kind: &str,
+        allow_missing_repository: bool,
     ) -> Result<Vec<serde_json::Value>, ForgeError> {
         // Two entries suffice to detect any extra ref. A later page implies a
         // full first page, which already fails the one-branch bootstrap contract.
-        let value = self.api_json(
-            &format!(
-                "{}/repository/{kind}?per_page=2",
-                Self::project_endpoint(owner, repo)
-            ),
-            &[],
-        )?;
+        let endpoint = format!(
+            "{}/repository/{kind}?per_page=2",
+            Self::project_endpoint(owner, repo)
+        );
+        let value = if allow_missing_repository {
+            match self.api_optional(&endpoint)? {
+                Some(value) => value,
+                None => return Ok(Vec::new()),
+            }
+        } else {
+            self.api_json(&endpoint, &[])?
+        };
         value
             .as_array()
             .cloned()
@@ -164,8 +170,28 @@ impl GitlabClient {
     }
 
     pub(super) fn remote_empty(&self, owner: &str, repo: &str) -> Result<bool, ForgeError> {
-        Ok(self.refs(owner, repo, "branches")?.is_empty()
-            && self.refs(owner, repo, "tags")?.is_empty())
+        // A blank GitLab project may not have a repository yet, so ref lists
+        // return 404. Confirm the project still exists and reports empty before
+        // interpreting only those repository-level 404 responses as no refs.
+        let project = self.api_json(&Self::project_endpoint(owner, repo), &[])?;
+        if project
+            .get("path_with_namespace")
+            .and_then(serde_json::Value::as_str)
+            != Some(format!("{owner}/{repo}").as_str())
+        {
+            return Err(validation(
+                "remote_drift",
+                "GitLab project path changed before the first push",
+                None,
+            ));
+        }
+        let empty = project
+            .get("empty_repo")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| software("GitLab project read-back omitted empty_repo"))?;
+        Ok(empty
+            && self.refs(owner, repo, "branches", true)?.is_empty()
+            && self.refs(owner, repo, "tags", true)?.is_empty())
     }
 
     pub(super) fn parse_repo_snapshot(
@@ -238,14 +264,14 @@ impl GitlabClient {
         branch: &str,
         sha: &str,
     ) -> Result<(), ForgeError> {
-        let branches = self.refs(owner, repo, "branches")?;
+        let branches = self.refs(owner, repo, "branches", false)?;
         if branches.len() != 1
             || branches[0].get("name").and_then(serde_json::Value::as_str) != Some(branch)
             || branches[0]
                 .pointer("/commit/id")
                 .and_then(serde_json::Value::as_str)
                 != Some(sha)
-            || !self.refs(owner, repo, "tags")?.is_empty()
+            || !self.refs(owner, repo, "tags", false)?.is_empty()
         {
             return Err(validation(
                 "remote_drift",
