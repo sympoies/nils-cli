@@ -406,6 +406,44 @@ mod tests {
     }
 
     #[test]
+    fn observed_disappearance_is_unknown_and_deduplicated_per_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let context = context(dir.path());
+        let mut target: SessionRecord = serde_json::from_value(json!({
+            "schema_version": crate::SESSION_DOCUMENT_VERSION, "id":"observed", "agent":"claude",
+            "mode":"interactive", "title":null, "cwd":dir.path(), "tmux_session":"fixture",
+            "prompt_file":null, "log_file":null, "created_at":"2026-01-01T00:00:00Z", "updated_at":"2026-01-01T00:00:00Z",
+            "runtime":{"kind":"tmux","tmux_session":"fixture","generation":1,"started_at":"2026-01-01T00:00:00Z","launch_id":"old"},
+            "delete_tmux_identity":{"launch_id":"old","session_id":"$7","pane_id":"%7","pane_pid":7,"process_group_id":7}
+        })).unwrap();
+        observe_stopped(&context, &target);
+        observe_stopped(&context, &target);
+        let rows = read(&context, "observed", 10).unwrap();
+        assert_eq!(rows["records"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            rows["records"][0]["exit"]["reason"],
+            "runtime disappeared outside agent-session"
+        );
+        assert_eq!(rows["records"][0]["exit"]["code"], Value::Null);
+        assert_eq!(rows["records"][0]["exit"]["signal"], Value::Null);
+        assert_eq!(rows["records"][0]["exit"]["stopped_by"], Value::Null);
+        target.runtime.as_mut().unwrap().generation = 2;
+        record(
+            &context,
+            Some(&target),
+            "observed",
+            "stop",
+            "cli",
+            Ok(()),
+            None,
+        );
+        observe_stopped(&context, &target);
+        let rows = read(&context, "observed", 10).unwrap();
+        assert_eq!(rows["records"].as_array().unwrap().len(), 3);
+        assert_eq!(rows["records"][2]["exit"]["reason"], "runtime-stopped");
+    }
+
+    #[test]
     fn rotation_bounds_storage_and_preserves_recent_records() {
         let dir = tempfile::tempdir().unwrap();
         let context = context(dir.path());

@@ -22166,35 +22166,45 @@ esac
         )
         .await;
 
-        assert_eq!(create_status, StatusCode::OK, "body={create_body}");
-        let session = &create_body["data"]["session"];
-        assert_eq!(session["status"], "stopped");
-        assert_eq!(session["startup"]["state"], "failed");
-        assert_eq!(session["startup"]["stage"], "proxy");
         assert_eq!(
-            session["startup"]["failure_code"],
-            "runtime-helper-unavailable"
+            create_status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "body={create_body}"
         );
         assert_eq!(
-            session["startup"]["message"],
+            create_body["error"]["code"],
+            "codex-app-server-proxy-binary-unavailable"
+        );
+        assert_eq!(
+            create_body["error"]["message"],
+            "the agent-session runtime helper is unavailable"
+        );
+        let record_path = tmp.path().join("sessions/deleted-helper/session.json");
+        let record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+        let startup = &record["startup"];
+        assert_eq!(startup["state"], "failed");
+        assert_eq!(startup["stage"], "proxy");
+        assert_eq!(startup["failure_code"], "runtime-helper-unavailable");
+        assert_eq!(
+            startup["message"],
             "Session runtime helper is unavailable after an upgrade."
         );
         assert!(!create_body.to_string().contains("token-secret"));
         assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
 
-        let record_path = tmp.path().join("sessions/deleted-helper/session.json");
-        let record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
-        assert_eq!(record["startup"], session["startup"]);
+        let journal = crate::lifecycle::read(&st.context, "deleted-helper", 10).unwrap();
+        assert_eq!(
+            journal["records"][0]["result"]["code"],
+            create_body["error"]["code"]
+        );
+        assert_eq!(journal["records"][0]["caller"]["kind"], "serve");
         let (list_status, list_body) = call(router(st.clone()), get("/sessions")).await;
         assert_eq!(list_status, StatusCode::OK, "body={list_body}");
-        assert_eq!(
-            list_body["data"]["sessions"][0]["startup"],
-            session["startup"]
-        );
+        assert_eq!(list_body["data"]["sessions"][0]["startup"], *startup);
         let (glance_status, glance_body) =
             call(router(st), get("/sessions/deleted-helper/glance")).await;
         assert_eq!(glance_status, StatusCode::OK, "body={glance_body}");
-        assert_eq!(glance_body["data"]["glance"]["startup"], session["startup"]);
+        assert_eq!(glance_body["data"]["glance"]["startup"], *startup);
     }
 
     #[tokio::test]

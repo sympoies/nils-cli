@@ -1903,6 +1903,35 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     #[test]
+    fn controller_loss_records_one_exact_runtime_failure() {
+        use pretty_assertions::assert_eq;
+        let dir = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: dir.path().to_path_buf(),
+            host: None,
+        };
+        let record = seed_retirable_broker(&context, json!({}));
+        crate::write_session_record(&context, &record).unwrap();
+        let args = BrokerHeartbeatArgs {
+            session: "session".into(),
+            incarnation: "old".into(),
+            generation: 1,
+            capability_file: dir.path().join("unused-capability"),
+            format: crate::cli::OutputFormat::Json,
+        };
+        mark_degraded(&context, &args);
+        mark_degraded(&context, &args);
+        let journal = crate::lifecycle::read(&context, "session", 10).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["operation"], "broker-heartbeat-loss");
+        assert_eq!(rows[0]["session_incarnation"], "old");
+        assert_eq!(rows[0]["session_generation"], 1);
+        assert_eq!(rows[0]["result"]["code"], "coordination-broker-lost");
+        assert_eq!(rows[0]["result"]["proof_step"], "broker-state");
+    }
+
+    #[test]
     fn heartbeat_clock_boundary_does_not_report_a_healthy_broker_lost() {
         let temporary = tempfile::TempDir::new().expect("temporary state");
         let context = CliContext {
