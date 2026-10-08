@@ -172,6 +172,41 @@ impl RemovalFixture {
 }
 
 #[test]
+fn safe_removal_retains_target_behind_startup_lifecycle_barrier() {
+    use sha2::{Digest, Sha256};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::{
+        ffi::OsStrExt,
+        fs::{OpenOptionsExt, PermissionsExt},
+    };
+
+    let fixture = RemovalFixture::new();
+    let root = fs::canonicalize(&fixture.target).unwrap();
+    let key = format!("{:x}", Sha256::digest(root.as_os_str().as_bytes()));
+    let directory = fixture
+        .home
+        .path()
+        .join("sessions/coordination/worktree-lifecycle");
+    fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(directory.join(format!("{key}.lock")))
+        .unwrap();
+    // A startup that has not registered yet owns this barrier. Removal must
+    // retain the checkout even though the session and process snapshots are idle.
+    assert_eq!(unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) }, 0);
+    fixture.refused("removal-lifecycle-busy");
+    drop(lock);
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(!root.exists());
+}
+
+#[test]
 fn safe_removal_idle_clean_merged_succeeds_in_advisory() {
     let fixture = RemovalFixture::new();
     let result = fixture.remove("safe");

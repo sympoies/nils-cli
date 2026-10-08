@@ -7,7 +7,6 @@ use std::net::{TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 #[cfg(target_os = "linux")]
 use std::os::linux::net::SocketAddrExt;
-#[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStrExt;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::MetadataExt;
@@ -35,6 +34,89 @@ use super::cli::{
 // so their success fixtures must model real tmux by terminating the pane group.
 const FAKE_TMUX_KEEP_GROUP_FOR_VERIFIED_STOP: &str =
     if cfg!(target_os = "linux") { "1" } else { "0" };
+
+#[test]
+fn worktree_lifecycle_removal_barrier_prevents_start_and_run_publication() {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    for verb in ["start", "run"] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let checkout = tmp.path().join("checkout");
+        init_checkout(&checkout, "https://example.invalid/example/repository.git");
+        let nested = checkout.join("nested");
+        fs::create_dir(&nested).unwrap();
+        let state = tmp.path().join("state");
+        let directory = state.join("coordination/worktree-lifecycle");
+        fs::create_dir_all(&directory).unwrap();
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(
+            state.join("coordination"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let root = fs::canonicalize(&checkout).unwrap();
+        let key = format!("{:x}", Sha256::digest(root.as_os_str().as_bytes()));
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(directory.join(format!("{key}.lock")))
+            .unwrap();
+        assert_eq!(unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) }, 0);
+
+        // This fake records attempted launch and exits, so even a failing red
+        // regression leaves no provider or pane process behind.
+        let tmux = tmp.path().join("tmux");
+        let marker = tmp.path().join("launch-attempted");
+        fs::write(&tmux, "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = new-session ]; then touch \"$LIFECYCLE_LAUNCH_MARKER\"; exit 1; fi\ndone\nexit 0\n").unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let agent = fake_agent(tmp.path(), "codex");
+        let mut args = vec![
+            "--state-dir",
+            state.to_str().unwrap(),
+            verb,
+            "--agent",
+            "codex",
+            "--id",
+            "lifecycle-test",
+            "--cwd",
+            nested.to_str().unwrap(),
+            "--tmux-bin",
+            tmux.to_str().unwrap(),
+            "--agent-bin",
+            agent.to_str().unwrap(),
+            "--coordination-mode",
+            "advisory",
+            "--format",
+            "json",
+        ];
+        if verb == "run" {
+            args.extend(["--prompt", "fixture prompt"]);
+        }
+        let output = run_with_env(
+            tmp.path(),
+            &args,
+            &[("LIFECYCLE_LAUNCH_MARKER", marker.to_str().unwrap())],
+        );
+        assert_ne!(output.code, 0, "{}", output.stdout_text());
+        assert_eq!(
+            output.stdout_json()["error"]["code"],
+            "worktree-lifecycle-busy",
+            "startup must observe removal's barrier before publishing: {}",
+            output.stdout_text()
+        );
+        assert!(
+            !marker.exists(),
+            "startup entered the checkout while removal owned its fence"
+        );
+        assert!(
+            !state.join("sessions/lifecycle-test").exists(),
+            "a refused startup must not publish a session"
+        );
+    }
+}
 
 #[cfg(target_os = "linux")]
 fn provider_stop_canary_test_capability() -> Result<(), String> {
