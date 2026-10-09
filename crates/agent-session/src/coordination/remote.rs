@@ -479,6 +479,8 @@ pub(crate) fn client() -> Result<reqwest::blocking::Client, CliError> {
         .build()
         .map_err(|_| unavailable())
 }
+pub(super) const RECIPIENT_NOT_DISCOVERED_MESSAGE: &str = "remote recipient is absent from authorized peer discovery; check the exact --to session ID and --to-machine using `agent-session message peers` (unavailable hosts may be omitted)";
+
 fn unavailable() -> CliError {
     CliError::runtime(
         "remote-messaging-unavailable",
@@ -843,18 +845,20 @@ where
         let discovered = peers_from(config, &origin).inspect_err(|_| {
             observe_discovery_refusal(context, "peer-discovery-failed");
         })?;
-        let peer = discovered["peers"]
+        let mut matching = discovered["peers"]
             .as_array()
             .expect("validated peers")
             .iter()
-            .find(|p| {
-                p["machine"] == args.to_machine && p["session_id"] == args.to_session
-            })
+            .filter(|p| p["machine"] == args.to_machine && p["session_id"] == args.to_session);
+        let peer = matching
+            .clone()
+            .find(|p| p["messaging_supported"] == true)
+            .or_else(|| matching.next())
             .ok_or_else(|| {
                 observe_discovery_refusal(context, "recipient-not-discovered");
                 CliError::data(
-                    "remote-messaging-unavailable",
-                    "remote recipient is absent from authorized peer discovery; check the exact --to session ID and --to-machine using `agent-session message peers` (unavailable hosts may be omitted)",
+                    "remote-recipient-not-discovered",
+                    RECIPIENT_NOT_DISCOVERED_MESSAGE,
                     None,
                 )
             })?;
@@ -1822,9 +1826,175 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     const TOKEN: &str = "fixture-private-session-capability-0000000000001";
+    fn discovery_server(body: Value) -> (Config, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut config = config();
+        config.url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let mut bytes = [0; 1024];
+                let count = stream.read(&mut bytes).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&bytes[..count]);
+                assert!(request.len() <= 8192);
+            }
+            assert!(request.starts_with(b"GET /api/coordination/peers/v1?"));
+            let body = body.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        (config, server)
+    }
+    #[test]
+    fn discovery_service_rejects_absent_addresses_without_retrying() {
+        use super::super::service;
+        for (machine, session, valid_snapshot, expected, retryable, exit_code) in [
+            (
+                "host-b",
+                "wrong-recipient",
+                true,
+                "remote-recipient-not-discovered",
+                false,
+                65,
+            ),
+            (
+                "wrong-host",
+                "target",
+                true,
+                "remote-recipient-not-discovered",
+                false,
+                65,
+            ),
+            (
+                "host-b",
+                "target",
+                false,
+                "remote-messaging-unavailable",
+                true,
+                69,
+            ),
+        ] {
+            let (_temp, context) = fixture();
+            let (config, server) = discovery_server(json!({
+                "schema_version": if valid_snapshot { "agent-session.remote-peers.v1" } else { "invalid-fixture-schema" },
+                "peers": [{"machine":"host-b", "session_id":"target", "session_incarnation":"target-incarnation", "messaging_supported":true}]
+            }));
+            let error = service::submit(
+                &context,
+                &config.machine,
+                Some(&config),
+                service::Submit {
+                    service_id: "reporter".into(),
+                    service_generation: "generation-1".into(),
+                    to_machine: Some(machine.into()),
+                    to_session: session.into(),
+                    body: "private-service-body-canary".into(),
+                    idempotency_key: "service-discovery-key".into(),
+                    expires_in: None,
+                    expected_recipient_incarnation: None,
+                    category: None,
+                },
+                || Ok(()),
+            )
+            .unwrap_err();
+            server.join().unwrap();
+            let error = service::recovery(error).into_inner();
+            assert_eq!(error.code, expected);
+            assert_eq!(error.exit_code, exit_code);
+            assert_eq!(error.details.as_ref().unwrap()["retryable"], retryable);
+            assert_eq!(
+                error.details.as_ref().unwrap()["next_action"],
+                if retryable {
+                    "retry_same_submission"
+                } else {
+                    "inspect_submission_contract"
+                }
+            );
+            if !retryable {
+                assert!(
+                    error
+                        .message
+                        .contains("exact --to session ID and --to-machine")
+                );
+                assert!(error.message.contains("message peers"));
+            }
+            assert!(!format!("{error:?}").contains("private-service-body-canary"));
+            assert!(
+                lock_journal(&context)
+                    .unwrap()
+                    .registry
+                    .remote_outbox
+                    .is_empty()
+            );
+        }
+    }
+    #[test]
+    fn discovery_prefers_supported_exact_peer_over_duplicate_unsupported_peer() {
+        for unsupported_first in [true, false] {
+            let (_temp, context) = fixture();
+            let supported = json!({"machine":"host-b", "session_id":"target", "session_incarnation":"supported-incarnation", "messaging_supported":true});
+            let unsupported = json!({"machine":"host-b", "session_id":"target", "session_incarnation":"unsupported-incarnation", "messaging_supported":false});
+            let mut peers = vec![
+                json!({"machine":"wrong-host", "session_id":"target", "session_incarnation":"unrelated-incarnation", "messaging_supported":true}),
+                json!({"machine":"host-b", "session_id":"wrong-recipient", "session_incarnation":"unrelated-incarnation", "messaging_supported":true}),
+            ];
+            peers.extend(if unsupported_first {
+                [unsupported, supported]
+            } else {
+                [supported, unsupported]
+            });
+            let (config, server) = discovery_server(
+                json!({"schema_version":"agent-session.remote-peers.v1", "peers":peers}),
+            );
+            let result = submit(
+                &context,
+                &config,
+                "recipient",
+                TOKEN,
+                Submit {
+                    to_machine: "host-b".into(),
+                    to_session: "target".into(),
+                    body: "fixture body".into(),
+                    idempotency_key: "duplicate-peer-key".into(),
+                    reply_to: None,
+                    expires_in: None,
+                    reply_revision: None,
+                    expected_recipient_incarnation: Some("supported-incarnation".into()),
+                    category: None,
+                    forward: None,
+                },
+            );
+            server.join().unwrap();
+            let result = result.expect("supported exact peer must be selected");
+            assert_eq!(result["state"], "queued");
+            assert_eq!(
+                result["recipient"]["session_incarnation"],
+                "supported-incarnation"
+            );
+            let locked = lock_journal(&context).unwrap();
+            assert_eq!(locked.registry.remote_outbox.len(), 1);
+            assert_eq!(
+                locked.registry.remote_outbox[0]
+                    .envelope
+                    .to
+                    .session_incarnation,
+                "supported-incarnation"
+            );
+        }
+    }
     #[test]
     fn submit_distinguishes_absent_recipient_from_unsupported_peer() {
-        use std::io::{Read, Write};
         for (to_machine, to_session, supported, reason, valid_snapshot, expected, observed) in [
             (
                 "host-b",
@@ -1832,7 +2002,7 @@ mod tests {
                 true,
                 None,
                 true,
-                "remote-messaging-unavailable",
+                "remote-recipient-not-discovered",
                 "recipient-not-discovered",
             ),
             (
@@ -1841,7 +2011,7 @@ mod tests {
                 true,
                 None,
                 true,
-                "remote-messaging-unavailable",
+                "remote-recipient-not-discovered",
                 "recipient-not-discovered",
             ),
             (
@@ -1900,37 +2070,12 @@ mod tests {
             ),
         ] {
             let (_temp, context) = fixture();
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let mut config = config();
-            config.url = format!("http://{}", listener.local_addr().unwrap());
-            let server = std::thread::spawn(move || {
-                let (mut stream, _) = listener.accept().unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                let mut request = Vec::new();
-                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                    let mut bytes = [0; 1024];
-                    let count = stream.read(&mut bytes).unwrap();
-                    assert!(count > 0);
-                    request.extend_from_slice(&bytes[..count]);
-                    assert!(request.len() <= 8192);
-                }
-                assert!(request.starts_with(b"GET /api/coordination/peers/v1?"));
-                let body = json!({
-                    "schema_version": if valid_snapshot { "agent-session.remote-peers.v1" } else { "private-upstream-sentinel" },
-                    "peers": [{"machine": "host-b", "session_id": "target",
-                        "session_incarnation": "target-incarnation", "messaging_supported": supported,
-                        "messaging_unavailable_reason": reason}]
-                }).to_string();
-                write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                )
-                .unwrap();
-            });
+            let (config, server) = discovery_server(json!({
+                "schema_version": if valid_snapshot { "agent-session.remote-peers.v1" } else { "private-upstream-sentinel" },
+                "peers": [{"machine": "host-b", "session_id": "target",
+                    "session_incarnation": "target-incarnation", "messaging_supported": supported,
+                    "messaging_unavailable_reason": reason}]
+            }));
             let args = Submit {
                 to_machine: to_machine.into(),
                 to_session: to_session.into(),
