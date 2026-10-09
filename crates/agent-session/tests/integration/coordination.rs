@@ -36,6 +36,69 @@ const FAKE_TMUX_KEEP_GROUP_FOR_VERIFIED_STOP: &str =
     if cfg!(target_os = "linux") { "1" } else { "0" };
 
 #[test]
+fn worktree_lifecycle_state_root_override_cannot_split_removal_fence() {
+    use nils_common::worktree_lifecycle::Guard;
+    for verb in ["start", "run"] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let checkout = tmp.path().join("checkout");
+        init_checkout(&checkout, "https://example.invalid/example/repository.git");
+        let removal_state = tmp.path().join("removal-state");
+        let session_state = tmp.path().join("session-state");
+        let _guard = Guard::acquire(&removal_state, &checkout).unwrap();
+        let tmux = tmp.path().join("tmux");
+        let marker = tmp.path().join("launch-attempted");
+        fs::write(&tmux, "#!/bin/sh\nfor arg in \"$@\"; do\n if [ \"$arg\" = new-session ]; then touch \"$LIFECYCLE_LAUNCH_MARKER\"; exit 1; fi\ndone\nexit 0\n").unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let agent = fake_agent(tmp.path(), "codex");
+        let mut args = vec![
+            "--state-dir",
+            session_state.to_str().unwrap(),
+            verb,
+            "--agent",
+            "codex",
+            "--id",
+            "state-root-override",
+            "--cwd",
+            checkout.to_str().unwrap(),
+            "--tmux-bin",
+            tmux.to_str().unwrap(),
+            "--agent-bin",
+            agent.to_str().unwrap(),
+            "--coordination-mode",
+            "advisory",
+            "--format",
+            "json",
+        ];
+        if verb == "run" {
+            args.extend(["--prompt", "fixture prompt"]);
+        }
+        let output = run_resolved(
+            "agent-session",
+            &args,
+            &CmdOptions::new()
+                .without_ambient_managed_session_env()
+                .with_cwd(tmp.path())
+                .with_env(
+                    "AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME",
+                    removal_state.to_str().unwrap(),
+                )
+                .with_env("LIFECYCLE_LAUNCH_MARKER", marker.to_str().unwrap()),
+        );
+        assert_ne!(output.code, 0, "{}", output.stdout_text());
+        assert_eq!(
+            output.stdout_json()["error"]["code"],
+            "worktree-lifecycle-busy",
+            "an explicit session-state override must not split checkout exclusion"
+        );
+        assert!(
+            !marker.exists(),
+            "startup bypassed removal's checkout fence"
+        );
+        assert!(!session_state.join("sessions/state-root-override").exists());
+    }
+}
+
+#[test]
 fn worktree_lifecycle_removal_barrier_prevents_start_and_run_publication() {
     use std::os::unix::fs::OpenOptionsExt;
 

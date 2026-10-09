@@ -195,6 +195,25 @@ impl RemovalFixture {
 }
 
 #[test]
+fn safe_removal_queries_the_explicit_session_state_root() {
+    let fixture = RemovalFixture::new();
+    fs::write(
+        fixture.home.path().join("sessions/live-sessions.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "ok": true,
+            "data": [{ "status": "running", "cwd": fixture.target }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fixture.probes.write_exe(
+        "agent-session",
+        "#!/bin/sh\nif [ \"$1\" = --state-dir ] && [ \"$2\" = \"$AGENT_SESSION_STATE_DIR\" ] && [ \"$3\" = list ]; then\n cat \"$AGENT_SESSION_STATE_DIR/live-sessions.json\"\nelse\n printf '%s\\n' '{\"ok\":true,\"data\":[]}'\nfi\n",
+    );
+    fixture.refused("removal-session-active");
+}
+
+#[test]
 fn safe_removal_retains_target_behind_startup_lifecycle_barrier() {
     use sha2::{Digest, Sha256};
     use std::os::fd::AsRawFd;
