@@ -14,6 +14,7 @@ pub mod codex_account;
 pub mod codex_app_server;
 mod codex_runtime_dir;
 pub mod completion;
+mod conversation;
 #[doc(hidden)]
 pub mod coordination;
 mod diagnose;
@@ -348,6 +349,8 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Send(args) => run_send(&context, args),
         Command::Glance(args) => run_glance(&context, args),
         Command::Resume(args) => run_resume(&context, args),
+        Command::Clear(args) => conversation::run(&context, args, true),
+        Command::Rebind(args) => conversation::run(&context, args, false),
         Command::Account(args) => session_account::run_account(&context, args),
         Command::Activity(args) => run_activity(&context, args),
         Command::WorkContext(args) => coordination::run_work_context(&context, args),
@@ -474,6 +477,7 @@ fn command_format(command: &Command) -> OutputFormat {
         Command::Send(args) => args.format,
         Command::Glance(args) => args.format,
         Command::Resume(args) => args.format,
+        Command::Clear(args) | Command::Rebind(args) => args.format,
         Command::Account(args) => match &args.command {
             cli::AccountCommand::Show(args) => args.format,
             cli::AccountCommand::Switch(args) => args.format,

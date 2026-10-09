@@ -129,3 +129,18 @@ fn account_commands_report_typed_json_errors() {
         .expect("agent-session account switch without --account");
     assert_eq!(output.status.code(), Some(64), "--account is required");
 }
+
+#[test]
+fn conversation_clear_and_rebind_are_discoverable() {
+    for verb in ["clear", "rebind"] {
+        let output = Command::new(bin::resolve("agent-session"))
+            .args([verb, "--help"])
+            .output()
+            .expect("conversation lifecycle help");
+        assert!(output.status.success(), "missing supported {verb} command");
+        let help = String::from_utf8_lossy(&output.stdout);
+        for flag in ["--expect-idle", "--format", "--tmux-bin"] {
+            assert!(help.contains(flag), "missing {flag}: {help}");
+        }
+    }
+}

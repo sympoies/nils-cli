@@ -13,6 +13,40 @@ Consumers must ignore additive unknown fields. A future, unrecognized
 `turn_state.schema_version` must be treated as unknown rather than interpreted
 as a v1 phase.
 
+## Conversation transitions
+
+`agent-session clear <id> [--expect-idle] --format json` admits only a verified
+idle interactive Codex or Claude Code session. A native clear changes the
+provider conversation while retaining the managed session and runtime generation.
+The owning adapter records the exact new resume identity and replaces the old
+turn snapshot with an authoritative `waiting` state without a current or last
+turn. The record and activity mutation share the lifecycle/activity fences;
+persistence failure restores the previous snapshot and retains the private native
+observation for `agent-session rebind <id> --format json` recovery.
+
+Codex observes successful primary TUI `thread/start` responses before forwarding
+them, refreshes its attached marker and control-thread reducer, and excludes
+system-ephemeral threads. Clear/rebind require the live proxy’s versioned
+conversation capability, not only the historical app-server runtime kind. Older
+running proxies must stop/resume through the upgraded installation before
+conversation mutation. Claude accepts only the primary `SessionStart` with
+`source: "clear"` through the paired hook helper. That private receipt contains
+only the provider identity and event/source. The paired hook retains runtime-bound
+private recovery evidence before invoking the helper, so helper failures do not
+lose the identity. It never enters public hook output
+or the activity journal. Compaction and foreign-runtime receipts are excluded.
+
+Recovery never chooses a thread by transcript recency. Codex requires an
+unambiguous loaded primary identity and live provider `idle` status under the
+turn-admission fence. A rejected manual-marker mismatch retains the live TUI
+thread candidate for this verification, even with two loaded primary threads.
+Claude requires a newly observed clear receipt and verified idle activity; a
+matching new idle projection can complete an interrupted record commit. A prior
+runtime receipt is ignored after resume. Recovery refuses a stale same-ID Claude
+receipt and does not infer missing native evidence from history.
+A clear confirmation timeout returns `conversation-clear-unconfirmed`, retaining
+state for inspection/rebind instead of claiming that tmux delivery proved clear.
+
 ## Normalized turn event
 
 The local-only command accepts one JSON object on stdin:

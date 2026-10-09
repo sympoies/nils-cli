@@ -84,6 +84,10 @@ pub enum Command {
     Glance(GlanceArgs),
     /// Recreate a missing tmux runtime from exact provider resume metadata.
     Resume(ResumeArgs),
+    /// Clear an idle conversation in place and verify its new provider identity.
+    Clear(ConversationArgs),
+    /// Recover an idle session by rebinding its live provider conversation.
+    Rebind(ConversationArgs),
     /// Show or switch the provider account of one session.
     Account(AccountArgs),
     /// Inspect or ingest metadata-only agent turn lifecycle events.
@@ -1294,6 +1298,25 @@ pub struct GlanceArgs {
     #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub tmux_bin: Option<PathBuf>,
 
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct ConversationArgs {
+    /// Managed session id.
+    #[arg(value_name = "ID")]
+    pub id: String,
+    /// Assert idle admission (both operations always require idle).
+    #[arg(long)]
+    pub expect_idle: bool,
+    /// Bound the wait for provider-native clear confirmation, in seconds.
+    #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u64).range(1..=120))]
+    pub timeout: u64,
+    /// tmux binary override.
+    #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub tmux_bin: Option<PathBuf>,
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,

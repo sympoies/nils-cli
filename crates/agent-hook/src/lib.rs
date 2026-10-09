@@ -2,6 +2,7 @@ mod adapter;
 mod cli;
 mod completion;
 mod contract;
+mod conversation_receipt;
 mod data_policy;
 mod degradation;
 mod degraded;
