@@ -96,6 +96,27 @@ fn retire(context: &agent_session::CliContext, tmux: &Path, extra: &[&str]) -> C
     run_resolved("agent-session", &args, &CmdOptions::new())
 }
 
+fn lifecycle(context: &agent_session::CliContext) -> Vec<Value> {
+    let output = run_resolved(
+        "agent-session",
+        &[
+            "--state-dir",
+            context.state_dir.to_str().unwrap(),
+            "logs",
+            "--lifecycle",
+            "recoverable",
+            "--format",
+            "json",
+        ],
+        &CmdOptions::new(),
+    );
+    assert_eq!(output.code, 0, "{}", output.stderr_text());
+    output.stdout_json()["data"]["records"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
 #[test]
 fn retirement_preview_is_read_only_and_apply_replays_one_atomic_receipt() {
     let dir = tempfile::tempdir().unwrap();
@@ -144,6 +165,32 @@ fn retirement_preview_is_read_only_and_apply_replays_one_atomic_receipt() {
     assert_eq!(
         changed_request.stdout_json()["error"]["code"],
         "idempotency-key-reused"
+    );
+    let rows = lifecycle(&context);
+    assert_eq!(rows.len(), 4);
+    for row in &rows {
+        assert_eq!(row["operation"], "broker-retire-stopped");
+        assert_eq!(row["caller"]["kind"], "cli");
+        assert_eq!(row["session_incarnation"], "prior-runtime");
+        assert_eq!(row["session_generation"], 1);
+    }
+    assert!(rows[..3].iter().all(|row| row["result"]["ok"] == true));
+    let mut replaced = state;
+    replaced["brokers"]["recoverable"]["state"] = json!("ready");
+    replaced["brokers"]["recoverable"]["capability_digest"] = json!("replacement-capability");
+    private_json(&registry_path, &replaced);
+    let refused_replay = retire(&context, &tmux, &["--apply"]);
+    assert_ne!(refused_replay.code, 0);
+    assert_eq!(
+        refused_replay.stdout_json()["error"]["details"]["proof_step"],
+        "broker-state"
+    );
+    let rows = lifecycle(&context);
+    assert_eq!(rows.len(), 5);
+    assert_eq!(rows[4]["result"]["proof_step"], "broker-state");
+    assert_eq!(
+        rows[4]["result"]["message"],
+        refused_replay.stdout_json()["error"]["message"]
     );
 }
 
@@ -298,6 +345,17 @@ fn retirement_cleanup_failure_keeps_revocation_and_retries_from_receipt() {
             .unwrap();
     assert_eq!(registry["brokers"]["recoverable"]["capability_digest"], "");
     assert_eq!(registry["receipts"].as_object().unwrap().len(), 1);
+    let rows = lifecycle(&context);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0]["result"]["code"],
+        failed.stdout_json()["error"]["code"]
+    );
+    assert_eq!(
+        rows[0]["result"]["message"],
+        failed.stdout_json()["error"]["message"]
+    );
+    assert_eq!(rows[0]["result"]["proof_step"], "capability-present");
     fs::remove_dir(&capability).unwrap();
     let replay = retire(&context, &tmux, &["--apply"]);
     assert_eq!(replay.code, 0, "{}", replay.stdout_text());
