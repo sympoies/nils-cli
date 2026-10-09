@@ -3201,6 +3201,9 @@ pub(crate) fn probe_idle_conversation(
         send_json(&mut websocket, initialized_notification()).await?;
         send_json(&mut websocket, loaded_threads_request(2)).await?;
         let result = receive_response_with_timeout(&mut websocket, 2, None, None, CONTROL_RESPONSE_TIMEOUT).await?;
+        if result.get("nextCursor").is_some_and(|cursor| !cursor.is_null()) {
+            return Err("loaded conversation identities are incomplete".to_string());
+        }
         let ids = loaded_thread_ids(&result).ok_or_else(|| "loaded conversation identities were invalid".to_string())?;
         let mut primary = Vec::new();
         for id in ids {
@@ -10122,6 +10125,54 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             }
             server.await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn conversation_recovery_refuses_paginated_thread_list() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("probe-pagination.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = record_with_runtime("conversation-probe-pagination", &path);
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let initialize = receive_json(&mut socket).await;
+            respond(&mut socket, &initialize, json!({})).await;
+            assert_eq!(receive_json(&mut socket).await["method"], "initialized");
+            let loaded = receive_json(&mut socket).await;
+            assert_eq!(loaded["method"], "thread/loaded/list");
+            respond(
+                &mut socket,
+                &loaded,
+                json!({"data":["live-thread"],"nextCursor":"next-page"}),
+            )
+            .await;
+            assert!(
+                matches!(
+                    socket.next().await,
+                    None | Some(Ok(Message::Close(_))) | Some(Err(_))
+                ),
+                "recovery must not read a candidate from an incomplete thread list"
+            );
+        });
+
+        let outcome = tokio::task::spawn_blocking(move || {
+            probe_idle_conversation(&context, &record, None)
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            outcome.unwrap_err().code(),
+            "conversation-live-identity-unverified"
+        );
+        server.await.unwrap();
     }
 
     #[tokio::test]
