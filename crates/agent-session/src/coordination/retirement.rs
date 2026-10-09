@@ -60,7 +60,7 @@ fn retire_locked(context: &CliContext, args: BrokerRetireStoppedArgs) -> Result<
             return Err(CliError::data(
                 "session-incarnation-conflict",
                 "retired broker was replaced before receipt replay",
-                None,
+                Some(json!({"proof_step":"broker-state"})),
             ));
         }
         if args.apply {

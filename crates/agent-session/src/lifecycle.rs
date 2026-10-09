@@ -113,6 +113,8 @@ fn failure_message(error: &CliError) -> String {
         | "the account switch stopped the session but could not resume it; the next account is marked failed and can be retried by resuming"
         | "operator retirement requires every stopped-runtime proof to pass"
         | "stopped-runtime proof changed before retirement"
+        | "retired broker was replaced before receipt replay"
+        | "broker capability is revoked; retry the same retirement request to finish private-file cleanup"
         | "coordination broker is unavailable" => error.message().to_string(),
         _ => "lifecycle operation failed; inspect the returned error code".to_string(),
     }
