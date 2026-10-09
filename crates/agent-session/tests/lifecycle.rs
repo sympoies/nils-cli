@@ -131,7 +131,7 @@ fn refused_delete_account_and_broker_recovery_each_record_one_attempt() {
             ],
         ),
         (
-            "stop",
+            "broker-stop",
             vec![
                 "broker",
                 "stop",

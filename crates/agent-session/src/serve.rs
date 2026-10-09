@@ -18189,6 +18189,46 @@ esac
         .unwrap();
     }
 
+    fn assert_serve_lifecycle(dir: &Path, id: &str, expected: &[(&str, usize)]) {
+        let context = CliContext {
+            state_dir: dir.to_path_buf(),
+            host: None,
+        };
+        let journal = crate::lifecycle::read(&context, id, 100).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        let operations = [
+            "start",
+            "import",
+            "create",
+            "resume",
+            "stop",
+            "delete",
+            "archive",
+            "account-switch",
+            "history-resume",
+        ];
+        let rows = rows
+            .iter()
+            .filter(|r| operations.contains(&r["operation"].as_str().unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.len(),
+            expected.iter().map(|(_, n)| n).sum::<usize>(),
+            "{journal}"
+        );
+        for (operation, count) in expected {
+            let matching = rows
+                .iter()
+                .filter(|r| r["operation"] == *operation)
+                .collect::<Vec<_>>();
+            assert_eq!(matching.len(), *count, "{journal}");
+            assert!(
+                matching.iter().all(|r| r["caller"]["kind"] == "serve"),
+                "{journal}"
+            );
+        }
+    }
+
     async fn call(app: Router, req: Request<Body>) -> (StatusCode, Value) {
         let resp = app.oneshot(req).await.unwrap();
         let status = resp.status();
@@ -20680,6 +20720,7 @@ esac
         assert_eq!(status, StatusCode::OK, "body={body}");
         let managed_id = body["data"]["session"]["id"].as_str().unwrap();
         assert_eq!(managed_id, "kept-dsh");
+        assert_serve_lifecycle(tmp.path(), managed_id, &[("history-resume", 1)]);
         assert_eq!(body["data"]["session"]["title_mode"], "pinned");
         assert_eq!(
             body["data"]["session"]["title"],
@@ -21223,6 +21264,7 @@ esac
             crate::board::closed_reasons_for_test(&context),
             vec![("archive-me".to_string(), "archived".to_string())]
         );
+        assert_serve_lifecycle(tmp.path(), "archive-me", &[("archive", 2)]);
     }
 
     #[tokio::test]
@@ -22120,7 +22162,7 @@ esac
     }
 
     #[tokio::test]
-    async fn deleted_runtime_helper_returns_a_durable_safe_startup_failure() {
+    async fn lifecycle_review_deleted_runtime_helper_returns_reachable_failure() {
         let lock = GlobalStateLock::new();
         let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
@@ -22182,6 +22224,11 @@ esac
         let record_path = tmp.path().join("sessions/deleted-helper/session.json");
         let record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
         let startup = &record["startup"];
+        assert_eq!(
+            create_body["error"]["details"]["session_id"],
+            "deleted-helper"
+        );
+        assert_eq!(create_body["error"]["details"]["startup"], *startup);
         assert_eq!(startup["state"], "failed");
         assert_eq!(startup["stage"], "proxy");
         assert_eq!(startup["failure_code"], "runtime-helper-unavailable");
@@ -22205,6 +22252,41 @@ esac
             call(router(st), get("/sessions/deleted-helper/glance")).await;
         assert_eq!(glance_status, StatusCode::OK, "body={glance_body}");
         assert_eq!(glance_body["data"]["glance"]["startup"], *startup);
+    }
+
+    #[tokio::test]
+    async fn lifecycle_review_create_failure_retains_cleanup_projection() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launcher = fake_agent(tmp.path(), "fixture-provider");
+        let tmux = executable(
+            &tmp.path().join("failed-tmux"),
+            "#!/bin/sh\ncase \"$1\" in\n new-session) exit 42 ;;\n display-message) printf '%s\\n' 'malformed identity'; exit 0 ;;\n has-session) exit 0 ;;\n *) exit 0 ;;\nesac\n",
+        );
+        let profile = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id":"fixture-profile", "label":"Fixture", "agent":"claude", "agent_bin":launcher
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let mut st = state(tmp.path(), Some(TOKEN), tmux);
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profile;
+        let (status, body) = call(router(st), post_json("/sessions", Some(TOKEN), json!({
+            "id":"cleanup-failure", "agent":"claude", "agent_profile":"fixture-profile", "cwd":tmp.path()
+        }))).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        let retained: Value = serde_json::from_slice(
+            &fs::read(tmp.path().join("sessions/cleanup-failure/session.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["error"]["details"]["session_id"], "cleanup-failure");
+        assert_eq!(body["error"]["details"]["startup"], retained["startup"]);
+        assert!(retained["startup"]["cleanup"].is_object(), "{retained}");
+        assert_eq!(
+            body["error"]["details"]["cleanup"],
+            retained["startup"]["cleanup"]
+        );
+        assert_serve_lifecycle(tmp.path(), "cleanup-failure", &[("create", 1)]);
     }
 
     #[tokio::test]
@@ -26856,6 +26938,7 @@ esac
             calls.contains(launcher.to_string_lossy().as_ref()),
             "managed resume must use the durable launcher: {calls:?}"
         );
+        assert_serve_lifecycle(tmp.path(), "profile-resume", &[("resume", 1)]);
     }
 
     #[tokio::test]
@@ -30731,6 +30814,11 @@ esac
             )),
             "{calls:?}"
         );
+        assert_serve_lifecycle(
+            tmp.path(),
+            "claude-switch",
+            &[("account-switch", 1), ("resume", 1)],
+        );
     }
 
     #[tokio::test]
@@ -32565,6 +32653,7 @@ esac
             assert_eq!(status, StatusCode::OK, "body={body}");
             assert_eq!(body["ok"], true);
             assert_eq!(body["data"]["deleted"]["deleted"], true);
+            assert_serve_lifecycle(tmp.path(), &id, &[("delete", 1)]);
             assert!(!session_dir.exists(), "{agent} metadata must be removed");
             assert!(
                 !runtime_metadata.exists(),

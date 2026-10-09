@@ -20745,39 +20745,48 @@ fi
     }
 
     #[test]
-    fn held_launch_executes_broker_and_provider_lifecycle_under_terminal() {
+    fn lifecycle_review_held_launch_supports_current_and_legacy_brokers() {
         use std::fs::File;
         use std::os::fd::FromRawFd;
         use std::process::Stdio;
 
-        let tmp = tempfile::TempDir::new().unwrap();
-        let gate = tmp.path().join("launch-ready");
-        let broker_gate = tmp.path().join("broker-provisioned");
-        let heartbeat = tmp.path().join("heartbeat");
-        let capability = tmp.path().join("capability");
-        let events = tmp.path().join("events");
-        let broker = tmp.path().join("broker");
-        let provider = tmp.path().join("provider");
-        fs::write(&capability, "capability\n").unwrap();
-        fs::write(
-            &broker,
-            r#"#!/bin/sh
+        for legacy in [false, true] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let gate = tmp.path().join("launch-ready");
+            let broker_gate = tmp.path().join("broker-provisioned");
+            let heartbeat = tmp.path().join("heartbeat");
+            let capability = tmp.path().join("capability");
+            let events = tmp.path().join("events");
+            let broker = tmp.path().join("broker");
+            let provider = tmp.path().join("provider");
+            fs::write(&capability, "capability\n").unwrap();
+            fs::write(
+                &broker,
+                r#"#!/bin/sh
 case " $* " in
   *" broker heartbeat "*)
     printf 'heartbeat\n' >> "$HELD_LAUNCH_EVENTS"
     while :; do sleep 0.05; done
     ;;
   *" broker stop "*)
-    printf 'stop\n' >> "$HELD_LAUNCH_EVENTS"
+    case " $* " in
+      *" --exit-code "*)
+        if [ "$HELD_LAUNCH_LEGACY" = 1 ]; then
+          printf 'flag-rejected\n' >> "$HELD_LAUNCH_EVENTS"; exit 64
+        fi
+        while [ "$1" != --exit-code ]; do shift; done
+        printf 'stop:%s\n' "$2" >> "$HELD_LAUNCH_EVENTS" ;;
+      *) printf 'stop-legacy\n' >> "$HELD_LAUNCH_EVENTS" ;;
+    esac
     ;;
   *) exit 64 ;;
 esac
 "#,
-        )
-        .unwrap();
-        fs::write(
-            &provider,
-            r#"#!/bin/sh
+            )
+            .unwrap();
+            fs::write(
+                &provider,
+                r#"#!/bin/sh
 if [ -t 0 ]; then
   printf 'provider-tty\n' >> "$HELD_LAUNCH_EVENTS"
   exit 23
@@ -20785,130 +20794,136 @@ fi
 printf 'provider-no-tty\n' >> "$HELD_LAUNCH_EVENTS"
 exit 97
 "#,
-        )
-        .unwrap();
-        for executable in [&broker, &provider] {
-            fs::set_permissions(executable, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-
-        let mut master_fd = -1;
-        let mut slave_fd = -1;
-        // SAFETY: openpty initializes both descriptors; each successful descriptor is
-        // immediately transferred into exactly one File and closed by its owner.
-        let openpty_status = unsafe {
-            libc::openpty(
-                &mut master_fd,
-                &mut slave_fd,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
             )
-        };
-        assert_eq!(openpty_status, 0, "openpty: {}", io::Error::last_os_error());
-        // SAFETY: openpty returned two fresh, owned descriptors above.
-        let _pty_master = unsafe { File::from_raw_fd(master_fd) };
-        // SAFETY: openpty returned two fresh, owned descriptors above.
-        let pty_slave = unsafe { File::from_raw_fd(slave_fd) };
+            .unwrap();
+            for executable in [&broker, &provider] {
+                fs::set_permissions(executable, fs::Permissions::from_mode(0o700)).unwrap();
+            }
 
-        let mut command = Command::new("sh");
-        command
-            .arg("-c")
-            .arg(super::HELD_LAUNCH_SCRIPT)
-            .arg("agent-session-held-launch")
-            .arg(&gate)
-            .arg(&broker_gate)
-            .arg(&heartbeat)
-            .arg(&capability)
-            .arg("incarnation")
-            .arg("7")
-            .arg(&broker)
-            .arg(&provider)
-            .env("AGENT_SESSION_STATE_DIR", tmp.path())
-            .env("AGENT_SESSION_ID", "held-launch-test")
-            .env("HELD_LAUNCH_EVENTS", &events)
-            .stdin(Stdio::from(pty_slave))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let mut child = command.spawn().unwrap();
+            let mut master_fd = -1;
+            let mut slave_fd = -1;
+            // SAFETY: openpty initializes both descriptors; each successful descriptor is
+            // immediately transferred into exactly one File and closed by its owner.
+            let openpty_status = unsafe {
+                libc::openpty(
+                    &mut master_fd,
+                    &mut slave_fd,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_eq!(openpty_status, 0, "openpty: {}", io::Error::last_os_error());
+            // SAFETY: openpty returned two fresh, owned descriptors above.
+            let _pty_master = unsafe { File::from_raw_fd(master_fd) };
+            // SAFETY: openpty returned two fresh, owned descriptors above.
+            let pty_slave = unsafe { File::from_raw_fd(slave_fd) };
 
-        thread::sleep(Duration::from_millis(100));
-        let before_provision = fs::read_to_string(&events).unwrap_or_default();
-        if !before_provision.is_empty() {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("heartbeat ran before broker provisioning: {before_provision:?}");
-        }
+            let mut command = Command::new("sh");
+            command
+                .arg("-c")
+                .arg(super::HELD_LAUNCH_SCRIPT)
+                .arg("agent-session-held-launch")
+                .arg(&gate)
+                .arg(&broker_gate)
+                .arg(&heartbeat)
+                .arg(&capability)
+                .arg("incarnation")
+                .arg("7")
+                .arg(&broker)
+                .arg(&provider)
+                .env("AGENT_SESSION_STATE_DIR", tmp.path())
+                .env("AGENT_SESSION_ID", "held-launch-test")
+                .env("HELD_LAUNCH_EVENTS", &events)
+                .env("HELD_LAUNCH_LEGACY", if legacy { "1" } else { "0" })
+                .stdin(Stdio::from(pty_slave))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let mut child = command.spawn().unwrap();
 
-        fs::write(&broker_gate, "ready\n").unwrap();
-        let heartbeat_deadline = Instant::now() + Duration::from_secs(2);
-        while !fs::read_to_string(&events)
-            .unwrap_or_default()
-            .contains("heartbeat\n")
-        {
-            if Instant::now() >= heartbeat_deadline {
+            thread::sleep(Duration::from_millis(100));
+            let before_provision = fs::read_to_string(&events).unwrap_or_default();
+            if !before_provision.is_empty() {
                 let _ = child.kill();
                 let _ = child.wait();
-                panic!("heartbeat did not start after broker provisioning");
+                panic!("heartbeat ran before broker provisioning: {before_provision:?}");
             }
-            thread::sleep(Duration::from_millis(10));
+
+            fs::write(&broker_gate, "ready\n").unwrap();
+            let heartbeat_deadline = Instant::now() + Duration::from_secs(2);
+            while !fs::read_to_string(&events)
+                .unwrap_or_default()
+                .contains("heartbeat\n")
+            {
+                if Instant::now() >= heartbeat_deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("heartbeat did not start after broker provisioning");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(fs::read_to_string(&events).unwrap(), "heartbeat\n");
+
+            fs::write(&gate, "ready\n").unwrap();
+            let exit_deadline = Instant::now() + Duration::from_secs(2);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() >= exit_deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("held launch did not exit after the provider completed");
+                }
+                thread::sleep(Duration::from_millis(10));
+            };
+
+            assert_eq!(status.code(), Some(23));
+            assert_eq!(
+                fs::read_to_string(&events).unwrap(),
+                if legacy {
+                    "heartbeat\nprovider-tty\nflag-rejected\nstop-legacy\n"
+                } else {
+                    "heartbeat\nprovider-tty\nstop:23\n"
+                }
+            );
+            assert!(!capability.exists());
+            assert!(!broker_gate.exists());
+            assert!(!gate.exists());
+            assert!(!fs::read_dir(tmp.path()).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("heartbeat.done.")
+            }));
         }
-        assert_eq!(fs::read_to_string(&events).unwrap(), "heartbeat\n");
+        use pretty_assertions::assert_eq;
+        #[cfg(target_os = "linux")]
+        use std::env;
+        use std::fs;
+        use std::io;
+        #[cfg(target_os = "linux")]
+        use std::io::BufRead as _;
+        #[cfg(target_os = "linux")]
+        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::process::CommandExt;
+        use std::path::Path;
+        #[cfg(target_os = "linux")]
+        use std::path::PathBuf;
+        #[cfg(target_os = "linux")]
+        use std::process::Stdio;
+        use std::process::{Child, Command};
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::{Duration, Instant};
 
-        fs::write(&gate, "ready\n").unwrap();
-        let exit_deadline = Instant::now() + Duration::from_secs(2);
-        let status = loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                break status;
+        fn test_context(state_dir: &Path) -> CliContext {
+            CliContext {
+                state_dir: state_dir.to_path_buf(),
+                host: None,
             }
-            if Instant::now() >= exit_deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("held launch did not exit after the provider completed");
-            }
-            thread::sleep(Duration::from_millis(10));
-        };
-
-        assert_eq!(status.code(), Some(23));
-        assert_eq!(
-            fs::read_to_string(&events).unwrap(),
-            "heartbeat\nprovider-tty\nstop\n"
-        );
-        assert!(!capability.exists());
-        assert!(!broker_gate.exists());
-        assert!(!gate.exists());
-        assert!(!fs::read_dir(tmp.path()).unwrap().any(|entry| {
-            entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .starts_with("heartbeat.done.")
-        }));
-    }
-    use pretty_assertions::assert_eq;
-    #[cfg(target_os = "linux")]
-    use std::env;
-    use std::fs;
-    use std::io;
-    #[cfg(target_os = "linux")]
-    use std::io::BufRead as _;
-    #[cfg(target_os = "linux")]
-    use std::os::unix::fs::MetadataExt;
-    use std::os::unix::fs::PermissionsExt;
-    use std::os::unix::process::CommandExt;
-    use std::path::Path;
-    #[cfg(target_os = "linux")]
-    use std::path::PathBuf;
-    #[cfg(target_os = "linux")]
-    use std::process::Stdio;
-    use std::process::{Child, Command};
-    use std::sync::mpsc;
-    use std::thread;
-    use std::time::{Duration, Instant};
-
-    fn test_context(state_dir: &Path) -> CliContext {
-        CliContext {
-            state_dir: state_dir.to_path_buf(),
-            host: None,
         }
     }
 

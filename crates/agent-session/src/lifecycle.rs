@@ -440,10 +440,7 @@ mod tests {
         observe_stopped(&context, &target);
         let rows = read(&context, "observed", 10).unwrap();
         assert_eq!(rows["records"].as_array().unwrap().len(), 1);
-        assert_eq!(
-            rows["records"][0]["exit"]["reason"],
-            "runtime disappeared outside agent-session"
-        );
+        assert_eq!(rows["records"][0]["exit"]["reason"], "runtime-disappeared");
         assert_eq!(rows["records"][0]["exit"]["code"], Value::Null);
         assert_eq!(rows["records"][0]["exit"]["signal"], Value::Null);
         assert_eq!(rows["records"][0]["exit"]["stopped_by"], Value::Null);
@@ -461,6 +458,82 @@ mod tests {
         let rows = read(&context, "observed", 10).unwrap();
         assert_eq!(rows["records"].as_array().unwrap().len(), 3);
         assert_eq!(rows["records"][2]["exit"]["reason"], "runtime-stopped");
+    }
+
+    #[tokio::test]
+    async fn lifecycle_review_preserves_large_and_non_json_responses() {
+        use axum::{
+            body::{Body, to_bytes},
+            http::StatusCode,
+            response::Response,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let context = context(dir.path());
+        for (id, status, bytes) in [
+            ("large", StatusCode::OK, vec![b'x'; 1024 * 1024 + 1]),
+            (
+                "failed",
+                StatusCode::BAD_GATEWAY,
+                b"upstream unavailable".to_vec(),
+            ),
+        ] {
+            let original = Response::builder()
+                .status(status)
+                .header("x-fixture", "retained")
+                .body(Body::from(bytes.clone()))
+                .unwrap();
+            let observed = response(&context, id, "resume", None, original).await;
+            assert_eq!(observed.status(), status);
+            assert_eq!(observed.headers()["x-fixture"], "retained");
+            assert_eq!(
+                to_bytes(observed.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .as_ref(),
+                bytes
+            );
+            let rows = read(&context, id, 10).unwrap();
+            assert_eq!(rows["records"].as_array().unwrap().len(), 1);
+            assert_eq!(rows["records"][0]["result"]["ok"], status.is_success());
+        }
+        let broken = axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from_stream(futures_util::stream::iter([Err::<
+                Vec<u8>,
+                _,
+            >(
+                std::io::Error::other("fixture body failure"),
+            )])))
+            .unwrap();
+        let observed = response(&context, "broken", "resume", None, broken).await;
+        assert_eq!(observed.status(), StatusCode::OK);
+        assert!(to_bytes(observed.into_body(), usize::MAX).await.is_err());
+    }
+
+    #[test]
+    fn lifecycle_review_controller_stop_does_not_claim_an_operator_actor() {
+        let dir = tempfile::tempdir().unwrap();
+        let context = context(dir.path());
+        let target: SessionRecord = serde_json::from_value(json!({
+            "schema_version": crate::SESSION_DOCUMENT_VERSION, "id":"legacy", "agent":"claude",
+            "mode":"interactive", "title":null, "cwd":dir.path(), "tmux_session":"fixture",
+            "prompt_file":null, "log_file":null, "created_at":"2026-01-01T00:00:00Z", "updated_at":"2026-01-01T00:00:00Z",
+            "runtime":{"kind":"tmux","tmux_session":"fixture","generation":1,"started_at":"2026-01-01T00:00:00Z","launch_id":"legacy"},
+            "delete_tmux_identity":{"launch_id":"legacy","session_id":"$7","pane_id":"%7","pane_pid":7,"process_group_id":7}
+        })).unwrap();
+        record(
+            &context,
+            Some(&target),
+            &target.id,
+            "stop",
+            "controller",
+            Ok(()),
+            None,
+        );
+        observe_stopped(&context, &target);
+        let rows = read(&context, &target.id, 10).unwrap();
+        assert_eq!(rows["records"][1]["exit"]["stopped_by"], Value::Null);
+        assert_eq!(rows["records"][1]["exit"]["reason"], "runtime-disappeared");
     }
 
     #[test]

@@ -10216,6 +10216,30 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
         "resume should refresh the durable sidecar"
     );
 
+    let capability = session.join(format!(
+        "coordination/capability-{}",
+        sha256_hex(runtime_id)
+    ));
+    let stopped = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "broker",
+            "stop",
+            "--session",
+            "recoverable",
+            "--exit-code",
+            "23",
+            "--capability-file",
+            capability.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    assert_eq!(stopped.code, 0, "{}", stopped.stderr_text());
+
     let list = run(
         tmp.path(),
         &["--state-dir", &state_arg, "list", "--format", "json"],
@@ -10230,6 +10254,210 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
     let listed = &data(&list_value)[0];
     assert_eq!(listed["status"], "stopped");
     assert_eq!(listed["startup"]["state"], "ready");
+    // Inventory may observe this disappearance again; wrapper evidence remains singular.
+    let context = agent_session::CliContext {
+        state_dir: state_dir.clone(),
+        host: None,
+    };
+    let persisted = agent_session::load_session_record(&context, "recoverable").unwrap();
+    assert_eq!(persisted.runtime.as_ref().unwrap().generation, 2);
+    let logs = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "logs",
+            "--lifecycle",
+            "recoverable",
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    assert_eq!(logs.code, 0, "{}", logs.stderr_text());
+    let journal = logs.stdout_json();
+    let rows = journal["data"]["records"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["operation"] == "resume" && r["result"]["ok"] == true)
+            .count(),
+        1
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["operation"] == "broker-stop" && r["result"]["ok"] == true)
+            .count(),
+        1
+    );
+    let exits = rows
+        .iter()
+        .filter(|r| r["operation"] == "exit-observed")
+        .collect::<Vec<_>>();
+    assert_eq!(exits.len(), 1, "{journal}");
+    assert_eq!(exits[0]["exit"]["code"], 23);
+    assert_eq!(exits[0]["exit"]["stopped_by"], Value::Null);
+    let deleted = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "delete",
+            "recoverable",
+            "--tmux-bin",
+            &tmux_arg,
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log_arg),
+            ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
+        ],
+    );
+    assert_eq!(deleted.code, 0, "{}", deleted.stderr_text());
+    let logs = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "logs",
+            "--lifecycle",
+            "recoverable",
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    let journal = logs.stdout_json();
+    let rows = journal["data"]["records"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["operation"] == "delete" && r["result"]["ok"] == true)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn lifecycle_review_generated_id_is_resolved_after_prompt_input() {
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = tempfile::TempDir::new().unwrap();
+    let state = tmp.path().join("state");
+    let fifo = tmp.path().join("prompt.fifo");
+    let cpath = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+    let (tmux, tmux_log) = fake_tmux(tmp.path());
+    let provider = fake_agent(tmp.path(), "codex");
+    let first_second = jiff::Timestamp::now().as_second();
+    let mut child = Command::new(nils_test_support::bin::resolve("agent-session"))
+        .args([
+            "--state-dir",
+            state.to_str().unwrap(),
+            "start",
+            "--agent",
+            "codex",
+            "--title",
+            "collision",
+            "--cwd",
+            tmp.path().to_str().unwrap(),
+            "--prompt-file",
+            fifo.to_str().unwrap(),
+            "--tmux-bin",
+            tmux.to_str().unwrap(),
+            "--agent-bin",
+            provider.to_str().unwrap(),
+            "--paste-delay-ms",
+            "0",
+            "--format",
+            "json",
+        ])
+        .env("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut writer = loop {
+        match fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&fifo)
+        {
+            Ok(file) => break file,
+            Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("prompt reader did not open");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("{error}"),
+        }
+    };
+    // The reader opens only after journal preallocation. Reserve every timestamp
+    // it could have picked while input is held, without depending on wall-clock alignment.
+    for second in first_second..=jiff::Timestamp::now().as_second() + 1 {
+        let timestamp = jiff::Timestamp::from_second(second)
+            .unwrap()
+            .to_zoned(jiff::tz::TimeZone::system())
+            .strftime("%Y%m%d-%H%M%S")
+            .to_string();
+        fs::create_dir_all(
+            state
+                .join("sessions")
+                .join(format!("{timestamp}-codex-collision")),
+        )
+        .unwrap();
+    }
+    writer.write_all(b"fixture prompt").unwrap();
+    drop(writer);
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let id = value["data"]["id"].as_str().unwrap();
+    assert!(id.ends_with("-codex-collision-1"), "{value}");
+    let logs = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            state.to_str().unwrap(),
+            "logs",
+            "--lifecycle",
+            id,
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    assert_eq!(logs.code, 0);
+    let journal = logs.stdout_json();
+    let rows = journal["data"]["records"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["operation"] == "start" && r["result"]["ok"] == true)
+            .count(),
+        1
+    );
+    let cleanup = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            state.to_str().unwrap(),
+            "delete",
+            id,
+            "--tmux-bin",
+            tmux.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+        &[("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log.to_str().unwrap())],
+    );
+    assert_eq!(cleanup.code, 0, "{}", cleanup.stderr_text());
 }
 
 #[test]
