@@ -1,234 +1,52 @@
-//! Fail-closed managed cleanup. Locks survive until the lifecycle call returns.
+//! Collision fencing and automatic preservation for managed cleanup.
 use super::{CliError, WorktreeLayout, dirty_checkout_adoption as lease, is_managed_worktree};
-use nils_common::coordination_projection;
-use nils_common::worktree_lifecycle;
-use serde::Serialize;
-use serde_json::Value;
+use nils_common::{coordination_projection, worktree_lifecycle};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::os::unix::fs::MetadataExt;
 use std::{
     env, fs,
     path::{Path, PathBuf},
     process::{Command, Output},
+    time::{Duration, SystemTime},
 };
 
+pub(super) mod backup;
 #[cfg(target_os = "linux")]
 mod procfs;
 
 pub(super) struct Fence {
-    _registry: lease::RemovalLeaseGuard,
-    _checkout: lease::RemovalLeaseGuard,
-    _lifecycle: worktree_lifecycle::Guard,
+    _registry: Option<lease::RemovalLeaseGuard>,
+    checkout: Option<lease::RemovalLeaseGuard>,
+    _lifecycle: Option<worktree_lifecycle::Guard>,
     pub(super) removed_branch: Option<String>,
     pub(super) removed_head: String,
-    pub(super) delivery_proof: DeliveryProof,
+    pub(super) delivered: bool,
+    pub(super) delivery_proof: Option<DeliveryProof>,
+    pub(super) warnings: Vec<String>,
+    pub(super) operations: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub(super) struct DeliveryProof {
     basis: &'static str,
     default_branch: String,
     default_head: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pr_number: Option<u64>,
 }
 
-fn refused(code: &'static str, message: &str) -> CliError {
-    CliError::data(code, message)
-        .with_hint("Retain the target until the failed proof is resolved; do not force removal")
-}
-
-fn probe(program: &str, args: &[&str], cwd: &Path) -> Result<Output, CliError> {
-    let mut command = Command::new(program);
-    command.args(args).current_dir(cwd);
-    if program == "git" {
-        lease::sanitize_git_environment(&mut command);
-    }
-    lease::removal_probe(&mut command).map_err(|_| {
-        refused(
-            "removal-proof-unavailable",
-            "a bounded removal proof could not be completed",
-        )
-    })
-}
-
-fn git(target: &Path, args: &[&str]) -> Result<String, CliError> {
-    let output = probe("git", args, target)?;
-    if !output.status.success() {
-        return Err(refused(
-            "removal-proof-unavailable",
-            "Git could not establish removal proof",
-        ));
-    }
-    String::from_utf8(output.stdout)
-        .map(|text| text.trim().to_string())
-        .map_err(|_| {
-            refused(
-                "removal-proof-unavailable",
-                "Git returned an unreadable proof",
-            )
-        })
-}
-
-fn json(program: &str, args: &[&str], cwd: &Path) -> Result<Value, CliError> {
-    let output = probe(program, args, cwd)?;
-    let value: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
-        refused(
-            "removal-proof-unavailable",
-            "removal proof response is malformed",
-        )
-    })?;
-    if !output.status.success() || value["ok"] != true {
-        return Err(refused(
-            "removal-proof-unavailable",
-            "removal proof response is unsuccessful",
-        ));
-    }
-    Ok(value["data"].clone())
-}
-
-fn session_root() -> Result<PathBuf, CliError> {
-    if let Some(path) = env::var_os("AGENT_SESSION_STATE_DIR").filter(|value| !value.is_empty()) {
-        return Ok(path.into());
-    }
-    let base = env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .ok_or_else(|| {
-            refused(
-                "removal-proof-unavailable",
-                "session state root is unavailable",
-            )
-        })?;
-    Ok(base.join("agent-session"))
-}
-
-fn sessions_idle(target: &Path, sessions: &Value) -> Result<(), CliError> {
-    let rows = sessions.as_array().ok_or_else(|| {
-        refused(
-            "removal-proof-unavailable",
-            "session inventory is malformed",
-        )
-    })?;
-    for row in rows {
-        let status = row["status"]
-            .as_str()
-            .ok_or_else(|| refused("removal-proof-unavailable", "session status is unknown"))?;
-        if status == "stopped" {
-            continue;
-        }
-        if status != "running" {
-            return Err(refused(
-                "removal-proof-unavailable",
-                "session liveness is unknown",
-            ));
-        }
-        let cwd = row["cwd"].as_str().ok_or_else(|| {
-            refused(
-                "removal-proof-unavailable",
-                "session checkout binding is unknown",
-            )
-        })?;
-        let cwd = fs::canonicalize(cwd).map_err(|_| {
-            refused(
-                "removal-proof-unavailable",
-                "live session checkout cannot be resolved",
-            )
-        })?;
-        if cwd.starts_with(target) {
-            return Err(refused(
-                "removal-session-active",
-                "a live session is bound to the removal target",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn processes_idle(target: &Path) -> Result<(), CliError> {
-    #[cfg(target_os = "linux")]
-    {
-        procfs::processes_idle(target, Path::new("/proc"))
-    }
-    #[cfg(not(target_os = "linux"))]
-    processes_idle_lsof(target)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn processes_idle_lsof(target: &Path) -> Result<(), CliError> {
-    let path = target.to_str().ok_or_else(|| {
-        refused(
-            "removal-proof-unavailable",
-            "process probe target is unreadable",
-        )
-    })?;
-    // cwd, directory descriptors, mapped files, and regular open files are all
-    // selected. Any warning means the inventory may be incomplete.
-    let output = probe(
-        "lsof",
-        &["-nP", "-Fpf", "+D", path],
-        target.parent().unwrap(),
-    )?;
-    if !output.stdout.is_empty() {
-        return Err(refused(
-            "removal-process-active",
-            "a live process has its cwd or an open file in the removal target",
-        ).with_hint("Run the caller itself from outside the target, close any other cwd or open-file holders, and retry"));
-    }
-    if output.status.code() != Some(1) || !output.stderr.is_empty() {
-        return Err(refused(
-            "removal-proof-unavailable",
-            "complete process cwd/open-file visibility is unavailable",
-        ));
-    }
-    Ok(())
-}
-
-fn delivered(target: &Path, head: &str) -> Result<DeliveryProof, CliError> {
-    // Query the remote now: cached refs cannot prove that the head was pushed.
-    let advertised = git(target, &["ls-remote", "--symref", "origin", "HEAD"])?;
-    let default = advertised
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("ref: refs/heads/")
-                .and_then(|line| line.strip_suffix("\tHEAD"))
-        })
-        .filter(|name| !name.is_empty() && !name.starts_with('-'))
-        .ok_or_else(|| {
-            refused(
-                "removal-proof-unavailable",
-                "remote default branch could not be resolved",
-            )
-        })?;
-    let advertised_head = advertised
-        .lines()
-        .filter_map(|line| line.strip_suffix("\tHEAD"))
-        .find(|oid| {
-            matches!(oid.len(), 40 | 64) && oid.bytes().all(|byte| byte.is_ascii_hexdigit())
-        })
-        .ok_or_else(|| {
-            refused(
-                "removal-proof-unavailable",
-                "remote default HEAD is malformed",
-            )
-        })?;
-    // Fetch into FETCH_HEAD rather than trusting or modifying the local base.
-    git(
+fn cached_delivery(target: &Path, head: &str) -> Option<DeliveryProof> {
+    let reference = git(
         target,
-        &[
-            "fetch",
-            "--no-tags",
-            "origin",
-            &format!("refs/heads/{default}"),
-        ],
-    )?;
-    let default_head = git(target, &["rev-parse", "--verify", "FETCH_HEAD"])?;
-    if default_head != advertised_head {
-        return Err(refused(
-            "removal-proof-unavailable",
-            "remote default HEAD changed during proof",
-        ));
-    }
-    if probe(
+        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+    )
+    .ok()?;
+    let branch = reference.strip_prefix("refs/remotes/origin/")?;
+    let default_head = git(
+        target,
+        &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
+    )
+    .ok()?;
+    if !probe(
         "git",
         &[
             "--no-replace-objects",
@@ -238,311 +56,530 @@ fn delivered(target: &Path, head: &str) -> Result<DeliveryProof, CliError> {
             &default_head,
         ],
         target,
-    )?
+    )
+    .ok()?
     .status
     .success()
     {
-        return Ok(DeliveryProof {
-            basis: "remote-default-ancestry",
-            default_branch: default.to_string(),
-            default_head,
-            pr_number: None,
-        });
+        return None;
     }
-    // Squash/rebase merge proof is provider-bound to the exact published head.
-    let branch = git(target, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
-    let listed = json(
-        "forge-cli",
-        &[
-            "pr", "list", "--state", "merged", "--head", &branch, "--base", default, "--format",
-            "json",
-        ],
-        target,
-    )?;
-    let rows = listed["items"].as_array().ok_or_else(|| {
+    Some(DeliveryProof {
+        basis: "cached-origin-default-ancestry",
+        default_branch: branch.to_owned(),
+        default_head,
+    })
+}
+
+impl Fence {
+    pub(super) fn release_own_lease(&self) -> Result<(), CliError> {
+        if let Some(checkout) = &self.checkout {
+            checkout.release_own_lease().map_err(|_| {
+                refused(
+                    "removal-backup-failed",
+                    "caller lease release failed; target retained",
+                )
+            })?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn refused(code: &'static str, message: &str) -> CliError {
+    CliError::data(code, message)
+}
+
+pub(super) fn probe(program: &str, args: &[&str], cwd: &Path) -> Result<Output, CliError> {
+    let mut command = Command::new(program);
+    command.args(args).current_dir(cwd);
+    if program == "git" {
+        lease::sanitize_git_environment(&mut command);
+    }
+    lease::removal_probe(&mut command).map_err(|_| {
         refused(
             "removal-proof-unavailable",
-            "merged pull request inventory is malformed",
+            "bounded local probe could not complete",
         )
-    })?;
-    for row in rows {
-        let number = row["number"].as_u64().ok_or_else(|| {
+    })
+}
+
+pub(super) fn git(target: &Path, args: &[&str]) -> Result<String, CliError> {
+    let output = probe("git", args, target)?;
+    if !output.status.success() {
+        return Err(
+            refused("removal-proof-unavailable", "local Git operation failed")
+                .with_details(json!({"reason": String::from_utf8_lossy(&output.stderr)})),
+        );
+    }
+    String::from_utf8(output.stdout)
+        .map(|text| text.trim().to_string())
+        .map_err(|_| {
             refused(
                 "removal-proof-unavailable",
-                "merged pull request identity is malformed",
+                "Git returned unreadable output",
             )
-        })?;
-        let pr = json(
-            "forge-cli",
-            &["pr", "view", &number.to_string(), "--format", "json"],
-            target,
-        )?;
-        if pr["state"] == "merged"
-            && pr["head"] == branch
-            && pr["base"] == default
-            && pr["head_sha"] == head
-            && pr["merged_at"]
-                .as_str()
-                .is_some_and(|value| !value.is_empty())
+        })
+}
+
+fn caller() -> Option<String> {
+    env::var("AGENT_SESSION_ID")
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+}
+
+fn session_root() -> Option<PathBuf> {
+    if let Some(path) = env::var_os("AGENT_SESSION_STATE_DIR").filter(|value| !value.is_empty()) {
+        return Some(path.into());
+    }
+    env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+        .map(|base| base.join("agent-session"))
+}
+
+fn sessions_idle(
+    target: &Path,
+    sessions: &Value,
+    own: Option<&str>,
+    warnings: &mut Vec<String>,
+) -> Result<(), CliError> {
+    let Some(rows) = sessions.as_array() else {
+        warnings.push("session inventory is malformed".into());
+        return Ok(());
+    };
+    for row in rows {
+        if row
+            .get("schema_version")
+            .is_some_and(|schema| schema != "agent-session.session.v1")
         {
-            return Ok(DeliveryProof {
-                basis: "provider-exact-head-merge",
-                default_branch: default.to_string(),
-                default_head,
-                pr_number: Some(number),
-            });
+            warnings.push("session record schema is unknown".into());
+            continue;
+        }
+        let id = row["session_id"].as_str().or_else(|| row["id"].as_str());
+        if id.is_none() {
+            warnings.push("session record identity is unknown".into());
+            continue;
+        }
+        if own.is_some() && id == own {
+            continue;
+        }
+        match row["status"].as_str() {
+            Some("stopped") => continue,
+            Some("running") => {}
+            _ => {
+                warnings.push("session status is unknown".into());
+                continue;
+            }
+        }
+        let cwd = row["cwd"]
+            .as_str()
+            .and_then(|cwd| fs::canonicalize(cwd).ok());
+        match cwd {
+            Some(cwd) if cwd.starts_with(target) => {
+                return Err(refused(
+                    "removal-session-active",
+                    "a foreign running session is bound to the target",
+                )
+                .with_details(json!({"session_id":id,"cwd":cwd,"evidence":"running-session"})));
+            }
+            Some(_) => {}
+            None => warnings.push("running session cwd is unavailable".into()),
         }
     }
-    Err(refused(
-        "removal-head-undelivered",
-        "target HEAD has no current pushed-and-merged proof",
-    ))
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn ancestor_pids() -> Vec<u32> {
+    let mut pids = vec![std::process::id()];
+    for _ in 0..128 {
+        let pid = *pids.last().unwrap();
+        if pid <= 1 {
+            break;
+        }
+        let output = Command::new("ps")
+            .args(["-o", "ppid=", "-p", &pid.to_string()])
+            .output();
+        let Some(parent) = output
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<u32>().ok())
+        else {
+            break;
+        };
+        if parent == 0 || pids.contains(&parent) {
+            break;
+        }
+        pids.push(parent);
+    }
+    pids
+}
+
+fn processes_idle(target: &Path, warnings: &mut Vec<String>) -> Result<(), CliError> {
+    #[cfg(target_os = "linux")]
+    {
+        procfs::processes_idle(target, Path::new("/proc"), warnings)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let excluded = ancestor_pids();
+        let output = match probe(
+            "lsof",
+            &["-nP", "-Fpcf", "+D", target.to_str().unwrap()],
+            target.parent().unwrap(),
+        ) {
+            Ok(output) => output,
+            Err(_) => {
+                warnings.push("lsof visibility unavailable".into());
+                return Ok(());
+            }
+        };
+        if !output.stderr.is_empty() {
+            warnings.push(format!(
+                "lsof: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let mut pid = None;
+        let mut command = String::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Some(value) = line.strip_prefix('p') {
+                pid = value.parse::<u32>().ok();
+                command.clear();
+            }
+            if let Some(value) = line.strip_prefix('c') {
+                command = value.to_owned();
+            }
+            if line.starts_with('f')
+                && let Some(pid) = pid
+                && !excluded.contains(&pid)
+            {
+                return Err(refused(
+                    "removal-process-active",
+                    "a readable process cwd or file is inside the target",
+                )
+                .with_details(json!({"pid":pid,"command":command,"backend":"lsof"})));
+            }
+        }
+        if !matches!(output.status.code(), Some(0 | 1)) {
+            warnings.push("lsof inventory incomplete".into());
+        }
+        Ok(())
+    }
+}
+
+fn git_state(
+    target: &Path,
+    branch: Option<&str>,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<String>, CliError> {
+    let directory = PathBuf::from(git(target, &["rev-parse", "--absolute-git-dir"])?);
+    let mut locks = vec![directory.join("index.lock"), directory.join("HEAD.lock")];
+    let mut dirs = vec![directory.join("refs")];
+    while let Some(dir) = dirs.pop() {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "lock") {
+                    locks.push(path);
+                }
+            }
+        }
+    }
+    if let Some(branch) = branch {
+        let common = git(
+            target,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        locks.push(Path::new(&common).join(format!("refs/heads/{branch}.lock")));
+    }
+    for lock in locks {
+        match fs::symlink_metadata(&lock) {
+            Ok(metadata) => match metadata.modified() {
+                Ok(modified)
+                    if SystemTime::now()
+                        .duration_since(modified)
+                        .unwrap_or_default()
+                        < Duration::from_secs(3600) =>
+                {
+                    return Err(refused("removal-git-busy", "a fresh Git lock is present")
+                        .with_details(json!({"lock_path":lock,"evidence":"fresh-git-lock"})));
+                }
+                Ok(_) => warnings.push(format!("stale Git lock: {}", lock.display())),
+                Err(_) => warnings.push(format!("Git lock age unavailable: {}", lock.display())),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => warnings.push(format!("Git lock unreadable: {}", lock.display())),
+        }
+    }
+    Ok([
+        "MERGE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+        "rebase-merge",
+        "rebase-apply",
+        "sequencer",
+        "BISECT_LOG",
+    ]
+    .into_iter()
+    .filter(|marker| directory.join(marker).exists())
+    .map(str::to_owned)
+    .collect())
+}
+
+fn registry_idle(
+    state: &Path,
+    target: &Path,
+    own: Option<&str>,
+    warnings: &mut Vec<String>,
+) -> Result<(), CliError> {
+    let projection = match coordination_projection::load(state) {
+        Ok(Some(projection)) => projection,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            warnings.push(format!(
+                "session ownership projection unavailable: {error:?}"
+            ));
+            return Ok(());
+        }
+    };
+    let Some(fingerprint) = coordination_projection::worktree_fingerprint(
+        projection.fingerprint_epoch,
+        &projection.fingerprint_key,
+        target,
+    ) else {
+        warnings.push("session checkout fingerprint unavailable".into());
+        return Ok(());
+    };
+    for claim in &projection.claims {
+        if own.is_some_and(|id| id == claim.session_id) {
+            continue;
+        }
+        if !matches!(
+            claim.state.as_str(),
+            "active" | "released" | "expired" | "stale"
+        ) {
+            warnings.push("session claim state unknown".into());
+            continue;
+        }
+        if claim.state == "active" && claim.worktrees.contains(&fingerprint) {
+            return Err(refused("removal-session-active", "a foreign active claim is bound to the target")
+                .with_details(json!({"session_id":claim.session_id,"claim_id":claim.claim_id,"evidence":"active-claim"})));
+        }
+    }
+    for operation in &projection.operations {
+        if operation.schema_version != "agent-session.operation-lease.v1"
+            || !matches!(
+                operation.state.as_str(),
+                "active"
+                    | "completing"
+                    | "reconcile_pending"
+                    | "completed"
+                    | "failed"
+                    | "abandoned"
+            )
+        {
+            warnings.push("session operation schema or state unknown".into());
+            continue;
+        }
+        if matches!(
+            operation.state.as_str(),
+            "completed" | "failed" | "abandoned"
+        ) {
+            continue;
+        }
+        let Some(claim) = projection
+            .claims
+            .iter()
+            .find(|claim| !claim.claim_id.is_empty() && claim.claim_id == operation.claim_id)
+        else {
+            warnings.push("session operation binding unavailable".into());
+            continue;
+        };
+        if own.is_some_and(|id| id == claim.session_id) {
+            continue;
+        }
+        if claim.worktrees.contains(&fingerprint) {
+            return Err(refused("removal-session-active", "a foreign nonterminal operation is bound to the target")
+                .with_details(json!({"session_id":claim.session_id,"claim_id":claim.claim_id,"operation_state":operation.state,"evidence":"nonterminal-operation"})));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn fence(target: &Path, layout: &WorktreeLayout) -> Result<Fence, CliError> {
     if !is_managed_worktree(target, layout) {
         return Err(refused(
             "removal-unmanaged",
-            "removal target is outside the managed worktree tree",
+            "target is outside the managed worktree tree",
         ));
     }
-    let target = fs::canonicalize(target)
-        .map_err(|_| refused("removal-proof-unavailable", "removal target is missing"))?;
-    let state = session_root()?;
-    // Lock order is lifecycle -> checkout lease -> registry. The lifecycle
-    // barrier covers launch before session registration and survives deletion.
-    let namespace = worktree_lifecycle::state_home().map_err(|_| {
-        refused(
-            "removal-proof-unavailable",
-            "checkout lifecycle state root is unavailable",
-        )
-    })?;
-    let adapt = |error| {
-        let code = match error {
-            worktree_lifecycle::Error::Busy => "removal-lifecycle-busy",
-            worktree_lifecycle::Error::Changed => "removal-target-changed",
-            worktree_lifecycle::Error::Unavailable => "removal-proof-unavailable",
-            worktree_lifecycle::Error::StateRootMismatch => "removal-session-state-mismatch",
-        };
-        refused(
-            code,
-            "checkout lifecycle fencing is busy, mismatched, or unavailable",
-        )
-    };
-    let mut lifecycle = worktree_lifecycle::Guard::acquire(&namespace, &target).map_err(adapt)?;
-    let state = lifecycle.bind_session_state(&state).map_err(adapt)?;
-    let identity = fs::metadata(&target).map_err(|_| {
-        refused(
-            "removal-proof-unavailable",
-            "target identity is unavailable",
-        )
-    })?;
-    if !git(
-        &target,
-        &["status", "--porcelain=v1", "--untracked-files=all"],
-    )?
-    .is_empty()
+    let target =
+        fs::canonicalize(target).map_err(|_| refused("worktree-not-found", "target is missing"))?;
+    let identity = fs::metadata(&target)
+        .map_err(|_| refused("removal-target-changed", "target identity unavailable"))?;
+    let mut warnings = Vec::new();
+    let own = caller();
+    let key = own.as_ref().map(|id| {
+        Sha256::digest(id.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    });
+    let mut state = session_root();
+    let mut lifecycle = match worktree_lifecycle::state_home()
+        .and_then(|namespace| worktree_lifecycle::Guard::acquire(&namespace, &target))
     {
-        return Err(refused(
-            "removal-dirty",
-            "dirty removal target must be retained",
-        ));
+        Ok(guard) => Some(guard),
+        Err(worktree_lifecycle::Error::Busy) => {
+            return Err(
+                refused("removal-lifecycle-busy", "target lifecycle lock is held")
+                    .with_details(json!({"target":target,"evidence":"held-lifecycle-lock"})),
+            );
+        }
+        Err(error) => {
+            warnings.push(format!("lifecycle inventory unavailable: {error}"));
+            None
+        }
+    };
+    if let (Some(guard), Some(root)) = (&mut lifecycle, &state) {
+        match guard.bind_session_state(root) {
+            Ok(bound) => state = Some(bound),
+            Err(error) => warnings.push(format!("session inventory binding unavailable: {error}")),
+        }
     }
-    let checkout = lease::fence_removal(&target).map_err(|_| {
-        refused(
-            "removal-lease-active-or-unavailable",
-            "checkout lease or Git operation proof failed",
-        )
-    })?;
+    let checkout =
+        match lease::fence_removal(&target, key.as_deref()) {
+            Ok((_guard, Some(holder), _)) => return Err(refused(
+                "removal-lease-active",
+                "a foreign unexpired checkout lease is held",
+            )
+            .with_details(
+                json!({"session_key":holder,"target":target,"evidence":"unexpired-checkout-lease"}),
+            )),
+            Ok((guard, None, notes)) => {
+                warnings.extend(notes);
+                guard
+            }
+            Err(error) => {
+                warnings.push(format!("checkout lease inventory unavailable: {error}"));
+                None
+            }
+        };
     let head = git(&target, &["rev-parse", "--verify", "HEAD"])?;
     let branch = probe(
         "git",
         &["symbolic-ref", "--quiet", "--short", "HEAD"],
         &target,
     )?;
-    let removed_branch = if branch.status.success() {
-        Some(
-            String::from_utf8(branch.stdout)
-                .map_err(|_| refused("removal-proof-unavailable", "target branch is unreadable"))?
-                .trim()
-                .to_string(),
-        )
-    } else if branch.status.code() == Some(1) {
-        None
-    } else {
-        return Err(refused(
-            "removal-proof-unavailable",
-            "target branch is unavailable",
+    let removed_branch = branch
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&branch.stdout).trim().to_owned());
+    let operations = git_state(&target, removed_branch.as_deref(), &mut warnings)?;
+    if !operations.is_empty() {
+        warnings.push(format!(
+            "Git operation state preserved: {}",
+            operations.join(", ")
         ));
-    };
-    let delivery_proof = delivered(&target, &head)?;
-    // `list` is the session owner's public liveness projection, not raw state.
-    let sessions = json(
-        "agent-session",
-        &[
-            "--state-dir",
-            state.to_str().ok_or_else(|| {
-                refused(
-                    "removal-proof-unavailable",
-                    "session state root is unreadable",
-                )
-            })?,
-            "list",
-            "--format",
-            "json",
-        ],
-        &layout.repo_root,
-    )?;
-    sessions_idle(&target, &sessions)?;
-    use std::os::unix::fs::DirBuilderExt;
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(state.join("coordination"))
-        .map_err(|_| {
-            refused(
-                "removal-proof-unavailable",
-                "session registry directory is unavailable",
-            )
-        })?;
-    let registry = lease::removal_registry_lock(&state.join("coordination")).map_err(|error| {
-        refused(
-            "removal-proof-unavailable",
-            "session registry fencing is unavailable",
-        )
-        .with_hint("Use AGENT_SESSION_STATE_DIR to select the same private inventory used by session launchers; resolve the reported trust or busy condition and retry from outside the target. Do not replace a live registry lock or rebind the inventory")
-        .with_details(serde_json::json!({
-            "state_root": state,
-            "registry_lock": state.join("coordination/registry.lock"),
-            "reason": error.to_string(),
-        }))
-    })?;
-    if let Some(projection) = coordination_projection::load(&state).map_err(|_| {
-        refused(
-            "removal-proof-unavailable",
-            "session ownership projection is unavailable",
-        )
-    })? {
-        let fingerprint = coordination_projection::worktree_fingerprint(
-            projection.fingerprint_epoch,
-            &projection.fingerprint_key,
-            &target,
-        )
-        .ok_or_else(|| {
-            refused(
-                "removal-proof-unavailable",
-                "checkout binding fingerprint is unavailable",
-            )
-        })?;
-        if projection.claims.iter().any(|claim| {
-            !matches!(
-                claim.state.as_str(),
-                "active" | "released" | "expired" | "stale"
-            )
-        }) {
-            return Err(refused(
-                "removal-proof-unavailable",
-                "session claim state is unknown",
-            ));
-        }
-        if projection.operations.iter().any(|operation| {
-            operation.schema_version != "agent-session.operation-lease.v1"
-                || !matches!(
-                    operation.state.as_str(),
-                    "active"
-                        | "completing"
-                        | "reconcile_pending"
-                        | "completed"
-                        | "failed"
-                        | "abandoned"
-                )
-        }) {
-            return Err(refused(
-                "removal-proof-unavailable",
-                "session operation schema or state is unknown",
-            ));
-        }
-        if projection
-            .claims
-            .iter()
-            .any(|claim| claim.state == "active" && claim.worktrees.contains(&fingerprint))
-        {
-            return Err(refused(
-                "removal-session-active",
-                "an active session claim is bound to the removal target",
-            ));
-        }
-        for operation in &projection.operations {
-            if matches!(
-                operation.state.as_str(),
-                "completed" | "failed" | "abandoned"
-            ) {
-                continue;
-            }
-            let claim = projection
-                .claims
-                .iter()
-                .find(|claim| !claim.claim_id.is_empty() && claim.claim_id == operation.claim_id)
-                .ok_or_else(|| {
-                    refused(
-                        "removal-proof-unavailable",
-                        "operation checkout binding is unavailable",
-                    )
-                })?;
-            if claim.worktrees.contains(&fingerprint) {
-                return Err(refused(
-                    "removal-session-active",
-                    "a nonterminal session operation is bound to the removal target",
-                ));
-            }
-        }
     }
-    processes_idle(&target)?;
-    lifecycle.verify().map_err(|_| {
-        refused(
-            "removal-target-changed",
-            "checkout lifecycle identity changed during proof",
-        )
-    })?;
-    checkout.verify_target().map_err(|_| {
-        refused(
-            "removal-target-changed",
-            "checkout identity changed during proof",
-        )
-    })?;
-    let after = fs::metadata(&target).map_err(|_| {
-        refused(
-            "removal-proof-unavailable",
-            "target disappeared during proof",
-        )
-    })?;
+    if removed_branch.is_none() {
+        warnings.push("detached HEAD".into());
+    }
+    let mut registry = None;
+    if let Some(state) = &state {
+        use std::os::unix::fs::DirBuilderExt;
+        let directory = state.join("coordination");
+        let lock = fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&directory)
+            .map_err(anyhow::Error::from)
+            .and_then(|_| lease::removal_registry_lock(&directory));
+        match lock {
+            Ok(guard) => registry = Some(guard),
+            Err(error) => warnings.push(format!("session registry fencing unavailable: {error}")),
+        }
+        match probe(
+            "agent-session",
+            &[
+                "--state-dir",
+                state.to_str().unwrap_or(""),
+                "list",
+                "--format",
+                "json",
+            ],
+            &layout.repo_root,
+        ) {
+            Ok(output) => match serde_json::from_slice::<Value>(&output.stdout) {
+                Ok(value) if output.status.success() && value["ok"] == true => {
+                    sessions_idle(&target, &value["data"], own.as_deref(), &mut warnings)?
+                }
+                _ => warnings.push("session inventory unavailable or malformed".into()),
+            },
+            Err(_) => warnings.push("session inventory unavailable".into()),
+        }
+        registry_idle(state, &target, own.as_deref(), &mut warnings)?;
+    } else {
+        warnings.push("session state root unavailable".into());
+    }
+    processes_idle(&target, &mut warnings)?;
+    if let Some(guard) = &lifecycle {
+        guard
+            .verify()
+            .map_err(|_| refused("removal-target-changed", "lifecycle identity changed"))?;
+    }
+    if let Some(guard) = &checkout {
+        guard
+            .verify_target()
+            .map_err(|_| refused("removal-target-changed", "checkout identity changed"))?;
+    }
+    let after = fs::metadata(&target)
+        .map_err(|_| refused("removal-target-changed", "target disappeared"))?;
     if (identity.dev(), identity.ino()) != (after.dev(), after.ino())
         || git(&target, &["rev-parse", "--verify", "HEAD"])? != head
-        || !git(
-            &target,
-            &["status", "--porcelain=v1", "--untracked-files=all"],
-        )?
-        .is_empty()
     {
         return Err(refused(
             "removal-target-changed",
-            "target changed during removal proof",
+            "target identity or HEAD changed",
         ));
     }
+    let delivery_proof = cached_delivery(&target, &head);
+    let delivered = delivery_proof.is_some();
+    if !delivered {
+        warnings.push(
+            "HEAD is not in the cached origin default branch; no network proof requested".into(),
+        );
+    }
+    warnings.sort();
+    warnings.dedup();
     Ok(Fence {
         _registry: registry,
-        _checkout: checkout,
+        checkout,
         _lifecycle: lifecycle,
         removed_branch,
         removed_head: head,
+        delivered,
         delivery_proof,
+        warnings,
+        operations,
     })
 }
 
 pub(super) fn remove(target: &Path, repo_root: &Path) -> Result<(), CliError> {
-    let path = target
-        .to_str()
-        .ok_or_else(|| refused("removal-proof-unavailable", "target path is unreadable"))?;
-    git(repo_root, &["worktree", "remove", path])?;
+    git(
+        repo_root,
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            target
+                .to_str()
+                .ok_or_else(|| refused("removal-proof-unavailable", "target path unreadable"))?,
+        ],
+    )?;
+    git(repo_root, &["worktree", "prune"])?;
     Ok(())
 }

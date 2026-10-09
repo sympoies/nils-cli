@@ -5761,13 +5761,22 @@ fn sync_directory(path: &Path) -> Result<()> {
 struct LeaseLock(File);
 
 /// Keep the same lock inode as the runtime checkout writer through removal.
-/// No lease is acquired or released, including for the requesting session.
+/// A caller-owned lease may be released after preservation succeeds.
 pub(super) struct RemovalLeaseGuard {
     _lock: LeaseLock,
     identity: Option<(CheckoutIdentity, u64, u64)>,
+    own_lease: Option<PathBuf>,
 }
 
 impl RemovalLeaseGuard {
+    pub(super) fn release_own_lease(&self) -> Result<()> {
+        if let Some(path) = &self.own_lease {
+            fs::remove_file(path).context("caller checkout lease release failed")?;
+            sync_directory(path.parent().context("checkout lease directory missing")?)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn verify_target(&self) -> Result<()> {
         if let Some((identity, device, inode)) = &self.identity {
             let after = resolve_checkout(
@@ -5785,33 +5794,64 @@ impl RemovalLeaseGuard {
     }
 }
 
-pub(super) fn fence_removal(checkout: &Path) -> Result<RemovalLeaseGuard> {
+pub(super) fn fence_removal(
+    checkout: &Path,
+    caller_key: Option<&str>,
+) -> Result<(Option<RemovalLeaseGuard>, Option<String>, Vec<String>)> {
     let deadline = Instant::now() + Duration::from_secs(10);
     let identity = resolve_checkout(checkout, true, deadline)?;
     let root = resolve_state_root()?;
-    let repository = root.join(&identity.repository_key);
-    let directory = repository.join(&identity.checkout_key);
+    let directory = root
+        .join(&identity.repository_key)
+        .join(&identity.checkout_key);
     use std::os::unix::fs::DirBuilderExt;
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(&directory)?;
     let directory = checkout_state_dir(&root, &identity)?;
-    let lock = LeaseLock::acquire_until(&directory, deadline)?;
-    if let Some(bytes) = read_optional_private(&directory.join("lease.json"), "checkout lease")? {
+    let path = directory.join("lease.json");
+    let read_lease = || -> Result<Option<LeaseRecord>> {
+        let Some(bytes) = read_optional_private(&path, "checkout lease")? else {
+            return Ok(None);
+        };
         let lease = parse_lease(&bytes)?;
         validate_lease(&lease, &identity)?;
-        ensure!(
-            lease.expires_at() <= unix_time()?,
-            "removal target has an active checkout lease"
-        );
+        Ok(Some(lease))
+    };
+    // A busy lock does not erase readable positive foreign ownership evidence.
+    if let Ok(Some(lease)) = read_lease()
+        && lease.expires_at() > unix_time()?
+        && caller_key != Some(lease.session_key())
+    {
+        return Ok((None, Some(lease.session_key().to_owned()), Vec::new()));
     }
-    reject_active_git_operation(&identity)?;
+    let lock = LeaseLock::acquire_until(&directory, deadline)?;
+    let mut warnings = Vec::new();
+    let mut active = None;
+    let mut own_lease = None;
+    let lease = read_lease();
+    match lease {
+        Ok(Some(lease)) if lease.expires_at() > unix_time()? => {
+            if caller_key == Some(lease.session_key()) {
+                own_lease = Some(path);
+            } else {
+                active = Some(lease.session_key().to_owned());
+            }
+        }
+        Ok(_) => {}
+        Err(error) => warnings.push(format!("checkout lease unavailable: {error}")),
+    }
     let metadata = fs::metadata(&identity.git_dir)?;
-    Ok(RemovalLeaseGuard {
-        _lock: lock,
-        identity: Some((identity, metadata.dev(), metadata.ino())),
-    })
+    Ok((
+        Some(RemovalLeaseGuard {
+            _lock: lock,
+            identity: Some((identity, metadata.dev(), metadata.ino())),
+            own_lease,
+        }),
+        active,
+        warnings,
+    ))
 }
 
 pub(super) fn removal_registry_lock(directory: &Path) -> Result<RemovalLeaseGuard> {
@@ -5841,6 +5881,7 @@ pub(super) fn removal_registry_lock(directory: &Path) -> Result<RemovalLeaseGuar
     Ok(RemovalLeaseGuard {
         _lock: LeaseLock(file),
         identity: None,
+        own_lease: None,
     })
 }
 

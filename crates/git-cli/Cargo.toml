@@ -26,10 +26,10 @@ nils-common = { version = "1.32.6", path = "../nils-common", package = "nils-com
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["preserve_order"] }
 sha2 = { workspace = true }
+tempfile = "3"
 thiserror = { workspace = true }
-time = { version = "0.3", features = ["formatting"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
 
 [dev-dependencies]
 nils-test-support = { version = "1.32.6", path = "../nils-test-support" }
 pretty_assertions = { workspace = true }
-tempfile = "3"

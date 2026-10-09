@@ -23,76 +23,35 @@ fn parse_json(output: &CmdOutput) -> Value {
 }
 
 #[test]
-fn worktree_remove_retains_dirty_content_without_force() {
-    let harness = GitCliHarness::new();
-    let repo = init_repo();
-    let agent_home = tempfile::TempDir::new().expect("agent home");
-    let add = run_with_agent_home(
-        &harness,
-        repo.path(),
-        agent_home.path(),
-        &[
-            "worktree", "add", "retained", "--from", "main", "--format", "json",
-        ],
-    );
-    assert_eq!(add.code, 0);
-    let target = parse_json(&add)["data"]["path"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    fs::write(
-        Path::new(&target).join("unfinished.txt"),
-        "retain this content",
-    )
-    .unwrap();
-    let result = run_with_agent_home(
-        &harness,
-        repo.path(),
-        agent_home.path(),
-        &["worktree", "remove", "retained", "--format", "json"],
-    );
-    assert_ne!(result.code, 0, "dirty content must survive removal");
+fn safe_removal_dirty_backup_restores_bytes_without_ignored_files() {
+    let fixture = RemovalFixture::new();
+    let target = Path::new(&fixture.target);
+    fs::write(target.join("README.md"), b"changed\0tracked\n").unwrap();
+    fs::write(target.join("new.bin"), b"new\0untracked\xff").unwrap();
+    fs::write(target.join(".gitignore"), "ignored.txt\n").unwrap();
+    fs::write(target.join("ignored.txt"), "not preserved").unwrap();
+    let before = git(target, &["diff", "--binary", "HEAD"]);
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let receipt = parse_json(&result);
+    let backup = receipt["data"]["backup_ref"].as_str().unwrap();
+    assert!(backup.starts_with("refs/worktree-backup/safe/"));
+    assert!(!target.exists());
+    assert_eq!(receipt["data"]["backup_retention"], "30d");
+    let restored = fixture.restore(backup, None);
+    assert_eq!(restored.code, 0, "{}", restored.stdout_text());
     assert_eq!(
-        fs::read_to_string(Path::new(&target).join("unfinished.txt")).unwrap(),
-        "retain this content"
+        fs::read(target.join("README.md")).unwrap(),
+        b"changed\0tracked\n"
     );
-}
-
-// Process visibility must cover the complete fixture, including its real holders.
-// A private Linux PID/proc namespace keeps unrelated host processes out of the
-// positive fixtures without weakening the production fail-closed proof.
-fn delegate_removal_fixture() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        const MARKER: &str = "NILS_GIT_CLI_REMOVAL_FIXTURE_NAMESPACE";
-        if std::env::var_os(MARKER).as_deref() == Some(std::ffi::OsStr::new("1")) {
-            return false;
-        }
-        let thread = std::thread::current();
-        let test = thread.name().expect("named libtest thread");
-        let result = std::process::Command::new("unshare")
-            .args([
-                "--user",
-                "--map-current-user",
-                "--pid",
-                "--fork",
-                "--mount",
-                "--mount-proc",
-                "--",
-            ])
-            .arg(std::env::current_exe().expect("test executable"))
-            .args(["--exact", test, "--nocapture", "--test-threads=1"])
-            .env(MARKER, "1")
-            .status()
-            .expect("Linux removal fixtures require unshare with user/PID/mount namespaces");
-        assert!(
-            result.success(),
-            "isolated removal fixture {test}: {result}"
-        );
-        true
-    }
-    #[cfg(not(target_os = "linux"))]
-    false
+    assert_eq!(
+        fs::read(target.join("new.bin")).unwrap(),
+        b"new\0untracked\xff"
+    );
+    assert!(!target.join("ignored.txt").exists());
+    assert_eq!(git(target, &["diff", "--binary", "HEAD"]), before);
+    assert!(git(target, &["diff", "--cached"]).trim().is_empty());
+    assert!(git(target, &["status", "--porcelain"]).contains("?? new.bin"));
 }
 
 struct RemovalFixture {
@@ -116,6 +75,7 @@ impl RemovalFixture {
         );
         git(repo.path(), &["push", "-u", "origin", "main"]);
         git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        git(repo.path(), &["remote", "set-head", "origin", "main"]);
         let home = tempfile::TempDir::new().unwrap();
         for directory in [
             home.path().join("lease-state"),
@@ -161,9 +121,8 @@ impl RemovalFixture {
     fn remove(&self, target: &str) -> CmdOutput {
         self.remove_from(self.repo.path(), target)
     }
-    fn remove_from(&self, cwd: &Path, target: &str) -> CmdOutput {
-        let options = self
-            .harness
+    fn options(&self, cwd: &Path) -> nils_test_support::cmd::CmdOptions {
+        self.harness
             .cmd_options(cwd)
             .with_path_prepend(self.probes.path())
             .with_env("AGENT_HOME", self.home.path().to_str().unwrap())
@@ -181,11 +140,26 @@ impl RemovalFixture {
                     .to_str()
                     .unwrap(),
             )
-            .with_env("AGENT_SESSION_COORDINATION_MODE", "advisory");
+            .with_env("AGENT_SESSION_COORDINATION_MODE", "advisory")
+            .with_env("AGENT_SESSION_ID", "fixture-caller")
+    }
+    fn remove_from(&self, cwd: &Path, target: &str) -> CmdOutput {
+        let options = self.options(cwd);
         run_with(
             &self.harness.git_cli_bin(),
             &["worktree", "remove", target, "--safe", "--format", "json"],
             &options,
+        )
+    }
+    fn restore(&self, backup: &str, path: Option<&str>) -> CmdOutput {
+        let mut args = vec!["worktree", "restore", backup, "--format", "json"];
+        if let Some(path) = path {
+            args.extend(["--path", path]);
+        }
+        run_with(
+            &self.harness.git_cli_bin(),
+            &args,
+            &self.options(self.repo.path()),
         )
     }
     fn refused(&self, code: &str) {
@@ -249,38 +223,42 @@ impl RemovalFixture {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn safe_removal_fixture_excludes_unreadable_host_processes() {
-    if std::env::var_os("NILS_GIT_CLI_REMOVAL_FIXTURE_NAMESPACE").is_none() {
-        use std::io::{BufRead, BufReader};
-        use std::process::{Command, Stdio};
-        let mut child = Command::new("python3")
-            .args(["-c", "import ctypes,time; assert ctypes.CDLL(None).prctl(4,0,0,0,0)==0; print('ready',flush=True); time.sleep(30)"])
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut ready = String::new();
-        BufReader::new(child.stdout.take().unwrap())
-            .read_line(&mut ready)
-            .unwrap();
-        assert_eq!(ready.trim(), "ready");
-        let delegated = std::panic::catch_unwind(delegate_removal_fixture);
-        child.kill().unwrap();
-        child.wait().unwrap();
-        assert!(delegated.unwrap());
-        return;
+fn safe_removal_real_host_protected_process_warns_and_allows_clean_and_dirty() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("python3")
+        .args(["-c", "import ctypes,time; assert ctypes.CDLL(None).prctl(4,0,0,0,0)==0; print('ready',flush=True); time.sleep(30)"])
+        .stdout(Stdio::piped()).spawn().unwrap();
+    let mut ready = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut ready)
+        .unwrap();
+    let results = [false, true].map(|dirty| {
+        let fixture = RemovalFixture::new();
+        if dirty {
+            fs::write(Path::new(&fixture.target).join("new.bin"), "preserve").unwrap();
+        }
+        let result = fixture.remove("safe");
+        (fixture, result, dirty)
+    });
+    child.kill().unwrap();
+    child.wait().unwrap();
+    for (fixture, result, dirty) in results {
+        assert_eq!(result.code, 0, "{}", result.stdout_text());
+        assert!(!Path::new(&fixture.target).exists());
+        assert!(
+            !parse_json(&result)["data"]["warnings"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(parse_json(&result)["data"]["backup_ref"].is_string(), dirty);
     }
-    let fixture = RemovalFixture::new();
-    let result = fixture.remove("safe");
-    assert_eq!(result.code, 0, "{}", result.stdout_text());
-    assert!(!Path::new(&fixture.target).exists());
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 fn safe_removal_linux_benign_lsof_warning_does_not_hide_idle_proof() {
-    if delegate_removal_fixture() {
-        return;
-    }
     let fixture = RemovalFixture::new();
     fixture.probes.write_exe(
         "lsof",
@@ -289,73 +267,45 @@ fn safe_removal_linux_benign_lsof_warning_does_not_hide_idle_proof() {
     let result = fixture.remove("safe");
     assert_eq!(result.code, 0, "{}", result.stdout_text());
     assert!(!Path::new(&fixture.target).exists());
-    assert_eq!(
-        parse_json(&result)["data"]["delivery_proof"]["basis"],
-        "remote-default-ancestry"
-    );
+    assert_eq!(parse_json(&result)["data"]["delivered"], true);
 }
 
 #[test]
-fn safe_removal_caller_inside_target_is_retained_with_outside_recovery() {
-    if delegate_removal_fixture() {
-        return;
-    }
+fn safe_removal_caller_inside_target_runs_deletion_from_primary() {
     let fixture = RemovalFixture::new();
     let result = fixture.remove_from(Path::new(&fixture.target), "safe");
-    let value = parse_json(&result);
-    assert_eq!(
-        value["error"]["code"],
-        "refuse-current-worktree",
-        "{}",
-        result.stdout_text()
-    );
-    assert!(value["error"]["hint"].as_str().unwrap().contains("outside"));
-    assert!(Path::new(&fixture.target).exists());
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(!Path::new(&fixture.target).exists());
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn safe_removal_unreadable_live_current_user_retains_target() {
-    if delegate_removal_fixture() {
-        return;
-    }
-    use std::io::{BufRead, BufReader};
-    use std::process::{Command, Stdio};
+fn safe_removal_caller_parent_shell_inside_target_is_excluded() {
     let fixture = RemovalFixture::new();
-    let mut child = Command::new("python3")
-        .args(["-c", "import ctypes,time; assert ctypes.CDLL(None).prctl(4,0,0,0,0)==0; print('ready',flush=True); time.sleep(30)"])
-        .current_dir(fixture.repo.path())
-        .stdout(Stdio::piped())
-        .spawn().unwrap();
-    let mut ready = String::new();
-    BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut ready)
-        .unwrap();
-    assert_eq!(ready.trim(), "ready");
-    let result = fixture.remove("safe");
-    child.kill().unwrap();
-    child.wait().unwrap();
-    let value = parse_json(&result);
-    assert_eq!(
-        value["error"]["code"],
-        "removal-proof-unavailable",
-        "{}",
-        result.stdout_text()
+    let options = fixture.options(Path::new(&fixture.target));
+    let result = run_with(
+        Path::new("/bin/sh"),
+        &[
+            "-c",
+            "\"$1\" worktree remove safe --format json; status=$?; exit \"$status\"",
+            "fixture-shell",
+            fixture.harness.git_cli_bin().to_str().unwrap(),
+        ],
+        &options,
     );
-    assert_eq!(value["error"]["details"]["backend"], "procfs");
-    assert!(Path::new(&fixture.target).exists());
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(!Path::new(&fixture.target).exists());
 }
 
 #[test]
-fn safe_removal_registry_fencing_diagnostic_names_root_and_recovery() {
-    if delegate_removal_fixture() {
-        return;
-    }
+fn safe_removal_busy_registry_warns_without_deleting_lock() {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::PermissionsExt;
     let fixture = RemovalFixture::new();
-    let root = fs::canonicalize(fixture.home.path().join("sessions")).unwrap();
-    let path = root.join("coordination/registry.lock");
+    let path = fixture
+        .home
+        .path()
+        .join("sessions/coordination/registry.lock");
     let lock = fs::File::create(&path).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(
@@ -363,37 +313,24 @@ fn safe_removal_registry_fencing_diagnostic_names_root_and_recovery() {
         0
     );
     let result = fixture.remove("safe");
-    assert_ne!(result.code, 0);
-    let error = &parse_json(&result)["error"];
-    assert_eq!(error["code"], "removal-proof-unavailable");
-    assert_eq!(error["details"]["state_root"], root.to_str().unwrap());
-    assert_eq!(error["details"]["registry_lock"], path.to_str().unwrap());
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(path.exists());
     assert!(
-        error["details"]["reason"]
-            .as_str()
+        !parse_json(&result)["data"]["warnings"]
+            .as_array()
             .unwrap()
-            .contains("busy")
+            .is_empty()
     );
-    assert!(
-        error["hint"]
-            .as_str()
-            .unwrap()
-            .contains("AGENT_SESSION_STATE_DIR")
-    );
-    assert!(Path::new(&fixture.target).exists());
 }
 
 #[test]
 fn safe_removal_queries_the_explicit_session_state_root() {
-    if delegate_removal_fixture() {
-        return;
-    }
     let fixture = RemovalFixture::new();
     fs::write(
         fixture.home.path().join("sessions/live-sessions.json"),
         serde_json::to_vec(&serde_json::json!({
             "ok": true,
-            "data": [{ "status": "running", "cwd": fixture.target }]
+            "data": [{ "session_id":"foreign", "status": "running", "cwd": fixture.target }]
         }))
         .unwrap(),
     )
@@ -406,10 +343,7 @@ fn safe_removal_queries_the_explicit_session_state_root() {
 }
 
 #[test]
-fn safe_removal_retains_target_bound_to_a_different_session_inventory() {
-    if delegate_removal_fixture() {
-        return;
-    }
+fn safe_removal_different_session_inventory_is_a_warning() {
     let fixture = RemovalFixture::new();
     let mut startup = nils_common::worktree_lifecycle::Guard::acquire_startup(
         &fs::canonicalize(fixture.home.path().join("lease-state")).unwrap(),
@@ -420,14 +354,18 @@ fn safe_removal_retains_target_bound_to_a_different_session_inventory() {
         .bind_session_state(&fixture.home.path().join("other-sessions"))
         .unwrap();
     drop(startup);
-    fixture.refused("removal-session-state-mismatch");
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(
+        !parse_json(&result)["data"]["warnings"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
 fn safe_removal_retains_target_behind_startup_lifecycle_barrier() {
-    if delegate_removal_fixture() {
-        return;
-    }
     use sha2::{Digest, Sha256};
     use std::os::fd::AsRawFd;
     use std::os::unix::{
@@ -465,41 +403,42 @@ fn safe_removal_retains_target_behind_startup_lifecycle_barrier() {
 }
 
 #[test]
-fn safe_removal_branch_cleanup_proves_managed_clean_success_and_dirty_retention() {
-    if delegate_removal_fixture() {
-        return;
-    }
+fn safe_removal_branch_cleanup_uses_backup_for_dirty_target() {
     for dirty in [false, true] {
         let fixture = RemovalFixture::new();
-        let unfinished = Path::new(&fixture.target).join("unfinished.txt");
         if dirty {
-            fs::write(&unfinished, "retain").unwrap();
+            fs::write(
+                Path::new(&fixture.target).join("unfinished.txt"),
+                "preserve",
+            )
+            .unwrap();
         }
         let output = fixture.cleanup();
+        assert_eq!(
+            output.code,
+            0,
+            "{} {}",
+            output.stdout_text(),
+            output.stderr_text()
+        );
+        assert!(!Path::new(&fixture.target).exists());
+        let refs = git(
+            fixture.repo.path(),
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/worktree-backup",
+            ],
+        );
+        assert_eq!(!refs.trim().is_empty(), dirty);
         if dirty {
-            assert_ne!(output.code, 0, "{}", output.stdout_text());
-            assert!(
-                output.stderr_text().contains("removal-dirty"),
-                "{}",
-                output.stderr_text()
-            );
-            assert_eq!(fs::read_to_string(unfinished).unwrap(), "retain");
-            assert!(
-                git(fixture.repo.path(), &["branch", "--list", "feat/safe"]).contains("feat/safe")
-            );
-        } else {
             assert_eq!(
-                output.code,
-                0,
-                "{} {}",
-                output.stdout_text(),
-                output.stderr_text()
-            );
-            assert!(!Path::new(&fixture.target).exists());
-            assert!(
-                git(fixture.repo.path(), &["branch", "--list", "feat/safe"])
-                    .trim()
-                    .is_empty()
+                git(
+                    fixture.repo.path(),
+                    &["show", &format!("{}:unfinished.txt", refs.trim())]
+                )
+                .trim(),
+                "preserve"
             );
         }
     }
@@ -507,9 +446,6 @@ fn safe_removal_branch_cleanup_proves_managed_clean_success_and_dirty_retention(
 
 #[test]
 fn safe_removal_holds_lifecycle_guard_through_git_deletion() {
-    if delegate_removal_fixture() {
-        return;
-    }
     use nils_common::worktree_lifecycle::{Error, Guard};
     use std::time::{Duration, Instant};
     let fixture = RemovalFixture::new();
@@ -544,9 +480,6 @@ fn safe_removal_holds_lifecycle_guard_through_git_deletion() {
 
 #[test]
 fn safe_removal_idle_clean_merged_succeeds_in_advisory() {
-    if delegate_removal_fixture() {
-        return;
-    }
     let fixture = RemovalFixture::new();
     let removed_head = git(Path::new(&fixture.target), &["rev-parse", "HEAD"])
         .trim()
@@ -563,15 +496,8 @@ fn safe_removal_idle_clean_merged_succeeds_in_advisory() {
     let receipt = parse_json(&result);
     assert_eq!(receipt["data"]["removed_branch"], "feat/safe");
     assert_eq!(receipt["data"]["removed_head"], removed_head);
-    assert_eq!(
-        receipt["data"]["delivery_proof"]["basis"],
-        "remote-default-ancestry"
-    );
-    assert_eq!(receipt["data"]["delivery_proof"]["default_branch"], "main");
-    assert_eq!(
-        receipt["data"]["delivery_proof"]["default_head"],
-        removed_head
-    );
+    assert_eq!(receipt["data"]["delivered"], true);
+    assert!(receipt["data"]["backup_ref"].is_null());
     assert_eq!(
         git(
             fixture.repo.path(),
@@ -585,9 +511,6 @@ fn safe_removal_idle_clean_merged_succeeds_in_advisory() {
 
 #[test]
 fn safe_removal_accepts_freshly_pushed_merged_commit() {
-    if delegate_removal_fixture() {
-        return;
-    }
     let fixture = RemovalFixture::new();
     fixture.commit();
     git(Path::new(&fixture.target), &["push", "origin", "HEAD"]);
@@ -599,54 +522,29 @@ fn safe_removal_accepts_freshly_pushed_merged_commit() {
 }
 
 #[test]
-fn safe_removal_requires_exact_provider_head_for_squash_merge() {
-    if delegate_removal_fixture() {
-        return;
-    }
-    for exact in [true, false] {
-        let fixture = RemovalFixture::new();
-        fixture.commit();
-        let head = git(Path::new(&fixture.target), &["rev-parse", "HEAD"])
+fn safe_removal_clean_unpublished_branch_needs_no_network_or_provider() {
+    let fixture = RemovalFixture::new();
+    fixture.commit();
+    fixture
+        .probes
+        .write_exe("forge-cli", "#!/bin/sh\nexit 99\n");
+    fixture.probes.write_exe(
+        "git",
+        "#!/bin/sh\ncase \"$1\" in fetch|ls-remote) exit 99;; esac\nexec /usr/bin/git \"$@\"\n",
+    );
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert_eq!(parse_json(&result)["data"]["delivered"], false);
+    assert!(parse_json(&result)["data"]["backup_ref"].is_null());
+    assert!(
+        !git(fixture.repo.path(), &["branch", "--list", "feat/safe"])
             .trim()
-            .to_string();
-        git(Path::new(&fixture.target), &["push", "origin", "HEAD"]);
-        // Distinct parentage means ancestry cannot stand in for provider proof.
-        let listed = serde_json::json!({"ok":true,"data":{"items":[{"number":1}]}});
-        let viewed = serde_json::json!({"ok":true,"data":{"state":"merged","head":"feat/safe","base":"main",
-            "head_sha":if exact { head.clone() } else { "0".repeat(40) }, "merged_at":"2030-01-01T00:00:00Z"}});
-        fixture.probes.write_exe("forge-cli", &format!("#!/bin/sh\ncase \"$2\" in\n list) printf '%s\\n' '{listed}' ;;\n view) printf '%s\\n' '{viewed}' ;;\n *) exit 2 ;;\nesac\n"));
-        let result = fixture.remove("safe");
-        if exact {
-            assert_eq!(result.code, 0, "{}", result.stdout_text());
-            assert!(!Path::new(&fixture.target).exists());
-            let receipt = parse_json(&result);
-            assert_eq!(receipt["data"]["removed_head"], head);
-            assert_eq!(receipt["data"]["removed_branch"], "feat/safe");
-            assert_eq!(
-                receipt["data"]["delivery_proof"]["basis"],
-                "provider-exact-head-merge"
-            );
-            assert_eq!(receipt["data"]["delivery_proof"]["default_branch"], "main");
-            assert_eq!(
-                receipt["data"]["delivery_proof"]["default_head"],
-                git(fixture._remote.path(), &["rev-parse", "refs/heads/main"]).trim()
-            );
-            assert_eq!(receipt["data"]["delivery_proof"]["pr_number"], 1);
-        } else {
-            assert_eq!(
-                parse_json(&result)["error"]["code"],
-                "removal-head-undelivered"
-            );
-            assert!(Path::new(&fixture.target).exists());
-        }
-    }
+            .is_empty()
+    );
 }
 
 #[test]
 fn safe_removal_fences_active_claim_and_nonterminal_operation_bindings() {
-    if delegate_removal_fixture() {
-        return;
-    }
     use std::os::unix::fs::PermissionsExt;
     for claim_state in ["active", "released"] {
         let fixture = RemovalFixture::new();
@@ -675,9 +573,6 @@ fn safe_removal_fences_active_claim_and_nonterminal_operation_bindings() {
 
 #[test]
 fn safe_removal_allows_known_terminal_claim_states() {
-    if delegate_removal_fixture() {
-        return;
-    }
     use std::os::unix::fs::PermissionsExt;
     for state in ["released", "expired", "stale"] {
         let fixture = RemovalFixture::new();
@@ -706,10 +601,7 @@ fn safe_removal_allows_known_terminal_claim_states() {
 }
 
 #[test]
-fn safe_removal_retains_semantically_unknown_ownership_state() {
-    if delegate_removal_fixture() {
-        return;
-    }
+fn safe_removal_unknown_ownership_state_warns() {
     use std::os::unix::fs::PermissionsExt;
     for unknown_claim in [true, false] {
         let fixture = RemovalFixture::new();
@@ -733,60 +625,69 @@ fn safe_removal_retains_semantically_unknown_ownership_state() {
             .join("sessions/coordination/registry.json");
         fs::write(&path, serde_json::to_vec(&registry).unwrap()).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        fixture.refused("removal-proof-unavailable");
+        let result = fixture.remove("safe");
+        assert_eq!(result.code, 0, "{}", result.stdout_text());
+        assert!(
+            !parse_json(&result)["data"]["warnings"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 }
 
 #[test]
-fn safe_removal_retains_unknown_registry_state_and_locked_target() {
-    if delegate_removal_fixture() {
-        return;
-    }
-    let fixture = RemovalFixture::new();
-    git(fixture.repo.path(), &["worktree", "lock", &fixture.target]);
-    let result = fixture.remove("safe");
-    assert_ne!(result.code, 0);
-    assert!(Path::new(&fixture.target).exists());
-    git(
-        fixture.repo.path(),
-        &["worktree", "unlock", &fixture.target],
-    );
+fn safe_removal_unknown_registry_warns() {
     use std::os::unix::fs::PermissionsExt;
+    let fixture = RemovalFixture::new();
     let registry = fixture
         .home
         .path()
         .join("sessions/coordination/registry.json");
     fs::write(&registry, "{}").unwrap();
     fs::set_permissions(&registry, fs::Permissions::from_mode(0o600)).unwrap();
-    fixture.refused("removal-proof-unavailable");
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(
+        !parse_json(&result)["data"]["warnings"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
-fn safe_removal_retains_unpushed_and_pushed_unmerged_commits() {
-    if delegate_removal_fixture() {
-        return;
-    }
-    for pushed in [false, true] {
-        let fixture = RemovalFixture::new();
-        fixture.commit();
-        if pushed {
-            git(Path::new(&fixture.target), &["push", "origin", "HEAD"]);
-        }
-        fixture.refused("removal-head-undelivered");
-    }
+fn safe_removal_detached_unreachable_head_is_backed_up() {
+    let fixture = RemovalFixture::new();
+    git(Path::new(&fixture.target), &["checkout", "--detach"]);
+    fixture.commit();
+    let head = git(Path::new(&fixture.target), &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let value = parse_json(&result);
+    let backup = value["data"]["backup_ref"].as_str().unwrap();
+    assert_eq!(
+        git(fixture.repo.path(), &["rev-parse", &format!("{backup}^")]).trim(),
+        head
+    );
+    let restore = fixture.restore(backup, None);
+    assert_eq!(restore.code, 0, "{}", restore.stdout_text());
+    assert_eq!(
+        git(Path::new(&fixture.target), &["rev-parse", "HEAD"]).trim(),
+        head
+    );
 }
 
 #[test]
 fn safe_removal_retains_live_session_binding_and_unknown_inventory() {
-    if delegate_removal_fixture() {
-        return;
-    }
     let fixture = RemovalFixture::new();
     fixture.probes.write_exe(
         "agent-session",
         &format!(
             "#!/bin/sh\nprintf '%s\\n' '{}'\n",
-            serde_json::json!({"ok":true,"data":[{"status":"running","cwd":fixture.target}]})
+            serde_json::json!({"ok":true,"data":[{"session_id":"foreign","status":"running","cwd":fixture.target}]})
         ),
     );
     fixture.refused("removal-session-active");
@@ -794,23 +695,21 @@ fn safe_removal_retains_live_session_binding_and_unknown_inventory() {
         "agent-session",
         "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"data\":{}}'\n",
     );
-    fixture.refused("removal-proof-unavailable");
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
 }
 
 #[test]
-fn safe_removal_retains_active_checkout_lease_including_requester() {
-    if delegate_removal_fixture() {
-        return;
-    }
+fn safe_removal_foreign_lease_refuses_and_own_lease_releases() {
     use sha2::{Digest, Sha256};
     use std::os::unix::fs::PermissionsExt;
     let fixture = RemovalFixture::new();
     // Initialize the sentinel and stable lock through one harmless failed proof.
     fixture.probes.write_exe(
         "agent-session",
-        "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"data\":{}}'\n",
+        &format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", serde_json::json!({"ok":true,"data":[{"status":"running","session_id":"foreign","cwd":fixture.target}]})),
     );
-    fixture.refused("removal-proof-unavailable");
+    fixture.refused("removal-session-active");
     let target = Path::new(&fixture.target).canonicalize().unwrap();
     let git_dir = PathBuf::from(git(&target, &["rev-parse", "--absolute-git-dir"]).trim());
     let common_dir = fixture.repo.path().join(".git").canonicalize().unwrap();
@@ -844,14 +743,43 @@ fn safe_removal_retains_active_checkout_lease_including_requester() {
         fs::Permissions::from_mode(0o600),
     )
     .unwrap();
-    fixture.refused("removal-lease-active-or-unavailable");
+    fixture.refused("removal-lease-active");
+    fixture.probes.write_exe(
+        "agent-session",
+        "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"data\":[]}'\n",
+    );
+    {
+        use std::os::fd::AsRawFd;
+        let lock = fs::File::open(directory.join("lease.lock")).unwrap();
+        assert_eq!(
+            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0
+        );
+        fixture.refused("removal-lease-active");
+    }
+    let mut own = lease;
+    own["session_key"] = serde_json::json!(
+        Sha256::digest(b"fixture-caller")
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    fs::write(
+        directory.join("lease.json"),
+        serde_json::to_vec(&own).unwrap(),
+    )
+    .unwrap();
+    fixture.probes.write_exe(
+        "agent-session",
+        "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"data\":[]}'\n",
+    );
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(!directory.join("lease.json").exists());
 }
 
 #[test]
 fn safe_removal_retains_process_cwd_and_open_file() {
-    if delegate_removal_fixture() {
-        return;
-    }
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
     for kind in ["cwd", "fd", "maps"] {
@@ -890,22 +818,24 @@ fn safe_removal_retains_process_cwd_and_open_file() {
             "{}",
             result.stdout_text()
         );
+        assert_eq!(parse_json(&result)["error"]["details"]["pid"], child.id());
+        assert!(
+            parse_json(&result)["error"]["details"]["command"]
+                .as_str()
+                .is_some_and(|name| !name.is_empty())
+        );
         assert!(Path::new(&fixture.target).exists());
     }
 }
 
 #[test]
 fn safe_removal_retains_incomplete_process_proof_and_unmanaged_target() {
-    if delegate_removal_fixture() {
-        return;
-    }
     let fixture = RemovalFixture::new();
     fixture.probes.write_exe(
         "lsof",
         "#!/bin/sh\necho 'inventory incomplete' >&2\nexit 1\n",
     );
-    #[cfg(not(target_os = "linux"))]
-    fixture.refused("removal-proof-unavailable");
+
     let unmanaged = fixture.home.path().join("unmanaged");
     git(
         fixture.repo.path(),
@@ -1418,9 +1348,6 @@ fn worktree_go_unknown_target_errors_in_json() {
 
 #[test]
 fn worktree_remove_refuses_primary_and_removes_managed_slug() {
-    if delegate_removal_fixture() {
-        return;
-    }
     let fixture = RemovalFixture::new();
     fs::create_dir(fixture.repo.path().join("safe")).unwrap();
     let primary = fixture.remove(fixture.repo.path().to_str().unwrap());
@@ -1553,4 +1480,349 @@ fn worktree_add_survives_an_unreachable_remote_when_head_is_missing() {
     );
     assert_eq!(add.code, 0, "stderr: {}", add.stderr_text());
     assert_eq!(parse_json(&add)["data"]["base_ref"], "main");
+}
+
+#[test]
+fn safe_removal_fresh_lock_blocks_old_lock_warns() {
+    use std::time::{Duration, SystemTime};
+    let fixture = RemovalFixture::new();
+    let git_dir = PathBuf::from(
+        git(
+            Path::new(&fixture.target),
+            &["rev-parse", "--absolute-git-dir"],
+        )
+        .trim(),
+    );
+    let lock = git_dir.join("index.lock");
+    fs::write(&lock, "crash lock").unwrap();
+    fixture.refused("removal-git-busy");
+    fs::File::open(&lock)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(SystemTime::now() - Duration::from_secs(7200)))
+        .unwrap();
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(
+        !parse_json(&result)["data"]["warnings"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn safe_removal_operation_state_creates_restorable_backup() {
+    let fixture = RemovalFixture::new();
+    let target = Path::new(&fixture.target);
+    let git_dir = PathBuf::from(git(target, &["rev-parse", "--absolute-git-dir"]).trim());
+    fs::create_dir(git_dir.join("rebase-merge")).unwrap();
+    fs::write(target.join("README.md"), "during rebase\n").unwrap();
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let value = parse_json(&result);
+    let backup = value["data"]["backup_ref"].as_str().unwrap();
+    assert!(
+        git(fixture.repo.path(), &["show", "-s", "--format=%B", backup]).contains("rebase-merge")
+    );
+    let restored = fixture.restore(backup, None);
+    assert_eq!(restored.code, 0, "{}", restored.stdout_text());
+    assert_eq!(
+        fs::read_to_string(target.join("README.md")).unwrap(),
+        "during rebase\n"
+    );
+}
+
+#[test]
+fn safe_removal_backup_ref_failure_retains_target_and_real_index() {
+    let fixture = RemovalFixture::new();
+    fs::write(Path::new(&fixture.target).join("README.md"), "preserve\n").unwrap();
+    fs::write(
+        fixture.repo.path().join(".git/refs/worktree-backup"),
+        "not a directory",
+    )
+    .unwrap();
+    let before = git(Path::new(&fixture.target), &["diff", "--binary", "HEAD"]);
+    fixture.refused("removal-backup-failed");
+    assert_eq!(
+        git(Path::new(&fixture.target), &["diff", "--binary", "HEAD"]),
+        before
+    );
+    assert!(
+        git(Path::new(&fixture.target), &["diff", "--cached"])
+            .trim()
+            .is_empty()
+    );
+}
+
+#[test]
+fn safe_removal_own_running_session_is_not_a_collision() {
+    let fixture = RemovalFixture::new();
+    fixture.probes.write_exe("agent-session", &format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", serde_json::json!({"ok":true,"data":[{"session_id":"fixture-caller","status":"running","cwd":fixture.target}]})));
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+}
+
+#[test]
+fn safe_removal_backup_cap_requires_acknowledgment_and_records_omissions() {
+    let fixture = RemovalFixture::new();
+    git(
+        fixture.repo.path(),
+        &["config", "worktree.backupMaxBytes", "8"],
+    );
+    fs::write(
+        Path::new(&fixture.target).join("large.bin"),
+        b"0123456789abcdef",
+    )
+    .unwrap();
+    let omitted_oid = git(
+        fixture.repo.path(),
+        &[
+            "hash-object",
+            Path::new(&fixture.target)
+                .join("large.bin")
+                .to_str()
+                .unwrap(),
+        ],
+    )
+    .trim()
+    .to_owned();
+    let result = fixture.remove("safe");
+    assert_eq!(
+        parse_json(&result)["error"]["code"],
+        "removal-backup-acknowledgment-required"
+    );
+    assert!(Path::new(&fixture.target).exists());
+    let result = run_with(
+        &fixture.harness.git_cli_bin(),
+        &[
+            "worktree",
+            "remove",
+            "safe",
+            "--acknowledge-backup-omissions",
+            "--format",
+            "json",
+        ],
+        &fixture.options(fixture.repo.path()),
+    );
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let value = parse_json(&result);
+    assert!(
+        value["data"]["backup_omissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["path"] == "large.bin" && row["bytes"] == 16)
+    );
+    assert!(value["data"]["backup_bytes"].as_u64().unwrap() <= 8);
+    assert!(
+        !git_output(fixture.repo.path(), &["cat-file", "-e", &omitted_oid])
+            .status
+            .success(),
+        "omitted content must never be written as a Git object"
+    );
+    let backup = value["data"]["backup_ref"].as_str().unwrap();
+    let result = fixture.restore(backup, None);
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(!Path::new(&fixture.target).join("large.bin").exists());
+}
+
+#[test]
+fn safe_removal_expiry_previews_logs_and_obeys_keep() {
+    let fixture = RemovalFixture::new();
+    fs::write(Path::new(&fixture.target).join("README.md"), "save\n").unwrap();
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let value = parse_json(&result);
+    let reference = value["data"]["backup_ref"].as_str().unwrap();
+    let message = git(
+        fixture.repo.path(),
+        &["show", "-s", "--format=%B", reference],
+    );
+    let mut metadata: Value = serde_json::from_str(message.trim()).unwrap();
+    metadata["utc"] = serde_json::json!("2000-01-01T00:00:00Z");
+    let parent = git(
+        fixture.repo.path(),
+        &["rev-parse", &format!("{reference}^")],
+    )
+    .trim()
+    .to_owned();
+    let tree = git(
+        fixture.repo.path(),
+        &["rev-parse", &format!("{reference}^{{tree}}")],
+    )
+    .trim()
+    .to_owned();
+    let commit = git(
+        fixture.repo.path(),
+        &[
+            "commit-tree",
+            &tree,
+            "-p",
+            &parent,
+            "-m",
+            &metadata.to_string(),
+        ],
+    )
+    .trim()
+    .to_owned();
+    git(fixture.repo.path(), &["update-ref", reference, &commit]);
+    let run = |dry: bool| {
+        let mut args = vec!["worktree", "backup", "prune", "--format", "json"];
+        if dry {
+            args.push("--dry-run");
+        }
+        run_with(
+            &fixture.harness.git_cli_bin(),
+            &args,
+            &fixture.options(fixture.repo.path()),
+        )
+    };
+    let preview = run(true);
+    assert_eq!(preview.code, 0, "{}", preview.stdout_text());
+    assert_eq!(
+        parse_json(&preview)["data"]["expired_refs"],
+        serde_json::json!([reference])
+    );
+    assert_eq!(
+        git(fixture.repo.path(), &["rev-parse", reference]).trim(),
+        commit
+    );
+    git(
+        fixture.repo.path(),
+        &["config", "worktree.backupRetention", "keep"],
+    );
+    let kept = run(false);
+    assert_eq!(kept.code, 0, "{}", kept.stdout_text());
+    assert!(
+        parse_json(&kept)["data"]["expired_refs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    git(
+        fixture.repo.path(),
+        &["config", "worktree.backupRetention", "30d"],
+    );
+    let expired = run(false);
+    assert_eq!(expired.code, 0, "{}", expired.stdout_text());
+    assert_eq!(
+        parse_json(&expired)["data"]["expired_refs"],
+        serde_json::json!([reference])
+    );
+    assert!(
+        git(
+            fixture.repo.path(),
+            &["for-each-ref", "refs/worktree-backup"]
+        )
+        .trim()
+        .is_empty()
+    );
+    let log = fs::read_to_string(
+        fixture
+            .repo
+            .path()
+            .join(".git/logs/worktree-backup-expiry.jsonl"),
+    )
+    .unwrap();
+    assert!(log.contains(reference));
+    assert!(log.contains("expired"));
+}
+
+#[test]
+fn safe_removal_restore_moved_branch_is_detached_at_parent_with_deletions() {
+    let fixture = RemovalFixture::new();
+    let target = Path::new(&fixture.target);
+    let parent = git(target, &["rev-parse", "HEAD"]).trim().to_owned();
+    fs::remove_file(target.join("README.md")).unwrap();
+    fs::create_dir(target.join("directory")).unwrap();
+    fs::write(target.join("directory/new.txt"), "new\n").unwrap();
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let value = parse_json(&result);
+    let reference = value["data"]["backup_ref"].as_str().unwrap();
+    fs::write(fixture.repo.path().join("other.txt"), "advance\n").unwrap();
+    git(fixture.repo.path(), &["add", "."]);
+    git(fixture.repo.path(), &["commit", "-m", "advance"]);
+    let moved = git(fixture.repo.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    git(
+        fixture.repo.path(),
+        &["update-ref", "refs/heads/feat/safe", &moved],
+    );
+    let override_path = fixture.home.path().join("restored");
+    let restored = fixture.restore(reference, Some(override_path.to_str().unwrap()));
+    assert_eq!(restored.code, 0, "{}", restored.stdout_text());
+    assert!(parse_json(&restored)["data"]["branch"].is_null());
+    assert_eq!(git(&override_path, &["rev-parse", "HEAD"]).trim(), parent);
+    assert!(!override_path.join("README.md").exists());
+    assert_eq!(
+        fs::read_to_string(override_path.join("directory/new.txt")).unwrap(),
+        "new\n"
+    );
+    assert!(git(&override_path, &["diff", "--cached"]).trim().is_empty());
+}
+
+#[test]
+fn safe_removal_backup_list_reports_sizes_and_retention() {
+    let fixture = RemovalFixture::new();
+    fs::write(Path::new(&fixture.target).join("new.txt"), "saved\n").unwrap();
+    let removed = fixture.remove("safe");
+    assert_eq!(removed.code, 0, "{}", removed.stdout_text());
+    let value = parse_json(&removed);
+    let reference = value["data"]["backup_ref"].as_str().unwrap();
+    let listed = run_with(
+        &fixture.harness.git_cli_bin(),
+        &["worktree", "backup", "list", "--format", "json"],
+        &fixture.options(fixture.repo.path()),
+    );
+    assert_eq!(listed.code, 0, "{}", listed.stdout_text());
+    let inventory = parse_json(&listed);
+    assert_eq!(inventory["data"]["retention"], "30d");
+    let row = &inventory["data"]["backups"][0];
+    assert_eq!(row["backup_ref"], reference);
+    assert_eq!(row["backup_bytes"], value["data"]["backup_bytes"]);
+    assert_eq!(row["path"], fixture.target);
+    assert!(row["utc"].is_string());
+    let dry_run = run_with(
+        &fixture.harness.git_cli_bin(),
+        &[
+            "worktree",
+            "backup",
+            "prune",
+            "--older-than",
+            "1s",
+            "--dry-run",
+            "--format",
+            "json",
+        ],
+        &fixture.options(fixture.repo.path()),
+    );
+    assert_eq!(dry_run.code, 0, "{}", dry_run.stdout_text());
+    assert_eq!(
+        git(
+            fixture.repo.path(),
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/worktree-backup"
+            ]
+        )
+        .trim(),
+        reference
+    );
+}
+
+#[test]
+fn safe_removal_unknown_session_schema_warns() {
+    let fixture = RemovalFixture::new();
+    fixture.probes.write_exe("agent-session", &format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", serde_json::json!({"ok":true,"data":[{"schema_version":"future-session","session_id":"foreign","status":"running","cwd":fixture.target}]})));
+    let removed = fixture.remove("safe");
+    assert_eq!(removed.code, 0, "{}", removed.stdout_text());
+    assert!(
+        !parse_json(&removed)["data"]["warnings"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }

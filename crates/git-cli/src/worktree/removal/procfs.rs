@@ -1,5 +1,4 @@
-//! Linux visibility proof is scoped to the caller's user, rather than unrelated
-//! lsof mount warnings. Unreadable live same-user processes remain unproven.
+//! Linux collision evidence; unreadable processes produce bounded warnings.
 use super::{CliError, refused};
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -10,15 +9,38 @@ use std::time::{Duration, Instant};
 
 const MAX_PROBE_BYTES: u64 = 64 * 1024 * 1024;
 
-fn unavailable(stage: &str, error: impl std::fmt::Display) -> CliError {
-    refused("removal-proof-unavailable", "current-user process visibility is unavailable")
-        .with_hint("Retry from outside the target with readable procfs cwd, fd and maps for every live current-user process; do not ignore permission failures")
-        .with_details(serde_json::json!({"backend": "procfs", "stage": stage, "reason": error.to_string()}))
+fn active(pid: u32, command: &str, kind: &str) -> CliError {
+    refused(
+        "removal-process-active",
+        "a readable foreign process cwd, file or mapping is inside the target",
+    )
+    .with_details(
+        serde_json::json!({"pid":pid,"command":command,"backend":"procfs","evidence":kind}),
+    )
 }
 
-fn active() -> CliError {
-    refused("removal-process-active", "a live process has its cwd or an open file in the removal target")
-        .with_hint("Run cleanup from outside the target, then close processes holding its cwd, open files or mappings and retry")
+fn ancestor_pids(root: &Path) -> Vec<u32> {
+    let mut pids = vec![std::process::id()];
+    for _ in 0..128 {
+        let pid = *pids.last().unwrap();
+        if pid <= 1 {
+            break;
+        }
+        let parent = fs::read_to_string(root.join(pid.to_string()).join("status"))
+            .ok()
+            .and_then(|s| {
+                s.lines().find_map(|l| {
+                    l.strip_prefix("PPid:")
+                        .and_then(|v| v.trim().parse::<u32>().ok())
+                })
+            });
+        let Some(parent) = parent else { break };
+        if parent == 0 || pids.contains(&parent) {
+            break;
+        }
+        pids.push(parent);
+    }
+    pids
 }
 
 fn read(path: &Path, budget: &mut u64) -> io::Result<Vec<u8>> {
@@ -65,8 +87,8 @@ fn live_user(status: &[u8], uid: u32) -> io::Result<bool> {
         }
     }
     match (users, state) {
-        (Some(false), Some(_)) | (Some(true), Some("Z" | "X")) => Ok(false),
-        (Some(true), Some(_)) => Ok(true),
+        (Some(_), Some("Z" | "X")) => Ok(false),
+        (Some(_), Some(_)) => Ok(true),
         _ => Err(io::Error::other(
             "process liveness or user identity is unavailable",
         )),
@@ -100,78 +122,127 @@ fn mapping_path(line: &[u8]) -> Option<PathBuf> {
     Some(PathBuf::from(OsString::from_vec(decoded)))
 }
 
-pub(super) fn processes_idle(target: &Path, root: &Path) -> Result<(), CliError> {
+pub(super) fn processes_idle(
+    target: &Path,
+    root: &Path,
+    warnings: &mut Vec<String>,
+) -> Result<(), CliError> {
+    processes_idle_with(target, root, warnings, |path| fs::read_link(path))
+}
+
+fn processes_idle_with(
+    target: &Path,
+    root: &Path,
+    warnings: &mut Vec<String>,
+    read_link: fn(&Path) -> io::Result<PathBuf>,
+) -> Result<(), CliError> {
     let deadline = Instant::now() + Duration::from_secs(10);
     let uid = unsafe { libc::geteuid() };
+    let excluded = ancestor_pids(root);
     let mut budget = MAX_PROBE_BYTES;
-    let mut incomplete = None;
-    let processes = fs::read_dir(root).map_err(|error| unavailable("inventory", error))?;
-    for entry in processes {
-        if Instant::now() >= deadline {
-            return Err(unavailable("inventory", "process proof timed out"));
+    let mut opaque = 0usize;
+    let processes = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            warnings.push(format!("procfs inventory unavailable: {error}"));
+            return Ok(());
         }
-        let entry = entry.map_err(|error| unavailable("inventory", error))?;
-        if !entry
+    };
+    for entry in processes {
+        if Instant::now() >= deadline || budget == 0 {
+            warnings.push("procfs scan limit reached".into());
+            break;
+        }
+        let Ok(entry) = entry else {
+            opaque += 1;
+            continue;
+        };
+        let Some(pid) = entry
             .file_name()
-            .as_encoded_bytes()
-            .iter()
-            .all(u8::is_ascii_digit)
-        {
+            .to_str()
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if excluded.contains(&pid) {
             continue;
         }
         let process = entry.path();
-        let result = (|| -> io::Result<bool> {
-            let status = match read(&process.join("status"), &mut budget) {
-                Ok(status) => status,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-                Err(error) => return Err(error),
-            };
-            if !live_user(&status, uid)? {
-                return Ok(false);
+        let status = match read(&process.join("status"), &mut budget) {
+            Ok(status) => status,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                opaque += 1;
+                Vec::new()
             }
-            let cwd = fs::read_link(process.join("cwd"))?;
-            if in_target(&cwd, target) {
-                return Ok(true);
-            }
-            for fd in fs::read_dir(process.join("fd"))? {
-                if Instant::now() >= deadline {
-                    return Err(io::Error::other("process proof timed out"));
-                }
-                match fs::read_link(fd?.path()) {
-                    Ok(path) if in_target(&path, target) => return Ok(true),
-                    Ok(_) => {}
-                    // A descriptor may close while we inspect it.
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error),
-                }
-            }
-            let maps = read(&process.join("maps"), &mut budget)?;
-            Ok(maps
-                .split(|byte| *byte == b'\n')
-                .filter_map(mapping_path)
-                .any(|path| in_target(&path, target)))
-        })();
-        match result {
-            Ok(true) => return Err(active()),
-            Ok(false) => {}
-            Err(error) => {
-                // Exit and zombie transitions release cwd/fds. All other loss
-                // of same-user visibility remains a refusal, but continue so
-                // a known holder gets the more specific active reason.
-                match read(&process.join("status"), &mut budget) {
-                    Err(gone) if gone.kind() == io::ErrorKind::NotFound => {}
-                    Ok(status) if matches!(live_user(&status, uid), Ok(false)) => {}
-                    _ => {
-                        incomplete.get_or_insert_with(|| unavailable("live-process", error));
+        };
+        match live_user(&status, uid) {
+            Ok(false) => continue,
+            Err(_) => opaque += 1,
+            Ok(true) => {}
+        }
+        let command = std::str::from_utf8(&status)
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find_map(|l| l.strip_prefix("Name:").map(str::trim))
+            })
+            .unwrap_or("unknown");
+        // Read each surface independently: an opaque cwd must not hide a
+        // readable fd or mapping. Unknown visibility is diagnostic, not a veto.
+        let mut incomplete = false;
+        match read_link(&process.join("cwd")) {
+            Ok(path) if in_target(&path, target) => return Err(active(pid, command, "cwd")),
+            Ok(_) => {}
+            Err(_) => incomplete = true,
+        }
+        match fs::read_dir(process.join("fd")) {
+            Ok(entries) => {
+                for fd in entries {
+                    if Instant::now() >= deadline {
+                        incomplete = true;
+                        break;
+                    }
+                    match fd.and_then(|entry| read_link(&entry.path())) {
+                        Ok(path) if in_target(&path, target) => {
+                            return Err(active(pid, command, "fd"));
+                        }
+                        Ok(_) => {}
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(_) => incomplete = true,
                     }
                 }
             }
+            Err(_) => incomplete = true,
+        }
+        match read(&process.join("maps"), &mut budget) {
+            Ok(maps)
+                if maps
+                    .split(|b| *b == b'\n')
+                    .filter_map(mapping_path)
+                    .any(|path| in_target(&path, target)) =>
+            {
+                return Err(active(pid, command, "mapping"));
+            }
+            Ok(_) => {}
+            Err(_) => incomplete = true,
+        }
+        if incomplete
+            && !matches!(
+                read(&process.join("status"), &mut budget).map(|s| live_user(&s, uid)),
+                Ok(Ok(false))
+            )
+            && process.exists()
+        {
+            opaque += 1;
         }
     }
-    match incomplete {
-        Some(error) => Err(error),
-        None => Ok(()),
+    if opaque > 0 {
+        warnings.push(format!(
+            "procfs: {opaque} unreadable process entries; visibility is incomplete"
+        ));
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -199,7 +270,7 @@ mod tests {
         let target = root.path().join("target");
         let path = process(root.path(), unsafe { libc::geteuid() }, "S", root.path());
         symlink(root.path().join("target-other/file"), path.join("fd/3")).unwrap();
-        assert!(processes_idle(&target, root.path()).is_ok());
+        assert!(processes_idle(&target, root.path(), &mut Vec::new()).is_ok());
     }
 
     #[test]
@@ -226,28 +297,34 @@ mod tests {
                 _ => {}
             }
             assert_eq!(
-                processes_idle(&target, root.path()).unwrap_err().code,
+                processes_idle(&target, root.path(), &mut Vec::new())
+                    .unwrap_err()
+                    .code,
                 "removal-process-active"
             );
         }
     }
 
     #[test]
-    fn process_visibility_unreadable_live_current_user_is_retained() {
+    fn process_visibility_unreadable_warns_and_readable_fd_still_blocks() {
         let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target");
         let path = process(root.path(), unsafe { libc::geteuid() }, "S", root.path());
-        // An unreadable live-process cwd is not equivalent to process exit.
         fs::remove_file(path.join("cwd")).unwrap();
+        let mut warnings = Vec::new();
+        assert!(processes_idle(&target, root.path(), &mut warnings).is_ok());
+        assert!(!warnings.is_empty());
+        symlink(target.join("file"), path.join("fd/3")).unwrap();
         assert_eq!(
-            processes_idle(&root.path().join("target"), root.path())
+            processes_idle(&target, root.path(), &mut warnings)
                 .unwrap_err()
                 .code,
-            "removal-proof-unavailable"
+            "removal-process-active"
         );
     }
 
     #[test]
-    fn process_visibility_other_users_and_zombies_do_not_require_cwd() {
+    fn process_visibility_zombies_do_not_require_cwd_and_other_users_are_scanned() {
         for (uid, state) in [
             (unsafe { libc::geteuid() }.wrapping_add(1), "S"),
             (unsafe { libc::geteuid() }, "Z"),
@@ -255,33 +332,60 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let path = process(root.path(), uid, state, root.path());
             fs::remove_file(path.join("cwd")).unwrap();
-            assert!(processes_idle(&root.path().join("target"), root.path()).is_ok());
+            assert!(
+                processes_idle(&root.path().join("target"), root.path(), &mut Vec::new()).is_ok()
+            );
         }
+    }
+
+    #[test]
+    fn process_visibility_readable_other_user_holder_is_named() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target");
+        process(
+            root.path(),
+            unsafe { libc::geteuid() }.wrapping_add(1),
+            "S",
+            &target,
+        );
+        let error = processes_idle(&target, root.path(), &mut Vec::new()).unwrap_err();
+        assert_eq!(error.code, "removal-process-active");
     }
 
     #[test]
     fn process_visibility_disappeared_process_is_not_a_holder() {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("42")).unwrap();
-        assert!(processes_idle(&root.path().join("target"), root.path()).is_ok());
+        assert!(processes_idle(&root.path().join("target"), root.path(), &mut Vec::new()).is_ok());
     }
 
     #[test]
-    fn process_visibility_unknown_identity_and_missing_inventory_are_retained() {
+    fn process_visibility_eacces_is_a_warning() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target");
+        process(root.path(), unsafe { libc::geteuid() }, "S", root.path());
+        let mut warnings = Vec::new();
+        let result = processes_idle_with(&target, root.path(), &mut warnings, |path| {
+            if path.ends_with("cwd") {
+                Err(io::Error::from_raw_os_error(libc::EACCES))
+            } else {
+                fs::read_link(path)
+            }
+        });
+        assert!(result.is_ok());
+        assert!(!warnings.is_empty());
+    }
+
+    #[test]
+    fn process_visibility_unknown_identity_and_inventory_warn() {
         let root = tempfile::tempdir().unwrap();
         let path = process(root.path(), unsafe { libc::geteuid() }, "S", root.path());
         fs::write(path.join("status"), "State: S\n").unwrap();
-        assert_eq!(
-            processes_idle(&root.path().join("target"), root.path())
-                .unwrap_err()
-                .code,
-            "removal-proof-unavailable"
-        );
-        assert_eq!(
-            processes_idle(root.path(), &root.path().join("missing"))
-                .unwrap_err()
-                .code,
-            "removal-proof-unavailable"
-        );
+        let mut warnings = Vec::new();
+        assert!(processes_idle(&root.path().join("target"), root.path(), &mut warnings).is_ok());
+        assert!(!warnings.is_empty());
+        warnings.clear();
+        assert!(processes_idle(root.path(), &root.path().join("missing"), &mut warnings).is_ok());
+        assert!(!warnings.is_empty());
     }
 }
