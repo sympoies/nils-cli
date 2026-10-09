@@ -15,6 +15,7 @@ struct Fixture {
     log: PathBuf,
     git_log: PathBuf,
     remote_sha: PathBuf,
+    user_namespace: bool,
 }
 
 impl Fixture {
@@ -47,17 +48,24 @@ endpoint= method=GET
 for arg in "$@"; do
   case "$arg" in user|namespaces/*|projects*) endpoint=$arg ;; POST|PUT) method=$arg ;; esac
 done
+case "$endpoint" in
+  projects/operator%2Fwidgets*) endpoint="projects/team%2Fsub%2Fwidgets${endpoint#projects/operator%2Fwidgets}" ;;
+esac
 header() { printf 'HTTP/2 %s\r\nContent-Type: application/json\r\n\r\n' "$1"; }
 missing() { header '404 Not Found'; printf '%s\n' '{"message":"404 Project Not Found"}'; exit 1; }
 project() {
   default=null; [ ! -f "$GL_TEST_BRANCH" ] || default="\"$(cat "$GL_TEST_BRANCH")\""
   empty=true; [ ! -f "$GL_TEST_REMOTE_SHA" ] || empty=false
+  owner=team/sub; kind=group; visibility=public
+  if [ "${GL_TEST_USER_NAMESPACE:-}" = yes ]; then owner=operator; kind=user; visibility=private; fi
+  clone_url=${GL_TEST_CLONE_URL:-https://gitlab.example.com/$owner/widgets.git}
   header '200 OK'
-  printf '{"path":"widgets","path_with_namespace":"team/sub/widgets","namespace":{"id":42,"full_path":"team/sub","kind":"group"},"visibility":"public","http_url_to_repo":"https://gitlab.example.com/team/sub/widgets.git","default_branch":%s,"empty_repo":%s}\n' "$default" "$empty"
+  printf '{"path":"widgets","path_with_namespace":"%s/widgets","namespace":{"id":42,"full_path":"%s","kind":"%s"},"visibility":"%s","http_url_to_repo":"%s","default_branch":%s,"empty_repo":%s}\n' "$owner" "$owner" "$kind" "$visibility" "$clone_url" "$default" "$empty"
 }
 case "$endpoint" in
   user) header '200 OK'; printf '%s\n' '{"username":"operator"}' ;;
   namespaces/team%2Fsub) header '200 OK'; printf '%s\n' '{"id":42,"full_path":"team/sub","kind":"group"}' ;;
+  namespaces/operator) header '200 OK'; printf '%s\n' '{"id":42,"full_path":"operator","kind":"user"}' ;;
   projects)
     [ "$method" = POST ] || exit 9
     : > "$GL_TEST_EXISTS"; project ;;
@@ -86,7 +94,7 @@ case "$endpoint" in
   projects/team%2Fsub%2Fwidgets/repository/commits/*/signature)
     header '200 OK'; printf '{"verification_status":"%s"}\n' "${GL_TEST_VERIFICATION:-verified}" ;;
   projects/team%2Fsub%2Fwidgets/repository/commits/*)
-    header '200 OK'; printf '{"id":"%s","parent_ids":[]}\n' "$GL_TEST_SHA" ;;
+    header '200 OK'; printf '{"id":"%s","parent_ids":%s}\n' "${GL_TEST_COMMIT_ID:-$GL_TEST_SHA}" "${GL_TEST_PARENTS:-[]}" ;;
   *) printf 'unexpected endpoint: %s\n' "$endpoint" >&2; exit 9 ;;
 esac
 "#);
@@ -129,6 +137,7 @@ printf '{"ok":true,"commit":{"sha":"%s"}}\n' "$GL_TEST_SHA"
             log,
             git_log,
             remote_sha,
+            user_namespace: false,
         }
     }
 
@@ -139,15 +148,17 @@ printf '{"ok":true,"commit":{"sha":"%s"}}\n' "$GL_TEST_SHA"
             "--host",
             "gitlab.example.com",
             "--repo",
-            "team/sub/widgets",
+            if self.user_namespace {
+                "operator/widgets"
+            } else {
+                "team/sub/widgets"
+            },
             "--format",
             "json",
             "repo",
             "bootstrap",
             "--owner-kind",
-            "org",
-            "--visibility",
-            "public",
+            if self.user_namespace { "user" } else { "org" },
             "--default-branch",
             "trunk/topic",
             "--file",
@@ -157,6 +168,9 @@ printf '{"ok":true,"commit":{"sha":"%s"}}\n' "$GL_TEST_SHA"
             "--reason-file",
             self.reason.to_str().unwrap(),
         ];
+        if !self.user_namespace {
+            args.extend(["--visibility", "public"]);
+        }
         if existing {
             args.push("--existing-empty");
         }
@@ -216,6 +230,78 @@ fn gitlab_bootstrap_adopts_existing_empty_project_without_creation() {
     let result = success(fixture.run(true, false, false));
     assert_eq!(result["data"]["remote_created"], false);
     assert!(!fs::read_to_string(&fixture.log).unwrap().contains("POST"));
+}
+
+#[test]
+fn gitlab_bootstrap_creates_authenticated_user_project_with_default_private_visibility() {
+    let mut fixture = Fixture::new(false);
+    fixture.user_namespace = true;
+    fixture.stub = fixture.stub.env("GL_TEST_USER_NAMESPACE", "yes");
+    let result = success(fixture.run(false, false, false));
+    assert_eq!(result["data"]["root_commit_sha"], SHA);
+    let log = fs::read_to_string(&fixture.log).unwrap();
+    assert!(log.contains("namespaces/operator"), "{log}");
+    let create = log.lines().find(|line| line.contains("POST")).unwrap();
+    assert!(create.contains("visibility=private"), "{create}");
+    assert!(create.contains("namespace_id=42"), "{create}");
+    assert!(
+        fs::read_to_string(&fixture.git_log)
+            .unwrap()
+            .contains("https://gitlab.example.com/operator/widgets.git"),
+        "{log}"
+    );
+}
+
+#[test]
+fn gitlab_bootstrap_refuses_clone_url_host_or_path_drift_before_push() {
+    for clone_url in [
+        "https://other.gitlab.example.com/team/sub/widgets.git",
+        "https://gitlab.example.com/team/sub/other.git",
+    ] {
+        let mut fixture = Fixture::new(true);
+        fixture.stub = fixture.stub.env("GL_TEST_CLONE_URL", clone_url);
+        let output = fixture.run(true, false, false);
+        assert_ne!(output.code, 0);
+        assert_eq!(
+            parse_envelope(&output.stdout)["error"]["code"],
+            "remote_drift"
+        );
+        let git = fs::read_to_string(&fixture.git_log).unwrap_or_default();
+        assert!(!git.contains("push "), "{clone_url}: {git}");
+        assert!(!fixture.remote_sha.exists());
+    }
+}
+
+#[test]
+fn gitlab_bootstrap_refuses_delivered_commit_with_parents() {
+    let mut fixture = Fixture::new(true);
+    fixture.stub = fixture.stub.env(
+        "GL_TEST_PARENTS",
+        "[\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"]",
+    );
+    let output = fixture.run(true, false, false);
+    assert_ne!(output.code, 0);
+    assert_eq!(
+        parse_envelope(&output.stdout)["error"]["code"],
+        "bootstrap_commit_not_root"
+    );
+    assert_eq!(fs::read_to_string(&fixture.remote_sha).unwrap().trim(), SHA);
+}
+
+#[test]
+fn gitlab_bootstrap_refuses_mismatched_delivered_commit_id() {
+    let mut fixture = Fixture::new(true);
+    fixture.stub = fixture.stub.env(
+        "GL_TEST_COMMIT_ID",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    );
+    let output = fixture.run(true, false, false);
+    assert_ne!(output.code, 0);
+    assert_eq!(
+        parse_envelope(&output.stdout)["error"]["code"],
+        "remote_drift"
+    );
+    assert_eq!(fs::read_to_string(&fixture.remote_sha).unwrap().trim(), SHA);
 }
 
 #[test]
