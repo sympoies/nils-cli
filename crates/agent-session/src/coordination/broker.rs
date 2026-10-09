@@ -927,7 +927,7 @@ pub(crate) fn stop(context: &CliContext, args: BrokerStopArgs) -> Result<Value, 
             &journal_id,
             "exit-observed",
             "controller",
-            result.as_ref().map(|_| ()).map_err(|e| e),
+            result.as_ref().map(|_| ()),
             Some(
                 json!({"code": code, "signal": null, "reason": "runtime-exited", "stopped_by": null}),
             ),
