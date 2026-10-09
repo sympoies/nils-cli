@@ -756,3 +756,18 @@ fn reset_rate_limits_text_output_names_the_outcome() {
     assert_exit(&output, 0);
     assert_eq!(stdout(&output), "Used a granted limit reset (1 left).\n");
 }
+
+#[test]
+fn reset_rate_limits_usage_status_403_rate_limit_is_provider_unavailable() {
+    let fx = Fixture::new();
+    *fx.status.lock().unwrap() = (403, "too many requests".to_string());
+    let output = fx.redeem("juniper_tide");
+    assert_exit(&output, 3);
+    let payload: Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(payload["error"]["code"], "provider-unavailable");
+    assert_eq!(payload["error"]["details"]["reason_code"], "rate_limited");
+    let requests = fx.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, "GET");
+    assert_eq!(requests[0].path, USAGE_PATH);
+}

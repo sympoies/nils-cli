@@ -61,6 +61,19 @@ Stable `reason_code` values:
 - `timeout`
 - `unknown`
 
+OAuth rate limits, including an active shared cooldown, return eligible cached
+windows with `stale: true` and `reason_code: rate_limited`, or an empty result
+with that reason. `--source auto` does not launch the native `/usage` probe on
+this path. Cache clears do not reset the cooldown.
+
+OAuth cooldown cache reads require `usage.owner.json` to match both the token
+and the exact cached payload by digest. This prevents a limited account from
+receiving another account's windows after a credential switch or concurrent
+cache replacement. Caches without recorded ownership remain available to explicit
+cache reads; they are omitted on OAuth cooldown paths until a successful OAuth
+refresh establishes ownership. The foreground prompt uses local associations
+without resolving credentials.
+
 ### Usage error envelopes
 
 `usage` normally succeeds, including when no window is available. It emits an
@@ -184,6 +197,12 @@ network additionally carries `limit_resets`, the normalized status of the two
 Claude limit-reset programs. Results from `--cached` or a cache fallback, and
 failed results, omit it. A network body without either program reports both
 as `null`, so absence always means the value was not read.
+
+A live rate limit or active shared cooldown preserves eligible cached diagnostic
+windows with `source: cache-fallback` and `reason_code: rate_limited`.
+`--cached` remains offline and carries the same reason while cooldown is active.
+Other accounts remain independent. These values are cached display data, not
+fresh quota authority.
 
 Live `--async --format json` collection normally falls back to stale cached
 windows after a profile request fails. A machine consumer that needs each

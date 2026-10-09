@@ -264,7 +264,16 @@ impl RateLimitsProvider for ClaudeRateLimits {
                 no_window: true,
                 ..Default::default()
             },
-            Fetch::Failed { message, .. } => {
+            Fetch::Failed {
+                message, reason, ..
+            } => {
+                if reason == Some(ProviderUsageReason::RateLimited) {
+                    let mut errors = Vec::new();
+                    if let Some(mut result) = stale_one_line(&name, &mut errors) {
+                        result.stale = true;
+                        return result;
+                    }
+                }
                 if debug {
                     eprintln!("{message}");
                 }
@@ -433,7 +442,13 @@ fn json_result(
     let identity = provider.identity(target);
     let name = identity.name.clone();
     if cached {
-        return from_cache(identity, "cache", &name, true);
+        let mut result = from_cache(identity, "cache", &name, true);
+        if read_target_login(target)
+            .is_ok_and(|login| crate::prompt_segment::client::backoff_active(&login.access_token))
+        {
+            result.reason_code = Some(ProviderUsageReason::RateLimited);
+        }
+        return result;
     }
 
     match fetch(target) {
@@ -462,9 +477,16 @@ fn json_result(
             message,
             reason,
         } => {
-            if fallback == CacheFallbackPolicy::AnyFailure {
-                let fallback_result = from_cache(identity.clone(), "cache-fallback", &name, false);
+            if fallback == CacheFallbackPolicy::AnyFailure
+                || (reason == Some(ProviderUsageReason::RateLimited)
+                    && !shared_env::env_truthy(ASYNC_JSON_NO_CACHE_FALLBACK_ENV))
+            {
+                let mut fallback_result =
+                    from_cache(identity.clone(), "cache-fallback", &name, false);
                 if fallback_result.ok {
+                    if reason == Some(ProviderUsageReason::RateLimited) {
+                        fallback_result.reason_code = reason;
+                    }
                     return fallback_result;
                 }
             }
@@ -593,6 +615,7 @@ fn fetch(target: &Path) -> Fetch {
 
 fn request_failure_reason(failure: &RequestFailure) -> ProviderUsageReason {
     match failure {
+        RequestFailure::Backoff => ProviderUsageReason::RateLimited,
         RequestFailure::Client => ProviderUsageReason::Unknown,
         RequestFailure::Transport { timeout: true } => ProviderUsageReason::Timeout,
         RequestFailure::Transport { timeout: false } => ProviderUsageReason::ServiceUnavailable,

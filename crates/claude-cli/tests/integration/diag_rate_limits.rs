@@ -470,7 +470,9 @@ fn diag_rate_limits_async_json_falls_back_to_cache_and_cached_mode_stays_offline
     let output = fx.run(&["diag", "rate-limits", "--async", "--json"]);
     assert_exit(&output, 0);
     let payload: Value = serde_json::from_str(&stdout(&output)).expect("json");
-    assert_eq!(payload["results"], json!([alpha_result("cache-fallback")]));
+    let mut limited = alpha_result("cache-fallback");
+    limited["reason_code"] = json!("rate_limited");
+    assert_eq!(payload["results"], json!([limited]));
 
     let strict = fx
         .options()

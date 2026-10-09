@@ -393,6 +393,7 @@ fn reset_max_time_seconds() -> u64 {
 
 fn request_failure(failure: &RequestFailure) -> Failure {
     match failure {
+        RequestFailure::Backoff => provider_unavailable("rate_limited"),
         RequestFailure::Client => provider_unavailable("service_unavailable"),
         RequestFailure::Transport { timeout: true } => provider_unavailable("timeout"),
         RequestFailure::Transport { timeout: false } => provider_unavailable("service_unavailable"),
