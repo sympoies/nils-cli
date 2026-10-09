@@ -204,7 +204,10 @@ fn safe_removal_retains_target_behind_startup_lifecycle_barrier() {
 
     let fixture = RemovalFixture::new();
     let root = fs::canonicalize(&fixture.target).unwrap();
-    let key = format!("{:x}", Sha256::digest(root.as_os_str().as_bytes()));
+    let key = Sha256::digest(root.as_os_str().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     let directory = fixture
         .home
         .path()
@@ -328,7 +331,7 @@ fn safe_removal_requires_exact_provider_head_for_squash_merge() {
         // Distinct parentage means ancestry cannot stand in for provider proof.
         let listed = serde_json::json!({"ok":true,"data":{"items":[{"number":1}]}});
         let viewed = serde_json::json!({"ok":true,"data":{"state":"merged","head":"feat/safe","base":"main",
-            "head_sha":if exact { head } else { "0".repeat(40) }, "merged_at":"2030-01-01T00:00:00Z"}});
+            "head_sha":if exact { head.clone() } else { "0".repeat(40) }, "merged_at":"2030-01-01T00:00:00Z"}});
         fixture.probes.write_exe("forge-cli", &format!("#!/bin/sh\ncase \"$2\" in\n list) printf '%s\\n' '{listed}' ;;\n view) printf '%s\\n' '{viewed}' ;;\n *) exit 2 ;;\nesac\n"));
         let result = fixture.remove("safe");
         if exact {

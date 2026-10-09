@@ -56,7 +56,10 @@ fn worktree_lifecycle_removal_barrier_prevents_start_and_run_publication() {
         .unwrap();
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
         let root = fs::canonicalize(&checkout).unwrap();
-        let key = format!("{:x}", Sha256::digest(root.as_os_str().as_bytes()));
+        let key = Sha256::digest(root.as_os_str().as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
