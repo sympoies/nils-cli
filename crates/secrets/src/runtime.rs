@@ -142,8 +142,8 @@ pub fn list(format: OutputFormat) -> i32 {
     dispatch(format, list_with)
 }
 
-pub fn which(name: Option<&str>, format: OutputFormat) -> i32 {
-    dispatch(format, |env| which_with(env, name))
+pub fn which(name: Option<&str>, explain: bool, format: OutputFormat) -> i32 {
+    dispatch(format, |env| which_with(env, name, explain))
 }
 
 pub fn edit(name: Option<&str>, format: OutputFormat) -> i32 {
@@ -229,6 +229,7 @@ fn pull_with(
         )));
     }
 
+    let explicit_output = output.is_some();
     let dest = output
         .map(PathBuf::from)
         .map(|path| {
@@ -239,11 +240,20 @@ fn pull_with(
             }
         })
         .unwrap_or_else(|| env.cwd.join(".env"));
-    // Decrypt into a same-directory private temporary file. Installation is
-    // atomic and does not replace an existing destination unless --force.
-    let dest_file = create_private_temp(&dest)?;
-    let temp_path = dest_file.1.clone();
-    let dest_file = dest_file.0;
+    if explicit_output && !force {
+        // Refuse before invoking SOPS; the atomic install below still protects
+        // against another process creating the path after this check.
+        ensure_output_available(&dest)?;
+    }
+
+    // Preserve the historical ./.env refresh behavior. Explicit destinations
+    // are decrypted to a private sibling temp file and installed atomically.
+    let (dest_file, temp_path) = if explicit_output {
+        let (file, path) = create_private_temp(&dest)?;
+        (file, Some(path))
+    } else {
+        (create_private_file(&dest)?, None)
+    };
     // The plaintext stream is
     // redirected to the file and never enters our address space as a buffer we
     // could print.
@@ -255,20 +265,30 @@ fn pull_with(
         .stderr(Stdio::inherit())
         .status()
         .map_err(|err| {
-            let _ = fs::remove_file(&temp_path);
+            if let Some(path) = &temp_path {
+                let _ = fs::remove_file(path);
+            } else {
+                let _ = fs::remove_file(&dest);
+            }
             CmdError::unavailable(format!("failed to run sops: {err}"), "sops-unavailable")
         })?;
 
     if !status.success() {
         // Leave no partial plaintext behind on decryption failure.
-        let _ = fs::remove_file(&temp_path);
+        if let Some(path) = &temp_path {
+            let _ = fs::remove_file(path);
+        } else {
+            let _ = fs::remove_file(&dest);
+        }
         return Err(CmdError::runtime(format!(
             "sops failed to decrypt {}",
             entry.rel
         )));
     }
 
-    install_private_file(&temp_path, &dest, force)?;
+    if let Some(path) = temp_path {
+        install_private_file(&path, &dest, force)?;
+    }
 
     // Count keys for metadata ONLY (we read key names from a file we just wrote;
     // values are never surfaced). This is the destination plaintext, but we
@@ -387,7 +407,8 @@ fn list_with(env: &Env) -> Result<ListOutcome, CmdError> {
     })
 }
 
-fn which_with(env: &Env, name: Option<&str>) -> Result<WhichOutcome, CmdError> {
+fn which_with(env: &Env, name: Option<&str>, explain: bool) -> Result<WhichOutcome, CmdError> {
+    env.ensure_store()?;
     let entry = resolve_entry(env, name)?;
     Ok(WhichOutcome {
         store: env.store_root.to_string_lossy().to_string(),
@@ -396,6 +417,7 @@ fn which_with(env: &Env, name: Option<&str>) -> Result<WhichOutcome, CmdError> {
         exists: entry.exists,
         selected_by: env.selection_source.clone(),
         matched_by: env.selection_match.clone(),
+        explain,
     })
 }
 
@@ -463,7 +485,7 @@ fn git_index_clean(store_root: &Path, rel: &str) -> Result<bool, CmdError> {
 
 // ------------------------------ fs helpers -----------------------------------
 
-/// Create (or truncate) a file with mode 600 for the decrypted plaintext.
+/// Create a new private temporary file beside an explicit pull destination.
 fn create_private_temp(destination: &Path) -> Result<(File, PathBuf), CmdError> {
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     for _ in 0..32 {
@@ -491,6 +513,34 @@ fn create_private_temp(destination: &Path) -> Result<(File, PathBuf), CmdError> 
         }
     }
     Err(CmdError::runtime("cannot allocate a private output file"))
+}
+
+/// Create or truncate the default `./.env` destination with mode 600.
+fn create_private_file(path: &Path) -> Result<File, CmdError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+        .open(path)
+        .map_err(|err| CmdError::runtime(format!("cannot write {}: {err}", path.display())))
+}
+
+fn ensure_output_available(path: &Path) -> Result<(), CmdError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Err(CmdError::runtime(format!(
+            "output already exists: {} (use --force to replace it)",
+            path.display()
+        ))),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(CmdError::runtime(format!(
+            "cannot inspect output {}: {err}",
+            path.display()
+        ))),
+    }
 }
 
 fn install_private_file(temp: &Path, destination: &Path, force: bool) -> Result<(), CmdError> {
@@ -926,6 +976,8 @@ pub struct WhichOutcome {
     pub exists: bool,
     pub selected_by: String,
     pub matched_by: Option<String>,
+    #[serde(skip)]
+    pub explain: bool,
 }
 
 impl Outcome for WhichOutcome {
@@ -933,6 +985,9 @@ impl Outcome for WhichOutcome {
         "which"
     }
     fn human(&self) -> String {
+        if !self.explain {
+            return self.path.clone();
+        }
         let reason = match &self.matched_by {
             Some(matched) => format!("{}: {}", self.selected_by, matched),
             None => self.selected_by.clone(),
@@ -992,6 +1047,7 @@ mod tests {
             exists: true,
             selected_by: "path-prefix".to_string(),
             matched_by: Some("/work/team".to_string()),
+            explain: true,
         };
         assert!(
             outcome

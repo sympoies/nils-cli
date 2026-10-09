@@ -10,7 +10,7 @@ an explicit name is supplied.
 secrets pull [name] [--output <path>] [--force]
 secrets add [file]
 secrets list
-secrets which [name]
+secrets which [name] [--explain]
 secrets edit [name]
 secrets completion bash
 secrets completion zsh
@@ -21,10 +21,10 @@ secrets completion zsh
 
 ## Pull output
 
-`pull` writes to `./.env` by default. `--output` selects another destination;
-existing destinations are preserved unless `--force` is used. Relative output
-paths are resolved from the current directory. Created output files have mode
-`600`.
+`pull` refreshes `./.env` by default. `--output` selects another destination;
+an existing explicit destination is preserved unless `--force` is used.
+Relative output paths are resolved from the current directory. Created output
+files have mode `600`.
 
 ## Store selection
 
@@ -47,8 +47,12 @@ Selection precedence is `SECRETS_REPO`, the longest matching checkout path
 prefix, the longest matching remote host/owner/repository prefix, the configured
 default, then `$XDG_DATA_HOME/secrets/store` (or
 `~/.local/share/secrets/store`). Relative store paths in the TOML file are
-resolved from that file's directory. `secrets which` explains the selected
-store source and matching selector.
+resolved from that file's directory. Checkout path-prefix keys must be absolute;
+matching uses lexically normalized paths and does not resolve symlink aliases
+or expand `~`. Remote selectors are case-insensitive host/path prefixes and
+match only at path-segment boundaries. `secrets which --explain` reports the
+selected store source and matching selector. JSON output includes this
+selection metadata as well.
 
 ## Output modes and secret handling
 
@@ -62,13 +66,16 @@ mode-600 output file and are never echoed to standard output or included in the
 JSON envelope.
 
 `add` encrypts into a hidden mode-600 temporary output beside the final entry,
-asks SOPS to decrypt and validate the complete temporary document, and only
+asks SOPS to decrypt and MAC-verify the complete temporary document, and only
 then atomically installs it over the tracked target. The sibling location
-ensures a same-filesystem rename. Encryption failure, invalid output, or a
-handled signal before installation leaves prior ciphertext unchanged and
-removes the temporary output. After installation, the transaction completes
-its Git operations. Hermetic integration tests use stub executables and
-synthetic stores to exercise these contracts.
+ensures a same-filesystem rename and supports linked worktrees. The target never
+contains plaintext; encryption failure, invalid output, or a handled signal
+before installation leaves prior ciphertext unchanged and removes the temporary
+output. After installation, handled signals are ignored while the add
+transaction completes its Git operations. On Unix, Git children are isolated
+from foreground process-group signals until add, commit, and push complete.
+Hermetic integration tests use a synthetic secret canary and assert it never
+appears on standard output or standard error.
 
 ## Exit codes
 

@@ -13,7 +13,8 @@ const ROOT_AFTER_HELP: &str = "\
 EXAMPLES:
   secrets pull [name] [--output <path>]  # decrypt to ./.env or a chosen path
   secrets add                  # encrypt ./.env into the store, commit, push
-  secrets which                # explain the selected store and entry
+  secrets which                # print the selected entry path
+  secrets which --explain      # explain the selected store and entry
   secrets list                 # list every store entry name
   secrets edit my-stack        # sops-edit a store entry
   secrets completion zsh
@@ -66,8 +67,8 @@ pub enum Command {
     Add(AddArgs),
     /// List every store entry name
     List,
-    /// Explain the selected store and matching context
-    Which(NameArgs),
+    /// Print the selected entry path; use --explain to show store selection
+    Which(WhichArgs),
     /// Open a store entry in sops for editing
     Edit(NameArgs),
     /// Export shell completion script
@@ -82,6 +83,16 @@ pub struct NameArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct WhichArgs {
+    /// Override the auto-detected entry: bare name, `repos/<o>/<r>`, or `stacks/<x>`
+    #[arg(value_name = "name", add = ArgValueCandidates::new(name_candidates))]
+    pub name: Option<String>,
+    /// Explain which store and matching context were selected
+    #[arg(long)]
+    pub explain: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct PullArgs {
     /// Override the auto-detected entry: bare name, `repos/<o>/<r>`, or `stacks/<x>`
     #[arg(value_name = "name", add = ArgValueCandidates::new(name_candidates))]
@@ -89,7 +100,7 @@ pub struct PullArgs {
     /// Write decrypted values to this path instead of ./.env
     #[arg(long, value_name = "path")]
     pub output: Option<String>,
-    /// Replace an existing output file
+    /// Replace an existing explicit --output destination
     #[arg(long)]
     pub force: bool,
 }
@@ -147,7 +158,7 @@ where
         ),
         Some(Command::Add(args)) => runtime::add(&args.file, format),
         Some(Command::List) => runtime::list(format),
-        Some(Command::Which(args)) => runtime::which(args.name.as_deref(), format),
+        Some(Command::Which(args)) => runtime::which(args.name.as_deref(), args.explain, format),
         Some(Command::Edit(args)) => runtime::edit(args.name.as_deref(), format),
         Some(Command::Completion(args)) => completion::run(args.shell),
     }
@@ -262,6 +273,18 @@ mod tests {
                 assert!(args.force);
             }
             other => panic!("expected pull, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn which_accepts_explain_option() {
+        let cli = Cli::parse_from(["secrets", "which", "service", "--explain"]);
+        match cli.command {
+            Some(Command::Which(args)) => {
+                assert_eq!(args.name.as_deref(), Some("service"));
+                assert!(args.explain);
+            }
+            other => panic!("expected which, got {other:?}"),
         }
     }
 }

@@ -325,6 +325,22 @@ fn assert_no_add_temp_files(store: &Path) {
     );
 }
 
+fn assert_no_pull_temp_files(dir: &Path) {
+    let leftovers = fs::read_dir(dir)
+        .expect("read output directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".secrets-pull-"))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        leftovers.is_empty(),
+        "pull temporary files remain: {leftovers:?}"
+    );
+}
+
 fn wait_for_file(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !path.exists() {
@@ -673,11 +689,119 @@ fn which_resolves_auto_detected_slug() {
     let output = run(&["which"], &options(tmp.path(), &store, stubs.path()));
     assert_exit(&output, 0);
     let stdout = output.stdout_text();
-    assert!(
-        stdout.contains("repos/example/service.enc.env"),
-        "stdout: {stdout}"
+    assert_eq!(
+        stdout.trim(),
+        store
+            .join("repos/example/service.enc.env")
+            .to_string_lossy()
     );
     assert_no_secret_leak(&output);
+}
+
+#[test]
+fn which_explains_remote_selection_and_environment_override() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    let env_store = tmp.path().join("env-store");
+    let remote_store = tmp.path().join("remote-store");
+    fs::create_dir_all(&app).expect("app");
+    init_store(&env_store);
+    init_store(&remote_store);
+    let config_home = tmp.path().join("config");
+    fs::create_dir_all(config_home.join("secrets")).expect("config dir");
+    fs::write(
+        config_home.join("secrets/stores.toml"),
+        format!(
+            "default = {:?}\n\n[remotes]\n\"github.com/example\" = {:?}\n",
+            tmp.path().join("default-store").to_string_lossy(),
+            remote_store.to_string_lossy(),
+        ),
+    )
+    .expect("config");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+
+    let env_output = run(
+        &["which", "--explain"],
+        &options(&app, &env_store, stubs.path())
+            .with_env("XDG_CONFIG_HOME", &config_home.to_string_lossy()),
+    );
+    assert_exit(&env_output, 0);
+    assert!(
+        env_output
+            .stdout_text()
+            .contains("selected by SECRETS_REPO")
+    );
+    assert!(
+        env_output
+            .stdout_text()
+            .contains(&env_store.to_string_lossy().to_string())
+    );
+
+    let remote_output = run(
+        &["which", "--explain"],
+        &CmdOptions::default()
+            .with_cwd(&app)
+            .with_path_prepend(stubs.path())
+            .with_env_remove("HOME")
+            .with_env_remove("SECRETS_REPO")
+            .with_env("XDG_CONFIG_HOME", &config_home.to_string_lossy()),
+    );
+    assert_exit(&remote_output, 0);
+    assert!(
+        remote_output
+            .stdout_text()
+            .contains("selected by remote: github.com/example")
+    );
+    assert!(
+        remote_output
+            .stdout_text()
+            .contains(&remote_store.to_string_lossy().to_string())
+    );
+    assert_no_secret_leak(&env_output);
+    assert_no_secret_leak(&remote_output);
+}
+
+#[test]
+fn which_requires_the_selected_store_to_exist() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    fs::create_dir_all(&app).expect("app");
+    let missing_store = tmp.path().join("missing-store");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+
+    let output = run(&["which"], &options(&app, &missing_store, stubs.path()));
+
+    assert_exit(&output, 69);
+}
+
+#[test]
+fn which_rejects_invalid_config_without_echoing_its_contents() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    let config_home = tmp.path().join("config");
+    fs::create_dir_all(&app).expect("app");
+    fs::create_dir_all(config_home.join("secrets")).expect("config dir");
+    fs::write(
+        config_home.join("secrets/stores.toml"),
+        "default = [\"TOP-SECRET-VALUE\"\n",
+    )
+    .expect("invalid config");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+    let opts = CmdOptions::default()
+        .with_cwd(&app)
+        .with_path_prepend(stubs.path())
+        .with_env_remove("HOME")
+        .with_env_remove("SECRETS_REPO")
+        .with_env("XDG_CONFIG_HOME", &config_home.to_string_lossy());
+
+    let output = run(&["which", "--explain"], &opts);
+
+    assert_exit(&output, 69);
+    assert!(!output.stdout_text().contains(SECRET_CANARY));
+    assert!(!output.stderr_text().contains(SECRET_CANARY));
 }
 
 #[test]
@@ -876,13 +1000,7 @@ fn pull_output_writes_private_file_and_reports_path_without_values() {
     let output_path = app.join("credentials.env");
 
     let output = run(
-        &[
-            "--format",
-            "json",
-            "pull",
-            "--output",
-            output_path.to_str().unwrap(),
-        ],
+        &["--format", "json", "pull", "--output", "credentials.env"],
         &options(&app, &store, stubs.path()),
     );
 
@@ -899,10 +1017,33 @@ fn pull_output_writes_private_file_and_reports_path_without_values() {
     {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(
-            fs::metadata(output_path).unwrap().permissions().mode() & 0o777,
+            fs::metadata(&output_path).unwrap().permissions().mode() & 0o777,
             0o600
         );
     }
+}
+
+#[test]
+fn pull_default_refreshes_existing_dotenv() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    let store = tmp.path().join("store");
+    fs::create_dir_all(&app).expect("app");
+    init_store(&store);
+    fs::create_dir_all(store.join("repos/example")).expect("entry dir");
+    fs::write(store.join("repos/example/service.enc.env"), "x").expect("entry");
+    fs::write(app.join(".env"), "KEEP=original\n").expect("existing dotenv");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+    sops_stub(stubs.path());
+
+    let output = run(&["pull"], &options(&app, &store, stubs.path()));
+
+    assert_exit(&output, 0);
+    assert_no_secret_leak(&output);
+    let dotenv = fs::read_to_string(app.join(".env")).expect("refreshed dotenv");
+    assert!(dotenv.contains(SECRET_CANARY));
+    assert!(!dotenv.contains("KEEP=original"));
 }
 
 #[test]
@@ -917,29 +1058,76 @@ fn pull_refuses_existing_output_without_force() {
     let stubs = StubBinDir::new();
     git_stub(stubs.path());
     sops_stub(stubs.path());
+    let sops_log = tmp.path().join("sops.log");
+    fs::write(&sops_log, "").expect("sops log");
     let output_path = app.join("existing.env");
     fs::write(&output_path, "KEEP=original\n").expect("existing output");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&output_path, fs::Permissions::from_mode(0o644))
+            .expect("set existing output mode");
+    }
 
     let output = run(
         &["pull", "--output", output_path.to_str().unwrap()],
-        &options(&app, &store, stubs.path()),
+        &options(&app, &store, stubs.path()).with_env("SOPS_LOG", &sops_log.to_string_lossy()),
     );
 
     assert_exit(&output, 1);
     assert_eq!(fs::read_to_string(&output_path).unwrap(), "KEEP=original\n");
     assert_no_secret_leak(&output);
+    assert_no_pull_temp_files(&app);
+    assert!(
+        fs::read_to_string(&sops_log).unwrap().is_empty(),
+        "an existing output should be rejected before decrypting"
+    );
 
     let output = run(
         &["pull", "--output", output_path.to_str().unwrap(), "--force"],
-        &options(&app, &store, stubs.path()),
+        &options(&app, &store, stubs.path()).with_env("SOPS_LOG", &sops_log.to_string_lossy()),
     );
     assert_exit(&output, 0);
     assert_no_secret_leak(&output);
     assert!(
-        fs::read_to_string(output_path)
+        fs::read_to_string(&output_path)
             .unwrap()
             .contains(SECRET_CANARY)
     );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&output_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    assert_no_pull_temp_files(&app);
+}
+
+#[test]
+fn pull_output_with_missing_parent_fails_without_creating_files() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    let store = tmp.path().join("store");
+    fs::create_dir_all(&app).expect("app");
+    init_store(&store);
+    fs::create_dir_all(store.join("repos/example")).expect("entry dir");
+    fs::write(store.join("repos/example/service.enc.env"), "x").expect("entry");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+    sops_stub(stubs.path());
+    let missing_parent = app.join("missing/output.env");
+
+    let output = run(
+        &["pull", "--output", missing_parent.to_str().unwrap()],
+        &options(&app, &store, stubs.path()),
+    );
+
+    assert_exit(&output, 1);
+    assert!(!missing_parent.parent().unwrap().exists());
+    assert_no_pull_temp_files(&app);
+    assert_no_secret_leak(&output);
 }
 
 #[test]
