@@ -18445,14 +18445,15 @@ fn acquire_worktree_lifecycle(
             Some(json!({ "retryable": matches!(error, Error::Busy) })),
         )
     };
-    let Some(root) = worktree_lifecycle::checkout_root(cwd).map_err(adapt)? else {
+    let Some(root) = worktree_lifecycle::checkout_root(&context.state_dir, cwd).map_err(adapt)?
+    else {
         return Ok(None);
     };
     let _state_root = private_session_state_root(context)?;
     let guard = worktree_lifecycle::Guard::acquire(&context.state_dir, &root).map_err(adapt)?;
     // A removal that won after root resolution must not allow startup to
     // publish a session for the now-missing checkout or nested cwd.
-    if worktree_lifecycle::checkout_root(cwd)
+    if worktree_lifecycle::checkout_root(&context.state_dir, cwd)
         .map_err(adapt)?
         .as_ref()
         != Some(&root)

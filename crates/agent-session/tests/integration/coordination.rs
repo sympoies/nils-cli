@@ -39,7 +39,12 @@ const FAKE_TMUX_KEEP_GROUP_FOR_VERIFIED_STOP: &str =
 fn worktree_lifecycle_removal_barrier_prevents_start_and_run_publication() {
     use std::os::unix::fs::OpenOptionsExt;
 
-    for verb in ["start", "run"] {
+    for (verb, marker_removed) in [
+        ("start", false),
+        ("run", false),
+        ("start", true),
+        ("run", true),
+    ] {
         let tmp = tempfile::TempDir::new().unwrap();
         let checkout = tmp.path().join("checkout");
         init_checkout(&checkout, "https://example.invalid/example/repository.git");
@@ -68,6 +73,11 @@ fn worktree_lifecycle_removal_barrier_prevents_start_and_run_publication() {
             .open(directory.join(format!("{key}.lock")))
             .unwrap();
         assert_eq!(unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) }, 0);
+        if marker_removed {
+            // Model deletion's .git-before-root window, with the same
+            // persistent lifecycle key still held by the remover.
+            fs::remove_dir_all(checkout.join(".git")).unwrap();
+        }
 
         // This fake records attempted launch and exits, so even a failing red
         // regression leaves no provider or pane process behind.

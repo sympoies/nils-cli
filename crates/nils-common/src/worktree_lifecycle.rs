@@ -24,9 +24,22 @@ pub enum Error {
 
 /// Resolve nested cwd to its physical Git checkout, without inherited Git
 /// retargeting. Ordinary non-repository directories have no checkout fence.
-pub fn checkout_root(cwd: &Path) -> Result<Option<PathBuf>, Error> {
+pub fn checkout_root(state: &Path, cwd: &Path) -> Result<Option<PathBuf>, Error> {
     let cwd = fs::canonicalize(cwd).map_err(|_| Error::Unavailable)?;
     if !cwd.ancestors().any(|path| path.join(".git").exists()) {
+        // Git may already have removed .git while deleting a checkout. Its
+        // remover created the persistent root lock first. Preserve that key
+        // instead of allowing startup to misclassify the directory as non-Git.
+        for ancestor in cwd.ancestors() {
+            let lock = state
+                .join("coordination/worktree-lifecycle")
+                .join(format!("{}.lock", checkout_key(ancestor)));
+            match fs::symlink_metadata(lock) {
+                Ok(_) => return Ok(Some(ancestor.to_path_buf())),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => return Err(Error::Unavailable),
+            }
+        }
         return Ok(None);
     }
     // This identity probe cannot use a PATH shim that reports a different
@@ -89,6 +102,13 @@ fn identity(metadata: &fs::Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
+fn checkout_key(checkout: &Path) -> String {
+    Sha256::digest(checkout.as_os_str().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn private_directory(path: &Path) -> Result<(), Error> {
     match fs::DirBuilder::new().mode(0o700).create(path) {
         Ok(()) => {}
@@ -143,10 +163,7 @@ impl Guard {
             directory.clone(),
             identity(&fs::symlink_metadata(&directory).map_err(|_| Error::Unavailable)?),
         ));
-        let key = Sha256::digest(root.as_os_str().as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
+        let key = checkout_key(&root);
         let lock_path = directory.join(format!("{key}.lock"));
         let lock = OpenOptions::new()
             .read(true)
@@ -216,6 +233,32 @@ impl Guard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_checkout_identity_survives_git_marker_deletion() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().join("checkout");
+        fs::create_dir(&root).unwrap();
+        assert!(
+            Command::new("/usr/bin/git")
+                .current_dir(&root)
+                .args(["init", "--quiet"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let nested = root.join("nested");
+        fs::create_dir(&nested).unwrap();
+        let state = tmp.path().join("state");
+        let physical = fs::canonicalize(&root).unwrap();
+        pretty_assertions::assert_eq!(
+            checkout_root(&state, &nested).unwrap(),
+            Some(physical.clone())
+        );
+        let _guard = Guard::acquire(&state, &root).unwrap();
+        fs::remove_dir_all(root.join(".git")).unwrap();
+        pretty_assertions::assert_eq!(checkout_root(&state, &nested).unwrap(), Some(physical));
+    }
 
     #[test]
     fn lifecycle_excludes_both_directions_and_retains_lock_inode() {
