@@ -31,6 +31,20 @@ and physical checkout leases into mutation requirements.
 
 ## Declare work in a managed session
 
+Managed startup and resume participate in the shared checkout lifecycle fence
+used by `git-cli worktree remove --safe`. A nested cwd uses its canonical Git
+checkout root; a partially removed checkout retains its prior lifecycle key.
+Ordinary non-repository cwd has no worktree removal fence. The guard spans
+startup state, tmux launch, registration, and failure rollback in every
+coordination mode. `worktree-lifecycle-busy` retains the session and checkout
+without launching; retry after the competing lifecycle operation completes.
+Missing or changed proof returns `worktree-lifecycle-unavailable` or
+`worktree-lifecycle-changed`. This exclusion does not grant work authorization.
+
+Launch and removal must use matching released implementations and the same
+session state root (`--state-dir`/`AGENT_SESSION_STATE_DIR`, or the default).
+Resume admission never waits for this lock while holding a session-record lock.
+
 The high-level commands infer the current session, capability, incarnation,
 checkout, revision, and idempotency behavior from the managed runtime:
 

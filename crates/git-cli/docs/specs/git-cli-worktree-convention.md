@@ -26,7 +26,7 @@ If `AGENT_HOME` is unset, the CLI falls back to
 
 - `git-cli worktree add <slug> [--from <ref>] [--kind <kind>] [--format text|json]`
 - `git-cli worktree list [--format text|json]`
-- `git-cli worktree remove <slug-or-path> [--format text|json]`
+- `git-cli worktree remove <slug-or-path> [--safe] [--format text|json]`
 - `git-cli worktree prune [--format text|json]`
 - `git-cli worktree go <slug-or-branch-or-path> [--shell] [--format text|json]`
 
@@ -35,9 +35,49 @@ If `AGENT_HOME` is unset, the CLI falls back to
 `test`->`test/`);
 default `feature`.
 
-`remove` refuses to remove the primary checkout or the current worktree. It uses
-`git worktree remove --force` for linked non-primary worktrees, then prunes stale
-worktree metadata.
+`remove` refuses primary, current, and unmanaged worktrees. It never forces
+removal. Use `git-cli worktree remove <slug-or-path> --safe --format json` from
+outside the target; the explicit flag makes older binaries fail closed before
+their forced removal. Current binaries always apply the same safety checks.
+
+The cleanup transaction holds an exclusive checkout lifecycle fence, the runtime
+checkout lease lock, and the agent-session registry lock through removal, in
+that acquisition order. Matching `agent-session` launch and resume paths hold
+a shared lifecycle fence before publishing startup state or entering tmux until
+registration or failure rollback completes. The lifecycle namespace uses the
+checkout-lease resolver: `AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME`, then
+`AGENT_RUNTIME_STATE_HOME/checkout-leases`, then
+`XDG_STATE_HOME/agent-runtime-kit/checkout-leases`, then the corresponding
+`HOME/.local/state` default. All participating commands must resolve this to
+the same private physical root, independent of `agent-session --state-dir`.
+
+Linked worktrees persistently bind their canonical session inventory root under
+that namespace. `--state-dir` and `AGENT_SESSION_STATE_DIR` overrides are supported
+when they select the same bound root. A different root is refused; do not delete
+binding or lock files to bypass the refusal. Removal queries `agent-session`
+with an explicit canonical `--state-dir` and reads ownership from that root.
+Install matching released launch and removal implementations, drain older
+managed sessions, and relaunch them with the selected inventory root before
+cleanup. Older launchers do not participate in this protocol; an unverified
+mixed installation must retain candidates.
+
+It requires clean stable checkout/admin identity,
+no Git operation or active checkout lease (including the requester), no live
+session cwd/binding or nonterminal operation, and a complete `lsof` inventory
+with no process cwd or open file under the target. Missing tools, warnings,
+malformed ownership state, lock contention, and unavailable proof retain the
+target. Coordination mode does not waive these checks. Runtime and session state
+roots use their existing environment configuration.
+
+HEAD must be present in the current `origin` default branch, or match the exact
+head of a provider-confirmed merged PR/MR targeting that default branch.
+Remote/default proof is fetched rather than inferred from cached refs; provider
+proof uses `forge-cli`. This also covers squash/rebase merges and deleted remote
+feature branches. Unpushed or unmerged HEADs are retained. Removal leaves the
+local branch intact and prunes stale worktree metadata. The JSON receipt includes
+`removed_branch`, `removed_head`, and `delivery_proof`: its `basis` is
+`remote-default-ancestry` or `provider-exact-head-merge`, with `default_branch`,
+`default_head`, and the provider `pr_number` for the latter.
 
 `go` resolves a single worktree (in priority order: exact branch name, explicit
 worktree path, managed slug, then worktree directory basename) and prints its
@@ -81,7 +121,14 @@ workspace envelope:
 
 Error responses use stable `error.code` values such as `branch-exists`,
 `worktree-path-exists`, `worktree-not-found`, `refuse-primary-worktree`, and
-`git-worktree-remove-failed`.
+`removal-dirty`, `removal-unmanaged`, `removal-process-active`,
+`removal-session-active`, `removal-head-undelivered`, `removal-target-changed`,
+`removal-lifecycle-busy`, `removal-session-state-mismatch`,
+`removal-lease-active-or-unavailable`, and
+`removal-proof-unavailable`.
 
-`git-cli worktree` and `git-cli branch cleanup --remove-worktrees` share one
-worktree listing/removal parser and the git-cli managed path convention.
+`git-cli worktree` and `git-cli branch cleanup --remove-worktrees` share the
+worktree listing parser and managed path convention. Branch batch cleanup routes linked candidates through the same fence and retains
+their branch when proof fails. Agent shell hooks require the explicit sole
+`worktree remove --safe` command before separate branch cleanup, because older
+batch-cleanup binaries cannot attest this contract.

@@ -13,6 +13,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 pub mod dirty_checkout_adoption;
+mod removal;
 
 const BINARY: &str = "git-cli";
 
@@ -124,6 +125,9 @@ struct WorktreeEntryOutput {
 #[derive(Debug, Serialize)]
 struct RemoveOutput {
     removed_path: String,
+    removed_branch: Option<String>,
+    removed_head: String,
+    delivery_proof: removal::DeliveryProof,
     pruned: bool,
 }
 
@@ -537,18 +541,28 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
     }
 
     let target_arg = display_path(&target);
-    git_output(&["worktree", "remove", "--force", target_arg.as_str()]).map_err(|err| {
-        CliError::runtime(
-            "git-worktree-remove-failed",
-            summarize_git_error(&err.to_string()),
-        )
-    })?;
+    // The explicit flag is also a fail-closed capability marker for callers:
+    // older binaries reject it before reaching their forced removal.
+    let fence = removal::fence(&target, &layout)?;
+    removal::remove(&target, &layout.repo_root)?;
     run_git_worktree_prune()?;
 
     Ok(RemoveOutput {
         removed_path: target_arg,
+        removed_branch: fence.removed_branch,
+        removed_head: fence.removed_head,
+        delivery_proof: fence.delivery_proof,
         pruned: true,
     })
+}
+
+pub(crate) fn remove_managed_path(path: &str) -> anyhow::Result<()> {
+    remove_worktree(&RemoveArgs {
+        target: path.to_string(),
+        format: OutputFormat::Text,
+    })
+    .map(|_| ())
+    .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.message))
 }
 
 fn prune_worktrees() -> Result<PruneOutput, CliError> {
@@ -769,6 +783,7 @@ fn parse_remove_args(args: &[String]) -> Result<RemoveArgs, CliError> {
         return Err(CliError::usage("help", "help requested"));
     }
 
+    args.retain(|arg| arg != "--safe");
     reject_unknown_flags(&args)?;
     let positionals: Vec<_> = args.iter().filter(|arg| !arg.starts_with('-')).collect();
     if positionals.len() != 1 {
@@ -932,7 +947,10 @@ fn print_list_help() {
 }
 
 fn print_remove_help() {
-    println!("Usage: git-cli worktree remove <slug-or-path> [--format text|json]");
+    println!("Usage: git-cli worktree remove <slug-or-path> [--safe] [--format text|json]");
+    println!(
+        "Removal always fences managed ownership, liveness, cleanliness and delivery; --safe requires this contract on older installations."
+    );
 }
 
 fn print_prune_help() {
