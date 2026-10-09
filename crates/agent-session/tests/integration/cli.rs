@@ -10371,6 +10371,7 @@ fn lifecycle_review_generated_id_is_resolved_after_prompt_input() {
             "json",
         ])
         .env("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log)
+        .env("NILS_TEST_PANE_LIFETIME_MS", "500")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -10443,6 +10444,22 @@ fn lifecycle_review_generated_id_is_resolved_after_prompt_input() {
             .count(),
         1
     );
+    let record: Value = serde_json::from_slice(
+        &fs::read(state.join("sessions").join(id).join("session.json")).unwrap(),
+    )
+    .unwrap();
+    let group = record["delete_tmux_identity"]["process_group_id"]
+        .as_i64()
+        .unwrap() as libc::pid_t;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while unsafe { libc::kill(-group, 0) } == 0 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_ne!(
+        unsafe { libc::kill(-group, 0) },
+        0,
+        "bounded fixture must stop before cleanup"
+    );
     let cleanup = run(
         tmp.path(),
         &[
@@ -10457,7 +10474,7 @@ fn lifecycle_review_generated_id_is_resolved_after_prompt_input() {
         ],
         &[
             ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log.to_str().unwrap()),
-            ("AGENT_SESSION_FAKE_TMUX_ABSENT_AFTER_KILL", "1"),
+            ("AGENT_SESSION_FAKE_TMUX_ABSENT", "1"),
         ],
     );
     assert_eq!(
