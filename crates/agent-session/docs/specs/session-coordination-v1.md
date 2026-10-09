@@ -946,8 +946,8 @@ lifecycle journal.
 
 Apply requires exact matching session and broker incarnation/generation and
 persisted runtime identity, current boot evidence, a stale registry heartbeat
-and stale or absent trusted heartbeat file, absent exact tmux target and pane
-process, and positive absence of every recorded process boundary. On Linux this
+and stale or absent trusted heartbeat file, absent exact managed tmux name and
+recorded numeric target, absent pane process, and positive absence of every recorded process boundary. On Linux this
 requires the same PID namespace and complete process inspection; on macOS it
 requires the same kernel boot UUID, signal-zero absence and a bounded complete
 process-group snapshot. Missing, malformed, permission-denied, live, or reused

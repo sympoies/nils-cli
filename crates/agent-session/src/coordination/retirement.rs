@@ -5,6 +5,7 @@ use crate::cli::BrokerRetireStoppedArgs;
 use crate::{CliContext, CliError, SessionRecord, TmuxRuntimeIdentity};
 use serde_json::{Value, json};
 use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 const OPERATION: &str = "broker-retire-stopped";
@@ -83,13 +84,9 @@ fn retire_locked(context: &CliContext, args: BrokerRetireStoppedArgs) -> Result<
                     && b.runtime_identity_digest == e.identity_digest
             });
     let same_boot_proven = identity.as_ref().is_some_and(same_boot);
-    let tmux_absent = identity.as_ref().is_some_and(|identity| {
-        crate::verified_tmux_status_with_timeout(
-            &tmux,
-            &identity.session_id,
-            crate::DELETE_TERMINATION_VERIFY_TIMEOUT,
-        ) == "stopped"
-    });
+    let tmux_absent = identity
+        .as_ref()
+        .is_some_and(|identity| tmux_targets_absent(&tmux, &record, identity));
     let pane_absent = identity
         .as_ref()
         .is_some_and(|identity| process_absent(identity.pane_pid));
@@ -190,11 +187,7 @@ fn retire_locked(context: &CliContext, args: BrokerRetireStoppedArgs) -> Result<
     if !same_boot(identity)
         || !process_absent(identity.pane_pid)
         || !process_boundary_absent(identity)
-        || crate::verified_tmux_status_with_timeout(
-            &tmux,
-            &identity.session_id,
-            crate::DELETE_TERMINATION_VERIFY_TIMEOUT,
-        ) != "stopped"
+        || !tmux_targets_absent(&tmux, &record, identity)
         || !broker.as_ref().is_some_and(|broker| {
             heartbeat_is_stale(
                 context,
@@ -257,6 +250,27 @@ fn retire_locked(context: &CliContext, args: BrokerRetireStoppedArgs) -> Result<
     // under both locks; a failure never advertises a completed filesystem cleanup.
     cleanup(context, &record, &args.incarnation, &receipt)?;
     Ok(receipt)
+}
+
+fn tmux_targets_absent(
+    tmux: &Path,
+    record: &SessionRecord,
+    identity: &TmuxRuntimeIdentity,
+) -> bool {
+    // Numeric IDs can disappear or be reused after a server restart. A live
+    // managed name must still refuse retirement of the retained broker.
+    [
+        &identity.session_id,
+        &crate::exact_tmux_target(&record.tmux_session),
+    ]
+    .into_iter()
+    .all(|target| {
+        crate::verified_tmux_status_with_timeout(
+            tmux,
+            target,
+            crate::DELETE_TERMINATION_VERIFY_TIMEOUT,
+        ) == "stopped"
+    })
 }
 
 fn process_absent(pid: libc::pid_t) -> bool {
