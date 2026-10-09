@@ -84,6 +84,7 @@ impl RemovalFixture {
             home.path().join("lease-state"),
             home.path().join("sessions"),
             home.path().join("sessions/coordination"),
+            home.path().join("lease-state/coordination"),
         ] {
             fs::create_dir_all(&directory).unwrap();
             fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
@@ -128,11 +129,17 @@ impl RemovalFixture {
             .with_env("AGENT_HOME", self.home.path().to_str().unwrap())
             .with_env(
                 "AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME",
-                self.home.path().join("lease-state").to_str().unwrap(),
+                fs::canonicalize(self.home.path().join("lease-state"))
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
             )
             .with_env(
                 "AGENT_SESSION_STATE_DIR",
-                self.home.path().join("sessions").to_str().unwrap(),
+                fs::canonicalize(self.home.path().join("sessions"))
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
             )
             .with_env("AGENT_SESSION_COORDINATION_MODE", "advisory");
         run_with(
@@ -160,11 +167,17 @@ impl RemovalFixture {
             .with_env("AGENT_HOME", self.home.path().to_str().unwrap())
             .with_env(
                 "AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME",
-                self.home.path().join("lease-state").to_str().unwrap(),
+                fs::canonicalize(self.home.path().join("lease-state"))
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
             )
             .with_env(
                 "AGENT_SESSION_STATE_DIR",
-                self.home.path().join("sessions").to_str().unwrap(),
+                fs::canonicalize(self.home.path().join("sessions"))
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
             )
             .with_env("AGENT_SESSION_COORDINATION_MODE", "advisory")
             .with_stdin_str("y\n");
@@ -214,6 +227,21 @@ fn safe_removal_queries_the_explicit_session_state_root() {
 }
 
 #[test]
+fn safe_removal_retains_target_bound_to_a_different_session_inventory() {
+    let fixture = RemovalFixture::new();
+    let mut startup = nils_common::worktree_lifecycle::Guard::acquire_startup(
+        &fs::canonicalize(fixture.home.path().join("lease-state")).unwrap(),
+        Path::new(&fixture.target),
+    )
+    .unwrap();
+    startup
+        .bind_session_state(&fixture.home.path().join("other-sessions"))
+        .unwrap();
+    drop(startup);
+    fixture.refused("removal-session-state-mismatch");
+}
+
+#[test]
 fn safe_removal_retains_target_behind_startup_lifecycle_barrier() {
     use sha2::{Digest, Sha256};
     use std::os::fd::AsRawFd;
@@ -231,7 +259,7 @@ fn safe_removal_retains_target_behind_startup_lifecycle_barrier() {
     let directory = fixture
         .home
         .path()
-        .join("sessions/coordination/worktree-lifecycle");
+        .join("lease-state/coordination/worktree-lifecycle");
     fs::create_dir(&directory).unwrap();
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
     let lock = fs::OpenOptions::new()
@@ -308,7 +336,7 @@ fn safe_removal_holds_lifecycle_guard_through_final_process_proof() {
             std::thread::sleep(Duration::from_millis(10));
         }
         let held = Guard::acquire(
-            &fixture.home.path().join("sessions"),
+            &fs::canonicalize(fixture.home.path().join("lease-state")).unwrap(),
             Path::new(&fixture.target),
         );
         fs::write(&release, "release").unwrap();

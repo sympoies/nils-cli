@@ -177,6 +177,10 @@ fn worktree_lifecycle_removal_barrier_prevents_start_and_run_publication() {
             &CmdOptions::new()
                 .without_ambient_managed_session_env()
                 .with_cwd(tmp.path())
+                .with_env(
+                    "AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME",
+                    state.to_str().unwrap(),
+                )
                 .with_env("LIFECYCLE_LAUNCH_MARKER", marker.to_str().unwrap()),
         );
         assert_ne!(output.code, 0, "{}", output.stdout_text());
@@ -234,6 +238,7 @@ fn worktree_lifecycle_guard_survives_launch_and_failure_rollback() {
                 "--format",
                 "json",
             ])
+            .env("AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME", &state)
             .env("LIFECYCLE_MARKER", &marker)
             .env("LIFECYCLE_RELEASE", &release)
             .stdin(Stdio::null())

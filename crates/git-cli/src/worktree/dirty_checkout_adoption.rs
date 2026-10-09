@@ -8812,21 +8812,8 @@ fn feature_enabled() -> bool {
 }
 
 fn resolve_state_root() -> Result<PathBuf> {
-    if let Some(value) =
-        env::var_os("AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME").filter(|value| !value.is_empty())
-    {
-        return Ok(PathBuf::from(value));
-    }
-    if let Some(value) = env::var_os("AGENT_RUNTIME_STATE_HOME").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(value).join("checkout-leases"));
-    }
-    if let Some(value) = env::var_os("XDG_STATE_HOME").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(value).join("agent-runtime-kit/checkout-leases"));
-    }
-    let home = env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .context("runtime state root is unavailable")?;
-    Ok(PathBuf::from(home).join(".local/state/agent-runtime-kit/checkout-leases"))
+    nils_common::worktree_lifecycle::state_home()
+        .map_err(|_| anyhow::anyhow!("runtime state root is unavailable"))
 }
 
 #[cfg(test)]

@@ -298,14 +298,26 @@ pub(super) fn fence(target: &Path, layout: &WorktreeLayout) -> Result<Fence, Cli
     let state = session_root()?;
     // Lock order is lifecycle -> checkout lease -> registry. The lifecycle
     // barrier covers launch before session registration and survives deletion.
-    let lifecycle = worktree_lifecycle::Guard::acquire(&state, &target).map_err(|error| {
+    let namespace = worktree_lifecycle::state_home().map_err(|_| {
+        refused(
+            "removal-proof-unavailable",
+            "checkout lifecycle state root is unavailable",
+        )
+    })?;
+    let adapt = |error| {
         let code = match error {
             worktree_lifecycle::Error::Busy => "removal-lifecycle-busy",
             worktree_lifecycle::Error::Changed => "removal-target-changed",
             worktree_lifecycle::Error::Unavailable => "removal-proof-unavailable",
+            worktree_lifecycle::Error::StateRootMismatch => "removal-session-state-mismatch",
         };
-        refused(code, "checkout lifecycle fencing is busy or unavailable")
-    })?;
+        refused(
+            code,
+            "checkout lifecycle fencing is busy, mismatched, or unavailable",
+        )
+    };
+    let mut lifecycle = worktree_lifecycle::Guard::acquire(&namespace, &target).map_err(adapt)?;
+    let state = lifecycle.bind_session_state(&state).map_err(adapt)?;
     let identity = fs::metadata(&target).map_err(|_| {
         refused(
             "removal-proof-unavailable",
@@ -354,7 +366,18 @@ pub(super) fn fence(target: &Path, layout: &WorktreeLayout) -> Result<Fence, Cli
     // `list` is the session owner's public liveness projection, not raw state.
     let sessions = json(
         "agent-session",
-        &["list", "--format", "json"],
+        &[
+            "--state-dir",
+            state.to_str().ok_or_else(|| {
+                refused(
+                    "removal-proof-unavailable",
+                    "session state root is unreadable",
+                )
+            })?,
+            "list",
+            "--format",
+            "json",
+        ],
         &layout.repo_root,
     )?;
     sessions_idle(&target, &sessions)?;

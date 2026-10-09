@@ -31968,8 +31968,17 @@ esac
         let home = tmp.path().join("home");
         let alpha_repo = home.join("Project/sympoies/alpha");
         let beta_repo = home.join("Project/sympoies/beta");
-        std::fs::create_dir_all(alpha_repo.join(".git")).unwrap();
-        std::fs::create_dir_all(beta_repo.join(".git")).unwrap();
+        for repo in [&alpha_repo, &beta_repo] {
+            std::fs::create_dir_all(repo).unwrap();
+            assert!(
+                std::process::Command::new("/usr/bin/git")
+                    .args(["init", "--quiet"])
+                    .current_dir(repo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
         let _home = EnvGuard::set(&lock, "HOME", home.to_str().unwrap());
         let tmux = minimal_tmux(tmp.path());
         let st = state(tmp.path(), Some(TOKEN), tmux);

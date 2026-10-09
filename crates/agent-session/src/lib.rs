@@ -10723,9 +10723,9 @@ fn resume_session_locked(
     mut record: SessionRecord,
     tmux_bin: &Path,
 ) -> Result<ResumeSessionOutcome, CliError> {
-    let _worktree_lifecycle = acquire_worktree_lifecycle(context, Path::new(&record.cwd))?;
     ensure_session_lifecycle_mutation_allowed(context, &record)?;
     orchestration::ensure_session_not_quarantined(context, &record)?;
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, Path::new(&record.cwd))?;
     match session_status(context, tmux_bin, &record).as_str() {
         "running" => {
             return Ok(ResumeSessionOutcome {
@@ -18506,6 +18506,7 @@ fn acquire_worktree_lifecycle(
             Error::Busy => "worktree-lifecycle-busy",
             Error::Changed => "worktree-lifecycle-changed",
             Error::Unavailable => "worktree-lifecycle-unavailable",
+            Error::StateRootMismatch => "worktree-lifecycle-state-root-mismatch",
         };
         CliError::runtime(
             code,
@@ -18513,15 +18514,22 @@ fn acquire_worktree_lifecycle(
             Some(json!({ "retryable": matches!(error, Error::Busy) })),
         )
     };
-    let Some(root) = resolve_worktree_lifecycle_root(&context.state_dir, cwd).map_err(adapt)?
-    else {
+    let namespace = worktree_lifecycle::state_home().map_err(adapt)?;
+    let Some(root) = resolve_worktree_lifecycle_root(&namespace, cwd).map_err(adapt)? else {
         return Ok(None);
     };
     let _state_root = private_session_state_root(context)?;
-    let guard = worktree_lifecycle::Guard::acquire(&context.state_dir, &root).map_err(adapt)?;
+    let mut guard = worktree_lifecycle::Guard::acquire_startup(&namespace, &root).map_err(adapt)?;
+    // Only linked worktrees can be removal targets. Primary checkouts may host
+    // independent session inventories without acquiring a removal binding.
+    if root.join(".git").is_file() {
+        guard
+            .bind_session_state(&context.state_dir)
+            .map_err(adapt)?;
+    }
     // A removal that won after root resolution must not allow startup to
     // publish a session for the now-missing checkout or nested cwd.
-    if resolve_worktree_lifecycle_root(&context.state_dir, cwd)
+    if resolve_worktree_lifecycle_root(&namespace, cwd)
         .map_err(adapt)?
         .as_ref()
         != Some(&root)
@@ -19622,8 +19630,11 @@ mod tests {
         .record;
         let record_path = context.state_dir.join("sessions/existing/session.json");
         let before = fs::read(&record_path).unwrap();
-        let _guard =
-            nils_common::worktree_lifecycle::Guard::acquire(&context.state_dir, &checkout).unwrap();
+        let _guard = nils_common::worktree_lifecycle::Guard::acquire(
+            &nils_common::worktree_lifecycle::state_home().unwrap(),
+            &checkout,
+        )
+        .unwrap();
         let args = ProviderResumeImportArgs {
             agent: AgentKind::Codex,
             title_mode: display_metadata::TitleMode::Auto,

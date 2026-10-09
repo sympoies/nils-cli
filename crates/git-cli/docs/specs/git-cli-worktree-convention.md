@@ -40,13 +40,26 @@ removal. Use `git-cli worktree remove <slug-or-path> --safe --format json` from
 outside the target; the explicit flag makes older binaries fail closed before
 their forced removal. Current binaries always apply the same safety checks.
 
-The cleanup transaction holds a shared checkout lifecycle fence, the runtime
+The cleanup transaction holds an exclusive checkout lifecycle fence, the runtime
 checkout lease lock, and the agent-session registry lock through removal, in
 that acquisition order. Matching `agent-session` launch and resume paths hold
-the lifecycle fence before publishing startup state or entering tmux until
-registration or failure rollback completes. Install matching released launch
-and removal implementations with the same `AGENT_SESSION_STATE_DIR` (or default
-state root); older launchers do not participate in this protocol.
+a shared lifecycle fence before publishing startup state or entering tmux until
+registration or failure rollback completes. The lifecycle namespace uses the
+checkout-lease resolver: `AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME`, then
+`AGENT_RUNTIME_STATE_HOME/checkout-leases`, then
+`XDG_STATE_HOME/agent-runtime-kit/checkout-leases`, then the corresponding
+`HOME/.local/state` default. All participating commands must resolve this to
+the same private physical root, independent of `agent-session --state-dir`.
+
+Linked worktrees persistently bind their canonical session inventory root under
+that namespace. `--state-dir` and `AGENT_SESSION_STATE_DIR` overrides are supported
+when they select the same bound root. A different root is refused; do not delete
+binding or lock files to bypass the refusal. Removal queries `agent-session`
+with an explicit canonical `--state-dir` and reads ownership from that root.
+Install matching released launch and removal implementations, drain older
+managed sessions, and relaunch them with the selected inventory root before
+cleanup. Older launchers do not participate in this protocol; an unverified
+mixed installation must retain candidates.
 
 It requires clean stable checkout/admin identity,
 no Git operation or active checkout lease (including the requester), no live
@@ -110,7 +123,8 @@ Error responses use stable `error.code` values such as `branch-exists`,
 `worktree-path-exists`, `worktree-not-found`, `refuse-primary-worktree`, and
 `removal-dirty`, `removal-unmanaged`, `removal-process-active`,
 `removal-session-active`, `removal-head-undelivered`, `removal-target-changed`,
-`removal-lifecycle-busy`, `removal-lease-active-or-unavailable`, and
+`removal-lifecycle-busy`, `removal-session-state-mismatch`,
+`removal-lease-active-or-unavailable`, and
 `removal-proof-unavailable`.
 
 `git-cli worktree` and `git-cli branch cleanup --remove-worktrees` share the
