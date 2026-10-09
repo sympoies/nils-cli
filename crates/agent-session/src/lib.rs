@@ -275,7 +275,7 @@ const TMUX_RUNTIME_NEVER_LAUNCHED_KEY: &str = "tmux_runtime_never_launched";
 const TMUX_RUNTIME_IDENTITY_CHANGED_OUTPUT: &str = "agent-session-runtime-identity-changed";
 const COORDINATION_LAUNCH_GATE: &str = "launch-ready";
 const COORDINATION_BROKER_GATE: &str = "broker-provisioned";
-const HELD_LAUNCH_SCRIPT: &str = "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --exit-code \"$status\" --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"";
+const HELD_LAUNCH_SCRIPT: &str = "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --exit-code \"$status\" --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"";
 
 pub fn run() -> i32 {
     run_with_args(env::args_os())
@@ -2336,15 +2336,13 @@ fn start_session_inner(
     lifecycle_guards: StartLifecycleGuards<'_>,
     claude_account: Option<InitialClaudeAccount>,
 ) -> Result<StartView, CliError> {
-    let mut args = args;
     let journal_id = lifecycle::start_id(
         context,
         args.id.as_deref(),
         args.agent,
         args.title.as_deref(),
     )?;
-    args.id = Some(journal_id.clone());
-    crate::lifecycle::attempt(context, &journal_id, "start", || {
+    crate::lifecycle::attempt_created(context, &journal_id, "start", || {
         start_session_inner_unjournaled(
             context,
             args,
@@ -2553,7 +2551,10 @@ fn start_session_inner_unjournaled(
                     result,
                     prompt_delivery_observation: None,
                 }),
-                None => Err(with_failed_launch_cleanup(err, cleanup)),
+                None => Err(with_retained_startup(
+                    with_failed_launch_cleanup(err, cleanup),
+                    &created.record,
+                )),
             };
         }
     };
@@ -2765,15 +2766,13 @@ fn start_session_inner_unjournaled(
 }
 
 fn start_run_session(context: &CliContext, args: cli::RunArgs) -> Result<StartView, CliError> {
-    let mut args = args;
     let journal_id = lifecycle::start_id(
         context,
         args.id.as_deref(),
         args.agent,
         args.title.as_deref(),
     )?;
-    args.id = Some(journal_id.clone());
-    crate::lifecycle::attempt(context, &journal_id, "start", || {
+    crate::lifecycle::attempt_created(context, &journal_id, "start", || {
         start_run_session_unjournaled(context, args)
     })
 }
@@ -2927,15 +2926,13 @@ pub(crate) fn start_provider_resume_session(
     context: &CliContext,
     args: ProviderResumeImportArgs,
 ) -> Result<StartView, CliError> {
-    let mut args = args;
     let journal_id = lifecycle::start_id(
         context,
         args.id.as_deref(),
         args.agent,
         args.title.as_deref(),
     )?;
-    args.id = Some(journal_id.clone());
-    crate::lifecycle::attempt(context, &journal_id, "import", || {
+    crate::lifecycle::attempt_created(context, &journal_id, "import", || {
         start_provider_resume_session_unjournaled(context, args)
     })
 }
@@ -2981,15 +2978,13 @@ pub(crate) fn start_dsh_history_resume_session(
     context: &CliContext,
     args: DshHistoryResumeArgs,
 ) -> Result<StartView, CliError> {
-    let mut args = args;
     let journal_id = lifecycle::start_id(
         context,
         args.id.as_deref(),
         AgentKind::Dsh,
         args.title.as_deref(),
     )?;
-    args.id = Some(journal_id.clone());
-    crate::lifecycle::attempt(context, &journal_id, "import", || {
+    crate::lifecycle::attempt_created(context, &journal_id, "import", || {
         start_dsh_history_resume_session_unjournaled(context, args)
     })
 }
@@ -14366,6 +14361,20 @@ fn recover_failed_tmux_launch_bounded(
         Ok(()) => FailedLaunchCleanup::Completed,
         Err(error) => failed_launch_cleanup_from_error(&error),
     }
+}
+
+/// A failed create that retains its record must remain directly addressable.
+fn with_retained_startup(mut error: CliError, record: &SessionRecord) -> CliError {
+    let mut details = match error.0.details.take() {
+        Some(Value::Object(details)) => details,
+        _ => serde_json::Map::new(),
+    };
+    details.insert("session_id".to_owned(), json!(record.id));
+    if let Some(startup) = startup_projection(record) {
+        details.insert("startup".to_owned(), json!(startup));
+    }
+    error.0.details = Some(Value::Object(details));
+    error
 }
 
 /// Attach bounded cleanup state to a primary failure, preserving code and message.

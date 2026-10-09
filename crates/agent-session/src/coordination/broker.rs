@@ -908,7 +908,7 @@ pub(crate) fn stop(context: &CliContext, args: BrokerStopArgs) -> Result<Value, 
     let journal_id = args.session.clone();
     let exit_code = args.exit_code;
     let before = crate::load_session_record(context, &journal_id).ok();
-    let result = crate::lifecycle::attempt(context, &journal_id, "stop", || {
+    let result = crate::lifecycle::attempt(context, &journal_id, "broker-stop", || {
         let (record, _) =
             authenticate_from_file(context, &args.session, args.capability_file.as_deref())?;
         crate::orchestration::ensure_session_not_runtime_stop_fenced(context, &record)?;

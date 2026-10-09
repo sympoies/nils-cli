@@ -2529,7 +2529,11 @@ pub(crate) fn envelope_ok(data: Value) -> Response {
 }
 
 fn envelope_status(status: StatusCode, data: Value) -> Response {
-    (
+    let session_id = data
+        .pointer("/session/id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut response = (
         status,
         Json(json!({
             "schema_version": serve_schema(),
@@ -2537,10 +2541,21 @@ fn envelope_status(status: StatusCode, data: Value) -> Response {
             "data": data,
         })),
     )
-        .into_response()
+        .into_response();
+    if let Some(id) = session_id {
+        response
+            .extensions_mut()
+            .insert(crate::lifecycle::ResponseSessionId(id));
+    }
+    response
 }
 
 pub(crate) fn envelope_err(err: CliError) -> Response {
+    let session_id = err
+        .details()
+        .and_then(|d| d["session_id"].as_str())
+        .map(str::to_owned);
+    let retained_error = err.clone();
     let data = err.into_inner();
     let status = match data.code.as_str() {
         "session-not-found"
@@ -2614,7 +2629,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
     {
         map.insert("details".to_string(), details);
     }
-    (
+    let mut response = (
         status,
         Json(json!({
             "schema_version": serve_schema(),
@@ -2622,11 +2637,18 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
             "error": error,
         })),
     )
-        .into_response()
+        .into_response();
+    response.extensions_mut().insert(retained_error);
+    if let Some(id) = session_id {
+        response
+            .extensions_mut()
+            .insert(crate::lifecycle::ResponseSessionId(id));
+    }
+    response
 }
 
 pub(crate) fn status_json(status: StatusCode, code: &str, message: &str) -> Response {
-    (
+    let mut response = (
         status,
         Json(json!({
             "schema_version": serve_schema(),
@@ -2634,7 +2656,11 @@ pub(crate) fn status_json(status: StatusCode, code: &str, message: &str) -> Resp
             "error": { "code": code, "message": message },
         })),
     )
-        .into_response()
+        .into_response();
+    response
+        .extensions_mut()
+        .insert(CliError::runtime(code, message, None));
+    response
 }
 
 pub(crate) fn join_err() -> Response {
@@ -6721,7 +6747,7 @@ async fn buffer_handler(
 async fn create_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
-    Json(mut body): Json<CreateBody>,
+    Json(body): Json<CreateBody>,
 ) -> Response {
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
@@ -6743,7 +6769,6 @@ async fn create_handler(
         Ok(id) => id,
         Err(error) => return envelope_err(error),
     };
-    body.id = Some(id.clone());
     let context = state.context.clone();
     let before = load_session_record(&context, &id).ok();
     let response = create_handler_inner(State(state), headers, Json(body)).await;

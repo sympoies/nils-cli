@@ -36,8 +36,11 @@ session diagnostics remain available through the normal session read routes.
 
 The launch wrapper reports observed exit status. Inventory and controller
 probes also record a stopped runtime once per incarnation when the wrapper
-cannot report. Such evidence says `runtime disappeared outside agent-session`
-unless a successful agent-session stop is known. Unknown exit status, signal,
+cannot report. Such evidence says `runtime-disappeared` unless a successful CLI or serve
+runtime stop is recorded for that exact incarnation and generation. Broker
+release is a separate `broker-stop` operation and does not identify an operator
+stop. For sessions stopped before journaling began, missing records cannot
+identify the actor or distinguish an external stop from an unrecorded stop. Unknown exit status, signal,
 and actor stay null. A lost heartbeat records a broker degradation transition,
 not an invented process exit. Absence of a lifecycle exit record does not prove
 that a runtime remains alive: a stopped controller cannot observe its own loss.

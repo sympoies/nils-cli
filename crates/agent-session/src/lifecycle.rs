@@ -37,14 +37,38 @@ pub(crate) fn attempt<T>(
     operation: &str,
     run: impl FnOnce() -> Result<T, CliError>,
 ) -> Result<T, CliError> {
+    attempt_resolved(context, id, operation, run, |_| None)
+}
+
+/// Record under the final create identity, without turning a provisional
+/// diagnostic target into an explicit session ID.
+pub(crate) fn attempt_created(
+    context: &CliContext,
+    id: &str,
+    operation: &str,
+    run: impl FnOnce() -> Result<crate::StartView, CliError>,
+) -> Result<crate::StartView, CliError> {
+    attempt_resolved(context, id, operation, run, |result| match result {
+        Ok(view) => Some(view.result.id.clone()),
+        Err(error) => error
+            .details()
+            .and_then(|d| d["session_id"].as_str())
+            .map(str::to_owned),
+    })
+}
+
+fn attempt_resolved<T>(
+    context: &CliContext,
+    id: &str,
+    operation: &str,
+    run: impl FnOnce() -> Result<T, CliError>,
+    resolve_id: impl FnOnce(&Result<T, CliError>) -> Option<String>,
+) -> Result<T, CliError> {
     let before = crate::load_session_record(context, id).ok();
     let id = before.as_ref().map(|r| r.id.as_str()).unwrap_or(id);
     let key = (id.to_string(), operation.to_string());
     let serve_owner = SERVE.with(Cell::get);
-    if serve_owner == Some(operation)
-        || (serve_owner == Some("create") && matches!(operation, "start" | "import"))
-        || ACTIVE.with(|active| active.borrow().contains(&key))
-    {
+    if serve_owner.is_some() || ACTIVE.with(|active| active.borrow().contains(&key)) {
         return run();
     }
     struct ActiveAttempt;
@@ -58,6 +82,9 @@ pub(crate) fn attempt<T>(
     ACTIVE.with(|active| active.borrow_mut().push(key));
     let _active = ActiveAttempt;
     let result = run();
+    let resolved = resolve_id(&result);
+    let id = resolved.as_deref().unwrap_or(id);
+    let before = before.filter(|record| record.id == id);
     let after = crate::load_session_record(context, id).ok();
     record(
         context,
@@ -292,6 +319,9 @@ pub(crate) fn read(context: &CliContext, id: &str, limit: usize) -> Result<Value
     Ok(json!({"session_id": id, "records": records}))
 }
 
+#[derive(Clone)]
+pub(crate) struct ResponseSessionId(pub(crate) String);
+
 pub(crate) async fn response(
     context: &CliContext,
     id: &str,
@@ -299,24 +329,20 @@ pub(crate) async fn response(
     before: Option<SessionRecord>,
     response: axum::response::Response,
 ) -> axum::response::Response {
-    let (parts, body) = response.into_parts();
-    let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
-        Ok(bytes) => bytes,
-        Err(_) => return crate::serve::join_err(),
-    };
-    let value = serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null);
-    let target_id = value
-        .pointer("/data/session/id")
-        .and_then(Value::as_str)
-        .unwrap_or(id)
-        .to_owned();
-    let error = value.get("error").map(|e| {
-        CliError::runtime(
-            e["code"].as_str().unwrap_or("serve-operation-failed"),
-            e["message"].as_str().unwrap_or("serve operation failed"),
-            e.get("details").cloned(),
-        )
-    });
+    let target_id = response
+        .extensions()
+        .get::<ResponseSessionId>()
+        .map(|id| id.0.clone())
+        .unwrap_or_else(|| id.to_owned());
+    let error = response
+        .extensions()
+        .get::<CliError>()
+        .cloned()
+        .or_else(|| {
+            (!response.status().is_success()).then(|| {
+                CliError::runtime("serve-operation-failed", "serve operation failed", None)
+            })
+        });
     let context = context.clone();
     let operation = operation.to_owned();
     let _ = tokio::task::spawn_blocking(move || {
@@ -335,7 +361,7 @@ pub(crate) async fn response(
     })
     .await;
 
-    axum::response::Response::from_parts(parts, axum::body::Body::from(bytes))
+    response
 }
 
 /// Inventory and controller probes can observe an external disappearance even
@@ -373,6 +399,8 @@ pub(crate) fn observe_stopped(context: &CliContext, target: &SessionRecord) {
         v["records"].as_array().map(|rows| {
             rows.iter().any(|row| {
                 row["operation"] == "stop"
+                    && matches!(row["caller"]["kind"].as_str(), Some("cli" | "serve"))
+                    && row["session_generation"].as_u64() == Some(runtime.generation)
                     && row["result"]["ok"] == true
                     && row["session_incarnation"].as_str()
                         == target.runtime.as_ref().map(|r| r.launch_id.as_str())
@@ -388,13 +416,13 @@ pub(crate) fn observe_stopped(context: &CliContext, target: &SessionRecord) {
         "controller",
         Ok(()),
         Some(
-            json!({"code": null, "signal": null, "reason": if known { "runtime-stopped" } else { "runtime disappeared outside agent-session" }, "stopped_by": if known { Some("agent-session") } else { None }}),
+            json!({"code": null, "signal": null, "reason": if known { "runtime-stopped" } else { "runtime-disappeared" }, "stopped_by": if known { Some("agent-session") } else { None }}),
         ),
     );
 }
 
-/// Allocate through the existing session ID policy before validation so failed
-/// creates have a target without changing the normal timestamp/title format.
+/// Choose a provisional diagnostic target for failures before record creation.
+/// The create path retains ownership of the final session ID allocation.
 pub(crate) fn start_id(
     context: &CliContext,
     id: Option<&str>,
