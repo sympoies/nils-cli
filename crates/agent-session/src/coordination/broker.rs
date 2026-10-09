@@ -283,7 +283,7 @@ fn stopped_macos_broker_matches_previous(
 }
 
 #[cfg(target_os = "macos")]
-fn macos_process_group_is_empty(identity: &crate::TmuxRuntimeIdentity) -> bool {
+pub(super) fn macos_process_group_is_empty(identity: &crate::TmuxRuntimeIdentity) -> bool {
     macos_process_group_absence_probe(identity).is_ok()
 }
 
@@ -883,7 +883,7 @@ fn pause_broker_stop_for_test() -> Result<(), CliError> {
     Ok(())
 }
 
-fn remove_advisory_state_for_incarnation(
+pub(super) fn remove_advisory_state_for_incarnation(
     registry: &mut super::Registry,
     session_id: &str,
     session_incarnation: &str,
@@ -2462,6 +2462,76 @@ mod tests {
         let mut command = Command::new("cat");
         command.arg(path);
         process_group_snapshot_is_empty(command, 7).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn operator_retirement_allows_same_boot_resume_provisioning() {
+        use pretty_assertions::assert_eq;
+        let temporary = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: temporary.path().join("state"),
+            host: None,
+        };
+        let tmux = temporary.path().join("tmux");
+        fs::write(
+            &tmux,
+            "#!/bin/sh\nprintf '%s\\n' \"can't find session: fixture\" >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut identity =
+            test_support::process_group_identity(test_support::verified_absent_process_group());
+        identity["macos_boot_id"] = json!(crate::capture_macos_boot_id().unwrap());
+        identity["launch_id"] = json!("old");
+        let mut prior = seed_retirable_broker(&context, identity.clone());
+        prior
+            .extra
+            .insert("delete_tmux_identity".to_string(), identity);
+        crate::write_session_record(&context, &prior).unwrap();
+        let stale = now_epoch() - 1200;
+        let mut locked = super::super::lock_registry_observational(&context).unwrap();
+        let broker = locked.registry.brokers.get_mut("session").unwrap();
+        broker.heartbeat_epoch = stale;
+        broker.runtime_identity_digest = crate::coordination_runtime_evidence(&context, &prior)
+            .unwrap()
+            .identity_digest;
+        locked.save().unwrap();
+        drop(locked);
+        fs::write(
+            super::super::heartbeat_path(&context.state_dir, "session"),
+            format!("old:{stale}\n"),
+        )
+        .unwrap();
+        let receipt = super::super::retirement::retire(
+            &context,
+            crate::cli::BrokerRetireStoppedArgs {
+                session: "session".into(),
+                incarnation: "old".into(),
+                generation: 1,
+                idempotency_key: "operator-retire".into(),
+                stale_after: 600,
+                apply: true,
+                dry_run: false,
+                tmux_bin: Some(tmux.clone()),
+                format: crate::cli::OutputFormat::Json,
+            },
+        )
+        .unwrap();
+        assert_eq!(receipt["state"], "retired");
+        let captured = capture_previous_runtime(&prior, &tmux);
+        let mut replacement = prior.clone();
+        replacement.runtime.as_mut().unwrap().launch_id = "replacement".into();
+        replacement.runtime.as_mut().unwrap().generation = 2;
+        assert!(provision_with_previous(&context, &replacement, Some(&captured)).is_ok());
+        assert_eq!(
+            super::super::lock_registry_observational(&context)
+                .unwrap()
+                .registry
+                .brokers["session"]
+                .generation,
+            2
+        );
     }
 
     #[cfg(target_os = "macos")]

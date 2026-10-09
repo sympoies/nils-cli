@@ -9,6 +9,7 @@ pub mod mailbox;
 mod notification;
 pub use notification::NotificationProjection;
 pub(crate) mod remote;
+pub(crate) mod retirement;
 pub(crate) mod server;
 pub(crate) mod service;
 
@@ -291,6 +292,11 @@ pub(crate) fn run_broker(context: &CliContext, args: cli::BrokerArgs) -> i32 {
             "broker-reconcile",
             args.format,
             broker::recover(context, args, true),
+        ),
+        BrokerCommand::RetireStopped(args) => (
+            "broker-retire-stopped",
+            args.format,
+            retirement::retire(context, args),
         ),
         BrokerCommand::Stop(args) => ("broker-stop", args.format, broker::stop(context, args)),
         BrokerCommand::Heartbeat(args) => (
@@ -1417,6 +1423,42 @@ fn remove_inactive_claim_mutation_fence_sidecar(
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(_) => Err(store_unavailable()),
+    }
+}
+
+/// Read-only operator preview: even an inactive retained fence must be resolved
+/// by its owner before a retirement can release the protected claim tuple.
+fn claim_mutation_fence_absent(
+    context: &CliContext,
+    session_id: &str,
+    incarnation: &str,
+    claim: &context::WorkContextRecord,
+) -> Result<bool, CliError> {
+    let digest = digest_bytes(
+        format!(
+            "{session_id}\0{incarnation}\0{}\0{}\0{}",
+            claim.claim_id, claim.revision, claim.expires_at_epoch
+        )
+        .as_bytes(),
+    );
+    let directory = context
+        .state_dir
+        .join("coordination")
+        .join(CLAIM_MUTATION_FENCES_DIR);
+    match fs::symlink_metadata(&directory) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Ok(metadata)
+            if metadata.is_dir()
+                && !metadata.file_type().is_symlink()
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && metadata.mode() & 0o077 == 0 => {}
+        _ => return Err(store_untrusted()),
+    }
+    let path = directory.join(digest.trim_start_matches("sha256:"));
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(_) => Err(store_unavailable()),
+        Ok(_) => Ok(false),
     }
 }
 

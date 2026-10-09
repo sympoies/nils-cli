@@ -654,6 +654,24 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(retire-stopped)
+_arguments "${_arguments_options[@]}" : \
+'--session=[Session id; unique prefixes resolve to the canonical id under the lifecycle lock]:SESSION:_default' \
+'--incarnation=[Exact persisted runtime incarnation (launch id)]:INCARNATION:_default' \
+'--generation=[Exact persisted runtime generation]:GENERATION:_default' \
+'--idempotency-key=[Stable key for replaying the atomic retirement receipt]:IDEMPOTENCY_KEY:_default' \
+'--stale-after=[Required heartbeat age in seconds; minimum 60, maximum 86400]:STALE_AFTER:_default' \
+'--tmux-bin=[]:PATH:_files' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'(--dry-run)--apply[Commit retirement after every proof passes. Without this flag, preview only]' \
+'--dry-run[Explicit read-only preview (also the default)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
 (stop)
 _arguments "${_arguments_options[@]}" : \
 '--exit-code=[Exit status observed by the owning runtime wrapper]:EXIT_CODE:_default' \
@@ -1199,6 +1217,7 @@ _agent-session__subcmd__broker_commands() {
 'identity:Authenticate and project the immutable forge launch binding (no credential access)' \
 'adopt:Adopt an unchanged live runtime after validating recovery proof' \
 'reconcile:Reconcile broker and registry state from validated recovery proof' \
+'retire-stopped:Preview or retire an exact runtime stopped outside agent-session' \
 'stop:' \
 'heartbeat:' \
     )
@@ -1223,6 +1242,11 @@ _agent-session__subcmd__broker__subcmd__identity_commands() {
 _agent-session__subcmd__broker__subcmd__reconcile_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session broker reconcile commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__broker__subcmd__retire-stopped_commands] )) ||
+_agent-session__subcmd__broker__subcmd__retire-stopped_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session broker retire-stopped commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__broker__subcmd__status_commands] )) ||
 _agent-session__subcmd__broker__subcmd__status_commands() {

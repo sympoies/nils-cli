@@ -396,6 +396,7 @@ fn coordination_command_name(command: &Command) -> Option<&'static str> {
             cli::BrokerCommand::Status(_) => "broker-status",
             cli::BrokerCommand::Adopt(_) => "broker-adopt",
             cli::BrokerCommand::Reconcile(_) => "broker-reconcile",
+            cli::BrokerCommand::RetireStopped(_) => "broker-retire-stopped",
             cli::BrokerCommand::Stop(_) => "broker-stop",
             cli::BrokerCommand::Heartbeat(_) => "broker-heartbeat",
         }),
@@ -447,6 +448,7 @@ fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("broker", "status") => Some("broker-status"),
             ("broker", "adopt") => Some("broker-adopt"),
             ("broker", "reconcile") => Some("broker-reconcile"),
+            ("broker", "retire-stopped") => Some("broker-retire-stopped"),
             ("broker", "stop") => Some("broker-stop"),
             ("message", "audit") => Some("message-audit"),
             ("message", "send") => Some("message-send"),
@@ -509,6 +511,7 @@ fn command_format(command: &Command) -> OutputFormat {
         Command::Broker(args) => match &args.command {
             cli::BrokerCommand::Identity(args) | cli::BrokerCommand::Status(args) => args.format,
             cli::BrokerCommand::Adopt(args) | cli::BrokerCommand::Reconcile(args) => args.format,
+            cli::BrokerCommand::RetireStopped(args) => args.format,
             cli::BrokerCommand::Stop(args) => args.format,
             cli::BrokerCommand::Heartbeat(args) => args.format,
         },
