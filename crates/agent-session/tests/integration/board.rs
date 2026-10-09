@@ -401,6 +401,7 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
                 "role": null,
                 "lineage": null,
                 "work": null,
+                "launch_env": {},
             })
         );
         assert!(
@@ -536,6 +537,7 @@ fn a_cli_delete_with_the_board_disabled_is_served_as_one_closed_record() {
             "role": null,
             "lineage": null,
             "work": null,
+            "launch_env": {},
         })
     );
 

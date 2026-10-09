@@ -116,7 +116,8 @@ Every board surface carries records with this shape. The record has no
   "summary": null,
   "role": null,
   "lineage": null,
-  "work": null
+  "work": null,
+  "launch_env": {}
 }
 ```
 
