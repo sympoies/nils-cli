@@ -20898,32 +20898,32 @@ exit 97
                     .starts_with("heartbeat.done.")
             }));
         }
-        use pretty_assertions::assert_eq;
-        #[cfg(target_os = "linux")]
-        use std::env;
-        use std::fs;
-        use std::io;
-        #[cfg(target_os = "linux")]
-        use std::io::BufRead as _;
-        #[cfg(target_os = "linux")]
-        use std::os::unix::fs::MetadataExt;
-        use std::os::unix::fs::PermissionsExt;
-        use std::os::unix::process::CommandExt;
-        use std::path::Path;
-        #[cfg(target_os = "linux")]
-        use std::path::PathBuf;
-        #[cfg(target_os = "linux")]
-        use std::process::Stdio;
-        use std::process::{Child, Command};
-        use std::sync::mpsc;
-        use std::thread;
-        use std::time::{Duration, Instant};
+    }
+    use pretty_assertions::assert_eq;
+    #[cfg(target_os = "linux")]
+    use std::env;
+    use std::fs;
+    use std::io;
+    #[cfg(target_os = "linux")]
+    use std::io::BufRead as _;
+    #[cfg(target_os = "linux")]
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    use std::path::Path;
+    #[cfg(target_os = "linux")]
+    use std::path::PathBuf;
+    #[cfg(target_os = "linux")]
+    use std::process::Stdio;
+    use std::process::{Child, Command};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
-        fn test_context(state_dir: &Path) -> CliContext {
-            CliContext {
-                state_dir: state_dir.to_path_buf(),
-                host: None,
-            }
+    fn test_context(state_dir: &Path) -> CliContext {
+        CliContext {
+            state_dir: state_dir.to_path_buf(),
+            host: None,
         }
     }
 
