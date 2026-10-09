@@ -10162,11 +10162,10 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             );
         });
 
-        let outcome = tokio::task::spawn_blocking(move || {
-            probe_idle_conversation(&context, &record, None)
-        })
-        .await
-        .unwrap();
+        let outcome =
+            tokio::task::spawn_blocking(move || probe_idle_conversation(&context, &record, None))
+                .await
+                .unwrap();
 
         assert_eq!(
             outcome.unwrap_err().code(),
