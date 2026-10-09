@@ -13,6 +13,59 @@ Consumers must ignore additive unknown fields. A future, unrecognized
 `turn_state.schema_version` must be treated as unknown rather than interpreted
 as a v1 phase.
 
+## Provider authentication incidents
+
+Claude `StopFailure.error=authentication_failed` and bound Codex app-server
+`codexErrorInfo="unauthorized"` or a model HTTP error variant with
+`httpStatusCode=401` produce `last_turn.provider_failure_kind="authentication"`.
+Codex error notifications are observed even when the provider intends to retry;
+failed-turn notifications provide the same incident evidence. MCP URL login
+requests, HTTP 403, and ordinary message text are excluded. External-token
+`account/chatgptAuthTokens/refresh` requests with `reason="unauthorized"` also
+produce incidents; reused JSON-RPC IDs represent separate refresh occurrences.
+
+List and board JSON expose an optional `auth_incident`, bound to the managed
+session, runtime launch identity and generation. It contains a digest incident
+ID, provider, optional configured account nickname, host `observed_at`, fixed
+source (`claude_stop_failure`, `codex_app_server`, `codex_external_refresh`, or
+`terminal_pattern`), confidence, status and notification receipts. Provider
+errors, terminal bytes, prompts, credential values and credential paths never
+enter the incident or notification body. Old-runtime incidents are retained
+privately and omitted from the current public projection. Their pending owner
+notifications continue using the current authenticated runtime; private mailbox
+journals reconcile earlier submissions before any resend. The bounded history
+holds sixteen incidents and evicts only fully settled incidents. If all slots
+have pending obligations, those obligations are preserved and new incidents are
+refused with `degraded_queue_capacity`; the activity authentication failure kind
+remains visible. Observation can retry after delivery frees a settled slot.
+
+The daemon polls live sessions every 15 seconds, reconciles committed activity
+when incident persistence was interrupted, and sends one incident message to
+the session's effective parent. An open incident coalesces repeated evidence;
+notification retries preserve the incident body and mailbox idempotency key.
+A completed provider turn produces one final `healthy` recovery-result message.
+Runtime replacement settles the old incident with `runtime_replaced`, without
+claiming provider health. Historical delivery receipts must match the owner,
+body and category. When an uncertain submission outlives the journal retention
+window, reporting fails closed as `delivery_unknown` rather than resending a
+possibly delivered incident.
+External refresh produces `credentials_refreshed` or `refresh_failed`; refreshed
+credentials alone do not claim a healthy model turn. Reporting failures do not
+prevent the provider's existing refresh path from running. Sessions without an
+owner route report `owner_unavailable` in the notification receipt.
+
+Missing/stale structured evidence permits an inferred fallback: at most eight
+terminal lines and 4096 bytes, with a 250 ms sampling deadline. Only a bottom
+provider UI error status immediately above an empty prompt (or the final status
+line) is accepted: Claude's error-status marker plus a fixed login error, or
+Codex's square error marker plus `unexpected status 401 Unauthorized`. Bare
+assistant text and older scrollback are excluded. Persistent screen content
+stays deduped until that status disappears. Fallback-only or unavailable
+sampling is exposed as degraded detection health; unavailable or queued relay
+delivery is exposed in the receipt. The target is observed failure to durable
+owner inbox delivery within 60 seconds when sources and transport are available;
+these degraded states do not establish that target or a measured p99.
+
 ## Conversation transitions
 
 `agent-session clear <id> [--expect-idle] --format json` admits only a verified

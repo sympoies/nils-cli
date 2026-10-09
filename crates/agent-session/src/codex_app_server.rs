@@ -1683,6 +1683,7 @@ pub(crate) fn cleanup_runtime_files(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StructuredFailureKind {
+    Authentication,
     UsageExhausted,
     ProviderCapacity,
 }
@@ -1690,15 +1691,34 @@ pub(crate) enum StructuredFailureKind {
 impl StructuredFailureKind {
     pub(crate) fn activity_reason(self) -> &'static str {
         match self {
+            Self::Authentication => "authentication",
             Self::UsageExhausted => "usage_exhausted",
             Self::ProviderCapacity => "provider_capacity",
         }
     }
 
-    fn from_codex_error_info(value: &str) -> Option<Self> {
-        match value {
-            "usageLimitExceeded" => Some(Self::UsageExhausted),
-            "serverOverloaded" => Some(Self::ProviderCapacity),
+    fn from_codex_error_info(value: &Value) -> Option<Self> {
+        match value.as_str() {
+            Some("usageLimitExceeded") => Some(Self::UsageExhausted),
+            Some("serverOverloaded") => Some(Self::ProviderCapacity),
+            Some("unauthorized") => Some(Self::Authentication),
+            _ if [
+                "httpConnectionFailed",
+                "responseStreamConnectionFailed",
+                "responseStreamDisconnected",
+                "responseTooManyFailedAttempts",
+            ]
+            .iter()
+            .any(|variant| {
+                value
+                    .get(variant)
+                    .and_then(|info| info.get("httpStatusCode"))
+                    .and_then(Value::as_u64)
+                    == Some(401)
+            }) =>
+            {
+                Some(Self::Authentication)
+            }
             _ => None,
         }
     }
@@ -1738,19 +1758,28 @@ impl FailureReducer {
         match message.get("method").and_then(Value::as_str) {
             Some("error") => {
                 let params = message.get("params")?;
-                if params.get("threadId").and_then(Value::as_str) != Some(self.thread_id.as_str())
-                    || params.get("willRetry").and_then(Value::as_bool) != Some(false)
-                {
+                if params.get("threadId").and_then(Value::as_str) != Some(self.thread_id.as_str()) {
                     return None;
                 }
                 let kind = params
                     .pointer("/error/codexErrorInfo")
-                    .and_then(Value::as_str)
                     .and_then(StructuredFailureKind::from_codex_error_info)?;
                 let turn_id = params
                     .get("turnId")
                     .and_then(Value::as_str)
                     .filter(|turn_id| protocol_id_is_valid(turn_id))?;
+                if kind == StructuredFailureKind::Authentication
+                    && !self.completed_turns.contains(turn_id)
+                {
+                    return Some(StructuredFailure {
+                        thread_id: self.thread_id.clone(),
+                        turn_id: turn_id.into(),
+                        kind,
+                    });
+                }
+                if params.get("willRetry").and_then(Value::as_bool) != Some(false) {
+                    return None;
+                }
                 if !self.completed_turns.contains(turn_id) {
                     insert_bounded_failure(
                         &mut self.pending_turns,
@@ -1774,7 +1803,6 @@ impl FailureReducer {
                     .filter(|turn_id| protocol_id_is_valid(turn_id))?;
                 let embedded_kind = params
                     .pointer("/turn/error/codexErrorInfo")
-                    .and_then(Value::as_str)
                     .and_then(StructuredFailureKind::from_codex_error_info);
                 let matched_kind = remove_bounded_failure(
                     &mut self.pending_turns,
@@ -5197,6 +5225,42 @@ async fn respond_to_external_auth_refresh<S>(
 where
     S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
+    let result = respond_to_external_auth_refresh_inner(websocket, value, external_auth).await;
+    if value.get("method").and_then(Value::as_str) == Some("account/chatgptAuthTokens/refresh")
+        && value.pointer("/params/reason").and_then(Value::as_str) == Some("unauthorized")
+        && let Some((context, record, _)) = external_auth
+    {
+        let recovery = if matches!(result, Ok(true)) {
+            "credentials_refreshed"
+        } else {
+            "refresh_failed"
+        };
+        let context = context.clone();
+        let record = record.clone();
+        if !matches!(
+            tokio::task::spawn_blocking(move || crate::auth_incident::recover(
+                &context,
+                &record,
+                recovery,
+                &jiff::Timestamp::now().to_string()
+            ))
+            .await,
+            Ok(Ok(()))
+        ) {
+            eprintln!("warning: provider authentication recovery reporting degraded");
+        }
+    }
+    result
+}
+
+async fn respond_to_external_auth_refresh_inner<S>(
+    websocket: &mut S,
+    value: &Value,
+    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
+) -> Result<bool, String>
+where
+    S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
     if value.get("method").and_then(Value::as_str) != Some("account/chatgptAuthTokens/refresh") {
         return Ok(false);
     }
@@ -5216,6 +5280,27 @@ where
         .as_ref()
         .map(|runtime| runtime.launch_id.clone())
         .ok_or_else(|| "Codex runtime identity is missing".to_string())?;
+    let incident_context = context.clone();
+    let incident_record = record.clone();
+    let incident_event = format!(
+        "external-refresh:{}:{}",
+        json_id_key(&id).unwrap_or_default(),
+        uuid::Uuid::new_v4()
+    );
+    if !matches!(
+        tokio::task::spawn_blocking(move || crate::auth_incident::observe(
+            &incident_context,
+            &incident_record,
+            &incident_event,
+            crate::auth_incident::AuthSource::CodexExternalRefresh,
+            crate::activity::Confidence::Authoritative,
+            &jiff::Timestamp::now().to_string()
+        ))
+        .await,
+        Ok(Ok(()))
+    ) {
+        eprintln!("warning: provider authentication incident persistence degraded");
+    }
     let begin_context = context.clone();
     let begin_id = record.id.clone();
     let begin_launch_id = launch_id.clone();
@@ -5441,6 +5526,26 @@ async fn process_live_message(
             });
         wake_from_open_usage(context, record, &snapshot).await?;
     }
+    if value.get("method").and_then(Value::as_str) == Some("turn/completed")
+        && value.pointer("/params/threadId").and_then(Value::as_str)
+            == Some(reducer.thread_id.as_str())
+        && value.pointer("/params/turn/status").and_then(Value::as_str) == Some("completed")
+    {
+        let recovery_context = context.clone();
+        let recovery_record = record.clone();
+        if !matches!(
+            tokio::task::spawn_blocking(move || crate::auth_incident::recover(
+                &recovery_context,
+                &recovery_record,
+                "healthy",
+                &jiff::Timestamp::now().to_string()
+            ))
+            .await,
+            Ok(Ok(()))
+        ) {
+            eprintln!("warning: provider authentication recovery reporting degraded");
+        }
+    }
     let Some(failure) = reducer.ingest(value) else {
         return Ok(());
     };
@@ -5500,6 +5605,7 @@ async fn wake_from_open_usage(
 mod tests {
     use super::*;
     use nils_test_support::{EnvGuard, GlobalStateLock};
+    use pretty_assertions::{assert_eq, assert_ne};
     use std::collections::BTreeMap;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -7127,6 +7233,111 @@ exit "$FAKE_PROVIDER_EXIT"
         assert_eq!(err, "Codex app-server request timed out");
     }
 
+    #[test]
+    fn auth_loss_codex_structured_failures_and_negative_controls() {
+        for info in [
+            json!("unauthorized"),
+            json!({"httpConnectionFailed":{"httpStatusCode":401}}),
+        ] {
+            let mut reducer = FailureReducer::new("thread-a");
+            let raw = json!({"method":"turn/completed", "params":{"threadId":"thread-a", "turn":{"id":"turn-a", "status":"failed", "error":{"codexErrorInfo":info, "message":"private-canary"}}}});
+            let projected = match server_observation(&raw) {
+                ServerProjection::Unique(value) => value,
+                _ => panic!("expected structured projection"),
+            };
+            let failure = reducer
+                .ingest(&projected)
+                .expect("401 must classify model authentication");
+            assert_eq!(failure.kind.activity_reason(), "authentication");
+            assert!(!projected.to_string().contains("private-canary"));
+        }
+        for raw in [
+            json!({"method":"turn/completed", "params":{"threadId":"thread-a", "turn":{"id":"turn-a", "status":"failed", "error":{"codexErrorInfo":{"httpConnectionFailed":{"httpStatusCode":403}}, "message":"Unauthorized 401"}}}}),
+            json!({"method":"mcpServer/elicitation/request", "id":1, "params":{"threadId":"thread-a", "mode":"url", "message":"Unauthorized 401"}}),
+            json!({"method":"item/agentMessage/delta", "params":{"threadId":"thread-a", "delta":"401 Unauthorized"}}),
+        ] {
+            assert!(FailureReducer::new("thread-a").ingest(&raw).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_loss_codex_fake_protocol_surfaces_durable_incident_and_board() {
+        for (name, info, expected) in [
+            ("unauthorized", json!("unauthorized"), true),
+            (
+                "http401",
+                json!({"responseStreamConnectionFailed":{"httpStatusCode":401}}),
+                true,
+            ),
+            (
+                "http403",
+                json!({"httpConnectionFailed":{"httpStatusCode":403}}),
+                false,
+            ),
+            ("text401", json!("other"), false),
+        ] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let context = CliContext {
+                state_dir: tmp.path().join("state"),
+                host: None,
+            };
+            let record = record_with_runtime(name, &tmp.path().join("server.sock"));
+            fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+            crate::write_session_record(&context, &record).unwrap();
+            crate::activity::activate_runtime(&context, &record).unwrap();
+            let mut reducer = FailureReducer::new("thread-a");
+            let message = json!({"method":"turn/completed", "params":{"threadId":"thread-a", "turn":{"id":"turn-a", "status":"failed", "error":{"codexErrorInfo":info,"message":"ordinary text mentioning 401 Unauthorized private-canary"}}}});
+            let ServerProjection::Unique(projected) = server_observation(&message) else {
+                panic!("structured projection");
+            };
+            process_live_message(&context, &record, &mut reducer, None, &projected)
+                .await
+                .unwrap();
+            let incident = crate::auth_incident::view(&context, &record);
+            assert_eq!(incident.is_some(), expected, "{name}");
+            let view = crate::session_view(
+                &context,
+                &record,
+                Some("running".into()),
+                Some(Path::new("/nonexistent/fixture-tmux")),
+            );
+            let list = serde_json::to_value(view).unwrap();
+            let board =
+                crate::board::project_record(&list, "fixture-machine", None, false).unwrap();
+            if expected {
+                assert_eq!(
+                    list["turn_state"]["last_turn"]["provider_failure_kind"],
+                    "authentication"
+                );
+                assert_eq!(
+                    board["turn_state"]["last_turn"]["provider_failure_kind"],
+                    "authentication"
+                );
+                assert_eq!(board["auth_incident"]["provider"], "codex");
+                assert_eq!(
+                    board["auth_incident"]["runtime_incarnation"],
+                    record.runtime.as_ref().unwrap().launch_id
+                );
+                assert!(!board.to_string().contains("private-canary"));
+            } else {
+                assert!(board.get("auth_incident").is_none());
+            }
+            // MCP login and ordinary assistant text never become provider failure.
+            for raw in [
+                json!({"method":"mcpServer/elicitation/request","id":1,"params":{"threadId":"thread-a","mode":"url"}}),
+                json!({"method":"item/agentMessage/delta","params":{"threadId":"thread-a","delta":"401 Unauthorized"}}),
+            ] {
+                process_live_message(&context, &record, &mut reducer, None, &raw)
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(
+                crate::auth_incident::view(&context, &record).is_some(),
+                expected
+            );
+        }
+    }
+
     #[tokio::test]
     async fn external_auth_refresh_rebinds_durable_state_without_serializing_token() {
         let lock = GlobalStateLock::new();
@@ -7185,6 +7396,16 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             .await
             .unwrap()
         );
+        let incident = crate::auth_incident::view(&context, &record).unwrap();
+        assert_eq!(
+            incident.source,
+            crate::auth_incident::AuthSource::CodexExternalRefresh
+        );
+        assert_eq!(
+            incident.recovery_result.as_deref(),
+            Some("credentials_refreshed")
+        );
+        assert_eq!(incident.status, "recovered");
         let response: Value = match &sink.messages[0] {
             Message::Text(text) => serde_json::from_str(text).unwrap(),
             message => panic!("unexpected refresh response: {message:?}"),
@@ -7205,6 +7426,26 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         assert_eq!(
             fs::read_to_string(calls).unwrap().trim(),
             "resolve --account acct1 --force-refresh --format json"
+        );
+        let previous_incident = incident.incident_id;
+        assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":"refresh-1", "method":"account/chatgptAuthTokens/refresh", "params":{"reason":"unauthorized"}}), Some((&context, &record, "acct1"))).await.unwrap());
+        assert_ne!(
+            crate::auth_incident::view(&context, &record)
+                .unwrap()
+                .incident_id,
+            previous_incident
+        );
+        // A broken reporting store must not prevent the credential response.
+        fs::write(
+            crate::session_dir(&context, &record.id).join("auth-incidents.json"),
+            b"invalid",
+        )
+        .unwrap();
+        assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":"refresh-2", "method":"account/chatgptAuthTokens/refresh", "params":{"reason":"unauthorized"}}), Some((&context, &record, "acct1"))).await.unwrap());
+        assert_eq!(sink.messages.len(), 3);
+        assert_eq!(
+            crate::auth_incident::detection_health(&context, &record).as_deref(),
+            Some("degraded_store_unavailable")
         );
     }
 
@@ -7254,6 +7495,13 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         assert_eq!(
             view.applied_runtime_id.as_deref(),
             Some("runtime-refresh-failure")
+        );
+        assert_eq!(
+            crate::auth_incident::view(&context, &record)
+                .unwrap()
+                .recovery_result
+                .as_deref(),
+            Some("refresh_failed")
         );
         assert!(crate::codex_account::ensure_input_allowed(&persisted).is_ok());
 

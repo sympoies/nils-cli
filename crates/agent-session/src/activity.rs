@@ -2812,6 +2812,8 @@ fn ingest_event_with_lock(
         drop(_health_fence);
         drop(_lock);
         drop(record_lock);
+        crate::auth_incident::observe_activity(context, &record, &event, &state)
+            .unwrap_or_else(|_| eprintln!("warning: provider authentication reporting degraded"));
         arm_auto_resume_from_event(context, &record, &event, &state, &now())?;
         return Ok(ActivityResult {
             id: record.id,
@@ -2827,6 +2829,8 @@ fn ingest_event_with_lock(
         drop(_health_fence);
         drop(_lock);
         drop(record_lock);
+        crate::auth_incident::observe_activity(context, &record, &event, &state)
+            .unwrap_or_else(|_| eprintln!("warning: provider authentication reporting degraded"));
         arm_auto_resume_from_event(context, &record, &event, &state, &received_at)?;
         return Ok(ActivityResult {
             id: record.id,
@@ -2898,6 +2902,8 @@ fn ingest_event_with_lock(
     drop(_health_fence);
     drop(_lock);
     drop(record_lock);
+    crate::auth_incident::observe_activity(context, &record, &event, &state)
+        .unwrap_or_else(|_| eprintln!("warning: provider authentication reporting degraded"));
     arm_auto_resume_from_event(context, &record, &event, &state, &received_at)?;
     Ok(ActivityResult {
         id: record.id,
@@ -6172,6 +6178,31 @@ mod tests {
                 arms
             );
         }
+    }
+
+    #[test]
+    fn auth_loss_claude_hook_projects_failure_kind() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+        activate_runtime(&context, &created.record).unwrap();
+        let runtime_id = &created.record.runtime.as_ref().unwrap().launch_id;
+        let raw = json!({"hook_event_name":"StopFailure", "error":"authentication_failed", "session_id":"session-1"});
+        let failure = normalize_provider_hook(AgentKind::Claude, None, runtime_id, &raw)
+            .unwrap()
+            .unwrap();
+        let result = ingest_event(&context, &created.record.id, failure).unwrap();
+        assert_eq!(
+            result.turn_state.last_turn.unwrap().provider_failure_kind(),
+            Some("authentication")
+        );
+        let incident: Value = serde_json::from_slice(
+            &fs::read(session_dir(&context, &created.record.id).join("auth-incidents.json"))
+                .expect("durable auth incident"),
+        )
+        .unwrap();
+        assert_eq!(incident["incidents"][0]["provider"], "claude");
+        assert_eq!(incident["incidents"][0]["runtime_incarnation"], *runtime_id);
+        assert!(!incident.to_string().contains("authentication_failed"));
     }
 
     #[test]
@@ -9691,14 +9722,19 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
                     } else {
                         "completed".to_string()
                     },
-                    extra: if event.failure_reason.as_deref() == Some("provider_capacity") {
+                    extra: if matches!(
+                        event.failure_reason.as_deref(),
+                        Some("provider_capacity" | "authentication")
+                    ) {
                         let mut extra = extra;
                         extra.insert(
                             "provider_failure_kind".to_string(),
-                            json!("provider_capacity"),
+                            json!(event.failure_reason),
                         );
                         extra
                     } else {
+                        let mut extra = extra;
+                        extra.remove("provider_failure_kind");
                         extra
                     },
                 });

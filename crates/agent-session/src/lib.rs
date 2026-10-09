@@ -2,6 +2,7 @@ mod account_broker;
 #[doc(hidden)]
 pub mod activity;
 mod activity_ingress;
+mod auth_incident;
 #[doc(hidden)]
 pub mod auto_resume;
 mod board;
@@ -1874,6 +1875,10 @@ pub struct SessionView {
     runtime_started_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     turn_state: Option<activity::TurnState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_incident: Option<auth_incident::AuthIncident>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_detection_health: Option<String>,
     /// Most recent user prompt, populated on demand by the list handler from the
     /// provider transcript (never persisted). Absent unless the daemon advertises
     /// the `last_prompt` capability and a preview was resolved.
@@ -12953,6 +12958,7 @@ fn session_view_from_parts(
             schedule_shadow_sampling,
         )
     });
+    let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
         model_settings: session_model::ModelSettings::for_record(record),
         id: record.id.clone(),
@@ -13007,6 +13013,8 @@ fn session_view_from_parts(
             .as_ref()
             .map(|runtime| runtime.started_at.clone()),
         turn_state,
+        auth_incident,
+        auth_detection_health,
         // Populated on demand by the list handler; never computed in the shared
         // collector so the expensive transcript path stays out of the hot build.
         last_prompt: None,

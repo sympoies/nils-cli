@@ -1166,6 +1166,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         let federation_task = tokio::spawn(remote_outbox_loop(state.clone()));
         let codex_control_task = tokio::spawn(codex_control_loop(state.clone()));
         let auto_resume_task = tokio::spawn(auto_resume_loop(state.clone()));
+        let auth_incident_task = tokio::spawn(auth_incident_loop(state.clone()));
         let auto_retitle_task = tokio::spawn(auto_retitle_loop(state.clone()));
         let retitle_v3_recovery_task =
             tokio::spawn(recover_retitle_v3_operations_once(state.clone()));
@@ -1185,6 +1186,8 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         let binary_replaced = *stop_rx.borrow() == Some(ServeStop::BinaryReplaced);
         federation_task.abort();
         let _ = federation_task.await;
+        auth_incident_task.abort();
+        let _ = auth_incident_task.await;
         auto_resume_task.abort();
         let _ = auto_resume_task.await;
         auto_retitle_task.abort();
@@ -8022,6 +8025,80 @@ async fn auto_resume_cancel_handler(
         Ok(Ok(view)) => envelope_ok(json!({ "machine": state.machine, "auto_resume": view })),
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
+    }
+}
+
+async fn auth_incident_loop(state: Arc<ServeState>) {
+    let mut interval = tokio::time::interval(Duration::from_secs(15));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        let context = state.context.clone();
+        let discovery_tmux = state.tmux_bin.clone();
+        let records = tokio::task::spawn_blocking(move || {
+            let mut records = Vec::new();
+            let mut command = ProcessCommand::new(&discovery_tmux);
+            command.args(["list-sessions", "-F", "#{session_name}"]);
+            let live_tmux = crate::run_output_with_timeout_and_strict_cap(
+                command,
+                Duration::from_millis(250),
+                64 * 1024,
+            )
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::to_string)
+                    .collect::<HashSet<_>>()
+            });
+            if let Ok(entries) = fs::read_dir(context.state_dir.join("sessions")) {
+                for entry in entries.flatten() {
+                    if let Some(id) = entry.file_name().to_str()
+                        && let Ok(record) = crate::load_session_record(&context, id)
+                        && record.mode == "interactive"
+                        && matches!(record.agent.as_str(), "claude" | "codex")
+                        && record.runtime.is_some()
+                    {
+                        let terminal_available = live_tmux
+                            .as_ref()
+                            .map(|sessions| sessions.contains(&record.tmux_session));
+                        records.push((record, terminal_available));
+                    }
+                }
+            }
+            records
+        })
+        .await;
+        let Ok(records) = records else {
+            continue;
+        };
+        // Bound concurrent sampling and mailbox requests; no provider text is
+        // copied to the async scheduler or diagnostic output.
+        let mut tasks = tokio::task::JoinSet::new();
+        for (record, terminal_available) in records {
+            if tasks.len() >= 4 {
+                let _ = tasks.join_next().await;
+            }
+            let context = state.context.clone();
+            let tmux = state.tmux_bin.clone();
+            let machine = state.machine.clone();
+            tasks.spawn_blocking(move || {
+                if let Err(error) = crate::auth_incident::tick(
+                    &context,
+                    &record,
+                    &tmux,
+                    &machine,
+                    terminal_available,
+                ) {
+                    eprintln!(
+                        "warning: provider authentication observation degraded: {}",
+                        error.code()
+                    );
+                }
+            });
+        }
+        while tasks.join_next().await.is_some() {}
     }
 }
 
