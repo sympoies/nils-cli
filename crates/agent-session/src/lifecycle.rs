@@ -393,6 +393,26 @@ pub(crate) fn observe_stopped(context: &CliContext, target: &SessionRecord) {
     );
 }
 
+/// Allocate through the existing session ID policy before validation so failed
+/// creates have a target without changing the normal timestamp/title format.
+pub(crate) fn start_id(
+    context: &CliContext,
+    id: Option<&str>,
+    agent: crate::AgentKind,
+    title: Option<&str>,
+) -> Result<String, CliError> {
+    if let Some(id) = id {
+        return Ok(id.to_string());
+    }
+    crate::resolve_session_id(
+        context,
+        None,
+        agent,
+        &jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string(),
+        title.map(crate::slugify).as_deref(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,24 +557,4 @@ mod tests {
         );
         assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
     }
-}
-
-/// Allocate through the existing session ID policy before validation so failed
-/// creates have a target without changing the normal timestamp/title format.
-pub(crate) fn start_id(
-    context: &CliContext,
-    id: Option<&str>,
-    agent: crate::AgentKind,
-    title: Option<&str>,
-) -> Result<String, CliError> {
-    if let Some(id) = id {
-        return Ok(id.to_string());
-    }
-    crate::resolve_session_id(
-        context,
-        None,
-        agent,
-        &jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string(),
-        title.map(crate::slugify).as_deref(),
-    )
 }
