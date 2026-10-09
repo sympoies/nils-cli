@@ -1495,7 +1495,6 @@ See [Session display metadata v1](session-display-metadata-v1.md) for additive
 `POST /sessions/{exact-id}/display-metadata`. Existing title edits remain
 available while pinned; model retitle is blocked until mode returns to auto.
 
-
 ## Lifecycle failure evidence
 
 Authenticated create, provider-history import, resume, account-switch and delete
