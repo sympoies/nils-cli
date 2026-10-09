@@ -18435,7 +18435,7 @@ fn resolve_worktree_lifecycle_root(
     cwd: &Path,
 ) -> Result<Option<PathBuf>, nils_common::worktree_lifecycle::Error> {
     use nils_common::worktree_lifecycle::{self, Error};
-    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
     let cwd = fs::canonicalize(cwd).map_err(|_| Error::Unavailable)?;
     if !cwd.ancestors().any(|path| path.join(".git").exists()) {
         return worktree_lifecycle::prior_checkout_root(state, &cwd);
