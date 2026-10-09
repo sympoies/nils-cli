@@ -177,7 +177,12 @@ fn observe_locked(
         return false;
     };
     let event_key = key(&runtime.launch_id, event);
-    if store.last_failure_key.as_ref() == Some(&event_key) {
+    if store.last_failure_key.as_ref() == Some(&event_key)
+        || store
+            .incidents
+            .iter()
+            .any(|incident| incident.incident_id == event_key)
+    {
         return true;
     }
     if store
@@ -303,6 +308,14 @@ pub(crate) fn observe_activity(
     } else {
         Ok(())
     }
+}
+
+pub(crate) fn recovery_pending(context: &CliContext, record: &SessionRecord) -> bool {
+    read(context, record).is_ok_and(|store| {
+        store.incidents.last().is_some_and(|incident| {
+            same_runtime(incident, record) && incident.status == "auth_failed"
+        })
+    })
 }
 
 pub(crate) fn recover(
@@ -1100,6 +1113,55 @@ mod tests {
             &notification,
             "2030-01-03T00:00:00Z".parse().unwrap()
         ));
+    }
+
+    #[test]
+    fn auth_loss_replayed_coalesced_failure_does_not_recreate_recovered_incident() {
+        let record = record();
+        let mut store = Store {
+            schema_version: SCHEMA.into(),
+            ..Store::default()
+        };
+        for event in ["event-a", "event-b"] {
+            observe_locked(
+                &mut store,
+                &record,
+                event,
+                AuthSource::ClaudeStopFailure,
+                Confidence::Authoritative,
+                "2030-01-01T00:00:00Z",
+            );
+        }
+        let mut sends = 0;
+        deliver_with(&mut store, |_, _, _| {
+            sends += 1;
+            Ok(json!({"message_id":"initial", "state":"delivered"}))
+        });
+        store.incidents[0].status = "recovered".into();
+        store.incidents[0].recovery_result = Some("healthy".into());
+        deliver_with(&mut store, |_, _, _| {
+            sends += 1;
+            Ok(json!({"message_id":"final", "state":"delivered"}))
+        });
+        let mut restored: Store =
+            serde_json::from_slice(&serde_json::to_vec(&store).unwrap()).unwrap();
+        observe_locked(
+            &mut restored,
+            &record,
+            "event-a",
+            AuthSource::ClaudeStopFailure,
+            Confidence::Authoritative,
+            "2030-01-01T00:00:00Z",
+        );
+        assert_eq!(
+            restored.incidents.len(),
+            1,
+            "replay must not duplicate an already retained incident identity"
+        );
+        deliver_with(&mut restored, |_, _, _| {
+            panic!("settled incident must not retry")
+        });
+        assert_eq!(sends, 2);
     }
 
     #[test]

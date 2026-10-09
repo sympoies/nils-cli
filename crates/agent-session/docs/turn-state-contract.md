@@ -18,8 +18,11 @@ as a v1 phase.
 Claude `StopFailure.error=authentication_failed` and bound Codex app-server
 `codexErrorInfo="unauthorized"` or a model HTTP error variant with
 `httpStatusCode=401` produce `last_turn.provider_failure_kind="authentication"`.
-Codex error notifications are observed even when the provider intends to retry;
-failed-turn notifications provide the same incident evidence. MCP URL login
+Codex error notifications are observed even when `willRetry` is true or absent:
+a structured Unauthorized/401 already proves an authenticated request failed,
+independently of the retry policy. Reporting does not disable provider retries;
+a later successful bound-thread completion settles the incident as `healthy`.
+Failed-turn notifications provide the same incident evidence. MCP URL login
 requests, HTTP 403, and ordinary message text are excluded. External-token
 `account/chatgptAuthTokens/refresh` requests with `reason="unauthorized"` also
 produce incidents; reused JSON-RPC IDs represent separate refresh occurrences.

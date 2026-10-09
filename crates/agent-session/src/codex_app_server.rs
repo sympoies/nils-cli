@@ -5530,6 +5530,7 @@ async fn process_live_message(
         && value.pointer("/params/threadId").and_then(Value::as_str)
             == Some(reducer.thread_id.as_str())
         && value.pointer("/params/turn/status").and_then(Value::as_str) == Some("completed")
+        && crate::auth_incident::recovery_pending(context, record)
     {
         let recovery_context = context.clone();
         let recovery_record = record.clone();
@@ -7257,6 +7258,60 @@ exit "$FAKE_PROVIDER_EXIT"
             json!({"method":"item/agentMessage/delta", "params":{"threadId":"thread-a", "delta":"401 Unauthorized"}}),
         ] {
             assert!(FailureReducer::new("thread-a").ingest(&raw).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_loss_codex_retry_policy_does_not_delay_incident_and_can_recover() {
+        for will_retry in [None, Some(true), Some(false)] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let context = CliContext {
+                state_dir: tmp.path().join("state"),
+                host: None,
+            };
+            let record = record_with_runtime("auth-retry", &tmp.path().join("server.sock"));
+            fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+            crate::write_session_record(&context, &record).unwrap();
+            crate::activity::activate_runtime(&context, &record).unwrap();
+            let mut raw = json!({"method":"error", "params":{"threadId":"thread-a",
+                "turnId":"turn-a", "error":{"codexErrorInfo":"unauthorized"}}});
+            if let Some(value) = will_retry {
+                raw["params"]["willRetry"] = json!(value);
+            }
+            let ServerProjection::Unique(projected) = server_observation(&raw) else {
+                panic!("structured unauthorized observation");
+            };
+            let mut reducer = FailureReducer::new("thread-a");
+            for _ in 0..3 {
+                process_live_message(&context, &record, &mut reducer, None, &projected)
+                    .await
+                    .unwrap();
+            }
+            let incident = crate::auth_incident::view(&context, &record).unwrap();
+            assert_eq!(
+                incident.source,
+                crate::auth_incident::AuthSource::CodexAppServer
+            );
+            assert_eq!(incident.status, "auth_failed");
+            let stored: Value = serde_json::from_slice(
+                &fs::read(crate::session_dir(&context, &record.id).join("auth-incidents.json"))
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(stored["incidents"].as_array().unwrap().len(), 1);
+            process_live_message(
+                &context,
+                &record,
+                &mut reducer,
+                None,
+                &json!({"method":"turn/completed", "params":{"threadId":"thread-a",
+                    "turn":{"id":"turn-a", "status":"completed"}}}),
+            )
+            .await
+            .unwrap();
+            let recovered = crate::auth_incident::view(&context, &record).unwrap();
+            assert_eq!(recovered.status, "recovered");
+            assert_eq!(recovered.recovery_result.as_deref(), Some("healthy"));
         }
     }
 
