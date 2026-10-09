@@ -24,6 +24,7 @@ mod display_metadata;
 pub mod dsh_external;
 mod forge_identity;
 mod group_lifecycle;
+mod lifecycle;
 #[doc(hidden)]
 pub mod lineage;
 mod maintenance;
@@ -276,7 +277,7 @@ const TMUX_RUNTIME_NEVER_LAUNCHED_KEY: &str = "tmux_runtime_never_launched";
 const TMUX_RUNTIME_IDENTITY_CHANGED_OUTPUT: &str = "agent-session-runtime-identity-changed";
 const COORDINATION_LAUNCH_GATE: &str = "launch-ready";
 const COORDINATION_BROKER_GATE: &str = "broker-provisioned";
-const HELD_LAUNCH_SCRIPT: &str = "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"";
+const HELD_LAUNCH_SCRIPT: &str = "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --exit-code \"$status\" --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"";
 
 pub fn run() -> i32 {
     run_with_args(env::args_os())
@@ -811,6 +812,14 @@ fn run_attach(context: &CliContext, args: cli::AttachArgs) -> i32 {
 }
 
 fn run_logs(context: &CliContext, args: cli::LogsArgs) -> i32 {
+    if args.lifecycle {
+        return match lifecycle::read(context, &args.id, args.tail) {
+            Ok(result) => render_single_success(LOGS_COMMAND, args.format, &result, |value| {
+                serde_json::to_string_pretty(value).unwrap_or_default()
+            }),
+            Err(err) => render_error(LOGS_COMMAND, args.format, err),
+        };
+    }
     match load_session_record(context, &args.id).and_then(|record| {
         session_logs(
             context,
@@ -2333,6 +2342,34 @@ fn start_session_inner(
     failure_disposition: StartFailureDisposition,
     prompt_delivery: PromptDelivery,
     create_guard: Option<&mut dyn FnMut() -> Result<(), CliError>>,
+    lifecycle_guards: StartLifecycleGuards<'_>,
+    claude_account: Option<InitialClaudeAccount>,
+) -> Result<StartView, CliError> {
+    let journal_id = lifecycle::start_id(
+        context,
+        args.id.as_deref(),
+        args.agent,
+        args.title.as_deref(),
+    )?;
+    crate::lifecycle::attempt_created(context, &journal_id, "start", || {
+        start_session_inner_unjournaled(
+            context,
+            args,
+            failure_disposition,
+            prompt_delivery,
+            create_guard,
+            lifecycle_guards,
+            claude_account,
+        )
+    })
+}
+
+fn start_session_inner_unjournaled(
+    context: &CliContext,
+    args: cli::StartArgs,
+    failure_disposition: StartFailureDisposition,
+    prompt_delivery: PromptDelivery,
+    create_guard: Option<&mut dyn FnMut() -> Result<(), CliError>>,
     mut lifecycle_guards: StartLifecycleGuards<'_>,
     claude_account: Option<InitialClaudeAccount>,
 ) -> Result<StartView, CliError> {
@@ -2523,7 +2560,10 @@ fn start_session_inner(
                     result,
                     prompt_delivery_observation: None,
                 }),
-                None => Err(with_failed_launch_cleanup(err, cleanup)),
+                None => Err(with_retained_startup(
+                    with_failed_launch_cleanup(err, cleanup),
+                    &created.record,
+                )),
             };
         }
     };
@@ -2735,6 +2775,21 @@ fn start_session_inner(
 }
 
 fn start_run_session(context: &CliContext, args: cli::RunArgs) -> Result<StartView, CliError> {
+    let journal_id = lifecycle::start_id(
+        context,
+        args.id.as_deref(),
+        args.agent,
+        args.title.as_deref(),
+    )?;
+    crate::lifecycle::attempt_created(context, &journal_id, "start", || {
+        start_run_session_unjournaled(context, args)
+    })
+}
+
+fn start_run_session_unjournaled(
+    context: &CliContext,
+    args: cli::RunArgs,
+) -> Result<StartView, CliError> {
     validate_agent_args(args.agent, &args.agent_args)?;
     let cwd = resolve_cwd(args.cwd.as_deref())?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
@@ -2880,6 +2935,21 @@ pub(crate) fn start_provider_resume_session(
     context: &CliContext,
     args: ProviderResumeImportArgs,
 ) -> Result<StartView, CliError> {
+    let journal_id = lifecycle::start_id(
+        context,
+        args.id.as_deref(),
+        args.agent,
+        args.title.as_deref(),
+    )?;
+    crate::lifecycle::attempt_created(context, &journal_id, "import", || {
+        start_provider_resume_session_unjournaled(context, args)
+    })
+}
+
+pub(crate) fn start_provider_resume_session_unjournaled(
+    context: &CliContext,
+    args: ProviderResumeImportArgs,
+) -> Result<StartView, CliError> {
     validate_provider_resume_import_agent_args(args.agent, &args.agent_args)?;
     validate_agent_args(args.agent, &args.agent_args)?;
     let provider_resume_id = normalize_provider_resume_id(&args.provider_resume_id)?;
@@ -2914,6 +2984,21 @@ pub(crate) fn start_provider_resume_session(
 }
 
 pub(crate) fn start_dsh_history_resume_session(
+    context: &CliContext,
+    args: DshHistoryResumeArgs,
+) -> Result<StartView, CliError> {
+    let journal_id = lifecycle::start_id(
+        context,
+        args.id.as_deref(),
+        AgentKind::Dsh,
+        args.title.as_deref(),
+    )?;
+    crate::lifecycle::attempt_created(context, &journal_id, "import", || {
+        start_dsh_history_resume_session_unjournaled(context, args)
+    })
+}
+
+pub(crate) fn start_dsh_history_resume_session_unjournaled(
     context: &CliContext,
     args: DshHistoryResumeArgs,
 ) -> Result<StartView, CliError> {
@@ -10707,6 +10792,16 @@ fn resume_session_by_id(
     id: &str,
     tmux_bin: &Path,
 ) -> Result<SessionView, CliError> {
+    crate::lifecycle::attempt(context, id, "resume", || {
+        resume_session_by_id_unjournaled(context, id, tmux_bin)
+    })
+}
+
+fn resume_session_by_id_unjournaled(
+    context: &CliContext,
+    id: &str,
+    tmux_bin: &Path,
+) -> Result<SessionView, CliError> {
     // Preserve not-found semantics before creating the private lock file, then
     // serialize the entire resume transition (including launch and rollback)
     // against title, hook, timestamp, and backfill writers.
@@ -13251,7 +13346,10 @@ fn session_list_runtime_snapshot(
                 "running".to_string(),
                 snapshot.last_terminal_activity_at.clone(),
             ),
-            None => ("stopped".to_string(), None),
+            None => {
+                lifecycle::observe_stopped(context, record);
+                ("stopped".to_string(), None)
+            }
         },
         None => (session_status(context, tmux_bin, record), None),
     }
@@ -13446,6 +13544,24 @@ pub(crate) fn delete_session_guarding_children(
     tmux_bin: PathBuf,
     orphan_children: bool,
 ) -> Result<DeleteResult, CliError> {
+    crate::lifecycle::attempt(context, id, "delete", || {
+        delete_session_guarding_children_unjournaled(
+            context,
+            machine,
+            id,
+            tmux_bin,
+            orphan_children,
+        )
+    })
+}
+
+pub(crate) fn delete_session_guarding_children_unjournaled(
+    context: &CliContext,
+    machine: &str,
+    id: &str,
+    tmux_bin: PathBuf,
+    orphan_children: bool,
+) -> Result<DeleteResult, CliError> {
     let children = lineage::guard_children(context, machine, id, orphan_children)?;
     let mut result = delete_session(context, id, tmux_bin)?;
     result.children = Some(children);
@@ -13453,6 +13569,29 @@ pub(crate) fn delete_session_guarding_children(
 }
 
 fn delete_session_with_expected_incarnation_and_prepare<T, F>(
+    context: &CliContext,
+    id: &str,
+    tmux_bin: PathBuf,
+    expected_session_incarnation: &str,
+    group_cleanup_owned: bool,
+    prepare: F,
+) -> Result<(T, DeleteResult), CliError>
+where
+    F: FnOnce(&SessionRecord) -> Result<T, CliError>,
+{
+    crate::lifecycle::attempt(context, id, "delete", || {
+        delete_session_with_expected_incarnation_and_prepare_unjournaled(
+            context,
+            id,
+            tmux_bin,
+            expected_session_incarnation,
+            group_cleanup_owned,
+            prepare,
+        )
+    })
+}
+
+fn delete_session_with_expected_incarnation_and_prepare_unjournaled<T, F>(
     context: &CliContext,
     id: &str,
     tmux_bin: PathBuf,
@@ -13639,6 +13778,28 @@ fn delete_session_with_timeouts(
 }
 
 fn delete_session_with_timeouts_for_terminal_assignment(
+    context: &CliContext,
+    id: &str,
+    tmux_bin: PathBuf,
+    kill_timeout: Duration,
+    verify_timeout: Duration,
+    terminal_assignment: Option<&orchestration::AssignmentRecord>,
+    group_cleanup_owned: bool,
+) -> Result<DeleteResult, CliError> {
+    crate::lifecycle::attempt(context, id, "delete", || {
+        delete_session_with_timeouts_for_terminal_assignment_unjournaled(
+            context,
+            id,
+            tmux_bin,
+            kill_timeout,
+            verify_timeout,
+            terminal_assignment,
+            group_cleanup_owned,
+        )
+    })
+}
+
+fn delete_session_with_timeouts_for_terminal_assignment_unjournaled(
     context: &CliContext,
     id: &str,
     tmux_bin: PathBuf,
@@ -13997,6 +14158,17 @@ pub fn stop_session_runtime_locked(
     record: &mut SessionRecord,
     tmux_bin: &Path,
 ) -> Result<(), CliError> {
+    let journal_id = record.id.clone();
+    crate::lifecycle::attempt(context, &journal_id, "stop", || {
+        stop_session_runtime_locked_unjournaled(context, record, tmux_bin)
+    })
+}
+
+pub fn stop_session_runtime_locked_unjournaled(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    tmux_bin: &Path,
+) -> Result<(), CliError> {
     ensure_session_lifecycle_mutation_allowed(context, record)?;
     if dsh_external::is_external_record(record) {
         return Err(CliError::usage(
@@ -14201,6 +14373,20 @@ fn recover_failed_tmux_launch_bounded(
         Ok(()) => FailedLaunchCleanup::Completed,
         Err(error) => failed_launch_cleanup_from_error(&error),
     }
+}
+
+/// A failed create that retains its record must remain directly addressable.
+fn with_retained_startup(mut error: CliError, record: &SessionRecord) -> CliError {
+    let mut details = match error.0.details.take() {
+        Some(Value::Object(details)) => details,
+        _ => serde_json::Map::new(),
+    };
+    details.insert("session_id".to_owned(), json!(record.id));
+    if let Some(startup) = startup_projection(record) {
+        details.insert("startup".to_owned(), json!(startup));
+    }
+    error.0.details = Some(Value::Object(details));
+    error
 }
 
 /// Attach bounded cleanup state to a primary failure, preserving code and message.
@@ -20580,39 +20766,48 @@ fi
     }
 
     #[test]
-    fn held_launch_executes_broker_and_provider_lifecycle_under_terminal() {
+    fn lifecycle_review_held_launch_supports_current_and_older_brokers() {
         use std::fs::File;
         use std::os::fd::FromRawFd;
         use std::process::Stdio;
 
-        let tmp = tempfile::TempDir::new().unwrap();
-        let gate = tmp.path().join("launch-ready");
-        let broker_gate = tmp.path().join("broker-provisioned");
-        let heartbeat = tmp.path().join("heartbeat");
-        let capability = tmp.path().join("capability");
-        let events = tmp.path().join("events");
-        let broker = tmp.path().join("broker");
-        let provider = tmp.path().join("provider");
-        fs::write(&capability, "capability\n").unwrap();
-        fs::write(
-            &broker,
-            r#"#!/bin/sh
+        for older in [false, true] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let gate = tmp.path().join("launch-ready");
+            let broker_gate = tmp.path().join("broker-provisioned");
+            let heartbeat = tmp.path().join("heartbeat");
+            let capability = tmp.path().join("capability");
+            let events = tmp.path().join("events");
+            let broker = tmp.path().join("broker");
+            let provider = tmp.path().join("provider");
+            fs::write(&capability, "capability\n").unwrap();
+            fs::write(
+                &broker,
+                r#"#!/bin/sh
 case " $* " in
   *" broker heartbeat "*)
     printf 'heartbeat\n' >> "$HELD_LAUNCH_EVENTS"
     while :; do sleep 0.05; done
     ;;
   *" broker stop "*)
-    printf 'stop\n' >> "$HELD_LAUNCH_EVENTS"
+    case " $* " in
+      *" --exit-code "*)
+        if [ "$HELD_LAUNCH_OLDER" = 1 ]; then
+          printf 'flag-rejected\n' >> "$HELD_LAUNCH_EVENTS"; exit 64
+        fi
+        while [ "$1" != --exit-code ]; do shift; done
+        printf 'stop:%s\n' "$2" >> "$HELD_LAUNCH_EVENTS" ;;
+      *) printf 'stop-older\n' >> "$HELD_LAUNCH_EVENTS" ;;
+    esac
     ;;
   *) exit 64 ;;
 esac
 "#,
-        )
-        .unwrap();
-        fs::write(
-            &provider,
-            r#"#!/bin/sh
+            )
+            .unwrap();
+            fs::write(
+                &provider,
+                r#"#!/bin/sh
 if [ -t 0 ]; then
   printf 'provider-tty\n' >> "$HELD_LAUNCH_EVENTS"
   exit 23
@@ -20620,104 +20815,110 @@ fi
 printf 'provider-no-tty\n' >> "$HELD_LAUNCH_EVENTS"
 exit 97
 "#,
-        )
-        .unwrap();
-        for executable in [&broker, &provider] {
-            fs::set_permissions(executable, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-
-        let mut master_fd = -1;
-        let mut slave_fd = -1;
-        // SAFETY: openpty initializes both descriptors; each successful descriptor is
-        // immediately transferred into exactly one File and closed by its owner.
-        let openpty_status = unsafe {
-            libc::openpty(
-                &mut master_fd,
-                &mut slave_fd,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
             )
-        };
-        assert_eq!(openpty_status, 0, "openpty: {}", io::Error::last_os_error());
-        // SAFETY: openpty returned two fresh, owned descriptors above.
-        let _pty_master = unsafe { File::from_raw_fd(master_fd) };
-        // SAFETY: openpty returned two fresh, owned descriptors above.
-        let pty_slave = unsafe { File::from_raw_fd(slave_fd) };
+            .unwrap();
+            for executable in [&broker, &provider] {
+                fs::set_permissions(executable, fs::Permissions::from_mode(0o700)).unwrap();
+            }
 
-        let mut command = Command::new("sh");
-        command
-            .arg("-c")
-            .arg(super::HELD_LAUNCH_SCRIPT)
-            .arg("agent-session-held-launch")
-            .arg(&gate)
-            .arg(&broker_gate)
-            .arg(&heartbeat)
-            .arg(&capability)
-            .arg("incarnation")
-            .arg("7")
-            .arg(&broker)
-            .arg(&provider)
-            .env("AGENT_SESSION_STATE_DIR", tmp.path())
-            .env("AGENT_SESSION_ID", "held-launch-test")
-            .env("HELD_LAUNCH_EVENTS", &events)
-            .stdin(Stdio::from(pty_slave))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let mut child = command.spawn().unwrap();
+            let mut master_fd = -1;
+            let mut slave_fd = -1;
+            // SAFETY: openpty initializes both descriptors; each successful descriptor is
+            // immediately transferred into exactly one File and closed by its owner.
+            let openpty_status = unsafe {
+                libc::openpty(
+                    &mut master_fd,
+                    &mut slave_fd,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_eq!(openpty_status, 0, "openpty: {}", io::Error::last_os_error());
+            // SAFETY: openpty returned two fresh, owned descriptors above.
+            let _pty_master = unsafe { File::from_raw_fd(master_fd) };
+            // SAFETY: openpty returned two fresh, owned descriptors above.
+            let pty_slave = unsafe { File::from_raw_fd(slave_fd) };
 
-        thread::sleep(Duration::from_millis(100));
-        let before_provision = fs::read_to_string(&events).unwrap_or_default();
-        if !before_provision.is_empty() {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("heartbeat ran before broker provisioning: {before_provision:?}");
-        }
+            let mut command = Command::new("sh");
+            command
+                .arg("-c")
+                .arg(super::HELD_LAUNCH_SCRIPT)
+                .arg("agent-session-held-launch")
+                .arg(&gate)
+                .arg(&broker_gate)
+                .arg(&heartbeat)
+                .arg(&capability)
+                .arg("incarnation")
+                .arg("7")
+                .arg(&broker)
+                .arg(&provider)
+                .env("AGENT_SESSION_STATE_DIR", tmp.path())
+                .env("AGENT_SESSION_ID", "held-launch-test")
+                .env("HELD_LAUNCH_EVENTS", &events)
+                .env("HELD_LAUNCH_OLDER", if older { "1" } else { "0" })
+                .stdin(Stdio::from(pty_slave))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let mut child = command.spawn().unwrap();
 
-        fs::write(&broker_gate, "ready\n").unwrap();
-        let heartbeat_deadline = Instant::now() + Duration::from_secs(2);
-        while !fs::read_to_string(&events)
-            .unwrap_or_default()
-            .contains("heartbeat\n")
-        {
-            if Instant::now() >= heartbeat_deadline {
+            thread::sleep(Duration::from_millis(100));
+            let before_provision = fs::read_to_string(&events).unwrap_or_default();
+            if !before_provision.is_empty() {
                 let _ = child.kill();
                 let _ = child.wait();
-                panic!("heartbeat did not start after broker provisioning");
+                panic!("heartbeat ran before broker provisioning: {before_provision:?}");
             }
-            thread::sleep(Duration::from_millis(10));
+
+            fs::write(&broker_gate, "ready\n").unwrap();
+            let heartbeat_deadline = Instant::now() + Duration::from_secs(2);
+            while !fs::read_to_string(&events)
+                .unwrap_or_default()
+                .contains("heartbeat\n")
+            {
+                if Instant::now() >= heartbeat_deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("heartbeat did not start after broker provisioning");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(fs::read_to_string(&events).unwrap(), "heartbeat\n");
+
+            fs::write(&gate, "ready\n").unwrap();
+            let exit_deadline = Instant::now() + Duration::from_secs(2);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() >= exit_deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("held launch did not exit after the provider completed");
+                }
+                thread::sleep(Duration::from_millis(10));
+            };
+
+            assert_eq!(status.code(), Some(23));
+            assert_eq!(
+                fs::read_to_string(&events).unwrap(),
+                if older {
+                    "heartbeat\nprovider-tty\nflag-rejected\nstop-older\n"
+                } else {
+                    "heartbeat\nprovider-tty\nstop:23\n"
+                }
+            );
+            assert!(!capability.exists());
+            assert!(!broker_gate.exists());
+            assert!(!gate.exists());
+            assert!(!fs::read_dir(tmp.path()).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("heartbeat.done.")
+            }));
         }
-        assert_eq!(fs::read_to_string(&events).unwrap(), "heartbeat\n");
-
-        fs::write(&gate, "ready\n").unwrap();
-        let exit_deadline = Instant::now() + Duration::from_secs(2);
-        let status = loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                break status;
-            }
-            if Instant::now() >= exit_deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("held launch did not exit after the provider completed");
-            }
-            thread::sleep(Duration::from_millis(10));
-        };
-
-        assert_eq!(status.code(), Some(23));
-        assert_eq!(
-            fs::read_to_string(&events).unwrap(),
-            "heartbeat\nprovider-tty\nstop\n"
-        );
-        assert!(!capability.exists());
-        assert!(!broker_gate.exists());
-        assert!(!gate.exists());
-        assert!(!fs::read_dir(tmp.path()).unwrap().any(|entry| {
-            entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .starts_with("heartbeat.done.")
-        }));
     }
     use pretty_assertions::assert_eq;
     #[cfg(target_os = "linux")]

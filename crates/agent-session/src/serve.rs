@@ -2532,7 +2532,11 @@ pub(crate) fn envelope_ok(data: Value) -> Response {
 }
 
 fn envelope_status(status: StatusCode, data: Value) -> Response {
-    (
+    let session_id = data
+        .pointer("/session/id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut response = (
         status,
         Json(json!({
             "schema_version": serve_schema(),
@@ -2540,10 +2544,21 @@ fn envelope_status(status: StatusCode, data: Value) -> Response {
             "data": data,
         })),
     )
-        .into_response()
+        .into_response();
+    if let Some(id) = session_id {
+        response
+            .extensions_mut()
+            .insert(crate::lifecycle::ResponseSessionId(id));
+    }
+    response
 }
 
 pub(crate) fn envelope_err(err: CliError) -> Response {
+    let session_id = err
+        .details()
+        .and_then(|d| d["session_id"].as_str())
+        .map(str::to_owned);
+    let retained_error = err.clone();
     let data = err.into_inner();
     let status = match data.code.as_str() {
         "session-not-found"
@@ -2617,7 +2632,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
     {
         map.insert("details".to_string(), details);
     }
-    (
+    let mut response = (
         status,
         Json(json!({
             "schema_version": serve_schema(),
@@ -2625,11 +2640,18 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
             "error": error,
         })),
     )
-        .into_response()
+        .into_response();
+    response.extensions_mut().insert(retained_error);
+    if let Some(id) = session_id {
+        response
+            .extensions_mut()
+            .insert(crate::lifecycle::ResponseSessionId(id));
+    }
+    response
 }
 
 pub(crate) fn status_json(status: StatusCode, code: &str, message: &str) -> Response {
-    (
+    let mut response = (
         status,
         Json(json!({
             "schema_version": serve_schema(),
@@ -2637,10 +2659,14 @@ pub(crate) fn status_json(status: StatusCode, code: &str, message: &str) -> Resp
             "error": { "code": code, "message": message },
         })),
     )
-        .into_response()
+        .into_response();
+    response
+        .extensions_mut()
+        .insert(CliError::runtime(code, message, None));
+    response
 }
 
-fn join_err() -> Response {
+pub(crate) fn join_err() -> Response {
     envelope_err(CliError::runtime(
         "serve-task-failed",
         "internal task failed",
@@ -5504,11 +5530,26 @@ async fn history_resume_handler(
         return response;
     }
     let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = history_resume_handler_inner(State(state), headers, AxPath(id.clone())).await;
+    crate::lifecycle::response(&context, &id, "history-resume", before, response).await
+}
+
+async fn history_resume_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
     let tmux_bin = state.tmux_bin.clone();
     let catalog = state.history_catalog.clone();
     let profiles = state.launch_profiles.clone();
     let machine = state.machine.clone();
     let result = tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("history-resume");
         let history = catalog.resolve_fresh(&id).map_err(history_resume_catalog_error)?;
         let expected_id = provider_history::stable_history_id(
             &history.provider,
@@ -6711,6 +6752,37 @@ async fn create_handler(
     headers: HeaderMap,
     Json(body): Json<CreateBody>,
 ) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let operation = if body.provider_resume_id.is_some() {
+        "import"
+    } else {
+        "create"
+    };
+    let id = match crate::lifecycle::start_id(
+        &state.context,
+        body.id.as_deref(),
+        AgentKind::from_name(&body.agent).unwrap_or(AgentKind::Codex),
+        match &body.title {
+            CreateTitleInput::Value(title) => Some(title.as_str()),
+            _ => None,
+        },
+    ) {
+        Ok(id) => id,
+        Err(error) => return envelope_err(error),
+    };
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = create_handler_inner(State(state), headers, Json(body)).await;
+    crate::lifecycle::response(&context, &id, operation, before, response).await
+}
+
+async fn create_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateBody>,
+) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
     }
@@ -6847,6 +6919,7 @@ async fn create_handler(
             format: nils_common::cli_contract::OutputFormat::Json,
         };
         return match tokio::task::spawn_blocking(move || {
+            let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
             start_provider_resume_session(&context, args)
         })
         .await
@@ -6860,6 +6933,7 @@ async fn create_handler(
     }
     let explicit_account = body.codex_account;
     let (selected_account, selection_source) = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
         resolve_initial_codex_account(agent, explicit_account)
     })
     .await
@@ -6873,6 +6947,7 @@ async fn create_handler(
     let claude_account = if agent == AgentKind::Claude && launch_profile.is_none() {
         let explicit_claude_account = body.claude_account;
         match tokio::task::spawn_blocking(move || {
+            let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
             crate::claude_account::resolve_initial_account(explicit_claude_account)
         })
         .await
@@ -6958,10 +7033,11 @@ async fn create_handler(
         format: nils_common::cli_contract::OutputFormat::Json,
     };
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
         crate::start_session_with_claude_account(
             &context,
             args,
-            StartFailureDisposition::ReturnSession,
+            StartFailureDisposition::ReturnError,
             crate::PromptDelivery::ResilientBeforeSubmit,
             claude_account,
         )
@@ -7441,6 +7517,22 @@ async fn session_account_handler(
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response =
+        session_account_handler_inner(State(state), headers, AxPath(id.clone()), Json(body)).await;
+    crate::lifecycle::response(&context, &id, "account-switch", before, response).await
+}
+
+async fn session_account_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    Json(body): Json<AccountSwitchBody>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
     let Some(expected_session_incarnation) = body
         .expected_session_incarnation
         .as_deref()
@@ -7455,6 +7547,7 @@ async fn session_account_handler(
     let resolve_context = state.context.clone();
     let requested_id = id.clone();
     let resolved_record = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         load_session_record(&resolve_context, &requested_id)
     })
     .await
@@ -7486,6 +7579,7 @@ async fn session_account_handler(
     let precheck_account = body.account.clone();
     let expected_session_incarnation = expected_session_incarnation.to_string();
     let launch_id = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         crate::session_account::codex_switch_precheck(
             &record,
             &expected_session_incarnation,
@@ -7511,6 +7605,7 @@ async fn session_account_handler(
     let begin_account = body.account.clone();
     let supports_unbound_account_queue = body.supports_unbound_account_queue;
     let revision = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         crate::codex_account::begin_switch_binding(
             &begin_context,
             &begin_id,
@@ -7531,6 +7626,7 @@ async fn session_account_handler(
             let queue_launch_id = launch_id.clone();
             let queue_account = body.account.clone();
             return match tokio::task::spawn_blocking(move || {
+                let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
                 crate::session_account::codex_queue_switch(
                     &queue_context,
                     &queue_id,
@@ -7565,6 +7661,7 @@ async fn session_account_handler(
             let finish_launch_id = launch_id.clone();
             let finish_account = body.account.clone();
             let _ = tokio::task::spawn_blocking(move || {
+                let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
                 crate::codex_account::finish_binding(
                     &finish_context,
                     &finish_id,
@@ -7594,6 +7691,7 @@ async fn claude_account_switch_handler(
     let context = state.context.clone();
     let tmux_bin = state.tmux_bin.clone();
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         crate::session_account::claude_switch_locked(
             &context,
             &id,
@@ -9448,6 +9546,20 @@ async fn resume_handler(
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = resume_handler_inner(State(state), headers, AxPath(id.clone())).await;
+    crate::lifecycle::response(&context, &id, "resume", before, response).await
+}
+
+async fn resume_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
     }
@@ -9455,6 +9567,7 @@ async fn resume_handler(
     let tmux = state.tmux_bin.clone();
     let launch_profiles = state.launch_profiles.clone();
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("resume");
         validate_launch_profile_resume(&context, &id, &launch_profiles)?;
         resume_session_by_id(&context, &id, &tmux)
     })
@@ -9933,6 +10046,21 @@ async fn delete_handler(
     AxPath(id): AxPath<String>,
     query: Result<Query<DeleteQuery>, QueryRejection>,
 ) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = delete_handler_inner(State(state), headers, AxPath(id.clone()), query).await;
+    crate::lifecycle::response(&context, &id, "delete", before, response).await
+}
+
+async fn delete_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    query: Result<Query<DeleteQuery>, QueryRejection>,
+) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
     }
@@ -9948,6 +10076,7 @@ async fn delete_handler(
     let delete_id = id.clone();
     let machine = state.machine.clone();
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("delete");
         crate::delete_session_guarding_children(
             &context,
             &machine,
@@ -9976,6 +10105,21 @@ async fn archive_handler(
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = archive_handler_inner(State(state), headers, AxPath(id.clone()), body).await;
+    crate::lifecycle::response(&context, &id, "archive", before, response).await
+}
+
+async fn archive_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Result<Json<ArchiveBody>, JsonRejection>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
     let Json(body) = match body {
         Ok(body) => body,
         Err(_) => {
@@ -9992,6 +10136,7 @@ async fn archive_handler(
     let response_machine = machine.clone();
     let starred = body.starred;
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("archive");
         let children =
             crate::lineage::guard_children(&context, &machine, &id, body.orphan_children)?;
         let (archive, mut deleted) = archive_session_with_expected_incarnation(
@@ -12604,6 +12749,24 @@ mod tests {
 
         assert!(old.exists());
         assert!(identity.changed());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_http_refusal_keeps_exact_error_and_records_pre_engine_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let st = state(tmp.path(), Some(TOKEN), PathBuf::from("/unavailable/tmux"));
+        let (status, body) = call(
+            router(st.clone()),
+            post_json("/sessions/missing/resume", Some(TOKEN), json!({})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let cause = crate::load_session_record(&st.context, "missing").unwrap_err();
+        assert_eq!(body["error"]["code"], cause.code());
+        assert_eq!(body["error"]["message"], cause.message());
+        let journal = crate::lifecycle::read(&st.context, "missing", 100).unwrap();
+        assert_eq!(journal["records"].as_array().unwrap().len(), 1);
+        assert_eq!(journal["records"][0]["caller"]["kind"], "serve");
     }
 
     #[tokio::test]
@@ -18128,6 +18291,46 @@ esac
         .unwrap();
     }
 
+    fn assert_serve_lifecycle(dir: &Path, id: &str, expected: &[(&str, usize)]) {
+        let context = CliContext {
+            state_dir: dir.to_path_buf(),
+            host: None,
+        };
+        let journal = crate::lifecycle::read(&context, id, 100).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        let operations = [
+            "start",
+            "import",
+            "create",
+            "resume",
+            "stop",
+            "delete",
+            "archive",
+            "account-switch",
+            "history-resume",
+        ];
+        let rows = rows
+            .iter()
+            .filter(|r| operations.contains(&r["operation"].as_str().unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.len(),
+            expected.iter().map(|(_, n)| n).sum::<usize>(),
+            "{journal}"
+        );
+        for (operation, count) in expected {
+            let matching = rows
+                .iter()
+                .filter(|r| r["operation"] == *operation)
+                .collect::<Vec<_>>();
+            assert_eq!(matching.len(), *count, "{journal}");
+            assert!(
+                matching.iter().all(|r| r["caller"]["kind"] == "serve"),
+                "{journal}"
+            );
+        }
+    }
+
     async fn call(app: Router, req: Request<Body>) -> (StatusCode, Value) {
         let resp = app.oneshot(req).await.unwrap();
         let status = resp.status();
@@ -20619,6 +20822,7 @@ esac
         assert_eq!(status, StatusCode::OK, "body={body}");
         let managed_id = body["data"]["session"]["id"].as_str().unwrap();
         assert_eq!(managed_id, "kept-dsh");
+        assert_serve_lifecycle(tmp.path(), managed_id, &[("history-resume", 1)]);
         assert_eq!(body["data"]["session"]["title_mode"], "pinned");
         assert_eq!(
             body["data"]["session"]["title"],
@@ -21162,6 +21366,7 @@ esac
             crate::board::closed_reasons_for_test(&context),
             vec![("archive-me".to_string(), "archived".to_string())]
         );
+        assert_serve_lifecycle(tmp.path(), "archive-me", &[("archive", 2)]);
     }
 
     #[tokio::test]
@@ -22059,7 +22264,7 @@ esac
     }
 
     #[tokio::test]
-    async fn deleted_runtime_helper_returns_a_durable_safe_startup_failure() {
+    async fn lifecycle_review_deleted_runtime_helper_returns_reachable_failure() {
         let lock = GlobalStateLock::new();
         let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
@@ -22105,35 +22310,85 @@ esac
         )
         .await;
 
-        assert_eq!(create_status, StatusCode::OK, "body={create_body}");
-        let session = &create_body["data"]["session"];
-        assert_eq!(session["status"], "stopped");
-        assert_eq!(session["startup"]["state"], "failed");
-        assert_eq!(session["startup"]["stage"], "proxy");
         assert_eq!(
-            session["startup"]["failure_code"],
-            "runtime-helper-unavailable"
+            create_status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "body={create_body}"
         );
         assert_eq!(
-            session["startup"]["message"],
+            create_body["error"]["code"],
+            "codex-app-server-proxy-binary-unavailable"
+        );
+        assert_eq!(
+            create_body["error"]["message"],
+            "the agent-session runtime helper is unavailable"
+        );
+        let record_path = tmp.path().join("sessions/deleted-helper/session.json");
+        let record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+        let startup = &record["startup"];
+        assert_eq!(
+            create_body["error"]["details"]["session_id"],
+            "deleted-helper"
+        );
+        assert_eq!(create_body["error"]["details"]["startup"], *startup);
+        assert_eq!(startup["state"], "failed");
+        assert_eq!(startup["stage"], "proxy");
+        assert_eq!(startup["failure_code"], "runtime-helper-unavailable");
+        assert_eq!(
+            startup["message"],
             "Session runtime helper is unavailable after an upgrade."
         );
         assert!(!create_body.to_string().contains("token-secret"));
         assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
 
-        let record_path = tmp.path().join("sessions/deleted-helper/session.json");
-        let record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
-        assert_eq!(record["startup"], session["startup"]);
+        let journal = crate::lifecycle::read(&st.context, "deleted-helper", 10).unwrap();
+        assert_eq!(
+            journal["records"][0]["result"]["code"],
+            create_body["error"]["code"]
+        );
+        assert_eq!(journal["records"][0]["caller"]["kind"], "serve");
         let (list_status, list_body) = call(router(st.clone()), get("/sessions")).await;
         assert_eq!(list_status, StatusCode::OK, "body={list_body}");
-        assert_eq!(
-            list_body["data"]["sessions"][0]["startup"],
-            session["startup"]
-        );
+        assert_eq!(list_body["data"]["sessions"][0]["startup"], *startup);
         let (glance_status, glance_body) =
             call(router(st), get("/sessions/deleted-helper/glance")).await;
         assert_eq!(glance_status, StatusCode::OK, "body={glance_body}");
-        assert_eq!(glance_body["data"]["glance"]["startup"], session["startup"]);
+        assert_eq!(glance_body["data"]["glance"]["startup"], *startup);
+    }
+
+    #[tokio::test]
+    async fn lifecycle_review_create_failure_retains_cleanup_projection() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launcher = fake_agent(tmp.path(), "fixture-provider");
+        let tmux = executable(
+            &tmp.path().join("failed-tmux"),
+            "#!/bin/sh\ncase \"$1\" in\n new-session) exit 0 ;;\n display-message) printf '%s\\n' 'malformed identity'; exit 0 ;;\n has-session) exit 0 ;;\n *) exit 0 ;;\nesac\n",
+        );
+        let profile = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id":"fixture-profile", "label":"Fixture", "agent":"claude", "agent_bin":launcher
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let mut st = state(tmp.path(), Some(TOKEN), tmux);
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profile;
+        let (status, body) = call(router(st), post_json("/sessions", Some(TOKEN), json!({
+            "id":"cleanup-failure", "agent":"claude", "agent_profile":"fixture-profile", "cwd":tmp.path()
+        }))).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        let retained: Value = serde_json::from_slice(
+            &fs::read(tmp.path().join("sessions/cleanup-failure/session.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["error"]["details"]["session_id"], "cleanup-failure");
+        assert_eq!(body["error"]["details"]["startup"], retained["startup"]);
+        assert!(retained["startup"]["cleanup"].is_object(), "{retained}");
+        assert_eq!(
+            body["error"]["details"]["cleanup"],
+            retained["startup"]["cleanup"]
+        );
+        assert_serve_lifecycle(tmp.path(), "cleanup-failure", &[("create", 1)]);
     }
 
     #[tokio::test]
@@ -22945,7 +23200,7 @@ esac
         );
 
         let (status, body) = call(
-            router(st),
+            router(st.clone()),
             post_json(
                 "/sessions",
                 Some(TOKEN),
@@ -22985,6 +23240,17 @@ esac
                 .and_then(|runtime| runtime.extra.get("agent_profile_graceful_shutdown"))
                 .and_then(Value::as_str),
             Some("double-ctrl-c")
+        );
+        let id = body["data"]["session"]["id"].as_str().unwrap();
+        let journal = crate::lifecycle::read(&st.context, id, 100).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        assert_eq!(
+            rows.iter().filter(|r| r["operation"] == "create").count(),
+            1
+        );
+        assert_eq!(
+            rows.iter().find(|r| r["operation"] == "create").unwrap()["result"]["ok"],
+            true
         );
     }
 
@@ -24149,6 +24415,7 @@ esac
                 Some(TOKEN),
                 json!({
                     "agent": "codex",
+                    "id": "import-failure",
                     "provider_resume_id": "missing-codex-id"
                 }),
             ),
@@ -24160,6 +24427,13 @@ esac
             body["error"]["details"]["provider_resume_id"],
             "missing-codex-id"
         );
+        let journal = crate::lifecycle::read(&st.context, "import-failure", 100).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["operation"], "import");
+        assert_eq!(rows[0]["caller"]["kind"], "serve");
+        assert_eq!(rows[0]["result"]["code"], body["error"]["code"]);
+        assert!(!journal.to_string().contains("missing-codex-id"));
     }
 
     #[tokio::test]
@@ -26766,6 +27040,7 @@ esac
             calls.contains(launcher.to_string_lossy().as_ref()),
             "managed resume must use the durable launcher: {calls:?}"
         );
+        assert_serve_lifecycle(tmp.path(), "profile-resume", &[("resume", 1)]);
     }
 
     #[tokio::test]
@@ -30641,6 +30916,11 @@ esac
             )),
             "{calls:?}"
         );
+        assert_serve_lifecycle(
+            tmp.path(),
+            "claude-switch",
+            &[("account-switch", 1), ("resume", 1)],
+        );
     }
 
     #[tokio::test]
@@ -32475,6 +32755,7 @@ esac
             assert_eq!(status, StatusCode::OK, "body={body}");
             assert_eq!(body["ok"], true);
             assert_eq!(body["data"]["deleted"]["deleted"], true);
+            assert_serve_lifecycle(tmp.path(), &id, &[("delete", 1)]);
             assert!(!session_dir.exists(), "{agent} metadata must be removed");
             assert!(
                 !runtime_metadata.exists(),

@@ -1003,12 +1003,16 @@ _agent__session() {
             return 0
             ;;
         agent__session__broker__stop)
-            opts="-h --session --capability-file --format --state-dir --host --help"
+            opts="-h --exit-code --session --capability-file --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --exit-code)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --session)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
@@ -1451,7 +1455,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__logs)
-            opts="-h --tail --tmux-bin --format --state-dir --host --help"
+            opts="-h --lifecycle --tail --tmux-bin --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

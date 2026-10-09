@@ -456,14 +456,16 @@ pub(crate) fn provision_with_previous(
             return Err(CliError::data(
                 "session-incarnation-conflict",
                 "the prior coordination incarnation is still live",
-                None,
+                Some(
+                    json!({"proof_step": if heartbeat_live { "heartbeat-fresh" } else { "process-group-probe" }}),
+                ),
             ));
         }
         if previous_runtime_status == crate::CoordinationRuntimeStatus::Unknown {
             return Err(CliError::runtime(
                 "coordination-runtime-unverified",
                 "the prior coordination runtime identity cannot be proven stopped",
-                None,
+                Some(json!({"proof_step": "process-group-probe"})),
             ));
         }
         let previous_operation = locked.registry.operations.iter().any(|lease| {
@@ -903,16 +905,35 @@ fn remove_advisory_state_for_incarnation(
 }
 
 pub(crate) fn stop(context: &CliContext, args: BrokerStopArgs) -> Result<Value, CliError> {
-    let (record, _) =
-        authenticate_from_file(context, &args.session, args.capability_file.as_deref())?;
-    crate::orchestration::ensure_session_not_runtime_stop_fenced(context, &record)?;
-    pause_broker_stop_for_test()?;
-    revoke_unless_runtime_stop_fenced(context, &record)?;
-    Ok(json!({
-        "schema_version": BROKER_VERSION,
-        "session_id": record.id,
-        "state": "stopped"
-    }))
+    let journal_id = args.session.clone();
+    let exit_code = args.exit_code;
+    let before = crate::load_session_record(context, &journal_id).ok();
+    let result = crate::lifecycle::attempt(context, &journal_id, "broker-stop", || {
+        let (record, _) =
+            authenticate_from_file(context, &args.session, args.capability_file.as_deref())?;
+        crate::orchestration::ensure_session_not_runtime_stop_fenced(context, &record)?;
+        pause_broker_stop_for_test()?;
+        revoke_unless_runtime_stop_fenced(context, &record)?;
+        Ok(json!({
+            "schema_version": BROKER_VERSION,
+            "session_id": record.id,
+            "state": "stopped"
+        }))
+    });
+    if let Some(code) = exit_code {
+        crate::lifecycle::record(
+            context,
+            before.as_ref(),
+            &journal_id,
+            "exit-observed",
+            "controller",
+            result.as_ref().map(|_| ()),
+            Some(
+                json!({"code": code, "signal": null, "reason": "runtime-exited", "stopped_by": null}),
+            ),
+        );
+    }
+    result
 }
 
 pub(crate) fn status(context: &CliContext, args: BrokerStatusArgs) -> Result<Value, CliError> {
@@ -993,6 +1014,24 @@ pub(crate) fn status(context: &CliContext, args: BrokerStatusArgs) -> Result<Val
 }
 
 pub(crate) fn recover(
+    context: &CliContext,
+    args: BrokerRecoveryArgs,
+    reconcile: bool,
+) -> Result<Value, CliError> {
+    let journal_id = args.session.clone();
+    crate::lifecycle::attempt(
+        context,
+        &journal_id,
+        if reconcile {
+            "broker-reconcile"
+        } else {
+            "broker-adopt"
+        },
+        || recover_unjournaled(context, args, reconcile),
+    )
+}
+
+pub(crate) fn recover_unjournaled(
     context: &CliContext,
     args: BrokerRecoveryArgs,
     reconcile: bool,
@@ -1429,6 +1468,7 @@ pub(crate) fn run_heartbeat_sidecar(
                     && started.elapsed() >= STARTUP_RUNTIME_CONFIRMATION_WINDOW =>
             {
                 observed_stopped = true;
+                crate::lifecycle::observe_stopped(context, &record);
                 break;
             }
             Ok(runtime) if started.elapsed() < STARTUP_RUNTIME_CONFIRMATION_WINDOW => {
@@ -1647,9 +1687,24 @@ fn mark_degraded(context: &CliContext, args: &BrokerHeartbeatArgs) {
     if broker.incarnation != args.incarnation || broker.generation != args.generation {
         return;
     }
+    let newly_lost = broker.state != "degraded";
     broker.state = "degraded".to_string();
     broker.lost_since_epoch.get_or_insert(now_epoch());
-    let _ = locked.save();
+    let saved = locked.save().is_ok();
+    drop(locked);
+    if newly_lost && saved {
+        let target = crate::load_session_record(context, &args.session).ok();
+        let error = unavailable();
+        crate::lifecycle::record(
+            context,
+            target.as_ref(),
+            &args.session,
+            "broker-heartbeat-loss",
+            "controller",
+            Err(&error),
+            None,
+        );
+    }
 }
 
 fn unavailable() -> CliError {
@@ -1846,6 +1901,35 @@ mod tests {
     use clap::Parser;
     use serde_json::json;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn controller_loss_records_one_exact_runtime_failure() {
+        use pretty_assertions::assert_eq;
+        let dir = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: dir.path().to_path_buf(),
+            host: None,
+        };
+        let record = seed_retirable_broker(&context, json!({}));
+        crate::write_session_record(&context, &record).unwrap();
+        let args = BrokerHeartbeatArgs {
+            session: "session".into(),
+            incarnation: "old".into(),
+            generation: 1,
+            capability_file: dir.path().join("unused-capability"),
+            format: nils_common::cli_contract::OutputFormat::Json,
+        };
+        mark_degraded(&context, &args);
+        mark_degraded(&context, &args);
+        let journal = crate::lifecycle::read(&context, "session", 10).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["operation"], "broker-heartbeat-loss");
+        assert_eq!(rows[0]["session_incarnation"], "old");
+        assert_eq!(rows[0]["session_generation"], 1);
+        assert_eq!(rows[0]["result"]["code"], "coordination-broker-lost");
+        assert_eq!(rows[0]["result"]["proof_step"], "broker-state");
+    }
 
     #[test]
     fn heartbeat_clock_boundary_does_not_report_a_healthy_broker_lost() {
