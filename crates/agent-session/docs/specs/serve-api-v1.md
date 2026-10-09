@@ -710,7 +710,14 @@ recorded in `sympoies/nils-cli#1409`.
   `next` path above, which the control loop applies before the next prompt.
 - `POST /sessions` normally creates a fresh session from `agent`, optional
   `cwd`, `title`, `title_state`, `id`, `prompt`, `coordination_mode`, and
-  `agent_args`. `coordination_mode` accepts `advisory`, `enforce`, or `off` and
+  `agent_args`, and `launch_env`. `launch_env` is an optional string-to-string
+  object of public non-secret runtime switches, validated against
+  `AGENT_SESSION_LAUNCH_ENV_ALLOWLIST` before creation. The default keys and
+  bounds follow the crate README's Public launch switches contract. It is
+  persisted and echoed in session views, and applied to the provider process
+  on every runtime launch. Unapproved keys return `launch-env-key-refused`
+  (HTTP 400); invalid allowlist configuration returns
+  `launch-env-allowlist-invalid` (HTTP 400). `coordination_mode` accepts `advisory`, `enforce`, or `off` and
   defaults to `advisory`. A fresh create may add an advertised `agent_profile`; the id
   must match the supplied base `agent` and be ready when the request arrives.
   A profile whose summary reports `provider_resume_import_supported: true` may

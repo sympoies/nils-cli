@@ -30,9 +30,9 @@ pub(crate) const BOARD_SCHEMA: &str = "agent-session.board.v1";
 pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";
 /// Additive capabilities of the v1 envelopes. A reader feature-detects from
 /// this list, never from the presence of a record field.
-pub(crate) const EXTENSIONS: [&str; 2] = ["lineage.v1", "work.v1"];
+pub(crate) const EXTENSIONS: [&str; 3] = ["lineage.v1", "work.v1", "launch_env.v1"];
 /// What the daemon snapshot names: the extensions plus the programs route.
-const DAEMON_EXTENSIONS: [&str; 3] = ["lineage.v1", "work.v1", "programs.v1"];
+const DAEMON_EXTENSIONS: [&str; 4] = ["lineage.v1", "work.v1", "programs.v1", "launch_env.v1"];
 /// `AGENT_SESSION_BOARD=1` enables the daemon board routes, like `--board`.
 pub(crate) const BOARD_ENV: &str = "AGENT_SESSION_BOARD";
 
@@ -292,6 +292,7 @@ pub(crate) fn project_record(
         "role": nullable("role"),
         "lineage": project_lineage(view),
         "work": project_work(view),
+        "launch_env": crate::launch_env::projection(view.get("launch_env")),
     });
     if let Some(incident) = view.get("auth_incident").and_then(|value| {
         serde_json::from_value::<crate::auth_incident::AuthIncident>(value.clone()).ok()
@@ -485,12 +486,13 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    const RECORD_KEYS: [&str; 23] = [
+    const RECORD_KEYS: [&str; 24] = [
         "agent_profile",
         "close_reason",
         "closed_at",
         "created_at",
         "cwd",
+        "launch_env",
         "lineage",
         "machine",
         "messaging_supported",
@@ -631,7 +633,8 @@ mod tests {
                 "summary": null,
                 "role": null,
                 "lineage": null,
-                "work": null
+                "work": null,
+                "launch_env": {}
             })
         );
     }

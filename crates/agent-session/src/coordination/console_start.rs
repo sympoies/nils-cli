@@ -123,7 +123,14 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
         | "role-requires-root"
         | "lineage-invalid"
         | "lineage-parent-mismatch"
-        | "work-ref-invalid" => CliError::usage(code, message, None),
+        | "work-ref-invalid"
+        | "launch-env-key-refused"
+        | "launch-env-allowlist-invalid"
+        | "launch-env-too-many"
+        | "launch-env-value-invalid"
+        | "launch-env-invalid"
+        | "launch-env-key-duplicate"
+        | "launch-env-assignment-invalid" => CliError::usage(code, message, None),
         "coordination-unauthorized"
         | "session-incarnation-conflict"
         | "ownership-unknown"
@@ -293,6 +300,7 @@ pub(crate) fn cli_start(
         .pop_if_empty()
         .extend(["sessions", caller.as_str(), "console-start", "v1"]);
     let requested_pinned = session["title_mode"] == "pinned";
+    let requested_launch_env = crate::launch_env::from_json(session.get("launch_env"))?;
     let mut request = json!({ "session": session });
     if let Some(machine) = machine {
         request["machine"] = json!(machine);
@@ -316,6 +324,16 @@ pub(crate) fn cli_start(
     let body = read_json(response)
         .ok_or_else(|| unavailable("the local daemon's console start answer is unreadable"))?;
     if status.is_success() {
+        if !requested_launch_env.is_empty()
+            && body["session"]["id"].is_string()
+            && body["session"]["launch_env"] != json!(requested_launch_env)
+        {
+            return Err(CliError::runtime(
+                "launch-env-unconfirmed",
+                "the created session did not confirm its launch env; inspect it before retrying",
+                Some(json!({"created_session_id":body["session"]["id"],"safe_to_retry":false})),
+            ));
+        }
         if requested_pinned
             && body["session"]["id"].is_string()
             && (body["session"]["title_mode"] != "pinned"
@@ -383,6 +401,21 @@ mod tests {
             json!([]),
         ] {
             assert!(checked_request(&body).is_none(), "{body}");
+        }
+    }
+
+    #[test]
+    fn launch_env_forwarded_validation_preserves_usage_errors() {
+        for code in [
+            "launch-env-key-refused",
+            "launch-env-allowlist-invalid",
+            "launch-env-too-many",
+            "launch-env-value-invalid",
+            "launch-env-invalid",
+        ] {
+            let error = forwarded(Some(code), &json!("refused")).into_inner();
+            assert_eq!(error.code, code);
+            assert_eq!(error.exit_code, 64, "{code}");
         }
     }
 

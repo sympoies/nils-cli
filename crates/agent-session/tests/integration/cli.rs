@@ -13655,3 +13655,127 @@ fn send_text_without_enter_and_keys_only_skip_submission_through_real_tmux() {
     assert!(data(&pressed.stdout_json()).get("submission").is_none());
     assert_eq!(submissions(&log), vec!["draft line one".to_string()]);
 }
+
+#[test]
+fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
+    for agent in ["codex", "claude"] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = tmp.path().join("state");
+        let (tmux, log) = fake_tmux(tmp.path());
+        let provider = fake_agent(tmp.path(), agent);
+        let values =
+            json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1", "AGENT_RUNTIME_SUPPRESS_HEALTH":"0"});
+        let envs = [
+            ("AGENT_SESSION_FAKE_TMUX_LOG", log.to_str().unwrap()),
+            ("AGENT_SESSION_CODEX_RUNTIME", "off"),
+            ("AGENT_SESSION_TMUX_BIN", tmux.to_str().unwrap()),
+            (
+                "AGENT_SESSION_LAUNCH_ENV_ALLOWLIST",
+                r#"["AGENT_RUNTIME_SUPPRESS_MEMORY","AGENT_RUNTIME_SUPPRESS_HEALTH"]"#,
+            ),
+        ];
+        let start = run(
+            tmp.path(),
+            &[
+                "--state-dir",
+                state.to_str().unwrap(),
+                "start",
+                "--agent",
+                agent,
+                "--cwd",
+                tmp.path().to_str().unwrap(),
+                "--id",
+                "launch-env",
+                "--tmux-bin",
+                tmux.to_str().unwrap(),
+                "--agent-bin",
+                provider.to_str().unwrap(),
+                "--env",
+                "AGENT_RUNTIME_SUPPRESS_MEMORY=1",
+                "--env",
+                "AGENT_RUNTIME_SUPPRESS_HEALTH=0",
+                "--format",
+                "json",
+            ],
+            &envs,
+        );
+        assert_eq!(
+            start.code,
+            0,
+            "{} {}",
+            start.stdout_text(),
+            start.stderr_text()
+        );
+        assert_eq!(start.stdout_json()["data"]["launch_env"], values);
+        let path = state.join("sessions/launch-env/session.json");
+        let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(record["launch_env"], values);
+        let list = run(
+            tmp.path(),
+            &[
+                "--state-dir",
+                state.to_str().unwrap(),
+                "list",
+                "--format",
+                "json",
+            ],
+            &envs,
+        );
+        assert_eq!(list.code, 0, "{}", list.stdout_text());
+        assert_eq!(list.stdout_json()["data"][0]["launch_env"], values);
+        // Pin a synthetic provider identity; provider history is outside this contract.
+        if agent == "codex" {
+            record["provider_resume"] = json!({"provider":"codex", "session_id":"fixture-conversation", "captured_at":"2030-01-01T00:00:00Z", "capture_method":"fixture", "resume_args":["resume","fixture-conversation","--cd",tmp.path(),"--no-alt-screen"]});
+            fs::write(&path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        }
+        let stopped = Command::new(&tmux)
+            .args([
+                "kill-session",
+                "-t",
+                record["tmux_session"].as_str().unwrap(),
+            ])
+            .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+            .output()
+            .unwrap();
+        assert!(stopped.status.success());
+        let resume = run(
+            tmp.path(),
+            &[
+                "--state-dir",
+                state.to_str().unwrap(),
+                "resume",
+                "launch-env",
+                "--tmux-bin",
+                tmux.to_str().unwrap(),
+                "--format",
+                "json",
+            ],
+            &envs,
+        );
+        assert_eq!(
+            resume.code,
+            0,
+            "{} {}",
+            resume.stdout_text(),
+            resume.stderr_text()
+        );
+        assert_eq!(resume.stdout_json()["data"]["launch_env"], values);
+        let launches: Vec<_> = tmux_calls(&log)
+            .into_iter()
+            .filter(|args| args.first().is_some_and(|arg| arg == "new-session"))
+            .collect();
+        assert_eq!(launches.len(), 2);
+        for launch in launches {
+            assert!(
+                launch
+                    .windows(2)
+                    .any(|args| args == ["-e", "AGENT_RUNTIME_SUPPRESS_MEMORY=1"])
+            );
+            assert!(
+                launch
+                    .windows(2)
+                    .any(|args| args == ["-e", "AGENT_RUNTIME_SUPPRESS_HEALTH=0"])
+            );
+        }
+    }
+}

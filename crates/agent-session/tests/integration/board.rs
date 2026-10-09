@@ -360,7 +360,7 @@ fn board_snapshot_is_opt_in_and_operator_authenticated() {
         assert_eq!(board["machine"], MACHINE);
         assert_eq!(
             board["extensions"],
-            json!(["lineage.v1", "work.v1", "programs.v1"])
+            json!(["lineage.v1", "work.v1", "programs.v1", "launch_env.v1"])
         );
         assert!(board["generated_at"].as_str().is_some(), "{board}");
         assert_eq!(board["skipped_count"], 1, "{board}");
@@ -962,7 +962,10 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
     let output = cli_board(&fixture, &["--format", "json", "--root", "tree-root"]);
     assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
     let board = output.stdout_json()["data"]["board"].clone();
-    assert_eq!(board["extensions"], json!(["lineage.v1", "work.v1"]));
+    assert_eq!(
+        board["extensions"],
+        json!(["lineage.v1", "work.v1", "launch_env.v1"])
+    );
     let records = board["records"].as_array().expect("records");
     let record = |id: &str| {
         records
@@ -1018,7 +1021,7 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
     let snapshot = &body["data"]["board"];
     assert_eq!(
         snapshot["extensions"],
-        json!(["lineage.v1", "work.v1", "programs.v1"])
+        json!(["lineage.v1", "work.v1", "programs.v1", "launch_env.v1"])
     );
     let root = snapshot["records"]
         .as_array()
@@ -1036,7 +1039,7 @@ fn the_board_carries_role_lineage_work_and_the_tree_filter() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(
         body["data"]["board_closed"]["extensions"],
-        json!(["lineage.v1", "work.v1"])
+        json!(["lineage.v1", "work.v1", "launch_env.v1"])
     );
 }
 

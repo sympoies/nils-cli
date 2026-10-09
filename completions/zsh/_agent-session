@@ -43,6 +43,7 @@ dsh\:"DeepSeek Harness, launched through a launch profile or an external runtime
 '--tmux-bin=[tmux binary override]:PATH:_files' \
 '--agent-bin=[Agent binary override]:PATH:_files' \
 '*--agent-arg=[Extra argument passed to the underlying agent command]:ARG:_default' \
+'*--env=[Public non-secret runtime switch, restricted to the launch env allowlist]:KEY=VALUE:_default' \
 '--coordination-mode=[Session collision coordination mode]:COORDINATION_MODE:((advisory\:"Warn about overlapping managed sessions without blocking work"
 enforce\:"Require authenticated claims and mutation admission leases"
 off\:"Disable agent-session collision warnings and admission"))' \
