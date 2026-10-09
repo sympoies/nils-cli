@@ -840,9 +840,8 @@ where
         }
         (sender, parent.reply_depth + 1)
     } else {
-        let discovered = peers_from(config, &origin).map_err(|error| {
+        let discovered = peers_from(config, &origin).inspect_err(|_| {
             observe_discovery_refusal(context, "peer-discovery-failed");
-            error
         })?;
         let peer = discovered["peers"]
             .as_array()
