@@ -832,6 +832,7 @@ fn which_explains_context_selected_store_and_path_precedence() {
     let app = tmp.path().join("work/team/app");
     let selected_store = tmp.path().join("team-store");
     let remote_store = tmp.path().join("remote-store");
+    let canonical_tmp = fs::canonicalize(tmp.path()).expect("canonical tempdir");
     fs::create_dir_all(&app).expect("app");
     init_store(&selected_store);
     init_store(&remote_store);
@@ -839,8 +840,8 @@ fn which_explains_context_selected_store_and_path_precedence() {
     fs::create_dir_all(config_home.join("secrets")).expect("config dir");
     let config = format!(
         "default = {:?}\n\n[path_prefixes]\n{:?} = {:?}\n\n[remotes]\n\"github.com/example\" = {:?}\n",
-        tmp.path().join("default-store").to_string_lossy(),
-        tmp.path().join("work/team").to_string_lossy(),
+        canonical_tmp.join("default-store").to_string_lossy(),
+        canonical_tmp.join("work/team").to_string_lossy(),
         selected_store.to_string_lossy(),
         remote_store.to_string_lossy(),
     );
@@ -873,7 +874,7 @@ fn which_explains_context_selected_store_and_path_precedence() {
     assert_eq!(json["data"]["selected_by"], "path-prefix");
     assert_eq!(
         json["data"]["matched_by"],
-        tmp.path().join("work/team").to_string_lossy().as_ref()
+        canonical_tmp.join("work/team").to_string_lossy().as_ref()
     );
     assert!(!output.stdout_text().contains(SECRET_CANARY));
 }
@@ -1007,7 +1008,13 @@ fn pull_output_writes_private_file_and_reports_path_without_values() {
     assert_exit(&output, 0);
     assert_no_secret_leak(&output);
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
-    assert_eq!(json["data"]["dest"], output_path.to_string_lossy().as_ref());
+    assert_eq!(
+        json["data"]["dest"],
+        fs::canonicalize(&output_path)
+            .expect("canonical output")
+            .to_string_lossy()
+            .as_ref()
+    );
     assert!(
         fs::read_to_string(&output_path)
             .expect("output")
