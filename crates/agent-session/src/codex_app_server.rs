@@ -9939,7 +9939,7 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             state_dir: tmp.path().join("state"),
             host: None,
         };
-        let record = record_with_runtime("legacy-proxy", &tmp.path().join("socket"));
+        let record = record_with_runtime("compat-proxy", &tmp.path().join("socket"));
         fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
         let guard = begin_proxy_capability(&context, &record).unwrap();
         assert!(live_conversation_capability(&context, &record));
