@@ -1,73 +1,93 @@
 # nils-secrets
 
-`secrets` pulls and pushes a repo's `.env` from a central [SOPS](https://github.com/getsops/sops)
-store, from anywhere. It is a thin wrapper over `sops` and `git`: run it from
-inside a cloned repo and it maps the repo's `origin` remote to a store entry,
-decrypts that entry into `./.env`, or encrypts `./.env` back into the store.
-
-This crate ports the `serenvia/secrets` bash script into the workspace.
+`secrets` pulls and pushes dotenv entries in a SOPS-encrypted store. From an
+application checkout, it uses the git `origin` remote to select an entry unless
+an explicit name is supplied.
 
 ## Commands
 
 ```bash
-secrets pull [name]    # decrypt the store entry -> ./.env (mode 600)
-secrets add [file]     # encrypt ./.env (or <file>) -> store, commit, push
-secrets list           # list every store entry name
-secrets which [name]   # print the store path this repo maps to
-secrets edit [name]    # open the store entry in sops for editing
+secrets pull [name] [--output <path>] [--force]
+secrets add [file]
+secrets list
+secrets which [name] [--explain]
+secrets edit [name]
 secrets completion bash
 secrets completion zsh
 ```
 
-`[name]` overrides the auto-detected repo: a bare name resolves against
-`repos/` then `stacks/`; or pass an explicit `stacks/<x>` / `repos/<o>/<r>`.
+`[name]` overrides automatic entry detection: a bare name resolves against
+`repos/` and then `stacks/`, or a store-relative entry path can be supplied.
 
-## Output modes
+## Pull output
 
-- Default: human-readable text on stdout; warnings/errors on stderr.
-- `--format json`: a single versioned envelope
-  (`schema_version` / `ok` / `data` | `error`) per the
-  [CLI Service JSON Contract Guideline](../../docs/specs/cli-service-json-contract-guideline-v1.md).
-  Envelope `schema_version` values are `cli.secrets.<command>.v1`.
+`pull` refreshes `./.env` by default. `--output` selects another destination;
+an existing explicit destination is preserved unless `--force` is used.
+Relative output paths are resolved from the current directory. Created output
+files have mode `600`.
 
-### No-secret-leak guarantee
+## Store selection
 
-stdout and the JSON envelope carry only **metadata** — store paths, store entry
-**names**, booleans, and counts. Decrypted secret **values** are written
-directly to `./.env` (mode `600`) and are never echoed to stdout or placed in
-the JSON envelope. `add` encrypts into a hidden mode-600 temporary output beside
-the final entry, asks SOPS to decrypt and MAC-verify the complete temporary
-document, and only then atomically renames it over the tracked target. The
-sibling location guarantees a same-filesystem rename and supports both primary
-checkouts and linked worktrees whose `.git` is a pointer file. The target never
-contains plaintext; encryption failure, invalid output, SIGINT, or SIGTERM that
-wins the atomic install commit point leaves any prior ciphertext unchanged and
-removes the temporary output. Once installation wins that commit point, handled
-signals are ignored for the remainder of the add transaction. On Unix, active
-Git children are also isolated from foreground process-group delivery until
-`git add`, commit, and push complete, so signals cannot strand an incomplete
-Git transaction. This contract is
-exercised by hermetic tests in `crates/secrets/tests/integration.rs` that use a
-secret canary string and assert it never appears on stdout/stderr.
+The optional TOML file at `$XDG_CONFIG_HOME/secrets/stores.toml` (or
+`~/.config/secrets/stores.toml` when `XDG_CONFIG_HOME` is unset) supports a
+configured default, checkout path prefixes, and git remote selectors:
+
+```toml
+default = "/srv/secrets/default"
+
+[path_prefixes]
+"/work/team" = "/srv/secrets/team"
+
+[remotes]
+"github.com/example" = "/srv/secrets/example"
+"git.example/group" = "/srv/secrets/group"
+```
+
+Selection precedence is `SECRETS_REPO`, the longest matching checkout path
+prefix, the longest matching remote host/owner/repository prefix, the configured
+default, then `$XDG_DATA_HOME/secrets/store` (or
+`~/.local/share/secrets/store`). Relative store paths in the TOML file are
+resolved from that file's directory. Checkout path-prefix keys must be absolute;
+matching uses lexically normalized paths and does not resolve symlink aliases
+or expand `~`. Remote selectors are case-insensitive host/path prefixes and
+match only at path-segment boundaries. `secrets which --explain` reports the
+selected store source and matching selector. JSON output includes this
+selection metadata as well.
+
+## Output modes and secret handling
+
+Default output is human-readable text. `--format json` emits one versioned
+envelope (`schema_version` / `ok` / `data` or `error`) per the
+[CLI Service JSON Contract Guideline](../../docs/specs/cli-service-json-contract-guideline-v1.md).
+
+Standard output and the JSON envelope carry metadata only: store paths, entry
+names, booleans, and counts. Decrypted values are redirected to the selected
+mode-600 output file and are never echoed to standard output or included in the
+JSON envelope.
+
+`add` encrypts into a hidden mode-600 temporary output beside the final entry,
+asks SOPS to decrypt and MAC-verify the complete temporary document, and only
+then atomically installs it over the tracked target. The sibling location
+ensures a same-filesystem rename and supports linked worktrees. The target never
+contains plaintext; encryption failure, invalid output, or a handled signal
+before installation leaves prior ciphertext unchanged and removes the temporary
+output. After installation, handled signals are ignored while the add
+transaction completes its Git operations. On Unix, Git children are isolated
+from foreground process-group signals until add, commit, and push complete.
+Hermetic integration tests use a synthetic secret canary and assert it never
+appears on standard output or standard error.
 
 ## Exit codes
 
-| Code | Meaning                                                       |
-| ---- | ------------------------------------------------------------- |
-| `0`  | success                                                       |
-| `1`  | runtime error                                                 |
-| `64` | command-line usage error                                      |
+| Code | Meaning |
+| ---- | ------- |
+| `0` | success |
+| `1` | runtime error |
+| `64` | command-line usage error |
 | `65` | no store entry for the requested target / missing source file |
-| `69` | the store, `sops`, or `git` is unavailable                    |
-
-## Environment
-
-- `SECRETS_REPO`: override the store path. The shared Serenvia environment sets
-  it to `$HOME/Project/serenvia/secrets`; the CLI uses that same path as its
-  fallback when the variable is unset.
+| `69` | the store, `sops`, or `git` is unavailable |
 
 ## Dependencies
 
-Requires `git` and `sops` on `PATH`. Decryption uses this host's age key
-(`~/.config/sops/age/keys.txt`) or a configured GPG key, per the store's
-`.sops.yaml`.
+Requires `git` and `sops` on `PATH`, plus a SOPS decryption identity configured
+for the selected store.

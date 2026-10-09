@@ -3,7 +3,7 @@
 //! No-secret-leak contract (enforced here and exercised by the integration
 //! tests):
 //!
-//! - `pull` decrypts by redirecting `sops -d` straight into the `./.env` file
+//! - `pull` decrypts by redirecting `sops -d` straight into a mode-600 file
 //!   (mode `600`). The plaintext is never captured into a buffer that could be
 //!   printed, and the success/JSON output carries only the store-relative path,
 //!   the destination path, and the count of keys written — never any value.
@@ -43,20 +43,41 @@ pub struct Env {
     pub store_root: PathBuf,
     /// The directory the command was invoked from (the app repo, for slug + .env).
     pub cwd: PathBuf,
+    pub selection_source: String,
+    pub selection_match: Option<String>,
 }
 
 impl Env {
-    /// Resolve the real environment from `$SECRETS_REPO`, `$HOME`, and the CWD.
+    /// Resolve the real environment from configuration, git context, and CWD.
     fn from_process() -> Result<Self, CmdError> {
         let secrets_repo = std::env::var("SECRETS_REPO").ok();
         let home = std::env::var_os("HOME").map(PathBuf::from);
-        let store_root = store::resolve_store_root(secrets_repo.as_deref(), home.as_deref())
-            .ok_or_else(|| {
-                CmdError::unavailable("store not found (set SECRETS_REPO)", "store-not-found")
-            })?;
         let cwd = std::env::current_dir()
             .map_err(|err| CmdError::runtime(format!("cannot resolve current directory: {err}")))?;
-        Ok(Self { store_root, cwd })
+        let config_home = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home.as_ref().map(|path| path.join(".config")));
+        let config_path = config_home
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("secrets/stores.toml");
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home.as_ref().map(|path| path.join(".local/share")));
+        let remote = git_origin_url(&cwd);
+        let selection = store::select_store(
+            secrets_repo.as_deref(),
+            &config_path,
+            &cwd,
+            remote.as_deref(),
+            data_home.as_deref(),
+        )
+        .map_err(|message| CmdError::unavailable(message, "store-config-invalid"))?;
+        Ok(Self {
+            store_root: selection.root,
+            cwd,
+            selection_source: selection.source,
+            selection_match: selection.matched_by,
+        })
     }
 
     fn ensure_store(&self) -> Result<(), CmdError> {
@@ -65,7 +86,7 @@ impl Env {
         } else {
             Err(CmdError::unavailable(
                 format!(
-                    "store not found at {} (set SECRETS_REPO)",
+                    "store not found at {}; configure SECRETS_REPO, stores.toml, or the XDG data default",
                     self.store_root.display()
                 ),
                 "store-not-found",
@@ -109,8 +130,8 @@ impl CmdError {
 
 // ----- public command entrypoints (resolve real env, delegate, then emit) ----
 
-pub fn pull(name: Option<&str>, format: OutputFormat) -> i32 {
-    dispatch(format, |env| pull_with(env, name))
+pub fn pull(name: Option<&str>, output: Option<&str>, force: bool, format: OutputFormat) -> i32 {
+    dispatch(format, |env| pull_with(env, name, output, force))
 }
 
 pub fn add(file: &str, format: OutputFormat) -> i32 {
@@ -121,8 +142,8 @@ pub fn list(format: OutputFormat) -> i32 {
     dispatch(format, list_with)
 }
 
-pub fn which(name: Option<&str>, format: OutputFormat) -> i32 {
-    dispatch(format, |env| which_with(env, name))
+pub fn which(name: Option<&str>, explain: bool, format: OutputFormat) -> i32 {
+    dispatch(format, |env| which_with(env, name, explain))
 }
 
 pub fn edit(name: Option<&str>, format: OutputFormat) -> i32 {
@@ -159,25 +180,34 @@ fn resolve_entry(env: &Env, name: Option<&str>) -> Result<StoreEntry, CmdError> 
 
 /// Derive the `owner/repo` slug from the CWD repo's `origin` remote.
 fn repo_slug(env: &Env) -> Result<String, CmdError> {
+    let url = git_origin_url(&env.cwd).ok_or_else(|| {
+        CmdError::no_entry("not in a git repo with an 'origin' remote — pass an explicit <name>")
+    })?;
+    store::slug_from_remote_url(&url)
+        .ok_or_else(|| CmdError::no_entry("could not derive a store slug from the origin remote"))
+}
+
+fn git_origin_url(cwd: &Path) -> Option<String> {
     let output = Command::new("git")
         .args(["remote", "get-url", "origin"])
-        .current_dir(&env.cwd)
+        .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
-        .map_err(|err| CmdError::runtime(format!("failed to run git: {err}")))?;
-    if !output.status.success() {
-        return Err(CmdError::no_entry(
-            "not in a git repo with an 'origin' remote — pass an explicit <name>",
-        ));
-    }
-    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    store::slug_from_remote_url(&url)
-        .ok_or_else(|| CmdError::no_entry(format!("could not derive a store slug from '{url}'")))
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn pull_with(env: &Env, name: Option<&str>) -> Result<PullOutcome, CmdError> {
+fn pull_with(
+    env: &Env,
+    name: Option<&str>,
+    output: Option<&str>,
+    force: bool,
+) -> Result<PullOutcome, CmdError> {
     env.ensure_store()?;
 
     // Best-effort refresh; failure (offline, detached, etc.) is non-fatal,
@@ -199,11 +229,34 @@ fn pull_with(env: &Env, name: Option<&str>) -> Result<PullOutcome, CmdError> {
         )));
     }
 
-    let dest = env.cwd.join(".env");
-    // Decrypt straight into ./.env with mode 600. The plaintext stream is
+    let explicit_output = output.is_some();
+    let dest = output
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                env.cwd.join(path)
+            }
+        })
+        .unwrap_or_else(|| env.cwd.join(".env"));
+    if explicit_output && !force {
+        // Refuse before invoking SOPS; the atomic install below still protects
+        // against another process creating the path after this check.
+        ensure_output_available(&dest)?;
+    }
+
+    // Preserve the historical ./.env refresh behavior. Explicit destinations
+    // are decrypted to a private sibling temp file and installed atomically.
+    let (dest_file, temp_path) = if explicit_output {
+        let (file, path) = create_private_temp(&dest)?;
+        (file, Some(path))
+    } else {
+        (create_private_file(&dest)?, None)
+    };
+    // The plaintext stream is
     // redirected to the file and never enters our address space as a buffer we
     // could print.
-    let dest_file = create_private_file(&dest)?;
     let status = Command::new("sops")
         .args(["-d", "--input-type", "dotenv", "--output-type", "dotenv"])
         .arg(&entry.path)
@@ -212,17 +265,29 @@ fn pull_with(env: &Env, name: Option<&str>) -> Result<PullOutcome, CmdError> {
         .stderr(Stdio::inherit())
         .status()
         .map_err(|err| {
-            let _ = fs::remove_file(&dest);
+            if let Some(path) = &temp_path {
+                let _ = fs::remove_file(path);
+            } else {
+                let _ = fs::remove_file(&dest);
+            }
             CmdError::unavailable(format!("failed to run sops: {err}"), "sops-unavailable")
         })?;
 
     if !status.success() {
         // Leave no partial plaintext behind on decryption failure.
-        let _ = fs::remove_file(&dest);
+        if let Some(path) = &temp_path {
+            let _ = fs::remove_file(path);
+        } else {
+            let _ = fs::remove_file(&dest);
+        }
         return Err(CmdError::runtime(format!(
             "sops failed to decrypt {}",
             entry.rel
         )));
+    }
+
+    if let Some(path) = temp_path {
+        install_private_file(&path, &dest, force)?;
     }
 
     // Count keys for metadata ONLY (we read key names from a file we just wrote;
@@ -342,13 +407,17 @@ fn list_with(env: &Env) -> Result<ListOutcome, CmdError> {
     })
 }
 
-fn which_with(env: &Env, name: Option<&str>) -> Result<WhichOutcome, CmdError> {
+fn which_with(env: &Env, name: Option<&str>, explain: bool) -> Result<WhichOutcome, CmdError> {
     env.ensure_store()?;
     let entry = resolve_entry(env, name)?;
     Ok(WhichOutcome {
+        store: env.store_root.to_string_lossy().to_string(),
         entry: entry.rel,
         path: entry.path.to_string_lossy().to_string(),
         exists: entry.exists,
+        selected_by: env.selection_source.clone(),
+        matched_by: env.selection_match.clone(),
+        explain,
     })
 }
 
@@ -416,7 +485,37 @@ fn git_index_clean(store_root: &Path, rel: &str) -> Result<bool, CmdError> {
 
 // ------------------------------ fs helpers -----------------------------------
 
-/// Create (or truncate) a file with mode 600 for the decrypted plaintext.
+/// Create a new private temporary file beside an explicit pull destination.
+fn create_private_temp(destination: &Path) -> Result<(File, PathBuf), CmdError> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    for _ in 0..32 {
+        let sequence = ADD_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = parent.join(format!(
+            ".secrets-pull-{}-{sequence}.tmp",
+            std::process::id()
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(file) => return Ok((file, path)),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(CmdError::runtime(format!(
+                    "cannot write {}: {err}",
+                    destination.display()
+                )));
+            }
+        }
+    }
+    Err(CmdError::runtime("cannot allocate a private output file"))
+}
+
+/// Create or truncate the default `./.env` destination with mode 600.
 fn create_private_file(path: &Path) -> Result<File, CmdError> {
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -428,6 +527,42 @@ fn create_private_file(path: &Path) -> Result<File, CmdError> {
     options
         .open(path)
         .map_err(|err| CmdError::runtime(format!("cannot write {}: {err}", path.display())))
+}
+
+fn ensure_output_available(path: &Path) -> Result<(), CmdError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Err(CmdError::runtime(format!(
+            "output already exists: {} (use --force to replace it)",
+            path.display()
+        ))),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(CmdError::runtime(format!(
+            "cannot inspect output {}: {err}",
+            path.display()
+        ))),
+    }
+}
+
+fn install_private_file(temp: &Path, destination: &Path, force: bool) -> Result<(), CmdError> {
+    let result = if force {
+        fs::rename(temp, destination)
+    } else {
+        fs::hard_link(temp, destination).and_then(|()| fs::remove_file(temp))
+    };
+    result.map_err(|err| {
+        let _ = fs::remove_file(temp);
+        if err.kind() == io::ErrorKind::AlreadyExists {
+            CmdError::runtime(format!(
+                "output already exists: {} (use --force to replace it)",
+                destination.display()
+            ))
+        } else {
+            CmdError::runtime(format!(
+                "cannot install output {}: {err}",
+                destination.display()
+            ))
+        }
+    })
 }
 
 static ADD_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -835,9 +970,14 @@ impl Outcome for ListOutcome {
 
 #[derive(Debug, Serialize)]
 pub struct WhichOutcome {
+    pub store: String,
     pub entry: String,
     pub path: String,
     pub exists: bool,
+    pub selected_by: String,
+    pub matched_by: Option<String>,
+    #[serde(skip)]
+    pub explain: bool,
 }
 
 impl Outcome for WhichOutcome {
@@ -845,13 +985,26 @@ impl Outcome for WhichOutcome {
         "which"
     }
     fn human(&self) -> String {
-        self.path.clone()
+        if !self.explain {
+            return self.path.clone();
+        }
+        let reason = match &self.matched_by {
+            Some(matched) => format!("{}: {}", self.selected_by, matched),
+            None => self.selected_by.clone(),
+        };
+        format!(
+            "store: {} (selected by {}); entry: {}",
+            self.store, reason, self.path
+        )
     }
     fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "entry": self.entry,
             "path": self.path,
+            "store": self.store,
             "exists": self.exists,
+            "selected_by": self.selected_by,
+            "matched_by": self.matched_by,
         })
     }
 }
@@ -883,5 +1036,27 @@ mod tests {
         // No value-bearing field exists.
         assert!(json.get("value").is_none());
         assert!(json.get("env").is_none());
+    }
+
+    #[test]
+    fn which_outcome_explains_store_selection_without_values() {
+        let outcome = WhichOutcome {
+            store: "/stores/team".to_string(),
+            entry: "repos/owner/repo.enc.env".to_string(),
+            path: "/stores/team".to_string(),
+            exists: true,
+            selected_by: "path-prefix".to_string(),
+            matched_by: Some("/work/team".to_string()),
+            explain: true,
+        };
+        assert!(
+            outcome
+                .human()
+                .contains("selected by path-prefix: /work/team")
+        );
+        let json = outcome.to_json();
+        assert_eq!(json["selected_by"], "path-prefix");
+        assert_eq!(json["matched_by"], "/work/team");
+        assert!(json.get("value").is_none());
     }
 }
