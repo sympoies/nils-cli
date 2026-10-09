@@ -66,6 +66,46 @@ delivery is exposed in the receipt. The target is observed failure to durable
 owner inbox delivery within 60 seconds when sources and transport are available;
 these degraded states do not establish that target or a measured p99.
 
+### Authentication JSON fields
+
+`auth_incident` is omitted when the current runtime has no incident. When
+present, list and board expose the same object; nullable members are present
+with JSON `null`. Consumers must ignore additive unknown members.
+
+| Field | Type | Meaning / values |
+| --- | --- | --- |
+| `incident_id` | string | SHA-256 hexadecimal incident identity. |
+| `session_id` | string | Managed session identity. |
+| `runtime_incarnation` | string | Original runtime launch identity. |
+| `runtime_generation` | unsigned integer | Original runtime generation. |
+| `provider` | string | `claude` or `codex`. |
+| `account_nickname` | string or null | Configured account nickname, when available. |
+| `observed_at` | timestamp string | Host observation time. |
+| `source` | string | `claude_stop_failure`, `codex_app_server`, `codex_external_refresh`, or `terminal_pattern`. |
+| `confidence` | string | `authoritative`, `observed`, or `inferred`. Terminal fallback is `inferred`. |
+| `status` | string | `auth_failed`, `recovered`, `recovery_failed`, or `runtime_replaced`. |
+| `recovery_result` | string or null | `healthy`, `credentials_refreshed`, `refresh_failed`, or `runtime_replaced`; null before a final result. |
+| `recovery_observed_at` | timestamp string or null | Final-result observation time. |
+| `notification` | object | Initial incident notification receipt, shaped below. |
+| `recovery_notification` | object | Final-result notification receipt, with the same shape. |
+
+Each notification receipt contains all four members:
+
+| Field | Type | Meaning / values |
+| --- | --- | --- |
+| `submission_started_at` | timestamp string or null | Start of a potentially committing submission; null before submission or after a proven missing-owner preflight failure. |
+| `delivered_at` | timestamp string or null | Time durable inbox delivery was confirmed; does not imply the owner read or accepted the message. |
+| `message_id` | string or null | Mailbox identity after submission is recorded. |
+| `degraded_reason` | string or null | `owner_unavailable`, `relay_unavailable`, `relay_pending`, `delivery_unknown`, or `identity_conflict`; null when no degradation is recorded. |
+
+Timestamps use RFC 3339 strings. `auth_detection_health` is omitted before
+observation and otherwise contains exactly one of `structured`,
+`degraded_terminal_fallback`, `degraded_source_unavailable`,
+`degraded_store_unavailable`, or `degraded_queue_capacity`. The board omits an
+unrecognized health value or an incident that fails typed deserialization.
+`runtime_replaced` results remain in private history because their original
+runtime is omitted from the current projection.
+
 ## Conversation transitions
 
 `agent-session clear <id> [--expect-idle] --format json` admits only a verified

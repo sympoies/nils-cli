@@ -177,7 +177,7 @@ the extension. A session with lineage and work looks like this:
 | Progress | `turn_state.current_turn.attention` | object or null | `CurrentTurn.attention`, projected to `kind` and `requested_at`. |
 | Progress | `turn_state.last_turn` | object or null | `TurnState.last_turn`, projected to `outcome` and an optional allowlisted `provider_failure_kind` (`authentication` or `provider_capacity`). |
 | Progress | `auth_incident` | optional object | Typed, runtime-bound provider authentication incident and notification receipts; see the [turn-state contract](../turn-state-contract.md#provider-authentication-incidents). Absent before an incident is observed. |
-| Progress | `auth_detection_health` | optional string | Structured detection, degraded terminal fallback, unavailable source, or unavailable incident store; absent before observation. |
+| Progress | `auth_detection_health` | optional string | `structured`, `degraded_terminal_fallback`, `degraded_source_unavailable`, `degraded_store_unavailable`, or `degraded_queue_capacity`; absent before observation. Unrecognized values are omitted. |
 | Progress | `turn_state.source.confidence` | string | `TurnState.source.confidence`: `authoritative`, `observed`, or `inferred`. |
 | Lifecycle | `state` | string | New derivation: `live`, `stopped`, or `closed`. See [Lifecycle states](#lifecycle-states). |
 | Lifecycle | `runtime_status` | string or null | `SessionView.status` (`running`, `stopped`, `missing`, or `unknown`) at projection time; `null` on a closed record. New on the board so a consumer can tell a proven stop from an unverified probe. |
