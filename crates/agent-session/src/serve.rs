@@ -10031,7 +10031,7 @@ async fn archive_handler(
     let context = state.context.clone();
     let before = load_session_record(&context, &id).ok();
     let response = archive_handler_inner(State(state), headers, AxPath(id.clone()), body).await;
-    crate::lifecycle::response(&context, &id, "delete", before, response).await
+    crate::lifecycle::response(&context, &id, "archive", before, response).await
 }
 
 async fn archive_handler_inner(
@@ -10059,7 +10059,7 @@ async fn archive_handler_inner(
     let response_machine = machine.clone();
     let starred = body.starred;
     match tokio::task::spawn_blocking(move || {
-        let _journal_owner = crate::lifecycle::ServeGuard::enter("delete");
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("archive");
         let children =
             crate::lineage::guard_children(&context, &machine, &id, body.orphan_children)?;
         let (archive, mut deleted) = archive_session_with_expected_incarnation(

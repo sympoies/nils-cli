@@ -10060,6 +10060,7 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
         &[
             ("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log_arg),
             ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
+            ("NILS_TEST_PANE_LIFETIME_MS", "500"),
         ],
     );
 
@@ -10296,6 +10297,18 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
     assert_eq!(exits.len(), 1, "{journal}");
     assert_eq!(exits[0]["exit"]["code"], 23);
     assert_eq!(exits[0]["exit"]["stopped_by"], Value::Null);
+    let group = record["delete_tmux_identity"]["process_group_id"]
+        .as_i64()
+        .unwrap() as libc::pid_t;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while unsafe { libc::kill(-group, 0) } == 0 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_ne!(
+        unsafe { libc::kill(-group, 0) },
+        0,
+        "bounded resumed pane must stop before deletion"
+    );
     let deleted = run(
         tmp.path(),
         &[
@@ -10310,10 +10323,16 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
         ],
         &[
             ("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log_arg),
-            ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
+            ("AGENT_SESSION_FAKE_TMUX_ABSENT", "1"),
         ],
     );
-    assert_eq!(deleted.code, 0, "{}", deleted.stderr_text());
+    assert_eq!(
+        deleted.code,
+        0,
+        "{} {}",
+        deleted.stdout_text(),
+        deleted.stderr_text()
+    );
     let logs = run(
         tmp.path(),
         &[
