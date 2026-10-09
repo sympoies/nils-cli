@@ -539,7 +539,7 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
 
     let target_arg = display_path(&target);
     // The explicit flag is also a fail-closed capability marker for callers:
-    // older binaries reject it before reaching their legacy force removal.
+    // older binaries reject it before reaching their forced removal.
     let _fence = removal::fence(&target, &layout)?;
     removal::remove(&target, &layout.repo_root)?;
     run_git_worktree_prune()?;

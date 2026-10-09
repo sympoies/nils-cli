@@ -38,7 +38,7 @@ default `feature`.
 `remove` refuses primary, current, and unmanaged worktrees. It never forces
 removal. Use `git-cli worktree remove <slug-or-path> --safe --format json` from
 outside the target; the explicit flag makes older binaries fail closed before
-legacy force removal. Current binaries always apply the same safety checks.
+their forced removal. Current binaries always apply the same safety checks.
 
 The cleanup transaction holds the runtime checkout lease lock and agent-session
 registry lock through removal. It requires clean stable checkout/admin identity,
