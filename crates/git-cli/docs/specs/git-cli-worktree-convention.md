@@ -63,11 +63,19 @@ mixed installation must retain candidates.
 
 It requires clean stable checkout/admin identity,
 no Git operation or active checkout lease (including the requester), no live
-session cwd/binding or nonterminal operation, and a complete `lsof` inventory
-with no process cwd or open file under the target. Missing tools, warnings,
-malformed ownership state, lock contention, and unavailable proof retain the
-target. Coordination mode does not waive these checks. Runtime and session state
-roots use their existing environment configuration.
+session cwd/binding or nonterminal operation, and complete process visibility
+with no cwd, open descriptor or mapped file under the target. Linux scans
+`/proc` for the current user, independently of unrelated `lsof` warnings;
+other supported platforms require a warning-free `lsof` inventory. Unreadable
+live current-user processes, missing tools, malformed ownership state, lock
+contention, and unavailable proof retain the target. Run the caller itself
+from outside the target; changing only a child command’s cwd cannot release
+the parent’s cwd. Registry-fencing refusals report the selected canonical
+state root, lock path, and underlying reason. Set `AGENT_SESSION_STATE_DIR`
+to the same private inventory used by launchers, then resolve trust or busy
+conditions without replacing a live lock or rebinding the inventory.
+Coordination mode does not waive these checks. Runtime and session state roots
+use their existing environment configuration.
 
 HEAD must be present in the current `origin` default branch, or match the exact
 head of a provider-confirmed merged PR/MR targeting that default branch.

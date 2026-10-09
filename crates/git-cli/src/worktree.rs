@@ -520,7 +520,7 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
                 "refusing to remove the current worktree {}",
                 display_path(&target)
             ),
-        ));
+        ).with_hint("Run the caller itself from outside the target before cleanup; changing only a child command's cwd does not release the parent's cwd"));
     }
 
     let entries = list_linked_worktrees()

@@ -122,9 +122,12 @@ impl RemovalFixture {
         }
     }
     fn remove(&self, target: &str) -> CmdOutput {
+        self.remove_from(self.repo.path(), target)
+    }
+    fn remove_from(&self, cwd: &Path, target: &str) -> CmdOutput {
         let options = self
             .harness
-            .cmd_options(self.repo.path())
+            .cmd_options(cwd)
             .with_path_prepend(self.probes.path())
             .with_env("AGENT_HOME", self.home.path().to_str().unwrap())
             .with_env(
@@ -205,6 +208,102 @@ impl RemovalFixture {
             ],
         );
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn safe_removal_linux_benign_lsof_warning_does_not_hide_idle_proof() {
+    let fixture = RemovalFixture::new();
+    fixture.probes.write_exe(
+        "lsof",
+        "#!/bin/sh\necho 'lsof: WARNING: cannot stat() unrelated fuse filesystem' >&2\nexit 1\n",
+    );
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(!Path::new(&fixture.target).exists());
+    assert_eq!(
+        parse_json(&result)["data"]["delivery_proof"]["basis"],
+        "remote-default-ancestry"
+    );
+}
+
+#[test]
+fn safe_removal_caller_inside_target_is_retained_with_outside_recovery() {
+    let fixture = RemovalFixture::new();
+    let result = fixture.remove_from(Path::new(&fixture.target), "safe");
+    let value = parse_json(&result);
+    assert_eq!(
+        value["error"]["code"],
+        "refuse-current-worktree",
+        "{}",
+        result.stdout_text()
+    );
+    assert!(value["error"]["hint"].as_str().unwrap().contains("outside"));
+    assert!(Path::new(&fixture.target).exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn safe_removal_unreadable_live_current_user_retains_target() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    let fixture = RemovalFixture::new();
+    let mut child = Command::new("python3")
+        .args(["-c", "import ctypes,time; assert ctypes.CDLL(None).prctl(4,0,0,0,0)==0; print('ready',flush=True); time.sleep(30)"])
+        .current_dir(fixture.repo.path())
+        .stdout(Stdio::piped())
+        .spawn().unwrap();
+    let mut ready = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut ready)
+        .unwrap();
+    assert_eq!(ready.trim(), "ready");
+    let result = fixture.remove("safe");
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let value = parse_json(&result);
+    assert_eq!(
+        value["error"]["code"],
+        "removal-proof-unavailable",
+        "{}",
+        result.stdout_text()
+    );
+    assert_eq!(value["error"]["details"]["backend"], "procfs");
+    assert!(Path::new(&fixture.target).exists());
+}
+
+#[test]
+fn safe_removal_registry_fencing_diagnostic_names_root_and_recovery() {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = RemovalFixture::new();
+    let root = fs::canonicalize(fixture.home.path().join("sessions")).unwrap();
+    let path = root.join("coordination/registry.lock");
+    let lock = fs::File::create(&path).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    let result = fixture.remove("safe");
+    assert_ne!(result.code, 0);
+    let error = &parse_json(&result)["error"];
+    assert_eq!(error["code"], "removal-proof-unavailable");
+    assert_eq!(error["details"]["state_root"], root.to_str().unwrap());
+    assert_eq!(error["details"]["registry_lock"], path.to_str().unwrap());
+    assert!(
+        error["details"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("busy")
+    );
+    assert!(
+        error["hint"]
+            .as_str()
+            .unwrap()
+            .contains("AGENT_SESSION_STATE_DIR")
+    );
+    assert!(Path::new(&fixture.target).exists());
 }
 
 #[test]
@@ -318,15 +417,15 @@ fn safe_removal_branch_cleanup_proves_managed_clean_success_and_dirty_retention(
 }
 
 #[test]
-fn safe_removal_holds_lifecycle_guard_through_final_process_proof() {
+fn safe_removal_holds_lifecycle_guard_through_git_deletion() {
     use nils_common::worktree_lifecycle::{Error, Guard};
     use std::time::{Duration, Instant};
     let fixture = RemovalFixture::new();
     let marker = fixture.home.path().join("proof-entered");
     let release = fixture.home.path().join("proof-release");
     let quote = nils_common::shell::quote_posix_single;
-    fixture.probes.write_exe("lsof", &format!(
-        "#!/bin/sh\ntouch {}\ncount=0\nwhile [ ! -f {} ] && [ \"$count\" -lt 500 ]; do sleep 0.01; count=$((count+1)); done\nexit 1\n",
+    fixture.probes.write_exe("git", &format!(
+        "#!/bin/sh\nif [ \"$1\" = worktree ] && [ \"$2\" = remove ]; then\ntouch {}\ncount=0\nwhile [ ! -f {} ] && [ \"$count\" -lt 500 ]; do sleep 0.01; count=$((count+1)); done\nfi\nexec /usr/bin/git \"$@\"\n",
         quote(marker.to_str().unwrap()), quote(release.to_str().unwrap()),
     ));
     std::thread::scope(|scope| {
@@ -585,10 +684,11 @@ fn safe_removal_retains_active_checkout_lease_including_requester() {
     use std::os::unix::fs::PermissionsExt;
     let fixture = RemovalFixture::new();
     // Initialize the sentinel and stable lock through one harmless failed proof.
-    fixture
-        .probes
-        .write_exe("lsof", "#!/bin/sh\necho p123\nexit 0\n");
-    fixture.refused("removal-process-active");
+    fixture.probes.write_exe(
+        "agent-session",
+        "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"data\":{}}'\n",
+    );
+    fixture.refused("removal-proof-unavailable");
     let target = Path::new(&fixture.target).canonicalize().unwrap();
     let git_dir = PathBuf::from(git(&target, &["rev-parse", "--absolute-git-dir"]).trim());
     let common_dir = fixture.repo.path().join(".git").canonicalize().unwrap();
@@ -629,14 +729,25 @@ fn safe_removal_retains_active_checkout_lease_including_requester() {
 fn safe_removal_retains_process_cwd_and_open_file() {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
-    for cwd in [true, false] {
+    for kind in ["cwd", "fd", "maps"] {
         let fixture = RemovalFixture::new();
         // The child announces readiness only after it owns the cwd/file.
-        let mut child = Command::new("python3").args(["-c", if cwd {
-            "import os,sys,time; os.chdir(sys.argv[1]); print('ready',flush=True); time.sleep(30)"
-        } else {
-            "import sys,time; f=open(sys.argv[1]+'/README.md'); print('ready',flush=True); time.sleep(30)"
-        }, &fixture.target]).stdout(Stdio::piped()).spawn().unwrap();
+        let script = match kind {
+            "cwd" => {
+                "import os,sys,time; os.chdir(sys.argv[1]); print('ready',flush=True); time.sleep(30)"
+            }
+            "fd" => {
+                "import sys,time; f=open(sys.argv[1]+'/README.md'); print('ready',flush=True); time.sleep(30)"
+            }
+            _ => {
+                "import sys,time,mmap; f=open(sys.argv[1]+'/README.md'); m=mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ); f.close(); print('ready',flush=True); time.sleep(30)"
+            }
+        };
+        let mut child = Command::new("python3")
+            .args(["-c", script, &fixture.target])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
         let mut ready = String::new();
         BufReader::new(child.stdout.take().unwrap())
             .read_line(&mut ready)
@@ -665,6 +776,7 @@ fn safe_removal_retains_incomplete_process_proof_and_unmanaged_target() {
         "lsof",
         "#!/bin/sh\necho 'inventory incomplete' >&2\nexit 1\n",
     );
+    #[cfg(not(target_os = "linux"))]
     fixture.refused("removal-proof-unavailable");
     let unmanaged = fixture.home.path().join("unmanaged");
     git(

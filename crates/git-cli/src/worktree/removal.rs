@@ -11,6 +11,9 @@ use std::{
     process::{Command, Output},
 };
 
+#[cfg(target_os = "linux")]
+mod procfs;
+
 pub(super) struct Fence {
     _registry: lease::RemovalLeaseGuard,
     _checkout: lease::RemovalLeaseGuard,
@@ -142,6 +145,16 @@ fn sessions_idle(target: &Path, sessions: &Value) -> Result<(), CliError> {
 }
 
 fn processes_idle(target: &Path) -> Result<(), CliError> {
+    #[cfg(target_os = "linux")]
+    {
+        procfs::processes_idle(target, Path::new("/proc"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    processes_idle_lsof(target)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn processes_idle_lsof(target: &Path) -> Result<(), CliError> {
     let path = target.to_str().ok_or_else(|| {
         refused(
             "removal-proof-unavailable",
@@ -159,7 +172,7 @@ fn processes_idle(target: &Path) -> Result<(), CliError> {
         return Err(refused(
             "removal-process-active",
             "a live process has its cwd or an open file in the removal target",
-        ));
+        ).with_hint("Run the caller itself from outside the target, close any other cwd or open-file holders, and retry"));
     }
     if output.status.code() != Some(1) || !output.stderr.is_empty() {
         return Err(refused(
@@ -392,11 +405,17 @@ pub(super) fn fence(target: &Path, layout: &WorktreeLayout) -> Result<Fence, Cli
                 "session registry directory is unavailable",
             )
         })?;
-    let registry = lease::removal_registry_lock(&state.join("coordination")).map_err(|_| {
+    let registry = lease::removal_registry_lock(&state.join("coordination")).map_err(|error| {
         refused(
             "removal-proof-unavailable",
             "session registry fencing is unavailable",
         )
+        .with_hint("Use AGENT_SESSION_STATE_DIR to select the same private inventory used by session launchers; resolve the reported trust or busy condition and retry from outside the target. Do not replace a live registry lock or rebind the inventory")
+        .with_details(serde_json::json!({
+            "state_root": state,
+            "registry_lock": state.join("coordination/registry.lock"),
+            "reason": error.to_string(),
+        }))
     })?;
     if let Some(projection) = coordination_projection::load(&state).map_err(|_| {
         refused(
