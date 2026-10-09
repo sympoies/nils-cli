@@ -98,10 +98,13 @@ fn worktree_lifecycle_removal_barrier_prevents_start_and_run_publication() {
         if verb == "run" {
             args.extend(["--prompt", "fixture prompt"]);
         }
-        let output = run_with_env(
-            tmp.path(),
+        let output = run_resolved(
+            "agent-session",
             &args,
-            &[("LIFECYCLE_LAUNCH_MARKER", marker.to_str().unwrap())],
+            &CmdOptions::new()
+                .without_ambient_managed_session_env()
+                .with_cwd(tmp.path())
+                .with_env("LIFECYCLE_LAUNCH_MARKER", marker.to_str().unwrap()),
         );
         assert_ne!(output.code, 0, "{}", output.stdout_text());
         assert_eq!(
