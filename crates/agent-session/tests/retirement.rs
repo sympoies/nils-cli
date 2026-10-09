@@ -348,7 +348,7 @@ fn retirement_unblocks_provisioning_the_next_incarnation() {
     let capability = agent_session::coordination::provision(&context, &record).unwrap();
     assert!(capability.exists());
     assert_eq!(
-        record.provider_resume.as_ref().unwrap().session_id,
+        serde_json::to_value(&record).unwrap()["provider_resume"]["session_id"],
         "conversation-id"
     );
 }
