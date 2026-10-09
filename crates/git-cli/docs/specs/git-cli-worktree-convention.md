@@ -99,8 +99,11 @@ Configuration is ordinary repository Git configuration:
 
 An over-cap backup refuses with `removal-backup-acknowledgment-required` and
 lists paths/sizes before any deletion. Review the omissions and explicitly pass
-`--acknowledge-backup-omissions` to permit their loss. Snapshot failures retain
-the target as `removal-backup-failed`. Invalid cap configuration uses the default;
+`--acknowledge-backup-omissions` to permit their loss. An omitted tracked edit
+restores the file's HEAD content; an omitted untracked file is absent on restore.
+Snapshot failures retain the target as `removal-backup-failed`, with bounded
+reason details that do not copy arbitrary subprocess diagnostics.
+Invalid cap configuration uses the default;
 invalid retention keeps backups with a warning. No expiry runs inside removal.
 
 The JSON removal receipt includes `removed_path`, `removed_branch`,

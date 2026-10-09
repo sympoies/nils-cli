@@ -1563,6 +1563,85 @@ fn safe_removal_own_running_session_is_not_a_collision() {
 }
 
 #[test]
+fn safe_removal_omitted_tracked_edit_restores_head_content_without_deletion() {
+    let fixture = RemovalFixture::new();
+    let target = Path::new(&fixture.target);
+    let original = fs::read(target.join("README.md")).unwrap();
+    git(
+        fixture.repo.path(),
+        &["config", "worktree.backupMaxBytes", "8"],
+    );
+    fs::write(target.join("README.md"), b"0123456789abcdef").unwrap();
+    let result = run_with(
+        &fixture.harness.git_cli_bin(),
+        &[
+            "worktree",
+            "remove",
+            "safe",
+            "--acknowledge-backup-omissions",
+            "--format",
+            "json",
+        ],
+        &fixture.options(fixture.repo.path()),
+    );
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    let receipt = parse_json(&result);
+    assert!(
+        receipt["data"]["backup_omissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["path"] == "README.md" && row["bytes"] == 16)
+    );
+    let backup = receipt["data"]["backup_ref"].as_str().unwrap();
+    let result = fixture.restore(backup, None);
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(
+        target.join("README.md").exists(),
+        "omission must retain HEAD content"
+    );
+    assert_eq!(fs::read(target.join("README.md")).unwrap(), original);
+    assert!(git(target, &["status", "--porcelain"]).trim().is_empty());
+}
+
+#[test]
+fn safe_removal_missing_author_identity_reports_reason_and_retains_target() {
+    let fixture = RemovalFixture::new();
+    let target = Path::new(&fixture.target);
+    fs::write(target.join("README.md"), "preserve\n").unwrap();
+    git(fixture.repo.path(), &["config", "user.name", ""]);
+    git(fixture.repo.path(), &["config", "user.email", ""]);
+    git(
+        fixture.repo.path(),
+        &["config", "user.useConfigOnly", "true"],
+    );
+    let options = fixture
+        .options(fixture.repo.path())
+        .with_env_remove("GIT_AUTHOR_NAME")
+        .with_env_remove("GIT_AUTHOR_EMAIL")
+        .with_env_remove("GIT_COMMITTER_NAME")
+        .with_env_remove("GIT_COMMITTER_EMAIL");
+    let result = run_with(
+        &fixture.harness.git_cli_bin(),
+        &["worktree", "remove", "safe", "--format", "json"],
+        &options,
+    );
+    let error = parse_json(&result);
+    assert_eq!(error["error"]["code"], "removal-backup-failed");
+    let reason = error["error"]["details"]["reason"].as_str().unwrap_or("");
+    assert!(
+        reason.contains("identity"),
+        "missing identity reason: {error}"
+    );
+    assert!(target.exists());
+    assert_eq!(
+        fs::read_to_string(target.join("README.md")).unwrap(),
+        "preserve\n"
+    );
+    assert!(git(target, &["diff", "--cached"]).trim().is_empty());
+}
+
+#[test]
 fn safe_removal_backup_cap_requires_acknowledgment_and_records_omissions() {
     let fixture = RemovalFixture::new();
     git(

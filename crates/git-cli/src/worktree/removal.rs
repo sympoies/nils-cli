@@ -88,17 +88,57 @@ pub(super) fn refused(code: &'static str, message: &str) -> CliError {
     CliError::data(code, message)
 }
 
+pub(super) fn probe_error_reason(error: &anyhow::Error) -> String {
+    if let Some(error) = error.downcast_ref::<lease::DirtyCheckoutError>() {
+        return error.code().to_owned();
+    }
+    if let Some(error) = error.downcast_ref::<std::io::Error>() {
+        return format!("local process I/O error: {:?}", error.kind());
+    }
+    "local process supervision failed".into()
+}
+
+pub(super) fn git_error_reason(output: &Output) -> String {
+    // Never project arbitrary stderr: Git filters/signers can include paths,
+    // identities or credentials. Only recognized causes get a fixed summary.
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    let cause = if [
+        "identity unknown",
+        "empty ident name",
+        "unable to auto-detect email",
+        "no email was given",
+        "no name was given",
+    ]
+    .iter()
+    .any(|pattern| stderr.contains(pattern))
+    {
+        "author or committer identity is missing or invalid"
+    } else if stderr.contains("failed to sign") || stderr.contains("signing failed") {
+        "commit signing failed"
+    } else if stderr.contains("permission denied") || stderr.contains("read-only file system") {
+        "repository access denied or read-only"
+    } else if stderr.contains("no space left on device") {
+        "repository storage is full"
+    } else if stderr.contains("cannot lock ref") || stderr.contains("file exists") {
+        "repository lock or reference conflict"
+    } else {
+        "unrecognized Git diagnostic withheld"
+    };
+    format!("{cause} ({})", output.status)
+}
+
 pub(super) fn probe(program: &str, args: &[&str], cwd: &Path) -> Result<Output, CliError> {
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd);
     if program == "git" {
         lease::sanitize_git_environment(&mut command);
     }
-    lease::removal_probe(&mut command).map_err(|_| {
+    lease::removal_probe(&mut command).map_err(|error| {
         refused(
             "removal-proof-unavailable",
             "bounded local probe could not complete",
         )
+        .with_details(json!({"reason": probe_error_reason(&error)}))
     })
 }
 
@@ -107,7 +147,7 @@ pub(super) fn git(target: &Path, args: &[&str]) -> Result<String, CliError> {
     if !output.status.success() {
         return Err(
             refused("removal-proof-unavailable", "local Git operation failed")
-                .with_details(json!({"reason": String::from_utf8_lossy(&output.stderr)})),
+                .with_details(json!({"reason": git_error_reason(&output)})),
         );
     }
     String::from_utf8(output.stdout)
@@ -582,4 +622,56 @@ pub(super) fn remove(target: &Path, repo_root: &Path) -> Result<(), CliError> {
     )?;
     git(repo_root, &["worktree", "prune"])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn git_failure_details_keep_cause_without_projecting_stderr() {
+        for (stderr, expected) in [
+            (
+                "Author identity unknown\nfatal: empty ident name (for <fixture@example.invalid>) not allowed",
+                "author or committer identity is missing or invalid",
+            ),
+            (
+                "gpg failed to sign the data: fixture-signing-key",
+                "commit signing failed",
+            ),
+            (
+                "fatal: /fixture/repository: Permission denied",
+                "repository access denied or read-only",
+            ),
+            (
+                "filter diagnostic token=fixture-secret-value",
+                "unrecognized Git diagnostic withheld",
+            ),
+        ] {
+            let output = Output {
+                status: std::process::ExitStatus::from_raw(128 << 8),
+                stdout: Vec::new(),
+                stderr: stderr.as_bytes().to_vec(),
+            };
+            let reason = git_error_reason(&output);
+            assert_eq!(reason, format!("{expected} ({})", output.status));
+            assert!(reason.len() <= 256);
+            assert!(!reason.contains("fixture"));
+        }
+    }
+
+    #[test]
+    fn probe_failure_details_keep_io_kind_without_projecting_context() {
+        let error = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "/fixture/repository token=fixture-secret-value",
+        ))
+        .context("fixture process could not start");
+        assert_eq!(
+            probe_error_reason(&error),
+            "local process I/O error: PermissionDenied"
+        );
+    }
 }

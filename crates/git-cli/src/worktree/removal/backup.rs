@@ -1,5 +1,5 @@
 //! Object-backed worktree preservation; the real index is never the snapshot index.
-use super::{CliError, Fence, git, lease, probe, refused};
+use super::{CliError, Fence, git, git_error_reason, lease, probe, probe_error_reason, refused};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -48,16 +48,30 @@ fn failure(message: &str) -> CliError {
         .with_hint("Target retained; resolve the snapshot error and retry")
 }
 
+fn caused_failure(message: &str, cause: CliError) -> CliError {
+    let mut error = failure(message);
+    error.details = cause
+        .details
+        .or_else(|| Some(Box::new(json!({"reason": cause.message}))));
+    error
+}
+
+fn io_failure(message: &str, cause: std::io::Error) -> CliError {
+    failure(message).with_details(json!({"reason": format!("local I/O error: {:?}", cause.kind())}))
+}
+
 fn indexed(target: &Path, index: &Path, args: &[&str]) -> Result<String, CliError> {
     let mut command = Command::new("git");
     command.args(args).current_dir(target);
     lease::sanitize_git_environment(&mut command);
     command.env("GIT_INDEX_FILE", index);
-    let output = lease::removal_probe(&mut command)
-        .map_err(|_| failure("bounded snapshot operation failed"))?;
+    let output = lease::removal_probe(&mut command).map_err(|error| {
+        failure("bounded snapshot operation failed")
+            .with_details(json!({"reason": probe_error_reason(&error)}))
+    })?;
     if !output.status.success() {
         return Err(failure("snapshot index operation failed")
-            .with_details(json!({"reason":String::from_utf8_lossy(&output.stderr)})));
+            .with_details(json!({"reason":git_error_reason(&output)})));
     }
     String::from_utf8(output.stdout)
         .map(|s| s.trim().to_owned())
@@ -101,12 +115,12 @@ pub(in crate::worktree) fn capture(
             "refs/remotes",
         ],
     )
-    .map_err(|_| failure("HEAD reachability unavailable"))?;
+    .map_err(|error| caused_failure("HEAD reachability unavailable", error))?;
     let status = git(
         target,
         &["status", "--porcelain=v1", "--untracked-files=all"],
     )
-    .map_err(|_| failure("working tree inventory unavailable"))?;
+    .map_err(|error| caused_failure("working tree inventory unavailable", error))?;
     if !status.is_empty() {
         receipt.reasons.push("dirty-or-untracked".into());
         receipt
@@ -133,9 +147,10 @@ pub(in crate::worktree) fn capture(
         ],
         target,
     )
-    .map_err(|_| failure("snapshot file inventory unavailable"))?;
+    .map_err(|error| caused_failure("snapshot file inventory unavailable", error))?;
     if !output.status.success() {
-        return Err(failure("snapshot file inventory failed"));
+        return Err(failure("snapshot file inventory failed")
+            .with_details(json!({"reason": git_error_reason(&output)})));
     }
     let mut files = Vec::new();
     for bytes in output.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
@@ -144,7 +159,7 @@ pub(in crate::worktree) fn capture(
         let metadata = match fs::symlink_metadata(target.join(&path)) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(_) => return Err(failure("snapshot file metadata unavailable")),
+            Err(error) => return Err(io_failure("snapshot file metadata unavailable", error)),
         };
         if metadata.is_file() || metadata.file_type().is_symlink() {
             files.push((path, metadata.len()));
@@ -185,8 +200,8 @@ pub(in crate::worktree) fn capture(
                 .with_details(json!({"backup_max_bytes":receipt.max_bytes,"backup_bytes":receipt.bytes,"backup_omitted_bytes":receipt.omitted_bytes,"backup_omissions":receipt.omissions,"warnings":receipt.warnings})));
         }
     }
-    let temporary =
-        tempfile::tempdir().map_err(|_| failure("snapshot temporary directory unavailable"))?;
+    let temporary = tempfile::tempdir()
+        .map_err(|error| io_failure("snapshot temporary directory unavailable", error))?;
     let index = temporary.path().join("index");
     indexed(target, &index, &["read-tree", &fence.removed_head])?;
     let exclusions = receipt
@@ -197,13 +212,8 @@ pub(in crate::worktree) fn capture(
     let mut add_args = vec!["add", "-A", "--", "."];
     add_args.extend(exclusions.iter().map(String::as_str));
     indexed(target, &index, &add_args)?;
-    for omission in &receipt.omissions {
-        indexed(
-            target,
-            &index,
-            &["update-index", "--force-remove", "--", &omission.path],
-        )?;
-    }
+    // Excluded tracked paths retain HEAD content; excluded untracked paths
+    // never enter the index. Omitting an edit must not invent a deletion.
     let tree = indexed(target, &index, &["write-tree"])?;
     let utc = time::OffsetDateTime::now_utc();
     let formatted = utc
@@ -236,7 +246,8 @@ pub(in crate::worktree) fn capture(
     {
         args.push("-S");
     }
-    let commit = git(target, &args).map_err(|_| failure("snapshot commit could not be written"))?;
+    let commit = git(target, &args)
+        .map_err(|error| caused_failure("snapshot commit could not be written", error))?;
     let slug = target
         .file_name()
         .and_then(|s| s.to_str())
@@ -248,7 +259,7 @@ pub(in crate::worktree) fn capture(
     // Create only: a concurrent snapshot cannot overwrite an existing backup.
     let zero = "0".repeat(commit.len());
     git(target, &["update-ref", &reference, &commit, &zero])
-        .map_err(|_| failure("snapshot reference could not be written"))?;
+        .map_err(|error| caused_failure("snapshot reference could not be written", error))?;
     receipt.reference = Some(reference);
     Ok(receipt)
 }
@@ -309,7 +320,8 @@ pub(in crate::worktree) fn restore(
     }
     args.extend(["--", target_str, branch.as_deref().unwrap_or(&parent)]);
     git(repo, &args)?;
-    let temporary = tempfile::tempdir().map_err(|_| failure("restore index unavailable"))?;
+    let temporary =
+        tempfile::tempdir().map_err(|error| io_failure("restore index unavailable", error))?;
     let index = temporary.path().join("index");
     indexed(target, &index, &["read-tree", &parent])?;
     indexed(target, &index, &["read-tree", "--reset", "-u", reference])?;
