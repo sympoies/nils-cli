@@ -172,13 +172,13 @@ fn observe_locked(
     source: AuthSource,
     confidence: Confidence,
     observed_at: &str,
-) {
+) -> bool {
     let Some(runtime) = record.runtime.as_ref() else {
-        return;
+        return false;
     };
     let event_key = key(&runtime.launch_id, event);
     if store.last_failure_key.as_ref() == Some(&event_key) {
-        return;
+        return true;
     }
     if store
         .incidents
@@ -186,7 +186,7 @@ fn observe_locked(
         .is_some_and(|incident| same_runtime(incident, record) && incident.status == "auth_failed")
     {
         store.last_failure_key = Some(event_key);
-        return;
+        return true;
     }
     store.detection_health = None;
     if store.incidents.len() == MAX_INCIDENTS {
@@ -198,7 +198,7 @@ fn observe_locked(
         });
         let Some(index) = settled else {
             store.detection_health = Some("degraded_queue_capacity".into());
-            return;
+            return false;
         };
         store.incidents.remove(index);
     }
@@ -224,6 +224,7 @@ fn observe_locked(
         notification: Notification::default(),
         recovery_notification: Notification::default(),
     });
+    true
 }
 
 pub(crate) fn observe(
@@ -457,15 +458,16 @@ fn sample(context: &CliContext, record: &SessionRecord, tmux: &Path) -> Result<(
             if terminal_auth_pattern(&current.agent, &text) {
                 if store.terminal_auth_runtime.as_deref() != Some(runtime.launch_id.as_str()) {
                     let event = format!("terminal-auth-status:{}", jiff::Timestamp::now());
-                    observe_locked(
+                    if observe_locked(
                         &mut store,
                         &current,
                         &event,
                         AuthSource::TerminalPattern,
                         Confidence::Inferred,
                         &jiff::Timestamp::now().to_string(),
-                    );
-                    store.terminal_auth_runtime = Some(runtime.launch_id.clone());
+                    ) {
+                        store.terminal_auth_runtime = Some(runtime.launch_id.clone());
+                    }
                 }
             } else {
                 // Re-arm fallback only after the old status line disappears.
@@ -1098,6 +1100,76 @@ mod tests {
             &notification,
             "2030-01-03T00:00:00Z".parse().unwrap()
         ));
+    }
+
+    #[test]
+    fn auth_loss_terminal_fallback_retries_after_capacity_frees() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = record();
+        fs::create_dir_all(session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        let mut store = Store {
+            schema_version: SCHEMA.into(),
+            ..Store::default()
+        };
+        for index in 0..MAX_INCIDENTS {
+            observe_locked(
+                &mut store,
+                &record,
+                &format!("event-{index}"),
+                AuthSource::ClaudeStopFailure,
+                Confidence::Authoritative,
+                "2030-01-01T00:00:00Z",
+            );
+            let incident = store.incidents.last_mut().unwrap();
+            incident.status = "recovered".into();
+            incident.recovery_result = Some("healthy".into());
+        }
+        save(&context, &record, &store).unwrap();
+        let tmux = tmp.path().join("fake-tmux");
+        fs::write(
+            &tmux,
+            "#!/bin/sh\nprintf '⎿  OAuth token revoked · Please run /login\\n❯\\n'\n",
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        sample(&context, &record, &tmux).unwrap();
+        let mut refused = read(&context, &record).unwrap();
+        assert_eq!(
+            refused.detection_health.as_deref(),
+            Some("degraded_queue_capacity")
+        );
+        assert_eq!(
+            refused.terminal_auth_runtime, None,
+            "refusal must not latch an unaccepted incident"
+        );
+        deliver_with(&mut refused, |_, _, _| {
+            Ok(json!({"message_id":"fixture", "state":"delivered"}))
+        });
+        save(&context, &record, &refused).unwrap();
+        for _ in 0..3 {
+            sample(&context, &record, &tmux).unwrap();
+        }
+        let admitted = read(&context, &record).unwrap();
+        assert_eq!(admitted.incidents.len(), MAX_INCIDENTS);
+        assert_eq!(
+            admitted.incidents.last().unwrap().source,
+            AuthSource::TerminalPattern
+        );
+        assert_eq!(admitted.incidents.last().unwrap().status, "auth_failed");
+        assert!(
+            admitted
+                .incidents
+                .last()
+                .unwrap()
+                .notification
+                .delivered_at
+                .is_none()
+        );
     }
 
     #[test]
