@@ -1917,7 +1917,7 @@ mod tests {
             incarnation: "old".into(),
             generation: 1,
             capability_file: dir.path().join("unused-capability"),
-            format: crate::cli::OutputFormat::Json,
+            format: nils_common::cli_contract::OutputFormat::Json,
         };
         mark_degraded(&context, &args);
         mark_degraded(&context, &args);
