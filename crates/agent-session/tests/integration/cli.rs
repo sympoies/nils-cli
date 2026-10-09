@@ -10455,9 +10455,18 @@ fn lifecycle_review_generated_id_is_resolved_after_prompt_input() {
             "--format",
             "json",
         ],
-        &[("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log.to_str().unwrap())],
+        &[
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log.to_str().unwrap()),
+            ("AGENT_SESSION_FAKE_TMUX_ABSENT_AFTER_KILL", "1"),
+        ],
     );
-    assert_eq!(cleanup.code, 0, "{}", cleanup.stderr_text());
+    assert_eq!(
+        cleanup.code,
+        0,
+        "{} {}",
+        cleanup.stdout_text(),
+        cleanup.stderr_text()
+    );
 }
 
 #[test]
