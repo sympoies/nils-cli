@@ -1107,7 +1107,7 @@ fn live_proxy_marker(context: &CliContext, record: &SessionRecord) -> Option<Run
     }
     read_runtime_process_marker_file(&mut file).filter(|marker| {
         valid_runtime_process_marker(
-            &marker,
+            marker,
             record,
             PROXY_CAPABILITY_VERSION,
             PROXY_CAPABILITY_TTL,
