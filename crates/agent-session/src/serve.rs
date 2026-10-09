@@ -5529,7 +5529,7 @@ async fn history_resume_handler(
     let context = state.context.clone();
     let before = load_session_record(&context, &id).ok();
     let response = history_resume_handler_inner(State(state), headers, AxPath(id.clone())).await;
-    crate::lifecycle::response(&context, &id, "import", before, response).await
+    crate::lifecycle::response(&context, &id, "history-resume", before, response).await
 }
 
 async fn history_resume_handler_inner(
@@ -5546,7 +5546,7 @@ async fn history_resume_handler_inner(
     let profiles = state.launch_profiles.clone();
     let machine = state.machine.clone();
     let result = tokio::task::spawn_blocking(move || {
-        let _journal_owner = crate::lifecycle::ServeGuard::enter("import");
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("history-resume");
         let history = catalog.resolve_fresh(&id).map_err(history_resume_catalog_error)?;
         let expected_id = provider_history::stable_history_id(
             &history.provider,
