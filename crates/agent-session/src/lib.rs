@@ -20745,12 +20745,12 @@ fi
     }
 
     #[test]
-    fn lifecycle_review_held_launch_supports_current_and_legacy_brokers() {
+    fn lifecycle_review_held_launch_supports_current_and_older_brokers() {
         use std::fs::File;
         use std::os::fd::FromRawFd;
         use std::process::Stdio;
 
-        for legacy in [false, true] {
+        for older in [false, true] {
             let tmp = tempfile::TempDir::new().unwrap();
             let gate = tmp.path().join("launch-ready");
             let broker_gate = tmp.path().join("broker-provisioned");
@@ -20771,12 +20771,12 @@ case " $* " in
   *" broker stop "*)
     case " $* " in
       *" --exit-code "*)
-        if [ "$HELD_LAUNCH_LEGACY" = 1 ]; then
+        if [ "$HELD_LAUNCH_OLDER" = 1 ]; then
           printf 'flag-rejected\n' >> "$HELD_LAUNCH_EVENTS"; exit 64
         fi
         while [ "$1" != --exit-code ]; do shift; done
         printf 'stop:%s\n' "$2" >> "$HELD_LAUNCH_EVENTS" ;;
-      *) printf 'stop-legacy\n' >> "$HELD_LAUNCH_EVENTS" ;;
+      *) printf 'stop-older\n' >> "$HELD_LAUNCH_EVENTS" ;;
     esac
     ;;
   *) exit 64 ;;
@@ -20835,7 +20835,7 @@ exit 97
                 .env("AGENT_SESSION_STATE_DIR", tmp.path())
                 .env("AGENT_SESSION_ID", "held-launch-test")
                 .env("HELD_LAUNCH_EVENTS", &events)
-                .env("HELD_LAUNCH_LEGACY", if legacy { "1" } else { "0" })
+                .env("HELD_LAUNCH_OLDER", if older { "1" } else { "0" })
                 .stdin(Stdio::from(pty_slave))
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
@@ -20881,8 +20881,8 @@ exit 97
             assert_eq!(status.code(), Some(23));
             assert_eq!(
                 fs::read_to_string(&events).unwrap(),
-                if legacy {
-                    "heartbeat\nprovider-tty\nflag-rejected\nstop-legacy\n"
+                if older {
+                    "heartbeat\nprovider-tty\nflag-rejected\nstop-older\n"
                 } else {
                     "heartbeat\nprovider-tty\nstop:23\n"
                 }

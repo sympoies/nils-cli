@@ -515,11 +515,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let context = context(dir.path());
         let target: SessionRecord = serde_json::from_value(json!({
-            "schema_version": crate::SESSION_DOCUMENT_VERSION, "id":"legacy", "agent":"claude",
+            "schema_version": crate::SESSION_DOCUMENT_VERSION, "id":"older", "agent":"claude",
             "mode":"interactive", "title":null, "cwd":dir.path(), "tmux_session":"fixture",
             "prompt_file":null, "log_file":null, "created_at":"2026-01-01T00:00:00Z", "updated_at":"2026-01-01T00:00:00Z",
-            "runtime":{"kind":"tmux","tmux_session":"fixture","generation":1,"started_at":"2026-01-01T00:00:00Z","launch_id":"legacy"},
-            "delete_tmux_identity":{"launch_id":"legacy","session_id":"$7","pane_id":"%7","pane_pid":7,"process_group_id":7}
+            "runtime":{"kind":"tmux","tmux_session":"fixture","generation":1,"started_at":"2026-01-01T00:00:00Z","launch_id":"older"},
+            "delete_tmux_identity":{"launch_id":"older","session_id":"$7","pane_id":"%7","pane_pid":7,"process_group_id":7}
         })).unwrap();
         record(
             &context,
