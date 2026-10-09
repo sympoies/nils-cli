@@ -1,5 +1,5 @@
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 use std::fs;
 #[cfg(target_os = "linux")]
@@ -351,4 +351,22 @@ fn retirement_unblocks_provisioning_the_next_incarnation() {
         record.provider_resume.as_ref().unwrap().session_id,
         "conversation-id"
     );
+}
+
+#[test]
+fn retirement_refuses_a_live_managed_name_after_tmux_server_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let (context, tmux, capability) = seed(dir.path(), i32::MAX, i32::MAX, 1200);
+    fs::write(
+        &tmux,
+        "#!/bin/sh\ncase \"$*\" in *hs-claude-recoverable*) exit 0;; esac\nprintf 'no server running on fixture socket\\n' >&2\nexit 1\n",
+    )
+    .unwrap();
+    let output = retire(&context, &tmux, &["--apply"]);
+    assert_ne!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["error"]["details"]["proof_step"],
+        "tmux-target-absent"
+    );
+    assert!(capability.exists());
 }

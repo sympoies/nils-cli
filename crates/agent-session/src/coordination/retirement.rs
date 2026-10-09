@@ -96,7 +96,13 @@ fn retire_locked(context: &CliContext, args: BrokerRetireStoppedArgs) -> Result<
     let group_absent = identity.as_ref().is_some_and(process_boundary_absent);
     let prior_absent = crate::persisted_prior_tmux_runtime_identities(&record).is_ok_and(|prior| {
         prior.iter().all(|identity| {
-            crate::verify_stopped_tmux_runtime(&tmux, identity, Duration::ZERO).is_ok()
+            crate::verify_stopped_tmux_runtime(
+                &tmux,
+                &record.tmux_session,
+                identity,
+                Duration::ZERO,
+            )
+            .is_ok()
         })
     });
     let now = now_epoch();
