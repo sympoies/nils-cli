@@ -58,6 +58,43 @@ fn worktree_remove_retains_dirty_content_without_force() {
     );
 }
 
+// Process visibility must cover the complete fixture, including its real holders.
+// A private Linux PID/proc namespace keeps unrelated host processes out of the
+// positive fixtures without weakening the production fail-closed proof.
+fn delegate_removal_fixture() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        const MARKER: &str = "NILS_GIT_CLI_REMOVAL_FIXTURE_NAMESPACE";
+        if std::env::var_os(MARKER).as_deref() == Some(std::ffi::OsStr::new("1")) {
+            return false;
+        }
+        let thread = std::thread::current();
+        let test = thread.name().expect("named libtest thread");
+        let result = std::process::Command::new("unshare")
+            .args([
+                "--user",
+                "--map-current-user",
+                "--pid",
+                "--fork",
+                "--mount",
+                "--mount-proc",
+                "--",
+            ])
+            .arg(std::env::current_exe().expect("test executable"))
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env(MARKER, "1")
+            .status()
+            .expect("Linux removal fixtures require unshare with user/PID/mount namespaces");
+        assert!(
+            result.success(),
+            "isolated removal fixture {test}: {result}"
+        );
+        true
+    }
+    #[cfg(not(target_os = "linux"))]
+    false
+}
+
 struct RemovalFixture {
     harness: GitCliHarness,
     repo: tempfile::TempDir,
@@ -212,7 +249,38 @@ impl RemovalFixture {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn safe_removal_fixture_excludes_unreadable_host_processes() {
+    if std::env::var_os("NILS_GIT_CLI_REMOVAL_FIXTURE_NAMESPACE").is_none() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("python3")
+            .args(["-c", "import ctypes,time; assert ctypes.CDLL(None).prctl(4,0,0,0,0)==0; print('ready',flush=True); time.sleep(30)"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut ready = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        assert_eq!(ready.trim(), "ready");
+        let delegated = std::panic::catch_unwind(delegate_removal_fixture);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(delegated.unwrap());
+        return;
+    }
+    let fixture = RemovalFixture::new();
+    let result = fixture.remove("safe");
+    assert_eq!(result.code, 0, "{}", result.stdout_text());
+    assert!(!Path::new(&fixture.target).exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn safe_removal_linux_benign_lsof_warning_does_not_hide_idle_proof() {
+    if delegate_removal_fixture() {
+        return;
+    }
     let fixture = RemovalFixture::new();
     fixture.probes.write_exe(
         "lsof",
@@ -229,6 +297,9 @@ fn safe_removal_linux_benign_lsof_warning_does_not_hide_idle_proof() {
 
 #[test]
 fn safe_removal_caller_inside_target_is_retained_with_outside_recovery() {
+    if delegate_removal_fixture() {
+        return;
+    }
     let fixture = RemovalFixture::new();
     let result = fixture.remove_from(Path::new(&fixture.target), "safe");
     let value = parse_json(&result);
@@ -245,6 +316,9 @@ fn safe_removal_caller_inside_target_is_retained_with_outside_recovery() {
 #[cfg(target_os = "linux")]
 #[test]
 fn safe_removal_unreadable_live_current_user_retains_target() {
+    if delegate_removal_fixture() {
+        return;
+    }
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
     let fixture = RemovalFixture::new();
@@ -274,6 +348,9 @@ fn safe_removal_unreadable_live_current_user_retains_target() {
 
 #[test]
 fn safe_removal_registry_fencing_diagnostic_names_root_and_recovery() {
+    if delegate_removal_fixture() {
+        return;
+    }
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::PermissionsExt;
     let fixture = RemovalFixture::new();
@@ -308,6 +385,9 @@ fn safe_removal_registry_fencing_diagnostic_names_root_and_recovery() {
 
 #[test]
 fn safe_removal_queries_the_explicit_session_state_root() {
+    if delegate_removal_fixture() {
+        return;
+    }
     let fixture = RemovalFixture::new();
     fs::write(
         fixture.home.path().join("sessions/live-sessions.json"),
@@ -327,6 +407,9 @@ fn safe_removal_queries_the_explicit_session_state_root() {
 
 #[test]
 fn safe_removal_retains_target_bound_to_a_different_session_inventory() {
+    if delegate_removal_fixture() {
+        return;
+    }
     let fixture = RemovalFixture::new();
     let mut startup = nils_common::worktree_lifecycle::Guard::acquire_startup(
         &fs::canonicalize(fixture.home.path().join("lease-state")).unwrap(),
@@ -342,6 +425,9 @@ fn safe_removal_retains_target_bound_to_a_different_session_inventory() {
 
 #[test]
 fn safe_removal_retains_target_behind_startup_lifecycle_barrier() {
+    if delegate_removal_fixture() {
+        return;
+    }
     use sha2::{Digest, Sha256};
     use std::os::fd::AsRawFd;
     use std::os::unix::{
@@ -380,6 +466,9 @@ fn safe_removal_retains_target_behind_startup_lifecycle_barrier() {
 
 #[test]
 fn safe_removal_branch_cleanup_proves_managed_clean_success_and_dirty_retention() {
+    if delegate_removal_fixture() {
+        return;
+    }
     for dirty in [false, true] {
         let fixture = RemovalFixture::new();
         let unfinished = Path::new(&fixture.target).join("unfinished.txt");
@@ -418,6 +507,9 @@ fn safe_removal_branch_cleanup_proves_managed_clean_success_and_dirty_retention(
 
 #[test]
 fn safe_removal_holds_lifecycle_guard_through_git_deletion() {
+    if delegate_removal_fixture() {
+        return;
+    }
     use nils_common::worktree_lifecycle::{Error, Guard};
     use std::time::{Duration, Instant};
     let fixture = RemovalFixture::new();
@@ -452,6 +544,9 @@ fn safe_removal_holds_lifecycle_guard_through_git_deletion() {
 
 #[test]
 fn safe_removal_idle_clean_merged_succeeds_in_advisory() {
+    if delegate_removal_fixture() {
+        return;
+    }
     let fixture = RemovalFixture::new();
     let removed_head = git(Path::new(&fixture.target), &["rev-parse", "HEAD"])
         .trim()
@@ -490,6 +585,9 @@ fn safe_removal_idle_clean_merged_succeeds_in_advisory() {
 
 #[test]
 fn safe_removal_accepts_freshly_pushed_merged_commit() {
+    if delegate_removal_fixture() {
+        return;
+    }
     let fixture = RemovalFixture::new();
     fixture.commit();
     git(Path::new(&fixture.target), &["push", "origin", "HEAD"]);
@@ -502,6 +600,9 @@ fn safe_removal_accepts_freshly_pushed_merged_commit() {
 
 #[test]
 fn safe_removal_requires_exact_provider_head_for_squash_merge() {
+    if delegate_removal_fixture() {
+        return;
+    }
     for exact in [true, false] {
         let fixture = RemovalFixture::new();
         fixture.commit();
@@ -543,6 +644,9 @@ fn safe_removal_requires_exact_provider_head_for_squash_merge() {
 
 #[test]
 fn safe_removal_fences_active_claim_and_nonterminal_operation_bindings() {
+    if delegate_removal_fixture() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
     for claim_state in ["active", "released"] {
         let fixture = RemovalFixture::new();
@@ -571,6 +675,9 @@ fn safe_removal_fences_active_claim_and_nonterminal_operation_bindings() {
 
 #[test]
 fn safe_removal_allows_known_terminal_claim_states() {
+    if delegate_removal_fixture() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
     for state in ["released", "expired", "stale"] {
         let fixture = RemovalFixture::new();
@@ -600,6 +707,9 @@ fn safe_removal_allows_known_terminal_claim_states() {
 
 #[test]
 fn safe_removal_retains_semantically_unknown_ownership_state() {
+    if delegate_removal_fixture() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
     for unknown_claim in [true, false] {
         let fixture = RemovalFixture::new();
@@ -629,6 +739,9 @@ fn safe_removal_retains_semantically_unknown_ownership_state() {
 
 #[test]
 fn safe_removal_retains_unknown_registry_state_and_locked_target() {
+    if delegate_removal_fixture() {
+        return;
+    }
     let fixture = RemovalFixture::new();
     git(fixture.repo.path(), &["worktree", "lock", &fixture.target]);
     let result = fixture.remove("safe");
@@ -650,6 +763,9 @@ fn safe_removal_retains_unknown_registry_state_and_locked_target() {
 
 #[test]
 fn safe_removal_retains_unpushed_and_pushed_unmerged_commits() {
+    if delegate_removal_fixture() {
+        return;
+    }
     for pushed in [false, true] {
         let fixture = RemovalFixture::new();
         fixture.commit();
@@ -662,6 +778,9 @@ fn safe_removal_retains_unpushed_and_pushed_unmerged_commits() {
 
 #[test]
 fn safe_removal_retains_live_session_binding_and_unknown_inventory() {
+    if delegate_removal_fixture() {
+        return;
+    }
     let fixture = RemovalFixture::new();
     fixture.probes.write_exe(
         "agent-session",
@@ -680,6 +799,9 @@ fn safe_removal_retains_live_session_binding_and_unknown_inventory() {
 
 #[test]
 fn safe_removal_retains_active_checkout_lease_including_requester() {
+    if delegate_removal_fixture() {
+        return;
+    }
     use sha2::{Digest, Sha256};
     use std::os::unix::fs::PermissionsExt;
     let fixture = RemovalFixture::new();
@@ -727,6 +849,9 @@ fn safe_removal_retains_active_checkout_lease_including_requester() {
 
 #[test]
 fn safe_removal_retains_process_cwd_and_open_file() {
+    if delegate_removal_fixture() {
+        return;
+    }
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
     for kind in ["cwd", "fd", "maps"] {
@@ -771,6 +896,9 @@ fn safe_removal_retains_process_cwd_and_open_file() {
 
 #[test]
 fn safe_removal_retains_incomplete_process_proof_and_unmanaged_target() {
+    if delegate_removal_fixture() {
+        return;
+    }
     let fixture = RemovalFixture::new();
     fixture.probes.write_exe(
         "lsof",
@@ -1290,6 +1418,9 @@ fn worktree_go_unknown_target_errors_in_json() {
 
 #[test]
 fn worktree_remove_refuses_primary_and_removes_managed_slug() {
+    if delegate_removal_fixture() {
+        return;
+    }
     let fixture = RemovalFixture::new();
     fs::create_dir(fixture.repo.path().join("safe")).unwrap();
     let primary = fixture.remove(fixture.repo.path().to_str().unwrap());
