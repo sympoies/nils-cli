@@ -84,11 +84,11 @@ fn attempt_resolved<T>(
     let result = run();
     let resolved = resolve_id(&result);
     let id = resolved.as_deref().unwrap_or(id);
-    let before = before.filter(|record| record.id == id);
+    let before = before.as_ref().filter(|record| record.id == id);
     let after = crate::load_session_record(context, id).ok();
     record(
         context,
-        after.as_ref().or(before.as_ref()),
+        after.as_ref().or(before),
         id,
         operation,
         if serve_owner.is_some() {
