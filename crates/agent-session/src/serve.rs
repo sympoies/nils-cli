@@ -22285,7 +22285,7 @@ esac
         let launcher = fake_agent(tmp.path(), "fixture-provider");
         let tmux = executable(
             &tmp.path().join("failed-tmux"),
-            "#!/bin/sh\ncase \"$1\" in\n new-session) exit 42 ;;\n display-message) printf '%s\\n' 'malformed identity'; exit 0 ;;\n has-session) exit 0 ;;\n *) exit 0 ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n new-session) exit 0 ;;\n display-message) printf '%s\\n' 'malformed identity'; exit 0 ;;\n has-session) exit 0 ;;\n *) exit 0 ;;\nesac\n",
         );
         let profile = AgentLaunchProfiles::from_json(
             &json!([{
