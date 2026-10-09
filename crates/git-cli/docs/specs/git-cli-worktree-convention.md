@@ -40,8 +40,15 @@ removal. Use `git-cli worktree remove <slug-or-path> --safe --format json` from
 outside the target; the explicit flag makes older binaries fail closed before
 their forced removal. Current binaries always apply the same safety checks.
 
-The cleanup transaction holds the runtime checkout lease lock and agent-session
-registry lock through removal. It requires clean stable checkout/admin identity,
+The cleanup transaction holds a shared checkout lifecycle fence, the runtime
+checkout lease lock, and the agent-session registry lock through removal, in
+that acquisition order. Matching `agent-session` launch and resume paths hold
+the lifecycle fence before publishing startup state or entering tmux until
+registration or failure rollback completes. Install matching released launch
+and removal implementations with the same `AGENT_SESSION_STATE_DIR` (or default
+state root); older launchers do not participate in this protocol.
+
+It requires clean stable checkout/admin identity,
 no Git operation or active checkout lease (including the requester), no live
 session cwd/binding or nonterminal operation, and a complete `lsof` inventory
 with no process cwd or open file under the target. Missing tools, warnings,
@@ -54,7 +61,10 @@ head of a provider-confirmed merged PR/MR targeting that default branch.
 Remote/default proof is fetched rather than inferred from cached refs; provider
 proof uses `forge-cli`. This also covers squash/rebase merges and deleted remote
 feature branches. Unpushed or unmerged HEADs are retained. Removal leaves the
-local branch intact and prunes stale worktree metadata.
+local branch intact and prunes stale worktree metadata. The JSON receipt includes
+`removed_branch`, `removed_head`, and `delivery_proof`: its `basis` is
+`remote-default-ancestry` or `provider-exact-head-merge`, with `default_branch`,
+`default_head`, and the provider `pr_number` for the latter.
 
 `go` resolves a single worktree (in priority order: exact branch name, explicit
 worktree path, managed slug, then worktree directory basename) and prints its
@@ -100,7 +110,8 @@ Error responses use stable `error.code` values such as `branch-exists`,
 `worktree-path-exists`, `worktree-not-found`, `refuse-primary-worktree`, and
 `removal-dirty`, `removal-unmanaged`, `removal-process-active`,
 `removal-session-active`, `removal-head-undelivered`, `removal-target-changed`,
-`removal-lease-active-or-unavailable`, and `removal-proof-unavailable`.
+`removal-lifecycle-busy`, `removal-lease-active-or-unavailable`, and
+`removal-proof-unavailable`.
 
 `git-cli worktree` and `git-cli branch cleanup --remove-worktrees` share the
 worktree listing parser and managed path convention. Branch batch cleanup routes linked candidates through the same fence and retains

@@ -29,6 +29,11 @@ Workspace-level keep/delete ownership decisions are tracked in
 
 ## Modules and purpose
 
+- `worktree_lifecycle`: private, canonical checkout-keyed cross-process exclusion
+  shared by session startup and worktree removal. Immediate lock contention
+  returns a structured result; callers own error text and retain the RAII guard
+  through launch/registration/rollback or deletion. Persistent lock files use
+  the shared session state root and must not be unlinked.
 - `forge_identity`: optional strict user policy, shared principal/profile resolution, credential actor verification, process-local
   Git identity, and private metadata audit; [contract](docs/specs/forge-identity-policy-v1.md).
 - `env`: truthy parsing helpers, env-presence checks, `NO_COLOR` and prompt-segment color toggles, duration parsing, and trimmed non-empty

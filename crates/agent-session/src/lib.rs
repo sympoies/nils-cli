@@ -2349,6 +2349,7 @@ fn start_session_inner(
         ));
     }
     let cwd = resolve_cwd(args.cwd.as_deref())?;
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
     let provider_plan = initial_provider_resume_plan(
         args.agent,
@@ -2728,6 +2729,7 @@ fn start_session_inner(
 fn start_run_session(context: &CliContext, args: cli::RunArgs) -> Result<StartView, CliError> {
     validate_agent_args(args.agent, &args.agent_args)?;
     let cwd = resolve_cwd(args.cwd.as_deref())?;
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
     let prompt = prompt
         .filter(|value| !value.trim().is_empty())
@@ -2964,6 +2966,7 @@ fn start_resolved_provider_resume_session(
     cwd: PathBuf,
     provider_resume: ProviderResume,
 ) -> Result<StartView, CliError> {
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
     let initial_lineage = args.initial_lineage;
@@ -10720,6 +10723,7 @@ fn resume_session_locked(
     mut record: SessionRecord,
     tmux_bin: &Path,
 ) -> Result<ResumeSessionOutcome, CliError> {
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, Path::new(&record.cwd))?;
     ensure_session_lifecycle_mutation_allowed(context, &record)?;
     orchestration::ensure_session_not_quarantined(context, &record)?;
     match session_status(context, tmux_bin, &record).as_str() {
@@ -18424,6 +18428,41 @@ fn resolve_state_dir(explicit: Option<PathBuf>) -> Result<PathBuf, CliError> {
     Ok(normalize_path(&home.join(".local/state/agent-session")))
 }
 
+fn acquire_worktree_lifecycle(
+    context: &CliContext,
+    cwd: &Path,
+) -> Result<Option<nils_common::worktree_lifecycle::Guard>, CliError> {
+    use nils_common::worktree_lifecycle::{self, Error};
+    let adapt = |error| {
+        let code = match error {
+            Error::Busy => "worktree-lifecycle-busy",
+            Error::Changed => "worktree-lifecycle-changed",
+            Error::Unavailable => "worktree-lifecycle-unavailable",
+        };
+        CliError::runtime(
+            code,
+            "checkout startup must wait until lifecycle proof is available",
+            Some(json!({ "retryable": matches!(error, Error::Busy) })),
+        )
+    };
+    let Some(root) = worktree_lifecycle::checkout_root(cwd).map_err(adapt)? else {
+        return Ok(None);
+    };
+    let _state_root = private_session_state_root(context)?;
+    let guard = worktree_lifecycle::Guard::acquire(&context.state_dir, &root).map_err(adapt)?;
+    // A removal that won after root resolution must not allow startup to
+    // publish a session for the now-missing checkout or nested cwd.
+    if worktree_lifecycle::checkout_root(cwd)
+        .map_err(adapt)?
+        .as_ref()
+        != Some(&root)
+    {
+        return Err(adapt(Error::Changed));
+    }
+    guard.verify().map_err(adapt)?;
+    Ok(Some(guard))
+}
+
 fn resolve_cwd(explicit: Option<&Path>) -> Result<PathBuf, CliError> {
     let cwd = match explicit {
         Some(path) => absolute_path(path)?,
@@ -19476,6 +19515,88 @@ mod tests {
         strip_trailing_blank_lines, tmux_launch_may_have_created_runtime,
         try_acquire_session_record_lock, write_session_record,
     };
+
+    #[test]
+    fn worktree_lifecycle_blocks_provider_import_and_existing_resume() {
+        use super::*;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let checkout = tmp.path().join("checkout");
+        fs::create_dir(&checkout).unwrap();
+        assert!(
+            ProcessCommand::new("git")
+                .current_dir(&checkout)
+                .args(["init", "--quiet"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = create_record(RecordRequest {
+            context: &context,
+            agent: AgentKind::Codex,
+            mode: "interactive",
+            coordination_mode: cli::CoordinationMode::Advisory,
+            title: None,
+            title_state: None,
+            explicit_id: Some("existing"),
+            cwd: &checkout,
+            prompt: None,
+            log_file_name: None,
+            provider_resume: None,
+            agent_args: Vec::new(),
+            agent_bin: None,
+        })
+        .unwrap()
+        .record;
+        let record_path = context.state_dir.join("sessions/existing/session.json");
+        let before = fs::read(&record_path).unwrap();
+        let _guard =
+            nils_common::worktree_lifecycle::Guard::acquire(&context.state_dir, &checkout).unwrap();
+        let args = ProviderResumeImportArgs {
+            agent: AgentKind::Codex,
+            title_mode: display_metadata::TitleMode::Auto,
+            provider_resume_id: "provider-fixture".into(),
+            title: None,
+            title_state: None,
+            id: Some("imported".into()),
+            coordination_mode: cli::CoordinationMode::Advisory,
+            tmux_bin: Some(tmp.path().join("never-launch")),
+            agent_bin: None,
+            agent_profile: None,
+            provider_config_dir: None,
+            profile_auto_resume_supported: None,
+            profile_graceful_shutdown: None,
+            codex_usage_account: None,
+            agent_args: Vec::new(),
+            initial_lineage: InitialLineage {
+                seed: lineage::LineageSeed::root("fixture", "user", "test"),
+                work: None,
+                role: None,
+            },
+            format: OutputFormat::Json,
+        };
+        let provider_resume = ProviderResume {
+            provider: "codex".into(),
+            session_id: "provider-fixture".into(),
+            captured_at: "2030-01-01T00:00:00Z".into(),
+            capture_method: "fixture".into(),
+            resume_args: Vec::new(),
+            extra: BTreeMap::new(),
+        };
+        let imported =
+            start_resolved_provider_resume_session(&context, args, checkout, provider_resume)
+                .unwrap_err();
+        pretty_assertions::assert_eq!(imported.code(), "worktree-lifecycle-busy");
+        assert!(!context.state_dir.join("sessions/imported").exists());
+        let resumed = resume_session_locked(&context, record, &tmp.path().join("never-launch"))
+            .err()
+            .expect("resume must retain the barrier");
+        pretty_assertions::assert_eq!(resumed.code(), "worktree-lifecycle-busy");
+        pretty_assertions::assert_eq!(fs::read(record_path).unwrap(), before);
+    }
 
     #[test]
     fn managed_dsh_profile_assigns_provider_identity_before_launch() {

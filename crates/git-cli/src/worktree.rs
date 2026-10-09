@@ -125,6 +125,9 @@ struct WorktreeEntryOutput {
 #[derive(Debug, Serialize)]
 struct RemoveOutput {
     removed_path: String,
+    removed_branch: Option<String>,
+    removed_head: String,
+    delivery_proof: removal::DeliveryProof,
     pruned: bool,
 }
 
@@ -540,12 +543,15 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
     let target_arg = display_path(&target);
     // The explicit flag is also a fail-closed capability marker for callers:
     // older binaries reject it before reaching their forced removal.
-    let _fence = removal::fence(&target, &layout)?;
+    let fence = removal::fence(&target, &layout)?;
     removal::remove(&target, &layout.repo_root)?;
     run_git_worktree_prune()?;
 
     Ok(RemoveOutput {
         removed_path: target_arg,
+        removed_branch: fence.removed_branch,
+        removed_head: fence.removed_head,
+        delivery_proof: fence.delivery_proof,
         pruned: true,
     })
 }

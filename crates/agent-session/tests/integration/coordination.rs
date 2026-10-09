@@ -124,6 +124,77 @@ fn worktree_lifecycle_removal_barrier_prevents_start_and_run_publication() {
     }
 }
 
+#[test]
+fn worktree_lifecycle_guard_survives_launch_and_failure_rollback() {
+    use nils_common::worktree_lifecycle::{Error, Guard};
+    for verb in ["start", "run"] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let checkout = tmp.path().join("checkout");
+        init_checkout(&checkout, "https://example.invalid/example/repository.git");
+        let state = tmp.path().join("state");
+        let marker = tmp.path().join("launch-entered");
+        let release = tmp.path().join("launch-release");
+        let tmux = tmp.path().join("tmux");
+        fs::write(&tmux, "#!/bin/sh\nfor arg in \"$@\"; do\n if [ \"$arg\" = new-session ]; then\n  touch \"$LIFECYCLE_MARKER\"\n  count=0\n  while [ ! -f \"$LIFECYCLE_RELEASE\" ] && [ \"$count\" -lt 500 ]; do sleep 0.01; count=$((count+1)); done\n  exit 1\n fi\ndone\nexit 0\n").unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let agent = fake_agent(tmp.path(), "codex");
+        let mut command = Command::new(bin::resolve("agent-session"));
+        nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+        command
+            .current_dir(tmp.path())
+            .args([
+                "--state-dir",
+                state.to_str().unwrap(),
+                verb,
+                "--agent",
+                "codex",
+                "--id",
+                "lifecycle-lifetime",
+                "--cwd",
+                checkout.to_str().unwrap(),
+                "--tmux-bin",
+                tmux.to_str().unwrap(),
+                "--agent-bin",
+                agent.to_str().unwrap(),
+                "--coordination-mode",
+                "advisory",
+                "--format",
+                "json",
+            ])
+            .env("LIFECYCLE_MARKER", &marker)
+            .env("LIFECYCLE_RELEASE", &release)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if verb == "run" {
+            command.args(["--prompt", "fixture prompt"]);
+        }
+        let child = command.spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while !marker.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let held = Guard::acquire(&state, &checkout);
+        // Release before asserting, so even a regression reaps the fake launch.
+        fs::write(&release, "release").unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            marker.exists(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            matches!(held, Err(Error::Busy)),
+            "guard dropped before launch finished"
+        );
+        assert!(!output.status.success());
+        assert!(
+            Guard::acquire(&state, &checkout).is_ok(),
+            "rollback leaked its guard"
+        );
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn provider_stop_canary_test_capability() -> Result<(), String> {
     let cgroup = fs::read_to_string("/proc/self/cgroup")

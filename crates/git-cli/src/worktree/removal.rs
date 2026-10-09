@@ -1,6 +1,8 @@
 //! Fail-closed managed cleanup. Locks survive until the lifecycle call returns.
 use super::{CliError, WorktreeLayout, dirty_checkout_adoption as lease, is_managed_worktree};
 use nils_common::coordination_projection;
+use nils_common::worktree_lifecycle;
+use serde::Serialize;
 use serde_json::Value;
 use std::os::unix::fs::MetadataExt;
 use std::{
@@ -10,8 +12,21 @@ use std::{
 };
 
 pub(super) struct Fence {
-    _checkout: lease::RemovalLeaseGuard,
     _registry: lease::RemovalLeaseGuard,
+    _checkout: lease::RemovalLeaseGuard,
+    _lifecycle: worktree_lifecycle::Guard,
+    pub(super) removed_branch: Option<String>,
+    pub(super) removed_head: String,
+    pub(super) delivery_proof: DeliveryProof,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DeliveryProof {
+    basis: &'static str,
+    default_branch: String,
+    default_head: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pr_number: Option<u64>,
 }
 
 fn refused(code: &'static str, message: &str) -> CliError {
@@ -155,7 +170,7 @@ fn processes_idle(target: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
-fn delivered(target: &Path, head: &str) -> Result<(), CliError> {
+fn delivered(target: &Path, head: &str) -> Result<DeliveryProof, CliError> {
     // Query the remote now: cached refs cannot prove that the head was pushed.
     let advertised = git(target, &["ls-remote", "--symref", "origin", "HEAD"])?;
     let default = advertised
@@ -214,7 +229,12 @@ fn delivered(target: &Path, head: &str) -> Result<(), CliError> {
     .status
     .success()
     {
-        return Ok(());
+        return Ok(DeliveryProof {
+            basis: "remote-default-ancestry",
+            default_branch: default.to_string(),
+            default_head,
+            pr_number: None,
+        });
     }
     // Squash/rebase merge proof is provider-bound to the exact published head.
     let branch = git(target, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
@@ -252,7 +272,12 @@ fn delivered(target: &Path, head: &str) -> Result<(), CliError> {
                 .as_str()
                 .is_some_and(|value| !value.is_empty())
         {
-            return Ok(());
+            return Ok(DeliveryProof {
+                basis: "provider-exact-head-merge",
+                default_branch: default.to_string(),
+                default_head,
+                pr_number: Some(number),
+            });
         }
     }
     Err(refused(
@@ -270,6 +295,17 @@ pub(super) fn fence(target: &Path, layout: &WorktreeLayout) -> Result<Fence, Cli
     }
     let target = fs::canonicalize(target)
         .map_err(|_| refused("removal-proof-unavailable", "removal target is missing"))?;
+    let state = session_root()?;
+    // Lock order is lifecycle -> checkout lease -> registry. The lifecycle
+    // barrier covers launch before session registration and survives deletion.
+    let lifecycle = worktree_lifecycle::Guard::acquire(&state, &target).map_err(|error| {
+        let code = match error {
+            worktree_lifecycle::Error::Busy => "removal-lifecycle-busy",
+            worktree_lifecycle::Error::Changed => "removal-target-changed",
+            worktree_lifecycle::Error::Unavailable => "removal-proof-unavailable",
+        };
+        refused(code, "checkout lifecycle fencing is busy or unavailable")
+    })?;
     let identity = fs::metadata(&target).map_err(|_| {
         refused(
             "removal-proof-unavailable",
@@ -294,8 +330,27 @@ pub(super) fn fence(target: &Path, layout: &WorktreeLayout) -> Result<Fence, Cli
         )
     })?;
     let head = git(&target, &["rev-parse", "--verify", "HEAD"])?;
-    delivered(&target, &head)?;
-    let state = session_root()?;
+    let branch = probe(
+        "git",
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        &target,
+    )?;
+    let removed_branch = if branch.status.success() {
+        Some(
+            String::from_utf8(branch.stdout)
+                .map_err(|_| refused("removal-proof-unavailable", "target branch is unreadable"))?
+                .trim()
+                .to_string(),
+        )
+    } else if branch.status.code() == Some(1) {
+        None
+    } else {
+        return Err(refused(
+            "removal-proof-unavailable",
+            "target branch is unavailable",
+        ));
+    };
+    let delivery_proof = delivered(&target, &head)?;
     // `list` is the session owner's public liveness projection, not raw state.
     let sessions = json(
         "agent-session",
@@ -401,6 +456,12 @@ pub(super) fn fence(target: &Path, layout: &WorktreeLayout) -> Result<Fence, Cli
         }
     }
     processes_idle(&target)?;
+    lifecycle.verify().map_err(|_| {
+        refused(
+            "removal-target-changed",
+            "checkout lifecycle identity changed during proof",
+        )
+    })?;
     checkout.verify_target().map_err(|_| {
         refused(
             "removal-target-changed",
@@ -427,8 +488,12 @@ pub(super) fn fence(target: &Path, layout: &WorktreeLayout) -> Result<Fence, Cli
         ));
     }
     Ok(Fence {
-        _checkout: checkout,
         _registry: registry,
+        _checkout: checkout,
+        _lifecycle: lifecycle,
+        removed_branch,
+        removed_head: head,
+        delivery_proof,
     })
 }
 

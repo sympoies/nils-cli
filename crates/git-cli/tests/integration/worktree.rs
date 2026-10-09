@@ -82,6 +82,7 @@ impl RemovalFixture {
         let home = tempfile::TempDir::new().unwrap();
         for directory in [
             home.path().join("lease-state"),
+            home.path().join("sessions"),
             home.path().join("sessions/coordination"),
         ] {
             fs::create_dir_all(&directory).unwrap();
@@ -267,6 +268,40 @@ fn safe_removal_branch_cleanup_proves_managed_clean_success_and_dirty_retention(
             );
         }
     }
+}
+
+#[test]
+fn safe_removal_holds_lifecycle_guard_through_final_process_proof() {
+    use nils_common::worktree_lifecycle::{Error, Guard};
+    use std::time::{Duration, Instant};
+    let fixture = RemovalFixture::new();
+    let marker = fixture.home.path().join("proof-entered");
+    let release = fixture.home.path().join("proof-release");
+    let quote = nils_common::shell::quote_posix_single;
+    fixture.probes.write_exe("lsof", &format!(
+        "#!/bin/sh\ntouch {}\ncount=0\nwhile [ ! -f {} ] && [ \"$count\" -lt 500 ]; do sleep 0.01; count=$((count+1)); done\nexit 1\n",
+        quote(marker.to_str().unwrap()), quote(release.to_str().unwrap()),
+    ));
+    std::thread::scope(|scope| {
+        let removing = scope.spawn(|| fixture.remove("safe"));
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while !marker.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let held = Guard::acquire(
+            &fixture.home.path().join("sessions"),
+            Path::new(&fixture.target),
+        );
+        fs::write(&release, "release").unwrap();
+        let result = removing.join().unwrap();
+        assert!(marker.exists(), "{}", result.stdout_text());
+        assert!(
+            matches!(held, Err(Error::Busy)),
+            "removal dropped guard before deletion"
+        );
+        assert_eq!(result.code, 0, "{}", result.stdout_text());
+        assert!(!Path::new(&fixture.target).exists());
+    });
 }
 
 #[test]
