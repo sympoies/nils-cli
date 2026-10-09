@@ -1973,7 +1973,7 @@ mod tests {
     fn fixture() -> (tempfile::TempDir, CliContext) {
         let temp = tempfile::TempDir::new().expect("private temp root");
         let context = CliContext {
-            state_dir: temp.path().to_path_buf(),
+            state_dir: fs::canonicalize(temp.path()).expect("canonical state root"),
             host: None,
         };
         let directory = context.state_dir.join("sessions/recipient/coordination");
