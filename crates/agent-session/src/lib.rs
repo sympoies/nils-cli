@@ -18428,6 +18428,74 @@ fn resolve_state_dir(explicit: Option<PathBuf>) -> Result<PathBuf, CliError> {
     Ok(normalize_path(&home.join(".local/state/agent-session")))
 }
 
+/// Resolve nested cwd to its physical Git checkout, without inherited Git
+/// retargeting. Ordinary non-repository directories have no checkout fence.
+fn resolve_worktree_lifecycle_root(
+    state: &Path,
+    cwd: &Path,
+) -> Result<Option<PathBuf>, nils_common::worktree_lifecycle::Error> {
+    use nils_common::worktree_lifecycle::{self, Error};
+    use std::os::unix::ffi::OsStringExt;
+    let cwd = fs::canonicalize(cwd).map_err(|_| Error::Unavailable)?;
+    if !cwd.ancestors().any(|path| path.join(".git").exists()) {
+        return worktree_lifecycle::prior_checkout_root(state, &cwd);
+    }
+    // This identity probe cannot use a PATH shim that reports a different
+    // checkout key from the one removal uses.
+    let mut command = ProcessCommand::new("/usr/bin/git");
+    command
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    for (key, _) in std::env::vars_os() {
+        if key.as_bytes().starts_with(b"GIT_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("LC_ALL", "C");
+    let mut child = command.spawn().map_err(|_| Error::Unavailable)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::Unavailable);
+            }
+        }
+    };
+    if !status.success() {
+        return Err(Error::Unavailable);
+    }
+    let mut bytes = Vec::new();
+    child
+        .stdout
+        .take()
+        .ok_or(Error::Unavailable)?
+        .take(65_537)
+        .read_to_end(&mut bytes)
+        .map_err(|_| Error::Unavailable)?;
+    if bytes.len() > 65_536 || bytes.pop() != Some(b'\n') || bytes.is_empty() {
+        return Err(Error::Unavailable);
+    }
+    let root = fs::canonicalize(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+        .map_err(|_| Error::Unavailable)?;
+    if !cwd.starts_with(&root) {
+        return Err(Error::Unavailable);
+    }
+    Ok(Some(root))
+}
+
 fn acquire_worktree_lifecycle(
     context: &CliContext,
     cwd: &Path,
@@ -18445,7 +18513,7 @@ fn acquire_worktree_lifecycle(
             Some(json!({ "retryable": matches!(error, Error::Busy) })),
         )
     };
-    let Some(root) = worktree_lifecycle::checkout_root(&context.state_dir, cwd).map_err(adapt)?
+    let Some(root) = resolve_worktree_lifecycle_root(&context.state_dir, cwd).map_err(adapt)?
     else {
         return Ok(None);
     };
@@ -18453,7 +18521,7 @@ fn acquire_worktree_lifecycle(
     let guard = worktree_lifecycle::Guard::acquire(&context.state_dir, &root).map_err(adapt)?;
     // A removal that won after root resolution must not allow startup to
     // publish a session for the now-missing checkout or nested cwd.
-    if worktree_lifecycle::checkout_root(&context.state_dir, cwd)
+    if resolve_worktree_lifecycle_root(&context.state_dir, cwd)
         .map_err(adapt)?
         .as_ref()
         != Some(&root)

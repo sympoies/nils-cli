@@ -4,13 +4,11 @@
 //! Lock files are persistent: unlinking them would split the exclusion domain.
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io;
 use std::os::fd::AsRawFd;
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum Error {
@@ -22,80 +20,22 @@ pub enum Error {
     Changed,
 }
 
-/// Resolve nested cwd to its physical Git checkout, without inherited Git
-/// retargeting. Ordinary non-repository directories have no checkout fence.
-pub fn checkout_root(state: &Path, cwd: &Path) -> Result<Option<PathBuf>, Error> {
+/// Find a prior canonical checkout key for a nested cwd. This retains identity
+/// while a remover deletes the Git marker before deleting the directory.
+/// The returned candidate still requires Guard::acquire and its private proof.
+pub fn prior_checkout_root(state: &Path, cwd: &Path) -> Result<Option<PathBuf>, Error> {
     let cwd = fs::canonicalize(cwd).map_err(|_| Error::Unavailable)?;
-    if !cwd.ancestors().any(|path| path.join(".git").exists()) {
-        // Git may already have removed .git while deleting a checkout. Its
-        // remover created the persistent root lock first. Preserve that key
-        // instead of allowing startup to misclassify the directory as non-Git.
-        for ancestor in cwd.ancestors() {
-            let lock = state
-                .join("coordination/worktree-lifecycle")
-                .join(format!("{}.lock", checkout_key(ancestor)));
-            match fs::symlink_metadata(lock) {
-                Ok(_) => return Ok(Some(ancestor.to_path_buf())),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(_) => return Err(Error::Unavailable),
-            }
-        }
-        return Ok(None);
-    }
-    // This identity probe cannot use a PATH shim that reports a different
-    // checkout key from the one removal uses.
-    let mut command = Command::new("/usr/bin/git");
-    command
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(&cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    for (key, _) in std::env::vars_os() {
-        if key.as_bytes().starts_with(b"GIT_") {
-            command.env_remove(key);
+    for ancestor in cwd.ancestors() {
+        let lock = state
+            .join("coordination/worktree-lifecycle")
+            .join(format!("{}.lock", checkout_key(ancestor)));
+        match fs::symlink_metadata(lock) {
+            Ok(_) => return Ok(Some(ancestor.to_path_buf())),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err(Error::Unavailable),
         }
     }
-    command
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("LC_ALL", "C");
-    let mut child = command.spawn().map_err(|_| Error::Unavailable)?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(Error::Unavailable);
-            }
-        }
-    };
-    if !status.success() {
-        return Err(Error::Unavailable);
-    }
-    let mut bytes = Vec::new();
-    child
-        .stdout
-        .take()
-        .ok_or(Error::Unavailable)?
-        .take(65_537)
-        .read_to_end(&mut bytes)
-        .map_err(|_| Error::Unavailable)?;
-    if bytes.len() > 65_536 || bytes.pop() != Some(b'\n') || bytes.is_empty() {
-        return Err(Error::Unavailable);
-    }
-    let root = fs::canonicalize(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
-        .map_err(|_| Error::Unavailable)?;
-    if !cwd.starts_with(&root) {
-        return Err(Error::Unavailable);
-    }
-    Ok(Some(root))
+    Ok(None)
 }
 
 fn identity(metadata: &fs::Metadata) -> (u64, u64) {
@@ -239,25 +179,22 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let root = tmp.path().join("checkout");
         fs::create_dir(&root).unwrap();
-        assert!(
-            Command::new("/usr/bin/git")
-                .current_dir(&root)
-                .args(["init", "--quiet"])
-                .status()
-                .unwrap()
-                .success()
-        );
+        fs::create_dir(root.join(".git")).unwrap();
         let nested = root.join("nested");
         fs::create_dir(&nested).unwrap();
         let state = tmp.path().join("state");
         let physical = fs::canonicalize(&root).unwrap();
+        pretty_assertions::assert_eq!(prior_checkout_root(&state, &nested).unwrap(), None);
+        let _guard = Guard::acquire(&state, &root).unwrap();
         pretty_assertions::assert_eq!(
-            checkout_root(&state, &nested).unwrap(),
+            prior_checkout_root(&state, &nested).unwrap(),
             Some(physical.clone())
         );
-        let _guard = Guard::acquire(&state, &root).unwrap();
         fs::remove_dir_all(root.join(".git")).unwrap();
-        pretty_assertions::assert_eq!(checkout_root(&state, &nested).unwrap(), Some(physical));
+        pretty_assertions::assert_eq!(
+            prior_checkout_root(&state, &nested).unwrap(),
+            Some(physical)
+        );
     }
 
     #[test]
