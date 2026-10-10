@@ -81,6 +81,46 @@ impl Drop for EnvGuard {
     }
 }
 
+/// Point forge identity and config lookups at empty directories under `root` and
+/// clear the forge principal, for an in-process test. Hold the returned guards for
+/// the test's duration; they restore the previous values on drop.
+pub fn isolate_forge_identity_env(lock: &GlobalStateLock, root: &Path) -> Vec<EnvGuard> {
+    vec![
+        EnvGuard::set(
+            lock,
+            "XDG_CONFIG_HOME",
+            &root.join("xdg-config").to_string_lossy(),
+        ),
+        EnvGuard::set(
+            lock,
+            "XDG_STATE_HOME",
+            &root.join("xdg-state").to_string_lossy(),
+        ),
+        EnvGuard::remove(lock, "FORGE_IDENTITY_PRINCIPAL"),
+    ]
+}
+
+/// In-process forge identity isolation for one test: holds the global lock, a
+/// temp config root, and the env guards. Fields drop in declaration order, so the
+/// environment is restored before the lock is released.
+pub struct ForgeIdentityIsolation {
+    _env: Vec<EnvGuard>,
+    _root: tempfile::TempDir,
+    _lock: GlobalStateLock,
+}
+
+/// Start in-process forge identity isolation with a fresh temp root.
+pub fn isolate_forge_identity() -> ForgeIdentityIsolation {
+    let lock = GlobalStateLock::new();
+    let root = tempfile::TempDir::new().expect("isolated config dir");
+    let env = isolate_forge_identity_env(&lock, root.path());
+    ForgeIdentityIsolation {
+        _env: env,
+        _root: root,
+        _lock: lock,
+    }
+}
+
 pub struct CwdGuard {
     original: PathBuf,
 }

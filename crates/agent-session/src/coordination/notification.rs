@@ -3,6 +3,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+#[path = "notification_recovery.rs"]
+mod recovery;
+
 use super::{Registry, now_epoch};
 use crate::{CliContext, CliError};
 
@@ -266,6 +269,7 @@ pub(crate) fn normalize_registry(registry: &mut Registry, now: i64) -> bool {
         registry.notifications.insert(key, receipt);
     }
 
+    recovery::refresh(registry, now);
     original_snapshot != serde_json::to_value(&registry.notifications).ok()
 }
 
@@ -290,6 +294,7 @@ pub(crate) fn schedule(
     receipt.message_id = compatibility_message_id(&key, receipt.generation);
     receipt.queued_at_epoch = now;
     receipt.updated_at_epoch = now;
+    recovery::resume_new_generation(receipt, now);
     if !matches!(receipt.state.as_str(), "attempting" | "attempt_unknown") {
         receipt.state = "queued".to_string();
         receipt.last_reason = Some(REASON_PENDING.to_string());
@@ -406,8 +411,7 @@ pub(super) fn submission_fences_session(
         .get(&receipt_key(target_session_id, target_incarnation))
         .is_some_and(|receipt| {
             receipt.state == "attempting"
-                && receipt.attempted_generation == receipt.generation
-                && receipt.generation > receipt.notified_generation
+                && receipt.attempted_generation > receipt.notified_generation
         })
 }
 
@@ -942,6 +946,7 @@ mod tests {
             forwarded_at_epoch: None,
             category: None,
             forwarding: None,
+            resume_carry: None,
             body_bytes: 0,
             body: String::new(),
         }
@@ -1040,13 +1045,16 @@ mod tests {
             102
         ));
 
-        // A later send re-dates the generation, but reconciliation of the
-        // uncertain attempt must still rebuild the prompt it submitted.
-        schedule(&mut registry, "target", "incarnation", 150);
-        let unresolved = unresolved_candidates(&mut registry, 151);
-        assert_eq!(unresolved.len(), 1);
-        assert_eq!(unresolved[0].generation, scheduled.generation);
-        assert_eq!(unresolved[0].queued_at_epoch, 100);
+        assert_eq!(candidate.generation, scheduled.generation);
+        // New mail owns a fresh generation without rewriting the attempted
+        // prompt's timestamp or accepting its unknown older outcome.
+        let latest = schedule(&mut registry, "target", "incarnation", 150);
+        let receipt = registry.notifications.values().next().unwrap();
+        assert_eq!(receipt.attempted_queued_at_epoch, 100);
+        assert!(unresolved_candidates(&mut registry, 151).is_empty());
+        let pending = pending_candidates(&mut registry, 151);
+        assert_eq!(pending[0].generation, latest.generation);
+        assert_eq!(pending[0].queued_at_epoch, 150);
     }
 
     #[test]

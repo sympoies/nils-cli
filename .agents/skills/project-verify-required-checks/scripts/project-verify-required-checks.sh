@@ -25,9 +25,11 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
   - bash scripts/ci/tests/publish-order-audit.test.sh
   - bash scripts/ci/tests/docs-hygiene-audit.test.sh
+  - bash scripts/ci/tests/file-size-audit.test.sh
   - bash scripts/ci/tests/prepare-private-release-workflow.test.sh
   - bash scripts/ci/skill-shell-suites.sh
   - bash scripts/ci/test-stale-audit.sh --strict
+  - bash scripts/ci/file-size-audit.sh --strict
   - bash scripts/ci/workspace-version-lockstep.sh --strict
   - bash scripts/ci/crate-naming-audit.sh
   - bash scripts/ci/publish-order-audit.sh --strict
@@ -66,7 +68,7 @@ Environment:
     For a CI lane whose sibling lane already runs the doc tests.
   NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1
     Skip the audits whose result does not depend on the OS:
-    test-stale-audit, completion-freshness-audit, completion-flag-parity-audit.
+    test-stale-audit, file-size-audit, completion-freshness-audit, completion-flag-parity-audit.
     For a CI lane whose sibling lane already runs them.
 
 Exit codes:
@@ -200,9 +202,11 @@ run bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
 run bash scripts/ci/tests/publish-order-audit.test.sh
 run bash scripts/ci/tests/docs-hygiene-audit.test.sh
 run bash scripts/ci/tests/workspace-test-stale-audit.test.sh
+run bash scripts/ci/tests/file-size-audit.test.sh
 run bash scripts/ci/tests/prepare-private-release-workflow.test.sh
 run bash scripts/ci/skill-shell-suites.sh
 run_os_independent_audit bash scripts/ci/test-stale-audit.sh --strict
+run_os_independent_audit bash scripts/ci/file-size-audit.sh --strict
 run bash scripts/ci/workspace-version-lockstep.sh --strict
 run bash scripts/ci/crate-naming-audit.sh
 run bash scripts/ci/publish-order-audit.sh --strict
