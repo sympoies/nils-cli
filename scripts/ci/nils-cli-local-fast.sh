@@ -477,6 +477,11 @@ run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/tempdir-leak-audit.test.sh
 run bash scripts/ci/tests/tempdir-leak-probe.test.sh
 
+# file-size-audit ratchets Rust source sizes against a committed baseline. It
+# needs no build, so it runs for every code change set, as CI does.
+run bash scripts/ci/file-size-audit.sh --strict --base "$base"
+run bash scripts/ci/tests/file-size-audit.test.sh
+
 if [[ "$third_party_artifacts" -eq 1 ]]; then
   run bash scripts/ci/third-party-artifacts-audit.sh --strict
 fi

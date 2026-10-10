@@ -385,10 +385,12 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/publish-order-audit.test.sh`
 - `bash scripts/ci/tests/docs-hygiene-audit.test.sh`
 - `bash scripts/ci/tests/workspace-test-stale-audit.test.sh`
+- `bash scripts/ci/tests/file-size-audit.test.sh`
 - `bash scripts/ci/tests/prepare-private-release-workflow.test.sh`
 - `bash scripts/ci/skill-shell-suites.sh` (runs every
   `.agents/skills/*/tests/test_*.sh` smoke suite)
 - `bash scripts/ci/test-stale-audit.sh --strict`
+- `bash scripts/ci/file-size-audit.sh --strict` (see the file-size ratchet below)
 - `bash scripts/ci/workspace-version-lockstep.sh --strict`
 - `bash scripts/ci/crate-naming-audit.sh`
 - `bash scripts/ci/publish-order-audit.sh --strict`
@@ -401,6 +403,29 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo test --workspace` (or `cargo nextest run --profile ci --workspace`
   plus `cargo test --workspace --doc` when `NILS_CLI_TEST_RUNNER=nextest`)
+
+### File-size ratchet
+
+`scripts/ci/file-size-audit.sh` limits each tracked `crates/**/*.rs` file to
+2,000 implementation lines and 3,000 test lines. Test lines are the lines of
+top-level `#[cfg(test)]` and `#[cfg(all(test, ..))]` items, plus whole files
+under `tests/` or `benches/` and files reached through an out-of-line
+`#[cfg(test)] mod x;`. An item ends at its first `;` or `{` outside `(..)` and
+`[..]`. Comments and literals are skipped when matching braces.
+
+Files already over a limit are recorded in
+`scripts/ci/file-size-baseline.tsv` (`path<TAB>kind<TAB>lines`). Strict mode
+fails when:
+
+- a file without a baseline row is over a limit;
+- a baselined file grew;
+- a baseline row is stale: the file is gone, is now within its limit, or shrank.
+- the per-kind sum of baseline values rose against the merge base with
+  `origin/main` (override with `--base <ref>`). A rename may move its row to the
+  new path, but cannot raise the total.
+
+When a PR shrinks or removes an over-limit file, refresh the baseline in the same
+PR with `bash scripts/ci/file-size-audit.sh --update-baseline` and commit it.
 
 ## 4.1 Supply-chain audit (cargo-deny)
 
