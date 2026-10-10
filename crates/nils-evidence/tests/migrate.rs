@@ -1654,6 +1654,7 @@ fn promotion_only_keeps_records_with_heuristic_inbox_link() {
 #[test]
 #[cfg(unix)]
 fn push_failure_records_no_digest_and_re_run_dedups_via_catalog() {
+    let _config = isolate_config();
     // Added coverage: when `git push` fails, apply errors out, no digest is
     // recorded in the (now-removed) sentinel, and a re-run still dedups via the
     // catalog written before the push attempt.
