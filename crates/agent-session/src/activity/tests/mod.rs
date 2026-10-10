@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::{
     CliContext, ProviderResume, RecordRequest, SessionRecord, create_record, write_session_record,
