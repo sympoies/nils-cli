@@ -419,7 +419,7 @@ fn resume_does_not_carry_a_deleted_sessions_mail_into_a_recreated_session() {
         ],
         &[
             ("AGENT_SESSION_FAKE_TMUX_LOG", &fixture.tmux_log_arg),
-            ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
+            ("AGENT_SESSION_FAKE_TMUX_ABSENT", "1"),
         ],
     );
     assert_eq!(deleted.code, 0, "stderr={}", deleted.stderr_text());
