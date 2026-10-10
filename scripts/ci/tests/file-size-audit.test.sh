@@ -16,8 +16,11 @@ set -euo pipefail
 #   - a baseline row for a deleted file fails;
 #   - the per-kind baseline total cannot increase against the base ref, while a
 #     rename that moves its row passes;
-#   - in-file #[cfg(test)] and #[cfg(all(test, ..))] items are counted as test
-#     lines, #[cfg(any(test, ..))] items are not;
+#   - in-file #[cfg(test)] and #[cfg(all(.., test, ..))] items (test in any
+#     top-level position) are counted as test lines; #[cfg(any(test, ..))] and
+#     #[cfg(all(.., not(test)))] items are not;
+#   - a measurement-helper change may move lines between kinds, but cannot raise
+#     the combined baseline total;
 #   - test-only files under tests/, and out-of-line #[cfg(test)] mod files, are
 #     counted as test lines;
 #   - a `;` inside [..] or (..) in an item signature does not end the item;
@@ -346,6 +349,72 @@ case_cfg_all_test_items_count_as_test_and_any_test_items_do_not() {
   echo "ok"
 }
 
+case_cfg_all_test_in_any_position_counts_as_test() {
+  echo "== #[cfg(all(.., test))] counts as test in any position; not(test) does not =="
+  local dir
+  dir="$(make_repo cfg-all-position)"
+  mkdir -p "$dir/crates/demo/src"
+  {
+    echo "fn a() {}"
+    echo '#[cfg(all(target_os = "linux", test))]'
+    echo "mod tests {"
+    gen_lines 3000
+    echo "}"
+    echo '#[cfg(all(unix, not(test)))]'
+    echo "fn production() {"
+    gen_lines 2000
+    echo "}"
+  } >"$dir/crates/demo/src/gates.rs"
+  commit_all "$dir" base
+
+  run_audit "$dir" --update-baseline
+  expect_status "update baseline" 0
+  baseline_has "$dir" "crates/demo/src/gates.rs${T}test${T}3003" || fail "all(.., test) module must be 3003 test lines"
+  baseline_has "$dir" "crates/demo/src/gates.rs${T}impl${T}2004" || fail "all(.., not(test)) item must stay implementation lines"
+  echo "ok"
+}
+
+case_helper_change_compares_combined_total() {
+  echo "== a measurement-helper change may reclassify lines but not raise the combined total =="
+  local dir
+  dir="$(make_repo helper-reclassify)"
+  mkdir -p "$dir/crates/demo/src"
+  {
+    gen_lines 2100
+    echo '#[cfg(all(unix, test))]'
+    echo "mod tests {"
+    gen_lines 3100
+    echo "}"
+  } >"$dir/crates/demo/src/gates.rs"
+  # The base baseline records the file as the previous rule measured it: all
+  # 5,203 lines as implementation.
+  write_baseline "$dir" "crates/demo/src/gates.rs${T}impl${T}5203"
+  commit_all "$dir" base
+  base_ref="$(git -C "$dir" rev-parse HEAD)"
+
+  # The rule change reclassifies 3,103 lines as test; the combined total stays 5,203.
+  echo "# rule change" >>"$dir/scripts/ci/lib/rust_file_size.py"
+  run_audit "$dir" --update-baseline
+  expect_status "update baseline after rule change" 0
+  baseline_has "$dir" "crates/demo/src/gates.rs${T}impl${T}2100" || fail "reclassified impl row must be 2100"
+  baseline_has "$dir" "crates/demo/src/gates.rs${T}test${T}3103" || fail "reclassified test row must be 3103"
+  commit_all "$dir" reclassify
+  run_audit "$dir" --strict
+  expect_status "reclassification passes strict" 0
+  expect_not_contains "no total regression for reclassification" "type=baseline-total-increased"
+
+  # With the helper still changed, a new over-limit file raises the combined total.
+  gen_lines 2001 >"$dir/crates/demo/src/extra.rs"
+  commit_all "$dir" add-extra
+  run_audit "$dir" --update-baseline
+  commit_all "$dir" raise
+  run_audit "$dir" --strict
+  expect_status "combined total increase fails strict" 1
+  expect_contains "combined total increase reported" "type=baseline-total-increased kind=combined base=5203 current=7204"
+  base_ref=HEAD
+  echo "ok"
+}
+
 case_signature_semicolon_inside_brackets_does_not_end_item() {
   echo "== a ';' inside [..] or (..) in a test item signature does not end the item =="
   local dir
@@ -408,6 +477,8 @@ case_in_file_test_module_counts_as_test_lines
 case_raw_string_column_zero_brace_does_not_end_module
 case_out_of_line_and_tests_dir_files_are_test_only
 case_cfg_all_test_items_count_as_test_and_any_test_items_do_not
+case_cfg_all_test_in_any_position_counts_as_test
+case_helper_change_compares_combined_total
 case_signature_semicolon_inside_brackets_does_not_end_item
 case_non_strict_warns_without_failing
 case_unresolvable_base_fails_strict

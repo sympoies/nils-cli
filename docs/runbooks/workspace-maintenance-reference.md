@@ -408,7 +408,8 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 
 `scripts/ci/file-size-audit.sh` limits each tracked `crates/**/*.rs` file to
 2,000 implementation lines and 3,000 test lines. Test lines are the lines of
-top-level `#[cfg(test)]` and `#[cfg(all(test, ..))]` items, plus whole files
+top-level `#[cfg(test)]` items and `#[cfg(all(..))]` items with `test` as one
+of the top-level `all` arguments (in any position), plus whole files
 under `tests/` or `benches/` and files reached through an out-of-line
 `#[cfg(test)] mod x;`. An item ends at its first `;` or `{` outside `(..)` and
 `[..]`. Comments and literals are skipped when matching braces.
@@ -422,7 +423,10 @@ fails when:
 - a baseline row is stale: the file is gone, is now within its limit, or shrank.
 - the per-kind sum of baseline values rose against the merge base with
   `origin/main` (override with `--base <ref>`). A rename may move its row to the
-  new path, but cannot raise the total.
+  new path, but cannot raise the total. When the change set modifies
+  `scripts/ci/lib/rust_file_size.py`, the combined implementation-plus-test sum
+  is compared instead, so a measurement-rule change may move lines between
+  kinds but still cannot raise the total.
 
 When a PR shrinks or removes an over-limit file, refresh the baseline in the same
 PR with `bash scripts/ci/file-size-audit.sh --update-baseline` and commit it.

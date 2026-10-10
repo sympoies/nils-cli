@@ -17,8 +17,8 @@ crates/agent-session/src/codex_app_server.rs	test	8821
 crates/agent-session/src/coordination/claims.rs	impl	2964
 crates/agent-session/src/coordination/mod.rs	impl	3643
 crates/agent-session/src/group_lifecycle.rs	test	3976
-crates/agent-session/src/lib.rs	impl	19488
-crates/agent-session/src/lib.rs	test	8097
+crates/agent-session/src/lib.rs	impl	19446
+crates/agent-session/src/lib.rs	test	8139
 crates/agent-session/src/orchestration.rs	impl	6518
 crates/agent-session/src/provider_history.rs	impl	3079
 crates/agent-session/src/retitle.rs	impl	3408
