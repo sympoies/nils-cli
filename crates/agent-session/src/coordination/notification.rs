@@ -942,6 +942,7 @@ mod tests {
             forwarded_at_epoch: None,
             category: None,
             forwarding: None,
+            resume_carry: None,
             body_bytes: 0,
             body: String::new(),
         }

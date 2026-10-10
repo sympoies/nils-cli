@@ -192,6 +192,64 @@ pub(super) fn record_recipient_transfer(
     Ok(())
 }
 
+/// Called only under the registry lock while a verified resume replaces the
+/// exact predecessor incarnation. The predecessor recipient attests its own
+/// transfer, so `controller` equals `from`; no forwarder authority is claimed.
+pub(super) fn record_resume_transfer(
+    message: &mut StoredMessage,
+    machine: &str,
+    current_incarnation: &str,
+    now: i64,
+) -> Result<(), CliError> {
+    let Some(existing) = &message.forwarding else {
+        return Ok(());
+    };
+    let from = Address {
+        machine: machine.into(),
+        session_id: message.recipient_session_id.clone(),
+        session_incarnation: message.recipient_incarnation.clone(),
+    };
+    let to = Address {
+        session_incarnation: current_incarnation.into(),
+        ..from.clone()
+    };
+    if from == to
+        || !existing.valid(&from, &message.body, message.expires_at_epoch, now)
+        || existing
+            .hops
+            .iter()
+            .map(|hop| hop.recipient_transfers.len())
+            .sum::<usize>()
+            >= MAX_RECIPIENT_TRANSFERS
+        || existing.hops.last().is_none_or(|hop| {
+            hop.recipient_transfers
+                .last()
+                .is_some_and(|t| t.message_id != message.message_id)
+        })
+    {
+        return Err(invalid());
+    }
+    let mut audit = existing.clone();
+    audit
+        .hops
+        .last_mut()
+        .ok_or_else(invalid)?
+        .recipient_transfers
+        .push(RecipientTransfer {
+            message_id: message.message_id.clone(),
+            from: from.clone(),
+            to: to.clone(),
+            controller: from,
+            source_revision: message.revision,
+            transferred_at_epoch: now,
+        });
+    if !audit.valid(&to, &message.body, message.expires_at_epoch, now) {
+        return Err(invalid());
+    }
+    message.forwarding = Some(audit);
+    Ok(())
+}
+
 fn same_session(left: &Address, right: &Address) -> bool {
     left.machine == right.machine && left.session_id == right.session_id
 }
@@ -314,7 +372,9 @@ impl Provenance {
                     || !valid_address(&transfer.controller)
                     || !same_session(&transfer.from, &transfer.to)
                     || transfer.from.session_incarnation == transfer.to.session_incarnation
-                    || transfer.controller != hop.forwarder
+                    // A controller carry is attested by the hop forwarder; a
+                    // same-session resume carry by its exact predecessor.
+                    || (transfer.controller != hop.forwarder && transfer.controller != transfer.from)
                     || transfer.controller.machine != transfer.from.machine
                     || uuid::Uuid::parse_str(&transfer.message_id).is_err()
                     || transfer.source_revision == 0
@@ -431,6 +491,35 @@ mod tests {
         let mut value = serde_json::to_value(&forwarded).unwrap();
         value["hops"][1]["recipient_transfers"] = serde_json::Value::Null;
         assert!(serde_json::from_value::<Provenance>(value).is_err());
+    }
+
+    #[test]
+    fn resume_transfer_is_attested_by_the_exact_predecessor_and_stays_forwardable() {
+        let coordinator = address("coordinator");
+        let worker = address("receiver");
+        let mut carried = message();
+        let audit = append(&carried, coordinator, worker.clone(), 101).unwrap();
+        carried.message_id = uuid::Uuid::new_v4().to_string();
+        carried.recipient_session_id = worker.session_id.clone();
+        carried.recipient_incarnation = worker.session_incarnation.clone();
+        carried.forwarding = Some(audit);
+        record_resume_transfer(&mut carried, "fixture", "resumed", 102).unwrap();
+        let transfer = carried.forwarding.as_ref().unwrap().hops[0].recipient_transfers[0].clone();
+        assert_eq!(transfer.controller, worker);
+        assert_eq!(transfer.from, worker);
+        assert_eq!(transfer.to.session_incarnation, "resumed");
+        carried.recipient_incarnation = "resumed".into();
+        carried.revision += 1;
+        let actor = Address {
+            session_incarnation: "resumed".into(),
+            ..worker.clone()
+        };
+        let destination = address("target");
+        let forwarded = append(&carried, actor, destination.clone(), 200).unwrap();
+        assert!(forwarded.valid(&destination, "body", 1000, 200));
+        let mut tampered = forwarded.clone();
+        tampered.hops[0].recipient_transfers[0].controller = address("unrelated");
+        assert!(!tampered.valid(&destination, "body", 1000, 200));
     }
 
     #[test]

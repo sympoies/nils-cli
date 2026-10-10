@@ -65,8 +65,32 @@ pub(crate) struct StoredMessage {
     pub category: Option<MessageCategory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forwarding: Option<super::forwarding::Provenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_carry: Option<ResumeCarry>,
     pub body_bytes: usize,
     pub body: String,
+}
+
+/// Same-session resume continuity audit (`sympoies/nils-cli#2302`).
+///
+/// Written only when a verified resume replaced the exact predecessor
+/// incarnation. Sender, creation time, expiry and category are never changed;
+/// this records which incarnations held the message and when it last moved.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct ResumeCarry {
+    pub original_recipient_incarnation: String,
+    pub from_incarnation: String,
+    pub carry_count: u32,
+    pub carried_at: String,
+    pub carried_at_epoch: i64,
+}
+
+/// Incarnation-free projection for the authenticated recipient.
+#[derive(Clone, Debug, Serialize)]
+struct ResumeCarryView {
+    carry_count: u32,
+    carried_at: String,
+    carried_at_epoch: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -86,6 +110,8 @@ struct MessageMetadata {
     category: MessageCategory,
     #[serde(skip_serializing_if = "Option::is_none")]
     forwarding: Option<super::forwarding::Provenance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resume_carry: Option<ResumeCarryView>,
     schema_version: String,
     message_id: String,
     sender: Value,
@@ -1012,6 +1038,7 @@ where
         forwarded_at_epoch: None,
         category,
         forwarding,
+        resume_carry: None,
         body_bytes: body.len(),
         body,
     };
@@ -1124,6 +1151,98 @@ where
         locked.save()?;
     }
     Ok(carried)
+}
+
+/// Same-session resume continuity (`sympoies/nils-cli#2302`).
+///
+/// The caller holds the registry lock and has just proven `previous_incarnation`
+/// is the exact predecessor broker of `session_id` and that its runtime is
+/// stopped, and persists this result together with the replacement broker, so
+/// no mail can still be admitted for the predecessor afterwards. Only unread,
+/// unexpired mail moves, in place: the message ID, sender, timestamps, expiry
+/// and category stay unchanged and the revision advances, so a copy can never be
+/// handled twice. Read or terminal mail, other session IDs and guidance from a
+/// Main Agent controller of this session (which keeps its own authorized
+/// continuity and quarantine) stay with their original incarnation.
+pub(super) fn carry_unread_after_verified_resume(
+    context: &CliContext,
+    registry: &mut Registry,
+    session_id: &str,
+    previous_incarnation: &str,
+    current_incarnation: &str,
+    now: i64,
+) -> usize {
+    if previous_incarnation == current_incarnation {
+        return 0;
+    }
+    let Some(controllers) = main_agent_controllers(context, session_id) else {
+        return 0;
+    };
+    let machine = crate::board::machine_identity(None, context);
+    let mut carried = 0usize;
+    for message in &mut registry.messages {
+        if message.recipient_session_id != session_id
+            || message.recipient_incarnation != previous_incarnation
+            || message.state != "unread"
+            || message.expires_at_epoch <= now
+            || controllers.contains(&message.sender_session_id)
+            || super::forwarding::record_resume_transfer(
+                message,
+                &machine,
+                current_incarnation,
+                now,
+            )
+            .is_err()
+        {
+            continue;
+        }
+        let original = message
+            .resume_carry
+            .as_ref()
+            .map(|carry| carry.original_recipient_incarnation.clone())
+            .unwrap_or_else(|| previous_incarnation.to_string());
+        let carry_count = message
+            .resume_carry
+            .as_ref()
+            .map_or(1, |carry| carry.carry_count.saturating_add(1));
+        message.resume_carry = Some(ResumeCarry {
+            original_recipient_incarnation: original,
+            from_incarnation: previous_incarnation.to_string(),
+            carry_count,
+            carried_at: timestamp(now),
+            carried_at_epoch: now,
+        });
+        message.recipient_incarnation = current_incarnation.to_string();
+        message.revision = message.revision.saturating_add(1);
+        carried = carried.saturating_add(1);
+    }
+    if carried > 0 {
+        let _ = super::notification::schedule(registry, session_id, current_incarnation, now);
+    }
+    carried
+}
+
+/// Local controllers whose guidance to `session_id` Main Agent reconciles
+/// itself; `None` when that relationship cannot be read (carry nothing).
+fn main_agent_controllers(
+    context: &CliContext,
+    session_id: &str,
+) -> Option<std::collections::BTreeSet<String>> {
+    let registry = crate::orchestration::load_registry_readonly(context).ok()?;
+    Some(
+        registry
+            .assignments
+            .values()
+            .filter(|assignment| {
+                assignment
+                    .worker
+                    .iter()
+                    .chain(assignment.previous_worker.iter())
+                    .any(|worker| worker.session_id == session_id)
+            })
+            .map(|assignment| assignment.primary_manager.session_id.clone())
+            .collect(),
+    )
 }
 
 pub(crate) fn quarantine_orphaned_controller_guidance_with_authorization<G, F>(
@@ -1271,6 +1390,11 @@ fn metadata(message: &StoredMessage) -> MessageMetadata {
     MessageMetadata {
         category: message.category.unwrap_or_default(),
         forwarding: message.forwarding.clone(),
+        resume_carry: message.resume_carry.as_ref().map(|carry| ResumeCarryView {
+            carry_count: carry.carry_count,
+            carried_at: carry.carried_at.clone(),
+            carried_at_epoch: carry.carried_at_epoch,
+        }),
         schema_version: message.schema_version.clone(),
         message_id: message.message_id.clone(),
         sender: if let Some(service) = super::service::sender_origin(message) {
@@ -1596,6 +1720,7 @@ mod tests {
             forwarded_at_epoch: None,
             category: None,
             forwarding: None,
+            resume_carry: None,
             body_bytes: bytes,
             body: String::new(),
         }
@@ -1735,6 +1860,7 @@ mod tests {
             forwarded_at_epoch: None,
             category: None,
             forwarding: None,
+            resume_carry: None,
             body_bytes: 6,
             body: "canary".to_string(),
         };
