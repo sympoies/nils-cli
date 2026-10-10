@@ -25,8 +25,8 @@ impl Repo {
         self.dir.path()
     }
 
-    fn git(&self, args: &[&str]) -> String {
-        let output = Command::new("git")
+    fn run(&self, args: &[&str]) -> std::process::Output {
+        Command::new("git")
             .args(args)
             .current_dir(self.path())
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -36,7 +36,11 @@ impl Repo {
             .env("GIT_COMMITTER_NAME", "Fixture")
             .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
             .output()
-            .expect("spawn git");
+            .expect("spawn git")
+    }
+
+    fn git(&self, args: &[&str]) -> String {
+        let output = self.run(args);
         assert!(
             output.status.success(),
             "git {args:?}: {}",
@@ -83,14 +87,10 @@ fn sync(conflicting: bool) -> Sync {
     let main = repo.commit("shared.txt", "one\nmain\nthree\n");
     repo.git(&["checkout", "-q", "feat"]);
     let synced = if conflicting {
-        let output = Command::new("git")
-            .args(["merge", "-q", "--no-edit", "main"])
-            .current_dir(repo.path())
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .output()
-            .unwrap();
+        let output = repo.run(&["merge", "-q", "--no-edit", "main"]);
         assert!(!output.status.success(), "fixture merge must conflict");
+        // The resolution must conclude this merge, so it has both parents.
+        repo.git(&["rev-parse", "--verify", "MERGE_HEAD"]);
         // A hand resolution: the reviewer never saw this content.
         repo.commit("shared.txt", "one\nfeature and main\nthree\n")
     } else {
@@ -241,12 +241,14 @@ fn clean_base_sync_carries_the_pass_and_records_it_once() {
     assert_eq!(data["sync_carry_over"], evidence);
     let bodies = ledger_bodies(&stub);
     assert_eq!(bodies.len(), 3);
-    assert!(
-        bodies[2].contains("review-sync-carry-over"),
-        "{}",
-        bodies[2]
-    );
-    assert!(bodies[2].contains(&s.repo.tree(&s.synced)), "{}", bodies[2]);
+    let record = review_state::parse_state_marker(&bodies[2])
+        .unwrap()
+        .expect("carry-over record");
+    assert_eq!(record.expected_head, s.synced);
+    let ReviewStatePayload::ReviewSyncCarryOver { carry_over } = record.payload else {
+        panic!("unexpected payload: {}", bodies[2]);
+    };
+    assert_eq!(serde_json::to_value(carry_over).unwrap(), evidence);
 
     let again = handoff_cmd(&stub, dir, false, "check", &s.synced);
     assert_eq!(again.code, 0, "{} {}", again.stdout, again.stderr);
