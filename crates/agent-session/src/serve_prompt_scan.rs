@@ -3,26 +3,61 @@
 //! take seconds on a large history; failed scans retry with a capped backoff.
 use super::*;
 
+/// Why no transcript source is available yet.
+enum NoSource {
+    Scanning,
+    Unavailable,
+}
+
 impl ProviderPromptDiscoveryRegistry {
     /// Resolves the transcript source, waiting for a scan when one is due.
     pub(super) async fn resolve_source(
         &self,
         record: &SessionRecord,
     ) -> Option<ProviderPromptSource> {
-        self.resolve(record, true).await
+        self.resolve(record, true).await.ok()
     }
 
     /// The session list never waits for a scan: it starts or shares one and
-    /// reports no source, and a later pass reads the result.
+    /// reports the prompt pending, and a later pass reads the result. A slot
+    /// whose source was invalidated, a scan backoff, or a registry-bound refusal
+    /// reports the prompt unavailable.
     pub(super) async fn cached_source_or_start_scan(
         &self,
         record: &SessionRecord,
-    ) -> Option<ProviderPromptSource> {
-        self.resolve(record, false).await
+        key: &ProviderPromptDiscoveryKey,
+    ) -> Result<ProviderPromptSource, LastPromptProjection> {
+        let scanning = match self.resolve(record, false).await {
+            Ok(source) => return Ok(source),
+            Err(NoSource::Scanning) => true,
+            Err(NoSource::Unavailable) => false,
+        };
+        let slot = self.entries.lock().await.get(key).cloned();
+        let (invalidated, continuity) = match slot {
+            Some(slot) => {
+                let state = slot.lock().await;
+                let continuity = state.last_prompt_continuity.clone();
+                (state.last_prompt_invalidated, Some(continuity))
+            }
+            None => (true, None),
+        };
+        Err(LastPromptProjection {
+            state: if scanning && !invalidated {
+                LastPromptState::Pending
+            } else {
+                LastPromptState::Unavailable
+            },
+            continuity,
+            prompt: None,
+        })
     }
 
-    async fn resolve(&self, record: &SessionRecord, wait: bool) -> Option<ProviderPromptSource> {
-        let key = ProviderPromptDiscoveryKey::from_record(record)?;
+    async fn resolve(
+        &self,
+        record: &SessionRecord,
+        wait: bool,
+    ) -> Result<ProviderPromptSource, NoSource> {
+        let key = ProviderPromptDiscoveryKey::from_record(record).ok_or(NoSource::Unavailable)?;
         let slot = {
             let mut entries = self.entries.lock().await;
             entries.retain(|existing, _| existing.session_id != key.session_id || existing == &key);
@@ -30,7 +65,7 @@ impl ProviderPromptDiscoveryRegistry {
             {
                 // Stable admission avoids turning every list pass above the
                 // registry bound into another expensive cold-recovery scan.
-                return None;
+                return Err(NoSource::Unavailable);
             }
             entries
                 .entry(key.clone())
@@ -44,16 +79,16 @@ impl ProviderPromptDiscoveryRegistry {
         loop {
             let mut state = slot.lock().await;
             if let Some(source) = state.source.clone() {
-                return Some(source);
+                return Ok(source);
             }
             let now = Instant::now();
             if state.next_scan_at.is_some_and(|next| now < next) {
-                return None;
+                return Err(NoSource::Unavailable);
             }
             let mut progress = state.progress.subscribe();
             if state.in_flight {
                 if !wait {
-                    return None;
+                    return Err(NoSource::Scanning);
                 }
                 drop(state);
                 let _ = progress.changed().await;
@@ -89,7 +124,7 @@ impl ProviderPromptDiscoveryRegistry {
                 });
             });
             if !wait {
-                return None;
+                return Err(NoSource::Scanning);
             }
             let _ = progress.changed().await;
         }
@@ -139,8 +174,8 @@ mod tests {
                 ))
             }
         }));
-        // A failed assertion must still release the blocked scan, or runtime
-        // shutdown waits on its blocking thread forever.
+        // A failed assertion must still release the blocked scans, or runtime
+        // shutdown waits on their blocking threads forever.
         struct ReleaseOnDrop(Arc<AtomicBool>);
         impl Drop for ReleaseOnDrop {
             fn drop(&mut self) {
@@ -148,24 +183,59 @@ mod tests {
             }
         }
         let _release_on_drop = ReleaseOnDrop(release.clone());
+        let list_pass = |record: SessionRecord| {
+            let registry = registry.clone();
+            async move {
+                tokio::time::timeout(
+                    Duration::from_millis(500),
+                    registry.last_prompt_projection(&record),
+                )
+                .await
+                .expect("GET /sessions must not wait for a provider-history scan")
+                .expect("projection")
+            }
+        };
         let record =
             provider_discovery_record("slow-history-scan", "hs-slow-scan", "launch-slow-scan", 1);
+        let key = ProviderPromptDiscoveryKey::from_record(&record).expect("discovery key");
 
         for _ in 0..2 {
-            let projection = tokio::time::timeout(
-                Duration::from_millis(500),
-                registry.last_prompt_projection(&record),
-            )
-            .await
-            .expect("GET /sessions must not wait for a provider-history scan")
-            .expect("projection");
-            assert_eq!(projection.state, LastPromptState::Unavailable);
+            let projection = list_pass(record.clone()).await;
+            assert_eq!(
+                projection.state,
+                LastPromptState::Pending,
+                "exact-source discovery in progress is pending"
+            );
             assert_eq!(projection.prompt, None);
+            assert_eq!(
+                projection.continuity,
+                registry.continuity_for_key(&key).await
+            );
         }
         assert_eq!(
             registry.scan_attempts(&record).await,
             1,
             "list passes during a scan must share it, not start another"
+        );
+
+        let bound: Vec<_> = (0..PROVIDER_PROMPT_DISCOVERY_MAX_ENTRIES)
+            .map(|index| {
+                provider_discovery_record(
+                    &format!("bound-{index}"),
+                    &format!("hs-bound-{index}"),
+                    "launch-bound",
+                    1,
+                )
+            })
+            .collect();
+        for record in &bound[..PROVIDER_PROMPT_DISCOVERY_MAX_ENTRIES - 1] {
+            list_pass(record.clone()).await;
+        }
+        let refused = list_pass(bound[PROVIDER_PROMPT_DISCOVERY_MAX_ENTRIES - 1].clone()).await;
+        assert_eq!(
+            refused.state,
+            LastPromptState::Unavailable,
+            "a registry-bound refusal is unavailable, not pending"
         );
 
         release.store(true, Ordering::SeqCst);
@@ -175,11 +245,18 @@ mod tests {
             }
         })
         .await
-        .expect("background scan completes");
+        .expect("background scans complete");
         assert!(
             registry.resolve_source(&record).await.is_some(),
             "the background scan result serves the next pass"
         );
         assert_eq!(registry.scan_attempts(&record).await, 1);
+
+        registry.invalidate_source(&record).await;
+        assert_eq!(
+            list_pass(record.clone()).await.state,
+            LastPromptState::Unavailable,
+            "rediscovery after an invalidated source stays unavailable"
+        );
     }
 }

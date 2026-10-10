@@ -24,7 +24,7 @@ crates/agent-session/src/provider_history.rs	impl	3079
 crates/agent-session/src/retitle.rs	impl	3408
 crates/agent-session/src/retitle_v3.rs	impl	3719
 crates/agent-session/src/retitle_v3.rs	test	3921
-crates/agent-session/src/serve.rs	impl	12581
+crates/agent-session/src/serve.rs	impl	12578
 crates/agent-session/src/serve.rs	test	27068
 crates/agent-session/tests/integration/cli.rs	test	13657
 crates/agent-session/tests/integration/coordination.rs	test	44693

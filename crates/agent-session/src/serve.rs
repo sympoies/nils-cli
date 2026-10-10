@@ -10631,12 +10631,9 @@ impl ProviderPromptDiscoveryRegistry {
         record: &crate::SessionRecord,
     ) -> Option<LastPromptProjection> {
         let key = ProviderPromptDiscoveryKey::from_record(record)?;
-        let Some(source) = self.cached_source_or_start_scan(record).await else {
-            return Some(LastPromptProjection {
-                state: LastPromptState::Unavailable,
-                continuity: self.continuity_for_key(&key).await,
-                prompt: None,
-            });
+        let source = match self.cached_source_or_start_scan(record, &key).await {
+            Ok(source) => source,
+            Err(projection) => return Some(projection),
         };
         let Some(slot) = self.entries.lock().await.get(&key).cloned() else {
             return Some(LastPromptProjection {
