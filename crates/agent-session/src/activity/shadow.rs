@@ -317,9 +317,16 @@ fn sample(record: &SessionRecord, tmux_bin: &Path, phase: &TurnPhase) -> ShadowO
         tmux_bin,
         &["display-message", "-p", "-t", &target, "#{pane_title}"],
     );
+    // Scrollback may retain an interrupt from an earlier turn after the
+    // current viewport has moved on. It cannot establish a fresh interrupt.
+    let capture_lines = if record.agent == "claude" {
+        "0"
+    } else {
+        CAPTURE_LINES
+    };
     let bottom = command_output(
         tmux_bin,
-        &["capture-pane", "-p", "-t", &target, "-S", CAPTURE_LINES],
+        &["capture-pane", "-p", "-t", &target, "-S", capture_lines],
     );
     let (projection, rule_id) = match (title, bottom) {
         (Some(title), Some(bottom)) => classify(&record.agent, &title, &bottom),
@@ -413,6 +420,16 @@ fn claude_interrupt_composer_is_empty(bottom: &str) -> bool {
     else {
         return false;
     };
+    // A submitted prompt after the marker starts a newer turn. The older
+    // interrupt cannot establish idleness for that turn, even if the tool
+    // status has stopped rendering. A draft also cannot establish idleness.
+    if after_marker.lines().map(str::trim).any(|line| {
+        line.strip_prefix('❯')
+            .or_else(|| line.strip_prefix("> "))
+            .is_some_and(|input| !input.trim().is_empty())
+    }) {
+        return false;
+    }
     // Renderer footers and padding may follow the composer. Only the latest
     // composer after the marker may establish idleness; an older one cannot.
     let mut next_nonempty = None;
@@ -568,6 +585,88 @@ mod tests {
             classify("codex", "Codex", pane),
             ("working", "codex_working_indicator")
         );
+    }
+
+    #[test]
+    fn claude_old_interrupt_before_a_fresh_prompt_does_not_establish_idleness() {
+        let bottom = "Interrupted · What should Claude do instead?\n❯ Continue the task\n⏺ Tool progress\n❯\n────────────────\n";
+        assert_ne!(
+            classify("claude", "Claude", bottom).1,
+            "claude_interrupt_marker"
+        );
+        assert_eq!(
+            classify(
+                "claude",
+                "Claude",
+                &format!("{bottom}\n{}", interrupted_pane_with_footer(""))
+            ),
+            ("unknown", "claude_interrupt_marker")
+        );
+    }
+
+    #[test]
+    fn claude_sampler_does_not_reuse_a_previous_turn_marker_from_scrollback() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut record = record("fresh-turn", "launch-a", 1);
+        record.agent = "claude".to_string();
+        let viewport = tmp.path().join("viewport");
+        let scrollback = tmp.path().join("scrollback");
+        let tmux = tmp.path().join("fake-tmux");
+        fs::write(
+            &tmux,
+            format!(
+                "#!/bin/sh\ncase \"$1\" in\n display-message) printf 'Claude\\n' ;;\n capture-pane) case \"$6\" in\n  0) cat {} ;;\n  -20) cat {} ;;\n  *) exit 1 ;;\n esac ;;\nesac\n",
+                shell_words::quote(viewport.to_str().unwrap()),
+                shell_words::quote(scrollback.to_str().unwrap()),
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let interrupted = interrupted_pane_with_footer("");
+        fs::write(&viewport, &interrupted).unwrap();
+        fs::write(&scrollback, &interrupted).unwrap();
+        assert_eq!(
+            sample(&record, &tmux, &TurnPhase::Working).rule_id,
+            "claude_interrupt_marker"
+        );
+
+        let fresh = "⏺ Tool progress\n❯\n────────────────\n";
+        fs::write(&viewport, fresh).unwrap();
+        fs::write(&scrollback, format!("{interrupted}\n{fresh}")).unwrap();
+        let observation = sample(&record, &tmux, &TurnPhase::Working);
+        assert_ne!(observation.rule_id, "claude_interrupt_marker");
+        let mut working = state(json!({
+            "schema_version": "agent-session.turn-state.v1", "phase": "working",
+            "phase_changed_at": now(), "revision": 5,
+            "source": {"kind": "provider_hook", "provider": "claude", "confidence": "observed"},
+            "semantic_event": {"kind": "progress", "observed_at": now()},
+            "current_turn": {"provider_turn_id": "fresh-turn", "started_at": now()}
+        }));
+        let earlier = Timestamp::now()
+            .checked_sub(jiff::SignedDuration::from_secs(20))
+            .unwrap()
+            .to_string();
+        let mut document = ShadowDocument {
+            schema_version: SHADOW_DOCUMENT_VERSION.to_string(),
+            runtime_id: "launch-a".to_string(),
+            runtime_generation: 1,
+            observation,
+            activity_revision: Some(working.revision),
+            interrupt_since: Some(earlier),
+        };
+        project_interrupt_uncertainty(&record, &document, &mut working);
+        assert_eq!(working.phase, TurnPhase::Working);
+
+        fs::write(&viewport, &interrupted).unwrap();
+        fs::write(&scrollback, format!("{fresh}\n{interrupted}")).unwrap();
+        document.observation = sample(&record, &tmux, &working.phase);
+        project_interrupt_uncertainty(&record, &document, &mut working);
+        assert_eq!(working.phase, TurnPhase::Unknown);
+        assert_eq!(
+            working.diagnostic.as_ref().unwrap().reason,
+            "interrupted_suspected"
+        );
+        assert!(working.last_turn.is_none());
     }
 
     #[test]
