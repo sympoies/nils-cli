@@ -1,6 +1,6 @@
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use nils_common::fs::{SECRET_FILE_MODE, display_path};
 use serde_json::{Value, json};
@@ -34,6 +34,17 @@ fn evaluate(context: &CliContext) -> Result<Value, CliError> {
     }))
 }
 
+pub fn checkpoint_path_for_state(state_dir: &Path, session_id: &str, incarnation: &str) -> PathBuf {
+    state_dir
+        .join("sessions")
+        .join(session_id)
+        .join("coordination")
+        .join(format!(
+            "main-agent-checkpoint-{}.json",
+            super::digest_bytes(incarnation.as_bytes())
+        ))
+}
+
 /// Verify the private checkpoint prepared by the broker for this incarnation.
 /// This does not create, repair, read, or write checkpoint contents.
 pub fn ensure_runtime_checkpoint_ready(
@@ -41,7 +52,7 @@ pub fn ensure_runtime_checkpoint_ready(
     record: &SessionRecord,
     incarnation: &str,
 ) -> Result<PathBuf, CliError> {
-    let expected = super::checkpoint_path_for_state(&context.state_dir, &record.id, incarnation);
+    let expected = checkpoint_path_for_state(&context.state_dir, &record.id, incarnation);
     let supplied = std::env::var_os(super::CHECKPOINT_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
