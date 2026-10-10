@@ -3,11 +3,902 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use pretty_assertions::assert_eq;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use crate::common;
+
+#[test]
+fn review_repair_prune_refuses_inspection_stderr_and_preserves_all_state() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.8.0", '8');
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    let receipt = fs::read(root.join("receipts/current.json")).expect("receipt");
+    for tag in ["v4.0.0", "v4.1.0"] {
+        fs::create_dir_all(root.join(format!("versions/{tag}/cli"))).expect("cache");
+    }
+    for script in [
+        "#!/bin/sh\necho 'lsof: inspection failed' >&2\nexit 1\n",
+        "#!/bin/sh\nhead -c 100000 /dev/zero >&2\nexit 1\n",
+    ] {
+        write_executable(&release.tools.join("lsof"), script);
+        for dry_run in [true, false] {
+            let mut args = vec!["--error-format", "json", "backend", "prune", "--strict"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let out = run_backend(&harness, cwd.path(), &root, &release, &args);
+            assert_eq!(out.code, 69, "{}", out.stderr_text());
+            for tag in ["v4.0.0", "v4.1.0", "v4.8.0"] {
+                assert!(root.join("versions").join(tag).is_dir());
+            }
+            assert_eq!(
+                fs::read(root.join("receipts/current.json")).expect("retained"),
+                receipt
+            );
+        }
+    }
+}
+
+#[test]
+fn review_repair_direct_upgrade_prune_retains_transition_only_predecessors() {
+    for (tag, token) in [("v4.2.2", '2'), ("v3.9.3", '3')] {
+        let harness = common::MacosAgentHarness::new();
+        let cwd = TempDir::new().expect("cwd");
+        let root = cwd.path().join("backend");
+        let old = candidate(cwd.path(), tag, token);
+        let new = candidate(cwd.path(), "v4.8.0", '8');
+        authorize_upgrade_from(&new, &old);
+        for release in [&old, &new] {
+            let out = run_backend(
+                &harness,
+                cwd.path(),
+                &root,
+                release,
+                &["backend", "install", "--strict"],
+            );
+            assert_eq!(out.code, 0, "{}", out.stderr_text());
+        }
+        for dry_run in [true, false] {
+            let mut args = vec!["--format", "json", "backend", "prune", "--strict"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let out = run_backend(&harness, cwd.path(), &root, &new, &args);
+            assert_eq!(out.code, 0, "{}", out.stderr_text());
+            assert_eq!(
+                out.stdout_json()["result"]["retained"],
+                json!([tag, "v4.8.0"])
+            );
+            assert!(root.join("versions").join(tag).is_dir());
+        }
+        let rollback = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            &new,
+            &["backend", "rollback", "--strict"],
+        );
+        assert_eq!(
+            rollback.code, 69,
+            "transition contract added rollback authority"
+        );
+    }
+}
+
+#[test]
+fn review_repair_verify_launch_failure_keeps_the_accepted_app() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.8.0", '8');
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["backend", "install"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    let trace = cwd.path().join("verify-actions");
+    let out = run_backend_probe_mode_with_runtime_trace(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["backend", "verify"],
+        "app_launch_failed",
+        &trace,
+    );
+    assert_eq!(out.code, 69, "{}", out.stderr_text());
+    let actions = fs::read_to_string(trace).expect("actions");
+    assert!(
+        !actions.contains("retire-owned-apps"),
+        "accepted app was retired before launch failed: {actions}"
+    );
+    assert!(root.join("stable/Peekaboo.app").is_dir());
+}
+
+#[test]
+fn review_repair_permission_probe_preserves_backend_failure_and_cause() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.8.0", '8');
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["backend", "install"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    let trace = cwd.path().join("runtime-actions");
+    fs::create_dir(&trace).expect("force preparation trace failure");
+    let out = run_backend_probe_mode_with_runtime_trace(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &[
+            "--error-format",
+            "json",
+            "exec",
+            "--out-dir",
+            "journal",
+            "--",
+            "see",
+            "--help",
+        ],
+        "permission_denied",
+        &trace,
+    );
+    assert_eq!(out.code, 69, "{}", out.stderr_text());
+    assert_eq!(out.stderr_json()["error"]["class"], "backend");
+    assert!(
+        out.stderr_text()
+            .contains("failed to record a test runtime action"),
+        "{}",
+        out.stderr_text()
+    );
+    assert!(
+        out.stderr_text().contains("Screen Recording"),
+        "{}",
+        out.stderr_text()
+    );
+}
+
+#[test]
+fn review_repair_rollback_launch_failure_retry_keeps_the_target() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let old = candidate(cwd.path(), "v4.6.0", '6');
+    let new = candidate(cwd.path(), "v4.8.0", '8');
+    authorize_rollback(&new, &old);
+    for release in [&old, &new] {
+        let out = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            release,
+            &["backend", "install"],
+        );
+        assert_eq!(out.code, 0, "{}", out.stderr_text());
+    }
+    let current = fs::read(root.join("receipts/current.json")).expect("current");
+    let target = fs::read(root.join("receipts/previous.json")).expect("target");
+    let failed = run_backend_probe_mode(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--error-format", "json", "backend", "rollback"],
+        "app_launch_failed",
+    );
+    assert_eq!(failed.code, 69, "{}", failed.stderr_text());
+    assert_eq!(
+        fs::read(root.join("receipts/current.json")).expect("current"),
+        current
+    );
+    assert_eq!(
+        fs::read(root.join("receipts/previous.json")).expect("previous"),
+        target
+    );
+    assert_eq!(
+        fs::read(root.join("receipts/pending.json")).expect("recoverable pending target"),
+        target
+    );
+    let retry = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "rollback"],
+    );
+    assert_eq!(retry.code, 0, "{}", retry.stderr_text());
+    assert_eq!(retry.stdout_json()["result"]["current"]["tag"], "v4.6.0");
+    assert_eq!(retry.stdout_json()["result"]["previous"]["tag"], "v4.8.0");
+    assert!(!root.join("receipts/pending.json").exists());
+}
+
+#[test]
+fn upgrade_acceptance_stable_cli_survives_upgrade_and_rollback_and_is_verified() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let old = candidate(cwd.path(), "v4.4.0", '4');
+    let new = candidate(cwd.path(), "v4.6.0", '6');
+    authorize_rollback(&new, &old);
+    let stable = root.join("stable/peekaboo");
+    for release in [&old, &new] {
+        let installed = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            release,
+            &["--format", "json", "backend", "install", "--strict"],
+        );
+        assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+        assert_eq!(
+            fs::read(&stable).expect("stable CLI"),
+            fs::read(release.source.join("peekaboo-macos-universal/peekaboo")).expect("source CLI")
+        );
+    }
+    let rollback = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "rollback", "--strict"],
+    );
+    assert_eq!(rollback.code, 0, "{}", rollback.stderr_text());
+    assert_eq!(
+        fs::read(&stable).expect("stable rollback CLI"),
+        fs::read(old.source.join("peekaboo-macos-universal/peekaboo")).expect("old CLI")
+    );
+    fs::write(&stable, "changed executable").expect("tamper stable CLI");
+    let verified = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--error-format", "json", "backend", "verify", "--strict"],
+    );
+    assert_eq!(verified.code, 69, "{}", verified.stderr_text());
+}
+
+#[test]
+fn upgrade_acceptance_prune_preserves_current_and_predecessor_and_dry_run_is_read_only() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let first = candidate(cwd.path(), "v4.2.2", '2');
+    let previous = candidate(cwd.path(), "v4.4.0", '4');
+    let current = candidate(cwd.path(), "v4.6.0", '6');
+    authorize_rollback(&previous, &first);
+    authorize_rollback(&current, &previous);
+    for release in [&first, &previous, &current] {
+        let out = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            release,
+            &["--format", "json", "backend", "install", "--strict"],
+        );
+        assert_eq!(out.code, 0, "{}", out.stderr_text());
+    }
+    let inactive_cache = root.join("versions/v4.2.2");
+    write_executable(&current.tools.join("lsof"), "#!/bin/sh\necho 123\nexit 0\n");
+    let busy = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &current,
+        &["--format", "json", "backend", "prune", "--strict"],
+    );
+    assert_eq!(busy.code, 69, "{}", busy.stderr_text());
+    assert!(inactive_cache.is_dir(), "prune removed an in-use cache");
+    write_executable(&current.tools.join("lsof"), "#!/bin/sh\nexit 1\n");
+    let outside = cwd.path().join("outside");
+    fs::create_dir(&outside).expect("outside directory");
+    fs::write(outside.join("retained"), "fixture").expect("outside file");
+    let link = root.join("versions/v9.9.9");
+    symlink(&outside, &link).expect("symlinked cache entry");
+    let unsafe_plan = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &current,
+        &["--format", "json", "backend", "prune", "--strict"],
+    );
+    assert_eq!(unsafe_plan.code, 69, "{}", unsafe_plan.stderr_text());
+    assert!(
+        inactive_cache.is_dir(),
+        "prune partially applied an unsafe plan"
+    );
+    assert!(outside.join("retained").is_file());
+    fs::remove_file(link).expect("remove fixture symlink");
+    for dry_run in [true, false] {
+        let mut args = vec!["--format", "json", "backend", "prune", "--strict"];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let out = run_backend(&harness, cwd.path(), &root, &current, &args);
+        assert_eq!(out.code, 0, "{}", out.stderr_text());
+        assert_eq!(out.stdout_json()["result"]["removed"], json!(["v4.2.2"]));
+        assert_eq!(inactive_cache.exists(), dry_run);
+        assert!(root.join("versions/v4.4.0").is_dir());
+        assert!(root.join("versions/v4.6.0").is_dir());
+    }
+}
+
+#[test]
+fn upgrade_acceptance_in_use_prune_names_the_busy_version_and_preserves_the_entire_plan() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let previous = candidate(cwd.path(), "v4.4.0", '4');
+    let current = candidate(cwd.path(), "v4.6.0", '6');
+    authorize_rollback(&current, &previous);
+    for release in [&previous, &current] {
+        let out = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            release,
+            &["--format", "json", "backend", "install", "--strict"],
+        );
+        assert_eq!(out.code, 0, "{}", out.stderr_text());
+    }
+    for tag in ["v4.1.0", "v4.2.2"] {
+        let cache = root.join("versions").join(tag);
+        fs::create_dir_all(cache.join("cli")).expect("CLI directory");
+        fs::create_dir_all(cache.join("app/Peekaboo.app/Contents/MacOS")).expect("app directory");
+        fs::write(cache.join("cli/peekaboo"), "inactive CLI").expect("CLI fixture");
+        fs::write(
+            cache.join("app/Peekaboo.app/Contents/MacOS/Peekaboo"),
+            "inactive app",
+        )
+        .expect("app fixture");
+    }
+    let receipts = ["current.json", "previous.json"]
+        .map(|name| fs::read(root.join("receipts").join(name)).expect("receipt"));
+    for (target, label) in [
+        ("cli/peekaboo", "CLI"),
+        ("app/Peekaboo.app/Contents/MacOS/Peekaboo", "app"),
+    ] {
+        write_executable(
+            &current.tools.join("lsof"),
+            &format!(
+                r#"#!/bin/sh
+case "$3" in
+  */versions/v4.2.2/{target}) echo 123; exit 0 ;;
+esac
+exit 1
+"#
+            ),
+        );
+        for dry_run in [true, false] {
+            let mut args = vec!["--error-format", "json", "backend", "prune", "--strict"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let out = run_backend(&harness, cwd.path(), &root, &current, &args);
+            assert_eq!(out.code, 69, "{}", out.stderr_text());
+            let error = out.stderr_text();
+            assert!(error.contains("v4.2.2") && error.contains(label), "{error}");
+            for tag in ["v4.1.0", "v4.2.2", "v4.4.0", "v4.6.0"] {
+                assert!(
+                    root.join("versions").join(tag).is_dir(),
+                    "prune partially removed {tag}"
+                );
+            }
+            for (name, receipt) in ["current.json", "previous.json"].into_iter().zip(&receipts) {
+                assert_eq!(
+                    &fs::read(root.join("receipts").join(name)).expect("retained receipt"),
+                    receipt
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn upgrade_acceptance_doctor_names_the_missing_permission() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.6.0", '6');
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    let out = run_backend_probe_mode(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["--format", "json", "doctor", "--strict"],
+        "permission_denied",
+    );
+    assert_eq!(out.code, 77, "{}", out.stderr_text());
+    let result = out.stdout_json();
+    let message = result["result"]["permissions"]["message"]
+        .as_str()
+        .expect("permission message");
+    assert!(message.contains("Screen Recording"), "{message}");
+    assert!(message.contains("Peekaboo GUI app"), "{message}");
+    assert!(message.contains("team FIXTURE"), "{message}");
+    assert!(!message.contains("locked"), "{message}");
+}
+
+#[test]
+fn upgrade_acceptance_prune_is_bounded_to_32_inactive_versions() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.6.0", '6');
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    for index in 0..34 {
+        let cached = root.join(format!("versions/v1.0.{index}"));
+        fs::create_dir_all(cached.join("cli")).expect("cached CLI parent");
+        fs::create_dir_all(cached.join("app/Peekaboo.app/Contents/MacOS"))
+            .expect("cached app parent");
+        fs::write(cached.join("cli/peekaboo"), "inactive fixture").expect("cached CLI");
+        fs::write(
+            cached.join("app/Peekaboo.app/Contents/MacOS/Peekaboo"),
+            "inactive fixture",
+        )
+        .expect("cached app");
+    }
+    for expected in [32, 2] {
+        let pruned = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            &release,
+            &["--format", "json", "backend", "prune", "--strict"],
+        );
+        assert_eq!(pruned.code, 0, "{}", pruned.stderr_text());
+        assert_eq!(
+            pruned.stdout_json()["result"]["removed"]
+                .as_array()
+                .expect("removed versions")
+                .len(),
+            expected
+        );
+        assert!(root.join("versions/v4.6.0").is_dir());
+    }
+}
+
+#[test]
+fn upgrade_acceptance_version_specific_cli_migration_is_explicit_and_dry_run_is_read_only() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.4.0", '4');
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &release,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    let stable = root.join("stable/peekaboo");
+    fs::remove_file(&stable).expect("simulate the version-specific CLI layout");
+    let receipt = fs::read(root.join("receipts/current.json")).expect("receipt");
+    for dry_run in [true, false] {
+        let mut args = vec!["--format", "json", "backend", "install", "--strict"];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let out = run_backend(&harness, cwd.path(), &root, &release, &args);
+        assert_eq!(out.code, 0, "{}", out.stderr_text());
+        assert_eq!(stable.exists(), !dry_run);
+        assert_eq!(
+            fs::read(root.join("receipts/current.json")).expect("receipt"),
+            receipt
+        );
+    }
+}
+
+#[test]
+fn missing_locked_cli_runtime_library_is_rejected_before_activation() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let backend_root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.8.0", '8');
+    let mut lock = read_lock(&release.lock);
+    lock["assets"][0]["runtime_libraries"] = json!([{
+        "name": "libswiftCompatibilitySpan.dylib",
+        "sha256": "a".repeat(64),
+        "architectures": ["arm64", "x86_64"]
+    }]);
+    write_lock(&release.lock, &lock);
+
+    let rejected = run_backend(
+        &harness,
+        cwd.path(),
+        &backend_root,
+        &release,
+        &["--error-format", "json", "backend", "install", "--strict"],
+    );
+    pretty_assertions::assert_eq!(rejected.code, 69, "{}", rejected.stderr_text());
+    assert!(!backend_root.join("receipts/current.json").exists());
+}
+
+#[test]
+fn locked_cli_runtime_library_is_preserved_at_the_version_path() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let backend_root = cwd.path().join("backend");
+    let release = candidate(cwd.path(), "v4.8.0", '8');
+    add_runtime_library(&release);
+
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &backend_root,
+        &release,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    pretty_assertions::assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    let library = backend_root.join("versions/v4.8.0/cli/libswiftCompatibilitySpan.dylib");
+    assert!(
+        library.is_file(),
+        "installation discarded the locked CLI runtime library"
+    );
+    pretty_assertions::assert_eq!(
+        sha256(&backend_root.join("stable/libswiftCompatibilitySpan.dylib")),
+        sha256(&library)
+    );
+    pretty_assertions::assert_eq!(
+        sha256(&library),
+        read_lock(&release.lock)["assets"][0]["runtime_libraries"][0]["sha256"]
+    );
+}
+
+fn add_runtime_library(release: &Candidate) {
+    let name = "libswiftCompatibilitySpan.dylib";
+    let library = release.source.join("peekaboo-macos-universal").join(name);
+    fs::write(
+        &library,
+        format!(
+            "fixture runtime library {}",
+            read_lock(&release.lock)["tag"]
+        ),
+    )
+    .expect("runtime library");
+    for (tool, failure) in [
+        ("codesign", "library_signature"),
+        ("lipo", "library_architecture"),
+    ] {
+        let path = release.tools.join(tool);
+        let original = fs::read_to_string(&path).expect("fixture tool");
+        let rejection = if tool == "lipo" {
+            "printf '%s\\n' arm64; exit 0"
+        } else {
+            "exit 1"
+        };
+        let prefix = format!(
+            "case \"$*: ${{NILS_MACOS_AGENT_TEST_VERIFY_FAIL:-}}\" in *CompatibilitySpan*{failure}*) {rejection} ;; esac\n"
+        );
+        write_executable(
+            &path,
+            &original.replacen("#!/bin/sh\n", &format!("#!/bin/sh\n{prefix}"), 1),
+        );
+    }
+    let mut lock = read_lock(&release.lock);
+    lock["assets"][0]["runtime_libraries"] = json!([{
+        "name": name, "sha256": sha256(&library), "architectures": ["arm64", "x86_64"]
+    }]);
+    write_lock(&release.lock, &lock);
+    let archive = release.assets.join(asset_name(&release.lock, "cli"));
+    let tar = Command::new("tar")
+        .args(["-czf"])
+        .arg(&archive)
+        .arg("-C")
+        .arg(&release.source)
+        .arg("peekaboo-macos-universal")
+        .status()
+        .expect("repack CLI runtime fixture");
+    assert!(tar.success());
+    refresh_asset_digest(&release.lock, &release.assets, "cli");
+}
+
+#[test]
+fn locked_cli_runtime_library_tampering_or_loss_fails_verification() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let release = candidate(cwd.path(), "v4.8.0", '8');
+    add_runtime_library(&release);
+    for (index, location) in ["versions/v4.8.0/cli", "stable"].iter().enumerate() {
+        for mutation in ["missing", "changed", "symlink"] {
+            let root = cwd.path().join(format!("backend-{index}-{mutation}"));
+            let installed = run_backend(
+                &harness,
+                cwd.path(),
+                &root,
+                &release,
+                &["--format", "json", "backend", "install", "--strict"],
+            );
+            assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+            let library = root.join(location).join("libswiftCompatibilitySpan.dylib");
+            fs::remove_file(&library).expect("remove authenticated library");
+            if mutation == "changed" {
+                fs::write(&library, b"unreviewed replacement").expect("tamper");
+            }
+            if mutation == "symlink" {
+                symlink(
+                    release
+                        .source
+                        .join("peekaboo-macos-universal/libswiftCompatibilitySpan.dylib"),
+                    &library,
+                )
+                .expect("library symlink");
+            }
+            let mut receipt = read_lock(&root.join("receipts/current.json"));
+            receipt["runtime_libraries"] =
+                json!([{"name":"libswiftCompatibilitySpan.dylib","sha256":"a".repeat(64)}]);
+            write_lock(&root.join("receipts/current.json"), &receipt);
+            let rejected = run_backend(
+                &harness,
+                cwd.path(),
+                &root,
+                &release,
+                &["--error-format", "json", "backend", "verify", "--strict"],
+            );
+            assert_eq!(
+                rejected.code,
+                69,
+                "{location}/{mutation}: {}",
+                rejected.stderr_text()
+            );
+            let status = run_backend(
+                &harness,
+                cwd.path(),
+                &root,
+                &release,
+                &["--format", "json", "backend", "status"],
+            );
+            assert_eq!(status.stdout_json()["result"]["verified"], false);
+        }
+    }
+}
+
+#[test]
+fn locked_cli_runtime_library_signature_and_architectures_are_independent_gates() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let release = candidate(cwd.path(), "v4.8.0", '8');
+    add_runtime_library(&release);
+    for failure in ["library_signature", "library_architecture"] {
+        let root = cwd.path().join(failure);
+        let rejected = run_backend_with_failure(
+            &harness,
+            cwd.path(),
+            &root,
+            &release,
+            &["--error-format", "json", "backend", "install", "--strict"],
+            failure,
+        );
+        assert_eq!(rejected.code, 69, "{failure}: {}", rejected.stderr_text());
+        assert!(!root.join("receipts/current.json").exists());
+    }
+}
+
+#[test]
+fn locked_cli_runtime_closure_survives_upgrade_rollback_and_prune() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let old = candidate(cwd.path(), "v4.4.0", '4');
+    let new = candidate(cwd.path(), "v4.8.0", '8');
+    add_runtime_library(&old);
+    add_runtime_library(&new);
+    authorize_rollback(&new, &old);
+    for release in [&old, &new] {
+        let installed = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            release,
+            &["--format", "json", "backend", "install", "--strict"],
+        );
+        assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+        assert_eq!(
+            sha256(&root.join("stable/libswiftCompatibilitySpan.dylib")),
+            read_lock(&release.lock)["assets"][0]["runtime_libraries"][0]["sha256"]
+        );
+    }
+    let rolled_back = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "rollback", "--strict"],
+    );
+    assert_eq!(rolled_back.code, 0, "{}", rolled_back.stderr_text());
+    assert_eq!(
+        rolled_back.stdout_json()["result"]["current"]["tag"],
+        "v4.4.0"
+    );
+    assert_eq!(
+        sha256(&root.join("stable/libswiftCompatibilitySpan.dylib")),
+        read_lock(&old.lock)["assets"][0]["runtime_libraries"][0]["sha256"]
+    );
+    let verified = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "verify", "--strict"],
+    );
+    assert_eq!(verified.code, 0, "{}", verified.stderr_text());
+    let pruned = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "prune", "--strict"],
+    );
+    assert_eq!(pruned.code, 0, "{}", pruned.stderr_text());
+    for tag in ["v4.4.0", "v4.8.0"] {
+        assert!(
+            root.join(format!(
+                "versions/{tag}/cli/libswiftCompatibilitySpan.dylib"
+            ))
+            .is_file()
+        );
+    }
+}
+
+#[test]
+fn accepted_runtime_predecessor_keeps_its_exact_contract_and_rollback_retires_candidate_library() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let old = candidate(cwd.path(), "v4.4.0", '4');
+    let new = candidate(cwd.path(), "v4.8.0", '8');
+    add_runtime_library(&new);
+    authorize_rollback(&new, &old);
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &old,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    fs::remove_file(root.join("stable/peekaboo")).expect("version-specific CLI layout");
+    let baseline = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "verify", "--strict"],
+    );
+    assert_eq!(baseline.code, 0, "{}", baseline.stderr_text());
+    assert_eq!(baseline.stdout_json()["result"]["active_tag"], "v4.4.0");
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    assert!(
+        root.join("stable/libswiftCompatibilitySpan.dylib")
+            .is_file()
+    );
+    let rolled_back = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "rollback", "--strict"],
+    );
+    assert_eq!(rolled_back.code, 0, "{}", rolled_back.stderr_text());
+    assert!(!root.join("stable/libswiftCompatibilitySpan.dylib").exists());
+    let verified = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "verify", "--strict"],
+    );
+    assert_eq!(verified.code, 0, "{}", verified.stderr_text());
+}
+
+#[test]
+fn interrupted_locked_cli_runtime_switch_recovers_only_authenticated_components() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let old = candidate(cwd.path(), "v4.4.0", '4');
+    let new = candidate(cwd.path(), "v4.8.0", '8');
+    add_runtime_library(&old);
+    add_runtime_library(&new);
+    authorize_rollback(&new, &old);
+    for release in [&old, &new] {
+        let installed = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            release,
+            &["--format", "json", "backend", "install", "--strict"],
+        );
+        assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    }
+    let pending = fs::read(root.join("receipts/current.json")).expect("new receipt");
+    let current = fs::read(root.join("receipts/previous.json")).expect("old receipt");
+    fs::write(root.join("receipts/current.json"), &current).expect("old current");
+    fs::write(root.join("receipts/pending.json"), &pending).expect("new pending");
+    fs::copy(
+        root.join("versions/v4.4.0/cli/peekaboo"),
+        root.join("stable/peekaboo"),
+    )
+    .expect("interruption after library switch, before CLI switch");
+    let recovered = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(recovered.code, 0, "{}", recovered.stderr_text());
+    assert_eq!(
+        recovered.stdout_json()["result"]["current"]["tag"],
+        "v4.8.0"
+    );
+    assert_eq!(
+        sha256(&root.join("stable/libswiftCompatibilitySpan.dylib")),
+        read_lock(&new.lock)["assets"][0]["runtime_libraries"][0]["sha256"]
+    );
+    assert!(!root.join("receipts/pending.json").exists());
+    fs::write(
+        root.join("stable/libswiftCompatibilitySpan.dylib"),
+        b"unowned replacement",
+    )
+    .expect("tamper");
+    let rejected = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--error-format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(rejected.code, 69, "{}", rejected.stderr_text());
+    assert_eq!(
+        fs::read(root.join("stable/libswiftCompatibilitySpan.dylib")).expect("unchanged"),
+        b"unowned replacement"
+    );
+}
 
 #[test]
 fn lifecycle_status_discloses_locked_notarization_policy() {
@@ -30,6 +921,41 @@ fn lifecycle_status_discloses_locked_notarization_policy() {
         status.stdout_json()["result"]["cli_notarization_policy"],
         "required"
     );
+}
+
+#[test]
+fn upgrade_acceptance_verify_migrates_the_accepted_predecessor_without_selecting_the_candidate() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let old = candidate(cwd.path(), "v4.4.0", '4');
+    let new = candidate(cwd.path(), "v4.6.0", '6');
+    authorize_rollback(&new, &old);
+    let installed = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &old,
+        &["--format", "json", "backend", "install", "--strict"],
+    );
+    assert_eq!(installed.code, 0, "{}", installed.stderr_text());
+    let receipt = fs::read(root.join("receipts/current.json")).expect("accepted receipt");
+    fs::remove_file(root.join("stable/peekaboo")).expect("version-specific CLI layout");
+    let verified = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "verify", "--strict"],
+    );
+    assert_eq!(verified.code, 0, "{}", verified.stderr_text());
+    assert_eq!(verified.stdout_json()["result"]["active_tag"], "v4.4.0");
+    assert_eq!(
+        fs::read(root.join("receipts/current.json")).expect("accepted receipt"),
+        receipt
+    );
+    assert!(root.join("stable/peekaboo").is_file());
+    assert!(!root.join("versions/v4.6.0").exists());
 }
 
 #[test]
@@ -423,13 +1349,22 @@ fn failed_transition_retirement_keeps_the_verified_outgoing_state_intact() {
     let stable_app = backend_root.join("stable/Peekaboo.app/Contents/MacOS/Peekaboo");
     let stable_before = fs::read(&stable_app).expect("stable app");
 
-    let rejected = run_backend_probe_mode(
+    let trace = cwd.path().join("refused-transition-actions");
+    let rejected = run_backend_probe_mode_with_runtime_trace(
         &harness,
         cwd.path(),
         &backend_root,
         &new,
         &["--error-format", "json", "backend", "install"],
         "daemon_stop_failed",
+        &trace,
+    );
+    assert!(
+        !trace.exists()
+            || !fs::read_to_string(&trace)
+                .expect("actions")
+                .contains("retire-owned-apps"),
+        "accepted app retired before daemon refusal"
     );
     assert_eq!(rejected.code, 69, "{}", rejected.stderr_text());
     assert!(socket.exists());
@@ -1359,6 +2294,7 @@ fn candidate(root: &Path, tag: &str, commit_char: char) -> Candidate {
     fs::create_dir_all(source.join("Peekaboo.app/Contents/MacOS")).expect("app source");
     fs::create_dir_all(&assets).expect("assets");
     fs::create_dir_all(&tools).expect("tools");
+    write_executable(&tools.join("lsof"), "#!/bin/sh\nexit 1\n");
     write_executable(
         &tools.join("lipo"),
         r#"#!/bin/sh

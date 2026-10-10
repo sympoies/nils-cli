@@ -98,10 +98,12 @@ pub enum BackendCommand {
     Install(BackendMutationArgs),
     /// Report the current and previous receipts without exposing local paths.
     Status(BackendStatusArgs),
-    /// Verify the active receipt, assets, signatures, version, and strict assessments.
+    /// Verify the active assets, migrate a version-specific CLI path, and restart the owned app.
     Verify(BackendVerifyArgs),
     /// Atomically select the verified previous receipt.
     Rollback(BackendMutationArgs),
+    /// Remove at most 32 inactive cached versions, retaining authenticated receipts.
+    Prune(BackendMutationArgs),
 }
 
 #[derive(Debug, Clone, Args)]
