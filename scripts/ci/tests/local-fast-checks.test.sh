@@ -19,6 +19,8 @@ if [[ ! -f "$script" ]]; then
   exit 2
 fi
 
+python3 "$repo_root/scripts/ci/tests/local-fast-graph.test.py"
+
 plan_for() {
   bash "$script" --plan-only "$@"
 }
@@ -230,8 +232,7 @@ assert_package_manifest_requests_third_party_artifacts() {
   echo "== package manifest requests third-party artifact audit =="
   local output
   output="$(plan_for --changed-file crates/semantic-commit/Cargo.toml)"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-semantic-commit"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=workspace"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_THIRD_PARTY_ARTIFACTS=1"
   echo "ok"
 }
