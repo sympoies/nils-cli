@@ -124,6 +124,7 @@ pub fn isolate_forge_identity() -> ForgeIdentityIsolation {
 /// Mark a freshly written script executable and run it once. macOS checks a newly
 /// created executable on its first run, which can take far longer than a short
 /// timeout budget. The warm-up keeps that cost out of the timed call.
+#[cfg(unix)]
 pub fn make_executable_and_warm(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).expect("chmod script");
