@@ -441,6 +441,39 @@ fn build_worktree_group() -> Command {
                         .required(true)
                         .add(ArgValueCandidates::new(worktree_target_candidates)),
                 )
+                .arg(
+                    Arg::new("acknowledge-backup-omissions")
+                        .long("acknowledge-backup-omissions")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("safe")
+                        .long("safe")
+                        .action(ArgAction::SetTrue)
+                        .help("Compatibility no-op"),
+                )
+                .arg(format_arg()),
+        )
+        .subcommand(
+            Command::new("backup")
+                .about("List or prune preserved worktree backups")
+                .subcommand(Command::new("list").arg(format_arg()))
+                .subcommand(
+                    Command::new("prune")
+                        .arg(Arg::new("older-than").long("older-than").num_args(1))
+                        .arg(
+                            Arg::new("dry-run")
+                                .long("dry-run")
+                                .action(ArgAction::SetTrue),
+                        )
+                        .arg(format_arg()),
+                ),
+        )
+        .subcommand(
+            Command::new("restore")
+                .about("Restore a preserved worktree backup")
+                .arg(Arg::new("backup-ref").required(true))
+                .arg(Arg::new("path").long("path").value_hint(ValueHint::DirPath))
                 .arg(format_arg()),
         )
         .subcommand(
