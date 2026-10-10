@@ -72,10 +72,11 @@ async function submit(body, expected = 200, token = service.token, headers = {})
 }
 const registry = host => JSON.parse(readFileSync(join(host.root, 'coordination', 'registry.json'), 'utf8'));
 const journal = () => JSON.parse(readFileSync(join(source.root, 'coordination', 'federation-journal.json'), 'utf8'));
-async function serviceCli(key, extra = [], expected = 0) {
+const outboxCount = () => existsSync(join(source.root, 'coordination', 'federation-journal.json')) ? journal().remote_outbox.length : 0;
+async function serviceCli(key, extra = [], expected = 0, recipient = source.session) {
   const bodyFile = join(root, 'cli-body'); privateWrite(bodyFile, 'PRIVATE-SERVICE-BODY-CANARY');
   const env = { ...process.env }; for (const key of Object.keys(env)) if (key.startsWith('AGENT_SESSION_')) delete env[key];
-  const args = ['--state-dir', source.root, 'message', 'service-send', '--service', service.id, '--service-generation', service.generation, '--credential-file', service.credential, '--to', source.session, '--body-file', bodyFile, '--idempotency-key', key, '--format', 'json', ...extra];
+  const args = ['--state-dir', source.root, 'message', 'service-send', '--service', service.id, '--service-generation', service.generation, '--credential-file', service.credential, '--to', recipient, '--body-file', bodyFile, '--idempotency-key', key, '--format', 'json', ...extra];
   const result = await new Promise((resolve, reject) => { const child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] }); let stdout = '', stderr = ''; child.stdout.on('data', data => stdout += data); child.stderr.on('data', data => stderr += data); child.on('error', reject); child.on('exit', code => resolve({ code, stdout, stderr })); });
   assert.equal(result.code, expected, 'unattended CLI exit');
   assert(!result.stdout.includes('PRIVATE-SERVICE-BODY-CANARY')); assert(!result.stderr.includes(service.token));
@@ -145,7 +146,31 @@ try {
   await submit(payload('stale-local', { expected_recipient_incarnation: source.incarnation }), 409);
   await submit(payload('unready-local'), 503);
   assert.equal(registry(source).messages.filter(m => m.message_id === local.message_id).length, 1); privateWrite(sessionPath, original); checks.push('local-stale-recipient-and-stable-replay');
-  discoveryDenied = true; await submit(payload('discovery-failure', { to_machine: target.machine, to_session: target.session }), 503); discoveryDenied = false;
+  const outboxBeforeRefusals = outboxCount();
+  for (const [key, selectors] of [
+    ['absent-remote-session', { to_machine: target.machine, to_session: 'wrong-recipient' }],
+    ['absent-remote-machine', { to_machine: 'wrong-host', to_session: target.session }],
+  ]) {
+    const rejected = await submit(payload(key, selectors), 422);
+    assert.equal(rejected.error.code, 'remote-recipient-not-discovered');
+    assert.equal(rejected.error.details.retryable, false);
+    assert.equal(rejected.error.details.next_action, 'inspect_submission_contract');
+    assert.equal(rejected.error.details.recovery.kind, 'operator');
+    assert.match(rejected.error.message, /exact --to session ID and --to-machine/);
+    assert.match(rejected.error.message, /message peers/);
+  }
+  const cliAbsent = await serviceCli('cli-absent-remote', ['--to-machine', target.machine], 65, 'wrong-recipient');
+  assert.equal(cliAbsent.error.code, 'remote-recipient-not-discovered');
+  assert.equal(cliAbsent.error.details.retryable, false);
+  assert.match(cliAbsent.error.message, /message peers/);
+  assert.equal(outboxCount(), outboxBeforeRefusals);
+  checks.push('absent-remote-address-nonretryable-through-service-http-and-cli');
+  discoveryDenied = true;
+  const unavailable = await submit(payload('discovery-failure', { to_machine: target.machine, to_session: target.session }), 503);
+  assert.equal(unavailable.error.code, 'remote-messaging-unavailable');
+  assert.equal(unavailable.error.details.retryable, true);
+  assert.equal(unavailable.error.details.next_action, 'retry_same_submission');
+  discoveryDenied = false;
   oldRelay = true;
   const incompatibleBody = payload('old-relay', { to_machine: target.machine, to_session: target.session });
   const incompatible = await submit(incompatibleBody);

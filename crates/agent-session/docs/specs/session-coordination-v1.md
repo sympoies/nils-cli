@@ -1258,9 +1258,24 @@ capabilities and bodies never appear in delivery status or diagnostic logs.
 
 Peer discovery returns raw `agent-session.remote-peers.v1`, with `peers` containing
 `machine`, `session_id`, `session_incarnation`, and `messaging_supported`.
+The optional `messaging_unavailable_reason` string may be absent or null.
+Recognized unsupported reasons are `daemon-unsupported`, `coordination-disabled`,
+and `coordination-unavailable`; missing, null, or unrecognized reasons use the
+generic unsupported observation without copying upstream text.
 `GET /sessions` advertises `data.coordination.remote_messaging_supported`;
 per-session `coordination_mode` and `coordination.coordination_available` determine
 current recipient readiness.
+
+New submissions match the exact machine and session ID from authorized peer
+discovery, preferring the first supported exact row when duplicate rows exist.
+An absent exact address in a valid snapshot returns
+`remote-recipient-not-discovered` with fixed guidance to check both address fields
+using `message peers`. Absence may also reflect an omitted unavailable-host
+snapshot and does not prove deletion or lack of capability. Failed or invalid
+peer discovery retains `remote-messaging-unavailable`.
+A discovered exact peer whose `messaging_supported` is not true returns
+`remote-messaging-unsupported`. Neither refusal enqueues an envelope. Idempotent
+replay precedes discovery and keeps the original recipient incarnation.
 
 Source outbox submission returns a raw delivery projection (wrapped in the usual
 CLI envelope for CLI callers): `message_id`, `state`, `sender`, `recipient`,
@@ -1541,6 +1556,12 @@ mailbox body/expiry/quota/rate/idempotency codes, and
 403 for nonlocal/proxied submission, 409 for recipient/idempotency revision
 conflicts, 400/422 for invalid requests, and 503 for unavailable coordination or
 transport. The CLI uses usage/data/unavailable exit categories (64/65/69).
+An absent remote address in a valid discovery snapshot returns
+`remote-recipient-not-discovered` (HTTP 422 / CLI 65) with the fixed address-check
+guidance, `retryable: false`, `next_action: inspect_submission_contract`, and
+operator recovery. Inspect discovery and correct the address before a new
+submission. Failed discovery and unavailable transport remain retryable with
+`retry_same_submission` and `same_idempotency_key` recovery.
 
 ## Message categories and recipient forwarding
 

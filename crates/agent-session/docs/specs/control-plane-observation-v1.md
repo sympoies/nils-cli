@@ -120,6 +120,17 @@ override.
 
 ## Diagnostic bundle
 
+Remote mailbox submission records refusals at stage `remote-discovery`:
+`peer-discovery-failed` for a failed discovery request,
+`recipient-not-discovered` for an absent exact authorized address, and
+`recipient-daemon-unsupported`, `recipient-coordination-disabled`, or
+`recipient-coordination-unavailable` for recognized peer capability reasons.
+Missing or unrecognized peer reasons become `recipient-messaging-unsupported`.
+These warning events retain only fixed classifications and timestamps, never
+the peer snapshot, addresses, incarnations, body, credentials, or upstream text.
+An absent address does not distinguish an unavailable snapshot from ownership
+filtering or an incorrect address. A logging failure cannot change the refusal.
+
 `agent-session diagnose [--limit N] [--format text|json]` returns
 `agent-session.diagnostic-bundle.v1` in the workspace envelope.
 

@@ -239,6 +239,10 @@ pub(crate) fn recovery(error: CliError) -> CliError {
         "session-not-found" | "message-not-found" => {
             ("message-not-found", "recipient is unavailable")
         }
+        "remote-recipient-not-discovered" => (
+            "remote-recipient-not-discovered",
+            remote::RECIPIENT_NOT_DISCOVERED_MESSAGE,
+        ),
         "remote-messaging-unsupported" => (
             "remote-messaging-unsupported",
             "remote recipient is unavailable",
