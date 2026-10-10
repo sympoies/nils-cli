@@ -3476,6 +3476,8 @@ struct MaintenanceQuery {
 
 #[derive(Debug, Deserialize)]
 struct CreateBody {
+    #[serde(default)]
+    launch_env: crate::launch_env::LaunchEnv,
     agent: String,
     #[serde(default)]
     title_mode: crate::display_metadata::TitleMode,
@@ -5626,6 +5628,7 @@ async fn history_resume_handler_inner(
                 start_provider_resume_session(
                     &context,
                     ProviderResumeImportArgs {
+                        launch_env: crate::launch_env::LaunchEnv::new(),
                         title_mode: restored.title_mode,
                         agent,
                         provider_resume_id: history.provider_session_id,
@@ -6755,6 +6758,9 @@ async fn create_handler(
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
+    if let Err(error) = crate::launch_env::validate(&body.launch_env) {
+        return envelope_err(error);
+    }
     let operation = if body.provider_resume_id.is_some() {
         "import"
     } else {
@@ -6889,6 +6895,7 @@ async fn create_handler_inner(
             ));
         }
         let args = ProviderResumeImportArgs {
+            launch_env: body.launch_env,
             title_mode: body.title_mode,
             agent,
             provider_resume_id,
@@ -7019,6 +7026,11 @@ async fn create_handler_inner(
             .map(|profile| profile.agent_bin.clone()),
         agent_args: body.agent_args,
         coordination_mode: body.coordination_mode,
+        launch_env: body
+            .launch_env
+            .into_iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect(),
         paste_delay_ms: initial_prompt_paste_delay_ms(agent),
         via_console: false,
         machine: None,
@@ -23153,6 +23165,83 @@ esac
     }
 
     #[tokio::test]
+    async fn launch_env_create_matches_cli_for_all_provider_profiles() {
+        let lock = GlobalStateLock::new();
+        let _policy = EnvGuard::remove(&lock, crate::launch_env::ALLOWLIST_ENV);
+        let _runtime = EnvGuard::set(&lock, "AGENT_SESSION_CODEX_RUNTIME", "off");
+        let _codex_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+        let _claude_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER");
+        for agent in ["codex", "claude", "dsh"] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let launcher = fake_agent(tmp.path(), "provider-fixture");
+            let profiles = AgentLaunchProfiles::from_json(
+                &json!([{
+                    "id":"local-fixture", "label":"Local fixture", "agent":agent,
+                    "agent_bin":launcher, "readiness_args":["--check"]
+                }])
+                .to_string(),
+            )
+            .unwrap();
+            let log = tmp.path().join("tmux.log");
+            let mut st = state(tmp.path(), Some(TOKEN), logging_tmux(tmp.path(), &log));
+            Arc::get_mut(&mut st).unwrap().launch_profiles = profiles;
+            let values = json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"});
+            let (status, body) = call(
+                router(st.clone()),
+                post_json(
+                    "/sessions",
+                    Some(TOKEN),
+                    json!({
+                        "agent":agent, "agent_profile":"local-fixture", "id":"env-profile",
+                        "cwd":tmp.path(), "launch_env":values
+                    }),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["data"]["session"]["launch_env"], values);
+            let record = load_session_record(&st.context, "env-profile").unwrap();
+            assert_eq!(record.extra["launch_env"], values);
+            assert!(
+                fs::read_to_string(&log)
+                    .unwrap()
+                    .contains("-e AGENT_RUNTIME_SUPPRESS_MEMORY=1")
+            );
+            let projected =
+                crate::board::project_record(&body["data"]["session"], "host-a", None, false)
+                    .unwrap();
+            assert_eq!(projected["launch_env"], values);
+        }
+    }
+
+    #[tokio::test]
+    async fn launch_env_http_refuses_unapproved_keys_before_starting() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let log = tmp.path().join("tmux.log");
+        let st = state(tmp.path(), Some(TOKEN), logging_tmux(tmp.path(), &log));
+        let (status, body) = call(
+            router(st),
+            post_json(
+                "/sessions",
+                Some(TOKEN),
+                json!({
+                    "agent":"codex", "launch_env":{"API_TOKEN":"private-fixture-value"}
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "launch-env-key-refused");
+        assert!(!body.to_string().contains("private-fixture-value"));
+        assert!(!tmp.path().join("sessions").exists());
+        assert!(
+            !fs::read_to_string(&log)
+                .unwrap_or_default()
+                .contains("new-session")
+        );
+    }
+
+    #[tokio::test]
     async fn create_uses_and_persists_a_ready_server_launch_profile() {
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("repo");
@@ -25855,11 +25944,17 @@ esac
     #[tokio::test]
     async fn codex_account_switch_routes_the_nickname_to_the_exact_runtime_control() {
         let lock = GlobalStateLock::new();
+        let _policy = EnvGuard::remove(&lock, crate::launch_env::ALLOWLIST_ENV);
         let tmp = tempfile::TempDir::new().unwrap();
         let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "omega"]);
         let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch");
         let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
-        let record = load_session_record(&st.context, "account-switch").unwrap();
+        let mut record = load_session_record(&st.context, "account-switch").unwrap();
+        record.extra.insert(
+            "launch_env".into(),
+            json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"}),
+        );
+        crate::write_session_record(&st.context, &record).unwrap();
         crate::activity::activate_runtime(&st.context, &record).unwrap();
         for (event_id, kind) in [
             ("turn-start", "turn_started"),
@@ -25914,7 +26009,7 @@ esac
         });
 
         let (status, body) = call(
-            router(st),
+            router(st.clone()),
             put_json(
                 "/sessions/account-switch/account",
                 Some(TOKEN),
@@ -25927,6 +26022,12 @@ esac
         assert_eq!(body["data"]["codex_account"]["selected_account"], "acct1");
         assert_eq!(body["data"]["codex_account"]["revision"], 1);
         responder.await.unwrap();
+        assert_eq!(
+            load_session_record(&st.context, "account-switch")
+                .unwrap()
+                .extra["launch_env"],
+            json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"})
+        );
     }
 
     #[tokio::test]
@@ -30868,11 +30969,22 @@ esac
     #[tokio::test]
     async fn claude_account_switch_on_a_stopped_session_applies_at_the_next_resume() {
         let lock = GlobalStateLock::new();
+        let _policy = EnvGuard::remove(&lock, crate::launch_env::ALLOWLIST_ENV);
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("repo");
         fs::create_dir_all(&cwd).unwrap();
         let broker = claude_broker_fixture(&lock, tmp.path());
         seed_bound_claude_session(tmp.path(), "claude-switch", &cwd, "alpha");
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let mut record = load_session_record(&context, "claude-switch").unwrap();
+        record.extra.insert(
+            "launch_env".into(),
+            json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"}),
+        );
+        crate::write_session_record(&context, &record).unwrap();
         let log = tmp.path().join("tmux.log");
         let st = state(tmp.path(), Some(TOKEN), resume_tmux(tmp.path(), &log));
 
@@ -30903,12 +31015,17 @@ esac
         )
         .await;
         assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(
+            body["data"]["session"]["launch_env"],
+            json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"})
+        );
         let account = &body["data"]["session"]["claude_account"];
         assert_eq!(account["selected_account"], "beta");
         assert_eq!(account["selection_source"], "explicit");
         assert_eq!(account["revision"], 2);
         assert!(account.get("next").is_none(), "{account}");
         let calls = fs::read_to_string(&log).unwrap();
+        assert!(calls.contains("-e AGENT_RUNTIME_SUPPRESS_MEMORY=1"));
         assert!(
             calls.contains(&format!(
                 "CLAUDE_CONFIG_DIR={}",

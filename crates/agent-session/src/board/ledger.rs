@@ -361,6 +361,7 @@ pub(crate) fn read_since(
                 let mut record = entry.record.clone();
                 if let Some(object) = record.as_object_mut() {
                     object.insert("machine".to_string(), Value::String(machine.to_string()));
+                    object.entry("launch_env").or_insert_with(|| json!({}));
                     // An entry closed before these members existed has none.
                     for key in ["role", "lineage", "work", "model", "reasoning_effort"] {
                         object.entry(key).or_insert(Value::Null);
@@ -483,6 +484,23 @@ mod tests {
             serde_json::from_slice(&fs::read(ledger_path(&context)).unwrap()).unwrap();
         assert_eq!(stored["entries"][0]["record"].get("machine"), None);
         assert_eq!(stored["last_seq"], 3);
+    }
+
+    #[test]
+    fn launch_env_legacy_closed_records_project_an_empty_map_without_rewriting_history() {
+        let (_tmp, context) = fresh();
+        append(&context, record("pre-upgrade")).unwrap();
+        let all = read(&context, None).unwrap();
+        assert!(
+            all["extensions"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("launch_env.v1"))
+        );
+        assert_eq!(all["entries"][0]["record"]["launch_env"], json!({}));
+        let stored: Value =
+            serde_json::from_slice(&fs::read(ledger_path(&context)).unwrap()).unwrap();
+        assert!(stored["entries"][0]["record"].get("launch_env").is_none());
     }
 
     #[test]

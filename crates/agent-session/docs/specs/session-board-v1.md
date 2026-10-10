@@ -116,7 +116,8 @@ Every board surface carries records with this shape. The record has no
   "summary": null,
   "role": null,
   "lineage": null,
-  "work": null
+  "work": null,
+  "launch_env": {}
 }
 ```
 
@@ -276,6 +277,7 @@ naming the additive capabilities the producer supports:
 | --- | --- |
 | `lineage.v1` | Record `role` and `lineage`; aggregator annotations `orphaned` and `subtree`; the `root` query filter. |
 | `work.v1` | Record `work`. |
+| `launch_env.v1` | Record `launch_env`, the public non-secret launch switches. |
 | `programs.v1` | The daemon route `GET /board/programs/v1` and the aggregator view `programs` member. Named by the daemon snapshot only. |
 
 A reader feature-detects from this list, never from the presence of a record
@@ -299,7 +301,7 @@ strings, so a deployed reader that requires the exact v1 strings keeps working.
   "schema_version": "agent-session.board.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
-  "extensions": ["lineage.v1", "work.v1", "programs.v1"],
+  "extensions": ["lineage.v1", "work.v1", "programs.v1", "launch_env.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "ledger_cursor": "opaque",
   "records": [],
@@ -461,7 +463,7 @@ result in `data.board_closed`:
   "schema_version": "agent-session.board-closed.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
-  "extensions": ["lineage.v1", "work.v1"],
+  "extensions": ["lineage.v1", "work.v1", "launch_env.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "entries": [{"cursor": "opaque", "record": {}}],
   "next_cursor": "opaque"
@@ -611,7 +613,7 @@ bearer is HTTP 401 or 403.
 {
   "schema_version": "agent-session.board-view.v1",
   "record_schema": "agent-session.board-record.v1",
-  "extensions": ["lineage.v1", "work.v1"],
+  "extensions": ["lineage.v1", "work.v1", "launch_env.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "retention": "3d",
   "effective_since": "2029-12-29T00:05:00Z",
@@ -867,3 +869,13 @@ Implementation items must cover:
   mode `machine` and `messaging_supported: false`, local mode clamping `since`
   to `7d` with `since_capped`, a relay view carrying `console_owner` passing
   through, and text and JSON golden output.
+
+### Public launch environment extension
+
+`launch_env.v1` advertises the additive `launch_env` record member: an object
+of approved non-secret runtime switch names and their string values. Missing
+older metadata projects as `{}`. Values are validated against the daemon's
+configured launch allowlist before projection; malformed or unapproved stored
+metadata projects as `{}`. The same map appears in `list --format json` and
+session create/resume views. Closed records retain the validated projection
+captured at close time. This field never includes ambient environment variables.

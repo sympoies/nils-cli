@@ -578,8 +578,15 @@ mod tests {
 
     #[test]
     fn native_transition_preserves_runtime_and_updates_exact_resume_arguments() {
+        let lock = nils_test_support::GlobalStateLock::new();
+        let _policy = nils_test_support::EnvGuard::remove(&lock, crate::launch_env::ALLOWLIST_ENV);
         let tmp = tempfile::TempDir::new().unwrap();
-        let (context, record, _) = fixture(&tmp, AgentKind::Claude);
+        let (context, mut record, _) = fixture(&tmp, AgentKind::Claude);
+        record.extra.insert(
+            "launch_env".into(),
+            json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"}),
+        );
+        crate::write_session_record(&context, &record).unwrap();
         observe_native(&context, &record, "new-conversation").unwrap();
         let new = load_session_record(&context, &record.id).unwrap();
         assert_eq!(
@@ -587,6 +594,7 @@ mod tests {
             serde_json::to_value(&record.runtime).unwrap()
         );
         assert_eq!(new.title, record.title);
+        assert_eq!(new.extra["launch_env"], record.extra["launch_env"]);
         assert_eq!(
             new.provider_resume.as_ref().unwrap().resume_args,
             vec!["--resume", "new-conversation"]
@@ -706,8 +714,15 @@ mod tests {
 
     #[test]
     fn clear_command_confirms_ids_and_preserves_exact_resume_identity() {
+        let lock = nils_test_support::GlobalStateLock::new();
+        let _policy = nils_test_support::EnvGuard::remove(&lock, crate::launch_env::ALLOWLIST_ENV);
         let tmp = tempfile::TempDir::new().unwrap();
-        let (context, record, tmux) = fixture(&tmp, AgentKind::Claude);
+        let (context, mut record, tmux) = fixture(&tmp, AgentKind::Claude);
+        record.extra.insert(
+            "launch_env".into(),
+            json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"}),
+        );
+        crate::write_session_record(&context, &record).unwrap();
         let observer_context = context.clone();
         let observer_record = record.clone();
         let calls = tmp.path().join("tmux.calls");
@@ -744,6 +759,7 @@ mod tests {
         assert_eq!(result["support"], "native-hook");
         assert_eq!(result["changed"], true);
         let current = load_session_record(&context, &record.id).unwrap();
+        assert_eq!(current.extra["launch_env"], record.extra["launch_env"]);
         assert_eq!(
             current.provider_resume.unwrap().resume_args,
             vec!["--resume", "new-conversation"]

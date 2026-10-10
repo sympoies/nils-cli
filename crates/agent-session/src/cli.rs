@@ -258,6 +258,10 @@ pub struct StartArgs {
     #[arg(long = "agent-arg", value_name = "ARG", allow_hyphen_values = true)]
     pub agent_args: Vec<String>,
 
+    /// Public non-secret runtime switch, restricted to the launch env allowlist.
+    #[arg(long = "env", value_name = "KEY=VALUE")]
+    pub launch_env: Vec<String>,
+
     /// Session collision coordination mode.
     #[arg(long, value_enum, default_value_t = CoordinationMode::Advisory)]
     pub coordination_mode: CoordinationMode,

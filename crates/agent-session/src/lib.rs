@@ -25,6 +25,7 @@ mod display_metadata;
 pub mod dsh_external;
 mod forge_identity;
 mod group_lifecycle;
+mod launch_env;
 mod lifecycle;
 #[doc(hidden)]
 pub mod lineage;
@@ -515,6 +516,9 @@ pub fn render_clap_message(err: &clap::Error) -> String {
 
 fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     let format = args.format;
+    if let Err(error) = launch_env::from_flags(&args.launch_env) {
+        return render_error(START_COMMAND, format, error);
+    }
     if args.forge_initiator.is_some() && non_empty_env("AGENT_SESSION_ID").is_some() {
         return render_error(
             START_COMMAND,
@@ -610,6 +614,10 @@ fn start_via_console(
 ) -> Result<Value, CliError> {
     let cwd = absolute_path(args.cwd.as_deref().unwrap_or(Path::new(".")))?;
     let mut session = json!({ "agent": args.agent.as_str(), "cwd": cwd.to_string_lossy() });
+    let launch_env = launch_env::from_flags(&args.launch_env)?;
+    if !launch_env.is_empty() {
+        session["launch_env"] = json!(launch_env);
+    }
     if args.title_mode == "pinned" {
         session["title_mode"] = json!(args.title_mode);
     }
@@ -1748,6 +1756,7 @@ struct DurableResumeRecord {
 
 #[derive(Debug, Serialize)]
 pub struct SessionView {
+    launch_env: launch_env::LaunchEnv,
     #[serde(flatten)]
     model_settings: session_model::ModelSettings,
     pub id: String,
@@ -1843,6 +1852,7 @@ pub struct StartView {
 }
 
 pub(crate) struct ProviderResumeImportArgs {
+    pub(crate) launch_env: launch_env::LaunchEnv,
     pub(crate) agent: AgentKind,
     pub(crate) title_mode: display_metadata::TitleMode,
     pub(crate) provider_resume_id: String,
@@ -2283,6 +2293,7 @@ fn start_session_inner_unjournaled(
     mut lifecycle_guards: StartLifecycleGuards<'_>,
     claude_account: Option<InitialClaudeAccount>,
 ) -> Result<StartView, CliError> {
+    let launch_env = launch_env::from_flags(&args.launch_env)?;
     if args.agent == AgentKind::Dsh && args.initial_agent_profile.is_none() {
         // Refused before any durable side effect: a dsh pane is launched only
         // through a server-owned launch profile, and external dsh records are
@@ -2338,6 +2349,7 @@ fn start_session_inner_unjournaled(
         .record
         .extra
         .insert("title_mode".into(), json!(args.title_mode));
+    launch_env::store(&mut created.record, &launch_env);
     persist_initial_profile_context(
         context,
         &mut created,
@@ -2943,6 +2955,7 @@ pub(crate) fn start_dsh_history_resume_session_unjournaled(
         )]),
     };
     let start_args = ProviderResumeImportArgs {
+        launch_env: launch_env::LaunchEnv::new(),
         agent: AgentKind::Dsh,
         title_mode: args.title_mode,
         provider_resume_id,
@@ -2970,6 +2983,7 @@ fn start_resolved_provider_resume_session(
     cwd: PathBuf,
     provider_resume: ProviderResume,
 ) -> Result<StartView, CliError> {
+    launch_env::validate(&args.launch_env)?;
     let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
@@ -2998,6 +3012,7 @@ fn start_resolved_provider_resume_session(
         .record
         .extra
         .insert("title_mode".into(), json!(args.title_mode));
+    launch_env::store(&mut created.record, &args.launch_env);
     persist_initial_profile_context(
         context,
         &mut created,
@@ -11199,6 +11214,9 @@ fn add_runtime_tmux_environment(
     state_dir: &Path,
     record: &SessionRecord,
 ) -> Result<(), CliError> {
+    for (key, value) in launch_env::from_record(record)? {
+        command.arg("-e").arg(format!("{key}={value}"));
+    }
     let runtime_id = record
         .runtime
         .as_ref()
@@ -12969,6 +12987,7 @@ fn session_view_from_parts(
     });
     let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
+        launch_env: launch_env::projection(record.extra.get("launch_env")),
         model_settings: session_model::ModelSettings::for_record(record),
         id: record.id.clone(),
         agent: record.agent.clone(),
@@ -18162,6 +18181,7 @@ pub(crate) fn dsh_provider_lease_scope(record: &SessionRecord) -> Result<Option<
 }
 
 fn validate_stored_agent_args(record: &SessionRecord, agent: AgentKind) -> Result<(), CliError> {
+    launch_env::from_record(record)?;
     let flag = match agent {
         AgentKind::Codex => record
             .agent_args
@@ -19744,6 +19764,7 @@ mod tests {
         )
         .unwrap();
         let args = ProviderResumeImportArgs {
+            launch_env: launch_env::LaunchEnv::new(),
             agent: AgentKind::Codex,
             title_mode: display_metadata::TitleMode::Auto,
             provider_resume_id: "provider-fixture".into(),

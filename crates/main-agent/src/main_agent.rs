@@ -4294,6 +4294,7 @@ fn run_worker_start_single_input(
                 tmux_bin: None,
                 agent_bin: None,
                 agent_args: launch_input.launch.agent_args.clone(),
+                launch_env: Vec::new(),
                 coordination_mode: launch_input.launch.coordination_mode,
                 paste_delay_ms: cli::DEFAULT_PASTE_DELAY_MS,
                 via_console: false,

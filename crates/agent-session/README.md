@@ -596,3 +596,29 @@ Managed Codex app-server thread responses report resolved defaults, and successf
 must match the active runtime and provider session; auxiliary sessions cannot
 replace primary settings. A changed model without an effort observation clears
 the previous effort. Labels resembling credentials or paths are omitted.
+
+### Public launch switches
+
+`agent-session start --env AGENT_RUNTIME_SUPPRESS_MEMORY=1` passes a switch to
+both the provider process and its startup hooks. Repeat `--env KEY=VALUE` for
+multiple switches. This is a public, non-secret surface: keys and values are
+persisted as `launch_env` and returned by JSON start/list/board responses.
+Never pass credentials or private values.
+
+The default allowlist contains `AGENT_RUNTIME_SUPPRESS_MEMORY`,
+`AGENT_RUNTIME_SUPPRESS_HEALTH`, `AGENT_RUNTIME_SUPPRESS_PREFLIGHT`, and
+`AGENT_RUNTIME_SUPPRESS_FINISH_GATE`. Configure
+`AGENT_SESSION_LAUNCH_ENV_ALLOWLIST` as a JSON array to replace that list;
+`[]` disables overrides. Configured keys must be uppercase `AGENT_RUNTIME_`
+switch names without credential words. At most 16 unique assignments are
+accepted, with values bounded to 1024 bytes and no control characters.
+Values are literal; empty values and `=` within values are preserved.
+
+The Console start path forwards `launch_env` to the target daemon and requires
+an exact echo. A relay that strips the field produces `launch-env-unconfirmed`
+after creation; inspect the created session before retrying. Configure the
+same allowlist on the caller and target daemon for custom switches. Resume,
+account switching, clear/rebind, and runtime recreation retain the saved map;
+a recreated provider receives the same overrides. Recreation revalidates the
+current allowlist and refuses a saved key that is no longer approved. With no
+overrides, existing launch environment inheritance is unchanged.
