@@ -12,7 +12,6 @@ use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-#[cfg(target_os = "linux")]
 use super::cli::{TestProcessGroup, fake_agent, fake_tmux, spawn_scoped_test_process_group};
 
 fn run(dir: &Path, args: &[&str]) -> CmdOutput {
@@ -2029,7 +2028,7 @@ fn atomic_claim_conflict_idempotency_and_uncovered_mutation_are_fenced() {
 }
 
 #[test]
-fn legacy_checkout_shell_grant_cannot_widen_explicit_claim_scopes() {
+fn retired_checkout_shell_grant_cannot_widen_explicit_claim_scopes() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
     let checkout = tmp.path().join("checkout");
@@ -2251,7 +2250,7 @@ fn legacy_checkout_shell_grant_cannot_widen_explicit_claim_scopes() {
         "uncovered-mutation-scope"
     );
     grant_checkout_shell(&state_dir, &["alpha"]);
-    let legacy_grant = run(
+    let retired_grant = run(
         &checkout,
         &[
             "--state-dir",
@@ -2278,9 +2277,9 @@ fn legacy_checkout_shell_grant_cannot_widen_explicit_claim_scopes() {
             "json",
         ],
     );
-    assert_eq!(legacy_grant.code, 65);
+    assert_eq!(retired_grant.code, 65);
     assert_eq!(
-        legacy_grant.stdout_json()["error"]["code"],
+        retired_grant.stdout_json()["error"]["code"],
         "uncovered-mutation-scope"
     );
     let registry = coordination_registry(&state_dir);

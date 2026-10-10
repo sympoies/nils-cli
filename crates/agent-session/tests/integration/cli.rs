@@ -7977,7 +7977,7 @@ fn delete_retired_external_runtime_preserves_existing_state() {
 }
 
 #[test]
-fn list_ignores_legacy_mode_registry_without_changing_existing_state() {
+fn list_ignores_retired_mode_registry_without_changing_existing_state() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
     let main_id = "main-agent-session";
