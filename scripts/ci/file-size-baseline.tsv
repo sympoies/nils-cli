@@ -43,7 +43,7 @@ crates/forge-cli/tests/integration/pr_deliver_chain.rs	test	3114
 crates/forge-cli/tests/integration/pr_merge.rs	test	3023
 crates/forge-cli/tests/integration/pr_pending_review.rs	test	3433
 crates/forge-cli/tests/integration/pr_review.rs	test	4840
-crates/git-cli/src/worktree/dirty_checkout_adoption.rs	impl	8391
+crates/git-cli/src/worktree/dirty_checkout_adoption.rs	impl	8302
 crates/git-cli/src/worktree/dirty_checkout_adoption.rs	test	6734
 crates/git-cli/tests/integration/dirty_checkout_adoption.rs	test	3158
 crates/main-agent/src/main_agent.rs	impl	24157
