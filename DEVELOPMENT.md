@@ -54,6 +54,11 @@ artifacts, and release/publish procedures live in the
    coverage maintenance, CI debugging, or an explicit request. GitHub required
    checks `test`, `test_macos`, and `coverage` remain the merge gate.
 
+For an approved batch of low-risk changes, follow the
+[`next` integration procedure](docs/runbooks/workspace-maintenance-reference.md#integration-batches-on-next).
+Each member needs changed-scope validation PASS and review PASS on its exact head; the
+batch shares one complete local gate on the frozen integration head.
+
 ## Documentation routing
 
 | Need | Canonical document |
