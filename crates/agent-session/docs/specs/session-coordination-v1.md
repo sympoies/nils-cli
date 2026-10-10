@@ -703,14 +703,25 @@ registry-locked transaction that replaces the broker:
 - **Who:** only the same session ID, and only from the exact predecessor
   incarnation recorded in that session's broker after its runtime has been
   proven stopped (the existing replacement proof; a live or unverifiable
-  predecessor refuses the resume and carries nothing). Other session IDs, a new
-  session, and a transferred relationship never receive the carry.
+  predecessor refuses the resume and carries nothing). The carry is bound to
+  the current session record's lineage. Delete revokes but keeps a session's
+  stopped broker, so a new session reusing the ID would otherwise see it as a
+  predecessor. Therefore mail persisted (millisecond ingress time; whole
+  seconds for older records) before the current session record's `created_at`
+  is never carried. A deleted session's mail never reaches a recreated session,
+  provided the host clock does not step backwards between delete and recreate.
+  Other session IDs, a new session, and a transferred relationship never
+  receive the carry.
 - **What:** only `unread`, unexpired mail. `read`, `acknowledged`, `expired`
   and `quarantined` mail stays with the incarnation that handled it, so a
   one-use grant that was already seen (for example a gate start token) is never
   presented again. Guidance from a Main Agent primary manager of an assignment
   whose current or previous worker is this session is excluded; Main Agent
-  guidance reconcile and quarantine keep owning it.
+  guidance reconcile and quarantine keep owning it. When that relationship
+  cannot be read, nothing is carried. Such mail stays retained, unchanged and
+  auditable under the predecessor incarnation. No retry marker is recorded, and
+  a later resume carries only from its own exact predecessor, so recovery is
+  the sender resending.
 - **How:** the message moves in place. Its message ID, sender, sender
   incarnation, `created_at`, remote creation epoch, expiry, category, body and
   reply link are unchanged; only `recipient_incarnation` changes and the

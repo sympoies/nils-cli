@@ -597,6 +597,7 @@ pub(crate) fn provision_with_previous(
             context,
             &mut locked.registry,
             &record.id,
+            &record.created_at,
             &previous.incarnation,
             &incarnation,
             now,

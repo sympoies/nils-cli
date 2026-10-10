@@ -1163,11 +1163,15 @@ where
 /// and category stay unchanged and the revision advances, so a copy can never be
 /// handled twice. Read or terminal mail, other session IDs and guidance from a
 /// Main Agent controller of this session (which keeps its own authorized
-/// continuity and quarantine) stay with their original incarnation.
+/// continuity and quarantine) stay with their original incarnation. Mail
+/// created before this session record existed belongs to an earlier session
+/// that reused the ID and is never carried.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn carry_unread_after_verified_resume(
     context: &CliContext,
     registry: &mut Registry,
     session_id: &str,
+    session_created_at: &str,
     previous_incarnation: &str,
     current_incarnation: &str,
     now: i64,
@@ -1175,6 +1179,9 @@ pub(super) fn carry_unread_after_verified_resume(
     if previous_incarnation == current_incarnation {
         return 0;
     }
+    let Ok(session_created) = session_created_at.parse::<jiff::Timestamp>() else {
+        return 0;
+    };
     let Some(controllers) = main_agent_controllers(context, session_id) else {
         return 0;
     };
@@ -1185,6 +1192,7 @@ pub(super) fn carry_unread_after_verified_resume(
             || message.recipient_incarnation != previous_incarnation
             || message.state != "unread"
             || message.expires_at_epoch <= now
+            || persisted_before(message, session_created)
             || controllers.contains(&message.sender_session_id)
             || super::forwarding::record_resume_transfer(
                 message,
@@ -1220,6 +1228,17 @@ pub(super) fn carry_unread_after_verified_resume(
         let _ = super::notification::schedule(registry, session_id, current_incarnation, now);
     }
     carried
+}
+
+/// Whether `message` was persisted before the session record was created, so
+/// it belongs to an earlier session that reused the ID (a deleted session's
+/// stopped broker stays registered).
+fn persisted_before(message: &StoredMessage, session_created: jiff::Timestamp) -> bool {
+    if message.created_at_epoch_millis > 0 {
+        message.created_at_epoch_millis < session_created.as_millisecond()
+    } else {
+        message.created_at_epoch < session_created.as_second()
+    }
 }
 
 /// Local controllers whose guidance to `session_id` Main Agent reconciles
