@@ -430,12 +430,13 @@ fn coordination_command_name(command: &Command) -> Option<&'static str> {
 fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
     let mut root_args = args.iter().skip(1);
     while let Some(arg) = root_args.next() {
-        match arg.to_str()? {
-            "--state-dir" | "--host" => {
+        // Match bytes so a non-UTF-8 option value cannot hide later command names.
+        match arg.as_encoded_bytes() {
+            b"--state-dir" | b"--host" => {
                 root_args.next()?;
             }
-            arg if arg.starts_with("--state-dir=") || arg.starts_with("--host=") => {}
-            "readiness" => return Some("readiness"),
+            arg if arg.starts_with(b"--state-dir=") || arg.starts_with(b"--host=") => {}
+            b"readiness" => return Some("readiness"),
             _ => break,
         }
     }
