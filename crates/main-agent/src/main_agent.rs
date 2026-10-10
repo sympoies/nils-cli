@@ -2014,37 +2014,10 @@ fn ensure_runtime_checkpoint_ready(
     record: &SessionRecord,
     incarnation: &str,
 ) -> Result<PathBuf, CliError> {
-    let expected = agent_session::internal::coordination::checkpoint_path_for_state(
-        &context.state_dir,
-        &record.id,
+    agent_session::internal::coordination::readiness::ensure_runtime_checkpoint_ready(
+        context,
+        record,
         incarnation,
-    );
-    let supplied = env::var_os(agent_session::internal::coordination::CHECKPOINT_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(runtime_checkpoint_unavailable)?;
-    if supplied != expected {
-        return Err(runtime_checkpoint_unavailable());
-    }
-    let metadata = fs::symlink_metadata(&expected).map_err(|_| runtime_checkpoint_unavailable())?;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.nlink() != 1
-        || metadata.permissions().mode() & 0o777 != SECRET_FILE_MODE
-    {
-        return Err(runtime_checkpoint_unavailable());
-    }
-    Ok(expected)
-}
-
-fn runtime_checkpoint_unavailable() -> CliError {
-    CliError::data(
-        "runtime-checkpoint-unavailable",
-        "this session incarnation has no trusted runtime-issued checkpoint file; resume or restart the managed session after deploying compatible runtime surfaces",
-        Some(json!({
-            "required_action": "resume-or-restart-managed-session"
-        })),
     )
 }
 
