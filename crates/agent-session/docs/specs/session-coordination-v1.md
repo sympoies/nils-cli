@@ -748,7 +748,14 @@ refusing it would leave guidance for an idle worker queued indefinitely. Termina
 byte-exact prompt as the content of a newer transcript-observed turn. A later
 provider observation reconciles `attempting` or `attempt_unknown`: an exact prompt proves
 `prompt_submitted`, a current transcript without it safely requeues, and
-unavailable observation leaves the attempt parked.
+unavailable observation leaves the attempted generation parked. A later send
+creates a new generation and supersedes an older `attempt_unknown` outcome;
+that older receipt cannot acknowledge the new generation. An active
+`attempting` submission retains its side-effect fence until its owner records
+an outcome. Pending reminder queue timestamps never precede the newest live unread
+canonical message admitted to the exact recipient incarnation, including remote
+deliveries and carried guidance. Migrated timestamps are recovered from those
+records; existing upper bounds and original attempted timestamps are retained.
 
 Busy app-server Codex without an authoritative steerable turn, attached or
 busy terminal runtimes, rate-limited, controller-unavailable, and

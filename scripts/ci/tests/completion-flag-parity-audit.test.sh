@@ -19,6 +19,10 @@ if [[ ! -f "$script" ]]; then
   exit 2
 fi
 
+# The audit honors an ambient isolated target; keep the default-layout fixtures
+# below independent of the caller's environment.
+unset CARGO_TARGET_DIR
+
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/completion-flag-parity-test.XXXXXX")"
 cleanup() {
   rm -rf "$tmp"
@@ -48,8 +52,9 @@ matrix_row() {
 make_workspace() {
   local dir="$1"
   shift
-  mkdir -p "$dir/scripts/ci" "$dir/docs/specs" "$dir/target/debug"
+  mkdir -p "$dir/scripts/ci/lib" "$dir/docs/specs" "$dir/target/debug"
   cp "$script" "$dir/scripts/ci/completion-flag-parity-audit.sh"
+  cp "$(dirname "$script")/lib/cargo-target-dir.sh" "$dir/scripts/ci/lib/cargo-target-dir.sh"
 
   {
     echo '| Binary | Obligation | Zsh completion (`completions/zsh`) | Bash completion (`completions/bash`) | Alias requirement | Completion enforcement metadata | Rationale |'
@@ -273,6 +278,78 @@ if [[ "$code" != "0" ]]; then
 fi
 if ! grep -qx 'PASS: completion flag parity audit (required=2, dynamic_engine_skipped=0, failures=0)' "$out"; then
   fail "concurrent fixture did not report PASS:"$'\n'"$(cat "$out")"
+fi
+
+# 4. Isolated cargo target: binaries that only exist under CARGO_TARGET_DIR
+#    (absolute or relative, with spaces) are audited in place. A stub `cargo`
+#    records any build attempt so the audit cannot silently rebuild instead.
+stub_dir="$tmp/stub-bin"
+mkdir -p "$stub_dir"
+cat >"$stub_dir/cargo" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"$STUB_CARGO_LOG"
+echo "stub cargo refuses to build" >&2
+exit 1
+EOF
+chmod +x "$stub_dir/cargo"
+
+run_isolated_audit() {
+  # Run from an unrelated cwd so a relative CARGO_TARGET_DIR must resolve
+  # against the audited root, where cargo itself would run.
+  local dir="$1"
+  local out_file="$2"
+  shift 2
+  local code=0
+  (cd "$tmp" && env "$@" PATH="$stub_dir:$PATH" STUB_CARGO_LOG="$dir/cargo.log" \
+    COMPLETION_PARITY_JOBS=2 \
+    bash "$dir/scripts/ci/completion-flag-parity-audit.sh" --strict) >"$out_file" 2>&1 || code=$?
+  printf '%s' "$code"
+}
+
+expected_isolated='PASS: completion flag parity audit (required=2, dynamic_engine_skipped=0, failures=0)'
+
+iso_abs="$tmp/iso-abs"
+make_workspace "$iso_abs" \
+  "alpha-cli:--verbose:--verbose:--verbose" \
+  "beta-cli:--json:--json:--json"
+mkdir -p "$tmp/iso abs target"
+mv "$iso_abs/target/debug" "$tmp/iso abs target/debug"
+rmdir "$iso_abs/target"
+out="$tmp/iso-abs.out"
+code="$(run_isolated_audit "$iso_abs" "$out" "CARGO_TARGET_DIR=$tmp/iso abs target")"
+if [[ "$code" != "0" ]] || ! grep -qxF "$expected_isolated" "$out"; then
+  fail "absolute isolated target fixture exited $code and reported:"$'\n'"$(cat "$out")"
+fi
+if [[ -e "$iso_abs/cargo.log" ]]; then
+  fail "absolute isolated target fixture attempted a cargo build: $(cat "$iso_abs/cargo.log")"
+fi
+
+iso_rel="$tmp/iso-rel"
+make_workspace "$iso_rel" \
+  "alpha-cli:--verbose:--verbose:--verbose" \
+  "beta-cli:--json:--json:--json"
+mv "$iso_rel/target" "$iso_rel/rel target"
+out="$tmp/iso-rel.out"
+code="$(run_isolated_audit "$iso_rel" "$out" "CARGO_TARGET_DIR=rel target")"
+if [[ "$code" != "0" ]] || ! grep -qxF "$expected_isolated" "$out"; then
+  fail "relative isolated target fixture exited $code and reported:"$'\n'"$(cat "$out")"
+fi
+if [[ -e "$iso_rel/cargo.log" ]]; then
+  fail "relative isolated target fixture attempted a cargo build: $(cat "$iso_rel/cargo.log")"
+fi
+
+# A genuinely missing binary still fails (via the build step) and still names
+# the effective target directory, not the default one.
+iso_missing="$tmp/iso-missing"
+make_workspace "$iso_missing" "alpha-cli:--verbose:--verbose:--verbose"
+mkdir -p "$tmp/iso missing target/debug"
+out="$tmp/iso-missing.out"
+code="$(run_isolated_audit "$iso_missing" "$out" "CARGO_TARGET_DIR=$tmp/iso missing target")"
+if [[ "$code" == "0" ]]; then
+  fail "missing isolated binary fixture should fail:"$'\n'"$(cat "$out")"
+fi
+if [[ ! -s "$iso_missing/cargo.log" ]]; then
+  fail "missing isolated binary fixture did not reach the build step"
 fi
 
 if (( failures > 0 )); then

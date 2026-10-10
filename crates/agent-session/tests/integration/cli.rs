@@ -6874,7 +6874,8 @@ esac
         record["agent_args"] = json!([]);
         fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
 
-        let delete = run(
+        let delete = nils_test_support::cmd::run_resolved_isolated_identity(
+            "agent-session",
             tmp.path(),
             &[
                 "--state-dir",
@@ -6886,7 +6887,6 @@ esac
                 "--format",
                 "json",
             ],
-            &[],
         );
 
         assert_eq!(delete.code, 0, "stdout={}", delete.stdout_text());

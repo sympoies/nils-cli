@@ -24,7 +24,18 @@ pub fn run_semantic_commit_output(
     envs: &[(&str, &str)],
     input: Option<&str>,
 ) -> Output {
-    let output = run_resolved_in_dir_with_stdin_str("semantic-commit", dir, args, envs, input);
+    // Point forge identity and config lookups at an empty per-run directory, so
+    // the developer's forge profiles cannot leak into the child process.
+    // Callers may still override these through `envs`.
+    let isolated = tempfile::TempDir::new().expect("isolated config dir");
+    let xdg_config = isolated.path().join("xdg-config");
+    let xdg_state = isolated.path().join("xdg-state");
+    let mut all_envs = vec![
+        ("XDG_CONFIG_HOME", xdg_config.to_str().expect("config path")),
+        ("XDG_STATE_HOME", xdg_state.to_str().expect("state path")),
+    ];
+    all_envs.extend_from_slice(envs);
+    let output = run_resolved_in_dir_with_stdin_str("semantic-commit", dir, args, &all_envs, input);
     output.into_output()
 }
 
