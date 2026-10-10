@@ -575,6 +575,19 @@ pub(crate) fn provision_with_previous(
             lease.terminal_at_epoch = Some(now);
         }
     }
+    if let Some(previous) = previous_broker.as_ref() {
+        // Persisted with the replacement broker below, so nothing can still be
+        // admitted for the predecessor once its unread mail has moved.
+        super::mailbox::carry_unread_after_verified_resume(
+            context,
+            &mut locked.registry,
+            &record.id,
+            &record.created_at,
+            &previous.incarnation,
+            &incarnation,
+            now,
+        );
+    }
     locked.registry.brokers.insert(
         record.id.clone(),
         BrokerRecord {

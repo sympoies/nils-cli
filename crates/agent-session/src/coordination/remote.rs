@@ -1521,6 +1521,7 @@ fn receive_admitted(
         forwarded_at_epoch: None,
         category: envelope.category,
         forwarding: envelope.forwarding,
+        resume_carry: None,
         body_bytes: envelope.body.len(),
         body: envelope.body,
     };
