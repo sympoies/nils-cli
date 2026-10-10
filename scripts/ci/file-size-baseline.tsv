@@ -2,7 +2,7 @@ path	kind	lines
 crates/agent-docs/src/session.rs	impl	2930
 crates/agent-docs/tests/integration/user_config.rs	test	3468
 crates/agent-hook/src/dsh_policy.rs	impl	5961
-crates/agent-hook/src/evaluator.rs	impl	2209
+crates/agent-hook/src/evaluator.rs	impl	2208
 crates/agent-hook/src/finish_line.rs	impl	5181
 crates/agent-hook/src/finish_line/acceptance.rs	impl	2106
 crates/agent-hook/src/setup.rs	impl	2099
@@ -10,7 +10,7 @@ crates/agent-hook/src/workspace_lease.rs	impl	2389
 crates/agent-hook/tests/dsh_policy.rs	test	5130
 crates/agent-hook/tests/setup.rs	test	3033
 crates/agent-out/src/lib.rs	impl	2430
-crates/agent-session/src/activity.rs	impl	5840
+crates/agent-session/src/activity.rs	impl	5835
 crates/agent-session/src/activity.rs	test	4319
 crates/agent-session/src/codex_app_server.rs	impl	5524
 crates/agent-session/src/codex_app_server.rs	test	8821
@@ -22,9 +22,9 @@ crates/agent-session/src/retitle.rs	impl	3408
 crates/agent-session/src/retitle_v3.rs	impl	3634
 crates/agent-session/src/retitle_v3.rs	test	3648
 crates/agent-session/src/serve.rs	impl	12479
-crates/agent-session/src/serve.rs	test	26352
+crates/agent-session/src/serve.rs	test	26353
 crates/agent-session/tests/integration/cli.rs	test	13488
-crates/agent-session/tests/integration/coordination.rs	test	5405
+crates/agent-session/tests/integration/coordination.rs	test	5408
 crates/agent-workflow-primitives/src/heuristic_inbox.rs	impl	4085
 crates/agent-workflow-primitives/src/repo_retro.rs	impl	2487
 crates/agent-workflow-primitives/src/review_specialists.rs	impl	2736

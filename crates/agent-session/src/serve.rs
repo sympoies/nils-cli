@@ -34364,6 +34364,7 @@ exit 0
             &self.identity_dir
         }
 
+        #[cfg(target_os = "linux")]
         fn wait_for_started_and_reaped(&self, expected: usize) -> io::Result<()> {
             let deadline = Instant::now() + Duration::from_secs(2);
             loop {

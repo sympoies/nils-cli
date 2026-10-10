@@ -254,7 +254,7 @@ fn worktree_lifecycle_guard_survives_launch_and_failure_rollback() {
     }
 }
 
-fn run(dir: &Path, args: &[&str]) -> CmdOutput {
+pub(super) fn run(dir: &Path, args: &[&str]) -> CmdOutput {
     run_resolved("agent-session", args, &CmdOptions::new().with_cwd(dir))
 }
 
@@ -325,7 +325,7 @@ fn seed_session_at(
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).expect("record mode");
 }
 
-fn seed_activity_state(
+pub(super) fn seed_activity_state(
     state_dir: &Path,
     id: &str,
     incarnation: &str,
@@ -379,7 +379,7 @@ fn seed_activity_state_with_source(
     );
 }
 
-fn seed_live_runtime_identity(
+pub(super) fn seed_live_runtime_identity(
     state_dir: &Path,
     id: &str,
     incarnation: &str,
@@ -423,7 +423,7 @@ fn current_pid_namespace_identity() -> serde_json::Value {
     }
 }
 
-fn init_checkout(path: &Path, remote: &str) {
+pub(super) fn init_checkout(path: &Path, remote: &str) {
     fs::create_dir_all(path).expect("checkout directory");
     let init = Command::new("git")
         .current_dir(path)
@@ -462,7 +462,10 @@ pub(super) fn seed_brokers(state_dir: &Path, sessions: &[(&str, &str, &str)]) {
     seed_brokers_at(state_dir, &sessions);
 }
 
-fn seed_brokers_at(state_dir: &Path, sessions: &[(&str, &str, &str, &Path, Option<&str>)]) {
+pub(super) fn seed_brokers_at(
+    state_dir: &Path,
+    sessions: &[(&str, &str, &str, &Path, Option<&str>)],
+) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
@@ -599,7 +602,7 @@ pub(super) fn capability(state_dir: &Path, id: &str) -> String {
         .to_string()
 }
 
-fn candidate(path: &Path, prefix: &str, summary: &str) {
+pub(super) fn candidate(path: &Path, prefix: &str, summary: &str) {
     fs::write(
         path,
         serde_json::to_vec_pretty(&json!({
@@ -631,7 +634,7 @@ pub(super) fn write_private_json(path: &Path, value: &serde_json::Value) {
     nils_common::fs::write_atomic(path, &bytes, 0o600).expect("write private json atomically");
 }
 
-fn rewrite_registry(state_dir: &Path, mutate: impl FnOnce(&mut serde_json::Value)) {
+pub(super) fn rewrite_registry(state_dir: &Path, mutate: impl FnOnce(&mut serde_json::Value)) {
     let path = state_dir.join("coordination/registry.json");
     let mut registry: serde_json::Value =
         serde_json::from_slice(&fs::read(&path).expect("registry")).expect("registry json");
@@ -651,7 +654,7 @@ fn coordination_registry(state_dir: &Path) -> serde_json::Value {
     .expect("coordination registry json")
 }
 
-fn load_coordination_registry(state_dir: &Path) -> serde_json::Value {
+pub(super) fn load_coordination_registry(state_dir: &Path) -> serde_json::Value {
     serde_json::from_slice(
         &fs::read(state_dir.join("coordination/registry.json")).expect("coordination registry"),
     )

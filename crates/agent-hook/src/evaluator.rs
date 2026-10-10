@@ -1111,7 +1111,6 @@ pub fn apply_session_coordination(
             },
         ),
     };
-
     merge_coordination_outcome(&mut decision, &rule.id, outcome)?;
     Ok(crate::degradation::apply_stop_reentry(
         request,

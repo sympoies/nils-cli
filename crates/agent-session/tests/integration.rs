@@ -16,3 +16,5 @@ mod metadata;
 mod readiness;
 #[path = "integration/retitle_v3.rs"]
 mod retitle_v3;
+#[path = "integration/work_context_admission.rs"]
+mod work_context_admission;

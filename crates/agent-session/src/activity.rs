@@ -1779,11 +1779,6 @@ pub(crate) fn refuse_if_blocked(
 }
 
 pub fn state_for_view(context: &CliContext, record: &SessionRecord) -> Option<TurnState> {
-    // A plugin-owned dsh lane reports its turn through the liveness sidecar
-    // instead of this store's activity document, and its unhealthy markers
-    // belong to a tmux runtime it never had. Projecting it here keeps every
-    // activity consumer — claim gates, views, prompt baselines — reading the
-
     let dir = session_dir(context, &record.id);
     if let Some(runtime) = record.runtime.as_ref() {
         match runtime_unhealthy_marker(&dir, &runtime.launch_id, runtime.generation) {

@@ -329,6 +329,72 @@ recorded in `sympoies/nils-cli#1409`.
   Codex/Claude sessions add `last_prompt_state` with one of `current`, `pending`,
   or `unavailable`. `current` may include `last_prompt`; `current` without it
   authoritatively means the caught-up transcript has no eligible user prompt.
+  `pending` means exact-source discovery, cold recovery, or known append catch-up
+  is in progress and omits the preview rather than reporting a stale cached
+  value. `unavailable` means the exact source cannot currently be used or its
+  continuity was invalidated, and also omits the preview. After continuity
+  invalidation, every caller continues to see `unavailable` until one response
+  can expose an authoritative `current` projection. The response-only opaque
+  `last_prompt_continuity` token is 16-128 URL-safe ASCII characters, is present
+  with eligible states, and rotates whenever exact transcript continuity is
+  lost, including across daemon restarts. Consumers may retain a pending
+  preview only when this token and the runtime identity both match. Sessions
+  without
+  enough runtime/provider identity to be eligible omit both fields. Later list
+  polls use a bounded metadata/continuity check, retain the newest caught-up
+  preview in process memory, and avoid recurring cold scans when the stable
+  registry is at capacity. Rotation, truncation, or identity drift invalidates
+  that memory and forces exact rediscovery. The text is returned in the response
+  only and is never logged or persisted by the daemon; the daemon never guesses
+  a transcript match.
+  `startup` is the metadata-only `agent-session.startup.v1` projection shared by
+  create, list, and glance responses. Its state is `starting`, `ready`, or
+  `failed`; its bounded stage is `record`, `tmux`, `runtime`, `app_server`,
+  `proxy`, `provider_client`, or `initial_connection`.
+  A Codex session whose automatic runtime selection kept the raw TUI adds
+  `runtime_fallback` with one allowlisted reason: `codex-unavailable`,
+  `codex-version-unrecognized`, `codex-version-too-old`,
+  `codex-app-server-transport-unavailable`,
+  `codex-app-server-runtime-dir-unavailable`,
+  `codex-app-server-runtime-dir-unsafe`,
+  `codex-app-server-socket-path-too-long`, or
+  `codex-app-server-runtime-unavailable`. It is absent for an app-server
+  runtime and for an explicit `AGENT_SESSION_CODEX_RUNTIME=raw`.
+  Failed projections add
+  an RFC 3339 `occurred_at` captured from the private failure marker, boolean
+  `retry_safe`, one reviewed message, and one
+  allowlisted code: `runtime-helper-unavailable`, `agent-binary-unavailable`,
+  `working-directory-unavailable`, `terminal-runtime-create-failed`,
+  `app-server-start-failed`, `proxy-start-failed`, `provider-client-exited`,
+  `provider-configuration-rejected`, `startup-timeout`, `startup-exited`, or
+  `claude-account-switch-resume-failed`, or `claude-account-switch-cleanup-incomplete`.
+  A failure whose cleanup could not finish adds a bounded `cleanup` object with
+  `state` of `pending` or `blocked` and one allowlisted `reason`:
+  `session_still_running`, `process_boundary_live`, `runtime_identity_changed`,
+  `runtime_identity_unavailable`, `termination_failed`, `termination_timeout`,
+  `verification_failed`, `cleanup_unavailable`, or `unknown`. `cleanup`
+  is absent when cleanup completed or was never attempted, so a projection that
+  omits it carries no caveat. Cleanup is strictly secondary: it never replaces
+  the primary startup failure, because the original create/start error is what
+  explains the failure and a termination error would hide it. When cleanup does
+  not complete, the session record is deliberately retained rather than removed —
+  a live boundary with no record would be unreachable from the Console — and the
+  runtime is not marked never-launched.
+  Managed launchers retain only bounded stage/failure markers in the record and
+  keep stderr in a private, tail-capped local diagnostic file for startup failures
+  and non-zero Codex provider-client exits after readiness; clean exits discard it.
+  The local `agent-session logs <id>` command can read that diagnostic, but it is
+  never copied into the session projection. Raw argv, environment, provider responses,
+  stderr, prompts, and filesystem paths are never copied into the projection. A
+  record that reached `ready` keeps that state after an ordinary later stop,
+  so consumers must not relabel normal session termination as startup failure.
+  A fresh managed Codex client that exits nonzero before binding its first
+  provider thread reports `provider-client-exited`, even if an earlier view
+  reported `ready` from the initial proxy connection. A resume starts a fresh startup
+  lifecycle for its new runtime generation; synchronous launch rollback restores
+  the prior projection and private diagnostic artifacts. A leftover resume
+  backup from an interrupted process blocks another resume before mutation so
+  the only copy of prior diagnostic state is not silently discarded.
 - `GET /usage` — read-only provider usage report, open on loopback. The serve
   envelope contains `data.usage.schema_version: "agent-session.usage.v1"` and
   provider entries for Codex and Claude. Provider readers are bounded by
