@@ -22116,23 +22116,9 @@ exit 1
             assert!(deleted.deleted);
         }
     }
-
-    /// Point forge identity and config lookups at an empty per-test directory, so
-    /// the developer's forge profiles cannot leak into this in-process check. The
-    /// returned directory must outlive the test.
-    fn isolate_forge_config() -> tempfile::TempDir {
-        let dir = tempfile::TempDir::new().expect("isolated config dir");
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", dir.path().join("xdg-config"));
-            std::env::set_var("XDG_STATE_HOME", dir.path().join("xdg-state"));
-            std::env::remove_var("FORGE_IDENTITY_PRINCIPAL");
-        }
-        dir
-    }
-
     #[test]
     fn absent_managed_name_requires_a_stopped_process_boundary() {
-        let _config = isolate_forge_config();
+        let _isolation = nils_test_support::isolate_forge_identity();
         let stub = nils_test_support::StubBinDir::new();
         stub.write_exe(
             "tmux",

@@ -23,19 +23,6 @@ fn run(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
     run_resolved("agent-session", args, &options)
 }
 
-/// Run `agent-session` with forge identity and config lookups pointed at empty
-/// directories under `dir`, so the developer's forge profiles cannot leak in.
-fn run_isolated(dir: &Path, args: &[&str]) -> CmdOutput {
-    let xdg_config = dir.join("xdg-config");
-    let xdg_state = dir.join("xdg-state");
-    let options = CmdOptions::new()
-        .with_cwd(dir)
-        .with_env("XDG_CONFIG_HOME", &xdg_config.to_string_lossy())
-        .with_env("XDG_STATE_HOME", &xdg_state.to_string_lossy())
-        .with_env_remove("FORGE_IDENTITY_PRINCIPAL");
-    run_resolved("agent-session", args, &options)
-}
-
 fn write_executable(path: &Path, body: &str) {
     fs::write(path, body).expect("write executable");
     let mut permissions = fs::metadata(path).expect("metadata").permissions();
@@ -6863,7 +6850,8 @@ esac
         record["agent_args"] = json!([]);
         fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
 
-        let delete = run_isolated(
+        let delete = nils_test_support::cmd::run_resolved_isolated_identity(
+            "agent-session",
             tmp.path(),
             &[
                 "--state-dir",
