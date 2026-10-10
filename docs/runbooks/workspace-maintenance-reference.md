@@ -196,7 +196,7 @@ batch. Required hosted checks and branch protections continue to apply.
    NILS_CLI_TEST_RUNNER=nextest bash .agents/scripts/pre-pr.sh --full
    ```
 
-   Use the resource wrapper described below and the host's configured limits.
+   Use the shared gate semaphore described below and the host's configured limits.
    A package check, partial run, or a passing member does not establish a
    complete batch PASS.
 5. Retain the original terminal outcome, logs, selected scope, counts, and
@@ -211,9 +211,11 @@ batch. Required hosted checks and branch protections continue to apply.
 7. Open the integration PR from `next` to `main` at the validated frozen head.
    Require review and green hosted `test`, `test_macos`, and `coverage` checks
    before an expected-head merge with `--expected-base main --keep-branch`.
-   If `main` advances and reconciliation is
-   needed, merge `main` into `next` through a PR, then freeze and validate the
-   new integration head. Keep the branch for subsequent batches.
+   If `main` advances and reconciliation is needed, open and review a PR from
+   `main` to `next`. Merge it using the guarded form in step 3 with
+   `--expected-head`, `--expected-base next`, `--allow-non-default-base`, and
+   `--keep-branch`. Then freeze and validate the new integration head. Keep the
+   branch for subsequent batches.
 8. Record the promoted integration head and member outcomes in the delivery
    handoff. A batch merge does not authorize tagging, publishing, installing,
    or deployment; follow the existing release workflow when requested.
