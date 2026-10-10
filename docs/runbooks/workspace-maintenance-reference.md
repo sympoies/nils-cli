@@ -481,6 +481,22 @@ fails when:
 When a PR shrinks or removes an over-limit file, refresh the baseline in the same
 PR with `bash scripts/ci/file-size-audit.sh --update-baseline` and commit it.
 
+Put new code in new modules, not in baselined files. A baselined file cannot
+grow by even one line, so each of its rows must end the PR at or below its
+baseline:
+
+- **New module file.** Put the new implementation and its unit tests in a new
+  file. A new file has no baseline row and can grow up to the limits. The `mod`
+  declaration and the call sites still count against the baselined file, so
+  offset them with removals there, or declare the module from a parent file
+  without a baseline row.
+- **Equal move-out.** Move at least as many lines out of the same file as the
+  change adds, then refresh the baseline. Rows only go down.
+
+Run `bash scripts/ci/file-size-audit.sh --strict` before pushing; it needs no
+compile. CI audits the PR's merge result each time it runs, so a PR opened
+before the ratchet merged fails on its next push or re-run.
+
 ## 4.1 Supply-chain audit (cargo-deny)
 
 A dedicated `cargo-deny` GitHub Actions job (`.github/workflows/ci.yml`) runs on
