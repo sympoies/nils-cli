@@ -240,7 +240,7 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus" >> "$GITHUB_ENV"
           test -S "/run/user/${uid}/systemd/private"
 
-      - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, tempdir-leak-audit, test-stale-audit)
+      - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
         env:
           NILS_CLI_GATE_MIN_AVAILABLE_GIB: "2"
           NILS_CLI_GATE_MEMORY_MAX_GIB: "12"
@@ -449,7 +449,7 @@ jobs:
       # the coverage floor here (NILS_CLI_TEST_RUNNER=llvm-cov). The `coverage`
       # job then reports from this run's LCOV instead of repeating the whole
       # suite on a second macOS runner.
-      - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, tempdir-leak-audit, test-stale-audit)
+      - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
         env:
           NILS_CLI_RUNNER_MAX: "2"
           NILS_CLI_TEST_RUNNER: llvm-cov
