@@ -693,6 +693,61 @@ JSON contract, stale target incarnation, permission drift, corrupt state,
 symlink escape, lock timeout, and quota/rate violations have distinct
 content-free errors.
 
+### Same-session resume continuity
+
+Every mailbox read and mutation stays fenced to the exact current recipient
+incarnation. A resume (or any other relaunch of the same session ID) that
+replaces the coordination broker carries mail forward only inside the
+registry-locked transaction that replaces the broker:
+
+- **Who:** only the same session ID, and only from the exact predecessor
+  incarnation recorded in that session's broker after its runtime has been
+  proven stopped (the existing replacement proof; a live or unverifiable
+  predecessor refuses the resume and carries nothing). The carry is bound to
+  the current session record's lineage. Delete revokes but keeps a session's
+  stopped broker, so a new session reusing the ID would otherwise see it as a
+  predecessor. Therefore mail persisted (millisecond ingress time; whole
+  seconds for older records) before the current session record's `created_at`
+  is never carried. A deleted session's mail never reaches a recreated session,
+  provided the host clock does not step backwards between delete and recreate.
+  On macOS a recreated session is refused earlier: the stopped-runtime proof
+  requires the session's own prior record, so its first resume fails closed
+  with `coordination-runtime-unverified` before any carry.
+  Other session IDs, a new session, and a transferred relationship never
+  receive the carry.
+- **What:** only `unread`, unexpired mail. `read`, `acknowledged`, `expired`
+  and `quarantined` mail stays with the incarnation that handled it, so a
+  one-use grant that was already seen (for example a gate start token) is never
+  presented again. Guidance from a Main Agent primary manager of an assignment
+  whose current or previous worker is this session is excluded; Main Agent
+  guidance reconcile and quarantine keep owning it. When that relationship
+  cannot be read, nothing is carried. Such mail stays retained, unchanged and
+  auditable under the predecessor incarnation. No retry marker is recorded, and
+  a later resume carries only from its own exact predecessor, so recovery is
+  the sender resending.
+- **How:** the message moves in place. Its message ID, sender, sender
+  incarnation, `created_at`, remote creation epoch, expiry, category, body and
+  reply link are unchanged; only `recipient_incarnation` changes and the
+  revision advances by one. No copy exists, so acknowledgement remains single
+  use and stale-revision requests fail with `message-revision-conflict`.
+  Existing idempotency receipts stay bound to the incarnation that created
+  them.
+- **Race:** remote ingress and local send admit mail only for the ready broker's
+  incarnation under the same lock, so nothing can be admitted for the
+  predecessor after the transaction commits. Repeated resumes carry one exact
+  step at a time.
+- **Audit:** the stored message gains optional `resume_carry`
+  `{original_recipient_incarnation, from_incarnation, carry_count, carried_at,
+  carried_at_epoch}` (`carried_at` is UTC RFC3339, `carried_at_epoch` is Unix
+  seconds). Inbox/show/wait rows add an optional, incarnation-free
+  `resume_carry` `{carry_count, carried_at, carried_at_epoch}`; it is absent for
+  mail that was never carried. Owner `message audit` rows report the full
+  stored object, or `null`. A forwarded message also records a
+  `recipient_transfers` entry whose `controller` equals its `from` predecessor
+  address, so it remains forwardable; a forwarded message that can take no
+  further transfer stays with its predecessor. A carry schedules the usual
+  body-free reminder for the new incarnation.
+
 ## Notification ownership
 
 Every successful authenticated send or reply persists the unread message and
@@ -1608,7 +1663,8 @@ carry records optional `recipient_transfers` on the existing hop, leaving the
 historical recipient unchanged. Each event retains the received copy's UUID,
 exact `from`/`to` addresses, controller address, source revision and transfer
 epoch. It changes only the incarnation of the same machine/session. The
-controller must equal that hop's forwarder and share the recipient machine;
+controller must equal that hop's forwarder, or the transfer's own `from`
+address for a same-session resume carry, and share the recipient machine;
 creation occurs under the existing broker check and controller authorization
 guard. Eight total transfers are allowed across all hops. Omitted or empty
 arrays mean no transfers; null and unknown event fields are rejected.

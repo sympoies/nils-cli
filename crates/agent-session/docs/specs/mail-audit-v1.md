@@ -84,6 +84,7 @@ All fields below are present. Unknown or inapplicable scalar values are JSON
 | `reason_code` | Allowlisted federation reason or `unknown`, `null` when absent |
 | `recipient_status` | `{runtime, broker, current_incarnation, heartbeat_at, heartbeat_fresh}` |
 | `notification` | Exact-incarnation receipt described below, or `null` |
+| `resume_carry` | Inbox mail moved by same-session resume: `{original_recipient_incarnation, from_incarnation, carry_count, carried_at, carried_at_epoch}` (UTC RFC3339 / Unix seconds); `null` otherwise and for outbox records |
 | `anomalies` | Array of stable anomaly codes; empty for healthy records |
 
 `recipient_status.runtime` is `running`, `stopped`, `missing`, or `unknown`.
