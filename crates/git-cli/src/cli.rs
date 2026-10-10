@@ -182,6 +182,10 @@ enum WorktreeCommand {
     List(RawArgs),
     #[command(about = "Remove a managed worktree by slug or path")]
     Remove(RawArgs),
+    #[command(about = "Restore a preserved worktree backup")]
+    Restore(RawArgs),
+    #[command(about = "List or prune preserved worktree backups")]
+    Backup(RawArgs),
     #[command(about = "Prune stale git worktree metadata")]
     Prune(RawArgs),
     #[command(name = "revoke-dirty", about = "Revoke a receipt-bound dirty adoption")]
@@ -387,6 +391,12 @@ fn run_worktree(group: WorktreeGroup) -> i32 {
         }
         Some(WorktreeCommand::Remove(raw)) => {
             worktree::dispatch("remove", &raw.args).unwrap_or(exit::USAGE)
+        }
+        Some(WorktreeCommand::Restore(raw)) => {
+            worktree::dispatch("restore", &raw.args).unwrap_or(exit::USAGE)
+        }
+        Some(WorktreeCommand::Backup(raw)) => {
+            worktree::dispatch("backup", &raw.args).unwrap_or(exit::USAGE)
         }
         Some(WorktreeCommand::Prune(raw)) => {
             worktree::dispatch("prune", &raw.args).unwrap_or(exit::USAGE)

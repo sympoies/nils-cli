@@ -21,8 +21,8 @@ crates/agent-session/src/provider_history.rs	impl	3079
 crates/agent-session/src/retitle.rs	impl	3408
 crates/agent-session/src/retitle_v3.rs	impl	3634
 crates/agent-session/src/retitle_v3.rs	test	3648
-crates/agent-session/src/serve.rs	impl	12479
-crates/agent-session/src/serve.rs	test	26353
+crates/agent-session/src/serve.rs	impl	12404
+crates/agent-session/src/serve.rs	test	26344
 crates/agent-session/tests/integration/cli.rs	test	13488
 crates/agent-session/tests/integration/coordination.rs	test	5408
 crates/agent-workflow-primitives/src/heuristic_inbox.rs	impl	4085
@@ -40,7 +40,7 @@ crates/forge-cli/tests/integration/pr_deliver_chain.rs	test	3114
 crates/forge-cli/tests/integration/pr_merge.rs	test	3023
 crates/forge-cli/tests/integration/pr_pending_review.rs	test	3433
 crates/forge-cli/tests/integration/pr_review.rs	test	4840
-crates/git-cli/src/worktree/dirty_checkout_adoption.rs	impl	8391
+crates/git-cli/src/worktree/dirty_checkout_adoption.rs	impl	8302
 crates/git-cli/src/worktree/dirty_checkout_adoption.rs	test	6734
 crates/git-cli/tests/integration/dirty_checkout_adoption.rs	test	3158
 crates/semantic-commit/src/commit.rs	impl	2149

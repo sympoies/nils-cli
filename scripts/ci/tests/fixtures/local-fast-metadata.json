@@ -1,0 +1,269 @@
+{
+  "packages": [
+    {
+      "id": "base",
+      "name": "base",
+      "manifest_path": "__REPO__/crates/base/Cargo.toml",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "doctest": true
+        }
+      ]
+    },
+    {
+      "id": "mid",
+      "name": "mid",
+      "manifest_path": "__REPO__/crates/mid/Cargo.toml",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "doctest": true
+        }
+      ]
+    },
+    {
+      "id": "leaf",
+      "name": "leaf",
+      "manifest_path": "__REPO__/crates/leaf/Cargo.toml",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "doctest": true
+        }
+      ]
+    },
+    {
+      "id": "dev-consumer",
+      "name": "dev-consumer",
+      "manifest_path": "__REPO__/crates/dev-consumer/Cargo.toml",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "doctest": true
+        }
+      ]
+    },
+    {
+      "id": "build-consumer",
+      "name": "build-consumer",
+      "manifest_path": "__REPO__/crates/build-consumer/Cargo.toml",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "doctest": true
+        }
+      ]
+    },
+    {
+      "id": "unrelated",
+      "name": "unrelated",
+      "manifest_path": "__REPO__/crates/unrelated/Cargo.toml",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "doctest": true
+        }
+      ]
+    },
+    {
+      "id": "nils-agent-session",
+      "name": "nils-agent-session",
+      "manifest_path": "__REPO__/crates/nils-agent-session/Cargo.toml",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "doctest": true
+        }
+      ]
+    },
+    {
+      "id": "nils-main-agent",
+      "name": "nils-main-agent",
+      "manifest_path": "__REPO__/crates/nils-main-agent/Cargo.toml",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "doctest": true
+        }
+      ]
+    },
+    {
+      "id": "coupled-consumer",
+      "name": "coupled-consumer",
+      "manifest_path": "__REPO__/crates/coupled-consumer/Cargo.toml",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "doctest": true
+        }
+      ]
+    },
+    {
+      "id": "external",
+      "name": "external",
+      "manifest_path": "__EXTERNAL__/Cargo.toml",
+      "targets": []
+    }
+  ],
+  "workspace_members": [
+    "base",
+    "mid",
+    "leaf",
+    "dev-consumer",
+    "build-consumer",
+    "unrelated",
+    "nils-agent-session",
+    "nils-main-agent",
+    "coupled-consumer"
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "base",
+        "deps": []
+      },
+      {
+        "id": "mid",
+        "deps": [
+          {
+            "pkg": "base",
+            "name": "renamed_base",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "leaf",
+        "deps": [
+          {
+            "pkg": "mid",
+            "name": "mid",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "pkg": "base",
+            "name": "base",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "dev-consumer",
+        "deps": [
+          {
+            "pkg": "base",
+            "name": "base",
+            "dep_kinds": [
+              {
+                "kind": "dev",
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "build-consumer",
+        "deps": [
+          {
+            "pkg": "mid",
+            "name": "mid",
+            "dep_kinds": [
+              {
+                "kind": "build",
+                "target": "cfg(unix)"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "unrelated",
+        "deps": [
+          {
+            "pkg": "external",
+            "name": "external",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "external",
+        "deps": [
+          {
+            "pkg": "base",
+            "name": "base",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "nils-agent-session",
+        "deps": []
+      },
+      {
+        "id": "nils-main-agent",
+        "deps": []
+      },
+      {
+        "id": "coupled-consumer",
+        "deps": [
+          {
+            "pkg": "nils-main-agent",
+            "name": "nils_main_agent",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
