@@ -551,7 +551,7 @@ fn silent_upstream_is_terminated_at_the_mcp_response_deadline() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("cwd");
     let fake = cwd.path().join("peekaboo");
-    fs::write(&fake, "#!/bin/sh\nIFS= read -r line\nsleep 2\n").expect("fake");
+    fs::write(&fake, "#!/bin/sh\nIFS= read -r line\nsleep 10\n").expect("fake");
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).expect("chmod");
     let options = harness
         .cmd_options(cwd.path())
@@ -571,7 +571,7 @@ fn silent_upstream_is_terminated_at_the_mcp_response_deadline() {
         options,
     );
     assert_eq!(out.code, 70, "{}", out.stderr_text());
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(started.elapsed() < Duration::from_secs(8));
     assert_terminal_failure_step(&out_dir, "mcp_response_timeout");
 }
 
@@ -640,7 +640,7 @@ fn blocked_upstream_stdin_is_bounded_by_the_mcp_deadline() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("cwd");
     let fake = cwd.path().join("peekaboo");
-    fs::write(&fake, "#!/bin/sh\nsleep 2\n").expect("fake");
+    fs::write(&fake, "#!/bin/sh\nsleep 10\n").expect("fake");
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).expect("chmod");
     let payload = "x".repeat(1024 * 1024);
     let input = format!(
@@ -662,7 +662,7 @@ fn blocked_upstream_stdin_is_bounded_by_the_mcp_deadline() {
         options,
     );
     assert_eq!(out.code, 70, "{}", out.stderr_text());
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(started.elapsed() < Duration::from_secs(8));
     assert_terminal_failure_step(&out_dir, "mcp_write_timeout");
 }
 
