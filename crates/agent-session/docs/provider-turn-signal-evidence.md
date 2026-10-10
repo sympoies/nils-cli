@@ -411,3 +411,25 @@ stale, but cannot block a prompt, tool call, approval, or completion.
 The connection-scoped `provider-prompt.v1` title channel remains independent.
 Its prompt text, attach events, reconnect behavior, queue drops, and event ids
 are never lifecycle input and never enter activity persistence.
+
+## Provider interrupt uncertainty addendum
+
+The [official hooks reference](https://code.claude.com/docs/en/hooks#stop),
+checked on 2026-10-07 through Claude Code 2.1.289, excludes user interrupts
+from Stop. Cancelling a tool also does not emit PostToolUseFailure. The chosen
+contract is explicit uncertainty: two runtime/revision-fenced samples of the
+interrupt marker with an empty composer, at least 15 seconds apart, project
+`unknown` / `interrupted_suspected`. No completion, attention resolution, or
+automation authority is inferred. A normal working indicator takes precedence.
+The nominal serve-collector detection bound is 30 seconds plus collection
+latency; without a collector the observation is unavailable. New hooks, prompts,
+or runtimes invalidate it. Fixture coverage includes sustained samples, drafts,
+long tools, new-prompt races, and stale runtime identity.
+
+Codex's `Conversation interrupted` marker uses the same sustained window and
+runtime/revision/current-turn/attention fences. Action-required titles and active
+working indicators take precedence. Codex's visible `esc to interrupt` affordance
+remains working evidence when the renderer changes the work header; a stale
+interruption marker cannot override it. Composer text remains uncertainty because
+plain captures cannot distinguish renderer placeholders from drafts; it never
+confirms completion or waiting. Claude retains its empty-composer requirement.

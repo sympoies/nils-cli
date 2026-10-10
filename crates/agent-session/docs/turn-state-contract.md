@@ -299,15 +299,40 @@ therefore deserialize conservatively.
 
 Optional `diagnostic.reason` values are producer-owned allowlisted codes:
 `completion_evidence_pending`, `attention_authority_mismatch`,
-`provider_projection_unavailable`, `runtime_activity_unhealthy`, and
-`activity_state_unavailable`. Free-form provider or runtime errors never cross
-the session-view or stream boundary.
+`provider_projection_unavailable`, `runtime_activity_unhealthy`,
+`activity_state_unavailable`, and `interrupted_suspected`. Free-form provider or
+runtime errors never cross the session-view or stream boundary.
 
-Optional `shadow_observation` is diagnostics-only. It contains
+Optional `shadow_observation` is ordinarily diagnostics-only. It contains
 `observer_version`, a bounded `rule_id`, daemon `observed_at`, one of
 `working`, `needs_input`, `waiting`, or `unknown`, and a `disagrees` flag. It
-never changes phase, completion, attention correlation, auto-resume, or any
-other automation condition.
+never confirms completion, clears attention, or authorizes automation.
+
+For Claude and Codex, two consecutive samples of the provider interrupt marker,
+at least 15 seconds apart, may project `phase: unknown` with
+`diagnostic.reason: interrupted_suspected` and inferred terminal-heuristic
+provenance. This is uncertainty, not confirmed `interrupted` or `waiting`: the
+open turn and last-turn outcome remain intact. Runtime launch/generation and
+activity revision fence both samples; a new prompt or any newer hook invalidates
+them. Claude samples the current viewport rather than scrollback, and a
+nonempty prompt row after its latest interrupt marker invalidates that marker.
+An earlier turn's marker cannot establish idleness for a fresh turn. Claude
+requires an empty idle composer; its drafts cannot produce this projection.
+Codex uses the `Conversation interrupted` marker; plain composer
+text cannot distinguish a placeholder from a draft and supplies no completion
+or waiting evidence. Claude also recognizes a Running tool status below the
+latest interrupt marker as Working evidence; an earlier tool status cannot mask
+a newer interrupt. A working indicator, attention, missing marker, stale sample,
+or runtime replacement cannot produce this projection. A ready serve
+activity broker refreshes on a 15-second timer even without
+hooks or HTTP polling, and completed shadow writes refresh stream snapshots.
+Sample timestamp changes alone update the cache without broadcasting a new
+snapshot; changed rules or turn-state projections still reach subscribers.
+Sampling is throttled to once per 15 seconds for each runtime, including across
+activity revisions, giving a nominal bound of 30 seconds plus collection and
+stream debounce latency. One-shot CLI views read only the cache. No observer or
+serve collector means this signal is unavailable. Claude has no interrupt hook
+and [Stop excludes user interrupts](https://code.claude.com/docs/en/hooks#stop).
 
 ## Attention correlation authority
 
@@ -556,7 +581,8 @@ reducer, persistence, replay, and public projection.
 
 The `activity/shadow.rs` observer samples only running Claude or Codex sessions
 whose structured evidence is unknown, at least five minutes old, or has been
-missing for at least five minutes. The long-lived serve collector schedules
+missing for at least five minutes, plus open Claude or Codex working turns for
+the interrupt-uncertainty rule. The long-lived serve collector schedules
 sampling in detached bounded workers and immediately returns cached metadata;
 one-shot CLI views only read that cache and never start work that could be lost
 at process exit. Sampling runs outside the activity-ingestion lock, uses a
