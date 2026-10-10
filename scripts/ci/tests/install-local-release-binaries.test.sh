@@ -13,6 +13,14 @@ if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
   exit 2
 fi
 
+fixture_dirs=()
+cleanup_fixtures() {
+  for fixture_dir in "${fixture_dirs[@]}"; do
+    rm -rf -- "$fixture_dir"
+  done
+}
+trap cleanup_fixtures EXIT
+
 script="$repo_root/scripts/install-local-release-binaries.sh"
 if [[ ! -f "$script" ]]; then
   echo "error: missing installer script: $script" >&2
@@ -133,6 +141,7 @@ assert_explicit_bins_build_exact_selection() {
   echo "== explicit --bin values drive cargo build =="
   local tmp
   tmp="$(mktemp -d)"
+  fixture_dirs+=("$tmp")
   mkdir -p "$tmp/install"
   printf 'old\n' >"$tmp/install/plan-issue"
   local output
@@ -152,11 +161,19 @@ assert_default_inventory_builds_release_default_bins() {
   echo "== default inventory drives cargo build =="
   local tmp
   tmp="$(mktemp -d)"
+  fixture_dirs+=("$tmp")
   mkdir -p "$tmp/install"
-  for retired in plan-issue plan-issue-local plan-tooling plan-archive; do
+  for retired in plan-issue plan-issue-local plan-tooling plan-archive main-agent; do
     printf 'old\n' >"$tmp/install/$retired"
   done
   printf 'keep\n' >"$tmp/install/unrelated-tool"
+  mkdir -p "$tmp/share/zsh/site-functions" "$tmp/etc/bash_completion.d"
+  printf 'old completion\n' >"$tmp/share/zsh/site-functions/_main-agent"
+  printf 'old completion\n' >"$tmp/etc/bash_completion.d/main-agent"
+  printf 'user completion\n' >"$tmp/share/zsh/site-functions/_user-owned"
+  printf 'user completion\n' >"$tmp/etc/bash_completion.d/user-owned"
+  mkdir -p "$tmp/state/orchestration"
+  printf 'opaque legacy state\n' >"$tmp/state/orchestration/registry.json"
   local output
   output="$(run_with_fake_tools "$tmp" --prefix "$tmp/install")"
 
@@ -168,18 +185,42 @@ assert_default_inventory_builds_release_default_bins() {
     exit 1
   fi
   [[ -x "$tmp/install/alpha" ]]
-  for retired in plan-issue plan-issue-local plan-tooling plan-archive; do
+  for retired in plan-issue plan-issue-local plan-tooling plan-archive main-agent; do
     if [[ -e "$tmp/install/$retired" ]]; then
       echo "FAIL: $FUNCNAME left retired binary $retired"
       exit 1
     fi
   done
-  [[ -f "$tmp/install/unrelated-tool" ]]
+  for retired_completion in "$tmp/share/zsh/site-functions/_main-agent" "$tmp/etc/bash_completion.d/main-agent"; do
+    if [[ -e "$retired_completion" ]]; then
+      echo "FAIL: $FUNCNAME left retired completion $retired_completion"
+      exit 1
+    fi
+  done
+  [[ "$(cat "$tmp/share/zsh/site-functions/_user-owned")" == "user completion" ]]
+  [[ "$(cat "$tmp/etc/bash_completion.d/user-owned")" == "user completion" ]]
+  [[ "$(cat "$tmp/install/unrelated-tool")" == keep ]]
+  [[ "$(cat "$tmp/state/orchestration/registry.json")" == "opaque legacy state" ]]
   rm -rf "$tmp"
   echo "ok"
 }
 
+assert_fresh_install_has_only_current_binaries() {
+  echo "== fresh full install creates only active binaries =="
+  local tmp
+  tmp="$(mktemp -d)"
+  fixture_dirs+=("$tmp")
+  local output
+  output="$(run_with_fake_tools "$tmp" --prefix "$tmp/install")"
+  [[ -x "$tmp/install/alpha" ]]
+  [[ ! -e "$tmp/install/main-agent" ]]
+  [[ ! -e "$tmp/share/zsh/site-functions/_main-agent" ]]
+  [[ ! -e "$tmp/etc/bash_completion.d/main-agent" ]]
+  echo "ok"
+}
+
 assert_explicit_bins_build_exact_selection
+assert_fresh_install_has_only_current_binaries
 assert_default_inventory_builds_release_default_bins
 
 echo

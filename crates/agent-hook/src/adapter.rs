@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -1382,89 +1381,6 @@ fn trusted_semantic_commit_repo(
     Ok(Some(canonical))
 }
 
-pub(crate) fn exact_main_agent_bootstrap_command(input: &[u8]) -> bool {
-    let Some(words) = exact_main_agent_command_words(input) else {
-        return false;
-    };
-    words.len() == 6
-        && words[1] == "bootstrap"
-        && words[2] == "--idempotency-key"
-        && lifecycle_idempotency_key(&words[3])
-        && words[4..] == ["--format", "json"]
-}
-
-/// Recognize only the finite Main Agent commands that the runtime-kit policy
-/// admits while ordinary owner capability evaluation is unavailable.
-///
-/// This is shape evidence, not authority. The paired locked coordination
-/// transaction still resolves the exact release sibling, validates the private
-/// capability, and owns the actual admission or recovery mutation.
-pub(crate) fn exact_main_agent_capability_recovery_command(input: &[u8]) -> bool {
-    let Some(words) = exact_main_agent_command_words(input) else {
-        return false;
-    };
-    let words = words.iter().map(String::as_str).collect::<Vec<_>>();
-    match words.as_slice() {
-        [_, version] => *version == "--version",
-        [_, "self", "show", "--format", "json"] => true,
-        [
-            _,
-            "self",
-            "recover",
-            "--idempotency-key",
-            key,
-            "--format",
-            "json",
-        ] => lifecycle_idempotency_key(key),
-        [_, "rehydrate", "--format", format] => matches!(*format, "json" | "markdown"),
-        [_, "status", "--format", "json"] => true,
-        [
-            _,
-            "rebind",
-            "--if-revision",
-            revision,
-            "--idempotency-key",
-            key,
-            "--format",
-            "json",
-        ] => lifecycle_revision(revision) && lifecycle_idempotency_key(key),
-        _ => exact_main_agent_bootstrap_command(input),
-    }
-}
-
-fn exact_main_agent_command_words(input: &[u8]) -> Option<Vec<String>> {
-    let command = strict_json::from_slice(input)
-        .ok()?
-        .as_object()
-        .and_then(command_text)?
-        .to_string();
-    if command.len() > MAX_MUTATION_TARGET_BYTES {
-        return None;
-    }
-    let words = shell_words::split(&command).ok()?;
-    if command != shell_words::join(words.iter()) {
-        return None;
-    }
-    let executable = Path::new(words.first()?);
-    let trusted_shape = words[0] == "main-agent"
-        || (executable.is_absolute() && executable.file_name() == Some(OsStr::new("main-agent")));
-    trusted_shape.then_some(words)
-}
-
-fn lifecycle_idempotency_key(value: &str) -> bool {
-    (8..=128).contains(&value.len())
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
-}
-
-fn lifecycle_revision(value: &str) -> bool {
-    value == "0"
-        || (value.bytes().all(|byte| byte.is_ascii_digit())
-            && !value.starts_with('0')
-            && value.parse::<u64>().is_ok())
-}
-
 fn optional_provider_id<'a>(
     object: &'a Map<String, Value>,
     field: &str,
@@ -1550,15 +1466,6 @@ mod tests {
     use super::*;
     use crate::model::{DecisionReason, ShadowObservation};
 
-    fn bash_payload(command: &str) -> Vec<u8> {
-        serde_json::to_vec(&json!({
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Bash",
-            "tool_input": {"command": command}
-        }))
-        .expect("provider request")
-    }
-
     #[test]
     fn clear_receipt_contains_only_private_identity_and_rejects_subagents() {
         let raw = serde_json::to_vec(&json!({
@@ -1585,45 +1492,6 @@ mod tests {
             project_conversation_clear_hook(&request, &serde_json::to_vec(&auxiliary).unwrap())
                 .is_none()
         );
-    }
-
-    #[test]
-    fn main_agent_capability_recovery_is_a_finite_exact_allowlist() {
-        for command in [
-            "main-agent --version",
-            "main-agent self show --format json",
-            "main-agent self recover --idempotency-key recover-12345678 --format json",
-            "main-agent rehydrate --format json",
-            "main-agent rehydrate --format markdown",
-            "main-agent status --format json",
-            "main-agent rebind --if-revision 0 --idempotency-key rebind-12345678 --format json",
-            "main-agent rebind --if-revision 42 --idempotency-key rebind-12345678 --format json",
-            "'/trusted release/main-agent' bootstrap --idempotency-key bootstrap-12345678 --format json",
-        ] {
-            assert!(
-                exact_main_agent_capability_recovery_command(&bash_payload(command)),
-                "exact recovery shape rejected: {command}"
-            );
-        }
-
-        for command in [
-            "./main-agent --version",
-            "main-agent self show --format markdown",
-            "main-agent self recover --idempotency-key short --format json",
-            "main-agent self recover --format json --idempotency-key recover-12345678",
-            "main-agent rehydrate --format text",
-            "main-agent status --format json extra",
-            "main-agent rebind --if-revision 01 --idempotency-key rebind-12345678 --format json",
-            "main-agent rebind --if-revision -1 --idempotency-key rebind-12345678 --format json",
-            "main-agent worker list --format json",
-            "main-agent self recover --idempotency-key recover-12345678 --format json; pwd",
-            "main-agent self recover --idempotency-key recover-12345678 --format json > /tmp/result",
-        ] {
-            assert!(
-                !exact_main_agent_capability_recovery_command(&bash_payload(command)),
-                "near-miss recovery shape admitted: {command}"
-            );
-        }
     }
 
     #[test]

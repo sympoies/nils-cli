@@ -190,116 +190,6 @@ capability = { id = "agent-session.coordination.v1", reason_code = "coordination
 }
 
 #[test]
-fn exact_recovery_reaches_authenticated_coordination_when_activity_is_stale() {
-    let fixture = Fixture::new(&activity_recovery_policy(true));
-    let activity = fixture.root.join("agent-session-stale-activity");
-    fs::write(&activity, "#!/bin/sh\nexit 65\n").expect("stale activity helper");
-    fs::set_permissions(&activity, fs::Permissions::from_mode(0o700))
-        .expect("activity helper mode");
-    install_coordination_handler(&fixture);
-    let capture = fixture.root.join("recovery-coordination.json");
-    let payload = json!({
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_use_id": "recover-after-rehydrate",
-        "cwd": fixture.root,
-        "tool_input": {
-            "command": "main-agent self recover --idempotency-key recover-12345678 --format json"
-        }
-    })
-    .to_string();
-    let recovered = fixture.run_with_env(
-        &["dispatch", "--product", "codex", "--format", "json"],
-        Some(&payload),
-        &[
-            (
-                "AGENT_SESSION_BIN",
-                activity.to_str().expect("activity path"),
-            ),
-            ("AGENT_SESSION_ID", "trusted"),
-            ("AGENT_SESSION_RUNTIME_ID", "stale-incarnation"),
-            ("AGENT_SESSION_COORDINATION_MODE", "enforce"),
-            (
-                "COORDINATION_CAPTURE",
-                capture.to_str().expect("capture path"),
-            ),
-        ],
-    );
-    assert_eq!(
-        recovered.code,
-        0,
-        "exact recovery must reach the later authenticated coordination boundary: stdout={} stderr={}",
-        recovered.stdout_text(),
-        recovered.stderr_text()
-    );
-    assert_eq!(recovered.stdout_json()["data"]["action"], "allow");
-    assert_eq!(
-        recovered.stdout_json()["data"]["reasons"][0]["code"],
-        "activity-recovery-deferred-to-coordination"
-    );
-    assert_eq!(
-        recovered.stdout_json()["data"]["reasons"][1]["code"],
-        "coordination-admitted"
-    );
-    assert_eq!(
-        fs::read_to_string(capture).expect("captured recovery request"),
-        payload
-    );
-}
-
-#[test]
-fn exact_recovery_reaches_coordination_when_the_activity_helper_is_unresolvable() {
-    let fixture = Fixture::new(&activity_recovery_policy(true));
-    install_coordination_handler(&fixture);
-    let capture = fixture.root.join("missing-helper-recovery.json");
-    let payload = json!({
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_use_id": "recover-without-activity-helper",
-        "cwd": fixture.root,
-        "tool_input": {
-            "command": "main-agent self recover --idempotency-key recover-12345678 --format json"
-        }
-    })
-    .to_string();
-    let recovered = fixture.run_with_env(
-        &["dispatch", "--product", "codex", "--format", "json"],
-        Some(&payload),
-        &[
-            ("AGENT_SESSION_BIN", "/missing/agent-session"),
-            ("AGENT_SESSION_ID", "trusted"),
-            ("AGENT_SESSION_RUNTIME_ID", "stale-incarnation"),
-            ("AGENT_SESSION_COORDINATION_MODE", "enforce"),
-            ("PATH", "/usr/bin:/bin"),
-            (
-                "COORDINATION_CAPTURE",
-                capture.to_str().expect("capture path"),
-            ),
-        ],
-    );
-    assert_eq!(
-        recovered.code,
-        0,
-        "missing activity helper must defer exact recovery: stdout={} stderr={}",
-        recovered.stdout_text(),
-        recovered.stderr_text()
-    );
-    assert_eq!(recovered.stdout_json()["data"]["action"], "allow");
-    assert_eq!(
-        recovered.stdout_json()["data"]["reasons"][0]["code"],
-        "activity-recovery-deferred-to-coordination"
-    );
-    assert_eq!(
-        recovered.stdout_json()["data"]["reasons"][1]["code"],
-        "coordination-admitted"
-    );
-    assert_eq!(
-        fs::read_to_string(capture).expect("captured recovery request"),
-        payload
-    );
-}
-
-#[test]
 fn activity_failure_reason_names_the_helper_typed_code() {
     for (helper_code, surfaced) in [
         ("activity-replay-index-full", true),
@@ -368,7 +258,7 @@ fn activity_failure_reason_names_the_helper_typed_code() {
 }
 
 #[test]
-fn activity_recovery_degradation_requires_exact_shape_and_coordination() {
+fn activity_failure_preserves_read_only_lane_and_blocks_recovery_mutations() {
     let fixture = Fixture::new(&activity_recovery_policy(true));
     let activity = fixture.root.join("agent-session-stale-activity");
     fs::write(&activity, "#!/bin/sh\nexit 65\n").expect("stale activity helper");
@@ -413,8 +303,9 @@ fn activity_recovery_degradation_requires_exact_shape_and_coordination() {
     );
 
     let commands = [
-        "main-agent self recover --idempotency-key short --format json",
-        "main-agent self recover --idempotency-key recover-12345678 --format json; pwd",
+        "agent-session broker recover --session trusted --format json",
+        "agent-session broker recover --session unknown --format json",
+        "agent-session broker recover --session trusted --format json; pwd",
     ];
     for command in commands {
         let fixture = Fixture::new(&activity_recovery_policy(true));
@@ -472,7 +363,7 @@ fn activity_recovery_degradation_requires_exact_shape_and_coordination() {
         "tool_use_id": "recovery-without-transaction",
         "cwd": fixture.root,
         "tool_input": {
-            "command": "main-agent self recover --idempotency-key recover-12345678 --format json"
+            "command": "agent-session broker recover --session trusted --format json"
         }
     })
     .to_string();
@@ -495,18 +386,22 @@ fn activity_recovery_degradation_requires_exact_shape_and_coordination() {
     );
 
     let fixture = Fixture::new(&activity_recovery_policy(true));
-    let activity = fixture.root.join("agent-session-stale-activity");
-    fs::write(&activity, "#!/bin/sh\nexit 65\n").expect("stale activity helper");
+    let activity = fixture.root.join("agent-session-healthy-activity");
+    fs::write(&activity, "#!/bin/sh\nexit 0\n").expect("healthy activity helper");
     fs::set_permissions(&activity, fs::Permissions::from_mode(0o700))
         .expect("activity helper mode");
-    install_coordination_handler_with(&fixture, "#!/bin/sh\nexit 70\n");
+    let capture = fixture.root.join("failed-coordination.json");
+    install_coordination_handler_with(
+        &fixture,
+        "#!/bin/sh\nset -eu\ndd of=\"$COORDINATION_CAPTURE\" status=none\nexit 70\n",
+    );
     let payload = json!({
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
         "tool_use_id": "recovery-with-failed-transaction",
         "cwd": fixture.root,
         "tool_input": {
-            "command": "main-agent self recover --idempotency-key recover-12345678 --format json"
+            "command": "agent-session broker recover --session trusted --format json"
         }
     })
     .to_string();
@@ -521,10 +416,22 @@ fn activity_recovery_degradation_requires_exact_shape_and_coordination() {
             ("AGENT_SESSION_ID", "trusted"),
             ("AGENT_SESSION_RUNTIME_ID", "stale-incarnation"),
             ("AGENT_SESSION_COORDINATION_MODE", "enforce"),
+            (
+                "COORDINATION_CAPTURE",
+                capture.to_str().expect("capture path"),
+            ),
         ],
     );
     assert_eq!(rejected.code, 1);
     assert_eq!(rejected.stdout_json()["data"]["action"], "block");
+    assert_eq!(
+        fs::read_to_string(capture).expect("captured failed coordination request"),
+        payload
+    );
+    assert_eq!(
+        rejected.stdout_json()["data"]["reasons"][0]["code"],
+        "activity-recorded"
+    );
     assert_eq!(
         rejected.stdout_json()["data"]["reasons"][1]["code"],
         "runtime.coordination:capability-failure-closed"
@@ -675,7 +582,7 @@ fn install_foreign_owner(fixture: &Fixture) {
 }
 
 #[test]
-fn exact_preclaim_bootstrap_defers_foreign_owner_to_typed_coordination() {
+fn retired_bootstrap_cannot_supersede_foreign_owner() {
     let fixture = Fixture::new(&bootstrap_policy(""));
     install_coordination_handler(&fixture);
     install_foreign_owner(&fixture);
@@ -711,8 +618,9 @@ fn exact_preclaim_bootstrap_defers_foreign_owner_to_typed_coordination() {
         "owner-active-foreign"
     );
     assert_eq!(
-        fs::read_to_string(&capture).expect("captured generic allow"),
-        exact_payload
+        capture.exists(),
+        false,
+        "blocked retired bootstrap never reaches coordination"
     );
 
     install_coordination_handler_with(
@@ -732,22 +640,13 @@ fn exact_preclaim_bootstrap_defers_foreign_owner_to_typed_coordination() {
             ),
         ],
     );
-    assert_eq!(exact.code, 0, "stderr={}", exact.stderr_text());
-    assert_eq!(exact.stdout_json()["data"]["action"], "allow");
+    assert_eq!(exact.code, 1, "stderr={}", exact.stderr_text());
+    assert_eq!(exact.stdout_json()["data"]["action"], "block");
     assert_eq!(
         exact.stdout_json()["data"]["reasons"][0]["code"],
-        "owner-liveness-superseded-by-typed-bootstrap"
+        "owner-active-foreign"
     );
-    assert_eq!(
-        exact.stdout_json()["data"]["reasons"][1]["code"],
-        "typed-main-agent-bootstrap-authorized"
-    );
-    assert_eq!(
-        fs::read_to_string(&capture).expect("captured exact bootstrap"),
-        exact_payload
-    );
-
-    fs::remove_file(&capture).expect("remove exact capture");
+    assert!(!capture.exists());
     let composed_payload =
         exact_payload.replace("--format json\"", "--format json; touch forbidden\"");
     let composed = fixture.run_with_env(
@@ -794,99 +693,6 @@ fn exact_preclaim_bootstrap_defers_foreign_owner_to_typed_coordination() {
         unavailable.stdout_json()["data"]["reasons"][0]["code"],
         "owner-active-foreign"
     );
-}
-
-#[test]
-fn typed_bootstrap_does_not_supersede_other_blocks_or_transforms() {
-    let cases = [
-        (
-            "additional block",
-            r#"[[rules]]
-id = "runtime.additional-block"
-products = ["codex"]
-events = ["PreToolUse"]
-matcher = "Bash"
-priority = 15
-mode = "enforce"
-failure_posture = "closed"
-override_class = "locked"
-capability = { id = "decision.block.v1", reason_code = "additional-block", message = "still blocked" }"#,
-            "additional-block",
-            "block",
-        ),
-        (
-            "transform",
-            r#"[[rules]]
-id = "runtime.transform"
-products = ["codex"]
-events = ["PreToolUse"]
-matcher = "Bash"
-priority = 15
-mode = "enforce"
-failure_posture = "closed"
-override_class = "locked"
-capability = { id = "decision.transform.v1", reason_code = "bootstrap-transform", replacement = { command = "safe" } }"#,
-            "bootstrap-transform",
-            "transform",
-        ),
-    ];
-    for (name, extra_rule, extra_code, extra_disposition) in cases {
-        let fixture = Fixture::new(&bootstrap_policy(extra_rule));
-        install_foreign_owner(&fixture);
-        install_coordination_handler_with(
-            &fixture,
-            "#!/bin/sh\nset -eu\ndd of=\"$COORDINATION_CAPTURE\" status=none\nprintf '%s\\n' '{\"schema_version\":\"runtime-kit.session-coordination-bootstrap-authorization.v1\",\"authorization\":\"typed-main-agent-bootstrap-authorized\"}'\n",
-        );
-        let payload = json!({
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Bash",
-            "tool_use_id": format!("bootstrap-{name}"),
-            "cwd": fixture.root,
-            "tool_input": {
-                "command": "/trusted/bin/main-agent bootstrap --idempotency-key bootstrap-12345678 --format json"
-            }
-        })
-        .to_string();
-        let capture = fixture.root.join("bootstrap-coordination.json");
-        let output = fixture.run_with_env(
-            &["dispatch", "--product", "codex", "--format", "json"],
-            Some(&payload),
-            &[
-                ("AGENT_SESSION_ID", "trusted"),
-                ("AGENT_SESSION_RUNTIME_ID", "trusted-incarnation"),
-                ("AGENT_SESSION_COORDINATION_MODE", "enforce"),
-                (
-                    "COORDINATION_CAPTURE",
-                    capture.to_str().expect("capture path"),
-                ),
-            ],
-        );
-        assert_eq!(
-            output.code,
-            1,
-            "case={name} stderr={}",
-            output.stderr_text()
-        );
-        let decision = output.stdout_json();
-        assert_eq!(decision["data"]["action"], "block");
-        let reasons = decision["data"]["reasons"].as_array().expect("reasons");
-        assert!(
-            reasons.iter().any(|reason| {
-                reason["code"] == "owner-active-foreign" && reason["disposition"] == "block"
-            }),
-            "case={name} owner block must remain authoritative"
-        );
-        assert!(
-            reasons.iter().any(|reason| {
-                reason["code"] == extra_code && reason["disposition"] == extra_disposition
-            }),
-            "case={name} additional decision must remain intact"
-        );
-        assert!(
-            !capture.exists(),
-            "case={name} must not reach typed coordination"
-        );
-    }
 }
 
 #[test]

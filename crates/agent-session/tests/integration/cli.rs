@@ -23,6 +23,30 @@ pub(super) fn run(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput
     run_resolved("agent-session", args, &options)
 }
 
+#[test]
+fn retired_internal_commands_are_usage_errors_without_state_side_effects() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let state = tmp.path().join("state");
+    for command in [
+        "provider-stop-canary-supervisor",
+        "provider-stop-canary-guardian",
+    ] {
+        let result = run(
+            tmp.path(),
+            &[
+                "--state-dir",
+                state.to_str().unwrap(),
+                command,
+                "--id",
+                "retired",
+            ],
+            &[],
+        );
+        assert_eq!(result.code, 64, "{}", result.stderr_text());
+        assert!(!state.exists());
+    }
+}
+
 fn write_executable(path: &Path, body: &str) {
     fs::write(path, body).expect("write executable");
     let mut permissions = fs::metadata(path).expect("metadata").permissions();
@@ -7901,7 +7925,59 @@ fn parse_context_data_and_session_reference_errors_follow_contract() {
 }
 
 #[test]
-fn list_projects_main_agent_relationship_without_changing_existing_sessions() {
+fn delete_retired_external_runtime_preserves_existing_state() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    let id = "retained-external";
+    let dir = write_session_record(&state_dir, id, "codex", "hs-retained-external");
+    let record_path = dir.join("session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record["runtime"] = json!({
+        "kind": "dsh_external", "tmux_session": "hs-retained-external", "generation": 1,
+        "started_at": "2000-01-01T00:00:00Z", "launch_id": "retired-incarnation"
+    });
+    fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    let sidecar = dir.join("retired-sidecar.json");
+    fs::write(&sidecar, b"{\"opaque_receipt\":\"retain\"}\n").unwrap();
+    let before = [record_path, sidecar].map(|path| {
+        let bytes = fs::read(&path).unwrap();
+        (path, bytes)
+    });
+    let (tmux_bin, tmux_calls) = fake_tmux(tmp.path());
+    let output = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            state_dir.to_str().unwrap(),
+            "delete",
+            id,
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_TMUX_BIN", tmux_bin.to_str().unwrap()),
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_calls.to_str().unwrap()),
+            ("AGENT_SESSION_FAKE_TMUX_ABSENT", "1"),
+        ],
+    );
+    assert_eq!(output.code, 1, "{}", output.stderr_text());
+    let payload = output.stdout_json();
+    assert_eq!(payload["error"]["code"], "session-termination-failed");
+    assert_eq!(
+        payload["error"]["details"]["reason"],
+        "runtime-identity-unavailable"
+    );
+    for (path, bytes) in before {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+    assert!(
+        !tmux_calls.exists(),
+        "retained external deletion must not signal tmux"
+    );
+}
+
+#[test]
+fn list_ignores_retired_mode_registry_without_changing_existing_state() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
     let main_id = "main-agent-session";
@@ -8051,6 +8127,8 @@ fn list_projects_main_agent_relationship_without_changing_existing_sessions() {
     fs::set_permissions(&registry, fs::Permissions::from_mode(0o600))
         .expect("orchestration registry mode");
 
+    let registry_before = fs::read(&registry).expect("registry before");
+    let record_before = fs::read(&main_record_path).expect("record before");
     let state_arg = state_dir.to_string_lossy().into_owned();
     let list = run(
         tmp.path(),
@@ -8073,264 +8151,17 @@ fn list_projects_main_agent_relationship_without_changing_existing_sessions() {
         .find(|session| session["id"] == worker_id)
         .expect("worker session");
 
-    assert_eq!(
-        main["orchestration"]["schema_version"],
-        "agent-session.session-orchestration.v1"
-    );
-    assert_eq!(main["orchestration"]["run_id"], "run-one");
-    assert_eq!(main["orchestration"]["role"], "main");
-    assert_eq!(main["orchestration"]["relationship_revision"], 4);
-    assert_eq!(
-        main["orchestration"]["objective_summary"],
-        "Deliver durable Main Agent recovery"
-    );
-    assert!(
-        main["orchestration"]
-            .get("objective_packet_digest")
-            .is_none()
-    );
-    assert_eq!(worker["orchestration"]["role"], "worker");
-    assert_eq!(worker["orchestration"]["run_id"], "run-one");
-    assert_eq!(worker["orchestration"]["assignment_id"], "assignment-one");
-    assert_eq!(
-        worker["orchestration"]["primary_manager"]["session_id"],
-        main_id
-    );
-    assert_eq!(worker["orchestration"]["relationship_revision"], 7);
-    assert_eq!(
-        worker["orchestration"]["relationship_state"], "rebind_required",
-        "a same-id/same-created_at replacement runtime must take precedence over borrowing"
-    );
-    assert_eq!(
-        worker["orchestration"]["borrowed_by"]
-            .as_array()
-            .expect("active borrowers")
-            .len(),
-        1,
-        "expired borrowers must be omitted"
-    );
-    assert_eq!(
-        worker["orchestration"]["borrowed_by"][0]["session_id"],
-        "active-borrower"
-    );
-    for private_field in [
-        "private_packet_digest",
-        "repository",
-        "worktree",
-        "scopes",
-        "durable_refs",
-    ] {
-        assert!(
-            worker["orchestration"].get(private_field).is_none(),
-            "private assignment field leaked: {private_field}"
-        );
+    for session in [main, worker, standalone] {
+        assert!(session.get("orchestration").is_none());
     }
-    assert!(standalone.get("orchestration").is_none());
-}
-
-#[test]
-fn list_projects_worker_task_checkpoint_and_blocker_summaries() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let state_dir = tmp.path().join("state");
-    let sessions = [
-        ("summary-main", "main-incarnation"),
-        ("summary-blocked-worker", "blocked-incarnation"),
-        ("summary-working-worker", "working-incarnation"),
-    ];
-    for (id, incarnation) in sessions {
-        let record_dir = write_session_record(&state_dir, id, "codex", &format!("hs-codex-{id}"));
-        let record_path = record_dir.join("session.json");
-        let mut record: Value =
-            serde_json::from_slice(&fs::read(&record_path).expect("session record"))
-                .expect("session json");
-        record["runtime"] = json!({
-            "kind": "tmux",
-            "tmux_session": format!("hs-codex-{id}"),
-            "generation": 1,
-            "started_at": "2030-01-01T00:00:00Z",
-            "launch_id": incarnation
-        });
-        fs::write(
-            &record_path,
-            serde_json::to_vec_pretty(&record).expect("session json"),
-        )
-        .expect("write session record");
-    }
-    let session_ref = |id: &str, incarnation: &str| {
-        json!({
-            "machine": "workstation",
-            "session_id": id,
-            "session_incarnation": incarnation,
-            "session_created_at": "2000-01-01T00:00:00Z"
-        })
-    };
-    let assignment = |id: &str,
-                      state: &str,
-                      task: &str,
-                      worker: Value,
-                      checkpoint: Value,
-                      blocker: Value| {
-        json!({
-            "schema_version": "agent-session.orchestration-assignment.v2",
-            "assignment_id": id,
-            "run_id": "run-summaries",
-            "revision": 3,
-            "state": state,
-            "task_summary": task,
-            "private_packet_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "primary_manager": session_ref("summary-main", "main-incarnation"),
-            "worker": worker,
-            "collaborators": [],
-            "borrowed_by": [],
-            "repository": "example/repository",
-            "worktree": "/tmp/private-worker-path",
-            "base_ref": "main",
-            "scopes": ["crates/agent-session"],
-            "durable_refs": [],
-            "depends_on": [],
-            "checkpoint": checkpoint,
-            "result_summary": null,
-            "blocker_summary": blocker,
-            "submit_recovery": null,
-            "created_at": "2030-01-01T00:00:01Z",
-            "updated_at": "2030-01-01T00:00:02Z"
-        })
-    };
-
-    let orchestration_root = state_dir.join("orchestration");
-    fs::create_dir_all(&orchestration_root).expect("orchestration root");
-    fs::set_permissions(&orchestration_root, fs::Permissions::from_mode(0o700))
-        .expect("orchestration mode");
-    let registry = orchestration_root.join("registry.json");
-    fs::write(
-        &registry,
-        serde_json::to_vec_pretty(&json!({
-            "schema_version": "agent-session.orchestration-registry.v2",
-            "runs": {
-                "run-summaries": {
-                    "schema_version": "agent-session.orchestration-run.v1",
-                    "run_id": "run-summaries",
-                    "revision": 5,
-                    "state": "active",
-                    "tier": "L0",
-                    "objective_summary": "Deliver the program wave",
-                    "objective_packet_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "controller": session_ref("summary-main", "main-incarnation"),
-                    "durable_refs": [],
-                    "checkpoint": {
-                        "revision": 5,
-                        "summary": "Wave one started with two workers",
-                        "next_action": "Review the first submitted worker",
-                        "updated_at": "2030-01-01T00:00:03Z"
-                    },
-                    "created_at": "2030-01-01T00:00:00Z",
-                    "updated_at": "2030-01-01T00:00:03Z"
-                }
-            },
-            "assignments": {
-                "assignment-blocked": assignment(
-                    "assignment-blocked",
-                    "blocked",
-                    "Project worker task summaries",
-                    session_ref("summary-blocked-worker", "blocked-incarnation"),
-                    json!({
-                        "revision": 3,
-                        "summary": "Waiting on the projection review",
-                        "next_action": "Controller decides the field name",
-                        "updated_at": "2030-01-01T00:00:02Z"
-                    }),
-                    json!("Needs a maintainer decision on the field name"),
-                ),
-                "assignment-working": assignment(
-                    "assignment-working",
-                    "working",
-                    "Title workers from their task",
-                    session_ref("summary-working-worker", "working-incarnation"),
-                    json!({
-                        "revision": 3,
-                        "summary": "Resumed after the blocker cleared",
-                        "next_action": "Finish the retitle change",
-                        "updated_at": "2030-01-01T00:00:02Z"
-                    }),
-                    json!("Stale blocker from an earlier pause"),
-                )
-            },
-            "receipts": {}
-        }))
-        .expect("orchestration registry json"),
-    )
-    .expect("write orchestration registry");
-    fs::set_permissions(&registry, fs::Permissions::from_mode(0o600))
-        .expect("orchestration registry mode");
-
-    let state_arg = state_dir.to_string_lossy().into_owned();
-    let list = run(
-        tmp.path(),
-        &["--state-dir", &state_arg, "list", "--format", "json"],
-        &[],
-    );
-    assert_eq!(list.code, 0, "stderr={}", list.stderr_text());
-    let payload = list.stdout_json();
-    let listed = data(&payload).as_array().expect("session list");
-    let projection = |id: &str| {
-        listed
-            .iter()
-            .find(|session| session["id"] == id)
-            .unwrap_or_else(|| panic!("session {id}"))["orchestration"]
-            .clone()
-    };
-    let main = projection("summary-main");
-    let blocked = projection("summary-blocked-worker");
-    let working = projection("summary-working-worker");
-
-    assert_eq!(main["role"], "main");
     assert_eq!(
-        main["checkpoint_summary"],
-        "Wave one started with two workers"
-    );
-    assert!(main.get("task_summary").is_none());
-    assert!(main.get("blocker_summary").is_none());
-
-    assert_eq!(blocked["role"], "worker");
-    assert_eq!(blocked["assignment_state"], "blocked");
-    assert_eq!(blocked["objective_summary"], "Deliver the program wave");
-    assert_eq!(blocked["task_summary"], "Project worker task summaries");
-    assert_eq!(
-        blocked["checkpoint_summary"],
-        "Waiting on the projection review"
+        fs::read(&registry).expect("registry after"),
+        registry_before
     );
     assert_eq!(
-        blocked["blocker_summary"],
-        "Needs a maintainer decision on the field name"
+        fs::read(&main_record_path).expect("record after"),
+        record_before
     );
-
-    assert_eq!(working["assignment_state"], "working");
-    assert_eq!(working["task_summary"], "Title workers from their task");
-    assert_eq!(
-        working["checkpoint_summary"],
-        "Resumed after the blocker cleared"
-    );
-    assert!(
-        working.get("blocker_summary").is_none(),
-        "a blocker is projected only while the assignment is blocked"
-    );
-
-    for worker in [&blocked, &working] {
-        for private_field in [
-            "private_packet_digest",
-            "repository",
-            "worktree",
-            "scopes",
-            "durable_refs",
-            "next_action",
-        ] {
-            assert!(
-                worker.get(private_field).is_none(),
-                "private assignment field leaked: {private_field}"
-            );
-        }
-        assert!(!worker.to_string().contains("private-worker-path"));
-    }
 }
 
 #[test]

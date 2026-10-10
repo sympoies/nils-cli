@@ -115,6 +115,17 @@ replacement numeric target is signaled and no boot proof is fabricated.
 If either condition stops holding between preview and action, the request
 returns `maintenance-preview-stale` and nothing moves.
 
+Retained records with `runtime.kind: dsh_external` are excluded from destructive
+maintenance in both contract versions. Absence of a tmux target cannot prove
+that their external runtime stopped. Preview is blocked and offers no
+destructive action; confirmed destructive requests return the existing
+`session-maintenance-failed` error with `runtime_identity_unavailable` and
+`session_metadata_retained: true`. Direct deletion and archive also reject
+before capability revocation or logical deletion with
+`session-termination-failed`. Record, sidecar, broker, and capability state
+remain retained for owner disposition. Ordinary native DSH launch-profile
+records use the supported runtime paths and retain their existing behavior.
+
 ### Consumer obligations
 
 The confirmation must state, before the record is removed, that:
@@ -135,7 +146,7 @@ available, so a preview taken while nothing was reachable cannot be replayed
 once a boundary reappears.
 
 Every v1 fence still applies to the new action: session incarnation, generation,
-preview digest, lifecycle lock, orchestration assignment admission, exact record
+preview digest, lifecycle lock, exact record
 path validation, same-id reuse, and quarantine-root safety are all revalidated
 before the record moves.
 

@@ -178,16 +178,6 @@ impl Fixture {
         assert_eq!(output.code, 0, "{}", output.stderr_text());
         data(&output.stdout_json())["messages"].clone()
     }
-
-    /// Write `<state>/orchestration/registry.json` privately.
-    fn write_orchestration_registry(&self, bytes: &[u8]) {
-        let root = self.state_dir.join("orchestration");
-        fs::create_dir_all(&root).unwrap();
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-        let path = root.join("registry.json");
-        fs::write(&path, bytes).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-    }
 }
 
 fn message(id: &str, sender: &str, recipient: &str, incarnation: &str, state: &str) -> Value {
@@ -466,77 +456,4 @@ fn resume_does_not_carry_a_deleted_sessions_mail_into_a_recreated_session() {
     let retained = fixture.stored(stale);
     assert_eq!(retained["recipient_incarnation"], incarnation_a.as_str());
     assert!(retained.get("resume_carry").is_none(), "{retained}");
-}
-
-/// Guidance from a Main Agent primary manager of this worker stays with the
-/// predecessor for Main Agent's own reconcile/quarantine; other peer mail moves.
-#[test]
-fn resume_leaves_main_agent_controller_guidance_with_the_predecessor() {
-    let fixture = Fixture::new();
-    let template = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/orchestration/registry-v2-populated.json"),
-    )
-    .unwrap();
-    let registry = template
-        .replace("\"main-v2\"", "\"controller\"")
-        .replace("\"worker-v2\"", &format!("\"{RECIPIENT}\""));
-    let parsed: Value = serde_json::from_str(&registry).unwrap();
-    assert_eq!(
-        parsed["assignments"]["assignment-v2"]["primary_manager"]["session_id"],
-        "controller"
-    );
-    assert_eq!(
-        parsed["assignments"]["assignment-v2"]["worker"]["session_id"],
-        RECIPIENT
-    );
-    fixture.write_orchestration_registry(registry.as_bytes());
-
-    let (record_a, incarnation_a, capability_a) = fixture.resume();
-    fixture.stop(&record_a, &capability_a);
-    let guidance = "00000000-0000-4000-8000-000000000021";
-    let peer = "00000000-0000-4000-8000-000000000022";
-    fixture.seed(vec![
-        message(guidance, "controller", RECIPIENT, &incarnation_a, "unread"),
-        message(peer, "peer", RECIPIENT, &incarnation_a, "unread"),
-    ]);
-
-    let (_, incarnation_b, capability_b) = fixture.resume();
-    let rows = fixture.inbox(&capability_b);
-    assert_eq!(message_ids(&rows), vec![peer.to_string()]);
-    let retained = fixture.stored(guidance);
-    assert_eq!(retained["state"], "unread");
-    assert_eq!(retained["recipient_incarnation"], incarnation_a.as_str());
-    assert!(retained.get("resume_carry").is_none(), "{retained}");
-    assert_eq!(
-        fixture.stored(peer)["recipient_incarnation"],
-        incarnation_b.as_str()
-    );
-}
-
-/// When the Main Agent relationship cannot be read, nothing is carried.
-#[test]
-fn resume_carries_nothing_when_the_orchestration_registry_is_unreadable() {
-    let fixture = Fixture::new();
-    fixture.write_orchestration_registry(b"{ not an orchestration registry");
-
-    let (record_a, incarnation_a, capability_a) = fixture.resume();
-    fixture.stop(&record_a, &capability_a);
-    let peer = "00000000-0000-4000-8000-000000000031";
-    fixture.seed(vec![message(
-        peer,
-        "peer",
-        RECIPIENT,
-        &incarnation_a,
-        "unread",
-    )]);
-
-    let (_, _, capability_b) = fixture.resume();
-    assert_eq!(
-        message_ids(&fixture.inbox(&capability_b)),
-        Vec::<String>::new()
-    );
-    let retained = fixture.stored(peer);
-    assert_eq!(retained["state"], "unread");
-    assert_eq!(retained["recipient_incarnation"], incarnation_a.as_str());
 }

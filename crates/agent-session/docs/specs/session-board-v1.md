@@ -194,7 +194,7 @@ Any `SessionView` field not in this table is excluded, in particular
 `last_prompt`, transcripts, pane content, `attach_command`,
 `ssh_attach_command`, `tmux_session`, `prompt_file`, `log_file`, provider
 resume identity, Codex account data, work-context scopes and claims, mailbox
-counts, capabilities, and orchestration projections. The bounded `role`,
+counts and capabilities. The bounded `role`,
 `lineage`, and `work` objects above replace none of these: they name
 sessions and public provider references only. Unknown upstream
 `turn_state` fields are dropped, not passed through.
