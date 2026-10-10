@@ -3,7 +3,7 @@ crates/agent-docs/src/session.rs	impl	2930
 crates/agent-docs/tests/integration/user_config.rs	test	3468
 crates/agent-hook/src/dsh_policy.rs	impl	5961
 crates/agent-hook/src/evaluator.rs	impl	2332
-crates/agent-hook/src/finish_line.rs	impl	5442
+crates/agent-hook/src/finish_line.rs	impl	5181
 crates/agent-hook/src/finish_line/acceptance.rs	impl	2106
 crates/agent-hook/src/setup.rs	impl	2099
 crates/agent-hook/src/workspace_lease.rs	impl	2389
@@ -15,7 +15,7 @@ crates/agent-session/src/activity.rs	test	4319
 crates/agent-session/src/codex_app_server.rs	impl	5524
 crates/agent-session/src/codex_app_server.rs	test	8821
 crates/agent-session/src/coordination/claims.rs	impl	2964
-crates/agent-session/src/coordination/mod.rs	impl	3665
+crates/agent-session/src/coordination/mod.rs	impl	3643
 crates/agent-session/src/group_lifecycle.rs	test	3976
 crates/agent-session/src/lib.rs	impl	19488
 crates/agent-session/src/lib.rs	test	8097
@@ -43,8 +43,8 @@ crates/forge-cli/tests/integration/pr_deliver_chain.rs	test	3114
 crates/forge-cli/tests/integration/pr_merge.rs	test	3023
 crates/forge-cli/tests/integration/pr_pending_review.rs	test	3433
 crates/forge-cli/tests/integration/pr_review.rs	test	4840
-crates/git-cli/src/worktree/dirty_checkout_adoption.rs	impl	8553
-crates/git-cli/src/worktree/dirty_checkout_adoption.rs	test	6572
+crates/git-cli/src/worktree/dirty_checkout_adoption.rs	impl	8391
+crates/git-cli/src/worktree/dirty_checkout_adoption.rs	test	6734
 crates/git-cli/tests/integration/dirty_checkout_adoption.rs	test	3158
 crates/main-agent/src/main_agent.rs	impl	24184
 crates/main-agent/src/main_agent.rs	test	4698

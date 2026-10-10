@@ -16,8 +16,11 @@ set -euo pipefail
 #   - a baseline row for a deleted file fails;
 #   - the per-kind baseline total cannot increase against the base ref, while a
 #     rename that moves its row passes;
-#   - in-file #[cfg(test)] items, test-only files under tests/, and out-of-line
-#     #[cfg(test)] mod files are counted as test lines;
+#   - in-file #[cfg(test)] and #[cfg(all(test, ..))] items are counted as test
+#     lines, #[cfg(any(test, ..))] items are not;
+#   - test-only files under tests/, and out-of-line #[cfg(test)] mod files, are
+#     counted as test lines;
+#   - a `;` inside [..] or (..) in an item signature does not end the item;
 #   - a raw string containing a column-0 `}` does not end a test module early;
 #   - non-strict mode warns without failing, and an unresolvable base ref fails
 #     strict mode instead of silently skipping the monotonic check.
@@ -299,18 +302,70 @@ case_out_of_line_and_tests_dir_files_are_test_only() {
   echo "== out-of-line #[cfg(test)] mod file and tests/ file count as test lines =="
   local dir
   dir="$(make_repo test-only-files)"
-  mkdir -p "$dir/crates/demo/src/widget" "$dir/crates/demo/tests"
+  mkdir -p "$dir/crates/demo/src/widget" "$dir/crates/demo/src/gadget" "$dir/crates/demo/tests"
   printf 'pub fn widget() {}\n#[cfg(test)]\nmod tests;\n' >"$dir/crates/demo/src/widget.rs"
+  printf 'pub fn gadget() {}\n#[cfg(all(test, target_os = "linux"))]\nmod tests;\n' >"$dir/crates/demo/src/gadget.rs"
   gen_lines 3001 >"$dir/crates/demo/src/widget/tests.rs"
+  gen_lines 3001 >"$dir/crates/demo/src/gadget/tests.rs"
   gen_lines 3001 >"$dir/crates/demo/tests/integration.rs"
   commit_all "$dir" base
 
   run_audit "$dir" --update-baseline
   expect_status "update baseline" 0
   baseline_has "$dir" "crates/demo/src/widget/tests.rs${T}test${T}3001" || fail "out-of-line module not test-only"
+  baseline_has "$dir" "crates/demo/src/gadget/tests.rs${T}test${T}3001" || fail "out-of-line all(test, ..) module not test-only"
   baseline_has "$dir" "crates/demo/tests/integration.rs${T}test${T}3001" || fail "tests/ file not test-only"
-  if grep -q "widget.rs${T}" "$dir/scripts/ci/file-size-baseline.tsv"; then
+  if grep -q "widget.rs${T}\|gadget.rs${T}" "$dir/scripts/ci/file-size-baseline.tsv"; then
     fail "parent file with a 'mod tests;' declaration should be under the limit"
+  fi
+  echo "ok"
+}
+
+case_cfg_all_test_items_count_as_test_and_any_test_items_do_not() {
+  echo "== #[cfg(all(test, ..))] items count as test; #[cfg(any(test, ..))] items do not =="
+  local dir
+  dir="$(make_repo cfg-combinators)"
+  mkdir -p "$dir/crates/demo/src"
+  {
+    echo "fn a() {}"
+    echo '#[cfg(all(test, target_os = "linux"))]'
+    echo "mod tests {"
+    gen_lines 3000
+    echo "}"
+    echo '#[cfg(any(test, target_os = "macos"))]'
+    echo "fn platform() {"
+    gen_lines 3000
+    echo "}"
+  } >"$dir/crates/demo/src/gates.rs"
+  commit_all "$dir" base
+
+  run_audit "$dir" --update-baseline
+  expect_status "update baseline" 0
+  baseline_has "$dir" "crates/demo/src/gates.rs${T}test${T}3003" || fail "all(test, ..) module must be 3003 test lines"
+  baseline_has "$dir" "crates/demo/src/gates.rs${T}impl${T}3004" || fail "any(test, ..) item must stay implementation lines"
+  echo "ok"
+}
+
+case_signature_semicolon_inside_brackets_does_not_end_item() {
+  echo "== a ';' inside [..] or (..) in a test item signature does not end the item =="
+  local dir
+  dir="$(make_repo bracket-signature)"
+  mkdir -p "$dir/crates/demo/src"
+  {
+    echo "fn a() {}"
+    echo "#[cfg(test)]"
+    echo "fn helper() -> [u8; 32] {"
+    gen_lines 3000
+    echo "}"
+  } >"$dir/crates/demo/src/digest.rs"
+  commit_all "$dir" base
+
+  run_audit "$dir" --update-baseline
+  expect_status "update baseline" 0
+  baseline_has "$dir" "crates/demo/src/digest.rs${T}test${T}3003" \
+    || fail "test fn body after an array-typed signature must count as test lines"
+  if grep -q "digest.rs${T}impl" "$dir/scripts/ci/file-size-baseline.tsv"; then
+    fail "the signature and body leaked into implementation lines"
   fi
   echo "ok"
 }
@@ -352,6 +407,8 @@ case_rename_moves_row_without_raising_total
 case_in_file_test_module_counts_as_test_lines
 case_raw_string_column_zero_brace_does_not_end_module
 case_out_of_line_and_tests_dir_files_are_test_only
+case_cfg_all_test_items_count_as_test_and_any_test_items_do_not
+case_signature_semicolon_inside_brackets_does_not_end_item
 case_non_strict_warns_without_failing
 case_unresolvable_base_fails_strict
 

@@ -9,8 +9,10 @@ Rules:
   - A file under a `tests/` or `benches/` directory is test-only.
   - A file reached through an out-of-line `#[cfg(test)] mod x;` declaration is
     test-only, and so is every file that a test-only file declares with `mod y;`.
-  - In any other file, each top-level `#[cfg(test)]` item counts as test lines,
-    from its attribute through the end of its braced block or its `;`.
+  - In any other file, each top-level `#[cfg(test)]` or `#[cfg(all(test, ..))]`
+    item counts as test lines, from its attribute through the end of the item.
+    An item ends at the first `;` or `{` outside `(..)` and `[..]`; a `{`
+    block ends at its matching `}`. `#[cfg(any(test, ..))]` is not test-only.
   - Implementation lines are the total lines minus the test lines.
 
 Comments, string literals, raw strings and char literals are masked before brace
@@ -41,11 +43,15 @@ TOKEN_RE = re.compile(
 )
 BLOCK_DELIM_RE = re.compile(r"/\*|\*/")
 BRACE_RE = re.compile(r"[{}]")
-CFG_TEST_RE = re.compile(r"#\[cfg\(test\)\]")
-ITEM_END_RE = re.compile(r"[{;]")
+# A test-gated attribute: `test`, or `all(test, ..)`. `any(test, ..)` is also
+# compiled outside tests, so it does not make an item test-only.
+TEST_CFG_ATTR = r"#\[cfg\((?:test|all\(\s*test\b[^\]]*)\)\]"
+CFG_TEST_RE = re.compile(TEST_CFG_ATTR)
+# Brackets are tracked so that a `;` in `[u8; 32]` or `(..)` does not end an item.
+ITEM_BOUNDARY_RE = re.compile(r"[{};()\[\]]")
 MOD_DECL_RE = re.compile(r"\bmod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
 CFG_TEST_MOD_RE = re.compile(
-    r"#\[cfg\(test\)\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
+    TEST_CFG_ATTR + r"\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
     r"mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
 )
 
@@ -135,12 +141,28 @@ class SourceFile:
         return lines
 
     def _item_end(self, pos):
-        boundary = ITEM_END_RE.search(self.masked, pos)
-        if boundary is None:
-            return len(self.masked)
-        if boundary.group() == ";":
-            return boundary.start()
-        index = bisect.bisect_left(self.event_positions, boundary.start())
+        """Return the offset where the item starting at pos ends.
+
+        The item ends at the first `;` or `{` outside any `(..)` or `[..]`. A
+        `{` starts a braced block that ends at its matching `}`.
+        """
+        nesting = 0
+        for boundary in ITEM_BOUNDARY_RE.finditer(self.masked, pos):
+            char = boundary.group()
+            if char in "([":
+                nesting += 1
+            elif char in ")]":
+                nesting = max(nesting - 1, 0)
+            elif nesting:
+                continue
+            elif char in ";}":
+                return boundary.start()
+            else:
+                return self._block_end(boundary.start())
+        return len(self.masked)
+
+    def _block_end(self, open_pos):
+        index = bisect.bisect_left(self.event_positions, open_pos)
         for close in range(index, len(self.events)):
             if self.events[close][1] == -1 and self.depths[close] == 0:
                 return self.event_positions[close]

@@ -408,9 +408,10 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 
 `scripts/ci/file-size-audit.sh` limits each tracked `crates/**/*.rs` file to
 2,000 implementation lines and 3,000 test lines. Test lines are the lines of
-top-level `#[cfg(test)]` items, plus whole files under `tests/` or `benches/`
-and files reached through an out-of-line `#[cfg(test)] mod x;`. Comments and
-literals are skipped when matching braces.
+top-level `#[cfg(test)]` and `#[cfg(all(test, ..))]` items, plus whole files
+under `tests/` or `benches/` and files reached through an out-of-line
+`#[cfg(test)] mod x;`. An item ends at its first `;` or `{` outside `(..)` and
+`[..]`. Comments and literals are skipped when matching braces.
 
 Files already over a limit are recorded in
 `scripts/ci/file-size-baseline.tsv` (`path<TAB>kind<TAB>lines`). Strict mode
