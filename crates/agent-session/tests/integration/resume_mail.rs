@@ -75,9 +75,8 @@ impl Fixture {
         run(self.tmp.path(), &full, envs)
     }
 
-    /// Resume and return the new record, incarnation and capability path.
-    fn resume(&self) -> (Value, String, PathBuf) {
-        let output = self.cli(
+    fn resume_output(&self) -> nils_test_support::cmd::CmdOutput {
+        self.cli(
             &[
                 "resume",
                 RECIPIENT,
@@ -91,7 +90,12 @@ impl Fixture {
                 ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
                 ("NILS_TEST_PANE_LIFETIME_MS", "500"),
             ],
-        );
+        )
+    }
+
+    /// Resume and return the new record, incarnation and capability path.
+    fn resume(&self) -> (Value, String, PathBuf) {
+        let output = self.resume_output();
         assert_eq!(output.code, 0, "stderr={}", output.stderr_text());
         let record: Value =
             serde_json::from_str(&fs::read_to_string(self.session.join("session.json")).unwrap())
@@ -437,6 +441,24 @@ fn resume_does_not_carry_a_deleted_sessions_mail_into_a_recreated_session() {
     record["created_at"] = json!(jiff::Timestamp::now().to_string());
     fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
 
+    if cfg!(not(target_os = "linux")) {
+        // The macOS stopped-runtime proof binds to the session's own prior
+        // record, so a recreated session is refused before any carry.
+        let refused = fixture.resume_output();
+        let stdout = refused.stdout_text();
+        assert_ne!(refused.code, 0, "stdout={stdout}");
+        let error = &refused.stdout_json()["error"];
+        assert!(
+            error["code"] == "coordination-runtime-unverified"
+                || error["details"]["launch_error"] == "coordination-runtime-unverified",
+            "stdout={stdout}"
+        );
+        let retained = fixture.stored(stale);
+        assert_eq!(retained["state"], "unread");
+        assert_eq!(retained["recipient_incarnation"], incarnation_a.as_str());
+        assert!(retained.get("resume_carry").is_none(), "{retained}");
+        return;
+    }
     let (_, incarnation_b, capability_b) = fixture.resume();
     assert_ne!(incarnation_a, incarnation_b);
     let rows = fixture.inbox(&capability_b);

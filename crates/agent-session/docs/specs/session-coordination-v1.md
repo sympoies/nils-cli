@@ -710,6 +710,9 @@ registry-locked transaction that replaces the broker:
   seconds for older records) before the current session record's `created_at`
   is never carried. A deleted session's mail never reaches a recreated session,
   provided the host clock does not step backwards between delete and recreate.
+  On macOS a recreated session is refused earlier: the stopped-runtime proof
+  requires the session's own prior record, so its first resume fails closed
+  with `coordination-runtime-unverified` before any carry.
   Other session IDs, a new session, and a transferred relationship never
   receive the carry.
 - **What:** only `unread`, unexpired mail. `read`, `acknowledged`, `expired`
