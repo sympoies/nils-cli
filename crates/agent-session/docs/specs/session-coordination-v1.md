@@ -943,6 +943,7 @@ agent-session work-context reconcile --session ID --lease UUID --if-revision N -
 agent-session broker status --session ID [--capability-file FILE]
 agent-session broker adopt --session ID --capability-file FILE --proof-file JSON --idempotency-key KEY
 agent-session broker reconcile --session ID --capability-file FILE --proof-file JSON --operation UUID --if-revision N --attest-inactive --idempotency-key KEY
+agent-session readiness --format json
 
 agent-session message send --from ID --to ID --body-file FILE [--capability-file FILE] --idempotency-key KEY [--reply-to UUID] [--expires-in DURATION]
 agent-session message inbox --session ID [--capability-file FILE] [--state unread] [--cursor CURSOR] [--limit N]
@@ -956,6 +957,39 @@ agent-session message reminder --session ID [--capability-file FILE]
 JSON uses the existing `cli.agent-session.<command>.v1` success/error envelope
 convention. Errors never echo body, capability, request JSON, local private
 paths, or peer summary.
+
+### Managed-session readiness
+
+`agent-session readiness` authenticates the capability supplied by
+`AGENT_SESSION_CAPABILITY_FILE` against one ready, heartbeat-fresh broker and
+its current session-record incarnation. It requires no orchestration run,
+assignment, or work-context claim and applies in every coordination mode.
+It then verifies `AGENT_SESSION_CHECKPOINT_FILE` equals the broker's expected
+incarnation-bound checkpoint path. The file must be a regular file owned by the
+current user, mode `0600`, with one link and no final symlink. The command does
+not create, repair, read, or write checkpoint contents.
+
+The success envelope is `cli.agent-session.readiness.v1`. Its private
+integration payload has schema `agent-session.runtime-readiness.v1`,
+`ready: true`, and string fields `session_id`, `session_incarnation`, and
+`checkpoint_file`. Consumers must validate those fields against their immutable
+managed-runtime projection and independently resolve the trusted helper;
+selectors and a successful JSON shape alone are not authentication. Do not
+copy this private proof into public summaries or retained diagnostics.
+
+Missing, stale, revoked, or untrusted credentials fail with
+`coordination-unauthorized`; a missing, mismatched, or untrusted checkpoint
+fails with `runtime-checkpoint-unavailable`. Both return exit `65`, `ok: false`,
+and bounded recovery details: `retryable: false`,
+`next_action: "resume-or-restart-managed-session"`, and a `recovery` object with
+the same `action`. Errors disclose no capability value or private path.
+Transport/store failures retain their existing codes and fail closed.
+Readiness does not acquire a baseline claim or authorize mutations; callers
+retain their own baseline work-context and admission checks.
+
+The existing Main Agent readiness facade uses the same checkpoint verifier
+while retaining its own schemas. Switching consumers to the generic contract
+must precede retirement of that facade.
 
 ## HTTP coverage
 

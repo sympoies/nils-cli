@@ -12,6 +12,8 @@ mod diagnose;
 mod lineage;
 #[path = "integration/metadata.rs"]
 mod metadata;
+#[path = "integration/readiness.rs"]
+mod readiness;
 #[path = "integration/retitle_v3.rs"]
 mod retitle_v3;
 
