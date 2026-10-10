@@ -36,6 +36,7 @@ Docs-only checks require:
 
 - `git`
 - `npx`
+- `python3`
 
 Local fast changed-scope checks also require:
 
@@ -369,6 +370,7 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 
 - `bash scripts/ci/docs-placement-audit.sh --strict`
 - `bash scripts/ci/docs-hygiene-audit.sh --strict`
+- `bash scripts/ci/docs-prose-audit.sh --strict`
 - `bash scripts/ci/markdownlint-audit.sh --strict`
 - `bash scripts/ci/cli-output-contract-lint.sh --strict`
 - `bash scripts/ci/forge-cli-fixture-lint.sh --strict`
@@ -386,11 +388,13 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/docs-hygiene-audit.test.sh`
 - `bash scripts/ci/tests/workspace-test-stale-audit.test.sh`
 - `bash scripts/ci/tests/file-size-audit.test.sh`
+- `bash scripts/ci/tests/docs-prose-audit.test.sh`
 - `bash scripts/ci/tests/prepare-private-release-workflow.test.sh`
 - `bash scripts/ci/skill-shell-suites.sh` (runs every
   `.agents/skills/*/tests/test_*.sh` smoke suite)
 - `bash scripts/ci/test-stale-audit.sh --strict`
 - `bash scripts/ci/file-size-audit.sh --strict` (see the file-size ratchet below)
+- `bash scripts/ci/docs-prose-audit.sh --strict`
 - `bash scripts/ci/workspace-version-lockstep.sh --strict`
 - `bash scripts/ci/crate-naming-audit.sh`
 - `bash scripts/ci/publish-order-audit.sh --strict`
@@ -426,6 +430,18 @@ fails when:
 
 When a PR shrinks or removes an over-limit file, refresh the baseline in the same
 PR with `bash scripts/ci/file-size-audit.sh --update-baseline` and commit it.
+
+### Markdown prose-run ratchet
+
+`scripts/ci/docs-prose-audit.sh` checks tracked Markdown outside `docs/devlog/`
+and the generated third-party notices. A prose run is consecutive nonblank
+lines outside fenced code; table rows, headings, and HTML comment lines end a
+run, and list markers begin a new run. Runs longer than 12 lines are recorded
+per file in `scripts/ci/docs-prose-baseline.tsv`
+(`path<TAB>runs_over_limit<TAB>longest_run`). Strict mode rejects new or grown
+rows, stale rows, and an increase in summed baseline runs from the merge base.
+Refresh improvements with `bash scripts/ci/docs-prose-audit.sh
+--update-baseline` and commit the baseline in the same PR.
 
 ## 4.1 Supply-chain audit (cargo-deny)
 

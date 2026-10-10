@@ -482,6 +482,10 @@ run bash scripts/ci/tests/tempdir-leak-probe.test.sh
 run bash scripts/ci/file-size-audit.sh --strict --base "$base"
 run bash scripts/ci/tests/file-size-audit.test.sh
 
+# docs-prose-audit checks every changed file set, including code-only changes.
+run bash scripts/ci/docs-prose-audit.sh --strict --base "$base"
+run bash scripts/ci/tests/docs-prose-audit.test.sh
+
 if [[ "$third_party_artifacts" -eq 1 ]]; then
   run bash scripts/ci/third-party-artifacts-audit.sh --strict
 fi
