@@ -323,8 +323,12 @@ class GateIntegration(unittest.TestCase):
             cargo.write_text(
                 '#!/usr/bin/env python3\nimport json, os; from pathlib import Path\n'
                 'with Path(os.environ["METADATA_CALLS"]).open("a") as log: log.write("metadata\\n")\n'
-                'print(json.dumps({"packages":[{"name":"example", "manifest_path":'
-                'str(Path.cwd()/"crates/example/Cargo.toml"), "targets":[]}]}))\n')
+                'packages = [{"id": name, "name": name, "manifest_path": '
+                'str(Path.cwd()/f"crates/{name}/Cargo.toml"), "targets":[]} '
+                'for name in ("example", "consumer")]\n'
+                'print(json.dumps({"packages": packages, "workspace_members": ["example", "consumer"], '
+                '"resolve": {"nodes": [{"id": "example", "deps": []}, '
+                '{"id": "consumer", "deps": [{"pkg": "example"}]}]}}))\n')
             cargo.chmod(0o755)
             (root / 'scripts/ci/gate-resources.py').write_text(
                 'import os, subprocess, sys; from pathlib import Path\n'
@@ -340,6 +344,8 @@ class GateIntegration(unittest.TestCase):
             self.assertTrue((root / 'gate-called').exists())
             self.assertEqual((root / 'metadata-calls').read_text().splitlines(), ['metadata'])
             self.assertEqual(result.stdout.count('LOCAL_FAST_MODE=packages'), 1)
+            self.assertIn('LOCAL_FAST_PACKAGE=consumer', result.stdout)
+            self.assertIn('LOCAL_FAST_PACKAGE_REASON=consumer: reverse dependency of example', result.stdout)
             self.assertFalse(list(temporary.glob('nils-cli-local-fast.*')))
 
     def test_second_gate_waits(self):
