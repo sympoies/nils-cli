@@ -68,7 +68,7 @@ pub(crate) fn refresh_blocking(cache_file: &Path) -> bool {
         write_last_attempt(cache_file);
         return false;
     };
-    let wrote = cache::write_cache_file(cache_file, &body).is_ok();
+    let wrote = cache::write_oauth_cache_file(cache_file, &body, &token.value).is_ok();
     write_last_attempt(cache_file);
     wrote
 }

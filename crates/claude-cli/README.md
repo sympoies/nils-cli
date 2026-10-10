@@ -345,6 +345,8 @@ are retained but contribute no prompt or usage windows.
 - `usage [--format text|json] [--source auto|oauth|cli|cache]`: Read Claude
   usage through a service-consumable contract.
 - `auto`: Try OAuth, then a bounded native Claude `/usage` probe, then cache.
+  An OAuth rate limit skips the native probe and returns eligible cached
+  windows as stale with `reason_code: rate_limited`.
 - `oauth`, `cli`, and `cache`: Select one source for focused diagnostics.
 - `-c, --clear-cache`: Remove the resolved `usage.json` and its
   `usage.refresh.at` throttle stamp before querying, so the next background
@@ -384,7 +386,8 @@ collector reads both.
   `Weekly` window (10080 minutes). Tokens are never refreshed, rewritten, or
   printed. An expired token reports `auth_expired` without a request. HTTP
   `401`, `403`, and `429` map to `auth_expired`, `permission_denied`, and
-  `rate_limited`; any other failure is `service_unavailable`.
+  `rate_limited`; a `403` body identifying a rate limit also maps to
+  `rate_limited`. Any other HTTP failure is `service_unavailable`.
 - `--format json` (or `--json`) emits `claude-cli.diag.rate-limits.v1`. `--all`
   and `--async` emit one result per profile (`name`, `target_file`, `status`,
   `ok`, `source`, `reason_code`, `summary`, `windows`, `error`) and exit `1`
@@ -406,7 +409,40 @@ collector reads both.
   within `CLAUDE_RATE_LIMITS_CACHE_TTL` (default 180 seconds) unless
   `CLAUDE_RATE_LIMITS_CACHE_ALLOW_STALE=true`.
 
-`claude-cli usage` is unchanged and remains the prompt-segment usage reader.
+### Shared usage backoff
+
+Prompt refresh, `usage`, diagnostic reads, and the status read before an auth
+rate-limit reset share a persistent cooldown under
+`<prompt-segment cache dir>/usage-backoff`. The key is a SHA-256 digest of the
+stored bearer token, so profiles and callers using the same token share state
+on one host; other tokens remain independent. No token is stored in this state.
+A changed token starts independent state. A digest-only `usage.account`
+association lets the prompt check its cooldown without resolving credentials.
+
+A usage-endpoint `429` or rate-limit `403` starts a cooldown using a positive
+`Retry-After` (seconds or HTTP date), otherwise 300 seconds. Consecutive limits
+at least double the previous delay, capped at 3600 seconds. A successful HTTP
+read clears the state. A per-token lock serializes the check and request across
+processes. Cache clears and forced refreshes do not bypass a cooldown.
+Persistence requires a writable cache directory; if it is unavailable, existing
+live reads remain usable and a received rate limit still skips the automatic
+native probe. Any readable active cooldown remains enforced.
+
+During cooldown, no OAuth usage request is sent. Eligible cached values remain
+available; `usage` marks them stale and diagnostic JSON retains
+`reason_code: rate_limited` with `source: cache-fallback` (or `cache` for
+`--cached`). Results without eligible cache retain the account and failure
+reason. The explicit async no-cache-fallback setting remains authoritative.
+Background prompt refresh is suppressed during cooldown; an eligible prompt
+line is marked stale. Display-age limits still apply.
+
+OAuth cooldown cache reads require `usage.owner.json` to match both the token
+and the exact cached payload by digest. This prevents a limited account from
+receiving another account's windows after a credential switch or concurrent
+cache replacement. Caches without recorded ownership remain available to explicit
+cache reads; they are omitted on OAuth cooldown paths until a successful OAuth
+refresh establishes ownership. The foreground prompt uses local associations
+without resolving credentials.
 
 ## Completion
 

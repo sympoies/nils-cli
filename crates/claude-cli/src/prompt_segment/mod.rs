@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 mod auth;
+mod backoff;
 pub(crate) mod cache;
 pub(crate) mod client;
 mod refresh;
@@ -55,8 +56,10 @@ pub fn run(options: &PromptSegmentOptions) -> i32 {
         false
     };
 
+    let (prompt_key, cooldown_active) = backoff::prompt_snapshot();
+
     if cache_snapshot.display_expired() {
-        if !force_refresh && needs_refresh {
+        if !force_refresh && needs_refresh && !cooldown_active {
             refresh::enqueue_background_refresh(&cache_file);
         }
         return exit::SUCCESS;
@@ -65,13 +68,22 @@ pub fn run(options: &PromptSegmentOptions) -> i32 {
     let Some(raw_cache) = cache::read_cache_file(&cache_file) else {
         return exit::SUCCESS;
     };
+    if cooldown_active
+        && prompt_key
+            .as_deref()
+            .is_none_or(|key| !cache::matches_token_key(&cache_file, &raw_cache, key))
+    {
+        return exit::SUCCESS;
+    }
     let time_format = match options.time_format.as_deref() {
         Some(value) => value,
         None if options.show_timezone => DEFAULT_TIME_FORMAT_WITH_TIMEZONE,
         None => DEFAULT_TIME_FORMAT,
     };
     let stale_suffix = resolve_stale_suffix();
-    let stale = (!force_refresh && needs_refresh) || (force_refresh && !refresh_succeeded);
+    let stale = (!force_refresh && needs_refresh)
+        || (force_refresh && !refresh_succeeded)
+        || cooldown_active;
     if let Some(line) = render::render_usage_json_with_options(
         &raw_cache,
         time_format,
@@ -82,7 +94,7 @@ pub fn run(options: &PromptSegmentOptions) -> i32 {
     {
         println!("{}", apply_prompt_escape(line));
     }
-    if !force_refresh && needs_refresh {
+    if !force_refresh && needs_refresh && !cooldown_active {
         refresh::enqueue_background_refresh(&cache_file);
     }
 

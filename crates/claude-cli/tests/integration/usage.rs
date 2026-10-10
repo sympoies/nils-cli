@@ -156,7 +156,11 @@ fn usage_auto_prefers_recent_structured_api_error_over_generic_usage_failure() {
         "#!/usr/bin/env sh\ncat >/dev/null\nprintf '%s\\n' 'usage unavailable'\n",
     );
     let server = LoopbackServer::new().expect("server");
-    server.add_route("GET", "/usage", HttpResponse::new(429, "rate limited"));
+    server.add_route(
+        "GET",
+        "/usage",
+        HttpResponse::new(500, "service unavailable"),
+    );
 
     let output = run(
         &["usage", "--format", "json", "--source", "auto"],
