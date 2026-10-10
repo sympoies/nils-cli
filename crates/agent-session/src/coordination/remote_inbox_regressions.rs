@@ -176,8 +176,18 @@ fn newer_remote_generation_survives_an_in_flight_attempt_becoming_unknown() {
     receive(&context, "destination", tests::envelope()).unwrap();
     assert!(
         notification::pending(&context).unwrap().is_empty(),
-        "an active submission retains its side effect fence"
+        "an active submission prevents a second dispatch"
     );
+    let locked = lock_registry(&context).unwrap();
+    assert!(
+        notification::submission_fences_session(
+            &locked.registry,
+            "recipient",
+            "recipient-incarnation"
+        ),
+        "new remote mail must not release the active session-admission fence"
+    );
+    drop(locked);
     assert!(notification::mark_unknown(&context, &old, "submission-outcome-unknown").unwrap());
     let candidates = notification::pending(&context).unwrap();
     assert_eq!(
@@ -186,6 +196,15 @@ fn newer_remote_generation_survives_an_in_flight_attempt_becoming_unknown() {
         "a newer generation must not inherit an older unknown outcome"
     );
     assert_eq!(candidates[0].generation, old.generation + 1);
+    let locked = lock_registry(&context).unwrap();
+    assert!(
+        !notification::submission_fences_session(
+            &locked.registry,
+            "recipient",
+            "recipient-incarnation"
+        ),
+        "the older owner's recorded outcome releases its session-admission fence"
+    );
 }
 
 #[test]

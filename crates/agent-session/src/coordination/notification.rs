@@ -411,8 +411,7 @@ pub(super) fn submission_fences_session(
         .get(&receipt_key(target_session_id, target_incarnation))
         .is_some_and(|receipt| {
             receipt.state == "attempting"
-                && receipt.attempted_generation == receipt.generation
-                && receipt.generation > receipt.notified_generation
+                && receipt.attempted_generation > receipt.notified_generation
         })
 }
 
