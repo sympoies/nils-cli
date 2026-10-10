@@ -1125,7 +1125,7 @@ mod tests {
         let stub = dir.path().join("gh");
         std::fs::write(
             &stub,
-            "#!/bin/sh\necho 'https://alice:credential-value@github.com/o/r' >&2\nsleep 2\necho should-not-complete\n",
+            "#!/bin/sh\necho 'https://alice:credential-value@github.com/o/r' >&2\nsleep 30\necho should-not-complete\n",
         )
         .expect("write stub");
         let mut perms = std::fs::metadata(&stub).expect("metadata").permissions();
@@ -1138,8 +1138,11 @@ mod tests {
         }
         let call = BackendCall::new(BackendProgram::Gh, ["search", "prs"]);
         let started = std::time::Instant::now();
+        // The stub must write its stderr line before the timeout fires. Shell
+        // startup takes a few ms unloaded but exceeds 50 ms under parallel load,
+        // which made the detail race. This budget is a fallback with a wide margin.
         let err = runner
-            .run_with_timeout(&call, Some(Duration::from_millis(50)))
+            .run_with_timeout(&call, Some(Duration::from_millis(1000)))
             .expect_err("timeout");
         unsafe {
             std::env::remove_var(ENV_GH_BIN);
@@ -1150,7 +1153,7 @@ mod tests {
         assert!(!detail.contains("credential-value"), "{detail}");
         assert!(detail.contains("github.com/o/r"), "{detail}");
         assert!(
-            started.elapsed() < Duration::from_secs(1),
+            started.elapsed() < Duration::from_secs(10),
             "timeout should kill the child promptly"
         );
     }
