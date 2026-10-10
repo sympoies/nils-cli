@@ -17,9 +17,10 @@ Description:
     fails here too.
   - Runs third-party artifact audit when Cargo manifests, Cargo.lock, the
     generator scripts, or the generated third-party artifact files change.
-  - Runs package-scoped fmt/clippy/tests for non-shared crate changes.
+  - Builds, lints, and tests changed non-shared packages and their transitive
+    workspace reverse dependencies (including dev/build dependencies).
   - Escalates to a workspace Rust gate for shared crates or workspace-level
-    files where package-scoped checks can miss reverse-dependency breakage.
+    files, manifests, toolchain/configuration files, and build scripts.
 
 Options:
   --base <ref>            Diff base for committed changes.
@@ -202,7 +203,7 @@ if shutil.which("cargo") is None:
     sys.exit(2)
 
 metadata_raw = subprocess.check_output(
-    ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+    ["cargo", "metadata", "--offline", "--locked", "--all-features", "--format-version", "1"],
     cwd=repo,
     text=True,
 )
@@ -210,13 +211,32 @@ metadata = json.loads(metadata_raw)
 
 crate_roots = []
 package_has_doctests = {}
-for package in metadata["packages"]:
+workspace_members = set(metadata["workspace_members"])
+resolved_packages = {package["id"]: package for package in metadata["packages"]}
+workspace_packages = {
+    package["id"]: package
+    for package in metadata["packages"]
+    if package["id"] in workspace_members
+}
+build_scripts = set()
+for package in workspace_packages.values():
     manifest = pathlib.Path(package["manifest_path"])
     root = manifest.parent.relative_to(repo).as_posix()
     has_doctests = any(target.get("doctest") for target in package.get("targets", []))
     crate_roots.append((root, package["name"]))
     package_has_doctests[package["name"]] = has_doctests
+    for target in package.get("targets", []):
+        if "custom-build" in target.get("kind", []):
+            build_scripts.add(pathlib.Path(target["src_path"]).relative_to(repo).as_posix())
 crate_roots.sort(key=lambda item: len(item[0]), reverse=True)
+
+# Resolve by package ID, not the dependency's possibly renamed import name.
+# Metadata is unfiltered by target and includes all features and dependency
+# kinds, so optional, platform-specific, dev and build consumers participate.
+reverse_dependencies = {package_id: set() for package_id in resolved_packages}
+for node in metadata["resolve"]["nodes"]:
+    for dependency in node["deps"]:
+        reverse_dependencies[dependency["pkg"]].add(node["id"])
 
 shared_packages = {"nils-common", "nils-term", "nils-test-support", "nils-scrub"}
 
@@ -229,6 +249,7 @@ def package_for_path(path):
 
 
 packages = set()
+package_reasons = {}
 workspace_reasons = []
 shell_files = []
 docs_checks = False
@@ -239,6 +260,14 @@ for path in changed:
 
     if path in {"THIRD_PARTY_LICENSES.md", "THIRD_PARTY_NOTICES.md"}:
         workspace_reasons.append(f"third-party artifact output changed: {path}")
+
+    if pathlib.PurePosixPath(path).name in {"Cargo.toml", "Cargo.lock"}:
+        workspace_reasons.append(f"workspace manifest changed: {path}")
+        continue
+    if (pathlib.PurePosixPath(path).name in {"rust-toolchain", "rust-toolchain.toml", "build.rs"}
+            or ".cargo" in pathlib.PurePosixPath(path).parts or path in build_scripts):
+        workspace_reasons.append(f"build configuration or script changed: {path}")
+        continue
 
     if is_doc_path(path):
         docs_checks = True
@@ -251,11 +280,10 @@ for path in changed:
             workspace_reasons.append(f"shared package changed: {package_name}")
         else:
             packages.add(package_name)
+            package_reasons.setdefault(package_name, set()).add(f"changed path: {path}")
         continue
 
-    if path in {"Cargo.toml", "Cargo.lock"}:
-        workspace_reasons.append(f"workspace manifest changed: {path}")
-    elif path.startswith((".agents/", ".github/", ".cargo/", ".config/", "scripts/", "tests/", "completions/")):
+    if path.startswith((".agents/", ".github/", ".cargo/", ".config/", "scripts/", "tests/", "completions/")):
         workspace_reasons.append(f"workspace-level path changed: {path}")
     else:
         workspace_reasons.append(f"unclassified workspace path changed: {path}")
@@ -265,9 +293,31 @@ for path in changed:
 # launches `agent-session` workers. Select them together so neither is validated
 # against a missing or stale sibling.
 coupled_packages = [{"nils-agent-session", "nils-main-agent"}]
-for group in coupled_packages:
-    if packages & group:
-        packages |= group
+# Coupling and reverse dependencies reach one fixed point: a newly selected
+# consumer can itself need a coupled binary, whose consumers must also run.
+workspace_ids = {package["name"]: package_id for package_id, package in workspace_packages.items()}
+selected_ids = {workspace_ids[name] for name in packages}
+pending = sorted(selected_ids)
+while pending:
+    source_id = pending.pop(0)
+    source = resolved_packages[source_id]["name"]
+    additions = [(package_id, f"reverse dependency of {source}")
+                 for package_id in sorted(reverse_dependencies[source_id])]
+    for group in coupled_packages:
+        if source_id in workspace_members and source in group:
+            additions.extend((workspace_ids[name], f"coupled with {source}")
+                             for name in sorted(group - {source})
+                             if name in workspace_ids)
+    for package_id, reason in additions:
+        # Traverse external intermediaries, but build/lint/test workspace
+        # members only. Filtering before traversal would truncate that closure.
+        if package_id in workspace_members:
+            name = workspace_packages[package_id]["name"]
+            package_reasons.setdefault(name, set()).add(reason)
+            packages.add(name)
+        if package_id not in selected_ids:
+            selected_ids.add(package_id)
+            pending.append(package_id)
 
 if not changed:
     mode = "none"
@@ -294,6 +344,8 @@ for path in changed:
     emit("changed", path)
 for package_name in sorted(packages):
     emit("package", package_name)
+    for reason in sorted(package_reasons[package_name]):
+        emit("package_reason", f"{package_name}: {reason}")
 for package_name in sorted(packages):
     if package_has_doctests.get(package_name, False):
         emit("package_doctest", package_name)
@@ -311,6 +363,7 @@ docs_hygiene=0
 third_party_artifacts=0
 changed_count=0
 declare -a packages=()
+declare -a package_reasons=()
 declare -a package_doctests=()
 declare -a reasons=()
 declare -a changed_files=()
@@ -324,6 +377,7 @@ while IFS=$'\t' read -r key value; do
     third_party_artifacts) third_party_artifacts="$value" ;;
     changed_count) changed_count="$value" ;;
     package) packages+=("$value") ;;
+    package_reason) package_reasons+=("$value") ;;
     package_doctest) package_doctests+=("$value") ;;
     reason) reasons+=("$value") ;;
     changed) changed_files+=("$value") ;;
@@ -348,6 +402,9 @@ print_plan() {
   done
   for package in "${packages[@]}"; do
     echo "LOCAL_FAST_PACKAGE=$package"
+  done
+  for reason in "${package_reasons[@]}"; do
+    echo "LOCAL_FAST_PACKAGE_REASON=$reason"
   done
   for package in "${package_doctests[@]}"; do
     echo "LOCAL_FAST_PACKAGE_DOCTEST=$package"

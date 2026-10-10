@@ -371,6 +371,16 @@ The local fast gate is conservative. Changes to `nils-common`, `nils-term`,
 `.github/`, or other workspace-level paths use a workspace Rust gate because
 package-scoped checks can miss reverse-dependency breakage.
 
+For non-shared crate changes, the selected set includes changed packages and
+all transitive workspace reverse dependents from offline, locked Cargo metadata
+with all features enabled. Normal, dev, build and target-specific dependencies
+participate; traversal can pass through external packages, which are excluded
+from the selected set. Binary coupling also expands this
+closure. The plan prints each selected package and its inclusion reasons.
+Any Cargo manifest or lockfile, toolchain file, `.cargo/` configuration, or
+build-script change uses the workspace lane; documentation-only routing stays
+the same. The full-check entrypoint and merge gates are unchanged.
+
 ### 3.3 Full checks (CI gate / optional local parity)
 
 ```bash
