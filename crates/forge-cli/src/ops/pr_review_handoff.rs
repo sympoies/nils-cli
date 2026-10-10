@@ -10,6 +10,7 @@ use crate::backend::{BackendCall, BackendProgram, BackendRunner};
 use crate::cli::{BINARY, GlobalFlags, PrReviewHandoffArgs, PrReviewHandoffCommand};
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
+use crate::ops::review_sync_carry_over::{self, SyncCarryOver};
 use crate::ops::{pr_review, pr_reviews, pr_view, review_state};
 use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
@@ -53,6 +54,8 @@ struct HandoffPayload {
     ignored_stale_records: Vec<String>,
     state_tip_digest: Option<String>,
     handoff: Option<ReviewHandoff>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sync_carry_over: Option<SyncCarryOver>,
     status: &'static str,
 }
 
@@ -346,6 +349,51 @@ pub(crate) fn ensure_writer(chain: &review_state::ReviewStateChain) -> Result<()
     Ok(())
 }
 
+/// Carry-over evidence is re-verified from git at every admission, so its
+/// record needs only an active interval, never the reviewer's identity.
+pub(crate) fn ensure_payload_writer(
+    chain: &review_state::ReviewStateChain,
+    payload: &review_state::ReviewStatePayload,
+) -> Result<(), ForgeError> {
+    if !matches!(
+        payload,
+        review_state::ReviewStatePayload::ReviewSyncCarryOver { .. }
+    ) {
+        return ensure_writer(chain);
+    }
+    assigned(chain)?.map(|_| ()).ok_or_else(|| {
+        fail(
+            "review_assignment_missing",
+            "no designated reviewer handoff exists",
+        )
+    })
+}
+
+/// The carry-over recorded in the active interval for `head`, if any.
+fn recorded_carry_over<'a>(
+    chain: &'a review_state::ReviewStateChain,
+    head: &str,
+) -> Option<&'a SyncCarryOver> {
+    chain
+        .records
+        .iter()
+        .rev()
+        .take_while(|r| {
+            !matches!(
+                r.payload,
+                review_state::ReviewStatePayload::ReviewHandoff { .. }
+            )
+        })
+        .find_map(|r| match &r.payload {
+            review_state::ReviewStatePayload::ReviewSyncCarryOver { carry_over }
+                if carry_over.head == head =>
+            {
+                Some(carry_over)
+            }
+            _ => None,
+        })
+}
+
 pub(crate) fn ensure_handoff_append(
     chain: &review_state::ReviewStateChain,
     next: &ReviewHandoff,
@@ -558,8 +606,11 @@ pub(crate) fn ensure_delivery_ready<R: BackendRunner>(
         &state.chain,
         state.handoff_created_at.as_deref(),
     )
+    .map(|_| ())
 }
 
+/// Merge gates admit a carried PASS only after `check` recorded it, so every
+/// carried merge leaves its audit evidence in the ledger.
 pub(crate) fn ensure_published<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
@@ -568,9 +619,36 @@ pub(crate) fn ensure_published<R: BackendRunner>(
     head: &str,
     chain: &review_state::ReviewStateChain,
     handoff_created_at: Option<&str>,
-) -> Result<(), ForgeError> {
+) -> Result<Option<SyncCarryOver>, ForgeError> {
+    let carry = admit_published(runner, ctx, number, url, head, chain, handoff_created_at)?;
+    if let Some(c) = &carry
+        && recorded_carry_over(chain, head) != Some(c)
+    {
+        return Err(ForgeError::validation(
+            schema(),
+            "awaiting_designated_review",
+            "awaiting designated review: the base-sync carry-over is not recorded",
+            Some(format!(
+                "recovery=run `forge-cli pr review-handoff check {number} --expected-head {head}` to verify and record it"
+            )),
+        ));
+    }
+    Ok(carry)
+}
+
+/// Admit the designated PASS for `head`. A PASS at the reviewed head carries
+/// over only to a verified clean base-sync merge of it; the evidence returns.
+fn admit_published<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+    url: &str,
+    head: &str,
+    chain: &review_state::ReviewStateChain,
+    handoff_created_at: Option<&str>,
+) -> Result<Option<SyncCarryOver>, ForgeError> {
     let Some(handoff) = assigned(chain)? else {
-        return Ok(());
+        return Ok(None);
     };
     let state = owned_state(chain).ok_or_else(|| {
         fail(
@@ -578,8 +656,7 @@ pub(crate) fn ensure_published<R: BackendRunner>(
             "awaiting designated review: reviewed-head ledger observation is missing",
         )
     })?;
-    if state.head_sha != head
-        || state.hard_stop.is_some()
+    if state.hard_stop.is_some()
         || state
             .findings
             .values()
@@ -590,12 +667,39 @@ pub(crate) fn ensure_published<R: BackendRunner>(
             "awaiting designated review: ledger is stale or has unresolved findings",
         ));
     }
-    if provider_base(runner, ctx, number)? != handoff.base_sha {
+    let refused = |reason: &str| {
+        ForgeError::validation(
+            schema(),
+            "awaiting_designated_review",
+            "awaiting designated review: ledger is stale or has unresolved findings",
+            Some(format!(
+                "sync_carry_over={reason}; recovery=return control to the coordinator; do not self-review"
+            )),
+        )
+    };
+    let sync = if state.head_sha == head {
+        None
+    } else {
+        Some(review_sync_carry_over::verify_merge(&state.head_sha, head).map_err(refused)?)
+    };
+    let base = provider_base(runner, ctx, number)?;
+    if let Some(sync) = &sync {
+        // A sync merge moves the base only forward on the assigned lineage,
+        // and its base parent must be target history.
+        review_sync_carry_over::verify_on_target(&handoff.base_sha, &base).map_err(|reason| {
+            refused(match reason {
+                "base-not-on-target" => "assigned-base-not-on-target",
+                other => other,
+            })
+        })?;
+        review_sync_carry_over::verify_on_target(&sync.base_commit, &base).map_err(refused)?;
+    } else if base != handoff.base_sha {
         return Err(fail(
             "review_scope_changed",
             "provider base changed since designated review assignment",
         ));
     }
+    let reviewed_head = state.head_sha.as_str();
 
     let reviews = pr_reviews::compute_for_pr(runner, ctx, number, url)?;
     if reviews.head_sha != head {
@@ -612,15 +716,20 @@ pub(crate) fn ensure_published<R: BackendRunner>(
                 "handoff publication timestamp is missing or invalid",
             )
         })?;
+    // A carried PASS competes with every later report on the synced head.
     let mut candidates = reviews
         .current_head_reviews
         .iter()
-        .filter(|r| matches_designated_author(r, &handoff.review_author) && r.commit_sha == head)
+        .chain(&reviews.stale_reviews)
+        .filter(|r| {
+            matches_designated_author(r, &handoff.review_author)
+                && (r.commit_sha == head || (sync.is_some() && r.commit_sha == reviewed_head))
+        })
         .collect::<Vec<_>>();
     candidates.sort_unstable_by(|a, b| {
         (&b.submitted_at, b.database_id).cmp(&(&a.submitted_at, a.database_id))
     });
-    let mut passing = false;
+    let mut passing = None;
     for r in candidates {
         let body = if r.summary_truncated
             || r.author_type.as_deref() == Some("Bot")
@@ -641,7 +750,9 @@ pub(crate) fn ensure_published<R: BackendRunner>(
         if publication_is_known_other_interval(chain, &body) {
             continue;
         }
-        if let Err(error) = pr_review::validate_reviewable(&body, ctx, number, url, Some(head)) {
+        if let Err(error) =
+            pr_review::validate_reviewable(&body, ctx, number, url, Some(&r.commit_sha))
+        {
             return Err(ForgeError::validation(
                 schema(),
                 "awaiting_designated_review",
@@ -656,7 +767,7 @@ pub(crate) fn ensure_published<R: BackendRunner>(
                 )),
             ));
         }
-        passing = pr_review::validate_specialist_review_report(&body).is_ok()
+        let pass = pr_review::validate_specialist_review_report(&body).is_ok()
             && publication_matches_interval(chain, &body)
             && matches!(r.state.as_str(), "APPROVED" | "COMMENTED")
             && r.submitted_at
@@ -668,17 +779,24 @@ pub(crate) fn ensure_published<R: BackendRunner>(
                     "- Lens verdict: pass" | "- Lens verdict: follow-up-pass"
                 )
             });
+        passing = pass.then_some(r.url.as_str());
         // The newest report not proven to belong to an older interval owns
         // the verdict, including blocked, malformed or unbound reports.
         break;
     }
-    if !passing {
+    let Some(review_url) = passing else {
         return Err(fail(
             "awaiting_designated_review",
             "awaiting designated review: published passing review for the current head is missing",
         ));
-    }
-    Ok(())
+    };
+    Ok(sync.map(|sync| SyncCarryOver {
+        review_url: review_url.to_string(),
+        reviewed_head: reviewed_head.to_string(),
+        head: head.to_string(),
+        base_commit: sync.base_commit,
+        merge_tree: sync.merge_tree,
+    }))
 }
 
 /// A bare login names a user; the REST `[bot]` suffix names an App account.
@@ -896,6 +1014,7 @@ pub fn run(
     };
     let base = provider_base(&runner, &ctx, id)?;
     let mut proposed = None;
+    let mut sync_carry_over = None;
     match &args.command {
         PrReviewHandoffCommand::Inspect(a) => {
             if let Some(expected) = &a.expected_head {
@@ -924,6 +1043,7 @@ pub fn run(
                     "awaiting-designated-review"
                 };
             }
+            sync_carry_over = recorded_carry_over(&chain, head).cloned();
         }
         PrReviewHandoffCommand::Check(a) => {
             require_head(head, &a.expected_head)?;
@@ -933,7 +1053,7 @@ pub fn run(
                     "no designated reviewer handoff exists",
                 ));
             }
-            ensure_published(
+            let carry = admit_published(
                 &runner,
                 &ctx,
                 id,
@@ -942,6 +1062,27 @@ pub fn run(
                 &chain,
                 state.handoff_created_at.as_deref(),
             )?;
+            if let Some(c) = &carry
+                && recorded_carry_over(&chain, head) != Some(c)
+                && !global.dry_run
+            {
+                chain = pr_review::append_review_state_payload(
+                    &runner,
+                    &ctx,
+                    pr_review::ReviewStateAppend {
+                        repository: &repository,
+                        number: id,
+                        expected_head: head,
+                        expected_tip: chain.tip_digest.as_deref(),
+                        payload: review_state::ReviewStatePayload::ReviewSyncCarryOver {
+                            carry_over: c.clone(),
+                        },
+                        visible_outcome: None,
+                    },
+                )?
+                .chain;
+            }
+            sync_carry_over = carry;
             status = "reviewed";
         }
         PrReviewHandoffCommand::Assign(a) => {
@@ -1158,6 +1299,7 @@ pub fn run(
         ignored_stale_records: chain.ignored_stale_records.clone(),
         state_tip_digest: chain.tip_digest.clone(),
         handoff: latest(&chain).cloned(),
+        sync_carry_over,
         status,
     };
     Ok(emit_success(schema(), payload, format, |p| {

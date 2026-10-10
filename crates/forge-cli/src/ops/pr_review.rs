@@ -2338,7 +2338,7 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
             }
         }
     } else {
-        super::pr_review_handoff::ensure_writer(&before.chain)?;
+        super::pr_review_handoff::ensure_payload_writer(&before.chain, &payload)?;
     }
     let assignment_generation = match &payload {
         review_state::ReviewStatePayload::ReviewHandoff { handoff } => {

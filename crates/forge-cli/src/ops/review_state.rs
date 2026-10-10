@@ -191,6 +191,9 @@ pub enum ReviewStatePayload {
     ReviewHandoff {
         handoff: super::pr_review_handoff::ReviewHandoff,
     },
+    ReviewSyncCarryOver {
+        carry_over: super::review_sync_carry_over::SyncCarryOver,
+    },
 }
 
 impl ReviewStatePayload {
@@ -200,6 +203,7 @@ impl ReviewStatePayload {
             Self::ReviewRunReceipt { .. } => "review-run-receipt",
             Self::ReviewLoop { .. } => "review-loop",
             Self::ReviewHandoff { .. } => "review-handoff",
+            Self::ReviewSyncCarryOver { .. } => "review-sync-carry-over",
         }
     }
 }
@@ -409,6 +413,12 @@ pub fn state_comment_visible_metadata(record: &ReviewStateRecord) -> String {
             short_sha(&handoff.assigned_head),
             short_sha(&handoff.base_sha)
         ),
+        ReviewStatePayload::ReviewSyncCarryOver { carry_over } => format!(
+            "Designated review pass at head {} carried to head {}: a clean merge of base {} with an identical tree. Ready for merge checks.",
+            short_sha(&carry_over.reviewed_head),
+            short_sha(&carry_over.head),
+            short_sha(&carry_over.base_commit)
+        ),
     }
 }
 
@@ -608,6 +618,13 @@ pub fn parse_chain<'a>(
         }
         if let ReviewStatePayload::ReviewHandoff { handoff } = &record.payload {
             super::pr_review_handoff::validate_handoff(handoff)?;
+        }
+        if let ReviewStatePayload::ReviewSyncCarryOver { carry_over } = &record.payload
+            && (!super::review_sync_carry_over::validate(carry_over)
+                || carry_over.head != record.expected_head
+                || record.assignment_generation.is_none())
+        {
+            return Err(state_conflict("review-state carry-over is invalid", None));
         }
         if let ReviewStatePayload::ReviewLoop { state } = &record.payload {
             validate_review_loop_state(state)?;
@@ -856,7 +873,8 @@ pub fn latest_review_loop_state(chain: &ReviewStateChain) -> Option<&ReviewLoopS
         .find_map(|record| match &record.payload {
             ReviewStatePayload::ReviewLoop { state } => Some(state),
             ReviewStatePayload::ReviewRunReceipt { .. }
-            | ReviewStatePayload::ReviewHandoff { .. } => None,
+            | ReviewStatePayload::ReviewHandoff { .. }
+            | ReviewStatePayload::ReviewSyncCarryOver { .. } => None,
         })
 }
 

@@ -756,7 +756,7 @@ pub fn ensure_merge_ready<R: BackendRunner>(
         )
     })?;
     let state_view = pr_review::read_review_loop_state_view(runner, ctx, &repository, number)?;
-    super::pr_review_handoff::ensure_published(
+    let carried = super::pr_review_handoff::ensure_published(
         runner,
         ctx,
         number,
@@ -803,7 +803,9 @@ pub fn ensure_merge_ready<R: BackendRunner>(
         );
         return Err(error);
     }
-    if state.head_sha != expected_head {
+    // A recorded, re-verified base-sync carry-over binds the reviewed head.
+    if state.head_sha != expected_head && carried.is_none_or(|c| c.reviewed_head != state.head_sha)
+    {
         return Err(ForgeError::validation(
             schema_err(),
             "review_state_conflict",

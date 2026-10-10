@@ -51,6 +51,7 @@ pub mod repo_view;
 pub mod required_check_gate;
 pub mod review_convergence;
 pub mod review_state;
+pub mod review_sync_carry_over;
 pub mod search;
 
 pub mod comment;
