@@ -166,6 +166,60 @@ This delegates to `./.agents/skills/project-verify-required-checks/scripts/proje
 It is what CI uses for the full `test` and `test_macos` jobs; it is not the
 default local development loop.
 
+### Integration batches on `next`
+
+The maintainer may approve a small batch of low-risk changes on the persistent
+`next` branch to share complete local validation. Changed-scope checks still
+belong to each member. Lifecycle, mailbox, credential, and release changes use
+individual PRs to `main`; keep other changes with comparable risk out of a
+batch. Required hosted checks and branch protections continue to apply.
+
+1. Select the batch members and record their exact PR head SHAs, with both
+   changed-scope validation PASS and designated review PASS on those heads. Resolve review findings
+   and check that each member applies to the current integration base before
+   admitting it. Changed heads require fresh review and validation.
+2. Assign validation to one platform lane per item at a time. Keep Linux
+   systemd, cgroup, and containment checks on Linux; use macOS for applicable
+   platform checks. A platform result covers only its recorded head and
+   command. Follow the host's resource limits and admission policy.
+3. Retarget approved member PRs to `next` and merge them through `forge-cli`,
+   pinning the expected head and base with `--expected-head` and
+   `--expected-base next` and the explicit `--allow-non-default-base` opt-in.
+   Recheck review and required checks after retargeting;
+   stop if either expectation changes. Record each resulting merge commit and
+   its member evidence. Do not bypass branch protection.
+4. Freeze the batch at one exact `next` head after the selected members land.
+   Stop adding members while it is being validated. Run one canonical complete
+   local gate from a clean managed worktree at that head:
+
+   ```bash
+   NILS_CLI_TEST_RUNNER=nextest bash .agents/scripts/pre-pr.sh --full
+   ```
+
+   Use the shared gate semaphore described below and the host's configured limits.
+   A package check, partial run, or a passing member does not establish a
+   complete batch PASS.
+5. Retain the original terminal outcome, logs, selected scope, counts, and
+   source identity. A resource abort or cancelled run is incomplete. On a
+   failure, stop promotion and isolate the cause with separately admitted,
+   bounded checks or a bisect of batch members. Do not infer a culprit from
+   merge order or erase a failed result with a retry.
+6. Repair or eject a confirmed culprit through a reviewed successor or revert
+   PR to `next`. Never reset or force-push the integration branch. Freeze the
+   resulting head again and run its complete gate; earlier results do not
+   transfer to that head.
+7. Open the integration PR from `next` to `main` at the validated frozen head.
+   Require review and green hosted `test`, `test_macos`, and `coverage` checks
+   before an expected-head merge with `--expected-base main --keep-branch`.
+   If `main` advances and reconciliation is needed, open and review a PR from
+   `main` to `next`. Merge it using the guarded form in step 3 with
+   `--expected-head`, `--expected-base next`, `--allow-non-default-base`, and
+   `--keep-branch`. Then freeze and validate the new integration head. Keep the
+   branch for subsequent batches.
+8. Record the promoted integration head and member outcomes in the delivery
+   handoff. A batch merge does not authorize tagging, publishing, installing,
+   or deployment; follow the existing release workflow when requested.
+
 ### Gate resource budgets
 
 Executing code gates, including local-fast and direct required-checks script
