@@ -175,7 +175,10 @@ belong to each member. Lifecycle, mailbox, credential, and release changes use
 individual PRs to `main`; keep other changes with comparable risk out of a
 batch. Required hosted checks and branch protections continue to apply.
 
-1. Select the batch members and record their exact PR head SHAs, with both
+1. Open one tracking issue per batch. It lists each member with its exact
+   head, the reconciliation PR, the frozen head, the gate result, and the
+   integration PR; whoever routes the batch keeps it current.
+   Select the batch members and record their exact PR head SHAs, with both
    changed-scope validation PASS and designated review PASS on those heads. Resolve review findings
    and check that each member applies to the current integration base before
    admitting it. Changed heads require fresh review and validation.
@@ -209,17 +212,24 @@ batch. Required hosted checks and branch protections continue to apply.
    PR to `next`. Never reset or force-push the integration branch. Freeze the
    resulting head again and run its complete gate; earlier results do not
    transfer to that head.
-7. Open the integration PR from `next` to `main` at the validated frozen head.
-   Require review and green hosted `test`, `test_macos`, and `coverage` checks
-   before an expected-head merge with `--expected-base main --keep-branch`.
-   If `main` advances and reconciliation is needed, open and review a PR from
-   `main` to `next`. Merge it using the guarded form in step 3 with
-   `--expected-head`, `--expected-base next`, `--allow-non-default-base`, and
-   `--keep-branch`. Then freeze and validate the new integration head. Keep the
-   branch for subsequent batches.
-8. Record the promoted integration head and member outcomes in the delivery
-   handoff. A batch merge does not authorize tagging, publishing, installing,
-   or deployment; follow the existing release workflow when requested.
+7. Open the integration PR to `main` only at the validated frozen head; do not
+   keep a persistent integration PR open between batches. `forge-cli pr create`
+   accepts only typed head branches (`chore/<slug>` and the other kinds), so
+   cut a `chore/` branch at the exact frozen `next` SHA and open the PR from it.
+   The head SHA, not the branch name, is what the gate result and
+   `--expected-head` bind. Require review and green hosted `test`,
+   `test_macos`, and `coverage` checks before an expected-head merge with
+   `--expected-base main --keep-branch`.
+   If `main` advances and reconciliation is needed, open and review a PR into
+   `next` from a `chore/` branch that carries the merge of `main` into `next`,
+   with any conflicts resolved there. Merge it using the guarded form in step 3
+   with `--expected-head`, `--expected-base next`, `--allow-non-default-base`,
+   and `--keep-branch`. Then freeze and validate the new integration head.
+   Keep the `next` branch for subsequent batches.
+8. Record the promoted integration head and member outcomes in the tracking
+   issue and the delivery handoff. A batch merge does not authorize tagging,
+   publishing, installing, or deployment; follow the existing release workflow
+   when requested.
 
 ### Gate resource budgets
 
