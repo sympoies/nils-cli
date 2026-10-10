@@ -26215,7 +26215,7 @@ fi
             ),
         )
         .unwrap();
-        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        nils_test_support::make_executable_and_warm(&tmux);
 
         let error = terminate_without_process_runtime_for_test(
             &context,
