@@ -513,16 +513,16 @@ pub struct RepoPushDefaultArgs {
     pub default_branch_receipt: Option<PathBuf>,
 }
 
-/// `repo bootstrap` arguments for a signed empty repository on GitHub or Forgejo.
+/// `repo bootstrap` arguments for a signed empty repository on GitHub, GitLab, or Forgejo.
 #[derive(Args, Debug, Clone)]
 pub struct RepoBootstrapArgs {
-    /// Whether the repository owner is the authenticated user or an organization.
+    /// Whether the owner is the authenticated user or an organization/group.
     #[arg(long = "owner-kind", value_enum)]
     pub owner_kind: RepoBootstrapOwnerKind,
-    /// GitHub repository visibility (Forgejo bootstrap remains private).
+    /// GitHub/GitLab repository visibility (Forgejo bootstrap remains private).
     #[arg(long, value_enum, default_value = "private")]
     pub visibility: RepoBootstrapVisibility,
-    /// Adopt an existing empty GitHub repository instead of creating one.
+    /// Adopt an existing empty GitHub/GitLab repository instead of creating one.
     #[arg(long = "existing-empty", action = ArgAction::SetTrue)]
     pub existing_empty: bool,
     /// Exact branch name to create and establish as the remote default.

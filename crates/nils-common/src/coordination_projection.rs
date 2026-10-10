@@ -42,6 +42,16 @@ pub struct RegistryProjection {
     pub brokers: BTreeMap<String, BrokerProjection>,
     #[serde(default)]
     pub claims: Vec<ClaimProjection>,
+    #[serde(default)]
+    pub operations: Vec<OperationProjection>,
+}
+
+/// Ownership selectors only; execution capability material is never projected.
+#[derive(Clone, Debug, Deserialize)]
+pub struct OperationProjection {
+    pub schema_version: String,
+    pub claim_id: String,
+    pub state: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -87,6 +97,8 @@ struct RuntimeProjection {
 pub struct ClaimProjection {
     schema_version: String,
     pub session_id: String,
+    #[serde(default)]
+    pub claim_id: String,
     pub session_incarnation: String,
     pub state: String,
     #[serde(default)]

@@ -347,6 +347,32 @@ prove either way: another provider, an unrecognized layout, a dialog, or a first
 choice (`1. …`). Text without `--key enter`, or with other keys, only
 types; `--key` alone presses keys as before.
 `glance` returns the recent pane tail plus live status as a JSON contract for dashboard tiles (cheaper than a full attach).
+`clear <id> --expect-idle --format json` clears an idle interactive conversation
+in place: Codex uses native `/new` through its managed app-server TUI and Claude
+Code uses `/clear` plus the paired `agent-hook` clear receipt. It preserves the
+managed session/runtime identity and records the new exact provider resume ID,
+resets the turn snapshot, and returns `old_provider_session_id`,
+`new_provider_session_id`, `changed`, and `support`. Idle admission is mandatory
+with or without `--expect-idle`; busy, blocked, starting, unknown, stopped, and
+unsupported sessions are refused. `--timeout` bounds clear confirmation (default
+15 seconds). A confirmation timeout is not success and must not be blindly
+retried: inspect the native prompt/dialog and use `rebind <id> --format json`.
+
+`rebind` repairs stale provider bindings without clearing again. Codex requires
+a provider-verified idle thread and either a runtime-bound native observation
+or one unambiguous loaded primary thread; ambiguous loaded threads are refused
+rather than selected from history. Claude requires a runtime-bound clear hook
+receipt and an idle snapshot. Raw provider IDs remain private lifecycle metadata;
+activity events continue to use projected identities. Native primary clears are
+also observed automatically; auxiliary threads and compaction do not rebind the
+managed conversation. The next provider turn and a later `resume` use the new ID.
+Codex also requires a live proxy advertising conversation-rebind support. An older
+already-running proxy is refused before terminal input: stop and resume the same
+managed session through the upgraded installation first. Rebinding older proxy
+process state or selecting among ambiguous unobserved threads is unsafe; neither
+is inferred from transcript order. Claude requires the matching `agent-hook`
+binary on the launch and resume PATH.
+
 `resume` recreates a missing tmux runtime only when the session has exact provider resume metadata; it never resumes the
 latest provider conversation implicitly. Runtime metadata is persisted before launch so hooks see the new generation,
 and the immutable tmux session/pane identity is persisted before a successful start or resume returns. Resume first
@@ -516,7 +542,12 @@ Run from inside the session's own tmux session, a Claude switch only queues.
 After stopping, the switch retires the stopped runtime's coordination
 incarnation before resuming. If the resume still fails, it returns
 `claude-account-switch-resume-failed` with the `agent-session resume <id>`
-recovery command; the session is stopped with the account queued. A Codex
+recovery command; the session is stopped with the account queued. On macOS,
+a revoked broker from the same boot may be retired or replaced only when its
+persisted identity exactly matches the prior record, both the managed tmux name
+and numeric target were absent before launch, and a complete process-group
+probe is empty. The group is checked again under the coordination lock before
+replacement. Live, unavailable, or mismatched evidence still refuses recovery. A Codex
 switch needs a running serve daemon to apply; re-selecting the current account
 cancels a queued switch.
 

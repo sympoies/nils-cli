@@ -1065,6 +1065,29 @@ fn projection(item: &Retained) -> Value {
     }
     value
 }
+/// Read-only reconciliation of the daemon's provider-incident outbox across
+/// runtime replacement. New sends still require the current capability.
+pub(crate) fn auth_incident_receipt(
+    context: &CliContext,
+    session: &str,
+    key: &str,
+    expected_digest: &str,
+) -> Result<Option<Value>, CliError> {
+    let locked = lock_journal(context)?;
+    match locked
+        .registry
+        .find(|item| item.sender.principal() == session && item.idempotency_key == key)
+    {
+        Some(item) if item.request_digest != expected_digest => Err(CliError::data(
+            "idempotency-key-conflict",
+            "authentication notification identity differs",
+            None,
+        )),
+        Some(item) => Ok(Some(projection(&item))),
+        None => Ok(None),
+    }
+}
+
 pub(crate) fn delivery(
     context: &CliContext,
     session: &str,

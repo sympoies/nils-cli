@@ -2256,9 +2256,11 @@ fn codex_turn_completion_error(
             Some(crate::codex_app_server::StructuredFailureKind::UsageExhausted) => {
                 provider_quota_exceeded()
             }
-            Some(crate::codex_app_server::StructuredFailureKind::ProviderCapacity) | None => {
-                provider_unavailable()
-            }
+            Some(
+                crate::codex_app_server::StructuredFailureKind::ProviderCapacity
+                | crate::codex_app_server::StructuredFailureKind::Authentication,
+            )
+            | None => provider_unavailable(),
         }),
         Some("interrupted") => Some(provider_unavailable()),
         _ => Some(provider_malformed()),

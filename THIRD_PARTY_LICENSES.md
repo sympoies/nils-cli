@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `4f6952e8e1131f510dadcae678dd396df621ac3230608cd1de3e2482e5ecc4c4`
+- Cargo.lock SHA256: `a4e52ebfe083706cd86ae15b3a2fad6e930a337ca63ee8c469d8c613ac4d89f6`
 - Third-party crates (`source != null`): 493
 - Workspace crates (`source == null`, excluded below): 43
 
@@ -246,7 +246,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | kqueue-sys | 1.1.2 | MIT | crates.io |
 | kurbo | 0.13.1 | Apache-2.0 OR MIT | crates.io |
 | lazy_static | 1.5.0 | MIT OR Apache-2.0 | crates.io |
-| libc | 0.2.189 | MIT OR Apache-2.0 | crates.io |
+| libc | 0.2.190 | MIT OR Apache-2.0 | crates.io |
 | libgit2-sys | 0.18.8+1.9.7 | MIT OR Apache-2.0 | crates.io |
 | libm | 0.2.16 | MIT | crates.io |
 | libsqlite3-sys | 0.38.2 | MIT | crates.io |
@@ -432,14 +432,14 @@ This file documents third-party Rust crate licenses used by this workspace.
 | tinystr | 0.8.3 | Unicode-3.0 | crates.io |
 | tinyvec | 1.11.0 | Zlib OR Apache-2.0 OR MIT | crates.io |
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib | crates.io |
-| tokio | 1.53.1 | MIT | crates.io |
+| tokio | 1.53.2 | MIT | crates.io |
 | tokio-macros | 2.7.0 | MIT | crates.io |
 | tokio-rustls | 0.26.4 | MIT OR Apache-2.0 | crates.io |
 | tokio-tungstenite | 0.29.0 | MIT | crates.io |
 | toml | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | toml_datetime | 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
-| toml_edit | 0.25.13+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
-| toml_parser | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
+| toml_edit | 0.25.15+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
+| toml_parser | 1.1.4+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | toml_writer | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | tower | 0.5.3 | MIT | crates.io |
 | tower-http | 0.6.11 | MIT | crates.io |
@@ -471,7 +471,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | usvg | 0.48.1 | Apache-2.0 OR MIT | crates.io |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | crates.io |
 | utf8parse | 0.2.2 | Apache-2.0 OR MIT | crates.io |
-| uuid | 1.26.1 | Apache-2.0 OR MIT | crates.io |
+| uuid | 1.27.0 | Apache-2.0 OR MIT | crates.io |
 | uuid-simd | 0.8.0 | MIT | crates.io |
 | valuable | 0.1.1 | MIT | crates.io |
 | vcpkg | 0.2.15 | MIT/Apache-2.0 | crates.io |

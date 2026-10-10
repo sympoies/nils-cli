@@ -132,7 +132,7 @@ fi
 
 case "$1 $2" in
   "remote get-url")
-    printf '%s\n' "${GIT_ORIGIN_URL:-git@github.com:graysurf/g14-infra.git}"
+    printf '%s\n' "${GIT_ORIGIN_URL:-git@github.com:example/service.git}"
     exit 0
     ;;
 esac
@@ -218,7 +218,7 @@ if [[ "$mode" == "e" ]]; then
     shopt -s nullglob
     output_files=(
       "${SOPS_STORE:?}"/.git/secrets-add-*.enc.env.tmp
-      "${SOPS_STORE:?}"/repos/graysurf/.secrets-add-*.enc.env.tmp
+      "${SOPS_STORE:?}"/repos/example/.secrets-add-*.enc.env.tmp
     )
     if (( "${#output_files[@]}" != 1 )); then
       echo "sops: expected one private encryption output, found ${#output_files[@]}" >&2
@@ -325,6 +325,22 @@ fn assert_no_add_temp_files(store: &Path) {
     );
 }
 
+fn assert_no_pull_temp_files(dir: &Path) {
+    let leftovers = fs::read_dir(dir)
+        .expect("read output directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".secrets-pull-"))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        leftovers.is_empty(),
+        "pull temporary files remain: {leftovers:?}"
+    );
+}
+
 fn wait_for_file(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !path.exists() {
@@ -391,7 +407,7 @@ fn add_interrupted_at_cli_preserves_target(signal: &str, prior: Option<&str>) {
     let stubs = StubBinDir::new();
     let store = tmp.path().join("store");
     init_store(&store);
-    let target = store.join("repos/graysurf/g14-infra.enc.env");
+    let target = store.join("repos/example/service.enc.env");
     if let Some(prior) = prior {
         fs::create_dir_all(target.parent().expect("target parent")).expect("target parent");
         fs::write(&target, prior).expect("existing ciphertext");
@@ -518,7 +534,7 @@ fn add_interrupted_after_install_finishes_git_transaction(signal: &str) {
     assert_exit(&captured, 0);
     assert_no_secret_leak(&captured);
 
-    let target = store.join("repos/graysurf/g14-infra.enc.env");
+    let target = store.join("repos/example/service.enc.env");
     let stored = fs::read_to_string(&target).expect("installed ciphertext");
     assert!(stored.contains("ENC["), "stored: {stored}");
     assert!(
@@ -636,8 +652,8 @@ fn dynamic_completion_enumerates_live_store_entries() {
     let tmp = TempDir::new().expect("tmp");
     let store = tmp.path().join("store");
     init_store(&store);
-    fs::create_dir_all(store.join("repos/graysurf")).expect("repos/graysurf");
-    fs::write(store.join("repos/graysurf/g14-infra.enc.env"), "x").expect("repo entry");
+    fs::create_dir_all(store.join("repos/example")).expect("repos/example");
+    fs::write(store.join("repos/example/service.enc.env"), "x").expect("repo entry");
     fs::write(store.join("stacks/web.enc.env"), "x").expect("stack web");
     fs::write(store.join("stacks/db.enc.env"), "x").expect("stack db");
 
@@ -652,7 +668,7 @@ fn dynamic_completion_enumerates_live_store_entries() {
     assert_exit(&output, 0);
     let stdout = output.stdout_text();
 
-    for expected in ["repos/graysurf/g14-infra", "stacks/db", "stacks/web"] {
+    for expected in ["repos/example/service", "stacks/db", "stacks/web"] {
         assert!(
             stdout.lines().any(|line| line == expected),
             "name completion should offer `{expected}`, got:\n{stdout}"
@@ -673,11 +689,119 @@ fn which_resolves_auto_detected_slug() {
     let output = run(&["which"], &options(tmp.path(), &store, stubs.path()));
     assert_exit(&output, 0);
     let stdout = output.stdout_text();
-    assert!(
-        stdout.contains("repos/graysurf/g14-infra.enc.env"),
-        "stdout: {stdout}"
+    assert_eq!(
+        stdout.trim(),
+        store
+            .join("repos/example/service.enc.env")
+            .to_string_lossy()
     );
     assert_no_secret_leak(&output);
+}
+
+#[test]
+fn which_explains_remote_selection_and_environment_override() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    let env_store = tmp.path().join("env-store");
+    let remote_store = tmp.path().join("remote-store");
+    fs::create_dir_all(&app).expect("app");
+    init_store(&env_store);
+    init_store(&remote_store);
+    let config_home = tmp.path().join("config");
+    fs::create_dir_all(config_home.join("secrets")).expect("config dir");
+    fs::write(
+        config_home.join("secrets/stores.toml"),
+        format!(
+            "default = {:?}\n\n[remotes]\n\"github.com/example\" = {:?}\n",
+            tmp.path().join("default-store").to_string_lossy(),
+            remote_store.to_string_lossy(),
+        ),
+    )
+    .expect("config");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+
+    let env_output = run(
+        &["which", "--explain"],
+        &options(&app, &env_store, stubs.path())
+            .with_env("XDG_CONFIG_HOME", &config_home.to_string_lossy()),
+    );
+    assert_exit(&env_output, 0);
+    assert!(
+        env_output
+            .stdout_text()
+            .contains("selected by SECRETS_REPO")
+    );
+    assert!(
+        env_output
+            .stdout_text()
+            .contains(&env_store.to_string_lossy().to_string())
+    );
+
+    let remote_output = run(
+        &["which", "--explain"],
+        &CmdOptions::default()
+            .with_cwd(&app)
+            .with_path_prepend(stubs.path())
+            .with_env_remove("HOME")
+            .with_env_remove("SECRETS_REPO")
+            .with_env("XDG_CONFIG_HOME", &config_home.to_string_lossy()),
+    );
+    assert_exit(&remote_output, 0);
+    assert!(
+        remote_output
+            .stdout_text()
+            .contains("selected by remote: github.com/example")
+    );
+    assert!(
+        remote_output
+            .stdout_text()
+            .contains(&remote_store.to_string_lossy().to_string())
+    );
+    assert_no_secret_leak(&env_output);
+    assert_no_secret_leak(&remote_output);
+}
+
+#[test]
+fn which_requires_the_selected_store_to_exist() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    fs::create_dir_all(&app).expect("app");
+    let missing_store = tmp.path().join("missing-store");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+
+    let output = run(&["which"], &options(&app, &missing_store, stubs.path()));
+
+    assert_exit(&output, 69);
+}
+
+#[test]
+fn which_rejects_invalid_config_without_echoing_its_contents() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    let config_home = tmp.path().join("config");
+    fs::create_dir_all(&app).expect("app");
+    fs::create_dir_all(config_home.join("secrets")).expect("config dir");
+    fs::write(
+        config_home.join("secrets/stores.toml"),
+        "default = [\"TOP-SECRET-VALUE\"\n",
+    )
+    .expect("invalid config");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+    let opts = CmdOptions::default()
+        .with_cwd(&app)
+        .with_path_prepend(stubs.path())
+        .with_env_remove("HOME")
+        .with_env_remove("SECRETS_REPO")
+        .with_env("XDG_CONFIG_HOME", &config_home.to_string_lossy());
+
+    let output = run(&["which", "--explain"], &opts);
+
+    assert_exit(&output, 69);
+    assert!(!output.stdout_text().contains(SECRET_CANARY));
+    assert!(!output.stderr_text().contains(SECRET_CANARY));
 }
 
 #[test]
@@ -700,6 +824,59 @@ fn which_json_envelope_is_metadata_only() {
     assert_eq!(json["data"]["entry"], "repos/my-stack.enc.env");
     assert_eq!(json["data"]["exists"], false);
     assert_no_secret_leak(&output);
+}
+
+#[test]
+fn which_explains_context_selected_store_and_path_precedence() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("work/team/app");
+    let selected_store = tmp.path().join("team-store");
+    let remote_store = tmp.path().join("remote-store");
+    let canonical_tmp = fs::canonicalize(tmp.path()).expect("canonical tempdir");
+    fs::create_dir_all(&app).expect("app");
+    init_store(&selected_store);
+    init_store(&remote_store);
+    let config_home = tmp.path().join("config");
+    fs::create_dir_all(config_home.join("secrets")).expect("config dir");
+    let config = format!(
+        "default = {:?}\n\n[path_prefixes]\n{:?} = {:?}\n\n[remotes]\n\"github.com/example\" = {:?}\n",
+        canonical_tmp.join("default-store").to_string_lossy(),
+        canonical_tmp.join("work/team").to_string_lossy(),
+        selected_store.to_string_lossy(),
+        remote_store.to_string_lossy(),
+    );
+    fs::write(config_home.join("secrets/stores.toml"), config).expect("config");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+    let opts = CmdOptions::default()
+        .with_cwd(&app)
+        .with_path_prepend(stubs.path())
+        .with_env_remove("SECRETS_REPO")
+        .with_env_remove("HOME")
+        .with_env("XDG_CONFIG_HOME", &config_home.to_string_lossy())
+        .with_env("XDG_DATA_HOME", &tmp.path().join("data").to_string_lossy());
+
+    let output = run(&["--format", "json", "which"], &opts);
+
+    assert_exit(&output, 0);
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
+    assert_eq!(
+        json["data"]["store"],
+        selected_store.to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        json["data"]["path"],
+        selected_store
+            .join("repos/example/service.enc.env")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(json["data"]["selected_by"], "path-prefix");
+    assert_eq!(
+        json["data"]["matched_by"],
+        canonical_tmp.join("work/team").to_string_lossy().as_ref()
+    );
+    assert!(!output.stdout_text().contains(SECRET_CANARY));
 }
 
 #[test]
@@ -749,9 +926,9 @@ fn pull_writes_dotenv_600_without_leaking_secret() {
     git_stub(stubs.path());
     sops_stub(stubs.path());
     // The store entry for the auto-detected slug must exist.
-    fs::create_dir_all(store.join("repos/graysurf")).expect("mkdir");
+    fs::create_dir_all(store.join("repos/example")).expect("mkdir");
     fs::write(
-        store.join("repos/graysurf/g14-infra.enc.env"),
+        store.join("repos/example/service.enc.env"),
         format!("A=ENC[{SECRET_CANARY}]"),
     )
     .expect("write");
@@ -768,7 +945,7 @@ fn pull_writes_dotenv_600_without_leaking_secret() {
 
     // Metadata-only stdout: store rel path + key count, no values.
     let stdout = output.stdout_text();
-    assert!(stdout.contains("repos/graysurf/g14-infra.enc.env"));
+    assert!(stdout.contains("repos/example/service.enc.env"));
     assert!(stdout.contains("2 keys"), "stdout: {stdout}");
 
     #[cfg(unix)]
@@ -789,8 +966,8 @@ fn pull_json_envelope_is_metadata_only() {
     init_store(&store);
     git_stub(stubs.path());
     sops_stub(stubs.path());
-    fs::create_dir_all(store.join("repos/graysurf")).expect("mkdir");
-    fs::write(store.join("repos/graysurf/g14-infra.enc.env"), "x").expect("write");
+    fs::create_dir_all(store.join("repos/example")).expect("mkdir");
+    fs::write(store.join("repos/example/service.enc.env"), "x").expect("write");
 
     let output = run(
         &["--format", "json", "pull"],
@@ -800,12 +977,163 @@ fn pull_json_envelope_is_metadata_only() {
     let json = output.stdout_json();
     assert_eq!(json["ok"], true);
     assert_eq!(json["schema_version"], "cli.secrets.pull.v1");
-    assert_eq!(json["data"]["entry"], "repos/graysurf/g14-infra.enc.env");
+    assert_eq!(json["data"]["entry"], "repos/example/service.enc.env");
     assert_eq!(json["data"]["key_count"], 2);
     // No value-bearing field can carry a secret.
     assert!(json["data"].get("value").is_none());
     assert!(json["data"].get("env").is_none());
     assert!(json["data"].get("keys").is_none());
+    assert_no_secret_leak(&output);
+}
+
+#[test]
+fn pull_output_writes_private_file_and_reports_path_without_values() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    let store = tmp.path().join("store");
+    fs::create_dir_all(&app).expect("app");
+    init_store(&store);
+    fs::create_dir_all(store.join("repos/example")).expect("entry dir");
+    fs::write(store.join("repos/example/service.enc.env"), "x").expect("entry");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+    sops_stub(stubs.path());
+    let output_path = app.join("credentials.env");
+
+    let output = run(
+        &["--format", "json", "pull", "--output", "credentials.env"],
+        &options(&app, &store, stubs.path()),
+    );
+
+    assert_exit(&output, 0);
+    assert_no_secret_leak(&output);
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
+    assert_eq!(
+        json["data"]["dest"],
+        fs::canonicalize(&output_path)
+            .expect("canonical output")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert!(
+        fs::read_to_string(&output_path)
+            .expect("output")
+            .contains(SECRET_CANARY)
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&output_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+}
+
+#[test]
+fn pull_default_refreshes_existing_dotenv() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    let store = tmp.path().join("store");
+    fs::create_dir_all(&app).expect("app");
+    init_store(&store);
+    fs::create_dir_all(store.join("repos/example")).expect("entry dir");
+    fs::write(store.join("repos/example/service.enc.env"), "x").expect("entry");
+    fs::write(app.join(".env"), "KEEP=original\n").expect("existing dotenv");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+    sops_stub(stubs.path());
+
+    let output = run(&["pull"], &options(&app, &store, stubs.path()));
+
+    assert_exit(&output, 0);
+    assert_no_secret_leak(&output);
+    let dotenv = fs::read_to_string(app.join(".env")).expect("refreshed dotenv");
+    assert!(dotenv.contains(SECRET_CANARY));
+    assert!(!dotenv.contains("KEEP=original"));
+}
+
+#[test]
+fn pull_refuses_existing_output_without_force() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    let store = tmp.path().join("store");
+    fs::create_dir_all(&app).expect("app");
+    init_store(&store);
+    fs::create_dir_all(store.join("repos/example")).expect("entry dir");
+    fs::write(store.join("repos/example/service.enc.env"), "x").expect("entry");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+    sops_stub(stubs.path());
+    let sops_log = tmp.path().join("sops.log");
+    fs::write(&sops_log, "").expect("sops log");
+    let output_path = app.join("existing.env");
+    fs::write(&output_path, "KEEP=original\n").expect("existing output");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&output_path, fs::Permissions::from_mode(0o644))
+            .expect("set existing output mode");
+    }
+
+    let output = run(
+        &["pull", "--output", output_path.to_str().unwrap()],
+        &options(&app, &store, stubs.path()).with_env("SOPS_LOG", &sops_log.to_string_lossy()),
+    );
+
+    assert_exit(&output, 1);
+    assert_eq!(fs::read_to_string(&output_path).unwrap(), "KEEP=original\n");
+    assert_no_secret_leak(&output);
+    assert_no_pull_temp_files(&app);
+    assert!(
+        fs::read_to_string(&sops_log).unwrap().is_empty(),
+        "an existing output should be rejected before decrypting"
+    );
+
+    let output = run(
+        &["pull", "--output", output_path.to_str().unwrap(), "--force"],
+        &options(&app, &store, stubs.path()).with_env("SOPS_LOG", &sops_log.to_string_lossy()),
+    );
+    assert_exit(&output, 0);
+    assert_no_secret_leak(&output);
+    assert!(
+        fs::read_to_string(&output_path)
+            .unwrap()
+            .contains(SECRET_CANARY)
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&output_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    assert_no_pull_temp_files(&app);
+}
+
+#[test]
+fn pull_output_with_missing_parent_fails_without_creating_files() {
+    let tmp = TempDir::new().expect("tempdir");
+    let app = tmp.path().join("app");
+    let store = tmp.path().join("store");
+    fs::create_dir_all(&app).expect("app");
+    init_store(&store);
+    fs::create_dir_all(store.join("repos/example")).expect("entry dir");
+    fs::write(store.join("repos/example/service.enc.env"), "x").expect("entry");
+    let stubs = StubBinDir::new();
+    git_stub(stubs.path());
+    sops_stub(stubs.path());
+    let missing_parent = app.join("missing/output.env");
+
+    let output = run(
+        &["pull", "--output", missing_parent.to_str().unwrap()],
+        &options(&app, &store, stubs.path()),
+    );
+
+    assert_exit(&output, 1);
+    assert!(!missing_parent.parent().unwrap().exists());
+    assert_no_pull_temp_files(&app);
     assert_no_secret_leak(&output);
 }
 
@@ -859,7 +1187,7 @@ fn add_encrypts_commits_and_pushes() {
 
     // The stored file is the ENC-marked output, not plaintext.
     let stored =
-        fs::read_to_string(store.join("repos/graysurf/g14-infra.enc.env")).expect("read stored");
+        fs::read_to_string(store.join("repos/example/service.enc.env")).expect("read stored");
     assert!(stored.contains("ENC["), "stored: {stored}");
     assert!(
         !stored.contains(SECRET_CANARY),
@@ -868,13 +1196,13 @@ fn add_encrypts_commits_and_pushes() {
 
     // git add + commit + push were all invoked.
     let git_calls = fs::read_to_string(&git_log).expect("git log");
-    assert!(git_calls.contains("add repos/graysurf/g14-infra.enc.env"));
+    assert!(git_calls.contains("add repos/example/service.enc.env"));
     assert!(git_calls.contains("commit"));
     assert!(git_calls.contains("push"));
 
     let sops_calls = fs::read_to_string(&sops_log).expect("sops log");
     assert!(
-        sops_calls.contains("--filename-override repos/graysurf/g14-infra.enc.env"),
+        sops_calls.contains("--filename-override repos/example/service.enc.env"),
         "sops must evaluate creation rules against the final target path: {sops_calls}"
     );
     assert!(
@@ -884,7 +1212,7 @@ fn add_encrypts_commits_and_pushes() {
     assert_no_add_temp_files(&store);
 
     let stdout = output.stdout_text();
-    assert!(stdout.contains("repos/graysurf/g14-infra.enc.env"));
+    assert!(stdout.contains("repos/example/service.enc.env"));
 }
 
 #[test]
@@ -913,7 +1241,7 @@ fn add_supports_linked_worktree_git_file_and_common_dir() {
     );
     assert_exit(&output, 0);
     assert_no_secret_leak(&output);
-    let stored = fs::read_to_string(store.join("repos/graysurf/g14-infra.enc.env"))
+    let stored = fs::read_to_string(store.join("repos/example/service.enc.env"))
         .expect("linked worktree ciphertext");
     assert!(stored.contains("ENC["), "stored: {stored}");
     let git_calls = fs::read_to_string(&git_log).expect("git log");
@@ -953,7 +1281,7 @@ fn add_non_ciphertext_output_leaves_no_target_or_temp() {
 
     // Plaintext copy removed; nothing staged/committed/pushed.
     assert!(
-        !store.join("repos/graysurf/g14-infra.enc.env").exists(),
+        !store.join("repos/example/service.enc.env").exists(),
         "invalid encryption output must not create the final target"
     );
     let git_calls = fs::read_to_string(&git_log).expect("git log");
@@ -972,7 +1300,7 @@ fn add_marker_bearing_mixed_plaintext_preserves_prior_target_and_git() {
     let stubs = StubBinDir::new();
     let store = tmp.path().join("store");
     init_store(&store);
-    let target = store.join("repos/graysurf/g14-infra.enc.env");
+    let target = store.join("repos/example/service.enc.env");
     fs::create_dir_all(target.parent().expect("target parent")).expect("target parent");
     let original = "API_KEY=ENC[AES256_GCM,data:original,type:str]\n";
     fs::write(&target, original).expect("existing ciphertext");
@@ -1018,7 +1346,7 @@ fn add_unchanged_stages_without_committing_or_pushing() {
     let stubs = StubBinDir::new();
     let store = tmp.path().join("store");
     init_store(&store);
-    let target = store.join("repos/graysurf/g14-infra.enc.env");
+    let target = store.join("repos/example/service.enc.env");
     fs::create_dir_all(target.parent().expect("target parent")).expect("target parent");
     let ciphertext = "API_KEY=ENC[AES256_GCM,data:abc,type:str]\n";
     fs::write(&target, ciphertext).expect("existing ciphertext");
@@ -1047,7 +1375,7 @@ fn add_unchanged_stages_without_committing_or_pushing() {
     );
 
     let git_calls = fs::read_to_string(&git_log).expect("git log");
-    assert!(git_calls.contains("add repos/graysurf/g14-infra.enc.env"));
+    assert!(git_calls.contains("add repos/example/service.enc.env"));
     assert!(
         !git_calls.contains("commit"),
         "must not commit unchanged data"
@@ -1066,7 +1394,7 @@ fn add_sops_failure_preserves_existing_ciphertext_and_cleans_temp() {
     let stubs = StubBinDir::new();
     let store = tmp.path().join("store");
     init_store(&store);
-    let target = store.join("repos/graysurf/g14-infra.enc.env");
+    let target = store.join("repos/example/service.enc.env");
     fs::create_dir_all(target.parent().expect("target parent")).expect("target parent");
     let original = "API_KEY=ENC[AES256_GCM,data:original,type:str]\n";
     fs::write(&target, original).expect("existing ciphertext");
@@ -1101,7 +1429,7 @@ fn add_non_ciphertext_output_preserves_existing_target_and_cleans_temp() {
     let stubs = StubBinDir::new();
     let store = tmp.path().join("store");
     init_store(&store);
-    let target = store.join("repos/graysurf/g14-infra.enc.env");
+    let target = store.join("repos/example/service.enc.env");
     fs::create_dir_all(target.parent().expect("target parent")).expect("target parent");
     let original = "API_KEY=ENC[AES256_GCM,data:original,type:str]\n";
     fs::write(&target, original).expect("existing ciphertext");
@@ -1150,7 +1478,7 @@ fn add_cleans_temp_when_sops_is_terminated_by_signal() {
     assert_exit(&output, 1);
     assert_no_secret_leak(&output);
     assert!(
-        !store.join("repos/graysurf/g14-infra.enc.env").exists(),
+        !store.join("repos/example/service.enc.env").exists(),
         "signal failure must not create the final target"
     );
     assert_no_add_temp_files(&store);

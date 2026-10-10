@@ -4435,7 +4435,7 @@ fn start_creates_session_state_without_printing_prompt() {
             "--".to_string(),
             "sh".to_string(),
             "-c".to_string(),
-            "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"".to_string(),
+            "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --exit-code \"$status\" --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"".to_string(),
             "agent-session-held-launch".to_string(),
             state_dir
                 .join("sessions")
@@ -9977,6 +9977,157 @@ fn list_marks_missing_tmux_with_resume_identity_as_resumable() {
 }
 
 #[test]
+fn claude_clear_command_preserves_next_turn_and_stop_resume_identity() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let state = tmp.path().join("state");
+    let cwd = tmp.path().join("repo");
+    fs::create_dir_all(&cwd).unwrap();
+    let (tmux, log) = fake_tmux(tmp.path());
+    let agent = fake_agent(tmp.path(), "claude");
+    let session = write_resumable_session_record_with_agent_bin(
+        &state,
+        "clear-lifecycle",
+        "claude",
+        "hs-claude-clear-lifecycle",
+        &cwd,
+        &["--resume", "resume-session-id"],
+        Some(&agent),
+    );
+    let record_path = session.join("session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record.as_object_mut().unwrap().remove("startup");
+    fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let state_arg = state.to_string_lossy().to_string();
+    let tmux_arg = tmux.to_string_lossy().to_string();
+    let log_arg = log.to_string_lossy().to_string();
+    let hook_env = [
+        ("AGENT_SESSION_ID", "clear-lifecycle"),
+        ("AGENT_SESSION_RUNTIME_ID", "never-launched-fixture"),
+        ("AGENT_SESSION_STATE_DIR", state_arg.as_str()),
+    ];
+    let initial = run_with_stdin(
+        tmp.path(),
+        &["activity", "hook", "--agent", "claude"],
+        &hook_env,
+        r#"{"hook_event_name":"SessionStart","source":"clear","session_id":"initial-conversation"}"#,
+    );
+    assert_eq!(initial.code, 0, "{}", initial.stderr_text());
+    let clear_cwd = tmp.path().to_owned();
+    let clear_state = state_arg.clone();
+    let clear_tmux = tmux_arg.clone();
+    let clear_log = log_arg.clone();
+    let clear = thread::spawn(move || {
+        run(
+            &clear_cwd,
+            &[
+                "--state-dir",
+                &clear_state,
+                "clear",
+                "clear-lifecycle",
+                "--expect-idle",
+                "--timeout",
+                "5",
+                "--tmux-bin",
+                &clear_tmux,
+                "--format",
+                "json",
+            ],
+            &[("AGENT_SESSION_FAKE_TMUX_LOG", &clear_log)],
+        )
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !tmux_calls(&log)
+        .iter()
+        .any(|call| call.first().is_some_and(|arg| arg == "send-keys"))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "clear never reached native input"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let observed = run_with_stdin(
+        tmp.path(),
+        &["activity", "hook", "--agent", "claude"],
+        &hook_env,
+        r#"{"hook_event_name":"SessionStart","source":"clear","session_id":"new-conversation"}"#,
+    );
+    assert_eq!(observed.code, 0);
+    let cleared = clear.join().unwrap();
+    assert_eq!(cleared.code, 0, "{}", cleared.stderr_text());
+    let envelope = cleared.stdout_json();
+    assert_eq!(envelope["schema_version"], "cli.agent-session.clear.v1");
+    assert_eq!(
+        data(&envelope)["old_provider_session_id"],
+        "initial-conversation"
+    );
+    assert_eq!(
+        data(&envelope)["new_provider_session_id"],
+        "new-conversation"
+    );
+    assert_eq!(data(&envelope)["support"], "native-hook");
+    for payload in [
+        r#"{"hook_event_name":"UserPromptSubmit","session_id":"new-conversation","prompt_id":"next-turn"}"#,
+        r#"{"hook_event_name":"Notification","notification_type":"idle_prompt","session_id":"new-conversation","prompt_id":"next-turn"}"#,
+    ] {
+        assert_eq!(
+            run_with_stdin(
+                tmp.path(),
+                &["activity", "hook", "--agent", "claude"],
+                &hook_env,
+                payload
+            )
+            .code,
+            0
+        );
+    }
+    let status = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "activity",
+            "status",
+            "clear-lifecycle",
+            "--format",
+            "json",
+        ],
+        &[],
+    )
+    .stdout_json();
+    assert_eq!(data(&status)["turn_state"]["phase"], "waiting");
+    let resumed = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "resume",
+            "clear-lifecycle",
+            "--tmux-bin",
+            &tmux_arg,
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_FAKE_TMUX_LOG", &log_arg),
+            ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
+        ],
+    );
+    assert_eq!(resumed.code, 0, "{}", resumed.stderr_text());
+    let calls = tmux_calls(&log);
+    let launch = calls
+        .iter()
+        .find(|call| call.first().is_some_and(|arg| arg == "new-session"))
+        .unwrap();
+    assert!(
+        launch
+            .windows(2)
+            .any(|args| args == ["--resume", "new-conversation"])
+    );
+    assert!(!launch.iter().any(|arg| arg == "initial-conversation"));
+}
+
+#[test]
 fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state_dir = tmp.path().join("state");
@@ -10060,6 +10211,7 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
         &[
             ("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log_arg),
             ("AGENT_SESSION_FAKE_TMUX_HAS_SESSION", "0"),
+            ("NILS_TEST_PANE_LIFETIME_MS", "500"),
         ],
     );
 
@@ -10144,7 +10296,7 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
             "--".to_string(),
             "sh".to_string(),
             "-c".to_string(),
-            "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"".to_string(),
+            "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --exit-code \"$status\" --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"".to_string(),
             "agent-session-held-launch".to_string(),
             state_dir
                 .join("sessions/recoverable/coordination/launch-ready")
@@ -10216,6 +10368,30 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
         "resume should refresh the durable sidecar"
     );
 
+    let capability = session.join(format!(
+        "coordination/capability-{}",
+        sha256_hex(runtime_id)
+    ));
+    let stopped = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "broker",
+            "stop",
+            "--session",
+            "recoverable",
+            "--exit-code",
+            "23",
+            "--capability-file",
+            capability.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    assert_eq!(stopped.code, 0, "{}", stopped.stderr_text());
+
     let list = run(
         tmp.path(),
         &["--state-dir", &state_arg, "list", "--format", "json"],
@@ -10230,6 +10406,254 @@ fn resume_recreates_tmux_runtime_from_exact_provider_identity() {
     let listed = &data(&list_value)[0];
     assert_eq!(listed["status"], "stopped");
     assert_eq!(listed["startup"]["state"], "ready");
+    // Inventory may observe this disappearance again; wrapper evidence remains singular.
+    let context = agent_session::CliContext {
+        state_dir: state_dir.clone(),
+        host: None,
+    };
+    let persisted = agent_session::load_session_record(&context, "recoverable").unwrap();
+    assert_eq!(persisted.runtime.as_ref().unwrap().generation, 2);
+    let logs = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "logs",
+            "--lifecycle",
+            "recoverable",
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    assert_eq!(logs.code, 0, "{}", logs.stderr_text());
+    let journal = logs.stdout_json();
+    let rows = journal["data"]["records"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["operation"] == "resume" && r["result"]["ok"] == true)
+            .count(),
+        1
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["operation"] == "broker-stop" && r["result"]["ok"] == true)
+            .count(),
+        1
+    );
+    let exits = rows
+        .iter()
+        .filter(|r| r["operation"] == "exit-observed")
+        .collect::<Vec<_>>();
+    assert_eq!(exits.len(), 1, "{journal}");
+    assert_eq!(exits[0]["exit"]["code"], 23);
+    assert_eq!(exits[0]["exit"]["stopped_by"], Value::Null);
+    let group = record["delete_tmux_identity"]["process_group_id"]
+        .as_i64()
+        .unwrap() as libc::pid_t;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while unsafe { libc::kill(-group, 0) } == 0 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_ne!(
+        unsafe { libc::kill(-group, 0) },
+        0,
+        "bounded resumed pane must stop before deletion"
+    );
+    let deleted = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "delete",
+            "recoverable",
+            "--tmux-bin",
+            &tmux_arg,
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log_arg),
+            ("AGENT_SESSION_FAKE_TMUX_ABSENT", "1"),
+        ],
+    );
+    assert_eq!(
+        deleted.code,
+        0,
+        "{} {}",
+        deleted.stdout_text(),
+        deleted.stderr_text()
+    );
+    let logs = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            &state_arg,
+            "logs",
+            "--lifecycle",
+            "recoverable",
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    let journal = logs.stdout_json();
+    let rows = journal["data"]["records"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["operation"] == "delete" && r["result"]["ok"] == true)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn lifecycle_review_generated_id_is_resolved_after_prompt_input() {
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = tempfile::TempDir::new().unwrap();
+    let state = tmp.path().join("state");
+    let fifo = tmp.path().join("prompt.fifo");
+    let cpath = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+    let (tmux, tmux_log) = fake_tmux(tmp.path());
+    let provider = fake_agent(tmp.path(), "codex");
+    let first_second = jiff::Timestamp::now().as_second();
+    let mut child = Command::new(nils_test_support::bin::resolve("agent-session"))
+        .args([
+            "--state-dir",
+            state.to_str().unwrap(),
+            "start",
+            "--agent",
+            "codex",
+            "--title",
+            "collision",
+            "--cwd",
+            tmp.path().to_str().unwrap(),
+            "--prompt-file",
+            fifo.to_str().unwrap(),
+            "--tmux-bin",
+            tmux.to_str().unwrap(),
+            "--agent-bin",
+            provider.to_str().unwrap(),
+            "--paste-delay-ms",
+            "0",
+            "--format",
+            "json",
+        ])
+        .env("AGENT_SESSION_FAKE_TMUX_LOG", &tmux_log)
+        .env("NILS_TEST_PANE_LIFETIME_MS", "500")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut writer = loop {
+        match fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&fifo)
+        {
+            Ok(file) => break file,
+            Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("prompt reader did not open");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("{error}"),
+        }
+    };
+    // The reader opens only after journal preallocation. Reserve every timestamp
+    // it could have picked while input is held, without depending on wall-clock alignment.
+    for second in first_second..=jiff::Timestamp::now().as_second() + 1 {
+        let timestamp = jiff::Timestamp::from_second(second)
+            .unwrap()
+            .to_zoned(jiff::tz::TimeZone::system())
+            .strftime("%Y%m%d-%H%M%S")
+            .to_string();
+        fs::create_dir_all(
+            state
+                .join("sessions")
+                .join(format!("{timestamp}-codex-collision")),
+        )
+        .unwrap();
+    }
+    writer.write_all(b"fixture prompt").unwrap();
+    drop(writer);
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let id = value["data"]["id"].as_str().unwrap();
+    assert!(id.ends_with("-codex-collision-1"), "{value}");
+    let logs = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            state.to_str().unwrap(),
+            "logs",
+            "--lifecycle",
+            id,
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    assert_eq!(logs.code, 0);
+    let journal = logs.stdout_json();
+    let rows = journal["data"]["records"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["operation"] == "start" && r["result"]["ok"] == true)
+            .count(),
+        1
+    );
+    let record: Value = serde_json::from_slice(
+        &fs::read(state.join("sessions").join(id).join("session.json")).unwrap(),
+    )
+    .unwrap();
+    let group = record["delete_tmux_identity"]["process_group_id"]
+        .as_i64()
+        .unwrap() as libc::pid_t;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while unsafe { libc::kill(-group, 0) } == 0 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_ne!(
+        unsafe { libc::kill(-group, 0) },
+        0,
+        "bounded fixture must stop before cleanup"
+    );
+    let cleanup = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            state.to_str().unwrap(),
+            "delete",
+            id,
+            "--tmux-bin",
+            tmux.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+        &[
+            ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log.to_str().unwrap()),
+            ("AGENT_SESSION_FAKE_TMUX_ABSENT", "1"),
+        ],
+    );
+    assert_eq!(
+        cleanup.code,
+        0,
+        "{} {}",
+        cleanup.stdout_text(),
+        cleanup.stderr_text()
+    );
 }
 
 #[test]

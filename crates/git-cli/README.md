@@ -19,6 +19,9 @@ subcommands (matching the binary's `--help` output):
   `to-stash` (alias `stash`).
 - `branch`: `cleanup` (alias `delete-merged`).
 - `worktree`: `add`, `list`, `remove`, `prune`, `go`, `dirty-snapshot`, `adopt-dirty`,
+  Sanctioned cleanup: `git-cli worktree remove <target> --safe --format json`;
+  retains dirty, busy, unmanaged, undelivered, or unverifiable targets. Requires
+  `lsof`, `agent-session`, and remote/provider proof; leaves the branch intact.
   `revoke-dirty`.
 - `ci`: `pick`.
 - `open`: `repo`, `branch`, `default-branch` (alias `default`), `commit`, `compare`,

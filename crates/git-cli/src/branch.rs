@@ -259,7 +259,7 @@ fn run_cleanup(args: &[String]) -> i32 {
         }
 
         if remove_worktrees && let Some(worktree_path) = linked_worktrees.get(branch) {
-            match git_output(&["worktree", "remove", "--force", worktree_path]) {
+            match worktree::remove_managed_path(worktree_path) {
                 Ok(_) => {
                     removed_worktrees_count += 1;
                 }
@@ -353,7 +353,9 @@ fn print_help() {
     );
     println!("  -b, --base <ref>  Base ref used to determine merged branches (default: HEAD)");
     println!("  -s, --squash      Include branches whose squashed diff already landed on base");
-    println!("  -w, --remove-worktrees  Force-remove linked worktrees for candidate branches");
+    println!(
+        "  -w, --remove-worktrees  Remove eligible managed worktrees through the cleanup fence"
+    );
 }
 
 fn parse_lines(output: &Output) -> Vec<String> {

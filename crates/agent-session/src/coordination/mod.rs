@@ -3106,6 +3106,38 @@ pub(crate) fn clean_expired(registry: &mut Registry, now: i64) -> bool {
         || registry.completion_events.len() != completion_event_count
 }
 
+/// Read-only daemon outbox reconciliation; this does not authorize a send.
+/// Provider incident keys include the original runtime and remain stable when
+/// the current runtime capability is used to submit a previously unsent notice.
+pub(crate) fn auth_incident_receipt(
+    context: &CliContext,
+    session: &str,
+    key: &str,
+    expected_digest: &str,
+) -> Result<Option<Value>, CliError> {
+    let locked = lock_registry_observational(context)?;
+    let receipt = locked
+        .registry
+        .receipts
+        .iter()
+        .find_map(|(stored_key, receipt)| {
+            (receipt.principal == session
+                && receipt.operation == "message-send"
+                && receipt.expires_at_epoch > now_epoch()
+                && *stored_key == receipt_key(session, &receipt.incarnation, "message-send", key))
+            .then_some(receipt)
+        });
+    match receipt {
+        Some(receipt) if receipt.digest != expected_digest => Err(CliError::data(
+            "idempotency-key-conflict",
+            "authentication notification identity differs",
+            None,
+        )),
+        Some(receipt) => Ok(Some(receipt.outcome.clone())),
+        None => Ok(None),
+    }
+}
+
 pub(crate) fn idempotency_replay(
     registry: &Registry,
     key: &str,

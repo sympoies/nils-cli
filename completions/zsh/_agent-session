@@ -146,6 +146,7 @@ _arguments "${_arguments_options[@]}" : \
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'--lifecycle[Read bounded lifecycle records instead of terminal content; works after delete]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':id -- Session id:_default' \
@@ -201,6 +202,34 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':id -- Session id:_default' \
+&& ret=0
+;;
+(clear)
+_arguments "${_arguments_options[@]}" : \
+'--timeout=[Bound the wait for provider-native clear confirmation, in seconds]:TIMEOUT:_default' \
+'--tmux-bin=[tmux binary override]:PATH:_files' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'--expect-idle[Assert idle admission (both operations always require idle)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Managed session id:_default' \
+&& ret=0
+;;
+(rebind)
+_arguments "${_arguments_options[@]}" : \
+'--timeout=[Bound the wait for provider-native clear confirmation, in seconds]:TIMEOUT:_default' \
+'--tmux-bin=[tmux binary override]:PATH:_files' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'--expect-idle[Assert idle admission (both operations always require idle)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Managed session id:_default' \
 && ret=0
 ;;
 (account)
@@ -627,6 +656,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (stop)
 _arguments "${_arguments_options[@]}" : \
+'--exit-code=[Exit status observed by the owning runtime wrapper]:EXIT_CODE:_default' \
 '--session=[Managed session id whose broker is being stopped]:SESSION:_default' \
 '--capability-file=[]:PATH:_files' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
@@ -1083,6 +1113,8 @@ _agent-session_commands() {
 'send:Send input (literal text and/or special keys) to a live session' \
 'glance:Capture the recent pane tail plus live status as a dashboard glance' \
 'resume:Recreate a missing tmux runtime from exact provider resume metadata' \
+'clear:Clear an idle conversation in place and verify its new provider identity' \
+'rebind:Recover an idle session by rebinding its live provider conversation' \
 'account:Show or switch the provider account of one session' \
 'activity:Inspect or ingest metadata-only agent turn lifecycle events' \
 'work-context:Manage authenticated structured work context and mutation leases' \
@@ -1212,6 +1244,11 @@ _agent-session__subcmd__broker__subcmd__status_commands() {
 _agent-session__subcmd__broker__subcmd__stop_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session broker stop commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__clear_commands] )) ||
+_agent-session__subcmd__clear_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session clear commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__codex-app-server-proxy_commands] )) ||
 _agent-session__subcmd__codex-app-server-proxy_commands() {
@@ -1375,6 +1412,11 @@ _agent-session__subcmd__provider-stop-canary-supervisor_commands() {
 _agent-session__subcmd__readiness_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session readiness commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__rebind_commands] )) ||
+_agent-session__subcmd__rebind_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session rebind commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__resume_commands] )) ||
 _agent-session__subcmd__resume_commands() {
