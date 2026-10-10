@@ -2689,27 +2689,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nils-main-agent"
-version = "1.32.6"
-dependencies = [
- "clap",
- "clap_complete",
- "jiff",
- "libc",
- "nils-agent-session",
- "nils-build-info",
- "nils-common",
- "nils-test-support",
- "serde",
- "serde_json",
- "sha2",
- "shell-words",
- "tempfile",
- "toml_edit",
- "uuid",
-]
-
-[[package]]
 name = "nils-markdown"
 version = "1.32.6"
 dependencies = [

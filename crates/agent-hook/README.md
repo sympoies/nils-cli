@@ -403,15 +403,9 @@ activity rules also project bounded model/effort labels and a hashed primary
 session identity to the optional `activity hook` ingress. This supplemental
 call runs after mandatory activity with a separate 250 ms deadline; old helpers
 ignore it and metadata failures cannot change enforcement decisions. Shadow
-evaluation skips every side-effecting capability. If that activity update is
-temporarily unavailable, only the finite, shell-uncomposed Main Agent
-rehydration, recovery, status, rebind, and bootstrap shapes may defer the
-activity failure to a selected locked `agent-session.coordination.v1`
-transaction. This deferral is shape evidence, not authority: the fixed
-coordination consumer must still authenticate the exact release, private
-capability, owner/claim state, and command, and any missing or failed consumer
-keeps the request fail-closed. Ordinary shell commands and near-miss recovery
-forms never receive this deferral.
+evaluation skips every side-effecting capability. An unavailable mandatory
+activity update keeps the mutation fail-closed. Coordination admission does
+not supersede an owner block or an activity failure.
 
 Recovery uses a private challenge/authorize/consume lifecycle. Capability
 files are exact, expiring, state-bound bearers. Each challenge binds a signed
