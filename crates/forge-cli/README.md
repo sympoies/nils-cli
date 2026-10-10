@@ -72,13 +72,17 @@ existing authorization.
 
 `repo bootstrap` creates one signed zero-parent commit and publishes it as the
 first branch of an empty repository. It supports a new GitHub user or
-organization repository, an explicitly selected existing empty GitHub
-repository, and the existing private Forgejo creation flow. GitLab is not
-supported. Supply `--provider`, `--repo owner/name`, `--owner-kind`, a safe
+organization repository, a new GitLab user or group project (including
+subgroups), an explicitly selected existing empty GitHub or GitLab repository,
+and the existing private Forgejo creation flow. Supply `--provider`,
+`--repo namespace/name`, `--owner-kind`, a safe
 `--default-branch`, one or more regular repository-root `--file` inputs, a
 Semantic Commit `--message`, and a regular `--reason-file` recording the
 operator's authorization. The default visibility is private; public GitHub
-repositories require `--visibility public`. Forgejo remains private only.
+or GitLab repositories require `--visibility public`. For GitLab, use
+`--owner-kind org` for a group or subgroup and `--owner-kind user` for the
+authenticated user's namespace. Bind a self-managed instance with
+`--host gitlab.example.com`. Forgejo remains private only.
 
 ```sh
 forge-cli --provider github --repo OWNER/REPO --dry-run repo bootstrap \
@@ -89,14 +93,18 @@ forge-cli --provider github --repo OWNER/REPO repo bootstrap \
   --owner-kind org --visibility public --existing-empty --default-branch main \
   --file README.md --message 'chore: initialize repository' \
   --reason-file authorization.txt
+forge-cli --provider gitlab --host gitlab.example.com --repo GROUP/SUBGROUP/PROJECT \
+  repo bootstrap --owner-kind org --default-branch main \
+  --file README.md --message 'chore: initialize repository' \
+  --reason-file authorization.txt
 ```
 
 Omit `--existing-empty` to create a new empty repository; include it only when
 adopting a repository that already exists and has no refs. The CLI records an
 exact-input receipt before creation or push, verifies the local signature and
 zero-parent ancestry, reads back the exact remote branch and provider signature,
-reads GitHub API status from the HTTP response header,
-and never retries an ambiguous first push. Receipts use schema v2; prior
+reads GitHub and GitLab API status from the HTTP response header,
+rejects additional GitLab branches or tags, and never retries an ambiguous first push. Receipts use schema v2; prior
 Forgejo v1 receipts remain readable. If interrupted, inspect the receipt
 reported in the error and repeat the same command with `--resume`. If an
 attempted push has no remote branch, resume stops for manual reconciliation. A completed

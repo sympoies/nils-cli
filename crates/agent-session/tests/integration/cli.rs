@@ -18,7 +18,7 @@ use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-fn run(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
+pub(super) fn run(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
     let options = CmdOptions::new().with_cwd(dir).with_envs(envs);
     run_resolved("agent-session", args, &options)
 }
@@ -58,7 +58,7 @@ impl Drop for RestoredPermissions {
     }
 }
 
-fn sha256_hex(value: &str) -> String {
+pub(super) fn sha256_hex(value: &str) -> String {
     Sha256::digest(value.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -1481,7 +1481,7 @@ JSON
     assert_eq!(claude["windows"][1]["reset_at_epoch"], 1_805_000_000);
 }
 
-fn data(value: &Value) -> &Value {
+pub(super) fn data(value: &Value) -> &Value {
     assert_eq!(value["ok"], true);
     assert!(
         value.get("command").is_none(),
@@ -6850,7 +6850,8 @@ esac
         record["agent_args"] = json!([]);
         fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
 
-        let delete = run(
+        let delete = nils_test_support::cmd::run_resolved_isolated_identity(
+            "agent-session",
             tmp.path(),
             &[
                 "--state-dir",
@@ -6862,7 +6863,6 @@ esac
                 "--format",
                 "json",
             ],
-            &[],
         );
 
         assert_eq!(delete.code, 0, "stdout={}", delete.stdout_text());
@@ -8606,7 +8606,7 @@ fn write_resumable_session_record(
     )
 }
 
-fn write_resumable_session_record_with_agent_bin(
+pub(super) fn write_resumable_session_record_with_agent_bin(
     dir: &Path,
     id: &str,
     agent: &str,

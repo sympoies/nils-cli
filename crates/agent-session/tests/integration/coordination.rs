@@ -381,7 +381,7 @@ fn run(dir: &Path, args: &[&str]) -> CmdOutput {
     run_resolved("agent-session", args, &CmdOptions::new().with_cwd(dir))
 }
 
-fn run_with_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
+pub(super) fn run_with_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
     run_resolved(
         "agent-session",
         args,
@@ -851,14 +851,14 @@ fn git_stdout(path: &Path, args: &[&str]) -> Vec<u8> {
     output.stdout
 }
 
-fn digest(value: &str) -> String {
+pub(super) fn digest(value: &str) -> String {
     Sha256::digest(value.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 
-fn seed_brokers(state_dir: &Path, sessions: &[(&str, &str, &str)]) {
+pub(super) fn seed_brokers(state_dir: &Path, sessions: &[(&str, &str, &str)]) {
     let sessions = sessions
         .iter()
         .map(|(id, incarnation, capability)| {
@@ -1027,7 +1027,7 @@ fn grant_checkout_shell(state_dir: &Path, session_ids: &[&str]) {
     });
 }
 
-fn capability(state_dir: &Path, id: &str) -> String {
+pub(super) fn capability(state_dir: &Path, id: &str) -> String {
     let record: serde_json::Value = serde_json::from_slice(
         &fs::read(state_dir.join("sessions").join(id).join("session.json"))
             .expect("session record"),
@@ -1067,7 +1067,7 @@ fn candidate(path: &Path, prefix: &str, summary: &str) {
     .expect("candidate");
 }
 
-fn data(output: &CmdOutput) -> serde_json::Value {
+pub(super) fn data(output: &CmdOutput) -> serde_json::Value {
     output.stdout_json()["data"].clone()
 }
 
@@ -1121,7 +1121,7 @@ fn assignment_request_digest(value: &serde_json::Value) -> String {
         .collect()
 }
 
-fn write_private_json(path: &Path, value: &serde_json::Value) {
+pub(super) fn write_private_json(path: &Path, value: &serde_json::Value) {
     let bytes = serde_json::to_vec_pretty(value).expect("private json");
     nils_common::fs::write_atomic(path, &bytes, 0o600).expect("write private json atomically");
 }

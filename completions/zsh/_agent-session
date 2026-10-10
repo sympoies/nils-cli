@@ -686,6 +686,16 @@ json\:"Single-record JSON envelope (snake_case)"))' \
     ;;
 esac
 ;;
+(readiness)
+_arguments "${_arguments_options[@]}" : \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
 (message)
 _arguments "${_arguments_options[@]}" : \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
@@ -1110,6 +1120,7 @@ _agent-session_commands() {
 'activity:Inspect or ingest metadata-only agent turn lifecycle events' \
 'work-context:Manage authenticated structured work context and mutation leases' \
 'broker:Inspect or recover the per-session coordination broker' \
+'readiness:Authenticate the current managed session and its runtime-issued checkpoint' \
 'message:Exchange bounded private coordination mailbox messages' \
 'metadata:Attach and inspect bounded public metadata for one managed session' \
 'lineage:Name a later steward for a session (session lineage v1)' \
@@ -1397,6 +1408,11 @@ _agent-session__subcmd__provider-stop-canary-guardian_commands() {
 _agent-session__subcmd__provider-stop-canary-supervisor_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session provider-stop-canary-supervisor commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__readiness_commands] )) ||
+_agent-session__subcmd__readiness_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session readiness commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__rebind_commands] )) ||
 _agent-session__subcmd__rebind_commands() {
