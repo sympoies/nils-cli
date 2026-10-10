@@ -13663,6 +13663,8 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
         let state = tmp.path().join("state");
         let (tmux, log) = fake_tmux(tmp.path());
         let provider = fake_agent(tmp.path(), agent);
+        let pane = spawn_test_process_group();
+        let pane_pid = pane.pid().to_string();
         let values =
             json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1", "AGENT_RUNTIME_SUPPRESS_HEALTH":"0"});
         let envs = [
@@ -13674,6 +13676,20 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
                 r#"["AGENT_RUNTIME_SUPPRESS_MEMORY","AGENT_RUNTIME_SUPPRESS_HEALTH"]"#,
             ),
         ];
+        let start_envs = [
+            envs.as_slice(),
+            &[
+                ("AGENT_SESSION_FAKE_TMUX_PANE_PID", pane_pid.as_str()),
+                (
+                    "AGENT_SESSION_FAKE_TMUX_PROCESS_GROUP_ID",
+                    pane_pid.as_str(),
+                ),
+                ("AGENT_SESSION_FAKE_TMUX_SESSION_ID", "$77"),
+                ("AGENT_SESSION_FAKE_TMUX_AGENT_SESSION_ID", "launch-env"),
+                ("AGENT_SESSION_FAKE_TMUX_STATE_DIR", state.to_str().unwrap()),
+            ],
+        ]
+        .concat();
         let start = run(
             tmp.path(),
             &[
@@ -13697,7 +13713,7 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
                 "--format",
                 "json",
             ],
-            &envs,
+            &start_envs,
         );
         assert_eq!(
             start.code,
@@ -13734,10 +13750,39 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
                 "-t",
                 record["tmux_session"].as_str().unwrap(),
             ])
-            .env("AGENT_SESSION_FAKE_TMUX_LOG", &log)
+            .envs(start_envs.iter().copied())
+            .env(
+                "AGENT_SESSION_FAKE_TMUX_RUNTIME_ID",
+                record["runtime"]["launch_id"].as_str().unwrap(),
+            )
             .output()
             .unwrap();
         assert!(stopped.status.success());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while pane.is_running() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!pane.is_running(), "fake tmux must stop the original pane");
+        // Resume needs a new live identity after the original group is reaped.
+        let resumed_pane = spawn_test_process_group();
+        let resumed_pane_pid = resumed_pane.pid().to_string();
+        let resume_envs = [
+            envs.as_slice(),
+            &[
+                (
+                    "AGENT_SESSION_FAKE_TMUX_PANE_PID",
+                    resumed_pane_pid.as_str(),
+                ),
+                (
+                    "AGENT_SESSION_FAKE_TMUX_PROCESS_GROUP_ID",
+                    resumed_pane_pid.as_str(),
+                ),
+                ("AGENT_SESSION_FAKE_TMUX_SESSION_ID", "$78"),
+                ("AGENT_SESSION_FAKE_TMUX_AGENT_SESSION_ID", "launch-env"),
+                ("AGENT_SESSION_FAKE_TMUX_STATE_DIR", state.to_str().unwrap()),
+            ],
+        ]
+        .concat();
         let resume = run(
             tmp.path(),
             &[
@@ -13750,7 +13795,7 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
                 "--format",
                 "json",
             ],
-            &envs,
+            &resume_envs,
         );
         assert_eq!(
             resume.code,
