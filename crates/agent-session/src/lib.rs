@@ -22116,9 +22116,9 @@ exit 1
             assert!(deleted.deleted);
         }
     }
-
     #[test]
     fn absent_managed_name_requires_a_stopped_process_boundary() {
+        let _isolation = nils_test_support::isolate_forge_identity();
         let stub = nils_test_support::StubBinDir::new();
         stub.write_exe(
             "tmux",
