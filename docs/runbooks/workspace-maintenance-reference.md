@@ -482,18 +482,20 @@ When a PR shrinks or removes an over-limit file, refresh the baseline in the sam
 PR with `bash scripts/ci/file-size-audit.sh --update-baseline` and commit it.
 
 Put new code in new modules, not in baselined files. A baselined file cannot
-grow, so a change that would add lines to one needs an offset in the same PR:
+grow by even one line, so each of its rows must end the PR at or below its
+baseline:
 
 - **New module file.** Put the new implementation and its unit tests in a new
-  file, such as `src/<module>.rs` or a topic file next to an existing test
-  file. A new file has no baseline row, so it can grow up to the limits. Keep
-  the edit to the baselined file to the calls into the new code.
-- **Equal move-out.** Move at least as many existing lines out of the same file,
-  then refresh the baseline. Rows only go down.
+  file. A new file has no baseline row and can grow up to the limits. The `mod`
+  declaration and the call sites still count against the baselined file, so
+  offset them with removals there, or declare the module from a parent file
+  without a baseline row.
+- **Equal move-out.** Move at least as many lines out of the same file as the
+  change adds, then refresh the baseline. Rows only go down.
 
-Before pushing, run `bash scripts/ci/file-size-audit.sh --strict`; it needs no
-compile. Branches opened before the ratchet merged are not checked by CI until
-they are rebased, so run it after the rebase too.
+Run `bash scripts/ci/file-size-audit.sh --strict` before pushing; it needs no
+compile. CI audits the PR's merge result each time it runs, so a PR opened
+before the ratchet merged fails on its next push or re-run.
 
 ## 4.1 Supply-chain audit (cargo-deny)
 
