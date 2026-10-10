@@ -19,6 +19,19 @@ struct Scenario {
     archive: PathBuf,
 }
 
+/// Point forge identity and config lookups at an empty per-test directory, so
+/// the developer's forge profiles cannot leak into the in-process migration.
+/// The returned directory must outlive the test.
+fn isolate_config() -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().expect("isolated config dir");
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", dir.path().join("xdg-config"));
+        std::env::set_var("XDG_STATE_HOME", dir.path().join("xdg-state"));
+        std::env::remove_var("FORGE_IDENTITY_PRINCIPAL");
+    }
+    dir
+}
+
 fn git(repo: &Path, args: &[&str]) {
     let out = Command::new("git")
         .args(args)
@@ -1234,6 +1247,7 @@ fn filters_by_skill_and_since() {
 #[test]
 #[cfg(unix)]
 fn apply_writes_one_batch_commit() {
+    let _config = isolate_config();
     let s = build_scenario();
     configure_push_remote(&s);
     let stub_dir = install_semantic_commit_stub(&s);
@@ -1335,6 +1349,7 @@ fn apply_refuses_existing_target() {
 
 #[test]
 fn linked_child_is_copied_scrubbed_and_path_matches_what_was_written() {
+    let _config = isolate_config();
     // Added coverage + F3: a non-empty linked_records child is copied, scrubbed,
     // and the rollup `linked_evidence.path` points at the file actually written.
     let s = build_empty_scenario();
@@ -1386,6 +1401,7 @@ fn linked_child_is_copied_scrubbed_and_path_matches_what_was_written() {
 
 #[test]
 fn path_traversal_record_type_cannot_escape_archive_target() {
+    let _config = isolate_config();
     // F1: a malicious record_type like `../../../etc` must NOT write outside
     // the archive target; it is sanitized to a safe in-target segment.
     let s = build_empty_scenario();
@@ -1449,6 +1465,7 @@ fn path_traversal_record_type_cannot_escape_archive_target() {
 
 #[test]
 fn absolute_and_escaping_child_path_is_not_copied() {
+    let _config = isolate_config();
     // F2: an absolute `link.path` (e.g. /etc/hosts) and a `../escape` path are
     // recorded as references but NOT copied into the archive.
     let s = build_empty_scenario();
@@ -1487,6 +1504,7 @@ fn absolute_and_escaping_child_path_is_not_copied() {
 
 #[test]
 fn linked_path_with_secret_does_not_leak_into_the_on_disk_path() {
+    let _config = isolate_config();
     // F3: a secret in a linked PATH must not land in the committed tree path,
     // and the rollup reference must point at the file that was written.
     let s = build_empty_scenario();
@@ -1532,6 +1550,7 @@ fn linked_path_with_secret_does_not_leak_into_the_on_disk_path() {
 
 #[test]
 fn same_type_same_leaf_children_are_both_preserved() {
+    let _config = isolate_config();
     // F5: two children of the same type with the same leaf name must both be
     // preserved at distinct paths, never silently overwritten.
     let s = build_empty_scenario();

@@ -26,6 +26,19 @@ fn lock_env() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|e| e.into_inner())
 }
 
+/// Point forge identity and config lookups at an empty per-test directory, so
+/// the developer's forge profiles cannot leak into these in-process checks.
+/// The returned directory must outlive the test.
+fn isolate_forge_config() -> TempDir {
+    let dir = TempDir::new().expect("isolated config dir");
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", dir.path().join("xdg-config"));
+        std::env::set_var("XDG_STATE_HOME", dir.path().join("xdg-state"));
+        std::env::remove_var("FORGE_IDENTITY_PRINCIPAL");
+    }
+    dir
+}
+
 fn write_stub(dir: &TempDir, body: &str) -> PathBuf {
     let path = dir.path().join("gh");
     fs::write(&path, super::support::check_gate_fixture::adapt(body)).expect("write gh stub");
@@ -78,6 +91,7 @@ fn all_required_green_returns_payload_with_runtime_runner() {
     // the helper reads the var each time the runner spawns gh, so a stale
     // value would only break parallel tests in this module.
     let _guard = lock_env();
+    let _config = isolate_forge_config();
     unsafe {
         std::env::set_var("FORGE_CLI_GH_BIN", tmp.path().join("gh"));
     }
@@ -103,6 +117,7 @@ fn pending_required_check_exits_data_with_kind_checks_pending() {
         ),
     );
     let _guard = lock_env();
+    let _config = isolate_forge_config();
     unsafe {
         std::env::set_var("FORGE_CLI_GH_BIN", tmp.path().join("gh"));
     }
@@ -130,6 +145,7 @@ fn failing_required_check_exits_runtime_with_kind_checks_failed() {
         ),
     );
     let _guard = lock_env();
+    let _config = isolate_forge_config();
     unsafe {
         std::env::set_var("FORGE_CLI_GH_BIN", tmp.path().join("gh"));
     }
@@ -161,6 +177,7 @@ fn helper_refetches_every_call_no_caching_across_atoms() {
     );
     write_stub(&tmp, &body);
     let _guard = lock_env();
+    let _config = isolate_forge_config();
     unsafe {
         std::env::set_var("FORGE_CLI_GH_BIN", tmp.path().join("gh"));
     }
@@ -195,6 +212,7 @@ fn a_head_with_no_registered_required_checks_is_refused() {
         ),
     );
     let _guard = lock_env();
+    let _config = isolate_forge_config();
     unsafe {
         std::env::set_var("FORGE_CLI_GH_BIN", tmp.path().join("gh"));
     }
@@ -224,6 +242,7 @@ fn a_head_with_no_registered_required_checks_passes_when_explicitly_allowed() {
         ),
     );
     let _guard = lock_env();
+    let _config = isolate_forge_config();
     unsafe {
         std::env::set_var("FORGE_CLI_GH_BIN", tmp.path().join("gh"));
     }
