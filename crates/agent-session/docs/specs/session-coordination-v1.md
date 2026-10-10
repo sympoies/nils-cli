@@ -704,7 +704,9 @@ registry-locked transaction that replaces the broker:
   incarnation recorded in that session's broker after its runtime has been
   proven stopped (the existing replacement proof; a live or unverifiable
   predecessor refuses the resume and carries nothing). The carry is bound to
-  the current session record's lineage. Delete revokes but keeps a session's
+  the current session record's lineage.
+
+  Delete revokes but keeps a session's
   stopped broker, so a new session reusing the ID would otherwise see it as a
   predecessor. Therefore mail persisted (millisecond ingress time; whole
   seconds for older records) before the current session record's `created_at`

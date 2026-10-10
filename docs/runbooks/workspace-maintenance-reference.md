@@ -220,6 +220,7 @@ batch. Required hosted checks and branch protections continue to apply.
    `--expected-head` bind. Require review and green hosted `test`,
    `test_macos`, and `coverage` checks before an expected-head merge with
    `--expected-base main --keep-branch`.
+
    If `main` advances and reconciliation is needed, open and review a PR into
    `next` from a `chore/` branch that carries the merge of `main` into `next`,
    with any conflicts resolved there. Merge it using the guarded form in step 3
