@@ -121,7 +121,7 @@ priority = 50
 # This full-window fixture has its own 60 s deadline so timeout failures
 # unwind and clean up. Keep a two-minute runner backstop without a retry.
 [[profile.ci.overrides]]
-filter = 'package(nils-agent-session) & test(=activity::tests::three_windows_of_exact_events_stay_ingestible_and_recent_replays_deduplicate)'
+filter = 'package(nils-agent-session) & test(=activity::tests::replay_journal::three_windows_of_exact_events_stay_ingestible_and_recent_replays_deduplicate)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 retries = 0
 
