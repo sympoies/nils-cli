@@ -12,7 +12,7 @@ crates/agent-hook/tests/setup.rs	test	3033
 crates/agent-out/src/lib.rs	impl	2430
 crates/agent-session/src/activity.rs	impl	5955
 crates/agent-session/src/codex_app_server.rs	impl	5524
-crates/agent-session/src/codex_app_server.rs	test	8821
+crates/agent-session/src/codex_app_server/tests/mod.rs	test	8669
 crates/agent-session/src/coordination/claims.rs	impl	2964
 crates/agent-session/src/coordination/mod.rs	impl	3634
 crates/agent-session/src/group_lifecycle.rs	test	3976
