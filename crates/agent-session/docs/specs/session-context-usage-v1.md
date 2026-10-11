@@ -1,8 +1,9 @@
 # Session context usage v1
 
 `list`, session inspection (`command ID --format json` and the HTTP session
-endpoint), and board records may include the additive `context_usage` object. Existing envelope versions remain unchanged; consumers must accept a
-missing object and nullable members. The board advertises `context_usage.v1`.
+endpoint), and board records may include the additive `context_usage` object.
+Existing envelope versions remain unchanged; consumers must accept a missing
+object and nullable members. The board advertises `context_usage.v1`.
 This is a read-time projection, never a persisted session-record update.
 The board closed-record ledger may retain these allowlisted facts in its
 historical snapshot.
