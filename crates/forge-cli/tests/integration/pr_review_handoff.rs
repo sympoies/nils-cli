@@ -38,6 +38,7 @@ fn handoff(returned: Option<&str>) -> ReviewHandoff {
         assignment_generation: if returned.is_some() { 2 } else { 1 },
         surrendered: false,
         coordinator_transfer: None,
+        base_ref: None,
     }
 }
 
@@ -93,7 +94,7 @@ fn records(h: ReviewHandoff, reviewed_head: Option<&str>) -> Vec<ReviewStateReco
     result
 }
 
-fn review(head: &str, verdict: &str) -> Value {
+pub(super) fn review(head: &str, verdict: &str) -> Value {
     json!({"id":"REVIEW_1", "databaseId":1,
         "url":"https://github.com/acme/widgets/pull/7#pullrequestreview-1",
         "author":{"login":"review-app[bot]", "__typename":"Bot", "id":"BOT_REVIEW_APP"}, "state":"COMMENTED", "commit":{"oid":head},
@@ -101,7 +102,7 @@ fn review(head: &str, verdict: &str) -> Value {
         "body":format!("<!-- agent-kit:specialist-review-report:v1 -->\n## Review Report\n\n- Reviewable: PR #7\n- Lens: testing maintainability\n- Lens verdict: {verdict}\n- Scope: assigned review fixture\n- Evidence reviewed: fixture validation\n\n| Finding | Severity | Confidence | Evidence | Recommendation |\n| --- | --- | ---: | --- | --- |\n| No findings | none | 0.00 | fixture | none |\n"), "viewerDidAuthor":false})
 }
 
-fn fixture(head: &str, records: &[ReviewStateRecord], reviews: Vec<Value>) -> StubEnv {
+pub(super) fn fixture(head: &str, records: &[ReviewStateRecord], reviews: Vec<Value>) -> StubEnv {
     fixture_with_native(head, records, reviews, None)
 }
 
@@ -175,7 +176,10 @@ case "$1 $2" in
 {view}
 JSON
     exit 0 ;;
-  "api repos/acme/widgets/pulls/7") echo "${{PROVIDER_BASE:-{OLD}}}"; exit 0 ;;
+  "api repos/acme/widgets/pulls/7") case "$*" in
+    *base.ref*) echo "${{PROVIDER_BASE:-{OLD}}} ${{PROVIDER_BASE_REF:-main}}" ;;
+    *) echo "${{PROVIDER_BASE:-{OLD}}}" ;;
+    esac; exit 0 ;;
 {native_cases}
   "api graphql")
     case "$*" in
@@ -254,7 +258,7 @@ fn observe(stub: &StubEnv, head: &str) -> super::support::CmdOutput {
     )
 }
 
-fn assert_refusal(output: &super::support::CmdOutput, code: i32, kind: &str) {
+pub(super) fn assert_refusal(output: &super::support::CmdOutput, code: i32, kind: &str) {
     assert_eq!(output.code, code, "{} {}", output.stdout, output.stderr);
     assert!(output.stdout.contains(kind), "{}", output.stdout);
     assert!(!output.stdout.contains("private-machine-canary"));
@@ -1699,7 +1703,7 @@ fn retired_coordinator_takeover_requires_exact_head_base_and_tip() {
 }
 
 /// A provider adapter stores posted bodies and reads them back through trusted comments.
-fn writable_ledger(stub: StubEnv, seeded: &[ReviewStateRecord]) -> StubEnv {
+pub(super) fn writable_ledger(stub: StubEnv, seeded: &[ReviewStateRecord]) -> StubEnv {
     let inner = stub.tempdir.path().join("gh-inner");
     fs::rename(stub.tempdir.path().join("gh"), &inner).unwrap();
     let seed = stub.tempdir.path().join("ledger.json");
@@ -2021,6 +2025,7 @@ fn scope_refresh_requires_publication_after_the_new_handoff() {
     let seeded = records(h.clone(), Some(HEAD));
     h.base_sha = HEAD.into();
     h.assignment_generation = 2;
+    h.base_ref = Some("main".into());
     let refresh = ReviewStateRecord::new(
         "acme/widgets",
         7,

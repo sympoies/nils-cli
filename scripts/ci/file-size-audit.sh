@@ -16,7 +16,8 @@ Regressions:
   - a baseline row that is stale: the file is gone, is now within the limit,
     or shrank (stale-baseline-row); refresh with --update-baseline
   - a per-kind baseline total larger than at the merge base with <ref>
-    (baseline-total-increased)
+    (baseline-total-increased); when the change set modifies the measurement
+    helper, the combined impl+test total is compared instead
 
 Baseline:
   scripts/ci/file-size-baseline.tsv  (path<TAB>kind<TAB>lines; kind is impl or test)
@@ -207,11 +208,21 @@ if [[ "$base_resolves" -eq 1 ]]; then
     current_sums="$(awk -F '\t' 'NR > 1 { sum[$2] += $3 } END { print sum["impl"] + 0, sum["test"] + 0 }' "$baseline_file")"
     read -r base_impl base_test <<<"$base_sums"
     read -r current_impl current_test <<<"$current_sums"
-    if (( current_impl > base_impl )); then
-      echo "type=baseline-total-increased kind=impl base=${base_impl} current=${current_impl}" >>"$regressions"
-    fi
-    if (( current_test > base_test )); then
-      echo "type=baseline-total-increased kind=test base=${base_test} current=${current_test}" >>"$regressions"
+    if ! git diff --quiet "$merge_base" -- "$helper"; then
+      # A measurement-rule change may move lines between kinds; the combined
+      # total still must not increase.
+      base_all=$((base_impl + base_test))
+      current_all=$((current_impl + current_test))
+      if (( current_all > base_all )); then
+        echo "type=baseline-total-increased kind=combined base=${base_all} current=${current_all}" >>"$regressions"
+      fi
+    else
+      if (( current_impl > base_impl )); then
+        echo "type=baseline-total-increased kind=impl base=${base_impl} current=${current_impl}" >>"$regressions"
+      fi
+      if (( current_test > base_test )); then
+        echo "type=baseline-total-increased kind=test base=${base_test} current=${current_test}" >>"$regressions"
+      fi
     fi
   else
     echo "INFO: no $baseline_file at merge base $merge_base; skipping baseline total check"

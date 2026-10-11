@@ -19,8 +19,35 @@ if [[ ! -f "$script" ]]; then
   exit 2
 fi
 
+python3 "$repo_root/scripts/ci/tests/local-fast-graph.test.py"
+
+# These routing assertions need workspace ownership and target kinds, not a
+# registry cache. The synthetic suite above exercises resolved graph edges.
+fixture_bin="$(mktemp -d)"
+trap 'rm -rf "$fixture_bin"' EXIT
+python3 - "$repo_root" "$fixture_bin/metadata.json" <<'PY'
+import json
+import subprocess
+import sys
+
+metadata = json.loads(subprocess.check_output(
+    ['cargo', 'metadata', '--no-deps', '--offline', '--locked', '--format-version', '1'],
+    cwd=sys.argv[1], text=True))
+metadata['resolve'] = {'nodes': [
+    {'id': member, 'deps': []} for member in metadata['workspace_members']
+]}
+with open(sys.argv[2], 'w') as fixture:
+    json.dump(metadata, fixture)
+PY
+cat >"$fixture_bin/cargo" <<'PY'
+#!/usr/bin/env python3
+from pathlib import Path
+print(Path(__file__).with_name('metadata.json').read_text())
+PY
+chmod +x "$fixture_bin/cargo"
+
 plan_for() {
-  bash "$script" --plan-only "$@"
+  PATH="$fixture_bin:$PATH" bash "$script" --plan-only "$@"
 }
 
 assert_contains() {
@@ -53,26 +80,6 @@ assert_package_crate_uses_package_mode() {
   output="$(plan_for --changed-file crates/semantic-commit/src/commit.rs)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-semantic-commit"
-  echo "ok"
-}
-
-assert_agent_session_change_selects_main_agent_too() {
-  echo "== agent-session change also validates main-agent =="
-  local output
-  output="$(plan_for --changed-file crates/agent-session/src/lib.rs)"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-agent-session"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-main-agent"
-  echo "ok"
-}
-
-assert_main_agent_change_selects_agent_session_too() {
-  echo "== main-agent change also validates agent-session =="
-  local output
-  output="$(plan_for --changed-file crates/main-agent/src/main_agent.rs)"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-agent-session"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-main-agent"
   echo "ok"
 }
 
@@ -230,8 +237,7 @@ assert_package_manifest_requests_third_party_artifacts() {
   echo "== package manifest requests third-party artifact audit =="
   local output
   output="$(plan_for --changed-file crates/semantic-commit/Cargo.toml)"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-semantic-commit"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=workspace"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_THIRD_PARTY_ARTIFACTS=1"
   echo "ok"
 }
@@ -280,8 +286,6 @@ assert_deleted_shell_script_escalates_without_syntax_check() {
 }
 
 assert_package_crate_uses_package_mode
-assert_agent_session_change_selects_main_agent_too
-assert_main_agent_change_selects_agent_session_too
 assert_bin_only_package_skips_doctests
 assert_library_package_keeps_doctests
 assert_shared_crate_escalates_to_workspace

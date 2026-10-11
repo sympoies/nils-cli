@@ -5760,99 +5760,10 @@ fn sync_directory(path: &Path) -> Result<()> {
 
 struct LeaseLock(File);
 
-/// Keep the same lock inode as the runtime checkout writer through removal.
-/// No lease is acquired or released, including for the requesting session.
-pub(super) struct RemovalLeaseGuard {
-    _lock: LeaseLock,
-    identity: Option<(CheckoutIdentity, u64, u64)>,
-}
-
-impl RemovalLeaseGuard {
-    pub(super) fn verify_target(&self) -> Result<()> {
-        if let Some((identity, device, inode)) = &self.identity {
-            let after = resolve_checkout(
-                &identity.root,
-                false,
-                Instant::now() + Duration::from_secs(10),
-            )?;
-            let metadata = fs::metadata(&after.git_dir)?;
-            ensure!(
-                &after == identity && (metadata.dev(), metadata.ino()) == (*device, *inode),
-                "removal checkout identity changed"
-            );
-        }
-        Ok(())
-    }
-}
-
-pub(super) fn fence_removal(checkout: &Path) -> Result<RemovalLeaseGuard> {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let identity = resolve_checkout(checkout, true, deadline)?;
-    let root = resolve_state_root()?;
-    let repository = root.join(&identity.repository_key);
-    let directory = repository.join(&identity.checkout_key);
-    use std::os::unix::fs::DirBuilderExt;
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(&directory)?;
-    let directory = checkout_state_dir(&root, &identity)?;
-    let lock = LeaseLock::acquire_until(&directory, deadline)?;
-    if let Some(bytes) = read_optional_private(&directory.join("lease.json"), "checkout lease")? {
-        let lease = parse_lease(&bytes)?;
-        validate_lease(&lease, &identity)?;
-        ensure!(
-            lease.expires_at() <= unix_time()?,
-            "removal target has an active checkout lease"
-        );
-    }
-    reject_active_git_operation(&identity)?;
-    let metadata = fs::metadata(&identity.git_dir)?;
-    Ok(RemovalLeaseGuard {
-        _lock: lock,
-        identity: Some((identity, metadata.dev(), metadata.ino())),
-    })
-}
-
-pub(super) fn removal_registry_lock(directory: &Path) -> Result<RemovalLeaseGuard> {
-    // Registry and checkout leases use the same flock protocol and trust rules,
-    // but the registry owner names its inode registry.lock.
-    verify_no_symlink_components(directory)?;
-    verify_private_directory(directory)?;
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(directory.join("registry.lock"))?;
-    let metadata = file.metadata()?;
-    ensure!(
-        metadata.is_file()
-            && metadata.uid() == unsafe { libc::geteuid() }
-            && metadata.mode() & 0o077 == 0
-            && metadata.nlink() == 1,
-        "coordination registry lock is untrusted"
-    );
-    ensure!(
-        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-        "coordination registry lock is busy"
-    );
-    Ok(RemovalLeaseGuard {
-        _lock: LeaseLock(file),
-        identity: None,
-    })
-}
-
-pub(super) fn removal_probe(command: &mut Command) -> Result<std::process::Output> {
-    output_with_aggregate_limit_until(
-        command,
-        Instant::now() + Duration::from_secs(15),
-        8 * 1024 * 1024,
-        1024 * 1024,
-        8 * 1024 * 1024,
-    )
-}
+mod removal_lease;
+pub(super) use removal_lease::{
+    RemovalLeaseGuard, fence_removal, removal_probe, removal_registry_lock,
+};
 
 impl LeaseLock {
     fn acquire_until(directory: &Path, transaction_deadline: Instant) -> Result<Self> {

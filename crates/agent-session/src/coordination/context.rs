@@ -41,15 +41,6 @@ pub struct ProviderRef {
     pub number: u64,
 }
 
-/// A pull request identified by its repository and head branch, which is how a
-/// pull request is named before it exists (`pr create`) and after.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(deny_unknown_fields)]
-pub struct PullRequestHead {
-    pub repository: String,
-    pub head: String,
-}
-
 /// Operation target kind for a pull request named by its head branch.
 pub const PULL_REQUEST_HEAD_TARGET_KIND: &str = "pull-request-head";
 
@@ -100,17 +91,9 @@ pub struct WorkContextRecord {
     pub tier: String,
     pub repositories: Vec<String>,
     pub worktrees: Vec<String>,
-    /// Private admission grant minted only by authenticated Main Agent worker
-    /// bootstrap. It is persisted in the coordination registry but removed
-    /// from every public work-context projection.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub checkout_shell_grant: bool,
-    /// Private pull-request head grant minted beside `checkout_shell_grant` from
-    /// the authenticated worker checkout's branch. It covers pull-request
-    /// operation targets for that exact repository and head and is removed from
-    /// every public projection.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pull_request_head: Option<PullRequestHead>,
+    /// Opaque persisted metadata has no admission authority and is never projected.
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
     pub provider_refs: Vec<ProviderRef>,
     pub plan_refs: Vec<String>,
     pub scopes: Vec<Scope>,
@@ -120,10 +103,6 @@ pub struct WorkContextRecord {
     pub expires_at_epoch: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_at_epoch: Option<i64>,
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -644,17 +623,6 @@ pub(crate) fn repository_for_checkout_with_timeout(
     let repository = parts.next()?;
     let owner = parts.next()?;
     canonical_repository(format!("{owner}/{repository}")).ok()
-}
-
-/// The branch checked out at `root`, or `None` for a detached or unreadable
-/// HEAD. An unborn branch still resolves to its name.
-pub(crate) fn checkout_branch(root: &Path) -> Option<String> {
-    let branch = git_stdout_with_timeout(
-        root,
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-        GIT_REMOTE_TIMEOUT,
-    )?;
-    canonical_branch(branch.trim()).ok()
 }
 
 fn git_stdout_with_timeout(root: &Path, args: &[&str], timeout: Duration) -> Option<String> {

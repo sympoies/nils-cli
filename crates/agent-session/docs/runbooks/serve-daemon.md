@@ -309,7 +309,7 @@ A verified prior boot allows deletion or exact provider resume without probing
 or signaling numeric tmux/PID IDs reused in the current boot. Resume rotates
 incarnation and generation while preserving provider identity, cwd and managed
 account selection. This evidence does not grant authority over a current-boot
-runtime or bypass assignment, quarantine or maintenance fences.
+runtime or bypass ordinary maintenance checks.
 
 Older records without boot evidence may still fail coordination recovery.
 When the exact managed tmux target is absent and no safe runtime boundary can

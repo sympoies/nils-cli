@@ -24,6 +24,8 @@ pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
         "dirty-snapshot" => Some(dirty_checkout_adoption::run_dirty_snapshot(args)),
         "list" => Some(run_list(args)),
         "remove" => Some(run_remove(args)),
+        "restore" => Some(run_restore(args)),
+        "backup" => Some(run_backup(args)),
         "revoke-dirty" => Some(dirty_checkout_adoption::run_revoke_dirty(args)),
         "prune" => Some(run_prune(args)),
         "go" => Some(run_go(args)),
@@ -65,6 +67,7 @@ struct ListArgs {
 #[derive(Debug)]
 struct RemoveArgs {
     target: String,
+    acknowledge_backup_omissions: bool,
     format: OutputFormat,
 }
 
@@ -127,7 +130,16 @@ struct RemoveOutput {
     removed_path: String,
     removed_branch: Option<String>,
     removed_head: String,
-    delivery_proof: removal::DeliveryProof,
+    backup_ref: Option<String>,
+    backup_reasons: Vec<String>,
+    backup_retention: String,
+    backup_bytes: u64,
+    backup_max_bytes: u64,
+    backup_omitted_bytes: u64,
+    backup_omissions: Vec<removal::backup::Omission>,
+    delivered: bool,
+    delivery_proof: Option<removal::DeliveryProof>,
+    warnings: Vec<String>,
     pruned: bool,
 }
 
@@ -229,13 +241,150 @@ fn run_remove(args: &[String]) -> i32 {
 
     match remove_worktree(&parsed) {
         Ok(output) => emit_success("worktree.remove", parsed.format, &output, || {
-            format!(
-                "Removed worktree {}\nPruned stale worktree metadata",
-                output.removed_path
-            )
+            render_removal(&output)
         }),
         Err(err) => emit_error("worktree.remove", parsed.format, err),
     }
+}
+
+fn render_removal(output: &RemoveOutput) -> String {
+    let mut text = format!(
+        "Removed worktree {}\nPruned stale worktree metadata",
+        output.removed_path
+    );
+    if let Some(reference) = &output.backup_ref {
+        text.push_str(&format!(
+            "\nBackup: {reference} ({} bytes; retention: {})",
+            output.backup_bytes, output.backup_retention
+        ));
+    }
+    for omission in &output.backup_omissions {
+        text.push_str(&format!(
+            "\nOmitted: {} ({} bytes)",
+            omission.path, omission.bytes
+        ));
+    }
+    for warning in &output.warnings {
+        text.push_str(&format!("\nWarning: {warning}"));
+    }
+    text
+}
+
+fn run_restore(args: &[String]) -> i32 {
+    let requested = detect_format(args);
+    let result = (|| {
+        let mut args = args.to_vec();
+        let format = take_format(&mut args)?;
+        if take_help(&args) {
+            println!(
+                "Usage: git-cli worktree restore <backup-ref> [--path <dir>] [--format text|json]"
+            );
+            return Err(CliError::usage("help", "help requested"));
+        }
+        let path = if let Some(index) = args.iter().position(|arg| arg == "--path") {
+            args.remove(index);
+            if index >= args.len() {
+                return Err(CliError::usage(
+                    "missing-path",
+                    "--path requires a directory",
+                ));
+            }
+            Some(args.remove(index))
+        } else {
+            None
+        };
+        reject_unknown_flags(&args)?;
+        if args.len() != 1 {
+            return Err(CliError::usage(
+                "invalid-target-count",
+                "restore accepts exactly one backup ref",
+            ));
+        }
+        let layout = resolve_layout()?;
+        let path = path
+            .as_deref()
+            .map(Path::new)
+            .map(absolute_path)
+            .transpose()?;
+        let output = removal::backup::restore(&layout.repo_root, &args[0], path.as_deref())?;
+        Ok((format, output))
+    })();
+    match result {
+        Ok((format, output)) => emit_success("worktree.restore", format, &output, || {
+            format!(
+                "Restored worktree {}\nBackup: {}",
+                output.path, output.backup_ref
+            )
+        }),
+        Err(error) => emit_error("worktree.restore", requested, error),
+    }
+}
+
+fn run_backup(args: &[String]) -> i32 {
+    let requested = detect_format(args);
+    if args
+        .first()
+        .is_some_and(|arg| matches!(arg.as_str(), "--help" | "-h" | "help"))
+    {
+        println!("Usage: git-cli worktree backup <list|prune> [--format text|json]");
+        return 0;
+    }
+    let Some((command, rest)) = args.split_first() else {
+        println!("Usage: git-cli worktree backup <list|prune> [--format text|json]");
+        return 0;
+    };
+    let name = match command.as_str() {
+        "list" => "worktree.backup.list",
+        "prune" => "worktree.backup.prune",
+        _ => {
+            return emit_error(
+                "worktree.backup",
+                requested,
+                CliError::usage("unknown-command", "backup accepts list or prune"),
+            );
+        }
+    };
+    let mut args = rest.to_vec();
+    let format = match take_format(&mut args) {
+        Ok(format) => format,
+        Err(error) => return emit_error(name, requested, error),
+    };
+    if take_help(&args) {
+        println!("Usage: git-cli worktree backup {command} [--format text|json]");
+        if command == "prune" {
+            println!(
+                "  [--older-than <dur>] [--dry-run]; default retention: worktree.backupRetention (30d)"
+            );
+        }
+        return 0;
+    }
+    let result = (|| {
+        let layout = resolve_layout()?;
+        if command == "list" {
+            reject_extra_args("worktree backup list", &args)?;
+            let output = removal::backup::list(&layout.repo_root)?;
+            let text = output.render_text();
+            return Ok(emit_success(name, format, &output, || text));
+        }
+        let dry_run = args.iter().any(|arg| arg == "--dry-run");
+        args.retain(|arg| arg != "--dry-run");
+        let older_than = if let Some(index) = args.iter().position(|arg| arg == "--older-than") {
+            args.remove(index);
+            if index >= args.len() {
+                return Err(CliError::usage(
+                    "missing-duration",
+                    "--older-than requires a duration",
+                ));
+            }
+            Some(args.remove(index))
+        } else {
+            None
+        };
+        reject_extra_args("worktree backup prune", &args)?;
+        let output = removal::backup::expire(&layout.repo_root, dry_run, older_than.as_deref())?;
+        Ok(emit_success(name, format, &output, || output.render_text()))
+    })();
+    result.unwrap_or_else(|error| emit_error(name, format, error))
 }
 
 fn run_prune(args: &[String]) -> i32 {
@@ -506,23 +655,6 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
         .with_details(json!({ "path": display_path(&target) })));
     }
 
-    let cwd = env::current_dir().map_err(|err| {
-        CliError::runtime(
-            "current-dir-failed",
-            format!("failed to read current dir: {err}"),
-        )
-    })?;
-    let cwd_key = path_key(&cwd);
-    if cwd_key == target_key || cwd_key.starts_with(&(target_key.clone() + "/")) {
-        return Err(CliError::data(
-            "refuse-current-worktree",
-            format!(
-                "refusing to remove the current worktree {}",
-                display_path(&target)
-            ),
-        ));
-    }
-
     let entries = list_linked_worktrees()
         .map_err(|err| CliError::runtime("git-worktree-list-failed", err.to_string()))?;
     let known = entries
@@ -541,17 +673,25 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
     }
 
     let target_arg = display_path(&target);
-    // The explicit flag is also a fail-closed capability marker for callers:
-    // older binaries reject it before reaching their forced removal.
     let fence = removal::fence(&target, &layout)?;
+    let backup = removal::backup::capture(&target, &fence, args.acknowledge_backup_omissions)?;
+    fence.release_own_lease()?;
     removal::remove(&target, &layout.repo_root)?;
-    run_git_worktree_prune()?;
 
     Ok(RemoveOutput {
         removed_path: target_arg,
         removed_branch: fence.removed_branch,
         removed_head: fence.removed_head,
+        backup_ref: backup.reference,
+        backup_reasons: backup.reasons,
+        backup_retention: backup.retention,
+        backup_bytes: backup.bytes,
+        backup_max_bytes: backup.max_bytes,
+        backup_omitted_bytes: backup.omitted_bytes,
+        backup_omissions: backup.omissions,
+        delivered: fence.delivered,
         delivery_proof: fence.delivery_proof,
+        warnings: fence.warnings.into_iter().chain(backup.warnings).collect(),
         pruned: true,
     })
 }
@@ -559,9 +699,12 @@ fn remove_worktree(args: &RemoveArgs) -> Result<RemoveOutput, CliError> {
 pub(crate) fn remove_managed_path(path: &str) -> anyhow::Result<()> {
     remove_worktree(&RemoveArgs {
         target: path.to_string(),
+        acknowledge_backup_omissions: false,
         format: OutputFormat::Text,
     })
-    .map(|_| ())
+    .map(|output| {
+        println!("{}", render_removal(&output));
+    })
     .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.message))
 }
 
@@ -783,7 +926,10 @@ fn parse_remove_args(args: &[String]) -> Result<RemoveArgs, CliError> {
         return Err(CliError::usage("help", "help requested"));
     }
 
-    args.retain(|arg| arg != "--safe");
+    let acknowledge_backup_omissions = args
+        .iter()
+        .any(|arg| arg == "--acknowledge-backup-omissions");
+    args.retain(|arg| !matches!(arg.as_str(), "--safe" | "--acknowledge-backup-omissions"));
     reject_unknown_flags(&args)?;
     let positionals: Vec<_> = args.iter().filter(|arg| !arg.starts_with('-')).collect();
     if positionals.len() != 1 {
@@ -794,6 +940,7 @@ fn parse_remove_args(args: &[String]) -> Result<RemoveArgs, CliError> {
     }
     Ok(RemoveArgs {
         target: positionals[0].to_string(),
+        acknowledge_backup_omissions,
         format,
     })
 }
@@ -947,9 +1094,11 @@ fn print_list_help() {
 }
 
 fn print_remove_help() {
-    println!("Usage: git-cli worktree remove <slug-or-path> [--safe] [--format text|json]");
     println!(
-        "Removal always fences managed ownership, liveness, cleanliness and delivery; --safe requires this contract on older installations."
+        "Usage: git-cli worktree remove <slug-or-path> [--safe] [--acknowledge-backup-omissions] [--format text|json]"
+    );
+    println!(
+        "Removal blocks known foreign holders and fresh Git locks, preserves unsaved work, and uses no network. --safe is a compatibility no-op."
     );
 }
 
