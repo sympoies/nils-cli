@@ -1618,6 +1618,7 @@ mailbox body/expiry/quota/rate/idempotency codes, and
 403 for nonlocal/proxied submission, 409 for recipient/idempotency revision
 conflicts, 400/422 for invalid requests, and 503 for unavailable coordination or
 transport. The CLI uses usage/data/unavailable exit categories (64/65/69).
+
 An absent remote address in a valid discovery snapshot returns
 `remote-recipient-not-discovered` (HTTP 422 / CLI 65) with the fixed address-check
 guidance, `retryable: false`, `next_action: inspect_submission_contract`, and
