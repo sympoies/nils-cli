@@ -27,41 +27,43 @@ macos-agent doctor --strict --format json
 macos-agent capabilities --strict --format json
 ```
 
-Install downloads the official locked CLI and app assets into private,
-versioned user storage, validates archive paths/symlinks, archive SHA256 values,
-and locked extracted-executable SHA256 values, then checks version,
-architecture, app metadata, and exact code-signing identities. Download,
-archive, architecture, signature, and Gatekeeper commands use fixed macOS
-system paths rather than caller-controlled `PATH` lookup. App Gatekeeper/notary
-assessment is mandatory during both install and execution verification;
-`--strict` additionally assesses standalone CLI notarization. The current
-v4.8.0 CLI and app both require notarization and report
-`security_posture=full`. The CLI archive also contains the locked
-`libswiftCompatibilitySpan.dylib`; install preserves it beside both cached and
-stable executables. Its digest, signing authority/team, and architectures are
-verified before activation and execution, and its digest contributes to daemon
-identity. Rollback removes only authenticated outgoing runtime libraries.
+Install downloads the official locked CLI and app assets into private, versioned
+user storage, validates archive paths/symlinks, archive SHA256 values, and
+locked extracted-executable SHA256 values, then checks version, architecture,
+app metadata, and exact code-signing identities. Download, archive,
+architecture, signature, and Gatekeeper commands use fixed macOS system paths
+rather than caller-controlled `PATH` lookup. App Gatekeeper/notary assessment is
+mandatory during both install and execution verification; `--strict`
+additionally assesses standalone CLI notarization. The current v4.8.0 CLI and
+app both require notarization and report `security_posture=full`.
+
+The CLI archive also contains the locked `libswiftCompatibilitySpan.dylib`;
+install preserves it beside both cached and stable executables. Its digest,
+signing authority/team, and architectures are verified before activation and
+execution, and its digest contributes to daemon identity. Rollback removes only
+authenticated outgoing runtime libraries.
+
 Timeout or signal termination always fails closed. There is no runtime bypass
-flag. Lifecycle responses from install,
-status, and rollback also expose `strict`, `cli_notarization_policy`, and
-`security_posture`; an accepted waiver is therefore never collapsed into an
-undifferentiated `verified=true` result. It atomically owns one stable app path
-and one stable CLI path; versioned files remain an authenticated recovery cache.
-Rollback is permitted only
-when the exact prior tag, commit, assets, and executable digests are retained in
-the embedded `rollback_releases` allowlist; mutable receipts are never a trust
-root. The v4.8.0 lock retains the complete accepted v4.4.0 tuple in
+flag. Lifecycle responses from install, status, and rollback also expose
+`strict`, `cli_notarization_policy`, and `security_posture`; an accepted waiver
+is therefore never collapsed into an undifferentiated `verified=true` result.
+
+It atomically owns one stable app path and one stable CLI path; versioned files
+remain an authenticated recovery cache. Rollback is permitted only when the
+exact prior tag, commit, assets, and executable digests are retained in the
+embedded `rollback_releases` allowlist; mutable receipts are never a trust root.
+The v4.8.0 lock retains the complete accepted v4.4.0 tuple in
 `rollback_releases` for authenticated upgrade and rollback if candidate
-acceptance fails. The exact
-v4.2.2 tuple is retained in `upgrade_from_releases` only to authenticate and
-retire the supported in-place predecessor, while the exact v3.9.3 tuple remains
-available for older transition recovery. Neither transition-only release can
-become active again through rollback. A shared verified-backend
-lease, including the digest recorded in the
-journal, is held for the full lifetime of every execution. Install, verify, prune, and rollback
-take the exclusive lifecycle lock, so verified code cannot be swapped between
-check and use. It will not replace an app it cannot prove it owns. It never
-changes TCC permissions.
+acceptance fails. The exact v4.2.2 tuple is retained in `upgrade_from_releases`
+only to authenticate and retire the supported in-place predecessor, while the
+exact v3.9.3 tuple remains available for older transition recovery. Neither
+transition-only release can become active again through rollback.
+
+A shared verified-backend lease, including the digest recorded in the journal,
+is held for the full lifetime of every execution. Install, verify, prune, and
+rollback take the exclusive lifecycle lock, so verified code cannot be swapped
+between check and use. It will not replace an app it cannot prove it owns. It
+never changes TCC permissions.
 
 `backend verify` migrates a missing version-specific CLI path from the authenticated
 active receipt, without selecting the candidate release. It verifies the
