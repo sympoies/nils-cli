@@ -1735,6 +1735,39 @@ fn heartbeat_fresh_with_clock(
 
 /// Seeds for tests outside this module that exercise a stopped runtime's
 /// coordination incarnation.
+pub(crate) fn run_broker(context: &CliContext, args: crate::cli::BrokerArgs) -> i32 {
+    let (command, format, result) = match args.command {
+        crate::cli::BrokerCommand::Identity(args) => (
+            "broker-identity",
+            args.format,
+            crate::forge_identity::projection(context, &args),
+        ),
+        crate::cli::BrokerCommand::Status(args) => {
+            ("broker-status", args.format, status(context, args))
+        }
+        crate::cli::BrokerCommand::Adopt(args) => {
+            ("broker-adopt", args.format, recover(context, args, false))
+        }
+        crate::cli::BrokerCommand::Reconcile(args) => (
+            "broker-reconcile",
+            args.format,
+            recover(context, args, true),
+        ),
+        crate::cli::BrokerCommand::RetireStopped(args) => (
+            "broker-retire-stopped",
+            args.format,
+            super::retirement::retire(context, args),
+        ),
+        crate::cli::BrokerCommand::Stop(args) => ("broker-stop", args.format, stop(context, args)),
+        crate::cli::BrokerCommand::Heartbeat(args) => (
+            "broker-heartbeat",
+            args.format,
+            run_heartbeat_sidecar(context, args),
+        ),
+    };
+    super::render_coordination(command, format, result)
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;

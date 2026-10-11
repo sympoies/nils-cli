@@ -15,6 +15,7 @@ pub(crate) mod retirement;
 pub(crate) mod server;
 pub(crate) mod service;
 
+pub(crate) use broker::run_broker;
 pub(crate) use notification::NotificationCandidate;
 pub(crate) use notification::is_mailbox_reminder_prompt;
 
@@ -33,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::cli::{self, BrokerCommand, MessageCommand, WorkContextCommand};
+use crate::cli::{self, MessageCommand, WorkContextCommand};
 use crate::{
     CliContext, CliError, SessionRecord, load_session_record, render_error, render_single_success,
     session_dir,
@@ -248,41 +249,6 @@ pub(crate) fn run_work_context(context: &CliContext, args: cli::WorkContextArgs)
             "work-context-reconcile",
             args.format,
             claims::reconcile(context, args),
-        ),
-    };
-    render_coordination(command, format, result)
-}
-
-pub(crate) fn run_broker(context: &CliContext, args: cli::BrokerArgs) -> i32 {
-    let (command, format, result) = match args.command {
-        BrokerCommand::Identity(args) => (
-            "broker-identity",
-            args.format,
-            crate::forge_identity::projection(context, &args),
-        ),
-        BrokerCommand::Status(args) => {
-            ("broker-status", args.format, broker::status(context, args))
-        }
-        BrokerCommand::Adopt(args) => (
-            "broker-adopt",
-            args.format,
-            broker::recover(context, args, false),
-        ),
-        BrokerCommand::Reconcile(args) => (
-            "broker-reconcile",
-            args.format,
-            broker::recover(context, args, true),
-        ),
-        BrokerCommand::RetireStopped(args) => (
-            "broker-retire-stopped",
-            args.format,
-            retirement::retire(context, args),
-        ),
-        BrokerCommand::Stop(args) => ("broker-stop", args.format, broker::stop(context, args)),
-        BrokerCommand::Heartbeat(args) => (
-            "broker-heartbeat",
-            args.format,
-            broker::run_heartbeat_sidecar(context, args),
         ),
     };
     render_coordination(command, format, result)
