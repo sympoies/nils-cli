@@ -2527,7 +2527,7 @@ mod tests {
                 apply: true,
                 dry_run: false,
                 tmux_bin: Some(tmux.clone()),
-                format: crate::cli::OutputFormat::Json,
+                format: nils_common::cli_contract::OutputFormat::Json,
             },
         )
         .unwrap();
