@@ -2,6 +2,8 @@
 mod board;
 #[path = "integration/cli.rs"]
 mod cli;
+#[path = "integration/cli_launch_env.rs"]
+mod cli_launch_env;
 #[path = "integration/coordination.rs"]
 mod coordination;
 #[path = "integration/coordination_server.rs"]
