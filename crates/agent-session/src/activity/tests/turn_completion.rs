@@ -1,5 +1,5 @@
 use super::*;
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 
 fn ingest_turn(
     context: &CliContext,
@@ -27,6 +27,14 @@ fn unmatched_completion_preserves_stop_presentation_until_accepted_work() {
     let (context, created) = test_session(&tmp);
     activate_runtime(&context, &created.record).unwrap();
     let stopped = stopped_turn(&context, &created.record, "A");
+    let projected_a = stopped
+        .current_turn
+        .as_ref()
+        .unwrap()
+        .provider_turn_id
+        .clone();
+    assert!(projected_a.is_some());
+    assert_ne!(projected_a.as_deref(), Some("A"));
     assert_eq!(
         stopped.semantic_event.as_ref().unwrap().kind,
         "stop_observed"
@@ -46,7 +54,7 @@ fn unmatched_completion_preserves_stop_presentation_until_accepted_work() {
         accepted.last_provider_event_kind,
         Some(TurnEventKind::StopObserved)
     );
-    assert_eq!(accepted.last_provider_event_turn_id.as_deref(), Some("A"));
+    assert_eq!(accepted.last_provider_event_turn_id, projected_a);
     assert_eq!(
         accepted.last_event_at.as_deref(),
         Some(
@@ -156,7 +164,15 @@ fn claude_idle_after_stop_reconciles_changed_prompt_without_new_start() {
     let tmp = tempfile::TempDir::new().unwrap();
     let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
     activate_runtime(&context, &created.record).unwrap();
-    stopped_turn(&context, &created.record, "A");
+    let stopped = stopped_turn(&context, &created.record, "A");
+    let projected_a = stopped
+        .current_turn
+        .as_ref()
+        .unwrap()
+        .provider_turn_id
+        .clone();
+    assert!(projected_a.is_some());
+    assert_ne!(projected_a.as_deref(), Some("A"));
     // Metadata projected from Stop(A), then idle_prompt(B) after local /compact.
     // No transcript, command content, or synthetic turn_started(B) is required.
     let completed = ingest_turn(
@@ -169,7 +185,8 @@ fn claude_idle_after_stop_reconciles_changed_prompt_without_new_start() {
     assert_eq!(completed.turn_state.phase, TurnPhase::Waiting);
     assert!(completed.turn_state.current_turn.is_none());
     let last = completed.turn_state.last_turn.as_ref().unwrap();
-    assert_eq!(last.provider_turn_id.as_deref(), Some("A"));
+    assert_eq!(last.provider_turn_id, projected_a);
+    assert_ne!(last.provider_turn_id.as_deref(), Some("B"));
     assert_eq!(last.outcome, "completed");
     assert!(completed.turn_state.diagnostic.is_none());
     assert_eq!(
