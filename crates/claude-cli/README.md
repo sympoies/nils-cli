@@ -387,6 +387,7 @@ collector reads both.
   printed. An expired token reports `auth_expired` without a request. HTTP
   `401`, `403`, and `429` map to `auth_expired`, `permission_denied`, and
   `rate_limited`; a `403` body identifying a rate limit also maps to
+
   `rate_limited`. Any other HTTP failure is `service_unavailable`.
 - `--format json` (or `--json`) emits `claude-cli.diag.rate-limits.v1`. `--all`
   and `--async` emit one result per profile (`name`, `target_file`, `status`,
