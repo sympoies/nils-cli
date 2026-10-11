@@ -10,6 +10,9 @@ use tempfile::TempDir;
 
 use crate::common;
 
+#[path = "backend/rollback_marker.rs"]
+mod rollback_marker;
+
 #[test]
 fn review_repair_prune_refuses_inspection_stderr_and_preserves_all_state() {
     let harness = common::MacosAgentHarness::new();

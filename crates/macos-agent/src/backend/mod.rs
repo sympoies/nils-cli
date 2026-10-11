@@ -270,9 +270,9 @@ impl BackendPaths {
         self.receipts().join("pending.json")
     }
 
-    /// Present only while the pending receipt was staged by a rollback.
+    /// The target receipt of a rollback that has not fully finished.
     fn pending_rollback_marker(&self) -> PathBuf {
-        self.receipts().join("pending-rollback")
+        self.receipts().join("pending-rollback.json")
     }
 
     fn version_root(&self, tag: &str) -> PathBuf {
@@ -539,7 +539,7 @@ fn install_into_staging(
     }
     // Persist recovery authority before retiring the accepted app. All outgoing
     // runtime validation and daemon retirement have already succeeded.
-    set_pending_rollback(paths, false)?;
+    set_pending_rollback(paths, None)?;
     write_receipt(&paths.pending_receipt(), &new_receipt)?;
     reconcile_apps(paths, lock, true)?;
     replace_stable_app(paths, &new_receipt)?;
@@ -1057,20 +1057,21 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
             LifecycleLockMode::Exclusive
         },
     )?;
-    if paths.pending_receipt().exists() {
-        if dry_run {
-            return Err(backend_error(
-                "an interrupted backend activation requires a non-dry-run recovery",
-            ));
-        }
+    // Receipts alone cannot tell a staged rollback from a reinstall of the previous
+    // release, so a rollback records its target until it has fully finished.
+    let staged_rollback = read_receipt(&paths.pending_rollback_marker())?;
+    let pending_exists = paths.pending_receipt().exists();
+    if dry_run && (pending_exists || staged_rollback.is_some()) {
+        return Err(backend_error(
+            "an interrupted backend activation requires a non-dry-run recovery",
+        ));
+    }
+    if pending_exists {
         let pending = read_receipt(&paths.pending_receipt())?
             .ok_or_else(|| backend_error("pending backend activation receipt is unavailable"))?;
-        // Receipts alone cannot tell a staged rollback from a reinstall of the
-        // previous release, so a rollback marks its pending receipt explicitly.
-        let pending_rollback = paths.pending_rollback_marker().exists();
         recover_pending(&paths, &lock, strict)?;
-        set_pending_rollback(&paths, false)?;
-        if pending_rollback
+        set_pending_rollback(&paths, None)?;
+        if staged_rollback.is_some()
             && read_receipt(&paths.current_receipt())?.is_some_and(|current| {
                 current.tag == pending.tag && current.commit == pending.commit
             })
@@ -1080,6 +1081,13 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
         }
         // Recovery abandoned a pre-replacement attempt or completed an interrupted
         // install; perform the requested rollback.
+    } else if let Some(target) = staged_rollback {
+        set_pending_rollback(&paths, None)?;
+        if read_receipt(&paths.current_receipt())?.as_ref() == Some(&target) {
+            // The rollback committed before its record was cleared; do not reverse it.
+            return status_unlocked(&lock, &paths, false, strict);
+        }
+        // The rollback stopped before staging its receipt; start it again.
     }
     let current = read_receipt(&paths.current_receipt())?
         .ok_or_else(|| backend_error("no current backend receipt exists"))?;
@@ -1112,14 +1120,14 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
         });
     }
     retire_transition_daemons(&outgoing)?;
-    set_pending_rollback(&paths, true)?;
+    set_pending_rollback(&paths, Some(&previous))?;
     write_receipt(&paths.pending_receipt(), &previous)?;
     reconcile_apps(&paths, &lock, true)?;
     if !stable_app_matches(&paths, &previous)? {
         replace_stable_app(&paths, &previous)?;
     }
     recover_pending(&paths, &lock, strict)?;
-    set_pending_rollback(&paths, false)?;
+    set_pending_rollback(&paths, None)?;
     status_unlocked(&lock, &paths, false, strict)
 }
 

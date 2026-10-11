@@ -44,12 +44,15 @@ pub(super) fn write_receipt(path: &Path, receipt: &Receipt) -> Result<(), CliErr
         .map_err(|_| backend_error("failed to atomically write backend receipt"))
 }
 
-/// Mark (or clear) the pending receipt as staged by a rollback rather than an install.
-pub(super) fn set_pending_rollback(paths: &BackendPaths, staged: bool) -> Result<(), CliError> {
+/// Record (or clear) the target receipt of an in-flight rollback, so recovery can
+/// tell a staged rollback from an install and a committed rollback from a new one.
+pub(super) fn set_pending_rollback(
+    paths: &BackendPaths,
+    target: Option<&Receipt>,
+) -> Result<(), CliError> {
     let marker = paths.pending_rollback_marker();
-    if staged {
-        return write_atomic(&marker, b"", SECRET_FILE_MODE)
-            .map_err(|_| backend_error("failed to mark the staged backend rollback"));
+    if let Some(target) = target {
+        return write_receipt(&marker, target);
     }
     match fs::remove_file(&marker) {
         Ok(()) => Ok(()),
