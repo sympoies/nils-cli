@@ -1,12 +1,11 @@
 //! Real separate-root HTTP federation acceptance, shared with installed fleet checks.
-use std::process::Command;
 
 #[test]
 fn two_root_http_federation_acceptance() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/remote-mailbox-acceptance.mjs");
     let agent_session_bin = nils_test_support::bin::resolve("agent-session");
-    let mut command = Command::new("node");
+    let mut command = nils_test_support::node::command();
     command
         .arg(&fixture)
         .arg("--agent-session-bin")

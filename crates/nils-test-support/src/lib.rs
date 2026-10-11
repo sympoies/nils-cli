@@ -10,6 +10,7 @@ pub mod fs;
 pub mod git;
 pub mod help;
 pub mod http;
+pub mod node;
 pub mod stubs;
 pub mod tempdir;
 
