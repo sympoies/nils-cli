@@ -28,7 +28,7 @@ Use these as the source of truth to avoid policy drift:
 - `agent-docs` command semantics and registration patterns:
   - `crates/agent-docs/README.md`
 - JSON contract details:
-  - `docs/specs/cli-service-json-contract-guideline-v1.md`
+  - `docs/specs/cli-output-contract-v1.md`
 
 ## Applicability
 
@@ -52,10 +52,10 @@ If a crate is intentionally internal-only, keep this standard for UX/testing qua
 For a new publishable CLI crate:
 
 - `Cargo.toml` must include:
-  - `version` matching the current workspace release version (see root
-    `Cargo.toml` `[workspace.package]` and the latest published value in
-    `release/crates-io-publish-order.txt` / `crates/cli-template/Cargo.toml`
-    as the live exemplar).
+  - `version` matching the current workspace release version in root
+    `Cargo.toml` `[workspace.package]`; `crates/cli-template/Cargo.toml` is
+    the live scaffold exemplar. `release/crates-io-publish-order.txt` lists
+    package names in publish order, not versions.
   - `edition.workspace = true`
   - `license.workspace = true`
   - `description = "CLI crate for nils-<name> in the nils-cli workspace."`
@@ -120,12 +120,13 @@ Every user-facing CLI command surface must have explicit output behavior.
 
 ### JSON Contract (Required For Service-Consumed Commands)
 
-- JSON output must be opt-in (`--json` or `--format json`).
+- JSON output must be opt-in through `--format json`; new binaries must not
+  introduce a `--json` boolean flag.
 - JSON responses must use a versioned envelope.
 - JSON mode must avoid prose-only error signaling.
 - JSON payloads must never expose secret/token material.
 - Full field-level requirements, examples, compatibility rules, and error envelope schema are defined in
-  `docs/specs/cli-service-json-contract-guideline-v1.md`.
+  `docs/specs/cli-output-contract-v1.md`.
 
 ### JSON Compatibility Rules
 

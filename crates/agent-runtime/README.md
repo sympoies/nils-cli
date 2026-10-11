@@ -44,8 +44,9 @@ Core runtime-kit operations:
   product, in deterministic text or JSON.
 - `restore-backups` — restore a runtime home from a recorded backup snapshot.
 - `purge-state` — purge runtime-managed state (use with caution).
-- `pr-body render` — render standardized feature / bug PR or MR bodies for
-  `forge-cli pr create` / `forge-cli pr deliver` flows.
+- `pr-body render` — render standardized feature, bug, chore, docs, CI, or
+  refactor PR or MR bodies for `forge-cli pr create` / `forge-cli pr deliver`
+  flows.
 
 Successful `install --apply` writes
 `<state-home>/receipts/<product>.json`. The portable receipt contains only the
