@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -31,7 +32,20 @@ root = Path(__file__).parent
 print((root / 'metadata.json').read_text())
 ''')
         cargo.chmod(0o755)
-        self.env = dict(os.environ, PATH=f'{directory}{os.pathsep}{os.environ["PATH"]}')
+        tools = directory / 'tools'
+        tools.mkdir()
+        for command in ('bash', 'git', 'python3', 'sed', 'sort'):
+            executable = shutil.which(command)
+            self.assertIsNotNone(executable, f'fixture requires {command}')
+            (tools / command).symlink_to(Path(executable).resolve())
+        cargo_home = directory / 'cargo-home'
+        cargo_home.mkdir()
+        self.env = dict(os.environ, PATH=f'{directory}{os.pathsep}{tools}',
+                        CARGO_HOME=str(cargo_home))
+        self.assertEqual(shutil.which("cargo", path=self.env["PATH"]), str(cargo))
+        self.assertTrue(os.access(cargo, os.X_OK), "fake cargo must be executable")
+        self.assertFalse((tools / 'cargo').exists(), "no ambient cargo fallback")
+        self.assertFalse((cargo_home / 'bin' / 'cargo').exists())
 
     def plan(self, *paths):
         args = [arg for path in paths for arg in ('--changed-file', path)]
@@ -93,6 +107,46 @@ print((root / 'metadata.json').read_text())
         self.assertIn('--offline', args)
         self.assertIn('--locked', args)
         self.assertIn('--all-features', args)
+
+    def test_metadata_failure_reports_one_actionable_error_without_a_plan(self):
+        cargo = Path(self.temp.name) / 'cargo'
+        cargo.write_text("""#!/usr/bin/env python3
+import sys
+print('fixture metadata unavailable', file=sys.stderr)
+sys.exit(101)
+""")
+        result = self.failed_plan()
+        self.assertIn('exit status 101', result.stderr)
+
+    def failed_plan(self):
+        result = subprocess.run(
+            ['bash', str(SCRIPT), '--plan-only', '--changed-file', 'crates/leaf/src/lib.rs'],
+            cwd=ROOT, env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
+        self.assertIn('cargo metadata --offline --locked --all-features', result.stderr)
+        self.assertIn('cache', result.stderr.lower())
+        self.assertIn('lockfile', result.stderr.lower())
+        self.assertIn('cargo fetch', result.stderr)
+        self.assertNotIn(self.temp.name, result.stderr)
+        return result
+
+    def test_invalid_metadata_reports_one_error_without_a_plan(self):
+        (Path(self.temp.name) / 'metadata.json').write_text('not valid JSON')
+        result = self.failed_plan()
+        self.assertIn('exit status 0', result.stderr)
+        self.assertIn('invalid JSON', result.stderr)
+
+    def test_metadata_spawn_error_reports_one_error_without_a_plan(self):
+        interpreter = Path(self.temp.name) / 'missing-interpreter'
+        self.assertFalse(interpreter.exists())
+        cargo = Path(self.temp.name) / 'cargo'
+        cargo.write_text(f'#!{interpreter}\n')
+        result = self.failed_plan()
+        self.assertIn('exit status unavailable', result.stderr)
+        self.assertIn('command could not start', result.stderr)
 
     def test_build_and_graph_inputs_escalate(self):
         for path in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain', 'rust-toolchain.toml',

@@ -202,12 +202,32 @@ if shutil.which("cargo") is None:
     print("error: cargo is required for non-document local-fast planning", file=sys.stderr)
     sys.exit(2)
 
-metadata_raw = subprocess.check_output(
-    ["cargo", "metadata", "--offline", "--locked", "--all-features", "--format-version", "1"],
-    cwd=repo,
-    text=True,
-)
-metadata = json.loads(metadata_raw)
+try:
+    metadata_result = subprocess.run(
+        ["cargo", "metadata", "--offline", "--locked", "--all-features", "--format-version", "1"],
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    metadata = json.loads(metadata_result.stdout)
+except (subprocess.CalledProcessError, OSError, json.JSONDecodeError) as error:
+    if isinstance(error, subprocess.CalledProcessError):
+        status = str(error.returncode)
+    elif isinstance(error, json.JSONDecodeError):
+        status = "0; invalid JSON output"
+    else:
+        status = "unavailable; command could not start"
+    print(
+        "error: cargo metadata --offline --locked --all-features failed "
+        f"(exit status {status}); check for a cold registry cache or a lockfile "
+        "behind a manifest edit; try cargo fetch",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+if metadata_result.stderr:
+    sys.stderr.write(metadata_result.stderr)
 
 crate_roots = []
 package_has_doctests = {}
