@@ -77,6 +77,8 @@ use crate::{
     update_session_title_if_revision,
 };
 
+#[path = "serve_claude_completion.rs"]
+mod claude_completion;
 #[path = "serve_create_body.rs"]
 mod create_body;
 #[path = "serve_prompt_scan.rs"]
@@ -2312,32 +2314,6 @@ fn collect_activity_stream_sessions(
     })
 }
 
-async fn activity_refresh_snapshot(
-    log: Arc<ActivityEventLog>,
-    lifecycle: watch::Sender<ActivityBrokerLifecycle>,
-    session_collector: SessionCollector,
-    context: CliContext,
-    tmux_bin: PathBuf,
-) -> bool {
-    match tokio::task::spawn_blocking(move || {
-        collect_activity_stream_sessions(&session_collector, &context, &tmux_bin)
-    })
-    .await
-    {
-        Ok(Ok(sessions)) => {
-            log.publish_snapshot(sessions);
-            true
-        }
-        Ok(Err(_)) | Err(_) => {
-            degrade_activity_broker(
-                &lifecycle,
-                "activity stream snapshot refresh failed; activity stream disabled",
-            );
-            false
-        }
-    }
-}
-
 #[cfg(test)]
 async fn activity_change_loop(
     log: Arc<ActivityEventLog>,
@@ -2371,6 +2347,14 @@ async fn activity_change_loop_inner(
     let mut lifecycle_rx = lifecycle.subscribe();
     let mut last_refresh_started_at = None;
     loop {
+        let completion_deadline =
+            claude_completion::activity_completion_refresh_deadline(&log, &context).await;
+        let completion_refresh = async {
+            match completion_deadline {
+                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                None => std::future::pending::<()>().await,
+            }
+        };
         let change = tokio::select! {
             biased;
             changed = lifecycle_rx.changed() => {
@@ -2382,6 +2366,7 @@ async fn activity_change_loop_inner(
                 continue;
             }
             change = changes.recv() => change,
+            _ = completion_refresh => Some(ActivityChange::Refresh),
         };
         let Some(change) = change else {
             degrade_activity_broker(
@@ -2461,7 +2446,7 @@ async fn activity_change_loop_inner(
         if let Some(observer) = &controls.refresh_started {
             let _ = observer.send(started_at);
         }
-        if !activity_refresh_snapshot(
+        if !claude_completion::activity_refresh_snapshot(
             log.clone(),
             lifecycle.clone(),
             session_collector.clone(),
@@ -12436,7 +12421,7 @@ async fn remote_outbox_loop(state: Arc<ServeState>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    include!("serve_claude_completion_tests.rs");
     use axum::body::Body;
     use axum::http::Request;
     use nils_test_support::{EnvGuard, GlobalStateLock};
@@ -19349,7 +19334,7 @@ esac
         };
 
         assert!(
-            !activity_refresh_snapshot(
+            !claude_completion::activity_refresh_snapshot(
                 broker.log.clone(),
                 broker.lifecycle.clone(),
                 failing_collector,

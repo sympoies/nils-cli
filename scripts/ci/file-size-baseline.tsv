@@ -10,7 +10,7 @@ crates/agent-hook/src/workspace_lease.rs	impl	2389
 crates/agent-hook/tests/dsh_policy.rs	test	5130
 crates/agent-hook/tests/setup.rs	test	3033
 crates/agent-out/src/lib.rs	impl	2430
-crates/agent-session/src/activity.rs	impl	5835
+crates/agent-session/src/activity.rs	impl	5712
 crates/agent-session/src/codex_app_server.rs	impl	5524
 crates/agent-session/src/codex_app_server/tests/mod.rs	test	8669
 crates/agent-session/src/coordination/mod.rs	impl	2018
@@ -20,7 +20,7 @@ crates/agent-session/src/provider_history.rs	impl	3079
 crates/agent-session/src/retitle.rs	impl	3408
 crates/agent-session/src/retitle_v3.rs	impl	3634
 crates/agent-session/src/retitle_v3.rs	test	3648
-crates/agent-session/src/serve.rs	impl	12383
+crates/agent-session/src/serve.rs	impl	12368
 crates/agent-session/src/serve.rs	test	26286
 crates/agent-session/tests/integration/cli.rs	test	13488
 crates/agent-session/tests/integration/coordination.rs	test	5408

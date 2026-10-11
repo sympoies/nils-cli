@@ -671,7 +671,9 @@ recorded in `sympoies/nils-cli#1409`.
   `agent_args`, and `launch_env`. `launch_env` is an optional string-to-string
   object of public non-secret runtime switches, validated against
   `AGENT_SESSION_LAUNCH_ENV_ALLOWLIST` before creation. The default keys and
-  bounds follow the crate README's Public launch switches contract. It is
+  bounds follow the
+  [Public launch switches](../runbooks/session-lifecycle.md#public-launch-switches)
+  contract. It is
   persisted and echoed in session views, and applied to the provider process
   on every runtime launch. Unapproved keys return `launch-env-key-refused`
   (HTTP 400); invalid allowlist configuration returns
