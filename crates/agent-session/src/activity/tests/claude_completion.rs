@@ -1,4 +1,33 @@
 use super::*;
+use pretty_assertions::assert_eq;
+
+#[test]
+fn completion_candidate_requires_observed_claude_stop_hook() {
+    let mut valid = event(TurnEventKind::StopObserved, "completion-candidate");
+    valid.provider = "claude".to_string();
+    valid.completion_candidate = true;
+    validate_event(&valid, EventAdmission::Generic).expect("qualifying Claude Stop candidate");
+
+    let mut invalid_provider = valid.clone();
+    invalid_provider.provider = "codex".to_string();
+    let mut invalid_kind = valid.clone();
+    invalid_kind.kind = TurnEventKind::Progress;
+    let mut invalid_source = valid.clone();
+    invalid_source.source_kind = SourceKind::Runtime;
+    let mut invalid_confidence = valid;
+    invalid_confidence.confidence = Confidence::Inferred;
+
+    for invalid in [
+        invalid_provider,
+        invalid_kind,
+        invalid_source,
+        invalid_confidence,
+    ] {
+        let error = validate_event(&invalid, EventAdmission::Generic)
+            .expect_err("non-qualifying completion candidate");
+        assert_eq!(error.code(), "activity-completion-candidate-invalid");
+    }
+}
 
 #[test]
 fn claude_stop_completion_without_idle_prompt() {

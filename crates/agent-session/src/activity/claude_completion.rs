@@ -37,7 +37,7 @@ fn claude_completion_deadline(document: &ActivityDocument) -> Option<jiff::Times
 /// Completion is a deterministic projection of the latest qualifying Stop.
 /// Reads never write activity; the next accepted event materializes the same
 /// settled state before reduction. Any event inside the quiet window cancels it.
-fn settle_claude_completion(document: &mut ActivityDocument, at: &str) {
+pub(super) fn settle_claude_completion(document: &mut ActivityDocument, at: &str) {
     let Some(pending) = document.pending_completion.as_ref() else {
         return;
     };

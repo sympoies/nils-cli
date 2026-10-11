@@ -25,6 +25,8 @@ use crate::{
 
 #[path = "activity/claude_completion.rs"]
 mod claude_completion;
+#[path = "activity/event_validation.rs"]
+mod event_validation;
 mod provider;
 #[path = "activity/state_view.rs"]
 mod state_view;
@@ -5048,19 +5050,7 @@ fn json_has_spec(value: &Value, agent: AgentKind, spec: ProviderSpec) -> bool {
 mod tests;
 
 fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Result<(), CliError> {
-    let schema_supported = event.schema_version == TURN_EVENT_VERSION
-        || (admission == EventAdmission::CodexProtocol
-            && event.schema_version == CODEX_PROTOCOL_TURN_EVENT_VERSION);
-    if !schema_supported {
-        return Err(CliError::data(
-            "unsupported-turn-event-version",
-            format!(
-                "unsupported turn event schema {}; expected {TURN_EVENT_VERSION}",
-                event.schema_version
-            ),
-            None,
-        ));
-    }
+    event_validation::validate_event_prefix(event, admission)?;
     for (name, value) in [
         ("event_id", Some(event.event_id.as_str())),
         ("runtime_id", Some(event.runtime_id.as_str())),
