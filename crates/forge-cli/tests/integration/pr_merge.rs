@@ -5,9 +5,8 @@
 //! `tests/integration/required_check_gate.rs`; this module pins the CLI surface
 //! and the per-repo `.forge-cli.toml` precedence end-to-end.
 
-use std::collections::BTreeMap;
-use std::fs;
 use std::process::Command;
+use std::{collections::BTreeMap, fs};
 
 use forge_cli::ops::review_state::{
     ReviewFindingStatus, ReviewLoopBudget, ReviewLoopFinding, ReviewLoopState, ReviewStatePayload,
@@ -2570,6 +2569,7 @@ fn assigned_live_merge_refuses_before_backend_without_published_review() {
         assignment_generation: 1,
         surrendered: false,
         coordinator_transfer: None,
+        base_ref: None,
     };
     let record = ReviewStateRecord::new(
         "acme/widgets",
