@@ -199,7 +199,7 @@ fn claude_prompt_id_is_correlated_as_the_provider_turn_id() {
     let stop = fixture.run_with_env(
         &["dispatch", "--product", "claude", "--format", "json"],
         Some(
-            r#"{"hook_event_name":"Stop","session_id":"claude-session-secret","prompt_id":"claude-prompt-secret","stop_hook_active":false,"last_assistant_message":"message-secret"}"#,
+            r#"{"hook_event_name":"Stop","session_id":"claude-session-secret","prompt_id":"claude-prompt-secret","stop_hook_active":false,"background_tasks":[],"last_assistant_message":"message-secret"}"#,
         ),
         &envs,
     );
@@ -208,6 +208,7 @@ fn claude_prompt_id_is_correlated_as_the_provider_turn_id() {
     let stop_json: serde_json::Value = serde_json::from_str(&stop_event).expect("event JSON");
     assert_eq!(stop_json["provider"], "claude");
     assert_eq!(stop_json["kind"], "stop_observed");
+    assert_eq!(stop_json["completion_candidate"], true);
     assert!(
         stop_json["provider_turn_id"]
             .as_str()

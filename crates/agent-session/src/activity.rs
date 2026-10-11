@@ -23,7 +23,15 @@ use crate::{
     session_dir, valid_sha256,
 };
 
+#[path = "activity/claude_completion.rs"]
+mod claude_completion;
+#[path = "activity/event_validation.rs"]
+mod event_validation;
+use event_validation::validate_event;
 mod provider;
+#[path = "activity/state_view.rs"]
+mod state_view;
+pub use state_view::state_for_view;
 pub(crate) mod shadow;
 
 use provider::{normalize_provider_hook, normalize_provider_notification};
@@ -339,6 +347,8 @@ struct ActivityDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pending_journal: Option<JournalEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_completion: Option<JournalEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     runtime_unhealthy_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     operator_provider_turn_receipts: Vec<OperatorProviderTurnReceipt>,
@@ -421,6 +431,8 @@ pub(crate) struct TurnEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) provider_turn_id: Option<String>,
     pub(crate) kind: TurnEventKind,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) completion_candidate: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) failure_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -497,6 +509,7 @@ pub(crate) fn ingest_codex_app_server_failure_with_kind(
             attention_kind: None,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: false,
+            completion_candidate: false,
             confidence: Confidence::Authoritative,
             // `provider_hook` is the stable v1 wire value for authoritative,
             // provider-structured evidence, including the app-server protocol.
@@ -562,6 +575,7 @@ pub(crate) fn ingest_codex_app_server_attention(
             attention_kind,
             attention_correlation_ambiguous: false,
             attention_correlation_exact: true,
+            completion_candidate: false,
             confidence: Confidence::Authoritative,
             // `provider_hook` is the stable v1 wire value for all structured
             // provider evidence, including the app-server protocol.
@@ -1201,6 +1215,9 @@ fn semantic_event_key(event: &TurnEvent) -> String {
         digest.update(value.as_bytes());
         digest.update(b"\0");
     }
+    if event.kind == TurnEventKind::StopObserved {
+        digest.update([u8::from(event.completion_candidate)]);
+    }
     format!("sha256:{}", hex_digest(digest.finalize()))
 }
 
@@ -1390,6 +1407,7 @@ fn activity_document_for_runtime(
         provider_session_id: provider_session_for_runtime(record, runtime_id)?,
         last_event_at: None,
         pending_journal: None,
+        pending_completion: None,
         runtime_unhealthy_reason: None,
         operator_provider_turn_receipts: Vec::new(),
         extra,
@@ -1778,48 +1796,13 @@ pub(crate) fn refuse_if_blocked(
     ))
 }
 
-pub fn state_for_view(context: &CliContext, record: &SessionRecord) -> Option<TurnState> {
-    let dir = session_dir(context, &record.id);
-    if let Some(runtime) = record.runtime.as_ref() {
-        match runtime_unhealthy_marker(&dir, &runtime.launch_id, runtime.generation) {
-            RuntimeUnhealthyStatus::Matching(state) => return Some(*state),
-            RuntimeUnhealthyStatus::Pending(marked_at) => {
-                return Some(marker_state_from_snapshot(
-                    &dir,
-                    record,
-                    &runtime.launch_id,
-                    runtime.generation,
-                    &marked_at,
-                ));
-            }
-            RuntimeUnhealthyStatus::Invalid => {
-                return Some(marker_state_from_snapshot(
-                    &dir,
-                    record,
-                    &runtime.launch_id,
-                    runtime.generation,
-                    &runtime.started_at,
-                ));
-            }
-            RuntimeUnhealthyStatus::Absent => {}
-        }
-    }
-    let path = dir.join(ACTIVITY_FILE);
-    if !path.is_file() {
-        return None;
-    }
-    match read_document(&path) {
-        Ok(document)
-            if activity_matches_runtime(&document, record)
-                && replay_matches_document(&dir, &document) =>
-        {
-            Some(document.state)
-        }
-        Ok(_) | Err(_) => Some(unknown_state_with_reason(
-            record,
-            "activity_state_unavailable",
-        )),
-    }
+/// Read-only scheduling hint for the same runtime-fenced completion projection.
+/// A refresh at this deadline still re-reads state, so later hooks can cancel it.
+pub(crate) fn completion_deadline_for_view(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Option<jiff::Timestamp> {
+    claude_completion::completion_deadline_for_view(context, record)
 }
 
 /// The turn identity observed immediately before a terminal-delivered prompt.
@@ -2828,6 +2811,7 @@ fn ingest_event_with_lock(
             duplicate: true,
         });
     }
+    claude_completion::settle_claude_completion(&mut document, &received_at);
     reduce(&mut document, &event, &received_at);
     document.last_event_at = Some(received_at.clone());
     if matches!(event.source_kind, SourceKind::ProviderHook) {
@@ -3722,7 +3706,7 @@ pub(crate) fn doctor(
                 ),
                 AgentKind::Claude => (
                     "partial",
-                    "idle_prompt is observed completion; general PreToolUse reactivates continued work, while uncorrelated SubagentStop is ignored and raw Stop remains non-final because other hooks may continue",
+                    "qualifying Stop completes after a one-second quiet window; idle_prompt confirms completion; general PreToolUse reactivates continued work and SubagentStop is ignored",
                     "AskUserQuestion uses exact runtime-scoped tool_use_id correlation; Elicitation uses exact elicitation_id when both callbacks provide it and otherwise latches conservatively; other PermissionRequest and configured notification signals remain conservative latches",
                     "Claude settings hooks compose additively and execute with the user's permissions",
                     "Run activity setup --agent claude --dry-run and then --apply",
@@ -4954,126 +4938,6 @@ fn json_has_spec(value: &Value, agent: AgentKind, spec: ProviderSpec) -> bool {
 #[cfg(test)]
 mod tests;
 
-fn validate_event(event: &TurnEvent, admission: EventAdmission) -> Result<(), CliError> {
-    let schema_supported = event.schema_version == TURN_EVENT_VERSION
-        || (admission == EventAdmission::CodexProtocol
-            && event.schema_version == CODEX_PROTOCOL_TURN_EVENT_VERSION);
-    if !schema_supported {
-        return Err(CliError::data(
-            "unsupported-turn-event-version",
-            format!(
-                "unsupported turn event schema {}; expected {TURN_EVENT_VERSION}",
-                event.schema_version
-            ),
-            None,
-        ));
-    }
-    for (name, value) in [
-        ("event_id", Some(event.event_id.as_str())),
-        ("runtime_id", Some(event.runtime_id.as_str())),
-        ("provider", Some(event.provider.as_str())),
-        ("provider_session_id", event.provider_session_id.as_deref()),
-        ("provider_turn_id", event.provider_turn_id.as_deref()),
-        ("attention_id", event.attention_id.as_deref()),
-    ] {
-        if let Some(value) = value
-            && (value.is_empty()
-                || value.chars().count() > MAX_ID_CHARS
-                || value.chars().any(char::is_control))
-        {
-            return Err(CliError::data(
-                "activity-event-field-invalid",
-                format!("activity event field {name} is empty, too long, or contains controls"),
-                Some(json!({ "field": name })),
-            ));
-        }
-    }
-    if !matches!(event.provider.as_str(), "codex" | "claude" | "dsh") {
-        return Err(CliError::data(
-            "activity-provider-unsupported",
-            "activity event provider must be codex, claude, or dsh",
-            None,
-        ));
-    }
-    match event.kind {
-        TurnEventKind::AttentionRequested => {
-            if event.attention_id.is_none() || event.attention_kind.is_none() {
-                return Err(CliError::data(
-                    "activity-attention-invalid",
-                    "attention_requested requires attention_id and attention_kind",
-                    None,
-                ));
-            }
-        }
-        TurnEventKind::AttentionCleared if event.attention_id.is_none() => {
-            return Err(CliError::data(
-                "activity-attention-invalid",
-                "attention_cleared requires a correlated attention_id",
-                None,
-            ));
-        }
-        _ => {}
-    }
-    if let Some(kind) = event.attention_kind.as_deref()
-        && !matches!(
-            kind,
-            "approval" | "clarification" | "authentication" | "other"
-        )
-    {
-        return Err(CliError::data(
-            "activity-attention-kind-invalid",
-            "attention kind must be approval, clarification, authentication, or other",
-            None,
-        ));
-    }
-    if let Some(reason) = event.failure_reason.as_deref() {
-        let reason_allowed = matches!(
-            reason,
-            "usage_exhausted"
-                | "authentication"
-                | "organization"
-                | "billing"
-                | "invalid_request"
-                | "service"
-                | "max_output_tokens"
-                | "unknown"
-        ) || (reason == "provider_capacity"
-            && admission == EventAdmission::CodexProtocol
-            && event.schema_version == CODEX_PROTOCOL_TURN_EVENT_VERSION);
-        if event.kind != TurnEventKind::TurnFailed
-            || event.confidence != Confidence::Authoritative
-            || !reason_allowed
-        {
-            return Err(CliError::data(
-                "activity-failure-reason-invalid",
-                "failure_reason requires an authoritative turn_failed event and an allowlisted value",
-                None,
-            ));
-        }
-    }
-    if let Some(provider_time) = event.provider_time.as_deref() {
-        let parsed = provider_time.parse::<jiff::Timestamp>().map_err(|_| {
-            CliError::data(
-                "activity-provider-time-invalid",
-                "provider_time must be a valid RFC 3339 timestamp",
-                None,
-            )
-        })?;
-        let skew = parsed
-            .as_second()
-            .saturating_sub(Zoned::now().timestamp().as_second())
-            .unsigned_abs();
-        if skew > 24 * 60 * 60 {
-            return Err(CliError::data(
-                "activity-provider-time-skewed",
-                "provider_time is outside the accepted 24-hour skew window",
-                None,
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Claude runs one turn at a time and names it with `prompt_id`, but a turn
 /// whose `UserPromptSubmit` was never recorded (a lost or refused hook
 /// delivery) is never announced. An attention request from another turn
@@ -5132,6 +4996,7 @@ fn open_provider_turn(document: &mut ActivityDocument, provider_turn_id: Option<
 }
 
 fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
+    document.pending_completion = None;
     let previous_phase = document.state.phase.clone();
     let mut source = provider_source(event);
     source.extra = document.state.source.extra.clone();
@@ -5251,8 +5116,20 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
             }
         }
         TurnEventKind::StopObserved => {
-            // A raw Stop can race another matching hook that continues the turn.
-            // Retain it in the journal/revision, but never fabricate Waiting.
+            // Matching Stop hooks run concurrently. Only an inactive Stop with
+            // no background tasks is a candidate, and later events cancel it.
+            if event.completion_candidate
+                && document.state.current_turn.as_ref().is_some_and(|turn| {
+                    event.provider_turn_id.is_none()
+                        || turn.provider_turn_id.is_none()
+                        || event.provider_turn_id == turn.provider_turn_id
+                })
+            {
+                document.pending_completion = Some(JournalEntry {
+                    received_at: at.to_string(),
+                    event: event.clone(),
+                });
+            }
         }
         TurnEventKind::TurnCompleted | TurnEventKind::TurnFailed => {
             let requires_exact_open_turn = event.provider == AgentKind::Codex.as_str()

@@ -164,7 +164,11 @@ a capacity-one dirty bit. The first isolated refresh waits for a trailing 25 ms
 quiet window. Under
 a continuous burst, a refresh starts by the 250 ms cadence; after any refresh
 starts, the next refresh cannot start for at least 250 ms. Notifications
-arriving during a scan stay dirty and converge in a later rate-bounded refresh.
+arriving during a scan stay dirty and converge in a later rate-bounded refresh. A pending
+Claude Stop completion additionally schedules one refresh at its deterministic
+quiet-window deadline, including candidates in the initial snapshot. The refresh
+re-reads runtime-fenced activity, so a newer hook cancels completion and no later
+hook or polling request is required to deliver the settled state to subscribers.
 
 Shadow observations are populated asynchronously by the long-lived serve
 session collector and do not make list or SSE refresh wait for tmux capture.
