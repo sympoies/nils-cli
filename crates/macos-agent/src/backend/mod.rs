@@ -379,6 +379,12 @@ pub fn install(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> {
         }
         recover_pending(&paths, &lock, strict)?;
     }
+    let staged_rollback = read_receipt(&paths.pending_rollback_marker())?;
+    if dry_run && staged_rollback.is_some() {
+        return Err(backend_error(
+            "an interrupted backend rollback requires a non-dry-run recovery",
+        ));
+    }
     if let Some(current) = read_receipt(&paths.current_receipt())?
         && current.tag == lock.tag
         && current.commit == lock.commit
@@ -388,6 +394,12 @@ pub fn install(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> {
         if !dry_run {
             replace_stable_cli(&paths, &lock, &current, strict)?;
             reconcile_apps(&paths, &lock, false)?;
+            // A rollback onto this verified release committed before its record was
+            // cleared; settle it so the next rollback is a new request. A record that
+            // names another release stopped before staging and still awaits a retry.
+            if staged_rollback.as_ref() == Some(&current) {
+                set_pending_rollback(&paths, None)?;
+            }
         }
         return status_unlocked(&lock, &paths, dry_run, strict);
     }
@@ -1082,12 +1094,15 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
         // Recovery abandoned a pre-replacement attempt or completed an interrupted
         // install; perform the requested rollback.
     } else if let Some(target) = staged_rollback {
-        set_pending_rollback(&paths, None)?;
         if read_receipt(&paths.current_receipt())?.as_ref() == Some(&target) {
             // The rollback committed before its record was cleared; do not reverse it.
+            // Authenticate the active target first and keep the record on failure.
+            verify_unlocked(strict, &lock, &paths)?;
+            set_pending_rollback(&paths, None)?;
             return status_unlocked(&lock, &paths, false, strict);
         }
         // The rollback stopped before staging its receipt; start it again.
+        set_pending_rollback(&paths, None)?;
     }
     let current = read_receipt(&paths.current_receipt())?
         .ok_or_else(|| backend_error("no current backend receipt exists"))?;

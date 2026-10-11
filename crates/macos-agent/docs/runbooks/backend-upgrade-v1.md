@@ -115,6 +115,11 @@ assets. An unowned app, failed quit, changed executable, or failed strict
 assessment stops the operation. The maintainer quits an unowned instance
 manually; the adapter does not terminate unrelated applications.
 
+An interrupted rollback resumes on the next non-dry-run `backend rollback`. A
+retry that finds the rollback already committed verifies the active backend first
+and keeps its recovery record if verification fails. A same-release install
+settles a committed rollback, and dry runs refuse while one is unresolved.
+
 ## Bounded cache cleanup
 
 After acceptance or rollback, inspect and execute the same bounded plan:
