@@ -1,5 +1,7 @@
 #[path = "integration/board.rs"]
 mod board;
+#[path = "integration/broker_retirement.rs"]
+mod broker_retirement;
 #[path = "integration/cli.rs"]
 mod cli;
 #[path = "integration/cli_launch_env.rs"]

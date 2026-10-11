@@ -20,6 +20,7 @@ mod conversation;
 pub mod coordination;
 mod coordination_routing;
 mod diagnose;
+mod digest_format;
 mod display_metadata;
 mod forge_identity;
 mod launch_env;
@@ -92,6 +93,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use cli::{AgentKind, Cli, Command, SpecialKey};
+use digest_format::valid_sha256;
 use runtime_environment::add_runtime_tmux_environment;
 
 pub const SESSION_DOCUMENT_VERSION: &str = "agent-session.session.v1";
@@ -334,6 +336,7 @@ fn command_format(command: &Command) -> OutputFormat {
         Command::Broker(args) => match &args.command {
             cli::BrokerCommand::Identity(args) | cli::BrokerCommand::Status(args) => args.format,
             cli::BrokerCommand::Adopt(args) | cli::BrokerCommand::Reconcile(args) => args.format,
+            cli::BrokerCommand::RetireStopped(args) => args.format,
             cli::BrokerCommand::Stop(args) => args.format,
             cli::BrokerCommand::Heartbeat(args) => args.format,
         },
@@ -930,15 +933,6 @@ fn render_forwarded_setup_text(result: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("reported");
     format!("{product} activity {action}: {status} (owner: agent-hook)\n")
-}
-
-fn valid_sha256(value: &str) -> bool {
-    value.strip_prefix("sha256:").is_some_and(|hex| {
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    })
 }
 
 fn run_delete(context: &CliContext, args: cli::DeleteArgs) -> i32 {
