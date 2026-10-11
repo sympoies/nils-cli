@@ -7,7 +7,6 @@ nils-agent-memory
 nils-agent-out
 nils-agent-hook
 nils-agent-session
-nils-main-agent
 nils-agent-scope-lock
 nils-term
 nils-markdown
