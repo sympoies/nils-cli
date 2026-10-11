@@ -817,7 +817,8 @@ session's effective provider configuration root. The bounded walk reads only
 exact filename candidates and requires one regular, readable primary transcript
 with matching conversation identity and a non-empty cwd. An incomplete walk,
 ambiguous source, unsafe candidate, or unavailable metadata leaves observation
-unavailable. Legacy filename discovery remains available when no exact candidate
+unavailable. Discovery for noncanonical filenames remains available when no exact
+candidate
 exists; an incomplete or unsafe exact lookup never falls back to a partial match.
 
 Busy app-server Codex without an authoritative steerable turn, attached or
