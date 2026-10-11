@@ -25,6 +25,8 @@ use crate::{
 
 #[path = "activity/claude_completion.rs"]
 mod claude_completion;
+#[path = "activity/completion_admission.rs"]
+mod completion_admission;
 #[path = "activity/event_validation.rs"]
 mod event_validation;
 use event_validation::validate_event;
@@ -2807,9 +2809,11 @@ fn ingest_event_with_lock(
         });
     }
     claude_completion::settle_claude_completion(&mut document, &received_at);
-    reduce(&mut document, &event, &received_at);
-    document.last_event_at = Some(received_at.clone());
-    if matches!(event.source_kind, SourceKind::ProviderHook) {
+    let applied = reduce(&mut document, &event, &received_at);
+    if applied {
+        document.last_event_at = Some(received_at.clone());
+    }
+    if applied && matches!(event.source_kind, SourceKind::ProviderHook) {
         document.state.semantic_event = Some(SemanticEventView {
             kind: turn_event_kind_name(&event.kind).to_string(),
             observed_at: received_at.clone(),
@@ -2829,7 +2833,7 @@ fn ingest_event_with_lock(
         document.last_provider_event_at = Some(received_at.clone());
         document.last_provider_event_turn_id = event.provider_turn_id.clone();
     }
-    if document.provider_session_id.is_none() {
+    if applied && document.provider_session_id.is_none() {
         document.provider_session_id = event.provider_session_id.clone();
     }
     if uses_exact_replay_horizon
@@ -2873,7 +2877,9 @@ fn ingest_event_with_lock(
     drop(record_lock);
     crate::auth_incident::observe_activity(context, &record, &event, &state)
         .unwrap_or_else(|_| eprintln!("warning: provider authentication reporting degraded"));
-    arm_auto_resume_from_event(context, &record, &event, &state, &received_at)?;
+    if applied {
+        arm_auto_resume_from_event(context, &record, &event, &state, &received_at)?;
+    }
     Ok(ActivityResult {
         id: record.id,
         turn_state: state,
@@ -4990,7 +4996,14 @@ fn open_provider_turn(document: &mut ActivityDocument, provider_turn_id: Option<
     });
 }
 
-fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
+fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool {
+    if matches!(
+        event.kind,
+        TurnEventKind::TurnCompleted | TurnEventKind::TurnFailed
+    ) && !completion_admission::applies(document, event)
+    {
+        return false;
+    }
     document.pending_completion = None;
     let previous_phase = document.state.phase.clone();
     let mut source = provider_source(event);
@@ -5127,83 +5140,7 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
             }
         }
         TurnEventKind::TurnCompleted | TurnEventKind::TurnFailed => {
-            let requires_exact_open_turn = event.provider == AgentKind::Codex.as_str()
-                && event.kind == TurnEventKind::TurnCompleted
-                && event.confidence == Confidence::Authoritative
-                && event.source_kind == SourceKind::ProviderHook
-                && event.provider_turn_id.is_some();
-            let matches_current = if requires_exact_open_turn {
-                document
-                    .state
-                    .current_turn
-                    .as_ref()
-                    .and_then(|turn| turn.provider_turn_id.as_ref())
-                    == event.provider_turn_id.as_ref()
-            } else if let Some(current) = document.state.current_turn.as_ref() {
-                event.provider_turn_id.is_none()
-                    || current.provider_turn_id.is_none()
-                    || event.provider_turn_id == current.provider_turn_id
-            } else if let (Some(event_turn_id), Some(last_turn_id)) = (
-                event.provider_turn_id.as_ref(),
-                document
-                    .state
-                    .last_turn
-                    .as_ref()
-                    .and_then(|turn| turn.provider_turn_id.as_ref()),
-            ) {
-                event_turn_id == last_turn_id
-            } else {
-                true
-            };
-            if matches_current {
-                let current = document.state.current_turn.take();
-                let extra = if let Some(current) = current.as_ref() {
-                    current.extra.clone()
-                } else if let (Some(event_turn_id), Some(last_turn)) = (
-                    event.provider_turn_id.as_ref(),
-                    document.state.last_turn.as_ref(),
-                ) {
-                    if last_turn.provider_turn_id.as_ref() == Some(event_turn_id) {
-                        last_turn.extra.clone()
-                    } else {
-                        Map::new()
-                    }
-                } else {
-                    Map::new()
-                };
-                document.state.last_turn = Some(LastTurn {
-                    provider_turn_id: event.provider_turn_id.clone().or_else(|| {
-                        current
-                            .as_ref()
-                            .and_then(|turn| turn.provider_turn_id.clone())
-                    }),
-                    started_at: current.map(|turn| turn.started_at),
-                    completed_at: at.to_string(),
-                    outcome: if event.kind == TurnEventKind::TurnFailed {
-                        "failed".to_string()
-                    } else {
-                        "completed".to_string()
-                    },
-                    extra: if matches!(
-                        event.failure_reason.as_deref(),
-                        Some("provider_capacity" | "authentication")
-                    ) {
-                        let mut extra = extra;
-                        extra.insert(
-                            "provider_failure_kind".to_string(),
-                            json!(event.failure_reason),
-                        );
-                        extra
-                    } else {
-                        let mut extra = extra;
-                        extra.remove("provider_failure_kind");
-                        extra
-                    },
-                });
-                document.pending_attention.clear();
-                document.overflow_attention = None;
-                document.state.phase = TurnPhase::Waiting;
-            }
+            completion_admission::close_turn(document, event, at);
         }
     }
     document.state.revision = document.state.revision.saturating_add(1);
@@ -5211,6 +5148,7 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
     if document.state.phase != previous_phase {
         document.state.phase_changed_at = at.to_string();
     }
+    true
 }
 
 fn is_provider_progress_evidence(event: &TurnEvent) -> bool {

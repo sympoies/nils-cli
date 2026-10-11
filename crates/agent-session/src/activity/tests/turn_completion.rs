@@ -40,6 +40,24 @@ fn unmatched_completion_preserves_stop_presentation_until_accepted_work() {
     late.provider_turn_id = Some("B".to_string());
     let received = ingest_event(&context, &created.record.id, late.clone()).unwrap();
     assert_eq!(received.turn_state, stopped);
+    let accepted =
+        read_document(&session_dir(&context, &created.record.id).join(ACTIVITY_FILE)).unwrap();
+    assert_eq!(
+        accepted.last_provider_event_kind,
+        Some(TurnEventKind::StopObserved)
+    );
+    assert_eq!(accepted.last_provider_event_turn_id.as_deref(), Some("A"));
+    assert_eq!(
+        accepted.last_event_at.as_deref(),
+        Some(
+            stopped
+                .semantic_event
+                .as_ref()
+                .unwrap()
+                .observed_at
+                .as_str()
+        )
+    );
     let duplicate = ingest_event(&context, &created.record.id, late).unwrap();
     assert!(duplicate.duplicate);
     assert_eq!(duplicate.turn_state, stopped);
@@ -111,7 +129,13 @@ fn late_old_completion_preserves_newer_work_and_stop_candidate() {
             .unwrap()
             .turn_state;
         let path = session_dir(&context, &created.record.id).join(ACTIVITY_FILE);
-        let pending = read_document(&path).unwrap().pending_completion;
+        let mut snapshot = read_document(&path).unwrap();
+        if let Some(pending) = snapshot.pending_completion.as_mut() {
+            // Hold the quiet window open so this tests rejection, not elapsed time.
+            pending.received_at = "2099-01-01T00:00:00Z".to_string();
+            write_document(&path, &mut snapshot).unwrap();
+        }
+        let pending = snapshot.pending_completion;
         let late = ingest_turn(
             &context,
             &created.record,
