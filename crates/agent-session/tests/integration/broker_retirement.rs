@@ -59,7 +59,7 @@ fn operator_retirement_then_resume_preserves_the_provider_conversation() {
         state_dir: state_dir.clone(),
         host: None,
     };
-    let persisted = agent_session::internal::load_session_record(&context, "recoverable").unwrap();
+    let persisted = agent_session::load_session_record(&context, "recoverable").unwrap();
     let evidence = agent_session::coordination_runtime_evidence(&context, &persisted).unwrap();
     let registry = state_dir.join("coordination/registry.json");
     fs::create_dir_all(registry.parent().unwrap()).unwrap();

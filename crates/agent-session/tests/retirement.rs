@@ -45,7 +45,7 @@ fn seed(
     }
     let record = json!({"schema_version":"agent-session.session.v1", "id":"recoverable", "agent":"claude", "mode":"interactive", "title":null, "cwd":dir, "tmux_session":"hs-claude-recoverable", "prompt_file":null,"log_file":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z", "runtime":{"kind":"tmux","tmux_session":"hs-claude-recoverable","generation":1,"started_at":"2026-01-01T00:00:00Z","launch_id":"prior-runtime"},"provider_resume":{"provider":"claude","session_id":"conversation-id","captured_at":"2026-01-01T00:00:00Z","capture_method":"fixture","resume_args":["--resume","conversation-id"]},"delete_tmux_identity":identity});
     private_json(&dir.join("sessions/recoverable/session.json"), &record);
-    let session = agent_session::internal::load_session_record(&context, "recoverable").unwrap();
+    let session = agent_session::load_session_record(&context, "recoverable").unwrap();
     let evidence = agent_session::coordination_runtime_evidence(&context, &session).unwrap();
     let epoch = jiff::Timestamp::now().as_second() - age;
     private_json(
@@ -402,17 +402,15 @@ fn retirement_cleanup_failure_keeps_revocation_and_retries_from_receipt() {
 fn retirement_uses_the_same_lifecycle_lock_as_a_replacement_resume() {
     let dir = tempfile::tempdir().unwrap();
     let (context, tmux, capability) = seed(dir.path(), i32::MAX, i32::MAX, 1200);
-    let lock =
-        agent_session::internal::acquire_session_record_lock(&context, "recoverable").unwrap();
+    let lock = agent_session::acquire_session_record_lock(&context, "recoverable").unwrap();
     std::thread::scope(|scope| {
         let context = &context;
         let tmux = &tmux;
         let pending = scope.spawn(move || retire(context, tmux, &["--apply"]));
         // A replacement resume writes its new tuple while holding this lock.
-        let mut record =
-            agent_session::internal::load_session_record(context, "recoverable").unwrap();
+        let mut record = agent_session::load_session_record(context, "recoverable").unwrap();
         record.runtime.as_mut().unwrap().generation = 2;
-        agent_session::internal::write_session_record(context, &record).unwrap();
+        agent_session::write_session_record(context, &record).unwrap();
         drop(lock);
         let output = pending.join().unwrap();
         assert_ne!(output.code, 0);
@@ -431,7 +429,7 @@ fn retirement_unblocks_provisioning_the_next_incarnation() {
     let (context, tmux, _) = seed(dir.path(), i32::MAX, i32::MAX, 1200);
     let applied = retire(&context, &tmux, &["--apply"]);
     assert_eq!(applied.code, 0, "{}", applied.stdout_text());
-    let mut record = agent_session::internal::load_session_record(&context, "recoverable").unwrap();
+    let mut record = agent_session::load_session_record(&context, "recoverable").unwrap();
     record.runtime.as_mut().unwrap().launch_id = "next-runtime".into();
     record.runtime.as_mut().unwrap().generation = 2;
     // Provision runs the same prior-broker gate that resume uses. It must accept
