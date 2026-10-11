@@ -39,6 +39,7 @@ if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
   exit 2
 fi
 cd "$repo_root"
+source "$repo_root/scripts/ci/lib/node-scope.sh"
 
 if ! command -v npx >/dev/null 2>&1; then
   echo "error: missing required tool on PATH: npx" >&2
@@ -71,7 +72,7 @@ if [[ "${#md_files[@]}" -eq 0 ]]; then
 fi
 
 lint_cmd=(
-  npx --yes rumdl@0.1.62
+  node_scoped npx --yes rumdl@0.1.62
   check
   --config "$config_file"
   "${md_files[@]}"
