@@ -1,0 +1,3 @@
+{"type": "assistant", "sessionId": "provider-session", "timestamp": "2026-01-01T00:00:00Z", "message": {"model": "claude-haiku-4-5-20251001", "usage": {"input_tokens": 10, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 20, "output_tokens": 999}}, "cwd": "/workspace/project"}
+{"type": "system", "subtype": "compact_boundary", "sessionId": "provider-session", "timestamp": "2026-01-01T00:01:00Z"}
+{"type": "assistant", "sessionId": "provider-session", "timestamp": "2026-01-01T00:02:00Z", "message": {"model": "custom-model", "usage": {"input_tokens": 5, "cache_read_input_tokens": 10, "cache_creation_input_tokens": 2}}}

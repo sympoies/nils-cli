@@ -1,0 +1,6 @@
+{"type": "session_meta", "payload": {"id": "provider-session", "cwd": "/workspace/project", "source": "cli", "timestamp": "2026-01-01T00:00:00Z"}}
+{"type": "turn_context", "payload": {"model": "example-model"}}
+{"type": "event_msg", "timestamp": "2026-01-01T00:00:00Z", "payload": {"type": "token_count", "info": {"total_token_usage": {"total_tokens": 9000}, "last_token_usage": {"total_tokens": 130, "input_tokens": 110, "cached_input_tokens": 100, "output_tokens": 20, "reasoning_output_tokens": 10}, "model_context_window": 272000}}}
+{"type": "compacted", "timestamp": "2026-01-01T00:01:00Z", "payload": {}}
+{"type": "turn_context", "payload": {"model": "another-model"}}
+{"type": "event_msg", "timestamp": "2026-01-01T00:02:00Z", "payload": {"type": "token_count", "info": {"last_token_usage": {"total_tokens": 17}, "model_context_window": null}}}

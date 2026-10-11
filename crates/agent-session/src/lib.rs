@@ -16,6 +16,7 @@ pub mod codex_app_server;
 mod codex_runtime_dir;
 pub mod completion;
 mod conversation;
+mod context_usage;
 #[doc(hidden)]
 pub mod coordination;
 mod coordination_routing;
@@ -90,6 +91,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use cli::{AgentKind, Cli, Command, SpecialKey};
+use display_metadata::SessionTitleStateView;
 
 pub const SESSION_DOCUMENT_VERSION: &str = "agent-session.session.v1";
 const SESSION_RESUME_DOCUMENT_VERSION: &str = "agent-session.resume.v1";
@@ -1047,25 +1049,6 @@ impl From<SessionTitleStateInput> for SessionTitleState {
             references: input.references,
             activity: input.activity,
             extra: BTreeMap::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct SessionTitleStateView {
-    topic: Option<String>,
-    topic_source: SessionTitleTopicSource,
-    references: Vec<String>,
-    activity: Option<String>,
-}
-
-impl From<&SessionTitleState> for SessionTitleStateView {
-    fn from(state: &SessionTitleState) -> Self {
-        Self {
-            topic: state.topic.clone(),
-            topic_source: state.topic_source.clone(),
-            references: state.references.clone(),
-            activity: state.activity.clone(),
         }
     }
 }
