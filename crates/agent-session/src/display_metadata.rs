@@ -1,9 +1,29 @@
 //! Canonical display metadata. Descriptive only; never changes lineage or authority.
 use crate::{
-    CliContext, CliError, SessionRecord, lock_exact_session_authority, write_session_record,
+    CliContext, CliError, SessionRecord, SessionTitleState, SessionTitleTopicSource,
+    lock_exact_session_authority, write_session_record,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SessionTitleStateView {
+    topic: Option<String>,
+    topic_source: SessionTitleTopicSource,
+    references: Vec<String>,
+    activity: Option<String>,
+}
+
+impl From<&SessionTitleState> for SessionTitleStateView {
+    fn from(state: &SessionTitleState) -> Self {
+        Self {
+            topic: state.topic.clone(),
+            topic_source: state.topic_source.clone(),
+            references: state.references.clone(),
+            activity: state.activity.clone(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
