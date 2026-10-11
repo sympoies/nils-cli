@@ -128,7 +128,7 @@ command subcommands. JSON output uses the workspace envelope:
 
 | Need | Document |
 | --- | --- |
-| Drive one session: input, clear, resume, delete, accounts, secrets | [Session lifecycle operations](docs/runbooks/session-lifecycle.md) |
+| Drive one session: input, clear, resume, delete, accounts, launch switches, secrets | [Session lifecycle operations](docs/runbooks/session-lifecycle.md) |
 | Collision awareness and work permissions | [Work coordination](docs/runbooks/work-coordination.md) |
 | Deploy and operate the HTTP/WebSocket daemon | [Serve daemon operations](docs/runbooks/serve-daemon.md) |
 | Investigate a lifecycle incident | [Lifecycle incident evidence](docs/runbooks/lifecycle-journal.md) |

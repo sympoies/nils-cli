@@ -30,7 +30,8 @@ const MACHINE: &str = "host-a";
 const SESSION: &str = "20300101-000000-self";
 const INCARNATION: &str = "self-incarnation";
 
-const ISOLATED_ENV: [&str; 6] = [
+const ISOLATED_ENV: [&str; 7] = [
+    "AGENT_SESSION_LAUNCH_ENV_ALLOWLIST",
     "AGENT_SESSION_BOARD",
     "AGENT_SESSION_MACHINE",
     "AGENT_SESSION_HOST",
@@ -1500,4 +1501,46 @@ fn console_start_selects_the_account_for_its_agent_and_the_launch_profile() {
         "console-start-account-unsupported"
     );
     assert_eq!(aggregator.seen().len(), requests);
+}
+
+#[test]
+fn launch_env_console_forwards_every_provider_and_requires_confirmation() {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let _serve = fixture.serve(&[], Some(&aggregator));
+    let values = json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"});
+    for agent in ["codex", "claude", "dsh"] {
+        for confirmed in [true, false] {
+            let mut child = json!({"id":"env-child", "agent":agent});
+            if confirmed {
+                child["launch_env"] = values.clone();
+            }
+            aggregator.reply_json(201, &json!({"ok":true, "data":{"session":child}}));
+            let output = fixture.start_via_console(
+                &[
+                    "--agent",
+                    agent,
+                    "--env",
+                    "AGENT_RUNTIME_SUPPRESS_MEMORY=1",
+                    "--format",
+                    "json",
+                ],
+                true,
+            );
+            let body = output.stdout_json();
+            if confirmed {
+                assert_eq!(output.code, 0, "{body}");
+                assert_eq!(body["data"]["session"]["launch_env"], values);
+            } else {
+                assert_ne!(output.code, 0, "{body}");
+                assert_eq!(body["error"]["code"], "launch-env-unconfirmed");
+                assert_eq!(body["error"]["details"]["safe_to_retry"], false);
+                assert_eq!(body["error"]["details"]["created_session_id"], "env-child");
+            }
+        }
+    }
+    assert_eq!(aggregator.seen().len(), 6);
+    for request in aggregator.seen() {
+        assert_eq!(request.body.unwrap()["session"]["launch_env"], values);
+    }
 }
