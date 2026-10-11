@@ -49,21 +49,42 @@ PATH="$fake_bin:$PATH" NODE_SCOPE_TEST_LOG="$log" NILS_CLI_GATE_SLICE=fixture-ga
 ' bash "$helper"
 grep -q -- '--slice=fixture-gate.slice' "$log" || fail "gate slice missing: $(cat "$log")"
 
-# 3. Without a working systemd user scope, the command runs unchanged.
+# 3. An inherited cache value cannot skip the scope probe.
+log="$tmp/ambient.log"
+PATH="$fake_bin:$PATH" NODE_SCOPE_TEST_LOG="$log" NILS_CLI_GATE_SLICE='' NILS_CLI_NODE_SCOPE_AVAILABLE=0 bash -c '
+  source "$1"
+  node_scoped true
+' bash "$helper"
+grep -q -- 'MemoryMax=6G' "$log" || fail "ambient cache value skipped the scope: $(cat "$log" 2>/dev/null)"
+
+# 4. Outside a gate, a host without a working systemd user scope (for example
+# macOS or a hosted runner) runs the command unchanged.
 cat >"$fake_bin/systemd-run" <<'EOF'
 #!/usr/bin/env bash
-exit 1
+exit 42
 EOF
 chmod +x "$fake_bin/systemd-run"
 out="$(
-  PATH="$fake_bin:$PATH" bash -c '
+  PATH="$fake_bin:$PATH" NILS_CLI_GATE_SLICE='' bash -c '
     source "$1"
     node_scoped printf "%s" direct
   ' bash "$helper"
 )"
 [[ "$out" == direct ]] || fail "unscoped fallback output: $out"
 
-# 4. Every Node.js entry point of the check chain goes through the helper.
+# 5. Inside a gate, a scope that cannot be established fails closed: nonzero
+# exit, and the payload never runs.
+sentinel="$tmp/payload-ran"
+status=0
+PATH="$fake_bin:$PATH" NILS_CLI_GATE_SLICE=fixture-gate.slice bash -c '
+  source "$1"
+  node_scoped touch "$2"
+' bash "$helper" "$sentinel" 2>"$tmp/fail-closed.err" || status=$?
+[[ "$status" -ne 0 ]] || fail "gate scope failure returned success"
+[[ ! -e "$sentinel" ]] || fail "payload ran without a scope inside a gate"
+grep -q 'node scope' "$tmp/fail-closed.err" || fail "missing fail-closed diagnostic: $(cat "$tmp/fail-closed.err")"
+
+# 6. Every Node.js entry point of the check chain goes through the helper.
 grep -q 'node_scoped npx --yes rumdl@' "$repo_root/scripts/ci/markdownlint-audit.sh" ||
   fail "markdownlint-audit.sh does not run npx through node_scoped"
 verify="$repo_root/.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh"

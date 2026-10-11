@@ -41,8 +41,9 @@ Docs-only checks require:
 Node.js commands in these checks (`npx` for Markdown lint and the `node` release
 tests) run through `scripts/ci/lib/node-scope.sh`. Where `systemd-run --user`
 can start a scope, each one runs with `MemoryMax=6G` and no swap, nested under
-`NILS_CLI_GATE_SLICE` when a gate sets it. Elsewhere, for example on macOS or a
-hosted runner, the command runs unchanged.
+`NILS_CLI_GATE_SLICE` when a gate sets it. Inside such a gate the scope is
+required: if it cannot start, the check fails without running Node. Outside a
+gate, for example on macOS or a hosted runner, the command runs unchanged.
 
 Local fast changed-scope checks also require:
 
