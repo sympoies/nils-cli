@@ -52,14 +52,23 @@ pub fn clear() -> Result<(), String> {
 }
 
 fn read_entry(name: &str, now_epoch: i64) -> Result<CacheEntry, String> {
+    let content = read_content(name)?;
+    validate_entry(name, &content, now_epoch)
+}
+
+fn read_content(name: &str) -> Result<String, String> {
     let path = cache_file(name)?;
-    let content = std::fs::read_to_string(&path).map_err(|_| {
+    std::fs::read_to_string(&path).map_err(|_| {
         format!(
             "claude-rate-limits: cache not found (run claude-cli diag rate-limits without --cached to populate): {}",
             path.display()
         )
-    })?;
-    let entry = shared_values::parse_cache_entry(&content);
+    })
+}
+
+fn validate_entry(name: &str, content: &str, now_epoch: i64) -> Result<CacheEntry, String> {
+    let path = cache_file(name)?;
+    let entry = shared_values::parse_cache_entry(content);
     if !entry.is_complete() {
         return Err(format!(
             "claude-rate-limits: invalid cache (incomplete window data): {}",
@@ -103,10 +112,46 @@ pub fn read_allow_stale(name: &str, now_epoch: i64) -> Result<StaleCacheRead, St
     Ok(StaleCacheRead { entry, stale })
 }
 
+/// The stale cache only when its atomically stored token digest matches.
+pub fn read_allow_stale_owned(
+    name: &str,
+    token_key: &str,
+    now_epoch: i64,
+) -> Result<StaleCacheRead, String> {
+    let content = read_content(name)?;
+    let owner = content
+        .lines()
+        .find_map(|line| line.strip_prefix("owner_token_key="));
+    if owner != Some(token_key) {
+        return Err("claude-rate-limits: cache belongs to a different account".to_string());
+    }
+    let entry = validate_entry(name, &content, now_epoch)?;
+    let stale = entry.is_stale(now_epoch, ttl_seconds());
+    Ok(StaleCacheRead { entry, stale })
+}
+
 pub fn write(name: &str, fetched_at_epoch: i64, values: &WeeklyValues) -> Result<(), String> {
     let Some(data) = shared_values::render_cache_entry(fetched_at_epoch, values) else {
         return Ok(());
     };
+    let path = cache_file(name)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    shared_fs::write_atomic(&path, data.as_bytes(), shared_fs::SECRET_FILE_MODE)
+        .map_err(|err| err.to_string())
+}
+
+pub fn write_owned(
+    name: &str,
+    fetched_at_epoch: i64,
+    values: &WeeklyValues,
+    token_key: &str,
+) -> Result<(), String> {
+    let Some(mut data) = shared_values::render_cache_entry(fetched_at_epoch, values) else {
+        return Ok(());
+    };
+    data.push_str(&format!("\nowner_token_key={token_key}"));
     let path = cache_file(name)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
@@ -172,5 +217,20 @@ mod tests {
         let _stale = EnvGuard::set(&lock, CACHE_ALLOW_STALE_ENV, "true");
         assert_eq!(ttl_seconds(), 300);
         assert!(allow_stale());
+    }
+
+    #[test]
+    fn same_named_target_cache_is_rejected_after_account_switch() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _dir = EnvGuard::set(
+            &lock,
+            "CLAUDE_PROMPT_SEGMENT_CACHE_DIR",
+            tmp.path().to_str().unwrap(),
+        );
+        write_owned("active", 1_900_000_000, &values(), "token-account-a").unwrap();
+
+        assert!(read_allow_stale_owned("active", "token-account-a", 1_900_000_000).is_ok());
+        assert!(read_allow_stale_owned("active", "token-account-b", 1_900_000_000).is_err());
     }
 }

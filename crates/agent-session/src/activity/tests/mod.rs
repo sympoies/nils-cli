@@ -15,6 +15,7 @@ fn event(kind: TurnEventKind, event_id: &str) -> TurnEvent {
         provider_session_id: Some("session-1".to_string()),
         provider_turn_id: Some("turn-1".to_string()),
         kind,
+        completion_candidate: false,
         failure_reason: None,
         attention_id: None,
         attention_kind: None,
@@ -44,6 +45,7 @@ fn document() -> ActivityDocument {
         provider_session_id: None,
         last_event_at: None,
         pending_journal: None,
+        pending_completion: None,
         runtime_unhealthy_reason: None,
         operator_provider_turn_receipts: Vec::new(),
         extra: Map::new(),
@@ -1176,3 +1178,5 @@ fn test_session(tmp: &tempfile::TempDir) -> (CliContext, crate::CreatedRecord) {
 
 mod provider_hooks;
 mod replay_journal;
+
+mod claude_completion;

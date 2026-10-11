@@ -38,3 +38,5 @@ mod main_entrypoint;
 mod prompt_segment;
 #[path = "integration/usage.rs"]
 mod usage;
+#[path = "integration/usage_backoff.rs"]
+mod usage_backoff;

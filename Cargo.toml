@@ -14,7 +14,6 @@ members = [
   "crates/agent-hook",
   "crates/memo",
   "crates/agent-session",
-  "crates/main-agent",
   "crates/claude-cli",
   "crates/codex-cli",
   "crates/docker-tools",
@@ -50,7 +49,7 @@ resolver = "2"
 # edition.
 edition = "2024"
 license = "MIT"
-version = "1.33.2"
+version = "1.33.3"
 
 [workspace.dependencies]
 anyhow = "1"

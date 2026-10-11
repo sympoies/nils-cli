@@ -56,7 +56,7 @@ created.
 | Provider | Audited floor | Classification | Start | Completion | Attention | Failure | Setup |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Codex | 0.144.1 baseline; exact-attention versions 0.144.1 and 0.144.3; capacity enum re-audited at 0.153.4 | supported; exact attention and structured failure recovery require an audited agent-session app-server v2 runtime | `UserPromptSubmit`, observed | matching `agent-turn-complete`, authoritative; raw `Stop` remains journal evidence only | managed protocol authority: typed exact request/resolution; raw/unmanaged hook authority: `PermissionRequest` conservative latch | live app-server terminal `failed` + exact `usageLimitExceeded` or `serverOverloaded`, authoritative; raw TUI remains unavailable | additive hooks/notify plus capability-probed private Unix app-server runtime for fresh sessions |
-| Claude Code | 2.1.206 baseline; Elicitation audit 2.1.210; prompt-identity audit 2.1.285 | partial; usage failure supported; Elicitation exact only when both callbacks carry the same non-empty id | `UserPromptSubmit`, observed; general `PreToolUse` provides observed progress/reactivation; `SubagentStop` is ignored | `idle_prompt`, observed; raw `Stop` is journal evidence only | exact `AskUserQuestion`; conditional exact `Elicitation`; `PermissionRequest`/notification conservative latch | structured `StopFailure.error`, authoritative; only `rate_limit` can arm auto-resume | additive merge into `~/.claude/settings.json` |
+| Claude Code | 2.1.206 baseline; Elicitation audit 2.1.210; prompt-identity audit 2.1.285 | partial; usage failure supported; Elicitation exact only when both callbacks carry the same non-empty id | `UserPromptSubmit`, observed; general `PreToolUse` provides observed progress/reactivation; `SubagentStop` is ignored | qualifying `Stop`, observed after a one-second quiet window; `idle_prompt` is late confirmation | exact `AskUserQuestion`; conditional exact `Elicitation`; `PermissionRequest`/notification conservative latch | structured `StopFailure.error`, authoritative; only `rate_limit` can arm auto-resume | additive merge into `~/.claude/settings.json` |
 
 Versions below the audited floor remain usable. `activity doctor` reports them
 as unverified and session views retain optional-field/activity fallback rather
@@ -154,8 +154,17 @@ manual input clears that chain.
 ### Claude Code
 
 Matching hooks also run in parallel, and `Stop` hooks may continue the turn.
-Raw `Stop` is therefore treated exactly like Codex raw Stop. `idle_prompt` is a
-later provider notification explicitly meaning that Claude is done and waiting
+An inactive `Stop` with no background tasks now supplies observed completion
+after a one-second quiet window with no newer accepted event. Missing fields,
+active stop hooks, and background tasks remain non-final. This follows the
+[official Stop contract](https://code.claude.com/docs/en/hooks#stop), checked on
+2026-10-07 for the existing 2.1.206 floor through 2.1.289. Continuation inside
+the window cancels completion; later progress reopens working. `idle_prompt`
+is only late confirmation, since it is delayed and can be suppressed by typing.
+`StopFailure` remains immediately terminal and authoritative. Concurrent hooks
+mean the quiet-window completion is observed, not authoritative.
+
+`idle_prompt` is a later provider notification meaning that Claude is done and waiting
 for another prompt, so it may yield observed Waiting.
 
 Coordination notification delivery uses a narrower `Stop` trust rule without

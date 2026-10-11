@@ -904,9 +904,10 @@ operations:
         base_sha: string
         state_tip_digest: string|null
         handoff_digest: string|null
-        handoff: object|null
+        handoff: object|null # base_ref (provider base branch) is recorded by assign; absent on older records
         status: string
         ignored_stale_records: array<string> # omitted when empty
+        sync_carry_over: object<{review_url,reviewed_head,head,base_commit,merge_tree}> # check/inspect only; omitted when absent
 
   - id: pr.review-loop.inspect
     schema_version: cli.forge-cli.pr.review-loop.inspect.v1

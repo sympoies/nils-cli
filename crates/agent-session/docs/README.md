@@ -6,13 +6,14 @@ or integrating a specific subsystem.
 
 ## Operator runbooks
 
+- [Session lifecycle operations](runbooks/session-lifecycle.md): sending input
+  and prompt submission outcomes, clear and rebind, resume, verified deletion,
+  startup logs, DSH launch, account switching, model settings, and secret
+  safety.
 - [Lifecycle incident evidence](runbooks/lifecycle-journal.md): bounded per-session
   lifecycle records, refusal proof steps, retention, and runtime exit observations.
 - [Work coordination](runbooks/work-coordination.md): coordination modes,
   declared paths, authority boundaries, advisory flow, and enforce flow.
-- [Main Agent orchestration](runbooks/main-agent-orchestration.md): complete
-  operator lifecycle, input packets, retry fences, interactive worker
-  acceptance, relationship transfer, recovery, and cleanup.
 - [Serve daemon operations](runbooks/serve-daemon.md): safe startup,
   authentication boundaries, HTTP session creation, restart survival, and the
   versioned `serve --config` file.
@@ -50,13 +51,6 @@ or integrating a specific subsystem.
   maintenance operation contract.
 - [Session maintenance v2](specs/session-maintenance-v2.md): successor contract
   adding record-only removal for a runtime with no safe signal boundary.
-- [Main Agent orchestration v1](specs/main-agent-orchestration-v1.md): durable
-  run/assignment schemas, authenticated facade, rehydration, and relationship
-  lifecycle.
-- [Main Agent DSH external runtime v1](specs/main-agent-dsh-external-runtime-v1.md):
-  the `launch.agent = "dsh"` worker transport owned by the external
-  dsh-runtime-kit plugin — capabilities probe, external launch contract, and
-  the liveness sidecar.
 - [Mail audit v1](specs/mail-audit-v1.md): owner-only, paginated mailbox
   metadata, anomalies, source journal and notification evidence.
 
