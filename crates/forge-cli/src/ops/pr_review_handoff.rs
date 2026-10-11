@@ -31,6 +31,10 @@ pub struct ReviewHandoff {
     pub surrendered: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordinator_transfer: Option<CoordinatorTransfer>,
+    /// Provider base branch name at assignment; a base-sync carry-over never
+    /// survives a retarget. Absent on records written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -136,6 +140,7 @@ pub(crate) fn validate_handoff(h: &ReviewHandoff) -> Result<(), ForgeError> {
         || h.coordinator_digest == h.reviewer_digest
         || !valid_sha(&h.base_sha)
         || !valid_sha(&h.assigned_head)
+        || h.base_ref.as_deref().is_some_and(|r| !valid_base_ref(r))
         || h.review_author.is_empty()
         || h.review_author.len() > 128
         || !h
@@ -680,20 +685,33 @@ fn admit_published<R: BackendRunner>(
     let sync = if state.head_sha == head {
         None
     } else {
-        Some(review_sync_carry_over::verify_merge(&state.head_sha, head).map_err(refused)?)
+        let objects = review_sync_carry_over::Objects::open().map_err(refused)?;
+        let merge = objects
+            .verify_merge(&state.head_sha, head)
+            .map_err(refused)?;
+        Some((objects, merge))
     };
-    let base = provider_base(runner, ctx, number)?;
-    if let Some(sync) = &sync {
-        // A sync merge moves the base only forward on the assigned lineage,
-        // and its base parent must be target history.
-        review_sync_carry_over::verify_on_target(&handoff.base_sha, &base).map_err(|reason| {
-            refused(match reason {
-                "base-not-on-target" => "assigned-base-not-on-target",
-                other => other,
-            })
-        })?;
-        review_sync_carry_over::verify_on_target(&sync.base_commit, &base).map_err(refused)?;
-    } else if base != handoff.base_sha {
+    if let Some((objects, merge)) = &sync {
+        // A sync merge keeps the assigned base branch and moves its tip only
+        // forward on the assigned lineage; its base parent is target history.
+        let (base, base_ref) = provider_base_scope(runner, ctx, number)?;
+        match handoff.base_ref.as_deref() {
+            None => return Err(refused("base-ref-unrecorded")),
+            Some(recorded) if recorded != base_ref => return Err(refused("base-ref-changed")),
+            Some(_) => {}
+        }
+        objects
+            .verify_on_target(&handoff.base_sha, &base)
+            .map_err(|reason| {
+                refused(match reason {
+                    "base-not-on-target" => "assigned-base-not-on-target",
+                    other => other,
+                })
+            })?;
+        objects
+            .verify_on_target(&merge.base_commit, &base)
+            .map_err(refused)?;
+    } else if provider_base(runner, ctx, number)? != handoff.base_sha {
         return Err(fail(
             "review_scope_changed",
             "provider base changed since designated review assignment",
@@ -790,12 +808,12 @@ fn admit_published<R: BackendRunner>(
             "awaiting designated review: published passing review for the current head is missing",
         ));
     };
-    Ok(sync.map(|sync| SyncCarryOver {
+    Ok(sync.map(|(_, merge)| SyncCarryOver {
         review_url: review_url.to_string(),
         reviewed_head: reviewed_head.to_string(),
         head: head.to_string(),
-        base_commit: sync.base_commit,
-        merge_tree: sync.merge_tree,
+        base_commit: merge.base_commit,
+        merge_tree: merge.merge_tree,
     }))
 }
 
@@ -942,10 +960,11 @@ fn read_complete_report<R: BackendRunner>(
     Ok(body.to_string())
 }
 
-pub(crate) fn provider_base<R: BackendRunner>(
+fn provider_pull_field<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
     number: u64,
+    jq: &str,
 ) -> Result<String, ForgeError> {
     let repo = ctx
         .repo
@@ -956,17 +975,47 @@ pub(crate) fn provider_base<R: BackendRunner>(
     argv.extend([
         format!("repos/{repo}/pulls/{number}").into(),
         "--jq".into(),
-        ".base.sha".into(),
+        jq.into(),
     ]);
-    let output = runner.run(&BackendCall::new(BackendProgram::Gh, argv))?;
-    let base = output.stdout.trim();
-    if !valid_sha(base) {
+    Ok(runner
+        .run(&BackendCall::new(BackendProgram::Gh, argv))?
+        .stdout
+        .trim()
+        .to_string())
+}
+
+pub(crate) fn provider_base<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+) -> Result<String, ForgeError> {
+    let base = provider_pull_field(runner, ctx, number, ".base.sha")?;
+    if !valid_sha(&base) {
         return Err(fail(
             "review_snapshot_incomplete",
             "provider base SHA is missing or invalid",
         ));
     }
-    Ok(base.to_string())
+    Ok(base)
+}
+
+/// The base tip and branch name from one provider read, so a retarget cannot
+/// slip between them.
+fn provider_base_scope<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+) -> Result<(String, String), ForgeError> {
+    let scope = provider_pull_field(runner, ctx, number, r#".base.sha + " " + .base.ref"#)?;
+    match scope.split_once(' ') {
+        Some((base, base_ref)) if valid_sha(base) && valid_base_ref(base_ref) => {
+            Ok((base.to_string(), base_ref.to_string()))
+        }
+        _ => Err(fail(
+            "review_snapshot_incomplete",
+            "provider base SHA or branch is missing or invalid",
+        )),
+    }
 }
 
 pub fn run(
@@ -1142,6 +1191,7 @@ pub fn run(
                 assignment_generation: generation,
                 surrendered: false,
                 coordinator_transfer: None,
+                base_ref: Some(view.base.clone()),
             };
             if latest(&chain).is_some_and(|h| {
                 !h.surrendered && h.returned_reason.is_none() && !valid_scope_refresh(h, &next)
@@ -1307,6 +1357,9 @@ pub fn run(
     }))
 }
 
+fn valid_base_ref(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 255 && !s.chars().any(|c| c.is_whitespace() || c.is_control())
+}
 fn valid_sha(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|c| c.is_ascii_hexdigit())
 }

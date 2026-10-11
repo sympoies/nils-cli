@@ -2009,6 +2009,7 @@ mod tests {
                         assignment_generation: 1,
                         surrendered,
                         coordinator_transfer: None,
+                        base_ref: None,
                     },
                 },
             )

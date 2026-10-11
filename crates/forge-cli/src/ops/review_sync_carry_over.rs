@@ -1,6 +1,6 @@
 //! A designated PASS may survive a pure base-sync merge of its reviewed head.
-//! Admission re-derives every fact from content-addressed local git objects;
-//! a recorded carry-over is audit evidence, never proof.
+//! Admission re-derives every fact from content-addressed local git objects in
+//! an isolated repository; a recorded carry-over is audit evidence, never proof.
 
 use serde::{Deserialize, Serialize};
 use std::process::Command;
@@ -33,71 +33,132 @@ pub(crate) struct SyncMerge {
     pub merge_tree: String,
 }
 
-/// Prove `head` is exactly the clean merge of `reviewed_head` (first parent)
-/// with one other commit. Errors are stable reason tokens; each means re-review.
-pub(crate) fn verify_merge(reviewed_head: &str, head: &str) -> Result<SyncMerge, &'static str> {
-    let raw = git(&["cat-file", "commit", head])
+/// A throwaway bare repository that borrows the caller's object store. Only
+/// content-addressed objects cross over: the caller's attributes, config, refs
+/// and hooks never shape the recomputed merge.
+pub(crate) struct Objects {
+    dir: tempfile::TempDir,
+    store: String,
+}
+
+impl Objects {
+    pub(crate) fn open() -> Result<Self, &'static str> {
+        let caller = output(Command::new("git").args([
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "objects",
+        ]))
         .filter(|out| out.status.success())
         .ok_or("head-unavailable")?;
-    let raw = String::from_utf8(raw.stdout).map_err(|_| "head-unavailable")?;
-    let mut tree = None;
-    let mut parents = Vec::new();
-    for line in raw.lines().take_while(|line| !line.is_empty()) {
-        if let Some(value) = line.strip_prefix("tree ") {
-            tree = Some(value);
-        } else if let Some(value) = line.strip_prefix("parent ") {
-            parents.push(value);
+        let store = String::from_utf8(caller.stdout).map_err(|_| "head-unavailable")?;
+        let store = store.trim_end_matches('\n').to_string();
+        // The alternates variable is colon-separated; never let a path split.
+        if store.is_empty() || store.contains([':', '\n', '"']) {
+            return Err("head-unavailable");
+        }
+        let objects = Self {
+            dir: tempfile::tempdir().map_err(|_| "merge-unavailable")?,
+            store,
+        };
+        output(&mut objects.git(&["init", "--bare", "--quiet", "--template="]))
+            .filter(|out| out.status.success())
+            .ok_or("merge-unavailable")?;
+        Ok(objects)
+    }
+
+    fn git(&self, args: &[&str]) -> Command {
+        let mut command = Command::new("git");
+        for (key, _) in std::env::vars_os() {
+            if key.to_str().is_some_and(|key| key.starts_with("GIT_")) {
+                command.env_remove(key);
+            }
+        }
+        let home = self.dir.path();
+        command
+            .args(args)
+            .current_dir(home)
+            .env("GIT_DIR", home.join("repo"))
+            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &self.store)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_ATTR_NOSYSTEM", "1")
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .env("HOME", home)
+            .env("XDG_CONFIG_HOME", home.join("xdg"));
+        command
+    }
+
+    /// Prove `head` is exactly the clean merge of `reviewed_head` (first
+    /// parent) with one other commit. Errors are stable reason tokens; each
+    /// means re-review.
+    pub(crate) fn verify_merge(
+        &self,
+        reviewed_head: &str,
+        head: &str,
+    ) -> Result<SyncMerge, &'static str> {
+        let raw = output(&mut self.git(&["cat-file", "commit", head]))
+            .filter(|out| out.status.success())
+            .ok_or("head-unavailable")?;
+        let raw = String::from_utf8(raw.stdout).map_err(|_| "head-unavailable")?;
+        let mut tree = None;
+        let mut parents = Vec::new();
+        for line in raw.lines().take_while(|line| !line.is_empty()) {
+            if let Some(value) = line.strip_prefix("tree ") {
+                tree = Some(value);
+            } else if let Some(value) = line.strip_prefix("parent ") {
+                parents.push(value);
+            }
+        }
+        let (Some(tree), [first, base]) = (tree, parents.as_slice()) else {
+            return Err("not-a-sync-merge");
+        };
+        if *first != reviewed_head {
+            return Err("not-a-sync-merge");
+        }
+        let merged = output(&mut self.git(&[
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            reviewed_head,
+            base,
+        ]))
+        .ok_or("merge-unavailable")?;
+        match merged.status.code() {
+            Some(0) => {}
+            Some(1) => return Err("merge-conflicted"),
+            _ => return Err("merge-unavailable"),
+        }
+        let merge_tree = String::from_utf8_lossy(&merged.stdout)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        if merge_tree != tree {
+            return Err("tree-mismatch");
+        }
+        Ok(SyncMerge {
+            base_commit: (*base).to_string(),
+            merge_tree,
+        })
+    }
+
+    /// `commit` must already be history of the target branch tip.
+    pub(crate) fn verify_on_target(
+        &self,
+        commit: &str,
+        target_base: &str,
+    ) -> Result<(), &'static str> {
+        match output(&mut self.git(&["merge-base", "--is-ancestor", commit, target_base]))
+            .map(|out| out.status.code())
+        {
+            Some(Some(0)) => Ok(()),
+            Some(Some(1)) => Err("base-not-on-target"),
+            _ => Err("base-unavailable"),
         }
     }
-    let (Some(tree), [first, base]) = (tree, parents.as_slice()) else {
-        return Err("not-a-sync-merge");
-    };
-    if *first != reviewed_head {
-        return Err("not-a-sync-merge");
-    }
-    let merged = git(&[
-        "merge-tree",
-        "--write-tree",
-        "--no-messages",
-        reviewed_head,
-        base,
-    ])
-    .ok_or("merge-unavailable")?;
-    match merged.status.code() {
-        Some(0) => {}
-        Some(1) => return Err("merge-conflicted"),
-        _ => return Err("merge-unavailable"),
-    }
-    let merge_tree = String::from_utf8_lossy(&merged.stdout)
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .to_string();
-    if merge_tree != tree {
-        return Err("tree-mismatch");
-    }
-    Ok(SyncMerge {
-        base_commit: (*base).to_string(),
-        merge_tree,
-    })
 }
 
-/// The merged base commit must already be target-branch history.
-pub(crate) fn verify_on_target(base_commit: &str, target_base: &str) -> Result<(), &'static str> {
-    match git(&["merge-base", "--is-ancestor", base_commit, target_base])
-        .map(|out| out.status.code())
-    {
-        Some(Some(0)) => Ok(()),
-        Some(Some(1)) => Err("base-not-on-target"),
-        _ => Err("base-unavailable"),
-    }
-}
-
-/// Replacement refs could rewrite parents or trees locally; read only the
-/// objects the SHAs actually name.
-fn git(args: &[&str]) -> Option<std::process::Output> {
-    let mut command = Command::new("git");
-    command.args(args).env("GIT_NO_REPLACE_OBJECTS", "1");
-    crate::backend::output_with_limits(&mut command, Some(Duration::from_secs(60)), 1024 * 1024)
-        .ok()
+fn output(command: &mut Command) -> Option<std::process::Output> {
+    crate::backend::output_with_limits(command, Some(Duration::from_secs(60)), 1024 * 1024).ok()
 }

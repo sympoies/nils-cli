@@ -858,24 +858,42 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   a CLI that supplies the binding; timestamps alone no longer admit those reports.
 - Base-sync carry-over: when the provider head H' is not the reviewed head H
   of the owned observation, `check` admits the existing designated PASS only
-  if H' is a commit with exactly two parents, H first and base commit B second;
-  the assigned base and B are both ancestors of the current provider base (a
-  retargeted pull request never carries); `git merge-tree --write-tree`
-  of H and B is conflict-free; and its tree equals H'^{tree}. The check reads
-  local git objects with replacement refs disabled. Anything else,
-  including a conflicted sync, a later commit, a forged tree, a base parent off
-  the target branch, or objects missing locally, keeps the re-review refusal
-  `awaiting_designated_review` with detail `sync_carry_over=<reason>`. Hard
-  stops, open findings, author binding, interval binding, and newest-report
-  ownership still apply; a newer report on H' supersedes the PASS on H. A live
-  `check` appends a `review-sync-carry-over` record (`review_url`,
-  `reviewed_head`, `head`, `base_commit`, `merge_tree`) once and reports it as
-  `sync_carry_over`; `--dry-run` reports it without writing. `inspect` reports
-  the recorded carry-over for the current head. Delivery and merge gates
-  re-verify the carry-over and admit it only when that exact record is in the
-  active interval; otherwise they refuse and point to `check`. Provider-side
-  reviews are never changed. Forge-cli releases before this record kind fail
-  closed when they read a ledger that contains one.
+  if all of these hold:
+  - H' is a commit with exactly two parents, H first and base commit B second.
+  - The provider base branch name equals the `base_ref` that `assign` recorded
+    from the pull request view. A handoff without `base_ref` never carries, so
+    a retarget never carries, even to a branch descending from the assigned
+    base.
+  - The assigned base and B are both ancestors of the current provider base.
+    The base tip and branch name come from one provider read.
+  - `git merge-tree --write-tree` of H and B is conflict-free, and its tree
+    equals H'^{tree}.
+  Every git fact is evaluated in a throwaway bare repository that borrows only
+  the caller's object store. The caller's attributes (including merge drivers
+  in the checkout or `info/attributes`), config, refs, replacement refs and
+  hooks never shape the result.
+  Any other case keeps the re-review refusal `awaiting_designated_review` with
+  detail `sync_carry_over=<reason>`. That includes a conflicted sync, a later
+  commit, a forged tree, a base parent off the target branch, a changed or
+  unrecorded base branch, and objects missing locally. Hard stops, open
+  findings, author binding, interval binding, and newest-report ownership still
+  apply, so a newer report on H' supersedes the PASS on H.
+  A live `check` appends a `review-sync-carry-over` record once (`review_url`,
+  `reviewed_head`, `head`, `base_commit`, `merge_tree`) and reports it as
+  `sync_carry_over`; `--dry-run` reports it without writing. Any session with
+  an active assignment may record it through `check`, including the
+  coordinator. The record is never trusted alone, because every admission
+  recomputes it. Delivery and merge gates re-verify the carry-over and admit
+  it only when that exact record is in the active interval; otherwise they
+  refuse and point to `check`. For a carried merge, the merge payload's
+  `review_loop.head_sha` is the reviewed head H. `inspect` reports the
+  recorded carry-over for the current head as-is, without re-verifying it, and
+  its `status` stays derived from the handoff (for example
+  `review-scope-changed` after the base moved). Provider-side reviews are
+  never changed.
+  Forge-cli releases before this change fail closed when they read a ledger
+  that contains the new record kind or a handoff `base_ref`. The fleet must
+  run this release before the first live carry-over or assignment writes one.
 - `surrender <id> --expected-head <sha> --expected-state <digest>` is a
   reviewer-owned relinquishment at the current assignment generation.
   Ordinary reassignment requires this explicit surrender; inspection alone

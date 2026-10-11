@@ -38,6 +38,7 @@ fn handoff(returned: Option<&str>) -> ReviewHandoff {
         assignment_generation: if returned.is_some() { 2 } else { 1 },
         surrendered: false,
         coordinator_transfer: None,
+        base_ref: None,
     }
 }
 

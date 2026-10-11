@@ -5,11 +5,10 @@
 //! `pr_deliver.rs` module; this one pins the lock-step ordering and
 //! short-circuit behaviour against real subprocess wiring.
 
-use std::collections::BTreeMap;
-use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::{collections::BTreeMap, fs};
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -3057,6 +3056,7 @@ fn restarted_no_merge_delivery_reads_persisted_assignment() {
         assignment_generation: 1,
         surrendered: false,
         coordinator_transfer: None,
+        base_ref: None,
     };
     let record = ReviewStateRecord::new(
         "sympoies/nils-cli",

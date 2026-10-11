@@ -108,7 +108,7 @@ fn sync(conflicting: bool) -> Sync {
 }
 
 fn assigned(base: &str, reviewed: &str) -> Vec<ReviewStateRecord> {
-    scoped(base, reviewed, None)
+    scoped(base, reviewed, Some("main"))
 }
 
 /// An assignment, optionally bound to the provider base branch name.
@@ -459,6 +459,16 @@ fn retarget_to_a_descendant_base_requires_the_recorded_base_ref() {
     .env("PROVIDER_BASE_REF", "release");
     let output = handoff_cmd(&stub, s.repo.path(), false, "check", &s.synced);
     assert_not_carried(&output, &stub, "base-ref-unrecorded");
+
+    let seeded = scoped(&s.base, &s.reviewed, Some("main"));
+    let stub = writable_ledger(
+        fixture(&s.synced, &seeded, vec![review(&s.reviewed, "pass")]),
+        &seeded,
+    )
+    .env("PROVIDER_BASE", &s.main)
+    .env("PROVIDER_BASE_REF", "release");
+    let output = handoff_cmd(&stub, s.repo.path(), false, "check", &s.synced);
+    assert_not_carried(&output, &stub, "base-ref-changed");
 }
 
 #[test]
