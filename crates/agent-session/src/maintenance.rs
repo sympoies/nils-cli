@@ -273,37 +273,22 @@ fn preview_locked(
     operation: MaintenanceOperation,
     contract: MaintenanceContract,
 ) -> Result<PreparedPreview, CliError> {
-    let runtime_stop_fenced = operation == MaintenanceOperation::Delete
-        && crate::orchestration::session_runtime_stop_fenced(context, record)?;
-    let assessment = if runtime_stop_fenced {
-        blocked_assessment(
-            "runtime_stop_fenced",
-            "assignment-bound worker delete is required for this runtime-stopped session",
-            "stopped",
-            "none",
-            0,
-            Vec::new(),
-        )
-    } else {
-        assess(record, tmux_bin, operation)?
-    };
+    let assessment = assess(record, tmux_bin, operation)?;
     // Record-only removal is a last resort: it needs both an evidence class
     // with no safe signal boundary and proof that the exact managed tmux target
     // is gone, so nothing is left that a signal could legitimately reach.
-    let record_only_removable = !runtime_stop_fenced
-        && contract.supports_record_only_removal()
+    let record_only_removable = contract.supports_record_only_removal()
         && operation == MaintenanceOperation::Delete
         && assessment.record_only_candidate
         && exact_tmux_target_is_absent(context, record, tmux_bin);
-    let actions = if runtime_stop_fenced {
-        Vec::new()
-    } else {
-        actions_for(
-            operation,
-            assessment.state == "repairable",
-            record_only_removable,
-        )
-    };
+    let mut actions = actions_for(
+        operation,
+        assessment.state == "repairable",
+        record_only_removable,
+    );
+    if is_retired_external_runtime(record) {
+        actions.retain(|action| !action.destructive);
+    }
     let session_incarnation = record
         .runtime
         .as_ref()
@@ -365,6 +350,18 @@ fn assess(
     tmux_bin: &Path,
     operation: MaintenanceOperation,
 ) -> Result<PreviewAssessment, CliError> {
+    if is_retired_external_runtime(record) {
+        let mut assessment = blocked_assessment(
+            "runtime_identity_unavailable",
+            "the recorded runtime cannot be safely managed by this release",
+            "unknown",
+            "unknown",
+            0,
+            Vec::new(),
+        );
+        assessment.record_only_candidate = false;
+        return Ok(assessment);
+    }
     let status = if recorded_runtime_is_from_prior_boot(record) {
         "stopped".to_string()
     } else {
@@ -768,6 +765,9 @@ fn execute_inner(
     let _record_lock = acquire_maintenance_lock(context, &canonical_id, requested_operation)?;
     let mut record = load_session_record(context, &canonical_id)?;
     ensure_same_session_identity(&observed, &record)?;
+    if request.action.destructive() {
+        ensure_session_deletion_supported(&record)?;
+    }
     let prepared = preview_locked(context, &record, tmux_bin, request.operation, contract)?;
     let prepared_runtime_status = prepared.assessment.runtime_status;
     let preview = &prepared.view;
@@ -792,19 +792,7 @@ fn execute_inner(
         request.action,
         MaintenanceActionId::RetryResume | MaintenanceActionId::TerminateRuntimeThenResume
     ) {
-        crate::orchestration::ensure_session_not_quarantined(context, &record)?;
         resume_guard(&record)?;
-    }
-
-    if matches!(
-        request.action,
-        MaintenanceActionId::RetryDelete
-            | MaintenanceActionId::TerminateRuntimeThenDelete
-            | MaintenanceActionId::RemoveConsoleRecord
-    ) {
-        crate::orchestration::ensure_terminal_assignment_may_delete_runtime_stopped_session(
-            context, &record, None,
-        )?;
     }
 
     if matches!(
@@ -830,30 +818,6 @@ fn execute_inner(
 
     match request.action {
         MaintenanceActionId::RemoveConsoleRecord => {
-            // An external runtime owns no tmux session, so the tmux-only
-            // assessment that admits record-only removal says nothing about
-            // whether its lane is alive. Route the decision through the same
-            // positive-evidence rule ordinary deletion uses, or this becomes a
-            // second, ungated way to destroy a running lane's durable state.
-            if crate::dsh_external::is_external_record(&record) {
-                let incarnation = crate::coordination::incarnation(&record)?;
-                match crate::dsh_external::external_lane_disposition_with_broker(context, &record) {
-                    crate::dsh_external::ExternalLaneDisposition::NeverAttached
-                    | crate::dsh_external::ExternalLaneDisposition::ProvenStopped
-                        if crate::dsh_external::external_lane_terminal_is_proven(
-                            context,
-                            &record,
-                            &incarnation,
-                        ) => {}
-                    _ => {
-                        return Err(CliError::runtime(
-                            "coordination-runtime-unverified",
-                            "external dsh lane liveness is not proven; the dsh-runtime-kit plugin owns this runtime",
-                            Some(json!({ "id": record.id.clone() })),
-                        ));
-                    }
-                }
-            }
             let resolved = resolve_session_record_path(context, &canonical_id)?;
             validate_record_id(&record, &resolved.expected_id, &resolved.record_path)?;
             // Deliberately no signal of any kind. This reuses the same atomic

@@ -67,7 +67,7 @@ Written once when the record is created; it does not change afterwards.
 | `parent` | The session that started this one, or `null` for a root. |
 | `root` | The topmost ancestor. A root names itself. |
 | `depth` | `0` for a root, otherwise the parent's depth plus one; at most 64. |
-| `starter.kind` | `session` (started from inside a managed session), `main-agent` (a Main Agent worker; the `orchestration` projection stays authoritative for roles), `console` (a browser create in Agent Console), or `operator` (a shell or HTTP caller with no managed parent, and every intentional new root). |
+| `starter.kind` | `session` (started from inside a managed session), `console` (a browser create in Agent Console), or `operator` (a shell or HTTP caller with no managed parent, and every intentional new root). |
 | `starter.via` | `cli`, `console` (relayed through Agent Console), or `http` (a direct `POST /sessions`). |
 | `budget` | Reserved for the subtree budget of the admission contract; always `null` in v1. |
 
@@ -76,7 +76,7 @@ closed-session ledger, or run on an unreachable host, so walking the chain at
 read time is unreliable. Readers derive the tree from `parent` edges and group
 by `root`.
 
-A session with `starter.kind` `session` or `main-agent` always has a parent; a
+A session with `starter.kind` `session` always has a parent; a
 `console` or `operator` session never does.
 
 ### Plain CLI start and run
@@ -119,7 +119,7 @@ stores it after validating its shape:
 
 - `schema_version` is optional; when present it must be
   `agent-session.session-lineage.v1`.
-- A `session` or `main-agent` start names `parent` and `root` with `depth`
+- A `session` start names `parent` and `root` with `depth`
   1 to 64. A `console` or `operator` start names neither, with `depth` 0; the
   daemon then makes the session its own root.
 - `machine` is 1 to 64 printable ASCII bytes, `session_id` a valid session id,
@@ -160,13 +160,6 @@ source_incarnation)` and forwards both members in the target daemon's
 `POST /sessions` body. An aggregator that predates this contract drops unknown
 `session` members, so the child is then created as an HTTP operator root and
 the aggregator's own dispatcher mark stays the only parent link.
-
-### Main Agent workers
-
-`main-agent worker start` records the Run owner session as the worker's parent
-with `starter {"kind": "main-agent", "via": "cli"}` and the owner's work
-inherited, for tmux workers and DSH external workers alike. A worker whose owner cannot be recorded (for example a chain already
-64 deep) still starts, without lineage.
 
 ## Adoption
 
@@ -237,11 +230,10 @@ enforce it:
   board relay follows when board records carry lineage.
 - There is no cascade: closing children is a multi-target destructive action
   and stays explicit.
-- Main Agent cleanup and orchestration group archive close their own workers
-  and are not guarded. Neither are the serve maintenance recovery actions
-  (`retry_delete`, `terminate_runtime_then_delete`, `remove_console_record`):
-  they finish a close that already started or remove a record whose runtime
-  cannot be stopped, and refusing them would strand that recovery.
+- Serve maintenance recovery actions (`retry_delete`,
+  `terminate_runtime_then_delete`, `remove_console_record`) finish a close that
+  already started or remove a record whose runtime cannot be stopped; they
+  retain their existing recovery boundary.
 
 ## `work`
 

@@ -82,10 +82,6 @@ Use a trailing slash when declaring a directory subtree. The stored value is
 normalized without the trailing slash; its scope kind preserves the exact or
 prefix distinction.
 
-Main Agent assignment packet `scopes` are different: every entry is a
-`path-prefix` scope, and a trailing slash is optional and normalized away. See
-[Main Agent orchestration](main-agent-orchestration.md).
-
 ## Understand the authority boundaries
 
 Identifiers such as session, incarnation, claim, operation, message, and
@@ -136,19 +132,9 @@ Use `enforce` only when the caller can preserve the full lifecycle:
    use `reconcile` only with the bounded proof required by the v1 contract.
 6. Renew or release the claim using revision compare-and-swap.
 
-A Main Agent worker may project an opaque checkout-local shell command as
-exactly one repository target (`value: "."`) plus exactly one checkout
-binding. `agent-session` admits that shape under a narrow claim only when
-authenticated worker bootstrap minted the claim's private checkout-shell
-grant, the claim names that repository, and its worktree fingerprint matches
-the binding. Generic claims cannot request or observe the grant.
-
-This is checkout-level coordination, not a path sandbox. Declared path scopes
-remain the semantic ownership and review boundary; the manager must reject an
-out-of-scope final diff. Use an OS sandbox or separate security principal when
-a malicious same-user process must be contained. Explicit file edits still
-must fit the path scopes, and retargeting the command to another checkout is
-rejected.
+Opaque checkout-local shell effects require an explicitly covering repository
+scope. A checkout fingerprint does not widen a path claim. Retired mode-specific
+grants are retained as opaque metadata and never authorize admission.
 
 Raw `claim|show|check|renew|release|admit|complete|reconcile` commands are the
 compatibility and enforce surface. They are intentionally more explicit than
