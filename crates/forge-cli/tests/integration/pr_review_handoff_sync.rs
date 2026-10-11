@@ -7,6 +7,7 @@ use std::process::Command;
 
 use forge_cli::ops::pr_review_handoff::ReviewHandoff;
 use forge_cli::ops::review_state::{self, ReviewStatePayload, ReviewStateRecord};
+use forge_cli::ops::review_sync_carry_over::SyncCarryOver;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -107,17 +108,25 @@ fn sync(conflicting: bool) -> Sync {
 }
 
 fn assigned(base: &str, reviewed: &str) -> Vec<ReviewStateRecord> {
-    let handoff = ReviewHandoff {
-        coordinator_digest: review_state::sha256_digest(b"worker-session"),
-        reviewer_digest: review_state::sha256_digest(b"reviewer-session"),
-        review_author: "review-app[bot]".into(),
-        base_sha: base.into(),
-        assigned_head: reviewed.into(),
-        returned_reason: None,
-        assignment_generation: 1,
-        surrendered: false,
-        coordinator_transfer: None,
-    };
+    scoped(base, reviewed, None)
+}
+
+/// An assignment, optionally bound to the provider base branch name.
+fn scoped(base: &str, reviewed: &str, base_ref: Option<&str>) -> Vec<ReviewStateRecord> {
+    let mut handoff = json!({
+        "coordinator_digest": review_state::sha256_digest(b"worker-session"),
+        "reviewer_digest": review_state::sha256_digest(b"reviewer-session"),
+        "review_author": "review-app[bot]",
+        "base_sha": base,
+        "assigned_head": reviewed,
+        "returned_reason": null,
+        "assignment_generation": 1,
+        "surrendered": false,
+    });
+    if let Some(base_ref) = base_ref {
+        handoff["base_ref"] = json!(base_ref);
+    }
+    let handoff: ReviewHandoff = serde_json::from_value(handoff).unwrap();
     let first = ReviewStateRecord::new(
         "acme/widgets",
         7,
@@ -394,4 +403,142 @@ fn newer_blocked_report_on_the_synced_head_supersedes_the_carried_pass() {
     let output = handoff_cmd(&stub, s.repo.path(), false, "check", &s.synced);
     assert_refusal(&output, 65, "awaiting_designated_review");
     assert_eq!(ledger_bodies(&stub).len(), 2);
+}
+
+#[test]
+fn checkout_merge_attributes_cannot_hide_a_sync_conflict() {
+    // A union merge driver from the reviewed tree or the caller's
+    // info/attributes turns a real content conflict into a "clean" sync.
+    for committed in [true, false] {
+        let repo = Repo {
+            dir: TempDir::new().unwrap(),
+        };
+        repo.git(&["init", "-q", "-b", "main"]);
+        let base = repo.commit("shared.txt", "one\ntwo\nthree\n");
+        repo.git(&["checkout", "-q", "-b", "feat"]);
+        let attributes = if committed {
+            repo.path().join(".gitattributes")
+        } else {
+            repo.path().join(".git/info/attributes")
+        };
+        fs::create_dir_all(attributes.parent().unwrap()).unwrap();
+        fs::write(&attributes, "shared.txt merge=union\n").unwrap();
+        if committed {
+            repo.git(&["add", ".gitattributes"]);
+        }
+        let reviewed = repo.commit("shared.txt", "one\nfeature\nthree\n");
+        repo.git(&["checkout", "-q", "main"]);
+        let main = repo.commit("shared.txt", "one\nmain\nthree\n");
+        repo.git(&["checkout", "-q", "feat"]);
+        repo.git(&["merge", "-q", "--no-edit", "main"]);
+        let synced = repo.git(&["rev-parse", "HEAD"]);
+        let s = Sync {
+            repo,
+            base,
+            reviewed,
+            main,
+            synced,
+        };
+        let stub = provider(&s, &s.synced, vec![review(&s.reviewed, "pass")]);
+        let output = handoff_cmd(&stub, s.repo.path(), false, "check", &s.synced);
+        assert_not_carried(&output, &stub, "merge-conflicted");
+    }
+}
+
+#[test]
+fn retarget_to_a_descendant_base_requires_the_recorded_base_ref() {
+    // A retarget to a branch descending from the assigned base keeps every
+    // SHA ancestry fact; only the recorded base branch name exposes it.
+    let s = sync(false);
+    let seeded = scoped(&s.base, &s.reviewed, None);
+    let stub = writable_ledger(
+        fixture(&s.synced, &seeded, vec![review(&s.reviewed, "pass")]),
+        &seeded,
+    )
+    .env("PROVIDER_BASE", &s.main)
+    .env("PROVIDER_BASE_REF", "release");
+    let output = handoff_cmd(&stub, s.repo.path(), false, "check", &s.synced);
+    assert_not_carried(&output, &stub, "base-ref-unrecorded");
+}
+
+#[test]
+fn a_recorded_carry_over_admits_only_when_it_matches_the_recomputation() {
+    let s = sync(false);
+    let mut seeded = assigned(&s.base, &s.reviewed);
+    let forged = SyncCarryOver {
+        review_url: REVIEW_URL.into(),
+        reviewed_head: s.reviewed.clone(),
+        head: s.synced.clone(),
+        base_commit: s.main.clone(),
+        merge_tree: s.repo.tree(&s.reviewed),
+    };
+    seeded.push(
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            &s.synced,
+            2,
+            Some(seeded[1].record_digest.clone()),
+            ReviewStatePayload::ReviewSyncCarryOver { carry_over: forged },
+        )
+        .unwrap()
+        .with_assignment_generation(Some(1))
+        .unwrap(),
+    );
+    let stub = writable_ledger(
+        fixture(&s.synced, &seeded, vec![review(&s.reviewed, "pass")]),
+        &seeded,
+    )
+    .env("PROVIDER_BASE", &s.main);
+    let gate = merge_preview(&stub, s.repo.path());
+    assert_refusal(&gate, 65, "awaiting_designated_review");
+    assert!(
+        gate.stdout.contains("review-handoff check"),
+        "{}",
+        gate.stdout
+    );
+}
+
+#[test]
+fn ledger_rejects_a_carry_over_for_another_head_or_without_an_owner() {
+    let s = sync(false);
+    let seeded = assigned(&s.base, &s.reviewed);
+    let carry_over = SyncCarryOver {
+        review_url: REVIEW_URL.into(),
+        reviewed_head: s.reviewed.clone(),
+        head: s.synced.clone(),
+        base_commit: s.main.clone(),
+        merge_tree: s.repo.tree(&s.synced),
+    };
+    let record = |head: &str, previous: Option<&ReviewStateRecord>, generation| {
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            head,
+            previous.map_or(0, |_| 2),
+            previous.map(|r| r.record_digest.clone()),
+            ReviewStatePayload::ReviewSyncCarryOver {
+                carry_over: carry_over.clone(),
+            },
+        )
+        .unwrap()
+        .with_assignment_generation(generation)
+        .unwrap()
+    };
+    let wrong_head = [
+        seeded.clone(),
+        vec![record(&s.reviewed, seeded.last(), Some(1))],
+    ]
+    .concat();
+    let ownerless = vec![record(&s.synced, None, None)];
+    for chain in [wrong_head, ownerless] {
+        let bodies: Vec<String> = chain
+            .iter()
+            .map(|r| review_state::render_state_comment_body(r, None).unwrap())
+            .collect();
+        assert!(
+            review_state::parse_chain(bodies.iter().map(String::as_str), "acme/widgets", 7)
+                .is_err()
+        );
+    }
 }

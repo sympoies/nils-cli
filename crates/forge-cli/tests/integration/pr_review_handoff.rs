@@ -175,7 +175,10 @@ case "$1 $2" in
 {view}
 JSON
     exit 0 ;;
-  "api repos/acme/widgets/pulls/7") echo "${{PROVIDER_BASE:-{OLD}}}"; exit 0 ;;
+  "api repos/acme/widgets/pulls/7") case "$*" in
+    *base.ref*) echo "${{PROVIDER_BASE:-{OLD}}} ${{PROVIDER_BASE_REF:-main}}" ;;
+    *) echo "${{PROVIDER_BASE:-{OLD}}}" ;;
+    esac; exit 0 ;;
 {native_cases}
   "api graphql")
     case "$*" in
