@@ -12,7 +12,7 @@
 - Explicit treatment: `image-processing` is `required` (user-facing CLI in `README.md`) and must ship clap-first thin completion adapters in
   both shells.
 - Alias policy: alias families are required only for `git-scope` (`gs*`), `git-cli` (`gx*`), `codex-cli` (`cx*`), and `fzf-cli` (`fx*`) per
-  `AGENTS.md`; other binaries have no alias requirement.
+  the Alias Policy in `docs/runbooks/cli-completion-development-standard.md`; other binaries have no alias requirement.
 - Completion quality baseline for every `required` binary: subcommands + long/short flags + declared value candidates.
 - Completion quality baseline for every `required` binary also requires context-aware filtering by cursor position (not global candidate
   dumps).
@@ -23,7 +23,8 @@
 - Completion enforcement metadata is required for every `required` binary and must use:
   `completion_mode=clap-first; completion_mode_toggles=forbidden; alternate_completion_dispatch=forbidden; generated_load_failure=fail-closed`.
 - Completion engine dimension: the enforcement metadata may carry an optional `completion_engine=<static|dynamic>` key. When the key is
-  absent, `static` is assumed — the CLI ships a `clap_complete` `generate()`-baked baseline (the default; every current row is `static`). A
+  absent, `static` is assumed — the CLI ships a `clap_complete` `generate()`-baked baseline. The `agent-memory`, `git-cli`, and `secrets`
+  rows explicitly declare `dynamic`. A
   `dynamic` CLI opts into the `clap_complete` `CompleteEnv` runtime-completion engine (`unstable-dynamic`) and must declare
   `completion_engine=dynamic` explicitly. Dynamic mode extends the clap-first baseline and remains a single completion path per CLI (it is
   not an alternate dispatch): the completion-freshness audit classifies a `dynamic` CLI as a runtime adapter (no static baseline to diff).

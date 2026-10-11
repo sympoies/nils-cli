@@ -7,8 +7,12 @@ gates.
 
 ## Canonical Sources
 
-- Global completion obligations and alias families:
-  - `AGENTS.md`
+- Completion obligations and engine declarations:
+  - `docs/specs/completion-coverage-matrix-v1.md`
+- Alias families and definitions:
+  - the Alias Policy section below
+  - `completions/zsh/aliases.zsh`
+  - `completions/bash/aliases.bash`
 - Local validation and CI coverage policy:
   - `DEVELOPMENT.md`
   - `bash scripts/ci/nils-cli-checks-entrypoint.sh --local-fast`
@@ -173,7 +177,8 @@ the optional `completion_engine=<static|dynamic>` key in its matrix
 enforcement-metadata tuple (absent means `static`):
 
 - `static` (default): the CLI ships a `clap_complete::generate()`-baked baseline
-  committed under `completions/`. Every current CLI is `static`.
+  committed under `completions/`. The coverage matrix records each CLI's
+  engine; `agent-memory`, `git-cli`, and `secrets` declare `dynamic`.
 - `dynamic`: the CLI opts into `clap_complete::env::CompleteEnv` (behind
   `clap_complete`'s `unstable-dynamic` feature) so it can compute candidates at
   TAB time (worktree names, branches, remotes, tags, live paths) that a static
