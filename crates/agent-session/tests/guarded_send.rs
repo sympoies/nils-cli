@@ -447,3 +447,34 @@ fn guarded_send_truncated_capture_is_unobservable() {
         fixture.no_delivery();
     }
 }
+
+#[test]
+fn guarded_send_observed_provider_hook_idle_is_supported() {
+    let fixture = Fixture::new("claude");
+    let path = fixture.root().join("state/sessions/guarded/activity.json");
+    let mut document: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    document["state"]["source"]["confidence"] = json!("observed");
+    fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    let output = fixture.send(&["--require-idle", "--require-empty-composer"]);
+    assert_eq!(output.code, 0, "{}", output.stderr_text());
+    assert_eq!(
+        output.stdout_json()["data"]["submission"]["enter_presses"],
+        1
+    );
+}
+
+#[test]
+fn guarded_send_inferred_or_console_idle_is_unobservable() {
+    for (kind, confidence) in [
+        ("provider_hook", "inferred"),
+        ("console_observation", "observed"),
+    ] {
+        let fixture = Fixture::new("claude");
+        let path = fixture.root().join("state/sessions/guarded/activity.json");
+        let mut document: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        document["state"]["source"] = json!({"kind": kind, "confidence": confidence});
+        fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        fixture.refused(&fixture.send(&["--require-idle"]), "send-idle-unobservable");
+        fixture.no_delivery();
+    }
+}

@@ -178,7 +178,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '--text-stdin[Read the literal text to type from stdin (secret-safe; never echoed)]' \
 '--allow-blocked[Type the literal text even while the agent is waiting on an approval or question. Without this, text is refused so it cannot land in the dialog; special keys are always allowed, so answering a dialog never needs it]' \
-'--require-idle[Require authoritative idle activity and no pending provider event]' \
+'--require-idle[Require provider-reported idle activity and no pending provider event]' \
 '--require-empty-composer[Refuse unless the provider composer is observably empty]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \

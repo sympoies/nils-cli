@@ -22,7 +22,7 @@ pub struct GuardArgs {
     /// Require the persisted provider session id to match before delivery.
     #[arg(long, value_name = "SESSION")]
     pub expect_provider_session: Option<String>,
-    /// Require authoritative idle activity and no pending provider event.
+    /// Require provider-reported idle activity and no pending provider event.
     #[arg(long)]
     pub require_idle: bool,
     /// Refuse unless the provider composer is observably empty.
@@ -240,12 +240,16 @@ impl Admission<'_> {
         let state = activity::state_for_view(self.context, self.record)
             .filter(|state| {
                 state.phase != activity::TurnPhase::Unknown
-                    && state.source.confidence == activity::Confidence::Authoritative
+                    && state.source.kind == activity::SourceKind::ProviderHook
+                    && matches!(
+                        state.source.confidence,
+                        activity::Confidence::Authoritative | activity::Confidence::Observed
+                    )
             })
             .ok_or_else(|| {
                 self.refusal(
                     "send-idle-unobservable",
-                    "authoritative idle activity is unavailable",
+                    "provider-reported idle activity is unavailable",
                     "idle",
                     stage,
                 )

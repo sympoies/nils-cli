@@ -19,9 +19,11 @@ Each option is independent:
   also verify the live terminal's session and runtime environment markers.
 - `--expect-provider-session` matches the persisted provider resume session ID
   for the session's provider. An absent binding cannot match.
-- `--require-idle` requires authoritative `waiting` activity, no current turn,
+- `--require-idle` requires provider-reported `waiting` activity, no current turn,
   and no provider event ingestion queued behind the record lock. Missing,
-  unknown, degraded, or non-authoritative activity fails closed.
+  unknown, degraded, inferred, or console-only activity fails closed. Normal
+  Claude completion hooks use `observed` confidence; both observed and
+  authoritative provider-hook evidence are supported.
 - `--require-empty-composer` requires an observable empty composer. A draft
   is refused without paste or Enter. `--allow-blocked` cannot override guards.
 - `--idempotency-key` accepts 1–256 bytes and claims one delivery attempt for
@@ -95,9 +97,9 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | --- | --- |
 | `send-identity-mismatch` | Expected or live runtime/provider identity differs. |
 | `send-identity-unobservable` | Runtime identity or terminal markers are unavailable. |
-| `send-session-not-idle` | An authoritative phase or current turn is not idle. |
+| `send-session-not-idle` | A provider-reported phase or current turn is not idle. |
 | `send-provider-event-pending` | Provider event ingestion is queued/in progress. |
-| `send-idle-unobservable` | Authoritative activity or ingress status cannot be observed. |
+| `send-idle-unobservable` | Provider-reported activity or ingress status cannot be observed. |
 | `send-composer-not-empty` | A visible draft exists before paste. |
 | `send-composer-unobservable` | The composer cannot be read exactly. |
 | `send-composer-mismatch` | After paste, the composer differs from the submitted text. |
