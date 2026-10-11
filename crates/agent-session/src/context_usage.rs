@@ -324,6 +324,8 @@ const CLAUDE_WINDOWS: &[(&str, Option<u64>, Option<u64>)] = &[
     ("claude-sonnet-5", Some(1_000_000), Some(1_000_000)),
     ("claude-sonnet-5-5", Some(1_000_000), Some(1_000_000)),
     ("claude-haiku-5-5", Some(1_000_000), Some(1_000_000)),
+    ("claude-fable-5", Some(1_000_000), Some(1_000_000)),
+    ("claude-fable-5-1", Some(1_000_000), Some(1_000_000)),
 ];
 
 fn claude_window(model: &str) -> Option<u64> {

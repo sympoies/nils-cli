@@ -229,6 +229,14 @@ fn claude_capacity_table_does_not_guess_ambiguous_variants() {
         ("claude-sonnet-4-5-20250929", None),
         ("claude-opus-4-6[1m]", Some(1000000)),
         ("claude-sonnet-4-5-20250929[1m]", Some(1000000)),
+        ("claude-fable-5", Some(1000000)),
+        ("claude-fable-5-1", Some(1000000)),
+        ("claude-fable-5-20260101", Some(1000000)),
+        ("claude-fable-5-1-20260101", Some(1000000)),
+        ("claude-fable-5[1m]", Some(1000000)),
+        ("claude-fable-5-1[1m]", Some(1000000)),
+        ("claude-fable-5-20260101[1m]", Some(1000000)),
+        ("claude-fable-5-1-20260101[1m]", Some(1000000)),
         ("custom-model[1m]", None),
     ] {
         row["message"]["model"] = serde_json::json!(model);
