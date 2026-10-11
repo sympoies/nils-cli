@@ -268,8 +268,12 @@ reachability is answered by receiving a response at all; the other two are the
 fields above. Collapsing them into one generic offline state is the reporting gap
 recorded in `sympoies/nils-cli#1409`.
 
-- `GET /healthz`, `GET /sessions`, `GET /sessions/{id}/glance?tail=N` — reads, open on loopback. `GET /sessions`
-  additively reports `data.observed_at`, sampled from daemon time after the returned session state is assembled, plus
+- `GET /healthz`, `GET /sessions`, `GET /sessions/{id}/glance?tail=N` — reads, open on loopback.
+  Session objects returned by `GET /sessions` may include optional
+  [`context_usage`](session-context-usage-v1.md) facts;
+  unavailable observations omit the object, and all five members may be null.
+  The session view shared with CLI inspection uses the same projection.
+  `GET /sessions` also reports `data.observed_at`, sampled from daemon time after the returned session state is assembled, plus
   `data.agent_profiles` containing only ready server-owned
   `{ id, label, agent, provider_resume_import_supported, history_resume_supported }` launch-profile
   summaries. `data.capabilities.profile_resume_import` advertises support for

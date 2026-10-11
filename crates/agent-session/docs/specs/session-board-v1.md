@@ -165,6 +165,7 @@ the extension. A session with lineage and work looks like this:
 | Place | `cwd` | string or null | New derivation from `SessionView.cwd`: the daemon user's home prefix is replaced by `~` (for example `~/Project/x`). A `cwd` outside that home is `null`, never an absolute path. |
 | Place | `provider` | string | `SessionView.agent` (for example `codex`, `claude`, `dsh`). |
 | Place | `agent_profile` | string or null | `SessionView.agent_profile`. |
+| Context usage | `context_usage` | optional object | Five allowlisted raw facts from the shared session view; omitted when unavailable. See [session-context-usage-v1](session-context-usage-v1.md). |
 | Model | `model` | string or null | Bounded `SessionView.model`; `null` means unknown. |
 | Model | `reasoning_effort` | string or null | `SessionView.reasoning_effort`; `null` means unknown. |
 | Doing | `title` | string or null | `SessionView.title`. |
@@ -276,6 +277,7 @@ naming the additive capabilities the producer supports:
 | --- | --- |
 | `lineage.v1` | Record `role` and `lineage`; aggregator annotations `orphaned` and `subtree`; the `root` query filter. |
 | `work.v1` | Record `work`. |
+| `context_usage.v1` | Optional record `context_usage`; [raw context facts](session-context-usage-v1.md). |
 | `programs.v1` | The daemon route `GET /board/programs/v1` and the aggregator view `programs` member. Named by the daemon snapshot only. |
 
 A reader feature-detects from this list, never from the presence of a record
@@ -299,7 +301,7 @@ strings, so a deployed reader that requires the exact v1 strings keeps working.
   "schema_version": "agent-session.board.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
-  "extensions": ["lineage.v1", "work.v1", "programs.v1"],
+  "extensions": ["lineage.v1", "work.v1", "programs.v1", "context_usage.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "ledger_cursor": "opaque",
   "records": [],
@@ -461,7 +463,7 @@ result in `data.board_closed`:
   "schema_version": "agent-session.board-closed.v1",
   "record_schema": "agent-session.board-record.v1",
   "machine": "host-a",
-  "extensions": ["lineage.v1", "work.v1"],
+  "extensions": ["lineage.v1", "work.v1", "context_usage.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "entries": [{"cursor": "opaque", "record": {}}],
   "next_cursor": "opaque"
@@ -611,7 +613,7 @@ bearer is HTTP 401 or 403.
 {
   "schema_version": "agent-session.board-view.v1",
   "record_schema": "agent-session.board-record.v1",
-  "extensions": ["lineage.v1", "work.v1"],
+  "extensions": ["lineage.v1", "work.v1", "context_usage.v1"],
   "generated_at": "2030-01-01T00:05:00Z",
   "retention": "3d",
   "effective_since": "2029-12-29T00:05:00Z",

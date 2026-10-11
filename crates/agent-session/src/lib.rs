@@ -1636,6 +1636,8 @@ struct DurableResumeRecord {
 
 #[derive(Debug, Serialize)]
 pub struct SessionView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_usage: Option<context_usage::ContextUsage>,
     #[serde(flatten)]
     model_settings: session_model::ModelSettings,
     pub id: String,
@@ -8012,6 +8014,7 @@ fn session_view_from_parts(
     });
     let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
+        context_usage: context_usage::projection(context, record),
         model_settings: session_model::ModelSettings::for_record(record),
         id: record.id.clone(),
         agent: record.agent.clone(),

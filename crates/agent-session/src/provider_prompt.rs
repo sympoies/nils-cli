@@ -102,6 +102,14 @@ pub struct ProviderPromptSource {
 }
 
 impl ProviderPromptSource {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn validated_path(&self) -> Option<&Path> {
+        source_still_matches(self).then_some(self.path.as_path())
+    }
+
     pub(crate) fn for_history(
         provider: &str,
         session_id: impl Into<String>,
@@ -1246,7 +1254,10 @@ impl From<ParsedPrompt> for LastPrompt {
 fn resolve_provider_prompt_source(record: &SessionRecord) -> Option<ProviderPromptSource> {
     resolve_provider_prompt_source_from_roots(
         record,
-        codex_sessions_root().as_deref(),
+        crate::session_provider_config_dir(record)
+            .map(|dir| dir.join("sessions"))
+            .or_else(codex_sessions_root)
+            .as_deref(),
         claude_projects_root_for_record(record, claude_projects_root()).as_deref(),
     )
 }
