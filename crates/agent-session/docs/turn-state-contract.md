@@ -438,9 +438,9 @@ and an empty `background_tasks` array.
 
 The coordination notification controller applies a narrower input-safety rule:
 an exact-runtime `Stop` may authorize only the fixed body-free mailbox prompt
-after a short debounce with no later provider hook, no pending attention, and no
-attached tmux client. Any later provider event cancels that notification-only
-waiting signal.
+after a short debounce with no later accepted provider hook, no pending attention,
+and no attached tmux client. Any later accepted provider event cancels that
+notification-only waiting signal.
 
 ## Deterministic transition rules
 
@@ -454,8 +454,9 @@ waiting signal.
 | `stop_observed` | increment evidence revision and journal it; never changes to Waiting |
 | admitted server-operator reconciliation | close only the exact stop-observed open provider turn as `operator_reconciled`, enter authoritative `waiting`, and retain typed reconciliation provenance |
 | matching `turn_completed` | close current turn, clear attention, enter `waiting`; authoritative Codex notifications require the exact open turn id |
+| Claude idle after qualifying exact current Stop with a changed prompt ID | close the stopped turn in the same bound runtime and provider conversation only with no newer accepted work, pending attention, or known old-turn ID |
 | matching `turn_failed` | close current turn with failed outcome, clear attention, enter `waiting` |
-| late completion for older turn | retain the newer current phase |
+| unapplied completion for another turn | journal receipt and retain accepted revision, source, phase, Stop diagnostic, and pending completion candidate |
 | duplicate exact-replay `event_id` | no state or revision change within the sliding active-runtime replay window (at least the last 4096 exact events); uncorrelated Claude progress instead uses the short semantic guard |
 | missing/prior runtime id | reject before host timestamp or reducer |
 | corrupt snapshot | expose safe `unknown`; list/serve/delete remain available |
@@ -478,7 +479,24 @@ derived by clients and are never persisted separately.
 A raw Stop also projects `diagnostic.reason:
 completion_evidence_pending` while the turn remains open. The next accepted
 provider event replaces that diagnostic; it does not retroactively treat Stop
-as completion.
+as completion. An unapplied completion is receipt evidence only: it does not
+replace the accepted semantic event, diagnostic, provider event selectors, or
+pending Stop candidate.
+
+Claude's observed `idle_prompt` can carry a new prompt ID after a local
+`/compact` without a new `UserPromptSubmit`. Reconciliation uses the latest
+accepted qualifying Stop candidate for the exact current turn in the same runtime
+and bound provider conversation. An active, background-task, or reentrant Stop
+cannot authorize this exception. It requires working state, no later accepted
+work or attention, no pending attention, and an idle ID absent from both the
+known previous turn and correlated turn metadata in the retained journal unless
+the receipt is explicitly marked `applied: false`. A retained terminal receipt
+without the admission member conservatively denies this exception. Journal
+read uncertainty denies only this changed-ID exception. IDs outside the bounded
+retention window are treated as unseen.
+
+It completes the stopped turn under its original ID and journals the raw idle
+ID separately. No command or conversation content is collected or inferred.
 
 ## Missing authoritative completion reconciliation
 
@@ -543,7 +561,13 @@ validates both the active launch id and runtime generation, records one pending
 journal entry in the atomic snapshot, updates the fixed replay index when the
 event requires exact replay protection, appends the bounded journal
 idempotently, and clears the pending marker. A later event or runtime transition
-repairs an interrupted split write before reduction. The replay index is
+repairs an interrupted split write before reduction. New journal entries record
+the optional `applied` boolean; `false` receipts never authorize recovery retries.
+Entries without this member require matching accepted terminal state,
+selectors, source, and timestamps before retrying recovery. Duplicate recovery
+requires retained admission evidence even when the longer replay index still
+deduplicates the receipt. Unapplied late receipts do not become known accepted
+turn history. The replay index is
 separate from the shorter journal retention, gives expected O(1) duplicate
 checks without growing the JSON snapshot, and is a sliding window: the exact
 event with zero-based index `i` in a runtime generation (the snapshot's

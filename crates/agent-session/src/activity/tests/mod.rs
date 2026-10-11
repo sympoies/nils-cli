@@ -556,6 +556,7 @@ fn operator_receipt_ttl_boundary_and_pending_journal_replay_are_exact_and_read_o
     document.pending_journal = Some(JournalEntry {
         received_at: "2030-01-01T00:00:00Z".to_string(),
         event: event(TurnEventKind::StopObserved, "pending-after-reconciliation"),
+        applied: None,
     });
     write_document(&path, &mut document).expect("pending activity");
     let pending_bytes = fs::read(&path).expect("pending bytes");
@@ -1176,7 +1177,8 @@ fn test_session(tmp: &tempfile::TempDir) -> (CliContext, crate::CreatedRecord) {
     test_session_for_agent(tmp, AgentKind::Codex)
 }
 
+mod claude_completion;
+mod completion_review;
 mod provider_hooks;
 mod replay_journal;
-
-mod claude_completion;
+mod turn_completion;

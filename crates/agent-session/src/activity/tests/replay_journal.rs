@@ -477,6 +477,7 @@ fn a_stale_or_missing_table_one_before_its_boundary_reset_keeps_the_view_valid()
         snapshot.pending_journal = Some(JournalEntry {
             received_at: "2026-07-10T00:00:00Z".to_string(),
             event: exact(MAX_DEDUPE_EVENTS),
+            applied: None,
         });
         write_document(&path, &mut snapshot).expect("pending boundary snapshot");
         assert_ne!(
