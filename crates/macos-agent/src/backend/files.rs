@@ -1,3 +1,5 @@
+use std::io;
+
 use super::*;
 
 pub(super) fn run_tool(program: &Path, args: &[&str]) -> Result<process::ProcessOutput, CliError> {

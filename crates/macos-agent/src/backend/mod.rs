@@ -1,12 +1,11 @@
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
-use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use nils_common::fs::{SECRET_FILE_MODE, sha256_file, write_atomic};
+use nils_common::fs::{SECRET_FILE_MODE, sha256_file};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -21,6 +20,7 @@ use crate::test_mode;
 pub(crate) mod app;
 mod archive;
 mod files;
+mod receipts;
 use archive::{
     ArchiveKind, download_asset, extract_archive, validate_archive_listing, validate_symlink_tree,
     verify_app_metadata, verify_architectures, verify_archive_digest, verify_signature,
@@ -35,6 +35,7 @@ use files::production_tool_path;
 use files::{
     copy_file, copy_tree, create_private_dir, hash_file, reject_symlink_components, run_tool,
 };
+use receipts::{read_receipt, write_receipt};
 
 const RECEIPT_SCHEMA: &str = "macos-agent.backend-receipt.v1";
 const LIFECYCLE_LOCK_FILE: &str = ".backend-lifecycle.lock";
@@ -1058,14 +1059,21 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
         }
         let pending = read_receipt(&paths.pending_receipt())?
             .ok_or_else(|| backend_error("pending backend activation receipt is unavailable"))?;
+        // A rollback stages the previous receipt as pending; an install stages a new one.
+        let pending_rollback = read_receipt(&paths.previous_receipt())?.is_some_and(|previous| {
+            previous.tag == pending.tag && previous.commit == pending.commit
+        });
         recover_pending(&paths, &lock, strict)?;
-        if read_receipt(&paths.current_receipt())?
-            .is_some_and(|current| current.tag == pending.tag && current.commit == pending.commit)
+        if pending_rollback
+            && read_receipt(&paths.current_receipt())?.is_some_and(|current| {
+                current.tag == pending.tag && current.commit == pending.commit
+            })
         {
             // A recovered committed rollback must not be reversed by another one.
             return status_unlocked(&lock, &paths, false, strict);
         }
-        // Recovery abandoned a pre-replacement attempt; perform the requested rollback.
+        // Recovery abandoned a pre-replacement attempt or completed an interrupted
+        // install; perform the requested rollback.
     }
     let current = read_receipt(&paths.current_receipt())?
         .ok_or_else(|| backend_error("no current backend receipt exists"))?;
@@ -1897,46 +1905,6 @@ fn obsolete_runtime_contracts(lock: &PeekabooLock, receipt: &Receipt) -> Vec<Run
                 .then(|| RuntimeContract::new(key.0, key.1))
         })
         .collect()
-}
-
-fn read_receipt(path: &Path) -> Result<Option<Receipt>, CliError> {
-    let raw = match fs::read(path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err(backend_error("failed to read a backend receipt")),
-    };
-    let receipt = serde_json::from_slice::<Receipt>(&raw)
-        .map_err(|_| backend_error("backend receipt is malformed"))?;
-    if receipt.schema_version != RECEIPT_SCHEMA
-        || !safe_tag(&receipt.tag)
-        || !receipt_digests_are_valid(&receipt)
-    {
-        return Err(backend_error("backend receipt is unsupported or unsafe"));
-    }
-    Ok(Some(receipt))
-}
-
-fn receipt_digests_are_valid(receipt: &Receipt) -> bool {
-    [
-        &receipt.cli_archive_sha256,
-        &receipt.app_archive_sha256,
-        &receipt.cli_binary_sha256,
-        &receipt.app_binary_sha256,
-    ]
-    .into_iter()
-    .all(|digest| {
-        digest.len() == 64
-            && digest
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    })
-}
-
-fn write_receipt(path: &Path, receipt: &Receipt) -> Result<(), CliError> {
-    let body = serde_json::to_vec_pretty(receipt)
-        .map_err(|_| backend_error("failed to encode backend receipt"))?;
-    write_atomic(path, &body, SECRET_FILE_MODE)
-        .map_err(|_| backend_error("failed to atomically write backend receipt"))
 }
 
 fn safe_tag(tag: &str) -> bool {
