@@ -81,8 +81,11 @@ use activity_stream::activity_notify_event_relevant;
 mod activity_stream;
 #[path = "serve_claude_completion.rs"]
 mod claude_completion;
+#[path = "serve_create_body.rs"]
+mod create_body;
 #[path = "serve_prompt_scan.rs"]
 mod prompt_scan;
+use create_body::CreateBody;
 #[path = "serve_shell.rs"]
 mod shell;
 
@@ -3375,40 +3378,6 @@ struct MaintenanceQuery {
     schema_version: maintenance::MaintenanceContract,
 }
 
-#[derive(Debug, Deserialize)]
-struct CreateBody {
-    agent: String,
-    #[serde(default)]
-    title_mode: crate::display_metadata::TitleMode,
-    #[serde(default)]
-    coordination_mode: cli::CoordinationMode,
-    agent_profile: Option<String>,
-    cwd: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_create_title")]
-    title: CreateTitleInput,
-    title_state: Option<SessionTitleStateInput>,
-    id: Option<String>,
-    prompt: Option<String>,
-    #[serde(default, alias = "resume_id")]
-    provider_resume_id: Option<String>,
-    #[serde(default)]
-    agent_args: Vec<String>,
-    #[serde(default)]
-    codex_account: Option<String>,
-    #[serde(default)]
-    claude_account: Option<String>,
-    /// `session-lineage-work-v1`: who started this session, as the caller
-    /// (Agent Console) states it. Absent: an operator root over HTTP.
-    #[serde(default)]
-    lineage: Option<Value>,
-    /// `session-lineage-work-v1`: resolved program and issue references.
-    #[serde(default)]
-    work: Option<Value>,
-    /// `session-lineage-work-v1`: configured launch role, stored verbatim.
-    #[serde(default)]
-    role: Option<Value>,
-}
-
 /// The lineage and work a create body states, validated for a session on
 /// `machine`. Without `lineage` the session is an operator root over HTTP.
 fn create_body_lineage(
@@ -5527,6 +5496,7 @@ async fn history_resume_handler_inner(
                 start_provider_resume_session(
                     &context,
                     ProviderResumeImportArgs {
+                        launch_env: crate::launch_env::LaunchEnv::new(),
                         title_mode: restored.title_mode,
                         agent,
                         provider_resume_id: history.provider_session_id,
@@ -6611,6 +6581,9 @@ async fn create_handler(
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
+    if let Err(error) = crate::launch_env::validate(&body.launch_env) {
+        return envelope_err(error);
+    }
     let operation = if body.provider_resume_id.is_some() {
         "import"
     } else {
@@ -6745,6 +6718,7 @@ async fn create_handler_inner(
             ));
         }
         let args = ProviderResumeImportArgs {
+            launch_env: body.launch_env,
             title_mode: body.title_mode,
             agent,
             provider_resume_id,
@@ -6873,6 +6847,11 @@ async fn create_handler_inner(
             .map(|profile| profile.agent_bin.clone()),
         agent_args: body.agent_args,
         coordination_mode: body.coordination_mode,
+        launch_env: body
+            .launch_env
+            .into_iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect(),
         paste_delay_ms: initial_prompt_paste_delay_ms(agent),
         via_console: false,
         machine: None,
@@ -25308,83 +25287,6 @@ esac
     }
 
     #[tokio::test]
-    async fn codex_account_switch_routes_the_nickname_to_the_exact_runtime_control() {
-        let lock = GlobalStateLock::new();
-        let tmp = tempfile::TempDir::new().unwrap();
-        let _broker = codex_listing_broker(&lock, tmp.path(), &["acct1", "omega"]);
-        let launch_id = seed_codex_app_server_session(tmp.path(), "account-switch");
-        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
-        let record = load_session_record(&st.context, "account-switch").unwrap();
-        crate::activity::activate_runtime(&st.context, &record).unwrap();
-        for (event_id, kind) in [
-            ("turn-start", "turn_started"),
-            ("turn-done", "turn_completed"),
-        ] {
-            let event = serde_json::from_value(json!({
-                "schema_version": crate::activity::TURN_EVENT_VERSION,
-                "event_id": event_id,
-                "runtime_id": launch_id,
-                "provider": "codex",
-                "provider_turn_id": "turn-account-switch",
-                "kind": kind,
-                "confidence": "authoritative"
-            }))
-            .unwrap();
-            crate::activity::ingest_event(&st.context, &record.id, event).unwrap();
-        }
-        let (handle, mut commands) = codex_app_server::control_channel();
-        st.codex_controls.lock().unwrap().insert(
-            record.id.clone(),
-            CodexControlEntry {
-                launch_id: launch_id.clone(),
-                handle,
-            },
-        );
-        let responder_launch_id = launch_id.clone();
-        let responder = tokio::spawn(async move {
-            let Some(codex_app_server::ControlCommand::BindAccount {
-                account,
-                revision,
-                response,
-            }) = commands.recv().await
-            else {
-                panic!("account switch did not reach the Codex control plane");
-            };
-            assert_eq!(account, "acct1");
-            assert_eq!(revision, 1);
-            response
-                .send(Ok(crate::codex_account::CodexAccountView {
-                    schema_version: crate::codex_account::VIEW_SCHEMA_VERSION,
-                    supported: true,
-                    state: "bound",
-                    selected_account: Some(account.clone()),
-                    effective_account: Some(account),
-                    selection_source: Some("explicit".to_string()),
-                    revision: 1,
-                    applied_runtime_id: Some(responder_launch_id),
-                    failure_reason: None,
-                    next: None,
-                }))
-                .unwrap();
-        });
-
-        let (status, body) = call(
-            router(st),
-            put_json(
-                "/sessions/account-switch/account",
-                Some(TOKEN),
-                json!({ "account": "acct1", "expected_session_incarnation": launch_id }),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "body={body}");
-        assert_eq!(body["data"]["codex_account"]["state"], "bound");
-        assert_eq!(body["data"]["codex_account"]["selected_account"], "acct1");
-        assert_eq!(body["data"]["codex_account"]["revision"], 1);
-        responder.await.unwrap();
-    }
-
-    #[tokio::test]
     async fn codex_account_switch_queues_during_a_working_turn_without_control_dispatch() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::TempDir::new().unwrap();
@@ -29771,11 +29673,22 @@ esac
     #[tokio::test]
     async fn claude_account_switch_on_a_stopped_session_applies_at_the_next_resume() {
         let lock = GlobalStateLock::new();
+        let _policy = EnvGuard::remove(&lock, crate::launch_env::ALLOWLIST_ENV);
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("repo");
         fs::create_dir_all(&cwd).unwrap();
         let broker = claude_broker_fixture(&lock, tmp.path());
         seed_bound_claude_session(tmp.path(), "claude-switch", &cwd, "alpha");
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let mut record = load_session_record(&context, "claude-switch").unwrap();
+        record.extra.insert(
+            "launch_env".into(),
+            json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"}),
+        );
+        crate::write_session_record(&context, &record).unwrap();
         let log = tmp.path().join("tmux.log");
         let st = state(tmp.path(), Some(TOKEN), resume_tmux(tmp.path(), &log));
 
@@ -29806,12 +29719,17 @@ esac
         )
         .await;
         assert_eq!(status, StatusCode::OK, "body={body}");
+        assert_eq!(
+            body["data"]["session"]["launch_env"],
+            json!({"AGENT_RUNTIME_SUPPRESS_MEMORY":"1"})
+        );
         let account = &body["data"]["session"]["claude_account"];
         assert_eq!(account["selected_account"], "beta");
         assert_eq!(account["selection_source"], "explicit");
         assert_eq!(account["revision"], 2);
         assert!(account.get("next").is_none(), "{account}");
         let calls = fs::read_to_string(&log).unwrap();
+        assert!(calls.contains("-e AGENT_RUNTIME_SUPPRESS_MEMORY=1"));
         assert!(
             calls.contains(&format!(
                 "CLAUDE_CONFIG_DIR={}",
@@ -38459,4 +38377,7 @@ esac
         });
         record
     }
+
+    #[path = "launch_env.rs"]
+    mod launch_env_tests;
 }
