@@ -164,7 +164,19 @@ fn claude_idle_after_stop_reconciles_changed_prompt_without_new_start() {
     let tmp = tempfile::TempDir::new().unwrap();
     let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
     activate_runtime(&context, &created.record).unwrap();
-    let stopped = stopped_turn(&context, &created.record, "A");
+    stopped_turn(&context, &created.record, "A");
+    let mut stop = event(TurnEventKind::StopObserved, "qualifying-stop");
+    stop.runtime_id = created.record.runtime.as_ref().unwrap().launch_id.clone();
+    stop.provider = "claude".to_string();
+    stop.provider_turn_id = Some("A".to_string());
+    stop.completion_candidate = true;
+    let stopped = ingest_event(&context, &created.record.id, stop)
+        .unwrap()
+        .turn_state;
+    let path = session_dir(&context, &created.record.id).join(ACTIVITY_FILE);
+    let mut document = read_document(&path).unwrap();
+    document.pending_completion.as_mut().unwrap().received_at = "2099-01-01T00:00:00Z".to_string();
+    write_document(&path, &mut document).unwrap();
     let projected_a = stopped
         .current_turn
         .as_ref()
