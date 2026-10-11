@@ -1728,6 +1728,25 @@ fn run_session_activity(
             return Err(error);
         }
     }
+    if let Some(receipt) = crate::adapter::project_conversation_clear_hook(request, raw) {
+        crate::conversation_receipt::retain(&session_id, &runtime_id, &receipt)?;
+        let helper = resolve_activity_helper()?;
+        let mut command = Command::new(helper);
+        command
+            .args(["activity", "hook", "--agent", "claude"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // A bounded private receipt is required for in-place clear read-back.
+        // The helper never receives prompt text, paths, or the full hook input.
+        let output = run_bounded(command, &receipt, Duration::from_secs(2), 0, false)?;
+        if !output.status.success() {
+            return Err(HookError::runtime(
+                "conversation-receipt-persistence-failed",
+                "native clear binding needs agent-session rebind",
+            ));
+        }
+    }
     if let Some(metadata) = crate::adapter::project_session_model_hook(request, raw, &runtime_id)
         && let Ok(helper) = resolve_activity_helper()
     {

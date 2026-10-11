@@ -78,6 +78,7 @@ const MANUAL_INPUT_GATE_TIMEOUT: Duration = Duration::from_secs(12);
 const MANUAL_INPUT_ACK_TIMEOUT: Duration = Duration::from_millis(250);
 const PROXY_CAPABILITY_FILE: &str = ".codex-app-server-proxy-capability";
 const PROXY_CAPABILITY_VERSION: &str = "agent-session.codex-manual-input-proxy.v1";
+const CONVERSATION_CAPABILITY: &str = "agent-session.codex-conversation-rebind.v1";
 const PROXY_CAPABILITY_TTL: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 const PROXY_CAPABILITY_READY_TIMEOUT: Duration = Duration::from_secs(2);
 const SYSTEM_EPHEMERAL_THREADS_FILE: &str = ".codex-app-server-system-ephemeral-threads.json";
@@ -827,6 +828,8 @@ struct RuntimeProcessMarker {
     token: String,
     owner_pid: u32,
     expires_at_epoch_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conversation_capability: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1010,6 +1013,8 @@ fn write_runtime_process_marker(
         token: token.clone(),
         owner_pid: std::process::id(),
         expires_at_epoch_ms: now.saturating_add(ttl_ms),
+        conversation_capability: (schema_version == PROXY_CAPABILITY_VERSION)
+            .then(|| CONVERSATION_CAPABILITY.to_string()),
     };
     let bytes = serde_json::to_vec(&marker).map_err(|err| {
         CliError::runtime(
@@ -1079,34 +1084,44 @@ pub(crate) fn ensure_manual_input_capability(
     ))
 }
 
-fn live_proxy_capability(context: &CliContext, record: &SessionRecord) -> bool {
+fn live_proxy_marker(context: &CliContext, record: &SessionRecord) -> Option<RuntimeProcessMarker> {
     let path = proxy_capability_path(context, record);
     let Ok(mut file) = fs::File::open(&path) else {
-        return false;
+        return None;
     };
     let (Ok(own), Ok(current)) = (file.metadata(), fs::metadata(&path)) else {
-        return false;
+        return None;
     };
     if own.dev() != current.dev() || own.ino() != current.ino() {
-        return false;
+        return None;
     }
     // A live proxy holds a shared lock for its complete advertised lifetime.
     // Acquiring an exclusive lock therefore identifies an unlocked stale file.
     // SAFETY: `flock` observes the valid descriptor borrowed for this call.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
         unlock_bootstrap_file(&file);
-        return false;
+        return None;
     }
     if std::io::Error::last_os_error().kind() != std::io::ErrorKind::WouldBlock {
-        return false;
+        return None;
     }
-    read_runtime_process_marker_file(&mut file).is_some_and(|marker| {
+    read_runtime_process_marker_file(&mut file).filter(|marker| {
         valid_runtime_process_marker(
-            &marker,
+            marker,
             record,
             PROXY_CAPABILITY_VERSION,
             PROXY_CAPABILITY_TTL,
         )
+    })
+}
+
+fn live_proxy_capability(context: &CliContext, record: &SessionRecord) -> bool {
+    live_proxy_marker(context, record).is_some()
+}
+
+pub(crate) fn live_conversation_capability(context: &CliContext, record: &SessionRecord) -> bool {
+    live_proxy_marker(context, record).is_some_and(|marker| {
+        marker.conversation_capability.as_deref() == Some(CONVERSATION_CAPABILITY)
     })
 }
 
@@ -1362,6 +1377,11 @@ fn acquire_turn_start_gate(
         });
     }
     if !manual_input_request_matches_bound_thread(context, record, value) {
+        // Keep the rejected TUI's candidate for explicit, provider-verified
+        // recovery. This does not change the binding or admit the failed turn.
+        if let Some(thread_id) = value.pointer("/params/threadId").and_then(Value::as_str) {
+            let _ = crate::conversation::retain_observation(context, record, thread_id);
+        }
         return Err(TuiMutationRejection::ManualMarkerThreadMismatch);
     }
     let own = owner_file
@@ -1663,6 +1683,7 @@ pub(crate) fn cleanup_runtime_files(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StructuredFailureKind {
+    Authentication,
     UsageExhausted,
     ProviderCapacity,
 }
@@ -1670,15 +1691,34 @@ pub(crate) enum StructuredFailureKind {
 impl StructuredFailureKind {
     pub(crate) fn activity_reason(self) -> &'static str {
         match self {
+            Self::Authentication => "authentication",
             Self::UsageExhausted => "usage_exhausted",
             Self::ProviderCapacity => "provider_capacity",
         }
     }
 
-    fn from_codex_error_info(value: &str) -> Option<Self> {
-        match value {
-            "usageLimitExceeded" => Some(Self::UsageExhausted),
-            "serverOverloaded" => Some(Self::ProviderCapacity),
+    fn from_codex_error_info(value: &Value) -> Option<Self> {
+        match value.as_str() {
+            Some("usageLimitExceeded") => Some(Self::UsageExhausted),
+            Some("serverOverloaded") => Some(Self::ProviderCapacity),
+            Some("unauthorized") => Some(Self::Authentication),
+            _ if [
+                "httpConnectionFailed",
+                "responseStreamConnectionFailed",
+                "responseStreamDisconnected",
+                "responseTooManyFailedAttempts",
+            ]
+            .iter()
+            .any(|variant| {
+                value
+                    .get(variant)
+                    .and_then(|info| info.get("httpStatusCode"))
+                    .and_then(Value::as_u64)
+                    == Some(401)
+            }) =>
+            {
+                Some(Self::Authentication)
+            }
             _ => None,
         }
     }
@@ -1718,19 +1758,28 @@ impl FailureReducer {
         match message.get("method").and_then(Value::as_str) {
             Some("error") => {
                 let params = message.get("params")?;
-                if params.get("threadId").and_then(Value::as_str) != Some(self.thread_id.as_str())
-                    || params.get("willRetry").and_then(Value::as_bool) != Some(false)
-                {
+                if params.get("threadId").and_then(Value::as_str) != Some(self.thread_id.as_str()) {
                     return None;
                 }
                 let kind = params
                     .pointer("/error/codexErrorInfo")
-                    .and_then(Value::as_str)
                     .and_then(StructuredFailureKind::from_codex_error_info)?;
                 let turn_id = params
                     .get("turnId")
                     .and_then(Value::as_str)
                     .filter(|turn_id| protocol_id_is_valid(turn_id))?;
+                if kind == StructuredFailureKind::Authentication
+                    && !self.completed_turns.contains(turn_id)
+                {
+                    return Some(StructuredFailure {
+                        thread_id: self.thread_id.clone(),
+                        turn_id: turn_id.into(),
+                        kind,
+                    });
+                }
+                if params.get("willRetry").and_then(Value::as_bool) != Some(false) {
+                    return None;
+                }
                 if !self.completed_turns.contains(turn_id) {
                     insert_bounded_failure(
                         &mut self.pending_turns,
@@ -1754,7 +1803,6 @@ impl FailureReducer {
                     .filter(|turn_id| protocol_id_is_valid(turn_id))?;
                 let embedded_kind = params
                     .pointer("/turn/error/codexErrorInfo")
-                    .and_then(Value::as_str)
                     .and_then(StructuredFailureKind::from_codex_error_info);
                 let matched_kind = remove_bounded_failure(
                     &mut self.pending_turns,
@@ -2677,7 +2725,7 @@ pub(crate) async fn run_control(
     }
 
     let mut discovery_attempts = 0_u8;
-    let thread_id = loop {
+    let mut thread_id = loop {
         request_id = request_id.saturating_add(1);
         send_json(&mut websocket, loaded_threads_request(request_id)).await?;
         let result = receive_response_with_timeout(
@@ -2764,6 +2812,13 @@ pub(crate) async fn run_control(
         tokio::select! {
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(()); };
+                let current = crate::load_session_record(&context, &record.id).map_err(|err| format!("conversation binding read failed: {}", err.code()))?;
+                crate::ensure_same_session_identity(&record, &current).map_err(|_| "conversation runtime changed".to_string())?;
+                if let Some(resume) = current.provider_resume.as_ref() && resume.session_id != thread_id {
+                    thread_id = resume.session_id.clone();
+                    reducer = FailureReducer::new(thread_id.clone());
+                    thread_resumed = true;
+                }
                 match command {
                     ControlCommand::Usage(response) => {
                         if let Err(error) = control_account_ready(
@@ -3103,6 +3158,15 @@ pub(crate) async fn run_control(
                 {
                     continue;
                 }
+                if value.pointer("/params/threadId").and_then(Value::as_str).is_some_and(|id| id != thread_id) {
+                    let current = crate::load_session_record(&context, &record.id).map_err(|err| format!("conversation binding read failed: {}", err.code()))?;
+                    crate::ensure_same_session_identity(&record, &current).map_err(|_| "conversation runtime changed".to_string())?;
+                    if let Some(resume) = current.provider_resume.as_ref() && resume.session_id != thread_id {
+                        thread_id = resume.session_id.clone();
+                        reducer = FailureReducer::new(thread_id.clone());
+                        thread_resumed = true;
+                    }
+                }
                 process_live_message(&context, &record, &mut reducer, None, &value).await?;
             }
         }
@@ -3121,6 +3185,71 @@ fn bind_thread(record: &SessionRecord, thread_id: &str) -> Result<(), String> {
     }
     write_private_file(attached, projected_thread_binding(thread_id).as_bytes())
         .map_err(|err| format!("Codex thread binding failed: {}", err.code()))
+}
+
+pub(crate) fn replace_thread_binding(
+    record: &SessionRecord,
+    thread_id: &str,
+) -> Result<(), CliError> {
+    let path = thread_attached_path(record).ok_or_else(|| {
+        CliError::data(
+            "conversation-binding-missing",
+            "Codex attached binding is missing",
+            None,
+        )
+    })?;
+    write_private_file(path, projected_thread_binding(thread_id).as_bytes())
+}
+
+/// Resolve only an unambiguous loaded primary conversation and require the
+/// provider's own idle status. Never infer the active thread from history order.
+pub(crate) fn probe_idle_conversation(
+    context: &CliContext,
+    record: &SessionRecord,
+    candidate: Option<&str>,
+) -> Result<String, CliError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| {
+            CliError::runtime(
+                "conversation-probe-unavailable",
+                "provider probe runtime is unavailable",
+                None,
+            )
+        })?;
+    runtime.block_on(async {
+        let socket = socket_path(record).ok_or_else(|| "managed Codex app-server is unavailable".to_string())?;
+        let stream = connect_socket(Path::new(socket)).await?;
+        let (mut websocket, _) = tokio::time::timeout(CONTROL_RESPONSE_TIMEOUT, tokio_tungstenite::client_async("ws://localhost", stream))
+            .await.map_err(|_| "provider handshake timed out".to_string())?
+            .map_err(|_| "provider handshake failed".to_string())?;
+        send_json(&mut websocket, initialize_request(1)).await?;
+        receive_response_with_timeout(&mut websocket, 1, None, None, CONTROL_RESPONSE_TIMEOUT).await?;
+        send_json(&mut websocket, initialized_notification()).await?;
+        send_json(&mut websocket, loaded_threads_request(2)).await?;
+        let result = receive_response_with_timeout(&mut websocket, 2, None, None, CONTROL_RESPONSE_TIMEOUT).await?;
+        if result.get("nextCursor").is_some_and(|cursor| !cursor.is_null()) {
+            return Err("loaded conversation identities are incomplete".to_string());
+        }
+        let ids = loaded_thread_ids(&result).ok_or_else(|| "loaded conversation identities were invalid".to_string())?;
+        let mut primary = Vec::new();
+        for id in ids {
+            if !system_ephemeral_raw_session_is_registered(context, record, &id).map_err(|_| "auxiliary identity classification failed".to_string())? { primary.push(id); }
+        }
+        let thread_id = match candidate {
+            Some(id) if primary.iter().any(|value| value == id) => id.to_string(),
+            None if primary.len() == 1 => primary.remove(0),
+            _ => return Err("live primary conversation cannot be identified unambiguously".to_string()),
+        };
+        send_json(&mut websocket, json!({"id":3,"method":"thread/read","params":{"threadId":thread_id,"includeTurns":false}})).await?;
+        let result = receive_response_with_timeout(&mut websocket, 3, None, None, CONTROL_RESPONSE_TIMEOUT).await?;
+        if result.pointer("/thread/id").and_then(Value::as_str) != Some(thread_id.as_str())
+            || result.pointer("/thread/status/type").and_then(Value::as_str) != Some("idle") {
+            return Err("live provider conversation is not verified idle".to_string());
+        }
+        Ok(thread_id)
+    }).map_err(|_| CliError::runtime("conversation-live-identity-unverified", "live Codex conversation is busy, ambiguous, or unavailable; no binding was changed", Some(json!({"id":record.id}))))
 }
 
 async fn bind_thread_and_persist_resume(
@@ -3573,7 +3702,8 @@ impl ProxyObserver {
             system_ephemeral,
         ) {
             (Some(thread_id), Some(persisted_thread), false) if thread_id == persisted_thread => {
-                self.bind_persisted(thread_id)?;
+                self.reducer = Some(FailureReducer::new(thread_id));
+                self.pending_attention_requests.clear();
                 self.queue_model_settings(context, record, thread_id, &value["result"]);
             }
             (Some(thread_id), None, true) => {
@@ -3607,7 +3737,13 @@ impl ProxyObserver {
                     thread_id,
                 );
             }
-            (Some(thread_id), None, false) => self.bind(record, thread_id)?,
+            (Some(thread_id), None, false) => {
+                if self.reducer.is_none() {
+                    self.bind(record, thread_id)?;
+                }
+                self.reducer = Some(FailureReducer::new(thread_id));
+                self.pending_attention_requests.clear();
+            }
             (None, None, false) => {}
             _ => {
                 return Err("Codex persisted thread binding did not match the response".to_string());
@@ -3926,12 +4062,26 @@ impl ProxyProjection {
                     });
                     return Ok(());
                 };
-                if !self.requires_thread_binding {
-                    self.enqueue(ProxyObservation::Server {
-                        value,
-                        persisted_thread: None,
-                        binding_ack: None,
-                    });
+                // A resumed TUI starts with thread/resume rather than
+                // thread/start. Its binding can be published after this
+                // projection was constructed; do not mistake a later /new
+                // for the initial bind and reject the resumed thread marker.
+                if !self.requires_thread_binding
+                    || (self.record.provider_resume.is_some()
+                        && thread_attached_path(&self.record).is_some_and(Path::is_file))
+                {
+                    let context = self.context.clone();
+                    let record = self.record.clone();
+                    let thread_id = persisted_thread.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::conversation::observe_native(&context, &record, &thread_id)
+                    })
+                    .await
+                    .map_err(|_| "conversation rebind worker failed".to_string())?
+                    .map_err(|err| format!("conversation rebind failed: {}", err.code()))?;
+                    self.enqueue_acknowledged_server(value, Some(persisted_thread))
+                        .await?;
+                    self.requires_thread_binding = false;
                     return Ok(());
                 }
                 if let Err(error) = self
@@ -4810,6 +4960,16 @@ async fn run_proxy_session(
     .map_err(|err| format!("upstream app-server handshake failed: {err}"))?;
     let _capability = begin_proxy_capability(&context, &record)
         .map_err(|err| format!("failed to advertise proxy capability: {}", err.code()))?;
+    // A resumed TUI uses thread/resume, so it has no initial thread/start
+    // response to publish the manual-input binding. Seed only the exact
+    // durable resume identity before accepting its first turn request.
+    if let Some(resume) = record.provider_resume.as_ref() {
+        if resume.provider != AgentKind::Codex.as_str() || !protocol_id_is_valid(&resume.session_id)
+        {
+            return Err("resumed provider identity was invalid".to_string());
+        }
+        bind_thread(&record, &resume.session_id)?;
+    }
     let _ = crate::write_private_file(
         &crate::session_dir(&context, &record.id).join(crate::STARTUP_STAGE_FILE),
         b"initial_connection\n",
@@ -5065,6 +5225,42 @@ async fn respond_to_external_auth_refresh<S>(
 where
     S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
+    let result = respond_to_external_auth_refresh_inner(websocket, value, external_auth).await;
+    if value.get("method").and_then(Value::as_str) == Some("account/chatgptAuthTokens/refresh")
+        && value.pointer("/params/reason").and_then(Value::as_str) == Some("unauthorized")
+        && let Some((context, record, _)) = external_auth
+    {
+        let recovery = if matches!(result, Ok(true)) {
+            "credentials_refreshed"
+        } else {
+            "refresh_failed"
+        };
+        let context = context.clone();
+        let record = record.clone();
+        if !matches!(
+            tokio::task::spawn_blocking(move || crate::auth_incident::recover(
+                &context,
+                &record,
+                recovery,
+                &jiff::Timestamp::now().to_string()
+            ))
+            .await,
+            Ok(Ok(()))
+        ) {
+            eprintln!("warning: provider authentication recovery reporting degraded");
+        }
+    }
+    result
+}
+
+async fn respond_to_external_auth_refresh_inner<S>(
+    websocket: &mut S,
+    value: &Value,
+    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
+) -> Result<bool, String>
+where
+    S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
     if value.get("method").and_then(Value::as_str) != Some("account/chatgptAuthTokens/refresh") {
         return Ok(false);
     }
@@ -5084,6 +5280,27 @@ where
         .as_ref()
         .map(|runtime| runtime.launch_id.clone())
         .ok_or_else(|| "Codex runtime identity is missing".to_string())?;
+    let incident_context = context.clone();
+    let incident_record = record.clone();
+    let incident_event = format!(
+        "external-refresh:{}:{}",
+        json_id_key(&id).unwrap_or_default(),
+        uuid::Uuid::new_v4()
+    );
+    if !matches!(
+        tokio::task::spawn_blocking(move || crate::auth_incident::observe(
+            &incident_context,
+            &incident_record,
+            &incident_event,
+            crate::auth_incident::AuthSource::CodexExternalRefresh,
+            crate::activity::Confidence::Authoritative,
+            &jiff::Timestamp::now().to_string()
+        ))
+        .await,
+        Ok(Ok(()))
+    ) {
+        eprintln!("warning: provider authentication incident persistence degraded");
+    }
     let begin_context = context.clone();
     let begin_id = record.id.clone();
     let begin_launch_id = launch_id.clone();
@@ -5309,6 +5526,27 @@ async fn process_live_message(
             });
         wake_from_open_usage(context, record, &snapshot).await?;
     }
+    if value.get("method").and_then(Value::as_str) == Some("turn/completed")
+        && value.pointer("/params/threadId").and_then(Value::as_str)
+            == Some(reducer.thread_id.as_str())
+        && value.pointer("/params/turn/status").and_then(Value::as_str) == Some("completed")
+        && crate::auth_incident::recovery_pending(context, record)
+    {
+        let recovery_context = context.clone();
+        let recovery_record = record.clone();
+        if !matches!(
+            tokio::task::spawn_blocking(move || crate::auth_incident::recover(
+                &recovery_context,
+                &recovery_record,
+                "healthy",
+                &jiff::Timestamp::now().to_string()
+            ))
+            .await,
+            Ok(Ok(()))
+        ) {
+            eprintln!("warning: provider authentication recovery reporting degraded");
+        }
+    }
     let Some(failure) = reducer.ingest(value) else {
         return Ok(());
     };
@@ -5368,6 +5606,7 @@ async fn wake_from_open_usage(
 mod tests {
     use super::*;
     use nils_test_support::{EnvGuard, GlobalStateLock};
+    use pretty_assertions::{assert_eq, assert_ne};
     use std::collections::BTreeMap;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -5796,6 +6035,7 @@ mod tests {
                 token: token.clone(),
                 owner_pid: std::process::id(),
                 expires_at_epoch_ms,
+                conversation_capability: None,
             })
             .unwrap(),
         )
@@ -6994,6 +7234,165 @@ exit "$FAKE_PROVIDER_EXIT"
         assert_eq!(err, "Codex app-server request timed out");
     }
 
+    #[test]
+    fn auth_loss_codex_structured_failures_and_negative_controls() {
+        for info in [
+            json!("unauthorized"),
+            json!({"httpConnectionFailed":{"httpStatusCode":401}}),
+        ] {
+            let mut reducer = FailureReducer::new("thread-a");
+            let raw = json!({"method":"turn/completed", "params":{"threadId":"thread-a", "turn":{"id":"turn-a", "status":"failed", "error":{"codexErrorInfo":info, "message":"private-canary"}}}});
+            let projected = match server_observation(&raw) {
+                ServerProjection::Unique(value) => value,
+                _ => panic!("expected structured projection"),
+            };
+            let failure = reducer
+                .ingest(&projected)
+                .expect("401 must classify model authentication");
+            assert_eq!(failure.kind.activity_reason(), "authentication");
+            assert!(!projected.to_string().contains("private-canary"));
+        }
+        for raw in [
+            json!({"method":"turn/completed", "params":{"threadId":"thread-a", "turn":{"id":"turn-a", "status":"failed", "error":{"codexErrorInfo":{"httpConnectionFailed":{"httpStatusCode":403}}, "message":"Unauthorized 401"}}}}),
+            json!({"method":"mcpServer/elicitation/request", "id":1, "params":{"threadId":"thread-a", "mode":"url", "message":"Unauthorized 401"}}),
+            json!({"method":"item/agentMessage/delta", "params":{"threadId":"thread-a", "delta":"401 Unauthorized"}}),
+        ] {
+            assert!(FailureReducer::new("thread-a").ingest(&raw).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_loss_codex_retry_policy_does_not_delay_incident_and_can_recover() {
+        for will_retry in [None, Some(true), Some(false)] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let context = CliContext {
+                state_dir: tmp.path().join("state"),
+                host: None,
+            };
+            let record = record_with_runtime("auth-retry", &tmp.path().join("server.sock"));
+            fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+            crate::write_session_record(&context, &record).unwrap();
+            crate::activity::activate_runtime(&context, &record).unwrap();
+            let mut raw = json!({"method":"error", "params":{"threadId":"thread-a",
+                "turnId":"turn-a", "error":{"codexErrorInfo":"unauthorized"}}});
+            if let Some(value) = will_retry {
+                raw["params"]["willRetry"] = json!(value);
+            }
+            let ServerProjection::Unique(projected) = server_observation(&raw) else {
+                panic!("structured unauthorized observation");
+            };
+            let mut reducer = FailureReducer::new("thread-a");
+            for _ in 0..3 {
+                process_live_message(&context, &record, &mut reducer, None, &projected)
+                    .await
+                    .unwrap();
+            }
+            let incident = crate::auth_incident::view(&context, &record).unwrap();
+            assert_eq!(
+                incident.source,
+                crate::auth_incident::AuthSource::CodexAppServer
+            );
+            assert_eq!(incident.status, "auth_failed");
+            let stored: Value = serde_json::from_slice(
+                &fs::read(crate::session_dir(&context, &record.id).join("auth-incidents.json"))
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(stored["incidents"].as_array().unwrap().len(), 1);
+            process_live_message(
+                &context,
+                &record,
+                &mut reducer,
+                None,
+                &json!({"method":"turn/completed", "params":{"threadId":"thread-a",
+                    "turn":{"id":"turn-a", "status":"completed"}}}),
+            )
+            .await
+            .unwrap();
+            let recovered = crate::auth_incident::view(&context, &record).unwrap();
+            assert_eq!(recovered.status, "recovered");
+            assert_eq!(recovered.recovery_result.as_deref(), Some("healthy"));
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_loss_codex_fake_protocol_surfaces_durable_incident_and_board() {
+        for (name, info, expected) in [
+            ("unauthorized", json!("unauthorized"), true),
+            (
+                "http401",
+                json!({"responseStreamConnectionFailed":{"httpStatusCode":401}}),
+                true,
+            ),
+            (
+                "http403",
+                json!({"httpConnectionFailed":{"httpStatusCode":403}}),
+                false,
+            ),
+            ("text401", json!("other"), false),
+        ] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let context = CliContext {
+                state_dir: tmp.path().join("state"),
+                host: None,
+            };
+            let record = record_with_runtime(name, &tmp.path().join("server.sock"));
+            fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+            crate::write_session_record(&context, &record).unwrap();
+            crate::activity::activate_runtime(&context, &record).unwrap();
+            let mut reducer = FailureReducer::new("thread-a");
+            let message = json!({"method":"turn/completed", "params":{"threadId":"thread-a", "turn":{"id":"turn-a", "status":"failed", "error":{"codexErrorInfo":info,"message":"ordinary text mentioning 401 Unauthorized private-canary"}}}});
+            let ServerProjection::Unique(projected) = server_observation(&message) else {
+                panic!("structured projection");
+            };
+            process_live_message(&context, &record, &mut reducer, None, &projected)
+                .await
+                .unwrap();
+            let incident = crate::auth_incident::view(&context, &record);
+            assert_eq!(incident.is_some(), expected, "{name}");
+            let view = crate::session_view(
+                &context,
+                &record,
+                Some("running".into()),
+                Some(Path::new("/nonexistent/fixture-tmux")),
+            );
+            let list = serde_json::to_value(view).unwrap();
+            let board =
+                crate::board::project_record(&list, "fixture-machine", None, false).unwrap();
+            if expected {
+                assert_eq!(
+                    list["turn_state"]["last_turn"]["provider_failure_kind"],
+                    "authentication"
+                );
+                assert_eq!(
+                    board["turn_state"]["last_turn"]["provider_failure_kind"],
+                    "authentication"
+                );
+                assert_eq!(board["auth_incident"]["provider"], "codex");
+                assert_eq!(
+                    board["auth_incident"]["runtime_incarnation"],
+                    record.runtime.as_ref().unwrap().launch_id
+                );
+                assert!(!board.to_string().contains("private-canary"));
+            } else {
+                assert!(board.get("auth_incident").is_none());
+            }
+            // MCP login and ordinary assistant text never become provider failure.
+            for raw in [
+                json!({"method":"mcpServer/elicitation/request","id":1,"params":{"threadId":"thread-a","mode":"url"}}),
+                json!({"method":"item/agentMessage/delta","params":{"threadId":"thread-a","delta":"401 Unauthorized"}}),
+            ] {
+                process_live_message(&context, &record, &mut reducer, None, &raw)
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(
+                crate::auth_incident::view(&context, &record).is_some(),
+                expected
+            );
+        }
+    }
+
     #[tokio::test]
     async fn external_auth_refresh_rebinds_durable_state_without_serializing_token() {
         let lock = GlobalStateLock::new();
@@ -7052,6 +7451,16 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
             .await
             .unwrap()
         );
+        let incident = crate::auth_incident::view(&context, &record).unwrap();
+        assert_eq!(
+            incident.source,
+            crate::auth_incident::AuthSource::CodexExternalRefresh
+        );
+        assert_eq!(
+            incident.recovery_result.as_deref(),
+            Some("credentials_refreshed")
+        );
+        assert_eq!(incident.status, "recovered");
         let response: Value = match &sink.messages[0] {
             Message::Text(text) => serde_json::from_str(text).unwrap(),
             message => panic!("unexpected refresh response: {message:?}"),
@@ -7072,6 +7481,26 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         assert_eq!(
             fs::read_to_string(calls).unwrap().trim(),
             "resolve --account acct1 --force-refresh --format json"
+        );
+        let previous_incident = incident.incident_id;
+        assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":"refresh-1", "method":"account/chatgptAuthTokens/refresh", "params":{"reason":"unauthorized"}}), Some((&context, &record, "acct1"))).await.unwrap());
+        assert_ne!(
+            crate::auth_incident::view(&context, &record)
+                .unwrap()
+                .incident_id,
+            previous_incident
+        );
+        // A broken reporting store must not prevent the credential response.
+        fs::write(
+            crate::session_dir(&context, &record.id).join("auth-incidents.json"),
+            b"invalid",
+        )
+        .unwrap();
+        assert!(respond_to_external_auth_refresh(&mut sink, &json!({"id":"refresh-2", "method":"account/chatgptAuthTokens/refresh", "params":{"reason":"unauthorized"}}), Some((&context, &record, "acct1"))).await.unwrap());
+        assert_eq!(sink.messages.len(), 3);
+        assert_eq!(
+            crate::auth_incident::detection_health(&context, &record).as_deref(),
+            Some("degraded_store_unavailable")
         );
     }
 
@@ -7121,6 +7550,13 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         assert_eq!(
             view.applied_runtime_id.as_deref(),
             Some("runtime-refresh-failure")
+        );
+        assert_eq!(
+            crate::auth_incident::view(&context, &record)
+                .unwrap()
+                .recovery_result
+                .as_deref(),
+            Some("refresh_failed")
         );
         assert!(crate::codex_account::ensure_input_allowed(&persisted).is_ok());
 
@@ -8424,17 +8860,18 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         }))
         .unwrap();
         observer.observe_client(&record, &user_start).unwrap();
+        observer
+            .observe_server(
+                &context,
+                &record,
+                &json!({ "id": 5, "result": { "thread": { "id": "other-user-thread" } } }),
+                None,
+            )
+            .await
+            .expect("native clear may switch the primary conversation");
         assert_eq!(
-            observer
-                .observe_server(
-                    &context,
-                    &record,
-                    &json!({ "id": 5, "result": { "thread": { "id": "other-user-thread" } } }),
-                    None,
-                )
-                .await
-                .unwrap_err(),
-            "Codex TUI proxy switched to a different thread"
+            observer.reducer.as_ref().unwrap().thread_id,
+            "other-user-thread"
         );
     }
 
@@ -9659,6 +10096,385 @@ printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":
         let sibling_view = crate::auto_resume::view_for_record(&context, &sibling);
         assert!(sibling_view.enabled);
         assert_eq!(sibling_view.state, "enabled");
+    }
+
+    #[tokio::test]
+    async fn resumed_proxy_binds_exact_identity_before_first_tui_request() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("resume-bind.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record = record_with_runtime("resume-bind", &path);
+        record.provider_resume = Some(ProviderResume {
+            provider: "codex".into(),
+            session_id: "resumed-thread".into(),
+            captured_at: "2030-01-01T00:00:00Z".into(),
+            capture_method: "test".into(),
+            resume_args: canonical_provider_resume_args(
+                AgentKind::Codex,
+                &record.cwd,
+                "resumed-thread",
+            )
+            .unwrap(),
+            extra: BTreeMap::new(),
+        });
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::activity::activate_runtime(&context, &record).unwrap();
+        let server_record = record.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let request = receive_json(&mut socket).await;
+            assert_eq!(request["method"], "thread/resume");
+            assert_eq!(
+                fs::read_to_string(thread_attached_path(&server_record).unwrap()).unwrap(),
+                projected_thread_binding("resumed-thread")
+            );
+            respond(
+                &mut socket,
+                &request,
+                json!({"thread":{"id":"resumed-thread"}}),
+            )
+            .await;
+            socket.close(None).await.unwrap();
+        });
+        let proxy_context = context.clone();
+        let proxy_id = record.id.clone();
+        let proxy_path = path.with_extension("proxy");
+        let args = crate::cli::CodexAppServerProxyArgs {
+            id: proxy_id,
+            upstream: path,
+            listen: proxy_path.clone(),
+        };
+        let proxy = tokio::spawn(async move { run_proxy_session(proxy_context, args).await });
+        let stream = connect_socket(&proxy_path).await.unwrap();
+        let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", stream)
+            .await
+            .unwrap();
+        send_json(
+            &mut tui,
+            json!({"id":1,"method":"thread/resume","params":{"threadId":"resumed-thread"}}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            receive_json(&mut tui).await["result"]["thread"]["id"],
+            "resumed-thread"
+        );
+        assert!(manual_input_request_matches_bound_thread(
+            &context,
+            &record,
+            &json!({"id":2,"method":"turn/start","params":{"threadId":"resumed-thread","input":[]}})
+        ));
+        server.await.unwrap();
+        let _ = proxy.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn native_new_rebinds_marker_resume_and_projection_before_response_forwarding() {
+        for pending_bootstrap in [false, true] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let context = CliContext {
+                state_dir: tmp.path().join("state"),
+                host: None,
+            };
+            let mut record = record_with_runtime("native-new", &tmp.path().join("server.sock"));
+            record.provider_resume = Some(ProviderResume {
+                provider: "codex".into(),
+                session_id: "old-thread".into(),
+                captured_at: "2030-01-01T00:00:00Z".into(),
+                capture_method: "test".into(),
+                resume_args: canonical_provider_resume_args(
+                    AgentKind::Codex,
+                    &record.cwd,
+                    "old-thread",
+                )
+                .unwrap(),
+                extra: BTreeMap::new(),
+            });
+            fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+            crate::write_session_record(&context, &record).unwrap();
+            crate::activity::activate_runtime(&context, &record).unwrap();
+            bind_thread(&record, "old-thread").unwrap();
+            let mut projection = ProxyProjection::new(context.clone(), record.clone());
+            projection.requires_thread_binding = pending_bootstrap;
+            projection.observe_client(
+                &json!({"id":1,"method":"thread/start","params":{"threadSource":"user"}}),
+            );
+            projection
+                .observe_server_before_forward(
+                    &json!({"id":1,"result":{"thread":{"id":"new-thread"}}}),
+                )
+                .await
+                .unwrap();
+            let current = crate::load_session_record(&context, &record.id).unwrap();
+            assert_eq!(
+                current.provider_resume.as_ref().unwrap().session_id,
+                "new-thread"
+            );
+            assert_eq!(
+                fs::read_to_string(thread_attached_path(&record).unwrap()).unwrap(),
+                projected_thread_binding("new-thread")
+            );
+            assert_eq!(
+                crate::activity::state_for_view(&context, &current)
+                    .unwrap()
+                    .phase,
+                crate::activity::TurnPhase::Waiting
+            );
+            projection.observe_client(
+                &json!({"id":2,"method":"turn/start","params":{"threadId":"new-thread"}}),
+            );
+            projection
+                .observe_server_before_forward(&json!({"id":2,"result":{"turn":{"id":"new-turn"}}}))
+                .await
+                .unwrap();
+            projection.finish().await;
+            assert!(!crate::activity::runtime_is_unhealthy(&context, &current));
+        }
+    }
+
+    #[test]
+    fn legacy_proxy_capability_cannot_authorize_conversation_mutation() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = record_with_runtime("compat-proxy", &tmp.path().join("socket"));
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        let guard = begin_proxy_capability(&context, &record).unwrap();
+        assert!(live_conversation_capability(&context, &record));
+        let path = proxy_capability_path(&context, &record);
+        let mut marker: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        marker
+            .as_object_mut()
+            .unwrap()
+            .remove("conversation_capability");
+        fs::write(&path, serde_json::to_vec(&marker).unwrap()).unwrap();
+        assert!(live_proxy_capability(&context, &record));
+        assert!(!live_conversation_capability(&context, &record));
+        drop(guard);
+        assert!(!live_conversation_capability(&context, &record));
+    }
+
+    #[tokio::test]
+    async fn rejected_live_thread_and_failed_codex_commit_recover_through_rebind() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("recovery.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let mut record = record_with_runtime("mismatch-recovery", &path);
+        record.provider_resume = Some(ProviderResume {
+            provider: "codex".into(),
+            session_id: "old-thread".into(),
+            captured_at: "2030-01-01T00:00:00Z".into(),
+            capture_method: "test".into(),
+            resume_args: canonical_provider_resume_args(
+                AgentKind::Codex,
+                &record.cwd,
+                "old-thread",
+            )
+            .unwrap(),
+            extra: BTreeMap::new(),
+        });
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        crate::activity::activate_runtime(&context, &record).unwrap();
+        bind_thread(&record, "old-thread").unwrap();
+        let _capability = begin_proxy_capability(&context, &record).unwrap();
+        let marker = begin_manual_input_section(&context, &record)
+            .unwrap()
+            .unwrap();
+        let request =
+            json!({"id":1,"method":"turn/start","params":{"threadId":"live-thread","input":[]}});
+        assert!(matches!(
+            acquire_turn_start_gate(&context, &record, &request),
+            Err(TuiMutationRejection::ManualMarkerThreadMismatch)
+        ));
+        drop(marker);
+        let attached = fs::read(thread_attached_path(&record).unwrap()).unwrap();
+        let snapshot_path = crate::session_dir(&context, &record.id).join("activity.json");
+        let snapshot = fs::read(&snapshot_path).unwrap();
+        crate::fail_session_record_write_on_nth_call(1);
+        assert!(crate::conversation::observe_native(&context, &record, "live-thread").is_err());
+        assert_eq!(
+            fs::read(thread_attached_path(&record).unwrap()).unwrap(),
+            attached
+        );
+        assert_eq!(fs::read(&snapshot_path).unwrap(), snapshot);
+        assert_eq!(
+            crate::load_session_record(&context, &record.id)
+                .unwrap()
+                .provider_resume
+                .unwrap()
+                .session_id,
+            "old-thread"
+        );
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let initialize = receive_json(&mut socket).await;
+                respond(&mut socket, &initialize, json!({})).await;
+                assert_eq!(receive_json(&mut socket).await["method"], "initialized");
+                let loaded = receive_json(&mut socket).await;
+                respond(
+                    &mut socket,
+                    &loaded,
+                    json!({"data":["old-thread","live-thread"],"nextCursor":null}),
+                )
+                .await;
+                let read = receive_json(&mut socket).await;
+                assert_eq!(read["params"]["threadId"], "live-thread");
+                respond(
+                    &mut socket,
+                    &read,
+                    json!({"thread":{"id":"live-thread","status":{"type":"idle"}}}),
+                )
+                .await;
+            }
+        });
+        let tmux = tmp.path().join("tmux");
+        fs::write(&tmux, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        let command_context = context.clone();
+        let command_id = record.id.clone();
+        let exit = tokio::task::spawn_blocking(move || {
+            crate::conversation::run(
+                &command_context,
+                crate::cli::ConversationArgs {
+                    id: command_id,
+                    expect_idle: true,
+                    timeout: 1,
+                    tmux_bin: Some(tmux),
+                    format: crate::OutputFormat::Json,
+                },
+                false,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(exit, 0);
+        server.await.unwrap();
+        let current = crate::load_session_record(&context, &record.id).unwrap();
+        assert_eq!(current.provider_resume.unwrap().session_id, "live-thread");
+        assert_eq!(
+            fs::read_to_string(thread_attached_path(&record).unwrap()).unwrap(),
+            projected_thread_binding("live-thread")
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_recovery_probes_only_unambiguous_idle_provider_threads() {
+        for (ids, returned_id, status, succeeds) in [
+            (vec!["live-thread"], "live-thread", "idle", true),
+            (vec!["live-thread"], "other-thread", "idle", false),
+            (vec!["live-thread"], "live-thread", "active", false),
+            (
+                vec!["old-thread", "live-thread"],
+                "live-thread",
+                "idle",
+                false,
+            ),
+        ] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let path = tmp.path().join("probe.sock");
+            let listener = tokio::net::UnixListener::bind(&path).unwrap();
+            let context = CliContext {
+                state_dir: tmp.path().join("state"),
+                host: None,
+            };
+            let record = record_with_runtime("conversation-probe", &path);
+            fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+            crate::write_session_record(&context, &record).unwrap();
+            let count = ids.len();
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let initialize = receive_json(&mut socket).await;
+                respond(&mut socket, &initialize, json!({})).await;
+                assert_eq!(receive_json(&mut socket).await["method"], "initialized");
+                let loaded = receive_json(&mut socket).await;
+                assert_eq!(loaded["method"], "thread/loaded/list");
+                respond(&mut socket, &loaded, json!({"data":ids,"nextCursor":null})).await;
+                if count == 1 {
+                    let read = receive_json(&mut socket).await;
+                    assert_eq!(read["method"], "thread/read");
+                    assert_eq!(read["params"]["includeTurns"], false);
+                    respond(
+                        &mut socket,
+                        &read,
+                        json!({"thread":{"id":returned_id,"status":{"type":status}}}),
+                    )
+                    .await;
+                }
+            });
+            let outcome = tokio::task::spawn_blocking(move || {
+                probe_idle_conversation(&context, &record, None)
+            })
+            .await
+            .unwrap();
+            assert_eq!(outcome.is_ok(), succeeds);
+            if let Ok(id) = outcome {
+                assert_eq!(id, "live-thread");
+            }
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn conversation_recovery_refuses_paginated_thread_list() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("probe-pagination.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = record_with_runtime("conversation-probe-pagination", &path);
+        fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+        crate::write_session_record(&context, &record).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let initialize = receive_json(&mut socket).await;
+            respond(&mut socket, &initialize, json!({})).await;
+            assert_eq!(receive_json(&mut socket).await["method"], "initialized");
+            let loaded = receive_json(&mut socket).await;
+            assert_eq!(loaded["method"], "thread/loaded/list");
+            respond(
+                &mut socket,
+                &loaded,
+                json!({"data":["live-thread"],"nextCursor":"next-page"}),
+            )
+            .await;
+            assert!(
+                matches!(
+                    socket.next().await,
+                    None | Some(Ok(Message::Close(_))) | Some(Err(_))
+                ),
+                "recovery must not read a candidate from an incomplete thread list"
+            );
+        });
+
+        let outcome =
+            tokio::task::spawn_blocking(move || probe_idle_conversation(&context, &record, None))
+                .await
+                .unwrap();
+
+        assert_eq!(
+            outcome.unwrap_err().code(),
+            "conversation-live-identity-unverified"
+        );
+        server.await.unwrap();
     }
 
     #[tokio::test]
@@ -13096,7 +13912,11 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
                 let request = receive_json(&mut socket).await;
                 assert_eq!(request["id"], expected_id);
                 let result = if expected_id == 1 {
-                    json!({ "thread": { "id": "thread-b" } })
+                    socket.send(Message::Text(json!({
+                        "id":"attention-request", "method":"item/tool/requestUserInput",
+                        "params":{"threadId":"thread-b", "turnId":"turn-b", "itemId":"item-b", "questions":[]}
+                    }).to_string().into())).await.unwrap();
+                    json!({ "ok": true })
                 } else {
                     json!({ "ok": true })
                 };
@@ -13110,7 +13930,7 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
         let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", proxy_stream)
             .await
             .unwrap();
-        for (id, method) in [(1, "thread/start"), (2, "thread/read")] {
+        for (id, method) in [(1, "thread/read"), (2, "thread/read")] {
             tui.send(Message::Text(
                 json!({
                     "id": id,
@@ -13122,6 +13942,9 @@ printf '%s\n' "{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"acco
             ))
             .await
             .unwrap();
+            if id == 1 {
+                assert_eq!(receive_json(&mut tui).await["id"], "attention-request");
+            }
             assert_eq!(receive_json(&mut tui).await["id"], id);
         }
         server.await.unwrap();

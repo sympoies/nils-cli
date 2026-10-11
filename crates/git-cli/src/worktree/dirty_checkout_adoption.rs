@@ -232,7 +232,7 @@ struct SnapshotWorkerResponse {
     error: Option<SnapshotWorkerError>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct CheckoutIdentity {
     root: PathBuf,
     git_dir: PathBuf,
@@ -5760,6 +5760,11 @@ fn sync_directory(path: &Path) -> Result<()> {
 
 struct LeaseLock(File);
 
+mod removal_lease;
+pub(super) use removal_lease::{
+    RemovalLeaseGuard, fence_removal, removal_probe, removal_registry_lock,
+};
+
 impl LeaseLock {
     fn acquire_until(directory: &Path, transaction_deadline: Instant) -> Result<Self> {
         Self::acquire_until_with(directory, transaction_deadline, || {})
@@ -6100,7 +6105,7 @@ fn parse_linux_uid_map_field(value: &str) -> Option<u64> {
         .flatten()
 }
 
-fn sanitize_git_environment(command: &mut Command) {
+pub(super) fn sanitize_git_environment(command: &mut Command) {
     const EXACT: &[&str] = &[
         "GIT_ALTERNATE_OBJECT_DIRECTORIES",
         "GIT_ASKPASS",
@@ -8718,21 +8723,8 @@ fn feature_enabled() -> bool {
 }
 
 fn resolve_state_root() -> Result<PathBuf> {
-    if let Some(value) =
-        env::var_os("AGENT_RUNTIME_CHECKOUT_LEASE_STATE_HOME").filter(|value| !value.is_empty())
-    {
-        return Ok(PathBuf::from(value));
-    }
-    if let Some(value) = env::var_os("AGENT_RUNTIME_STATE_HOME").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(value).join("checkout-leases"));
-    }
-    if let Some(value) = env::var_os("XDG_STATE_HOME").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(value).join("agent-runtime-kit/checkout-leases"));
-    }
-    let home = env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .context("runtime state root is unavailable")?;
-    Ok(PathBuf::from(home).join(".local/state/agent-runtime-kit/checkout-leases"))
+    nils_common::worktree_lifecycle::state_home()
+        .map_err(|_| anyhow::anyhow!("runtime state root is unavailable"))
 }
 
 #[cfg(test)]

@@ -13,6 +13,26 @@ format. All four require the private capability minted by `finish-line open`.
 That bearer must remain inside the runtime provider and must never enter a
 prompt, tool definition, log, session projection, or persistent configuration.
 
+## Contained-runner resources
+
+Every Linux contained execution acquires one host runner slot before starting
+its transient unit and holds it until execution and containment cleanup return.
+Slots use stable kernel-locked files in the user state directory, independent
+of repository identity. After a supervisor crash, the recorded unit must be
+quiescent with no pending job before its slot is reused. `NILS_CLI_RUNNER_MAX` overrides the default CPU/memory
+derived limit (floor 1, ceiling 2); `NILS_CLI_GATE_TIMEOUT_SECONDS` bounds queue
+waiting. A queued runner prints the slot holder PID and start time. Timeout
+returns retryable `finish-line-runner-queue-timeout`; a cancelled queue returns
+`finish-line-runner-queue-cancelled`; unavailable configuration
+or locks return `finish-line-resource-unavailable` and unsafe lock metadata
+returns `finish-line-resource-untrusted`.
+
+Contained units receive a memory throttle and hard cap even outside the gate
+wrapper. Inside a repository gate they also join its shared memory slice.
+The [workspace resource budgets](../../../../docs/runbooks/workspace-maintenance-reference.md#gate-resource-budgets)
+own defaults, tuning, the aggregate gate cap, and the macOS fallback. Resource
+admission changes no acceptance schema or permission sandbox policy.
+
 ## Wire contracts
 
 Every request is a duplicate-free JSON object with exactly these common

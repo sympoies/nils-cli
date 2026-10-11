@@ -384,3 +384,63 @@ fn failed_stop_activity_does_not_override_authoritative_coordination_block() {
         "missing coordination block: {decision}"
     );
 }
+
+#[test]
+fn claude_native_clear_delivers_only_private_identity_to_lifecycle_helper() {
+    let policy = POLICY.replace(
+        "events = [\"UserPromptSubmit\", \"PreToolUse\"]",
+        "events = [\"SessionStart\"]",
+    );
+    let fixture = Fixture::new(&policy);
+    let session_dir = fixture.session_state.join("sessions/managed-session");
+    fs::create_dir_all(&session_dir).unwrap();
+    fs::set_permissions(&session_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(session_dir.join("session.json"), r#"{"id":"managed-session","agent":"claude","runtime":{"launch_id":"managed-runtime","generation":1}}"#).unwrap();
+    let fake = fixture.root.join("agent-session-clear-helper");
+    let receipt = fixture.root.join("clear-receipt.json");
+    fs::write(
+        &fake,
+        "#!/bin/sh\nset -eu\nif [ \"$2\" = hook ]; then dd of=\"$CLEAR_RECEIPT\" status=none; fi\n",
+    )
+    .unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = fixture.run_with_env(
+        &["dispatch", "--product", "claude", "--format", "json"],
+        Some(r#"{"hook_event_name":"SessionStart","source":"clear","session_id":"fresh-conversation","cwd":"/private-path-canary","prompt":"private-prompt-canary"}"#),
+        &[("AGENT_SESSION_BIN", fake.to_str().unwrap()), ("AGENT_SESSION_ID", "managed-session"),
+          ("AGENT_SESSION_RUNTIME_ID", "managed-runtime"), ("CLEAR_RECEIPT", receipt.to_str().unwrap())],
+    );
+    assert_eq!(output.code, 0, "{}", output.stderr_text());
+    let captured: serde_json::Value = serde_json::from_slice(&fs::read(receipt).unwrap()).unwrap();
+    assert_eq!(
+        captured,
+        serde_json::json!({"hook_event_name":"SessionStart","source":"clear","session_id":"fresh-conversation"})
+    );
+    let retained: serde_json::Value =
+        serde_json::from_slice(&fs::read(session_dir.join("provider-conversation.json")).unwrap())
+            .unwrap();
+    assert_eq!(retained["session_id"], "fresh-conversation");
+    assert_eq!(retained["runtime_generation"], 1);
+    // A failing helper cannot erase the exact recovery evidence.
+    fs::write(&fake, "#!/bin/sh\nexit 65\n").unwrap();
+    let failed = fixture.run_with_env(
+        &["dispatch", "--product", "claude", "--format", "json"],
+        Some(r#"{"hook_event_name":"SessionStart","source":"clear","session_id":"recovery-conversation"}"#),
+        &[("AGENT_SESSION_BIN", fake.to_str().unwrap()), ("AGENT_SESSION_ID", "managed-session"),
+          ("AGENT_SESSION_RUNTIME_ID", "managed-runtime")],
+    );
+    assert_ne!(failed.code, 0);
+    let retained: serde_json::Value =
+        serde_json::from_slice(&fs::read(session_dir.join("provider-conversation.json")).unwrap())
+            .unwrap();
+    assert_eq!(retained["session_id"], "recovery-conversation");
+    assert!(!failed.stdout_text().contains("recovery-conversation"));
+    for canary in [
+        "fresh-conversation",
+        "private-path-canary",
+        "private-prompt-canary",
+    ] {
+        assert!(!output.stdout_text().contains(canary));
+        assert!(!output.stderr_text().contains(canary));
+    }
+}

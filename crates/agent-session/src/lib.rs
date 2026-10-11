@@ -2,6 +2,7 @@ mod account_broker;
 #[doc(hidden)]
 pub mod activity;
 mod activity_ingress;
+mod auth_incident;
 #[doc(hidden)]
 pub mod auto_resume;
 mod board;
@@ -14,14 +15,17 @@ pub mod codex_account;
 pub mod codex_app_server;
 mod codex_runtime_dir;
 pub mod completion;
+mod conversation;
 #[doc(hidden)]
 pub mod coordination;
+mod coordination_routing;
 mod diagnose;
 mod display_metadata;
 #[doc(hidden)]
 pub mod dsh_external;
 mod forge_identity;
 mod group_lifecycle;
+mod lifecycle;
 #[doc(hidden)]
 pub mod lineage;
 mod maintenance;
@@ -274,7 +278,7 @@ const TMUX_RUNTIME_NEVER_LAUNCHED_KEY: &str = "tmux_runtime_never_launched";
 const TMUX_RUNTIME_IDENTITY_CHANGED_OUTPUT: &str = "agent-session-runtime-identity-changed";
 const COORDINATION_LAUNCH_GATE: &str = "launch-ready";
 const COORDINATION_BROKER_GATE: &str = "broker-provisioned";
-const HELD_LAUNCH_SCRIPT: &str = "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"";
+const HELD_LAUNCH_SCRIPT: &str = "gate=$1; broker_gate=$2; heartbeat=$3; capability=$4; incarnation=$5; generation=$6; broker_bin=$7; shift 7; done_file=\"${heartbeat}.done.$$\"; umask 077; while [ ! -f \"$broker_gate\" ]; do sleep 0.01; done; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker heartbeat --session \"$AGENT_SESSION_ID\" --incarnation \"$incarnation\" --generation \"$generation\" --capability-file \"$capability\" --format json >/dev/null 2>&1 & broker_pid=$!; while [ ! -f \"$gate\" ]; do sleep 0.01; done; \"$@\"; status=$?; printf '%s\\n' \"$status\" > \"$done_file\"; kill \"$broker_pid\" >/dev/null 2>&1 || true; wait \"$broker_pid\" >/dev/null 2>&1 || true; \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --exit-code \"$status\" --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || \"$broker_bin\" --state-dir \"$AGENT_SESSION_STATE_DIR\" broker stop --session \"$AGENT_SESSION_ID\" --capability-file \"$capability\" --format json >/dev/null 2>&1 || true; rm -f \"$done_file\" \"$capability\" \"$broker_gate\" \"$gate\"; exit \"$status\"";
 
 pub fn run() -> i32 {
     run_with_args(env::args_os())
@@ -306,7 +310,7 @@ where
                 _ => "parse-error",
             };
             let message = render_clap_message(&err);
-            if let Some(command) = coordination_leaf_from_raw_args(&raw_args) {
+            if let Some(command) = coordination_routing::leaf_from_raw_args(&raw_args) {
                 return render_error(command, format, CliError::usage(code, message, None));
             }
             return emit_parse_error(BINARY, format, code, &message);
@@ -326,7 +330,7 @@ fn dispatch(cli: Cli) -> i32 {
         Ok(context) => context,
         Err(err) => {
             return render_error(
-                coordination_command_name(&cli.command).unwrap_or("error"),
+                coordination_routing::command_name(&cli.command).unwrap_or("error"),
                 format,
                 err,
             );
@@ -348,10 +352,13 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Send(args) => run_send(&context, args),
         Command::Glance(args) => run_glance(&context, args),
         Command::Resume(args) => run_resume(&context, args),
+        Command::Clear(args) => conversation::run(&context, args, true),
+        Command::Rebind(args) => conversation::run(&context, args, false),
         Command::Account(args) => session_account::run_account(&context, args),
         Command::Activity(args) => run_activity(&context, args),
         Command::WorkContext(args) => coordination::run_work_context(&context, args),
         Command::Broker(args) => coordination::run_broker(&context, args),
+        Command::Readiness(args) => coordination::readiness::run(&context, args),
         Command::Message(args) => coordination::run_message(&context, args),
         Command::Metadata(args) => metadata::run_metadata(&context, args),
         Command::Lineage(args) => lineage::run_lineage(&context, args),
@@ -369,101 +376,9 @@ fn dispatch(cli: Cli) -> i32 {
     }
 }
 
-fn coordination_command_name(command: &Command) -> Option<&'static str> {
-    match command {
-        Command::WorkContext(args) => Some(match &args.command {
-            cli::WorkContextCommand::Status(_) => "work-context-status",
-            cli::WorkContextCommand::Set(_) => "work-context-set",
-            cli::WorkContextCommand::Clear(_) => "work-context-clear",
-            cli::WorkContextCommand::Advise(_) => "work-context-advise",
-            cli::WorkContextCommand::Acknowledge(_) => "work-context-acknowledge",
-            cli::WorkContextCommand::Claim(_) => "work-context-claim",
-            cli::WorkContextCommand::Show(_) => "work-context-show",
-            cli::WorkContextCommand::Check(_) => "work-context-check",
-            cli::WorkContextCommand::Renew(_) => "work-context-renew",
-            cli::WorkContextCommand::Release(_) => "work-context-release",
-            cli::WorkContextCommand::Admit(_) => "work-context-admit",
-            cli::WorkContextCommand::Complete(_) => "work-context-complete",
-            cli::WorkContextCommand::Reconcile(_) => "work-context-reconcile",
-        }),
-        Command::Broker(args) => Some(match &args.command {
-            cli::BrokerCommand::Identity(_) => "broker-identity",
-            cli::BrokerCommand::Status(_) => "broker-status",
-            cli::BrokerCommand::Adopt(_) => "broker-adopt",
-            cli::BrokerCommand::Reconcile(_) => "broker-reconcile",
-            cli::BrokerCommand::Stop(_) => "broker-stop",
-            cli::BrokerCommand::Heartbeat(_) => "broker-heartbeat",
-        }),
-        Command::Message(args) => Some(match &args.command {
-            cli::MessageCommand::Audit(_) => "message-audit",
-            cli::MessageCommand::Peers(_) => "message-peers",
-            cli::MessageCommand::Delivery(_) => "message-delivery",
-            cli::MessageCommand::ServiceSend(_) => "message-service-send",
-            cli::MessageCommand::Send(_) => "message-send",
-            cli::MessageCommand::Forward(_) => "message-forward",
-            cli::MessageCommand::Inbox(_) => "message-inbox",
-            cli::MessageCommand::Show(_) => "message-show",
-            cli::MessageCommand::Ack(_) => "message-ack",
-            cli::MessageCommand::Reply(_) => "message-reply",
-            cli::MessageCommand::Wait(_) => "message-wait",
-            cli::MessageCommand::Reminder(_) => "message-reminder",
-        }),
-        Command::Metadata(args) => Some(match &args.command {
-            cli::MetadataCommand::Attach(_) => "metadata-attach",
-            cli::MetadataCommand::Show(_) => "metadata-show",
-        }),
-        Command::Account(args) => Some(match &args.command {
-            cli::AccountCommand::Show(_) => "account-show",
-            cli::AccountCommand::Switch(_) => "account-switch",
-        }),
-        _ => None,
-    }
-}
-
-fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
-    args.windows(2).find_map(|pair| {
-        let group = pair[0].to_str()?;
-        let leaf = pair[1].to_str()?;
-        match (group, leaf) {
-            ("work-context", "status") => Some("work-context-status"),
-            ("work-context", "set") => Some("work-context-set"),
-            ("work-context", "clear") => Some("work-context-clear"),
-            ("work-context", "advise") => Some("work-context-advise"),
-            ("work-context", "acknowledge") => Some("work-context-acknowledge"),
-            ("work-context", "claim") => Some("work-context-claim"),
-            ("work-context", "show") => Some("work-context-show"),
-            ("work-context", "check") => Some("work-context-check"),
-            ("work-context", "renew") => Some("work-context-renew"),
-            ("work-context", "release") => Some("work-context-release"),
-            ("work-context", "admit") => Some("work-context-admit"),
-            ("work-context", "complete") => Some("work-context-complete"),
-            ("work-context", "reconcile") => Some("work-context-reconcile"),
-            ("broker", "identity") => Some("broker-identity"),
-            ("broker", "status") => Some("broker-status"),
-            ("broker", "adopt") => Some("broker-adopt"),
-            ("broker", "reconcile") => Some("broker-reconcile"),
-            ("broker", "stop") => Some("broker-stop"),
-            ("message", "audit") => Some("message-audit"),
-            ("message", "send") => Some("message-send"),
-            ("message", "peers") => Some("message-peers"),
-            ("message", "delivery") => Some("message-delivery"),
-            ("message", "inbox") => Some("message-inbox"),
-            ("message", "show") => Some("message-show"),
-            ("message", "ack") => Some("message-ack"),
-            ("message", "reply") => Some("message-reply"),
-            ("message", "wait") => Some("message-wait"),
-            ("message", "reminder") => Some("message-reminder"),
-            ("metadata", "attach") => Some("metadata-attach"),
-            ("metadata", "show") => Some("metadata-show"),
-            ("account", "show") => Some("account-show"),
-            ("account", "switch") => Some("account-switch"),
-            _ => None,
-        }
-    })
-}
-
 fn command_format(command: &Command) -> OutputFormat {
     match command {
+        Command::Readiness(args) => args.format,
         Command::Start(args) => args.format,
         Command::Run(args) => args.format,
         Command::List(args) => args.format,
@@ -474,6 +389,7 @@ fn command_format(command: &Command) -> OutputFormat {
         Command::Send(args) => args.format,
         Command::Glance(args) => args.format,
         Command::Resume(args) => args.format,
+        Command::Clear(args) | Command::Rebind(args) => args.format,
         Command::Account(args) => match &args.command {
             cli::AccountCommand::Show(args) => args.format,
             cli::AccountCommand::Switch(args) => args.format,
@@ -806,6 +722,14 @@ fn run_attach(context: &CliContext, args: cli::AttachArgs) -> i32 {
 }
 
 fn run_logs(context: &CliContext, args: cli::LogsArgs) -> i32 {
+    if args.lifecycle {
+        return match lifecycle::read(context, &args.id, args.tail) {
+            Ok(result) => render_single_success(LOGS_COMMAND, args.format, &result, |value| {
+                serde_json::to_string_pretty(value).unwrap_or_default()
+            }),
+            Err(err) => render_error(LOGS_COMMAND, args.format, err),
+        };
+    }
     match load_session_record(context, &args.id).and_then(|record| {
         session_logs(
             context,
@@ -1870,6 +1794,10 @@ pub struct SessionView {
     runtime_started_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     turn_state: Option<activity::TurnState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_incident: Option<auth_incident::AuthIncident>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_detection_health: Option<String>,
     /// Most recent user prompt, populated on demand by the list handler from the
     /// provider transcript (never persisted). Absent unless the daemon advertises
     /// the `last_prompt` capability and a preview was resolved.
@@ -2324,6 +2252,34 @@ fn start_session_inner(
     failure_disposition: StartFailureDisposition,
     prompt_delivery: PromptDelivery,
     create_guard: Option<&mut dyn FnMut() -> Result<(), CliError>>,
+    lifecycle_guards: StartLifecycleGuards<'_>,
+    claude_account: Option<InitialClaudeAccount>,
+) -> Result<StartView, CliError> {
+    let journal_id = lifecycle::start_id(
+        context,
+        args.id.as_deref(),
+        args.agent,
+        args.title.as_deref(),
+    )?;
+    crate::lifecycle::attempt_created(context, &journal_id, "start", || {
+        start_session_inner_unjournaled(
+            context,
+            args,
+            failure_disposition,
+            prompt_delivery,
+            create_guard,
+            lifecycle_guards,
+            claude_account,
+        )
+    })
+}
+
+fn start_session_inner_unjournaled(
+    context: &CliContext,
+    args: cli::StartArgs,
+    failure_disposition: StartFailureDisposition,
+    prompt_delivery: PromptDelivery,
+    create_guard: Option<&mut dyn FnMut() -> Result<(), CliError>>,
     mut lifecycle_guards: StartLifecycleGuards<'_>,
     claude_account: Option<InitialClaudeAccount>,
 ) -> Result<StartView, CliError> {
@@ -2349,6 +2305,7 @@ fn start_session_inner(
         ));
     }
     let cwd = resolve_cwd(args.cwd.as_deref())?;
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
     let provider_plan = initial_provider_resume_plan(
         args.agent,
@@ -2514,7 +2471,10 @@ fn start_session_inner(
                     result,
                     prompt_delivery_observation: None,
                 }),
-                None => Err(with_failed_launch_cleanup(err, cleanup)),
+                None => Err(with_retained_startup(
+                    with_failed_launch_cleanup(err, cleanup),
+                    &created.record,
+                )),
             };
         }
     };
@@ -2726,8 +2686,24 @@ fn start_session_inner(
 }
 
 fn start_run_session(context: &CliContext, args: cli::RunArgs) -> Result<StartView, CliError> {
+    let journal_id = lifecycle::start_id(
+        context,
+        args.id.as_deref(),
+        args.agent,
+        args.title.as_deref(),
+    )?;
+    crate::lifecycle::attempt_created(context, &journal_id, "start", || {
+        start_run_session_unjournaled(context, args)
+    })
+}
+
+fn start_run_session_unjournaled(
+    context: &CliContext,
+    args: cli::RunArgs,
+) -> Result<StartView, CliError> {
     validate_agent_args(args.agent, &args.agent_args)?;
     let cwd = resolve_cwd(args.cwd.as_deref())?;
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
     let prompt = prompt
         .filter(|value| !value.trim().is_empty())
@@ -2871,6 +2847,21 @@ pub(crate) fn start_provider_resume_session(
     context: &CliContext,
     args: ProviderResumeImportArgs,
 ) -> Result<StartView, CliError> {
+    let journal_id = lifecycle::start_id(
+        context,
+        args.id.as_deref(),
+        args.agent,
+        args.title.as_deref(),
+    )?;
+    crate::lifecycle::attempt_created(context, &journal_id, "import", || {
+        start_provider_resume_session_unjournaled(context, args)
+    })
+}
+
+pub(crate) fn start_provider_resume_session_unjournaled(
+    context: &CliContext,
+    args: ProviderResumeImportArgs,
+) -> Result<StartView, CliError> {
     validate_provider_resume_import_agent_args(args.agent, &args.agent_args)?;
     validate_agent_args(args.agent, &args.agent_args)?;
     let provider_resume_id = normalize_provider_resume_id(&args.provider_resume_id)?;
@@ -2905,6 +2896,21 @@ pub(crate) fn start_provider_resume_session(
 }
 
 pub(crate) fn start_dsh_history_resume_session(
+    context: &CliContext,
+    args: DshHistoryResumeArgs,
+) -> Result<StartView, CliError> {
+    let journal_id = lifecycle::start_id(
+        context,
+        args.id.as_deref(),
+        AgentKind::Dsh,
+        args.title.as_deref(),
+    )?;
+    crate::lifecycle::attempt_created(context, &journal_id, "import", || {
+        start_dsh_history_resume_session_unjournaled(context, args)
+    })
+}
+
+pub(crate) fn start_dsh_history_resume_session_unjournaled(
     context: &CliContext,
     args: DshHistoryResumeArgs,
 ) -> Result<StartView, CliError> {
@@ -2964,6 +2970,7 @@ fn start_resolved_provider_resume_session(
     cwd: PathBuf,
     provider_resume: ProviderResume,
 ) -> Result<StartView, CliError> {
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
     let initial_lineage = args.initial_lineage;
@@ -10698,6 +10705,16 @@ fn resume_session_by_id(
     id: &str,
     tmux_bin: &Path,
 ) -> Result<SessionView, CliError> {
+    crate::lifecycle::attempt(context, id, "resume", || {
+        resume_session_by_id_unjournaled(context, id, tmux_bin)
+    })
+}
+
+fn resume_session_by_id_unjournaled(
+    context: &CliContext,
+    id: &str,
+    tmux_bin: &Path,
+) -> Result<SessionView, CliError> {
     // Preserve not-found semantics before creating the private lock file, then
     // serialize the entire resume transition (including launch and rollback)
     // against title, hook, timestamp, and backfill writers.
@@ -10722,6 +10739,7 @@ fn resume_session_locked(
 ) -> Result<ResumeSessionOutcome, CliError> {
     ensure_session_lifecycle_mutation_allowed(context, &record)?;
     orchestration::ensure_session_not_quarantined(context, &record)?;
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, Path::new(&record.cwd))?;
     match session_status(context, tmux_bin, &record).as_str() {
         "running" => {
             return Ok(ResumeSessionOutcome {
@@ -10759,7 +10777,7 @@ fn resume_session_locked(
     }
     let (provider_resume, agent) = validate_resume_metadata(&record)?;
     let resume_args = provider_resume.resume_args.clone();
-    if recorded_runtime_is_from_prior_macos_boot(&record) {
+    if recorded_runtime_is_from_prior_boot(&record) {
         record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
     }
     let prior_identities = persisted_prior_tmux_runtime_identities(&record).map_err(|reason| {
@@ -10793,9 +10811,10 @@ fn resume_session_locked(
             // termination that was never checked.
             let remaining =
                 DELETE_TERMINATION_VERIFY_TIMEOUT.saturating_sub(verification_started.elapsed());
-            verify_stopped_tmux_runtime(tmux_bin, &identity, remaining).map_err(|reason| {
-                session_termination_error(&record, reason, SessionTerminationOperation::Resume)
-            })?;
+            verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, &identity, remaining)
+                .map_err(|reason| {
+                    session_termination_error(&record, reason, SessionTerminationOperation::Resume)
+                })?;
         }
         None if runtime_is_proven_never_launched(&record) && prior_identities.is_empty() => {}
         None => {
@@ -12948,6 +12967,7 @@ fn session_view_from_parts(
             schedule_shadow_sampling,
         )
     });
+    let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
         model_settings: session_model::ModelSettings::for_record(record),
         id: record.id.clone(),
@@ -13002,6 +13022,8 @@ fn session_view_from_parts(
             .as_ref()
             .map(|runtime| runtime.started_at.clone()),
         turn_state,
+        auth_incident,
+        auth_detection_health,
         // Populated on demand by the list handler; never computed in the shared
         // collector so the expensive transcript path stays out of the hot build.
         last_prompt: None,
@@ -13229,7 +13251,7 @@ fn session_list_runtime_snapshot(
     if dsh_external::is_external_record(record) {
         return (dsh_external::external_session_status(context, record), None);
     }
-    if recorded_runtime_is_from_prior_macos_boot(record) {
+    if recorded_runtime_is_from_prior_boot(record) {
         return ("stopped".to_string(), None);
     }
     match tmux_snapshots {
@@ -13238,7 +13260,10 @@ fn session_list_runtime_snapshot(
                 "running".to_string(),
                 snapshot.last_terminal_activity_at.clone(),
             ),
-            None => ("stopped".to_string(), None),
+            None => {
+                lifecycle::observe_stopped(context, record);
+                ("stopped".to_string(), None)
+            }
         },
         None => (session_status(context, tmux_bin, record), None),
     }
@@ -13433,6 +13458,24 @@ pub(crate) fn delete_session_guarding_children(
     tmux_bin: PathBuf,
     orphan_children: bool,
 ) -> Result<DeleteResult, CliError> {
+    crate::lifecycle::attempt(context, id, "delete", || {
+        delete_session_guarding_children_unjournaled(
+            context,
+            machine,
+            id,
+            tmux_bin,
+            orphan_children,
+        )
+    })
+}
+
+pub(crate) fn delete_session_guarding_children_unjournaled(
+    context: &CliContext,
+    machine: &str,
+    id: &str,
+    tmux_bin: PathBuf,
+    orphan_children: bool,
+) -> Result<DeleteResult, CliError> {
     let children = lineage::guard_children(context, machine, id, orphan_children)?;
     let mut result = delete_session(context, id, tmux_bin)?;
     result.children = Some(children);
@@ -13440,6 +13483,29 @@ pub(crate) fn delete_session_guarding_children(
 }
 
 fn delete_session_with_expected_incarnation_and_prepare<T, F>(
+    context: &CliContext,
+    id: &str,
+    tmux_bin: PathBuf,
+    expected_session_incarnation: &str,
+    group_cleanup_owned: bool,
+    prepare: F,
+) -> Result<(T, DeleteResult), CliError>
+where
+    F: FnOnce(&SessionRecord) -> Result<T, CliError>,
+{
+    crate::lifecycle::attempt(context, id, "delete", || {
+        delete_session_with_expected_incarnation_and_prepare_unjournaled(
+            context,
+            id,
+            tmux_bin,
+            expected_session_incarnation,
+            group_cleanup_owned,
+            prepare,
+        )
+    })
+}
+
+fn delete_session_with_expected_incarnation_and_prepare_unjournaled<T, F>(
     context: &CliContext,
     id: &str,
     tmux_bin: PathBuf,
@@ -13626,6 +13692,28 @@ fn delete_session_with_timeouts(
 }
 
 fn delete_session_with_timeouts_for_terminal_assignment(
+    context: &CliContext,
+    id: &str,
+    tmux_bin: PathBuf,
+    kill_timeout: Duration,
+    verify_timeout: Duration,
+    terminal_assignment: Option<&orchestration::AssignmentRecord>,
+    group_cleanup_owned: bool,
+) -> Result<DeleteResult, CliError> {
+    crate::lifecycle::attempt(context, id, "delete", || {
+        delete_session_with_timeouts_for_terminal_assignment_unjournaled(
+            context,
+            id,
+            tmux_bin,
+            kill_timeout,
+            verify_timeout,
+            terminal_assignment,
+            group_cleanup_owned,
+        )
+    })
+}
+
+fn delete_session_with_timeouts_for_terminal_assignment_unjournaled(
     context: &CliContext,
     id: &str,
     tmux_bin: PathBuf,
@@ -13955,7 +14043,10 @@ enum SessionTerminationFailure {
     RuntimeIdentityChanged,
     RuntimeIdentityMismatch,
     RuntimeIdentityUnavailable,
+    ProcessIdentityUnavailable,
     VerificationFailed,
+    TmuxStatusUnavailable,
+    ProcessStatusUnavailable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13977,6 +14068,17 @@ impl SessionTerminationOperation {
 }
 
 pub fn stop_session_runtime_locked(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    tmux_bin: &Path,
+) -> Result<(), CliError> {
+    let journal_id = record.id.clone();
+    crate::lifecycle::attempt(context, &journal_id, "stop", || {
+        stop_session_runtime_locked_unjournaled(context, record, tmux_bin)
+    })
+}
+
+pub fn stop_session_runtime_locked_unjournaled(
     context: &CliContext,
     record: &mut SessionRecord,
     tmux_bin: &Path,
@@ -14014,8 +14116,12 @@ impl SessionTerminationFailure {
             Self::ProcessStillRunning => "process-still-running",
             Self::RuntimeIdentityChanged => "runtime-identity-changed",
             Self::RuntimeIdentityMismatch => "runtime-identity-mismatch",
-            Self::RuntimeIdentityUnavailable => "runtime-identity-unavailable",
-            Self::VerificationFailed => "verification-failed",
+            Self::RuntimeIdentityUnavailable | Self::ProcessIdentityUnavailable => {
+                "runtime-identity-unavailable"
+            }
+            Self::VerificationFailed
+            | Self::TmuxStatusUnavailable
+            | Self::ProcessStatusUnavailable => "verification-failed",
         }
     }
 
@@ -14027,9 +14133,9 @@ impl SessionTerminationFailure {
             Self::KillFailed => "tmux kill-session failed",
             Self::KillTimeout => "tmux kill-session timed out",
             Self::KillError => "tmux kill-session could not be executed",
-            Self::StillRunning => "tmux session remained live after kill-session",
+            Self::StillRunning => "tmux has-session probe reported a live session",
             Self::ProcessStillRunning => {
-                "the recorded tmux runtime process boundary remained live after kill-session"
+                "the recorded process boundary liveness probe reported surviving processes"
             }
             Self::RuntimeIdentityChanged => {
                 "the managed tmux pane identity changed before kill-session"
@@ -14041,20 +14147,30 @@ impl SessionTerminationFailure {
                 "the recorded tmux runtime identity could not be established"
             }
             Self::VerificationFailed => "tmux session termination could not be verified",
+            Self::TmuxStatusUnavailable => {
+                "tmux has-session probe for the exact managed session name was unavailable"
+            }
+            Self::ProcessStatusUnavailable | Self::ProcessIdentityUnavailable => {
+                "the recorded process boundary liveness probe was unavailable"
+            }
         }
     }
 
     fn retryable(self) -> bool {
         !matches!(
             self,
-            Self::RuntimeIdentityMismatch | Self::RuntimeIdentityUnavailable
+            Self::RuntimeIdentityMismatch
+                | Self::RuntimeIdentityUnavailable
+                | Self::ProcessIdentityUnavailable
         )
     }
 
     fn action(self, operation: SessionTerminationOperation) -> &'static str {
         match self {
             Self::RuntimeIdentityMismatch => "resolve-runtime-identity-mismatch",
-            Self::RuntimeIdentityUnavailable => "manual-runtime-verification-required",
+            Self::RuntimeIdentityUnavailable | Self::ProcessIdentityUnavailable => {
+                "manual-runtime-verification-required"
+            }
             _ => operation.retry_action(),
         }
     }
@@ -14171,6 +14287,20 @@ fn recover_failed_tmux_launch_bounded(
         Ok(()) => FailedLaunchCleanup::Completed,
         Err(error) => failed_launch_cleanup_from_error(&error),
     }
+}
+
+/// A failed create that retains its record must remain directly addressable.
+fn with_retained_startup(mut error: CliError, record: &SessionRecord) -> CliError {
+    let mut details = match error.0.details.take() {
+        Some(Value::Object(details)) => details,
+        _ => serde_json::Map::new(),
+    };
+    details.insert("session_id".to_owned(), json!(record.id));
+    if let Some(startup) = startup_projection(record) {
+        details.insert("startup".to_owned(), json!(startup));
+    }
+    error.0.details = Some(Value::Object(details));
+    error
 }
 
 /// Attach bounded cleanup state to a primary failure, preserving code and message.
@@ -14315,7 +14445,7 @@ fn terminate_verified_process_runtime_transaction(
         VerifiedRuntimeTerminationMode::LiveTmux { tmux_bin, .. }
         | VerifiedRuntimeTerminationMode::AlreadyStopped { tmux_bin } => tmux_bin,
     };
-    verify_stopped_tmux_runtime(tmux_bin, identity, remaining)?;
+    verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, identity, remaining)?;
     record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
     write_session_record(context, record)
         .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
@@ -14331,7 +14461,7 @@ fn terminate_tmux_session_with_timeouts(
     verify_timeout: Duration,
     terminate_process_group: bool,
 ) -> Result<(), SessionTerminationFailure> {
-    if recorded_runtime_is_from_prior_macos_boot(record) {
+    if recorded_runtime_is_from_prior_boot(record) {
         record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
         return Ok(());
     }
@@ -14398,7 +14528,7 @@ fn terminate_tmux_session_with_timeouts(
                 let verification_started = Instant::now();
                 verify_stopped_process_runtimes(&prior_identities, verify_timeout)?;
                 let remaining = verify_timeout.saturating_sub(verification_started.elapsed());
-                verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)?;
+                verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, &identity, remaining)?;
                 match persisted_tmux_termination_state(record)? {
                     Some(TmuxTerminationState::FreezePending { .. }) => {
                         return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
@@ -14457,7 +14587,7 @@ fn terminate_tmux_session_with_timeouts(
                     .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
                 let verification_started = Instant::now();
                 let remaining = verify_timeout.saturating_sub(verification_started.elapsed());
-                verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)?;
+                verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, &identity, remaining)?;
                 record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
                 write_session_record(context, record)
                     .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
@@ -14473,7 +14603,7 @@ fn gracefully_shutdown_profiled_tmux_session(
     tmux_bin: &Path,
     verify_timeout: Duration,
 ) -> Result<(), SessionTerminationFailure> {
-    if recorded_runtime_is_from_prior_macos_boot(record) {
+    if recorded_runtime_is_from_prior_boot(record) {
         return Ok(());
     }
     let Some(mode) = session_profile_graceful_shutdown(record)? else {
@@ -14520,10 +14650,13 @@ fn gracefully_shutdown_profiled_tmux_session(
                             remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT),
                         ) == "stopped"
                         {
-                            return verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)
-                                .map_err(|_| {
-                                    SessionTerminationFailure::GracefulShutdownIncomplete
-                                });
+                            return verify_stopped_tmux_runtime(
+                                tmux_bin,
+                                &record.tmux_session,
+                                &identity,
+                                remaining,
+                            )
+                            .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
                         }
                         return Err(SessionTerminationFailure::RuntimeIdentityChanged);
                     }
@@ -14534,10 +14667,13 @@ fn gracefully_shutdown_profiled_tmux_session(
                             remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT),
                         ) == "stopped"
                         {
-                            return verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)
-                                .map_err(|_| {
-                                    SessionTerminationFailure::GracefulShutdownIncomplete
-                                });
+                            return verify_stopped_tmux_runtime(
+                                tmux_bin,
+                                &record.tmux_session,
+                                &identity,
+                                remaining,
+                            )
+                            .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
                         }
                         return Err(reason);
                     }
@@ -14560,8 +14696,13 @@ fn gracefully_shutdown_profiled_tmux_session(
         .as_str()
         {
             "stopped" => {
-                return verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)
-                    .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
+                return verify_stopped_tmux_runtime(
+                    tmux_bin,
+                    &record.tmux_session,
+                    &identity,
+                    remaining,
+                )
+                .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
             }
             "running"
                 if !tmux_pane_identity_matches(
@@ -14579,8 +14720,13 @@ fn gracefully_shutdown_profiled_tmux_session(
                     remaining.min(DELETE_TERMINATION_PROBE_TIMEOUT),
                 ) == "stopped"
                 {
-                    return verify_stopped_tmux_runtime(tmux_bin, &identity, remaining)
-                        .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
+                    return verify_stopped_tmux_runtime(
+                        tmux_bin,
+                        &record.tmux_session,
+                        &identity,
+                        remaining,
+                    )
+                    .map_err(|_| SessionTerminationFailure::GracefulShutdownIncomplete);
                 }
                 return Err(SessionTerminationFailure::RuntimeIdentityChanged);
             }
@@ -15810,7 +15956,7 @@ fn coordination_process_runtime_status(identity: &TmuxRuntimeIdentity) -> Proces
 
 #[cfg(not(target_os = "linux"))]
 fn coordination_process_runtime_status(identity: &TmuxRuntimeIdentity) -> ProcessGroupStatus {
-    if runtime_is_from_prior_macos_boot(identity) {
+    if runtime_is_from_prior_boot(identity) {
         return ProcessGroupStatus::Stopped;
     }
     identity
@@ -15914,7 +16060,7 @@ fn macos_prior_boot_proven(recorded: Option<&str>, current: Option<&str>) -> boo
     }
 }
 
-fn runtime_is_from_prior_macos_boot(identity: &TmuxRuntimeIdentity) -> bool {
+fn runtime_is_from_prior_boot(identity: &TmuxRuntimeIdentity) -> bool {
     #[cfg(target_os = "macos")]
     {
         macos_prior_boot_proven(
@@ -15922,28 +16068,42 @@ fn runtime_is_from_prior_macos_boot(identity: &TmuxRuntimeIdentity) -> bool {
             capture_macos_boot_id().as_deref(),
         )
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        if identity.pid_namespace.is_some() {
+            return linux_runtime_pid_namespace_relation(identity)
+                == LinuxPidNamespaceRelation::PriorBoot;
+        }
+        // Older runtime records may only carry boot provenance on the cgroup.
+        identity
+            .control_group
+            .as_ref()
+            .and_then(|group| group.boot_id.as_deref())
+            .filter(|boot_id| valid_linux_boot_id(boot_id))
+            .is_some_and(|boot_id| linux_boot_id().is_ok_and(|current| current != boot_id))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = identity;
         false
     }
 }
 
-fn recorded_runtime_is_from_prior_macos_boot(record: &SessionRecord) -> bool {
+fn recorded_runtime_is_from_prior_boot(record: &SessionRecord) -> bool {
     let Ok(Some(identity)) = persisted_tmux_runtime_identity(record) else {
         return false;
     };
     let Ok(prior) = persisted_prior_tmux_runtime_identities(record) else {
         return false;
     };
-    runtime_is_from_prior_macos_boot(&identity)
+    runtime_is_from_prior_boot(&identity)
         && prior
             .iter()
-            .all(|old| old.same_runtime_target(&identity) && runtime_is_from_prior_macos_boot(old))
+            .all(|old| old.same_runtime_target(&identity) && runtime_is_from_prior_boot(old))
 }
 
 fn process_runtime_status(identity: &TmuxRuntimeIdentity) -> ProcessGroupStatus {
-    if runtime_is_from_prior_macos_boot(identity) {
+    if runtime_is_from_prior_boot(identity) {
         return ProcessGroupStatus::Stopped;
     }
     #[cfg(target_os = "linux")]
@@ -15974,7 +16134,7 @@ fn verify_stopped_process_runtime(
                 return Err(SessionTerminationFailure::ProcessStillRunning);
             }
             ProcessGroupStatus::Unknown => {
-                return Err(SessionTerminationFailure::VerificationFailed);
+                return Err(SessionTerminationFailure::ProcessIdentityUnavailable);
             }
             ProcessGroupStatus::Running => {}
         }
@@ -17619,10 +17779,11 @@ fn verify_stopped_process_runtimes(
 
 fn verify_stopped_tmux_runtime(
     tmux_bin: &Path,
+    tmux_session: &str,
     identity: &TmuxRuntimeIdentity,
     verify_timeout: Duration,
 ) -> Result<(), SessionTerminationFailure> {
-    if runtime_is_from_prior_macos_boot(identity) {
+    if runtime_is_from_prior_boot(identity) {
         return Ok(());
     }
     let started_at = Instant::now();
@@ -17636,9 +17797,13 @@ fn verify_stopped_tmux_runtime(
         // not terminate. One probe is bounded by the probe timeout, so the
         // window still cannot run away.
         let remaining = verify_timeout.saturating_sub(started_at.elapsed());
+        // Numeric selectors are local to a tmux server lifetime and can be
+        // reused after a restart. Only the exact managed name identifies the
+        // session whose absence is being verified; process evidence is checked
+        // independently before allowing lifecycle mutation.
         let tmux_status = verified_tmux_status_with_timeout(
             tmux_bin,
-            &identity.session_id,
+            &exact_tmux_target(tmux_session),
             if remaining.is_zero() {
                 DELETE_TERMINATION_PROBE_TIMEOUT
             } else {
@@ -17662,8 +17827,10 @@ fn verify_stopped_tmux_runtime(
                 SessionTerminationFailure::StillRunning
             } else if observed_tmux_stopped && observed_process_running {
                 SessionTerminationFailure::ProcessStillRunning
+            } else if tmux_status == "unknown" {
+                SessionTerminationFailure::TmuxStatusUnavailable
             } else {
-                SessionTerminationFailure::VerificationFailed
+                SessionTerminationFailure::ProcessStatusUnavailable
             });
         }
         thread::sleep(
@@ -17848,7 +18015,7 @@ pub fn session_status(context: &CliContext, tmux_bin: &Path, record: &SessionRec
     if dsh_external::is_external_record(record) {
         return dsh_external::external_session_status(context, record);
     }
-    if recorded_runtime_is_from_prior_macos_boot(record) {
+    if recorded_runtime_is_from_prior_boot(record) {
         return "stopped".to_string();
     }
     live_status(tmux_bin, &record.tmux_session)
@@ -18367,6 +18534,118 @@ fn resolve_state_dir(explicit: Option<PathBuf>) -> Result<PathBuf, CliError> {
         )
     })?;
     Ok(normalize_path(&home.join(".local/state/agent-session")))
+}
+
+/// Resolve nested cwd to its physical Git checkout, without inherited Git
+/// retargeting. Ordinary non-repository directories have no checkout fence.
+fn resolve_worktree_lifecycle_root(
+    state: &Path,
+    cwd: &Path,
+) -> Result<Option<PathBuf>, nils_common::worktree_lifecycle::Error> {
+    use nils_common::worktree_lifecycle::{self, Error};
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let cwd = fs::canonicalize(cwd).map_err(|_| Error::Unavailable)?;
+    if !cwd.ancestors().any(|path| path.join(".git").exists()) {
+        return worktree_lifecycle::prior_checkout_root(state, &cwd);
+    }
+    // This identity probe cannot use a PATH shim that reports a different
+    // checkout key from the one removal uses.
+    let mut command = ProcessCommand::new("/usr/bin/git");
+    command
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    for (key, _) in std::env::vars_os() {
+        if key.as_bytes().starts_with(b"GIT_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("LC_ALL", "C");
+    let mut child = command.spawn().map_err(|_| Error::Unavailable)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::Unavailable);
+            }
+        }
+    };
+    if !status.success() {
+        return Err(Error::Unavailable);
+    }
+    let mut bytes = Vec::new();
+    child
+        .stdout
+        .take()
+        .ok_or(Error::Unavailable)?
+        .take(65_537)
+        .read_to_end(&mut bytes)
+        .map_err(|_| Error::Unavailable)?;
+    if bytes.len() > 65_536 || bytes.pop() != Some(b'\n') || bytes.is_empty() {
+        return Err(Error::Unavailable);
+    }
+    let root = fs::canonicalize(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+        .map_err(|_| Error::Unavailable)?;
+    if !cwd.starts_with(&root) {
+        return Err(Error::Unavailable);
+    }
+    Ok(Some(root))
+}
+
+fn acquire_worktree_lifecycle(
+    context: &CliContext,
+    cwd: &Path,
+) -> Result<Option<nils_common::worktree_lifecycle::Guard>, CliError> {
+    use nils_common::worktree_lifecycle::{self, Error};
+    let adapt = |error| {
+        let code = match error {
+            Error::Busy => "worktree-lifecycle-busy",
+            Error::Changed => "worktree-lifecycle-changed",
+            Error::Unavailable => "worktree-lifecycle-unavailable",
+            Error::StateRootMismatch => "worktree-lifecycle-state-root-mismatch",
+        };
+        CliError::runtime(
+            code,
+            "checkout startup must wait until lifecycle proof is available",
+            Some(json!({ "retryable": matches!(error, Error::Busy) })),
+        )
+    };
+    let namespace = worktree_lifecycle::state_home().map_err(adapt)?;
+    let Some(root) = resolve_worktree_lifecycle_root(&namespace, cwd).map_err(adapt)? else {
+        return Ok(None);
+    };
+    let _state_root = private_session_state_root(context)?;
+    let mut guard = worktree_lifecycle::Guard::acquire_startup(&namespace, &root).map_err(adapt)?;
+    // Only linked worktrees can be removal targets. Primary checkouts may host
+    // independent session inventories without acquiring a removal binding.
+    if root.join(".git").is_file() {
+        guard
+            .bind_session_state(&context.state_dir)
+            .map_err(adapt)?;
+    }
+    // A removal that won after root resolution must not allow startup to
+    // publish a session for the now-missing checkout or nested cwd.
+    if resolve_worktree_lifecycle_root(&namespace, cwd)
+        .map_err(adapt)?
+        .as_ref()
+        != Some(&root)
+    {
+        return Err(adapt(Error::Changed));
+    }
+    guard.verify().map_err(adapt)?;
+    Ok(Some(guard))
 }
 
 fn resolve_cwd(explicit: Option<&Path>) -> Result<PathBuf, CliError> {
@@ -19421,6 +19700,91 @@ mod tests {
         strip_trailing_blank_lines, tmux_launch_may_have_created_runtime,
         try_acquire_session_record_lock, write_session_record,
     };
+
+    #[test]
+    fn worktree_lifecycle_blocks_provider_import_and_existing_resume() {
+        use super::*;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let checkout = tmp.path().join("checkout");
+        fs::create_dir(&checkout).unwrap();
+        assert!(
+            ProcessCommand::new("git")
+                .current_dir(&checkout)
+                .args(["init", "--quiet"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = create_record(RecordRequest {
+            context: &context,
+            agent: AgentKind::Codex,
+            mode: "interactive",
+            coordination_mode: cli::CoordinationMode::Advisory,
+            title: None,
+            title_state: None,
+            explicit_id: Some("existing"),
+            cwd: &checkout,
+            prompt: None,
+            log_file_name: None,
+            provider_resume: None,
+            agent_args: Vec::new(),
+            agent_bin: None,
+        })
+        .unwrap()
+        .record;
+        let record_path = context.state_dir.join("sessions/existing/session.json");
+        let before = fs::read(&record_path).unwrap();
+        let _guard = nils_common::worktree_lifecycle::Guard::acquire(
+            &nils_common::worktree_lifecycle::state_home().unwrap(),
+            &checkout,
+        )
+        .unwrap();
+        let args = ProviderResumeImportArgs {
+            agent: AgentKind::Codex,
+            title_mode: display_metadata::TitleMode::Auto,
+            provider_resume_id: "provider-fixture".into(),
+            title: None,
+            title_state: None,
+            id: Some("imported".into()),
+            coordination_mode: cli::CoordinationMode::Advisory,
+            tmux_bin: Some(tmp.path().join("never-launch")),
+            agent_bin: None,
+            agent_profile: None,
+            provider_config_dir: None,
+            profile_auto_resume_supported: None,
+            profile_graceful_shutdown: None,
+            codex_usage_account: None,
+            agent_args: Vec::new(),
+            initial_lineage: InitialLineage {
+                seed: lineage::LineageSeed::root("fixture", "user", "test"),
+                work: None,
+                role: None,
+            },
+            format: OutputFormat::Json,
+        };
+        let provider_resume = ProviderResume {
+            provider: "codex".into(),
+            session_id: "provider-fixture".into(),
+            captured_at: "2030-01-01T00:00:00Z".into(),
+            capture_method: "fixture".into(),
+            resume_args: Vec::new(),
+            extra: BTreeMap::new(),
+        };
+        let imported =
+            start_resolved_provider_resume_session(&context, args, checkout, provider_resume)
+                .unwrap_err();
+        pretty_assertions::assert_eq!(imported.code(), "worktree-lifecycle-busy");
+        assert!(!context.state_dir.join("sessions/imported").exists());
+        let resumed = resume_session_locked(&context, record, &tmp.path().join("never-launch"))
+            .err()
+            .expect("resume must retain the barrier");
+        pretty_assertions::assert_eq!(resumed.code(), "worktree-lifecycle-busy");
+        pretty_assertions::assert_eq!(fs::read(record_path).unwrap(), before);
+    }
 
     #[test]
     fn managed_dsh_profile_assigns_provider_identity_before_launch() {
@@ -20513,39 +20877,48 @@ fi
     }
 
     #[test]
-    fn held_launch_executes_broker_and_provider_lifecycle_under_terminal() {
+    fn lifecycle_review_held_launch_supports_current_and_older_brokers() {
         use std::fs::File;
         use std::os::fd::FromRawFd;
         use std::process::Stdio;
 
-        let tmp = tempfile::TempDir::new().unwrap();
-        let gate = tmp.path().join("launch-ready");
-        let broker_gate = tmp.path().join("broker-provisioned");
-        let heartbeat = tmp.path().join("heartbeat");
-        let capability = tmp.path().join("capability");
-        let events = tmp.path().join("events");
-        let broker = tmp.path().join("broker");
-        let provider = tmp.path().join("provider");
-        fs::write(&capability, "capability\n").unwrap();
-        fs::write(
-            &broker,
-            r#"#!/bin/sh
+        for older in [false, true] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let gate = tmp.path().join("launch-ready");
+            let broker_gate = tmp.path().join("broker-provisioned");
+            let heartbeat = tmp.path().join("heartbeat");
+            let capability = tmp.path().join("capability");
+            let events = tmp.path().join("events");
+            let broker = tmp.path().join("broker");
+            let provider = tmp.path().join("provider");
+            fs::write(&capability, "capability\n").unwrap();
+            fs::write(
+                &broker,
+                r#"#!/bin/sh
 case " $* " in
   *" broker heartbeat "*)
     printf 'heartbeat\n' >> "$HELD_LAUNCH_EVENTS"
     while :; do sleep 0.05; done
     ;;
   *" broker stop "*)
-    printf 'stop\n' >> "$HELD_LAUNCH_EVENTS"
+    case " $* " in
+      *" --exit-code "*)
+        if [ "$HELD_LAUNCH_OLDER" = 1 ]; then
+          printf 'flag-rejected\n' >> "$HELD_LAUNCH_EVENTS"; exit 64
+        fi
+        while [ "$1" != --exit-code ]; do shift; done
+        printf 'stop:%s\n' "$2" >> "$HELD_LAUNCH_EVENTS" ;;
+      *) printf 'stop-older\n' >> "$HELD_LAUNCH_EVENTS" ;;
+    esac
     ;;
   *) exit 64 ;;
 esac
 "#,
-        )
-        .unwrap();
-        fs::write(
-            &provider,
-            r#"#!/bin/sh
+            )
+            .unwrap();
+            fs::write(
+                &provider,
+                r#"#!/bin/sh
 if [ -t 0 ]; then
   printf 'provider-tty\n' >> "$HELD_LAUNCH_EVENTS"
   exit 23
@@ -20553,104 +20926,110 @@ fi
 printf 'provider-no-tty\n' >> "$HELD_LAUNCH_EVENTS"
 exit 97
 "#,
-        )
-        .unwrap();
-        for executable in [&broker, &provider] {
-            fs::set_permissions(executable, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-
-        let mut master_fd = -1;
-        let mut slave_fd = -1;
-        // SAFETY: openpty initializes both descriptors; each successful descriptor is
-        // immediately transferred into exactly one File and closed by its owner.
-        let openpty_status = unsafe {
-            libc::openpty(
-                &mut master_fd,
-                &mut slave_fd,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
             )
-        };
-        assert_eq!(openpty_status, 0, "openpty: {}", io::Error::last_os_error());
-        // SAFETY: openpty returned two fresh, owned descriptors above.
-        let _pty_master = unsafe { File::from_raw_fd(master_fd) };
-        // SAFETY: openpty returned two fresh, owned descriptors above.
-        let pty_slave = unsafe { File::from_raw_fd(slave_fd) };
+            .unwrap();
+            for executable in [&broker, &provider] {
+                fs::set_permissions(executable, fs::Permissions::from_mode(0o700)).unwrap();
+            }
 
-        let mut command = Command::new("sh");
-        command
-            .arg("-c")
-            .arg(super::HELD_LAUNCH_SCRIPT)
-            .arg("agent-session-held-launch")
-            .arg(&gate)
-            .arg(&broker_gate)
-            .arg(&heartbeat)
-            .arg(&capability)
-            .arg("incarnation")
-            .arg("7")
-            .arg(&broker)
-            .arg(&provider)
-            .env("AGENT_SESSION_STATE_DIR", tmp.path())
-            .env("AGENT_SESSION_ID", "held-launch-test")
-            .env("HELD_LAUNCH_EVENTS", &events)
-            .stdin(Stdio::from(pty_slave))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let mut child = command.spawn().unwrap();
+            let mut master_fd = -1;
+            let mut slave_fd = -1;
+            // SAFETY: openpty initializes both descriptors; each successful descriptor is
+            // immediately transferred into exactly one File and closed by its owner.
+            let openpty_status = unsafe {
+                libc::openpty(
+                    &mut master_fd,
+                    &mut slave_fd,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_eq!(openpty_status, 0, "openpty: {}", io::Error::last_os_error());
+            // SAFETY: openpty returned two fresh, owned descriptors above.
+            let _pty_master = unsafe { File::from_raw_fd(master_fd) };
+            // SAFETY: openpty returned two fresh, owned descriptors above.
+            let pty_slave = unsafe { File::from_raw_fd(slave_fd) };
 
-        thread::sleep(Duration::from_millis(100));
-        let before_provision = fs::read_to_string(&events).unwrap_or_default();
-        if !before_provision.is_empty() {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("heartbeat ran before broker provisioning: {before_provision:?}");
-        }
+            let mut command = Command::new("sh");
+            command
+                .arg("-c")
+                .arg(super::HELD_LAUNCH_SCRIPT)
+                .arg("agent-session-held-launch")
+                .arg(&gate)
+                .arg(&broker_gate)
+                .arg(&heartbeat)
+                .arg(&capability)
+                .arg("incarnation")
+                .arg("7")
+                .arg(&broker)
+                .arg(&provider)
+                .env("AGENT_SESSION_STATE_DIR", tmp.path())
+                .env("AGENT_SESSION_ID", "held-launch-test")
+                .env("HELD_LAUNCH_EVENTS", &events)
+                .env("HELD_LAUNCH_OLDER", if older { "1" } else { "0" })
+                .stdin(Stdio::from(pty_slave))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let mut child = command.spawn().unwrap();
 
-        fs::write(&broker_gate, "ready\n").unwrap();
-        let heartbeat_deadline = Instant::now() + Duration::from_secs(2);
-        while !fs::read_to_string(&events)
-            .unwrap_or_default()
-            .contains("heartbeat\n")
-        {
-            if Instant::now() >= heartbeat_deadline {
+            thread::sleep(Duration::from_millis(100));
+            let before_provision = fs::read_to_string(&events).unwrap_or_default();
+            if !before_provision.is_empty() {
                 let _ = child.kill();
                 let _ = child.wait();
-                panic!("heartbeat did not start after broker provisioning");
+                panic!("heartbeat ran before broker provisioning: {before_provision:?}");
             }
-            thread::sleep(Duration::from_millis(10));
+
+            fs::write(&broker_gate, "ready\n").unwrap();
+            let heartbeat_deadline = Instant::now() + Duration::from_secs(2);
+            while !fs::read_to_string(&events)
+                .unwrap_or_default()
+                .contains("heartbeat\n")
+            {
+                if Instant::now() >= heartbeat_deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("heartbeat did not start after broker provisioning");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(fs::read_to_string(&events).unwrap(), "heartbeat\n");
+
+            fs::write(&gate, "ready\n").unwrap();
+            let exit_deadline = Instant::now() + Duration::from_secs(2);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() >= exit_deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("held launch did not exit after the provider completed");
+                }
+                thread::sleep(Duration::from_millis(10));
+            };
+
+            assert_eq!(status.code(), Some(23));
+            assert_eq!(
+                fs::read_to_string(&events).unwrap(),
+                if older {
+                    "heartbeat\nprovider-tty\nflag-rejected\nstop-older\n"
+                } else {
+                    "heartbeat\nprovider-tty\nstop:23\n"
+                }
+            );
+            assert!(!capability.exists());
+            assert!(!broker_gate.exists());
+            assert!(!gate.exists());
+            assert!(!fs::read_dir(tmp.path()).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("heartbeat.done.")
+            }));
         }
-        assert_eq!(fs::read_to_string(&events).unwrap(), "heartbeat\n");
-
-        fs::write(&gate, "ready\n").unwrap();
-        let exit_deadline = Instant::now() + Duration::from_secs(2);
-        let status = loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                break status;
-            }
-            if Instant::now() >= exit_deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("held launch did not exit after the provider completed");
-            }
-            thread::sleep(Duration::from_millis(10));
-        };
-
-        assert_eq!(status.code(), Some(23));
-        assert_eq!(
-            fs::read_to_string(&events).unwrap(),
-            "heartbeat\nprovider-tty\nstop\n"
-        );
-        assert!(!capability.exists());
-        assert!(!broker_gate.exists());
-        assert!(!gate.exists());
-        assert!(!fs::read_dir(tmp.path()).unwrap().any(|entry| {
-            entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .starts_with("heartbeat.done.")
-        }));
     }
     use pretty_assertions::assert_eq;
     #[cfg(target_os = "linux")]
@@ -21621,6 +22000,236 @@ exit 97
         process.stop();
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn generation_two_reboot_ignores_reused_numeric_tmux_selector() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        for operation in ["delete", "archive"] {
+            let id = create_test_record_id(
+                &context,
+                AgentKind::Codex,
+                None,
+                Some(&format!("reboot-{operation}")),
+            );
+            let mut record = load_session_record(&context, &id).unwrap();
+            record.runtime.as_mut().unwrap().generation = 2;
+            let identity: TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
+                "launch_id": record.runtime.as_ref().unwrap().launch_id,
+                "session_id": "$7", "pane_id": "%7", "pane_pid": 2000000000,
+                "process_group_id": 2000000000,
+                "pid_namespace": { "device": 1, "inode": 1,
+                    "boot_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }
+            }))
+            .unwrap();
+            persist_tmux_runtime_identity(&mut record, &identity).unwrap();
+            use sha2::Digest;
+            let mut digest = sha2::Sha256::new();
+            digest.update(context.state_dir.as_os_str().as_encoded_bytes());
+            digest.update([0]);
+            digest.update(record.id.as_bytes());
+            digest.update([0]);
+            digest.update(record.runtime.as_ref().unwrap().launch_id.as_bytes());
+            let namespace: String = digest
+                .finalize()
+                .iter()
+                .take(8)
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            let socket = tmp
+                .path()
+                .join("runtime/agent-session")
+                .join(format!("cx-{namespace}.sock"));
+            let runtime = record.runtime.as_mut().unwrap();
+            runtime.kind = "codex_app_server".to_string();
+            runtime.extra.insert(
+                "codex_app_server_protocol".to_string(),
+                serde_json::json!("v2"),
+            );
+            for (key, path) in [
+                ("codex_app_server_socket", socket.clone()),
+                ("codex_app_server_proxy", socket.with_extension("proxy")),
+                (
+                    "codex_app_server_thread_handoff",
+                    socket.with_extension("thread"),
+                ),
+                (
+                    "codex_app_server_thread_attached",
+                    socket.with_extension("attached"),
+                ),
+            ] {
+                assert!(!path.exists());
+                runtime
+                    .extra
+                    .insert(key.to_string(), serde_json::json!(path));
+            }
+            assert!(super::codex_app_server::runtime_is_supported(&record));
+            record.provider_resume =
+                Some(super::codex_provider_resume(&record, "provider-fixture"));
+            write_session_record(&context, &record).unwrap();
+            let stub = nils_test_support::StubBinDir::new();
+            stub.write_exe(
+                "tmux",
+                r#"#!/bin/sh
+case "$1:$3" in
+has-session:\$7) exit 0 ;;
+esac
+printf '%s\n' "can't find session: $3" >&2
+exit 1
+"#,
+            );
+            let tmux = stub.path().join("tmux");
+            let preview = super::maintenance::preview(
+                &context,
+                &id,
+                &tmux,
+                super::maintenance::MaintenanceOperation::Resume,
+                super::maintenance::MaintenanceContract::V1,
+            )
+            .unwrap();
+            let preview = serde_json::to_value(preview).unwrap();
+            assert_eq!(preview["state"], "healthy");
+            assert_eq!(preview["boundary"]["kind"], "none");
+            assert_eq!(preview["boundary"]["safe_process_count"], 0);
+            super::stop_session_runtime_locked(&context, &mut record, &tmux).unwrap();
+            let deleted = if operation == "archive" {
+                let incarnation = record.runtime.as_ref().unwrap().launch_id.clone();
+                let (archive, deleted) = super::archive_session_with_expected_incarnation(
+                    &context,
+                    &id,
+                    tmux,
+                    &incarnation,
+                )
+                .unwrap();
+                assert_eq!(archive.provider_session_id, "provider-fixture");
+                deleted
+            } else {
+                delete_session_with_timeouts(
+                    &context,
+                    &id,
+                    tmux,
+                    Duration::from_millis(100),
+                    Duration::from_millis(100),
+                )
+                .unwrap()
+            };
+            assert!(deleted.deleted);
+        }
+    }
+    #[test]
+    fn absent_managed_name_requires_a_stopped_process_boundary() {
+        let _isolation = nils_test_support::isolate_forge_identity();
+        let stub = nils_test_support::StubBinDir::new();
+        stub.write_exe(
+            "tmux",
+            r#"#!/bin/sh
+if [ "$3" = '$7' ]; then exit 0; fi
+printf '%s\n' "can't find session: $3" >&2
+exit 1
+"#,
+        );
+        let tmux = stub.path().join("tmux");
+        let mut pane = TestProcessGroup::spawn();
+        let identity: TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
+            "session_id": "$7", "pane_id": "%7", "pane_pid": pane.pid(),
+            "process_group_id": pane.process_group_id
+        }))
+        .unwrap();
+        let result =
+            super::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO);
+        assert_eq!(
+            result,
+            Err(super::SessionTerminationFailure::ProcessStillRunning)
+        );
+        pane.stop();
+        assert!(
+            super::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn stopped_runtime_error_names_the_unavailable_probe() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = test_context(tmp.path());
+        let id = create_test_record_id(&context, AgentKind::Codex, None, Some("probe-error"));
+        let record = load_session_record(&context, &id).unwrap();
+        let stub = nils_test_support::StubBinDir::new();
+        stub.write_exe("tmux", "#!/bin/sh\nexit 42\n");
+        let tmux = stub.path().join("tmux");
+        let identity: TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
+            "session_id": "$7", "pane_id": "%7", "pane_pid": 2000000000
+        }))
+        .unwrap();
+        let reason =
+            super::verify_stopped_tmux_runtime(&tmux, "managed-fixture", &identity, Duration::ZERO)
+                .unwrap_err();
+        assert_eq!(
+            reason,
+            super::SessionTerminationFailure::TmuxStatusUnavailable
+        );
+        let error = super::session_termination_error(
+            &record,
+            reason,
+            super::SessionTerminationOperation::Resume,
+        );
+        assert!(error.0.message.contains("tmux has-session probe"));
+        assert_eq!(
+            error.0.details.as_ref().unwrap()["reason"],
+            "verification-failed"
+        );
+        assert!(session_dir(&context, &id).exists());
+        #[cfg(target_os = "linux")]
+        {
+            let _status = super::tmux_probe_fixture::install_status(
+                &tmux,
+                super::tmux_probe_fixture::Status::Stopped,
+            );
+            let mut unverified = identity;
+            unverified.control_group = Some(super::TmuxControlGroupIdentity {
+                path: "/unverified-boundary".to_string(),
+                device: 1,
+                inode: 1,
+                boot_id: Some(super::linux_boot_id().unwrap()),
+            });
+            let reason = super::verify_stopped_tmux_runtime(
+                &tmux,
+                "managed-fixture",
+                &unverified,
+                Duration::ZERO,
+            )
+            .unwrap_err();
+            assert_eq!(
+                reason,
+                super::SessionTerminationFailure::ProcessStatusUnavailable
+            );
+            let error = super::session_termination_error(
+                &record,
+                reason,
+                super::SessionTerminationOperation::Resume,
+            );
+            assert!(error.0.message.contains("process boundary liveness probe"));
+            assert_eq!(
+                error.0.details.as_ref().unwrap()["reason"],
+                "verification-failed"
+            );
+            assert!(session_dir(&context, &id).exists());
+
+            let reason =
+                super::verify_stopped_process_runtime(&unverified, Duration::ZERO).unwrap_err();
+            let error = super::session_termination_error(
+                &record,
+                reason,
+                super::SessionTerminationOperation::RuntimeStop,
+            );
+            assert!(error.0.message.contains("process boundary liveness probe"));
+            let details = error.0.details.as_ref().unwrap();
+            assert_eq!(details["reason"], "runtime-identity-unavailable");
+            assert_eq!(details["action"], "manual-runtime-verification-required");
+            assert_eq!(details["retryable"], false);
+        }
+    }
+
     /// An exhausted verification window must still observe before it judges.
     ///
     /// The termination transaction hands a sub-step the whole verify budget and
@@ -21668,7 +22277,13 @@ exit 1
 
         let started = Instant::now();
         assert!(
-            super::verify_stopped_tmux_runtime(&tmux_bin, &identity, Duration::ZERO).is_ok(),
+            super::verify_stopped_tmux_runtime(
+                &tmux_bin,
+                "managed-fixture",
+                &identity,
+                Duration::ZERO
+            )
+            .is_ok(),
             "an exhausted window must probe once and confirm the stopped session"
         );
         assert!(
@@ -21717,7 +22332,12 @@ exit 0
         // live or inconclusive probe returns rather than looping. Bounding the
         // elapsed time pins that: without the exit this call would not return.
         let started = Instant::now();
-        let verdict = super::verify_stopped_tmux_runtime(&tmux_bin, &identity, Duration::ZERO);
+        let verdict = super::verify_stopped_tmux_runtime(
+            &tmux_bin,
+            "managed-fixture",
+            &identity,
+            Duration::ZERO,
+        );
         assert_eq!(
             verdict,
             Err(super::SessionTerminationFailure::StillRunning),
@@ -25179,7 +25799,15 @@ fi
             super::coordination_process_runtime_status(&identity),
             super::ProcessGroupStatus::Stopped
         );
-        assert!(super::verify_stopped_tmux_runtime(&tmux, &identity, Duration::ZERO).is_ok());
+        assert!(
+            super::verify_stopped_tmux_runtime(
+                &tmux,
+                &record.tmux_session,
+                &identity,
+                Duration::ZERO
+            )
+            .is_ok()
+        );
         assert!(
             super::gracefully_shutdown_profiled_tmux_session(
                 &context,
@@ -25587,7 +26215,7 @@ fi
             ),
         )
         .unwrap();
-        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        nils_test_support::make_executable_and_warm(&tmux);
 
         let error = terminate_without_process_runtime_for_test(
             &context,
@@ -25598,7 +26226,10 @@ fi
         )
         .unwrap_err();
 
-        assert_eq!(error, super::SessionTerminationFailure::VerificationFailed);
+        assert_eq!(
+            error,
+            super::SessionTerminationFailure::TmuxStatusUnavailable
+        );
         assert!(session_dir(&context, &id).exists());
     }
 
@@ -25657,7 +26288,7 @@ fi
         .unwrap_err();
         assert_eq!(
             first_error,
-            super::SessionTerminationFailure::VerificationFailed
+            super::SessionTerminationFailure::TmuxStatusUnavailable
         );
         assert!(session_dir(&context, &id).exists());
 

@@ -73,6 +73,97 @@ fn http_hook_event_produces_the_same_turn_state_transition_as_the_file_path() {
 }
 
 #[test]
+fn auth_loss_real_hook_notifies_owner_once_and_reports_recovery() {
+    for discovery_available in [true, false] {
+        let fixture = Fixture::new();
+        if !discovery_available {
+            write_executable(&fixture.tmux_bin, "#!/bin/sh\nexit 1\n");
+        }
+        let record_path = fixture
+            .state_dir
+            .join("sessions")
+            .join(ALPHA)
+            .join("session.json");
+        let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+        let parent = json!({"machine":MACHINE, "session_id":BETA, "session_created_at":"2030-01-01T00:00:00Z"});
+        record["lineage"] = json!({"schema_version":"agent-session.session-lineage.v1", "machine":MACHINE, "parent":parent, "root":parent, "depth":1, "starter":{"kind":"session", "via":"cli"}, "budget":null});
+        write_private(&record_path, &serde_json::to_vec(&record).unwrap());
+        let server = ServeProcess::spawn(&fixture);
+        let payload = json!({"hook_event_name":"StopFailure", "session_id":"provider-session-0001", "error":"authentication_failed", "error_details":PROMPT_CANARY}).to_string();
+        let started = Instant::now();
+        for _ in 0..3 {
+            let result = fixture.hook(ALPHA, ALPHA, Some("http"), &payload);
+            assert!(result.status.success(), "{}", result.stderr);
+        }
+        assert_eq!(
+            fixture.turn_state(ALPHA)["last_turn"]["provider_failure_kind"],
+            "authentication"
+        );
+        let deadline = started + Duration::from_secs(60);
+        loop {
+            let data = fixture.inbox(BETA);
+            let count = data["data"]["messages"].as_array().unwrap().len();
+            if count == 1 {
+                break;
+            }
+            assert_eq!(count, 0, "one deduped owner notification");
+            assert!(
+                Instant::now() < deadline,
+                "owner notification exceeded 60 seconds"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let completed = json!({"hook_event_name":"Notification", "notification_type":"idle_prompt", "session_id":"provider-session-0001"}).to_string();
+        assert!(
+            fixture
+                .hook(ALPHA, ALPHA, Some("http"), &completed)
+                .status
+                .success()
+        );
+        let recovery_deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let data = fixture.inbox(BETA);
+            let messages = data["data"]["messages"].as_array().unwrap();
+            if messages.len() == 2 {
+                break;
+            }
+            assert_eq!(messages.len(), 1);
+            assert!(
+                Instant::now() < recovery_deadline,
+                "missing recovery-result notification"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            fixture
+                .hook(ALPHA, ALPHA, Some("http"), &completed)
+                .status
+                .success()
+        );
+        assert_eq!(
+            fixture.inbox(BETA)["data"]["messages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let incident_path = fixture
+            .state_dir
+            .join("sessions")
+            .join(ALPHA)
+            .join("auth-incidents.json");
+        let incidents = fs::read_to_string(incident_path).unwrap();
+        let stored: Value = serde_json::from_str(&incidents).unwrap();
+        assert_eq!(stored["incidents"].as_array().unwrap().len(), 1);
+        assert_eq!(stored["incidents"][0]["status"], "recovered");
+        assert_eq!(stored["incidents"][0]["recovery_result"], "healthy");
+        assert!(stored["incidents"][0]["recovery_notification"]["delivered_at"].is_string());
+        assert!(!incidents.contains(PROMPT_CANARY));
+        assert!(!server.stderr().contains(PROMPT_CANARY));
+    }
+}
+
+#[test]
 fn http_hook_rejects_a_credential_for_another_session_or_incarnation() {
     let fixture = Fixture::new();
     let server = ServeProcess::spawn(&fixture);
@@ -263,7 +354,10 @@ impl Fixture {
         let tmux_bin = root.join("tmux");
         fs::create_dir_all(&home).expect("fixture home");
         fs::create_dir_all(&state_dir).expect("fixture state");
-        write_executable(&tmux_bin, "#!/bin/sh\nexit 0\n");
+        write_executable(
+            &tmux_bin,
+            "#!/bin/sh\ncase \"$1\" in list-sessions) printf 'hs-claude-hook-ingress-alpha\\nhs-claude-hook-ingress-beta\\n' ;; esac\nexit 0\n",
+        );
         seed_brokers(
             &state_dir,
             &[(ALPHA, ALPHA_CAPABILITY), (BETA, BETA_CAPABILITY)],
@@ -328,6 +422,38 @@ impl Fixture {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         }
+    }
+
+    fn inbox(&self, id: &str) -> Value {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        for session in [ALPHA, BETA] {
+            write_private(
+                &self
+                    .state_dir
+                    .join("sessions")
+                    .join(session)
+                    .join("coordination/heartbeat"),
+                format!("{}:{now}\n", incarnation(session)).as_bytes(),
+            );
+        }
+        let output = Command::new(bin::resolve("agent-session"))
+            .args(["message", "inbox", "--session", id, "--format", "json"])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &self.home)
+            .env("AGENT_SESSION_STATE_DIR", &self.state_dir)
+            .env("AGENT_SESSION_CAPABILITY_FILE", self.capability_file(id))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
     }
 
     fn turn_state(&self, id: &str) -> Value {

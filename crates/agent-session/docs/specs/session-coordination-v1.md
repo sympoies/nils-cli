@@ -693,6 +693,61 @@ JSON contract, stale target incarnation, permission drift, corrupt state,
 symlink escape, lock timeout, and quota/rate violations have distinct
 content-free errors.
 
+### Same-session resume continuity
+
+Every mailbox read and mutation stays fenced to the exact current recipient
+incarnation. A resume (or any other relaunch of the same session ID) that
+replaces the coordination broker carries mail forward only inside the
+registry-locked transaction that replaces the broker:
+
+- **Who:** only the same session ID, and only from the exact predecessor
+  incarnation recorded in that session's broker after its runtime has been
+  proven stopped (the existing replacement proof; a live or unverifiable
+  predecessor refuses the resume and carries nothing). The carry is bound to
+  the current session record's lineage. Delete revokes but keeps a session's
+  stopped broker, so a new session reusing the ID would otherwise see it as a
+  predecessor. Therefore mail persisted (millisecond ingress time; whole
+  seconds for older records) before the current session record's `created_at`
+  is never carried. A deleted session's mail never reaches a recreated session,
+  provided the host clock does not step backwards between delete and recreate.
+  On macOS a recreated session is refused earlier: the stopped-runtime proof
+  requires the session's own prior record, so its first resume fails closed
+  with `coordination-runtime-unverified` before any carry.
+  Other session IDs, a new session, and a transferred relationship never
+  receive the carry.
+- **What:** only `unread`, unexpired mail. `read`, `acknowledged`, `expired`
+  and `quarantined` mail stays with the incarnation that handled it, so a
+  one-use grant that was already seen (for example a gate start token) is never
+  presented again. Guidance from a Main Agent primary manager of an assignment
+  whose current or previous worker is this session is excluded; Main Agent
+  guidance reconcile and quarantine keep owning it. When that relationship
+  cannot be read, nothing is carried. Such mail stays retained, unchanged and
+  auditable under the predecessor incarnation. No retry marker is recorded, and
+  a later resume carries only from its own exact predecessor, so recovery is
+  the sender resending.
+- **How:** the message moves in place. Its message ID, sender, sender
+  incarnation, `created_at`, remote creation epoch, expiry, category, body and
+  reply link are unchanged; only `recipient_incarnation` changes and the
+  revision advances by one. No copy exists, so acknowledgement remains single
+  use and stale-revision requests fail with `message-revision-conflict`.
+  Existing idempotency receipts stay bound to the incarnation that created
+  them.
+- **Race:** remote ingress and local send admit mail only for the ready broker's
+  incarnation under the same lock, so nothing can be admitted for the
+  predecessor after the transaction commits. Repeated resumes carry one exact
+  step at a time.
+- **Audit:** the stored message gains optional `resume_carry`
+  `{original_recipient_incarnation, from_incarnation, carry_count, carried_at,
+  carried_at_epoch}` (`carried_at` is UTC RFC3339, `carried_at_epoch` is Unix
+  seconds). Inbox/show/wait rows add an optional, incarnation-free
+  `resume_carry` `{carry_count, carried_at, carried_at_epoch}`; it is absent for
+  mail that was never carried. Owner `message audit` rows report the full
+  stored object, or `null`. A forwarded message also records a
+  `recipient_transfers` entry whose `controller` equals its `from` predecessor
+  address, so it remains forwardable; a forwarded message that can take no
+  further transfer stays with its predecessor. A carry schedules the usual
+  body-free reminder for the new incarnation.
+
 ## Notification ownership
 
 Every successful authenticated send or reply persists the unread message and
@@ -787,7 +842,14 @@ refusing it would leave guidance for an idle worker queued indefinitely. Termina
 byte-exact prompt as the content of a newer transcript-observed turn. A later
 provider observation reconciles `attempting` or `attempt_unknown`: an exact prompt proves
 `prompt_submitted`, a current transcript without it safely requeues, and
-unavailable observation leaves the attempt parked.
+unavailable observation leaves the attempted generation parked. A later send
+creates a new generation and supersedes an older `attempt_unknown` outcome;
+that older receipt cannot acknowledge the new generation. An active
+`attempting` submission retains its side-effect fence until its owner records
+an outcome. Pending reminder queue timestamps never precede the newest live unread
+canonical message admitted to the exact recipient incarnation, including remote
+deliveries and carried guidance. Migrated timestamps are recovered from those
+records; existing upper bounds and original attempted timestamps are retained.
 
 Busy app-server Codex without an authoritative steerable turn, attached or
 busy terminal runtimes, rate-limited, controller-unavailable, and
@@ -943,6 +1005,7 @@ agent-session work-context reconcile --session ID --lease UUID --if-revision N -
 agent-session broker status --session ID [--capability-file FILE]
 agent-session broker adopt --session ID --capability-file FILE --proof-file JSON --idempotency-key KEY
 agent-session broker reconcile --session ID --capability-file FILE --proof-file JSON --operation UUID --if-revision N --attest-inactive --idempotency-key KEY
+agent-session readiness --format json
 
 agent-session message send --from ID --to ID --body-file FILE [--capability-file FILE] --idempotency-key KEY [--reply-to UUID] [--expires-in DURATION]
 agent-session message inbox --session ID [--capability-file FILE] [--state unread] [--cursor CURSOR] [--limit N]
@@ -956,6 +1019,39 @@ agent-session message reminder --session ID [--capability-file FILE]
 JSON uses the existing `cli.agent-session.<command>.v1` success/error envelope
 convention. Errors never echo body, capability, request JSON, local private
 paths, or peer summary.
+
+### Managed-session readiness
+
+`agent-session readiness` authenticates the capability supplied by
+`AGENT_SESSION_CAPABILITY_FILE` against one ready, heartbeat-fresh broker and
+its current session-record incarnation. It requires no orchestration run,
+assignment, or work-context claim and applies in every coordination mode.
+It then verifies `AGENT_SESSION_CHECKPOINT_FILE` equals the broker's expected
+incarnation-bound checkpoint path. The file must be a regular file owned by the
+current user, mode `0600`, with one link and no final symlink. The command does
+not create, repair, read, or write checkpoint contents.
+
+The success envelope is `cli.agent-session.readiness.v1`. Its private
+integration payload has schema `agent-session.runtime-readiness.v1`,
+`ready: true`, and string fields `session_id`, `session_incarnation`, and
+`checkpoint_file`. Consumers must validate those fields against their immutable
+managed-runtime projection and independently resolve the trusted helper;
+selectors and a successful JSON shape alone are not authentication. Do not
+copy this private proof into public summaries or retained diagnostics.
+
+Missing, stale, revoked, or untrusted credentials fail with
+`coordination-unauthorized`; a missing, mismatched, or untrusted checkpoint
+fails with `runtime-checkpoint-unavailable`. Both return exit `65`, `ok: false`,
+and bounded recovery details: `retryable: false`,
+`next_action: "resume-or-restart-managed-session"`, and a `recovery` object with
+the same `action`. Errors disclose no capability value or private path.
+Transport/store failures retain their existing codes and fail closed.
+Readiness does not acquire a baseline claim or authorize mutations; callers
+retain their own baseline work-context and admission checks.
+
+The existing Main Agent readiness facade uses the same checkpoint verifier
+while retaining its own schemas. Switching consumers to the generic contract
+must precede retirement of that facade.
 
 ## HTTP coverage
 
@@ -1567,7 +1663,8 @@ carry records optional `recipient_transfers` on the existing hop, leaving the
 historical recipient unchanged. Each event retains the received copy's UUID,
 exact `from`/`to` addresses, controller address, source revision and transfer
 epoch. It changes only the incarnation of the same machine/session. The
-controller must equal that hop's forwarder and share the recipient machine;
+controller must equal that hop's forwarder, or the transfer's own `from`
+address for a same-session resume carry, and share the recipient machine;
 creation occurs under the existing broker check and controller authorization
 guard. Eight total transfers are allowed across all hops. Omitted or empty
 arrays mean no transfers; null and unknown event fields are rejected.
