@@ -329,6 +329,39 @@ fn retirement_rejects_unknown_boot_and_unresolved_expired_operations() {
 }
 
 #[test]
+fn retirement_refuses_during_an_exact_notification_submission() {
+    let dir = tempfile::tempdir().unwrap();
+    let (context, tmux, capability) = seed(dir.path(), i32::MAX, i32::MAX, 1200);
+    let registry_path = dir.path().join("coordination/registry.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+    let key = format!(
+        "recipient-{}",
+        agent_session::coordination::digest_bytes(b"recoverable\0prior-runtime")
+    );
+    let now = jiff::Timestamp::now().as_second();
+    registry["notifications"] = json!({key: {"schema_version":"agent-session.notification-generation.v1","target_session_id":"recoverable","target_incarnation":"prior-runtime","state":"attempting","generation":2,"notified_generation":1,"attempted_generation":2,"queued_at_epoch":now,"attempted_queued_at_epoch":now,"attempted_at_epoch":now,"updated_at_epoch":now,"next_attempt_at_epoch":now}});
+    private_json(&registry_path, &registry);
+    let before = fs::read(&registry_path).unwrap();
+    let preview = retire(&context, &tmux, &[]).stdout_json();
+    assert_eq!(preview["data"]["eligible"], false);
+    assert!(
+        preview["data"]["proofs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["step"] == "lifecycle-unfenced" && p["passed"] == false)
+    );
+    let applied = retire(&context, &tmux, &["--apply"]);
+    assert_ne!(applied.code, 0);
+    assert_eq!(
+        applied.stdout_json()["error"]["details"]["proof_step"],
+        "lifecycle-unfenced"
+    );
+    assert_eq!(fs::read(registry_path).unwrap(), before);
+    assert!(capability.exists());
+}
+
+#[test]
 fn retirement_cleanup_failure_keeps_revocation_and_retries_from_receipt() {
     let dir = tempfile::tempdir().unwrap();
     let (context, tmux, capability) = seed(dir.path(), i32::MAX, i32::MAX, 1200);
