@@ -1,3 +1,4 @@
+use super::files::backend_tool;
 use super::*;
 
 pub(super) fn download_asset(asset: &AssetLock, downloads: &Path) -> Result<PathBuf, CliError> {

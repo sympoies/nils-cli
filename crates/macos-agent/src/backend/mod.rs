@@ -22,13 +22,18 @@ pub(crate) mod app;
 mod archive;
 mod files;
 use archive::{
-    ArchiveKind, classify_cli_notarization_assessment, download_asset, extract_archive,
-    validate_archive_listing, validate_archive_path, validate_symlink_tree, verify_app_metadata,
-    verify_architectures, verify_archive_digest, verify_signature, verify_version,
+    ArchiveKind, download_asset, extract_archive, validate_archive_listing, validate_symlink_tree,
+    verify_app_metadata, verify_architectures, verify_archive_digest, verify_signature,
+    verify_version,
 };
+#[cfg(test)]
+use archive::{classify_cli_notarization_assessment, validate_archive_path};
+#[cfg(all(test, target_os = "macos"))]
+use files::allowed_platform_symlink;
+#[cfg(test)]
+use files::production_tool_path;
 use files::{
-    allowed_platform_symlink, copy_file, copy_tree, create_private_dir, hash_file,
-    production_tool_path, reject_symlink_components, run_tool,
+    copy_file, copy_tree, create_private_dir, hash_file, reject_symlink_components, run_tool,
 };
 
 const RECEIPT_SCHEMA: &str = "macos-agent.backend-receipt.v1";
