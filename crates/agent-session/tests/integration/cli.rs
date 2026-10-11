@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub(super) fn run(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> CmdOutput {
-    let options = CmdOptions::new().with_cwd(dir).with_envs(envs);
+    let options = super::hermetic_provider_options(dir).with_envs(envs);
     run_resolved("agent-session", args, &options)
 }
 

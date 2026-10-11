@@ -17,7 +17,21 @@ pub(crate) fn resolve_agent_bin(agent: AgentKind, explicit: Option<&Path>) -> Pa
     };
     crate::non_empty_env(env_key)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(agent.as_str()))
+        .unwrap_or_else(|| unpinned_agent_bin(agent))
+}
+
+/// Outside tests an unpinned provider resolves by name through `PATH`.
+#[cfg(not(test))]
+fn unpinned_agent_bin(agent: AgentKind) -> PathBuf {
+    PathBuf::from(agent.as_str())
+}
+
+/// Unit tests never reach an installed provider CLI through `PATH`: an unpinned
+/// agent resolves to a path that cannot exist, so probes report the provider
+/// unavailable, as on a host without it. Tests that need a provider pin a stub.
+#[cfg(test)]
+fn unpinned_agent_bin(agent: AgentKind) -> PathBuf {
+    Path::new("/nonexistent/agent-session-unpinned-test-agent").join(agent.as_str())
 }
 
 #[cfg(test)]

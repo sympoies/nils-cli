@@ -24,3 +24,16 @@ mod resume_mail;
 mod retitle_v3;
 #[path = "integration/work_context_admission.rs"]
 mod work_context_admission;
+
+/// Provider binaries an integration run resolves when a test pins none. The path
+/// cannot exist, so no test reaches an installed provider CLI through `PATH`.
+const UNPINNED_PROVIDER_BIN: &str = "/nonexistent/agent-session-unpinned-test-agent";
+
+/// Command options for the `agent-session` binary with provider binaries pinned
+/// away from `PATH`; a test's own environment entries override these defaults.
+fn hermetic_provider_options(dir: &std::path::Path) -> nils_test_support::cmd::CmdOptions {
+    nils_test_support::cmd::CmdOptions::new()
+        .with_cwd(dir)
+        .with_env("AGENT_SESSION_CODEX_BIN", UNPINNED_PROVIDER_BIN)
+        .with_env("AGENT_SESSION_CLAUDE_BIN", UNPINNED_PROVIDER_BIN)
+}

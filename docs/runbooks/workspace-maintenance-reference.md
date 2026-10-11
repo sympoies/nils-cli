@@ -48,6 +48,11 @@ Rust tests that launch Node use `nils_test_support::node::command()`, which
 applies the same scope and fail-closed rule; do not call `Command::new("node")`
 directly.
 
+Tests never run an installed provider CLI found through `PATH`. In unit tests an
+unpinned agent binary resolves to a path that cannot exist, and agent-session
+integration runs pin `AGENT_SESSION_CODEX_BIN` and `AGENT_SESSION_CLAUDE_BIN` the
+same way. A test that needs a provider sets its own stub.
+
 Local fast changed-scope checks also require:
 
 - `python3`
