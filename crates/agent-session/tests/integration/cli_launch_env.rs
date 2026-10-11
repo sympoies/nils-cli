@@ -96,11 +96,14 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
             record["provider_resume"] = json!({"provider":"codex", "session_id":"fixture-conversation", "captured_at":"2030-01-01T00:00:00Z", "capture_method":"fixture", "resume_args":["resume","fixture-conversation","--cd",tmp.path(),"--no-alt-screen"]});
             fs::write(&path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
         }
+        // macOS also probes the internal session ID; mark that exact target stopped.
         let stopped = Command::new(&tmux)
             .args([
                 "kill-session",
                 "-t",
-                record["tmux_session"].as_str().unwrap(),
+                record["delete_tmux_identity"]["session_id"]
+                    .as_str()
+                    .unwrap(),
             ])
             .envs(start_envs.iter().copied())
             .env(
