@@ -32,9 +32,20 @@ root = Path(__file__).parent
 print((root / 'metadata.json').read_text())
 ''')
         cargo.chmod(0o755)
-        self.env = dict(os.environ, PATH=f'{directory}{os.pathsep}{os.environ["PATH"]}')
+        tools = directory / 'tools'
+        tools.mkdir()
+        for command in ('bash', 'git', 'python3', 'sed', 'sort'):
+            executable = shutil.which(command)
+            self.assertIsNotNone(executable, f'fixture requires {command}')
+            (tools / command).symlink_to(Path(executable).resolve())
+        cargo_home = directory / 'cargo-home'
+        cargo_home.mkdir()
+        self.env = dict(os.environ, PATH=f'{directory}{os.pathsep}{tools}',
+                        CARGO_HOME=str(cargo_home))
         self.assertEqual(shutil.which("cargo", path=self.env["PATH"]), str(cargo))
         self.assertTrue(os.access(cargo, os.X_OK), "fake cargo must be executable")
+        self.assertFalse((tools / 'cargo').exists(), "no ambient cargo fallback")
+        self.assertFalse((cargo_home / 'bin' / 'cargo').exists())
 
     def plan(self, *paths):
         args = [arg for path in paths for arg in ('--changed-file', path)]
