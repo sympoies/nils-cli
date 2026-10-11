@@ -8,8 +8,8 @@ use serde_json::json;
 
 use crate::{
     CliContext, CliError, PANE_OBSERVATION_COMMAND_TIMEOUT, PANE_OBSERVATION_MAX_OUTPUT_BYTES,
-    SessionRecord, activity, load_session_record, run_output_with_timeout_and_cap, send_submit,
-    tmux_environment_value,
+    SessionRecord, activity, load_session_record, run_output_with_timeout_and_strict_cap,
+    send_submit, tmux_environment_value,
 };
 
 mod key;
@@ -222,7 +222,14 @@ impl Admission<'_> {
         if !self.args.require_idle {
             return Ok(());
         }
-        if activity::pending::event_pending(self.context, &self.record.id)? {
+        if activity::pending::event_pending(self.context, &self.record.id).map_err(|_| {
+            self.refusal(
+                "send-idle-unobservable",
+                "provider ingress state cannot be observed",
+                "idle",
+                stage,
+            )
+        })? {
             return Err(self.refusal(
                 "send-provider-event-pending",
                 "provider event ingestion is pending",
@@ -281,7 +288,7 @@ fn capture_styled(tmux_bin: &Path, target: &str, timeout: Duration) -> Option<St
     let mut command = std::process::Command::new(tmux_bin);
     command.args(["capture-pane", "-p", "-e", "-t", target]);
     let output =
-        run_output_with_timeout_and_cap(command, timeout, PANE_OBSERVATION_MAX_OUTPUT_BYTES)
+        run_output_with_timeout_and_strict_cap(command, timeout, PANE_OBSERVATION_MAX_OUTPUT_BYTES)
             .ok()?;
     if !output.status.success() {
         return None;

@@ -83,8 +83,8 @@ pub(crate) fn event_pending(context: &CliContext, id: &str) -> Result<bool, CliE
 
 fn lock_error(err: io::Error) -> CliError {
     CliError::runtime(
-        "send-idle-unobservable",
-        format!("provider ingress state cannot be observed: {err}"),
+        "activity-ingress-lock-failed",
+        format!("provider ingress locking failed: {err}"),
         None,
     )
 }

@@ -72,6 +72,11 @@ elif command == 'send-keys' and args[-1] == 'Enter':
     (root / 'composer').write_text('')
 elif command == 'capture-pane':
     if (root / 'capture-fails').exists(): sys.exit(1)
+    if (root / 'capture-oversize').exists():
+        if provider == 'claude': print('────────────────────────────\n❯ \x1b[2mTry \"edit <filepath> to...\"\x1b[22m\n────────────────────────────')
+        else: print('› \x1b[2mAsk Codex to do anything\x1b[22m\n')
+        print('x' * (2 * 1024 * 1024))
+        sys.exit(0)
     text = (root / 'composer').read_text()
     if provider == 'claude':
         shown = text if text else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
@@ -428,4 +433,17 @@ fn guarded_send_turn_start_during_buffer_load_refuses_without_pasting() {
     );
     assert!(fixture.calls().iter().any(|call| call[0] == "load-buffer"));
     fixture.no_delivery();
+}
+
+#[test]
+fn guarded_send_truncated_capture_is_unobservable() {
+    for provider in ["claude", "codex"] {
+        let fixture = Fixture::new(provider);
+        fs::write(fixture.root().join("capture-oversize"), "").unwrap();
+        fixture.refused(
+            &fixture.send(&["--require-empty-composer"]),
+            "send-composer-unobservable",
+        );
+        fixture.no_delivery();
+    }
 }
