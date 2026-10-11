@@ -1,7 +1,6 @@
-//! `secrets` — pull / add a repo's `.env` from the central SOPS store.
+//! `secrets` — pull / add dotenv entries from a SOPS store.
 //!
-//! This crate ports the Serenvia secrets-store wrapper into the workspace. It
-//! is a thin orchestrator over `sops` and `git`: it never parses or renders the
+//! It is a thin orchestrator over `sops` and `git`: it never parses or renders the
 //! *contents* of an encrypted store entry. The decrypted plaintext is written
 //! directly to disk (mode `600`) and is never routed back through stdout or the
 //! JSON envelope. See `crates/secrets/docs/README.md` for the no-secret-leak

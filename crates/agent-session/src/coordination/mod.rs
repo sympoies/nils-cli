@@ -8,6 +8,8 @@ mod forwarding;
 pub mod mailbox;
 mod notification;
 pub use notification::NotificationProjection;
+pub mod readiness;
+pub use readiness::checkpoint_path_for_state;
 pub(crate) mod remote;
 pub(crate) mod server;
 pub(crate) mod service;
@@ -2265,17 +2267,6 @@ pub(crate) fn capability_path_for_state(
         ))
 }
 
-pub fn checkpoint_path_for_state(state_dir: &Path, session_id: &str, incarnation: &str) -> PathBuf {
-    state_dir
-        .join("sessions")
-        .join(session_id)
-        .join("coordination")
-        .join(format!(
-            "main-agent-checkpoint-{}.json",
-            digest_bytes(incarnation.as_bytes())
-        ))
-}
-
 pub(crate) fn heartbeat_path(state_dir: &Path, session_id: &str) -> PathBuf {
     state_dir
         .join("sessions")
@@ -3103,6 +3094,38 @@ pub(crate) fn clean_expired(registry: &mut Registry, now: i64) -> bool {
         || registry.advisory_acknowledgements.len() != acknowledgement_count
         || registry.advisory_observations.len() != observation_count
         || registry.completion_events.len() != completion_event_count
+}
+
+/// Read-only daemon outbox reconciliation; this does not authorize a send.
+/// Provider incident keys include the original runtime and remain stable when
+/// the current runtime capability is used to submit a previously unsent notice.
+pub(crate) fn auth_incident_receipt(
+    context: &CliContext,
+    session: &str,
+    key: &str,
+    expected_digest: &str,
+) -> Result<Option<Value>, CliError> {
+    let locked = lock_registry_observational(context)?;
+    let receipt = locked
+        .registry
+        .receipts
+        .iter()
+        .find_map(|(stored_key, receipt)| {
+            (receipt.principal == session
+                && receipt.operation == "message-send"
+                && receipt.expires_at_epoch > now_epoch()
+                && *stored_key == receipt_key(session, &receipt.incarnation, "message-send", key))
+            .then_some(receipt)
+        });
+    match receipt {
+        Some(receipt) if receipt.digest != expected_digest => Err(CliError::data(
+            "idempotency-key-conflict",
+            "authentication notification identity differs",
+            None,
+        )),
+        Some(receipt) => Ok(Some(receipt.outcome.clone())),
+        None => Ok(None),
+    }
 }
 
 pub(crate) fn idempotency_replay(

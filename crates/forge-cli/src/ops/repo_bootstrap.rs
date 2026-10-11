@@ -27,6 +27,11 @@ use crate::forgejo::ForgejoClient;
 use crate::provider::{Provider, ProviderContext};
 use crate::rate_limit::default_runner;
 
+mod gitlab;
+use gitlab::GitlabClient;
+
+const GITLAB_PUSH_TOKEN_ENV: &str = "FORGE_CLI_BOOTSTRAP_GITLAB_TOKEN";
+
 const LEGACY_RECEIPT_SCHEMA: &str = "forge-cli.repo-bootstrap.receipt.v1";
 const RECEIPT_SCHEMA: &str = "forge-cli.repo-bootstrap.receipt.v2";
 const MAX_RECEIPT_BYTES: usize = 256 * 1024;
@@ -187,6 +192,7 @@ struct PushAuth<'a> {
 enum BootstrapBackend {
     Forgejo(ForgejoClient),
     Github(GithubClient),
+    Gitlab(GitlabClient),
 }
 
 struct GithubClient {
@@ -196,6 +202,9 @@ struct GithubClient {
 
 impl BootstrapBackend {
     fn from_global(global: &GlobalFlags) -> Result<Self, ForgeError> {
+        if matches!(global.provider, Some(ProviderFlag::Gitlab)) {
+            return Ok(Self::Gitlab(GitlabClient::from_global(global)?));
+        }
         if matches!(global.provider, Some(ProviderFlag::Github)) {
             return Ok(Self::Github(GithubClient::from_global(global)?));
         }
@@ -206,13 +215,14 @@ impl BootstrapBackend {
         match self {
             Self::Forgejo(_) => None,
             Self::Github(client) => Some(&client.context.host),
+            Self::Gitlab(client) => Some(&client.context.host),
         }
     }
 
     fn discover_version(&self) -> Result<(), ForgeError> {
         match self {
             Self::Forgejo(client) => client.discover_version(),
-            Self::Github(_) => Ok(()),
+            Self::Github(_) | Self::Gitlab(_) => Ok(()),
         }
     }
 
@@ -220,6 +230,7 @@ impl BootstrapBackend {
         match self {
             Self::Forgejo(client) => client.authenticated_user(),
             Self::Github(client) => client.authenticated_user(),
+            Self::Gitlab(client) => client.authenticated_user(),
         }
     }
 
@@ -231,6 +242,9 @@ impl BootstrapBackend {
         match self {
             Self::Forgejo(client) => client.repo_optional(owner, repo),
             Self::Github(client) => client.api_optional(&format!("repos/{owner}/{repo}")),
+            Self::Gitlab(client) => {
+                client.api_optional(&GitlabClient::project_endpoint(owner, repo))
+            }
         }
     }
 
@@ -238,6 +252,9 @@ impl BootstrapBackend {
         match self {
             Self::Forgejo(client) => client.repo(owner, repo),
             Self::Github(client) => client.api_json(&format!("repos/{owner}/{repo}"), &[]),
+            Self::Gitlab(client) => {
+                client.api_json(&GitlabClient::project_endpoint(owner, repo), &[])
+            }
         }
     }
 
@@ -251,6 +268,7 @@ impl BootstrapBackend {
         match self {
             Self::Forgejo(client) => client.create_repo(kind, owner, repo).map(|_| ()),
             Self::Github(client) => client.create_repo(kind, owner, repo, private),
+            Self::Gitlab(client) => client.create_repo(kind, owner, repo, private),
         }
     }
 
@@ -263,12 +281,22 @@ impl BootstrapBackend {
         match self {
             Self::Forgejo(client) => client.branch_optional(owner, repo, branch),
             Self::Github(client) => client.branch_ref_optional(owner, repo, branch),
+            Self::Gitlab(client) => client.branch_optional(owner, repo, branch),
         }
     }
 
     fn branch_sha(&self, value: Option<serde_json::Value>) -> Result<Option<String>, ForgeError> {
         match self {
             Self::Forgejo(_) => branch_sha(value),
+            Self::Gitlab(_) => value
+                .map(|value| {
+                    value
+                        .pointer("/commit/id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .ok_or_else(|| software("GitLab branch read-back omitted commit.id"))
+                })
+                .transpose(),
             Self::Github(_) => value
                 .map(|value| {
                     value
@@ -289,6 +317,7 @@ impl BootstrapBackend {
                 .and_then(serde_json::Value::as_bool)
                 .ok_or_else(|| software("Forgejo repository read-back omitted empty")),
             Self::Github(client) => client.empty_refs(owner, repo),
+            Self::Gitlab(client) => client.remote_empty(owner, repo),
         }
     }
 
@@ -302,6 +331,9 @@ impl BootstrapBackend {
     ) -> Result<RepoSnapshot, ForgeError> {
         match self {
             Self::Forgejo(client) => parse_repo_snapshot(value, client, owner, repo),
+            Self::Gitlab(client) => {
+                client.parse_repo_snapshot(value, owner, repo, owner_kind, private)
+            }
             Self::Github(client) => {
                 client.parse_repo_snapshot(value, owner, repo, owner_kind, private)
             }
@@ -318,6 +350,7 @@ impl BootstrapBackend {
         match self {
             Self::Forgejo(_) => Ok(()),
             Self::Github(client) => client.verify_final_refs(owner, repo, branch, sha),
+            Self::Gitlab(client) => client.verify_final_refs(owner, repo, branch, sha),
         }
     }
 
@@ -332,12 +365,14 @@ impl BootstrapBackend {
                 .update_default_branch(owner, repo, branch)
                 .map(|_| ()),
             Self::Github(client) => client.update_default_branch(owner, repo, branch),
+            Self::Gitlab(client) => client.update_default_branch(owner, repo, branch),
         }
     }
 
     fn commit(&self, owner: &str, repo: &str, sha: &str) -> Result<serde_json::Value, ForgeError> {
         match self {
             Self::Forgejo(client) => client.commit(owner, repo, sha),
+            Self::Gitlab(client) => client.commit(owner, repo, sha),
             Self::Github(client) => {
                 client.api_json(&format!("repos/{owner}/{repo}/git/commits/{sha}"), &[])
             }
@@ -351,6 +386,7 @@ impl BootstrapBackend {
     ) -> Result<(), ForgeError> {
         match self {
             Self::Forgejo(_) => verify_provider_signature(value, sha),
+            Self::Gitlab(_) => GitlabClient::verify_provider_signature(value, sha),
             Self::Github(_) => {
                 let observed = value.get("sha").and_then(serde_json::Value::as_str);
                 if observed != Some(sha) {
@@ -376,6 +412,7 @@ impl BootstrapBackend {
         match self {
             Self::Forgejo(client) => client.token_env(),
             Self::Github(_) => GITHUB_PUSH_TOKEN_ENV,
+            Self::Gitlab(_) => GITLAB_PUSH_TOKEN_ENV,
         }
     }
 
@@ -383,6 +420,7 @@ impl BootstrapBackend {
         match self {
             Self::Forgejo(_) => authenticated_login,
             Self::Github(_) => "x-access-token",
+            Self::Gitlab(_) => "oauth2",
         }
     }
 
@@ -390,6 +428,7 @@ impl BootstrapBackend {
         match self {
             Self::Forgejo(_) => Ok(None),
             Self::Github(client) => client.auth_token().map(Some),
+            Self::Gitlab(client) => client.auth_token().map(Some),
         }
     }
 }
@@ -436,7 +475,7 @@ impl GithubClient {
         args.push(OsString::from(endpoint));
         args.extend_from_slice(tail);
         let mut result = self.run_gh(&args)?;
-        match split_github_http_response(&result.stdout) {
+        match split_bootstrap_http_response(&result.stdout) {
             Ok((status, body)) => {
                 result.http_status = Some(status);
                 result.stdout = body.to_string();
@@ -698,11 +737,11 @@ fn optional_json(result: ProcessResult) -> Result<Option<serde_json::Value>, For
     ))
 }
 
-fn split_github_http_response(raw: &str) -> Result<(u16, &str), ForgeError> {
+fn split_bootstrap_http_response(raw: &str) -> Result<(u16, &str), ForgeError> {
     let (headers, body) = raw
         .split_once("\r\n\r\n")
         .or_else(|| raw.split_once("\n\n"))
-        .ok_or_else(|| software("GitHub API response omitted the HTTP header separator"))?;
+        .ok_or_else(|| software("Bootstrap API response omitted the HTTP header separator"))?;
     let mut status_line = headers
         .lines()
         .next()
@@ -717,7 +756,7 @@ fn split_github_http_response(raw: &str) -> Result<(u16, &str), ForgeError> {
             Ok((status, body))
         }
         _ => Err(software(
-            "GitHub API response omitted a valid HTTP status line",
+            "Bootstrap API response omitted a valid HTTP status line",
         )),
     }
 }
@@ -727,10 +766,15 @@ pub fn run(
     args: RepoBootstrapArgs,
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
-    let (owner, repo) = crate::forgejo::repo_parts(global).map_err(|_| {
+    let parts = if matches!(global.provider, Some(ProviderFlag::Gitlab)) {
+        gitlab::repo_parts(global)
+    } else {
+        crate::forgejo::repo_parts(global)
+    };
+    let (owner, repo) = parts.map_err(|_| {
         validation(
             "repo_invalid",
-            "repo bootstrap requires --repo owner/name with safe path components",
+            "repo bootstrap requires --repo namespace/name with safe path components",
             None,
         )
     })?;
@@ -741,23 +785,24 @@ pub fn run(
     let repository = format!("{owner}/{repo}");
     let provider = match global.provider.as_ref() {
         Some(ProviderFlag::Github) => "github",
+        Some(ProviderFlag::Gitlab) => "gitlab",
         Some(ProviderFlag::Named(name)) => name.as_str(),
         _ => {
             return Err(ForgeError::provider_unsupported(
                 error_schema(),
-                "repo bootstrap requires --provider github or a named Forgejo provider",
+                "repo bootstrap requires --provider github, gitlab, or a named Forgejo provider",
                 None,
             ));
         }
     };
-    let is_github = matches!(global.provider, Some(ProviderFlag::Github));
+    let is_forgejo = matches!(global.provider, Some(ProviderFlag::Named(_)));
     let private = args.visibility == RepoBootstrapVisibility::Private;
-    let host = if is_github {
-        Some(GithubClient::from_global(global)?.context.host)
-    } else {
-        None
+    let host = match global.provider {
+        Some(ProviderFlag::Github) => Some(GithubClient::from_global(global)?.context.host),
+        Some(ProviderFlag::Gitlab) => Some(GitlabClient::from_global(global)?.context.host),
+        _ => None,
     };
-    if !is_github && (!private || args.existing_empty) {
+    if is_forgejo && (!private || args.existing_empty) {
         return Err(validation(
             "bootstrap_mode_unsupported",
             "Forgejo bootstrap supports only creation of a private repository",
@@ -789,7 +834,7 @@ pub fn run(
             steps: vec![
                 if args.existing_empty {
                     "verify_existing_empty_repository"
-                } else if !is_github {
+                } else if is_forgejo {
                     "create_private_empty_repository"
                 } else {
                     "create_empty_repository"
@@ -997,20 +1042,21 @@ pub fn run(
                     None,
                 ));
             }
+            let askpass = write_askpass(&state_dir)?;
+            let auth = PushAuth {
+                token_env: client.token_env(),
+                username: client.push_username(&authenticated_login),
+                token: client.push_token()?,
+            };
             receipt.push_attempted = true;
             persist_receipt(&receipt_path, &receipt)?;
-            let askpass = write_askpass(&state_dir)?;
             let push = push_once(
                 &checkout,
                 &snapshot.clone_url,
                 &receipt.default_branch,
                 &local_sha,
                 &askpass,
-                PushAuth {
-                    token_env: client.token_env(),
-                    username: client.push_username(&authenticated_login),
-                    token: client.push_token()?,
-                },
+                auth,
             )?;
             let observed = client.branch_sha(client.branch_optional(
                 &owner,
@@ -1602,7 +1648,7 @@ fn push_once(
         ),
     ];
     if let Some(token) = auth.token {
-        env.push((OsString::from(GITHUB_PUSH_TOKEN_ENV), OsString::from(token)));
+        env.push((OsString::from(auth.token_env), OsString::from(token)));
     }
     let identity_args = ["push", "--", clone_url, &refspec];
     run_git_push_with_identity(checkout, &args, &identity_args, &env)
@@ -2796,13 +2842,13 @@ mod tests {
 
     #[test]
     fn github_http_status_comes_from_response_headers() {
-        let (status, body) = split_github_http_response(
+        let (status, body) = split_bootstrap_http_response(
             "HTTP/2.0 409 Conflict\r\nContent-Type: application/json\r\n\r\n{\"message\":\"empty\"}",
         )
         .unwrap();
         assert_eq!(status, 409);
         assert_eq!(body, "{\"message\":\"empty\"}");
-        assert!(split_github_http_response("{\"status\":\"409\"}").is_err());
+        assert!(split_bootstrap_http_response("{\"status\":\"409\"}").is_err());
     }
 
     #[test]

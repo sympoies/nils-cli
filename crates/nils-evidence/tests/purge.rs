@@ -13,6 +13,19 @@ use evidence::purge::{self, PurgeArgs, PurgeError};
 use evidence::validate::hosts::HostClass;
 use nils_common::cli_contract::OutputFormat;
 
+/// Point forge identity and config lookups at an empty per-test directory, so
+/// the developer's forge profiles cannot leak into the in-process purge.
+/// The returned directory must outlive the test.
+fn isolate_config() -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().expect("isolated config dir");
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", dir.path().join("xdg-config"));
+        std::env::set_var("XDG_STATE_HOME", dir.path().join("xdg-state"));
+        std::env::remove_var("FORGE_IDENTITY_PRINCIPAL");
+    }
+    dir
+}
+
 fn git(repo: &Path, args: &[&str]) {
     let out = Command::new("git")
         .args(args)
@@ -224,6 +237,7 @@ fn purge_dry_run_by_class_scopes_employer_hosts_only() {
 #[cfg(unix)]
 #[test]
 fn purge_apply_by_host_deletes_only_that_host_and_commits() {
+    let _config = isolate_config();
     let a = build();
     configure_push_remote(&a);
     let stub = install_semantic_commit_stub(&a);
@@ -359,6 +373,7 @@ fn purge_apply_refuses_foreign_staged_changes() {
 #[cfg(unix)]
 #[test]
 fn purge_apply_deletes_host_tree_without_rollups() {
+    let _config = isolate_config();
     // A scoped host tree that holds only orphaned files (no
     // skill-usage.rollup.json) must still be removed; the no-op decision is
     // based on whether scoped host roots exist, not on the rollup count.

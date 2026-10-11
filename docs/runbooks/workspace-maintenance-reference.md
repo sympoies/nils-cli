@@ -36,6 +36,7 @@ Docs-only checks require:
 
 - `git`
 - `npx`
+- `python3`
 
 Local fast changed-scope checks also require:
 
@@ -166,6 +167,168 @@ This delegates to `./.agents/skills/project-verify-required-checks/scripts/proje
 It is what CI uses for the full `test` and `test_macos` jobs; it is not the
 default local development loop.
 
+### Integration batches on `next`
+
+The maintainer may approve a small batch of low-risk changes on the persistent
+`next` branch to share complete local validation. Changed-scope checks still
+belong to each member. Lifecycle, mailbox, credential, and release changes use
+individual PRs to `main`; keep other changes with comparable risk out of a
+batch. Required hosted checks and branch protections continue to apply.
+
+1. Open one tracking issue per batch. It lists each member with its exact
+   head, the reconciliation PR, the frozen head, the gate result, and the
+   integration PR; whoever routes the batch keeps it current.
+   Select the batch members and record their exact PR head SHAs, with both
+   changed-scope validation PASS and designated review PASS on those heads. Resolve review findings
+   and check that each member applies to the current integration base before
+   admitting it. Changed heads require fresh review and validation.
+2. Assign validation to one platform lane per item at a time. Keep Linux
+   systemd, cgroup, and containment checks on Linux; use macOS for applicable
+   platform checks. A platform result covers only its recorded head and
+   command. Follow the host's resource limits and admission policy.
+3. Retarget approved member PRs to `next` and merge them through `forge-cli`,
+   pinning the expected head and base with `--expected-head` and
+   `--expected-base next` and the explicit `--allow-non-default-base` opt-in.
+   Recheck review and required checks after retargeting;
+   stop if either expectation changes. Record each resulting merge commit and
+   its member evidence. Do not bypass branch protection.
+4. Freeze the batch at one exact `next` head after the selected members land.
+   Stop adding members while it is being validated. Run one canonical complete
+   local gate from a clean managed worktree at that head:
+
+   ```bash
+   NILS_CLI_TEST_RUNNER=nextest bash .agents/scripts/pre-pr.sh --full
+   ```
+
+   Use the shared gate semaphore described below and the host's configured limits.
+   A package check, partial run, or a passing member does not establish a
+   complete batch PASS.
+5. Retain the original terminal outcome, logs, selected scope, counts, and
+   source identity. A resource abort or cancelled run is incomplete. On a
+   failure, stop promotion and isolate the cause with separately admitted,
+   bounded checks or a bisect of batch members. Do not infer a culprit from
+   merge order or erase a failed result with a retry.
+6. Repair or eject a confirmed culprit through a reviewed successor or revert
+   PR to `next`. Never reset or force-push the integration branch. Freeze the
+   resulting head again and run its complete gate; earlier results do not
+   transfer to that head.
+7. Open the integration PR to `main` only at the validated frozen head; do not
+   keep a persistent integration PR open between batches. `forge-cli pr create`
+   accepts only typed head branches (`chore/<slug>` and the other kinds), so
+   cut a `chore/` branch at the exact frozen `next` SHA and open the PR from it.
+   The head SHA, not the branch name, is what the gate result and
+   `--expected-head` bind. Require review and green hosted `test`,
+   `test_macos`, and `coverage` checks before an expected-head merge with
+   `--expected-base main --keep-branch`.
+
+   If `main` advances and reconciliation is needed, open and review a PR into
+   `next` from a `chore/` branch that carries the merge of `main` into `next`,
+   with any conflicts resolved there. Merge it using the guarded form in step 3
+   with `--expected-head`, `--expected-base next`, `--allow-non-default-base`,
+   and `--keep-branch`. Then freeze and validate the new integration head.
+   Keep the `next` branch for subsequent batches.
+8. Record the promoted integration head and member outcomes in the tracking
+   issue and the delivery handoff. A batch merge does not authorize tagging,
+   publishing, installing, or deployment; follow the existing release workflow
+   when requested.
+
+### Gate resource budgets
+
+Executing code gates, including local-fast and direct required-checks script
+calls, share a FIFO semaphore under
+`${XDG_STATE_HOME:-$HOME/.local/state}/nils-cli/resources`. The semaphore is
+shared across worktrees and repositories using this entrypoint for the same
+user on a host. Kernel `flock` ownership and recorded unit quiescence govern admission:
+crashed holders and waiters do not require deleting lock files. A crashed
+supervisor slot remains unavailable while its scope/services are draining. Waiting callers print the holder
+PID and UTC start time every five seconds; admission times out after one hour.
+Help, plan-only inspection, and the explicit docs-only lane do not take a slot.
+
+| Knob | Default | Purpose |
+| --- | --- | --- |
+| `NILS_CLI_GATE_SLOTS` | `1` | Maximum concurrent code gates for the user on this host. |
+| `NILS_CLI_GATE_TIMEOUT_SECONDS` | `3600` | Bounded gate and contained-runner queue wait. |
+| `NILS_CLI_RUNNER_MAX` | `max(1, min(2, CPU count / 4, MemAvailable / 4 GiB))` | Host contained-runner slots and upper bound on nextest/libtest concurrency; integer division. |
+| `CARGO_BUILD_JOBS` | `1` | Cargo compilation concurrency, including coverage compilation; clamped to the runner maximum. |
+| `NILS_CLI_GATE_MEMORY_MAX_GIB` | `16` | Linux aggregate hard memory cap per gate. |
+| `NILS_CLI_GATE_MEMORY_HIGH_GIB` | `75%` of the hard cap, rounded down, minimum `1` | Linux memory throttle threshold (`12` GiB with defaults). |
+| `NILS_CLI_GATE_MIN_AVAILABLE_GIB` | `20` | Linux admission requires at least this much `MemAvailable`; waits within the same timeout. A floor above `MemTotal` fails immediately. |
+
+These defaults intentionally serialize ordinary `agent-hook` finish-line
+workloads across checkouts, including small commands. The 16 GiB no-swap cap
+and bounded one-hour admission wait are the default resource policy. Configure
+the shared runner and gate limits together to permit additional concurrency.
+If the admission floor exceeds the host's total memory, the wrapper rejects it
+before joining FIFO; lower the floor and memory caps together on a smaller
+dedicated host.
+
+The default expected peak **budget** for a complete gate is 12–16 GiB,
+including compilation, linking, tests, and their contained services. This is a
+capacity planning allowance, not a measured guarantee for every toolchain or
+coverage build: two runners receive an allowance of about 4 GiB each, with the
+remaining space for compilation and filesystem cache. Linux caps aggregate
+cgroup-accounted memory at 16 GiB and disables swap for the gate. A workload
+that cannot fit fails its own gate. Observe the gate slice's `MemoryPeak` with
+`systemctl --user show <slice> -p MemoryPeak` while it runs before increasing
+budgets; a failed/collected slice may no longer retain that measurement.
+
+Linux requires cgroup v2 and a working systemd user manager. Each gate runs in a
+user scope; contained services join that scope's unique parent slice so user
+manager launches are included in the aggregate cap. Both the scope and slice
+receive `MemoryHigh`, `MemoryMax`, and `MemorySwapMax=0`; the scope and
+contained services also use `OOMPolicy=kill`.
+Missing containment fails closed. The outer wrapper stops the slice when the
+gate exits, including after a memory failure. On macOS the memory scope and
+`MemAvailable` admission floor are documented no-ops; semaphore and Cargo/test
+limits still apply. Interrupting the macOS supervisor terminates its workload
+process group before releasing admission. This fallback does not change
+`agent-hook`'s Linux-only contained-execution support.
+
+Use consistent semaphore and runner settings across callers on the same host.
+For example, on a host with capacity reserved for two gates:
+
+```bash
+NILS_CLI_GATE_SLOTS=2 NILS_CLI_RUNNER_MAX=2 \
+  NILS_CLI_GATE_MEMORY_MAX_GIB=16 CARGO_BUILD_JOBS=1 \
+  bash scripts/ci/nils-cli-checks-entrypoint.sh
+```
+
+Budget at least `gate slots × memory cap`, plus capacity for interactive work.
+The runner cap is shared across gates; raising gate slots does not multiply it.
+With a cap of at least two, one slot is reserved for admitted-gate children;
+ordinary contained commands use the remaining slots. This prevents queued outer
+gates from consuming all capacity needed by an admitted gate. Gate children
+prefer the reserved slot and may also use any free ordinary slot, preserving
+the total cap. A complete gate already inside a contained runner requires
+`NILS_CLI_RUNNER_MAX` of at least two and fails immediately otherwise. Use
+`NEXTEST_TEST_THREADS=1` with a runner cap of two for a nested gate with one
+test workload at a time.
+On a host with fewer than eight CPUs, the derived runner maximum is one;
+set `NILS_CLI_RUNNER_MAX=2` explicitly when a finish-line contained command
+must run a complete gate, while retaining a lower test-thread setting.
+For two gates that themselves run as contained commands, a runner cap of four
+allows both outer units and their child workloads; keep
+`NEXTEST_TEST_THREADS=2`, `RUST_TEST_THREADS=2`, and `CARGO_BUILD_JOBS=1`
+to preserve each gate's conservative workload concurrency.
+Caller `NEXTEST_TEST_THREADS` and `RUST_TEST_THREADS` values can lower test
+concurrency; the wrapper clamps higher values to the runner maximum.
+`NILS_CLI_RESOURCE_STATE_DIR` is the resolved host lock directory propagated to
+contained runners, so test fixtures changing `HOME` or `XDG_STATE_HOME` cannot
+create independent pools. Keep that directory consistent across callers.
+`NILS_CLI_GATE_ACTIVE`, `NILS_CLI_GATE_SLICE`, and
+`NILS_CLI_CONTAINED_RUNNER_ACTIVE` are internal wrapper state;
+ordinary callers should leave them unset.
+`NILS_CLI_LOCAL_FAST_PLAN` is an internal one-use planning handoff, removed
+before checks run; local-fast resolves docs-only, no-change and usage-error
+paths before entering the complete-gate queue.
+
+The dedicated hosted CI lanes explicitly use two runners. Linux uses a smaller
+reservation (2 GiB available at admission, 12 GiB hard cap), leaving room for
+the operating system within the [standard hosted runner resources](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). Adjust the
+memory floor and cap together for smaller dedicated runners, rather than
+turning off containment. Raw Cargo invocations are outside gate admission;
+use the entrypoint for complete validation.
+
 ### 3.1 Docs-only changes fast path
 
 If all changed files are documentation-only (`*.md`, `docs/**`, `crates/*/docs/**`, root docs like `README.md` and `DEVELOPMENT.md`):
@@ -209,6 +372,16 @@ The local fast gate is conservative. Changes to `nils-common`, `nils-term`,
 `nils-test-support`, root manifests, CI scripts, completions, `.agents/`,
 `.github/`, or other workspace-level paths use a workspace Rust gate because
 package-scoped checks can miss reverse-dependency breakage.
+
+For non-shared crate changes, the selected set includes changed packages and
+all transitive workspace reverse dependents from offline, locked Cargo metadata
+with all features enabled. Normal, dev, build and target-specific dependencies
+participate; traversal can pass through external packages, which are excluded
+from the selected set. Binary coupling also expands this
+closure. The plan prints each selected package and its inclusion reasons.
+Any Cargo manifest or lockfile, toolchain file, `.cargo/` configuration, or
+build-script change uses the workspace lane; documentation-only routing stays
+the same. The full-check entrypoint and merge gates are unchanged.
 
 ### 3.3 Full checks (CI gate / optional local parity)
 
@@ -272,6 +445,7 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 
 - `bash scripts/ci/docs-placement-audit.sh --strict`
 - `bash scripts/ci/docs-hygiene-audit.sh --strict`
+- `bash scripts/ci/docs-prose-audit.sh --strict`
 - `bash scripts/ci/markdownlint-audit.sh --strict`
 - `bash scripts/ci/cli-output-contract-lint.sh --strict`
 - `bash scripts/ci/forge-cli-fixture-lint.sh --strict`
@@ -288,10 +462,14 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/publish-order-audit.test.sh`
 - `bash scripts/ci/tests/docs-hygiene-audit.test.sh`
 - `bash scripts/ci/tests/workspace-test-stale-audit.test.sh`
+- `bash scripts/ci/tests/file-size-audit.test.sh`
+- `bash scripts/ci/tests/docs-prose-audit.test.sh`
 - `bash scripts/ci/tests/prepare-private-release-workflow.test.sh`
 - `bash scripts/ci/skill-shell-suites.sh` (runs every
   `.agents/skills/*/tests/test_*.sh` smoke suite)
 - `bash scripts/ci/test-stale-audit.sh --strict`
+- `bash scripts/ci/file-size-audit.sh --strict` (see the file-size ratchet below)
+- `bash scripts/ci/docs-prose-audit.sh --strict`
 - `bash scripts/ci/workspace-version-lockstep.sh --strict`
 - `bash scripts/ci/crate-naming-audit.sh`
 - `bash scripts/ci/publish-order-audit.sh --strict`
@@ -304,6 +482,61 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo test --workspace` (or `cargo nextest run --profile ci --workspace`
   plus `cargo test --workspace --doc` when `NILS_CLI_TEST_RUNNER=nextest`)
+
+### File-size ratchet
+
+`scripts/ci/file-size-audit.sh` limits each tracked `crates/**/*.rs` file to
+2,000 implementation lines and 3,000 test lines. Test lines are the lines of
+top-level `#[cfg(test)]` items and `#[cfg(all(..))]` items with `test` as one
+of the top-level `all` arguments (in any position), plus whole files
+under `tests/` or `benches/` and files reached through an out-of-line
+`#[cfg(test)] mod x;`. An item ends at its first `;` or `{` outside `(..)` and
+`[..]`. Comments and literals are skipped when matching braces.
+
+Files already over a limit are recorded in
+`scripts/ci/file-size-baseline.tsv` (`path<TAB>kind<TAB>lines`). Strict mode
+fails when:
+
+- a file without a baseline row is over a limit;
+- a baselined file grew;
+- a baseline row is stale: the file is gone, is now within its limit, or shrank.
+- the per-kind sum of baseline values rose against the merge base with
+  `origin/main` (override with `--base <ref>`). A rename may move its row to the
+  new path, but cannot raise the total. When the change set modifies
+  `scripts/ci/lib/rust_file_size.py`, the combined implementation-plus-test sum
+  is compared instead, so a measurement-rule change may move lines between
+  kinds but still cannot raise the total.
+
+When a PR shrinks or removes an over-limit file, refresh the baseline in the same
+PR with `bash scripts/ci/file-size-audit.sh --update-baseline` and commit it.
+
+Put new code in new modules, not in baselined files. A baselined file cannot
+grow by even one line, so each of its rows must end the PR at or below its
+baseline:
+
+- **New module file.** Put the new implementation and its unit tests in a new
+  file. A new file has no baseline row and can grow up to the limits. The `mod`
+  declaration and the call sites still count against the baselined file, so
+  offset them with removals there, or declare the module from a parent file
+  without a baseline row.
+- **Equal move-out.** Move at least as many lines out of the same file as the
+  change adds, then refresh the baseline. Rows only go down.
+
+Run `bash scripts/ci/file-size-audit.sh --strict` before pushing; it needs no
+compile. CI audits the PR's merge result each time it runs, so a PR opened
+before the ratchet merged fails on its next push or re-run.
+
+### Markdown prose-run ratchet
+
+`scripts/ci/docs-prose-audit.sh` checks tracked Markdown outside `docs/devlog/`
+and the generated third-party notices. A prose run is consecutive nonblank
+lines outside fenced code; table rows, headings, and HTML comment lines end a
+run, and list markers begin a new run. Runs longer than 12 lines are recorded
+per file in `scripts/ci/docs-prose-baseline.tsv`
+(`path<TAB>runs_over_limit<TAB>longest_run`). Strict mode rejects new or grown
+rows, stale rows, and an increase in summed baseline runs from the merge base.
+Refresh improvements with `bash scripts/ci/docs-prose-audit.sh
+--update-baseline` and commit the baseline in the same PR.
 
 ## 4.1 Supply-chain audit (cargo-deny)
 

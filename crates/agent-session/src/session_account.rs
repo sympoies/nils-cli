@@ -74,6 +74,18 @@ pub(crate) fn switch(
     expected_incarnation: Option<&str>,
     tmux_bin: &Path,
 ) -> Result<SessionAccount, CliError> {
+    crate::lifecycle::attempt(context, id, "account-switch", || {
+        switch_unjournaled(context, id, account, expected_incarnation, tmux_bin)
+    })
+}
+
+pub(crate) fn switch_unjournaled(
+    context: &CliContext,
+    id: &str,
+    account: &str,
+    expected_incarnation: Option<&str>,
+    tmux_bin: &Path,
+) -> Result<SessionAccount, CliError> {
     let record = load_session_record(context, id)?;
     let current = launch_id(&record);
     let expected = expected_incarnation
@@ -176,7 +188,7 @@ pub(crate) fn resume_after_switch_stop(
                 && crate::session_status(context, tmux_bin, &record) == "stopped"
                 && match crate::persisted_tmux_runtime_identity(&record) {
                     Ok(Some(identity)) => crate::verify_stopped_tmux_runtime(
-                        tmux_bin, &identity, std::time::Duration::ZERO,
+                        tmux_bin, &record.tmux_session, &identity, std::time::Duration::ZERO,
                     ).is_ok(),
                     Ok(None) => crate::runtime_is_proven_never_launched(&record),
                     Err(_) => false,

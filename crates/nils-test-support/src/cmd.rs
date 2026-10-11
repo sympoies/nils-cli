@@ -284,6 +284,17 @@ pub fn options_in_dir_with_envs(dir: &Path, envs: &[(&str, &str)]) -> CmdOptions
     CmdOptions::default().with_cwd(dir).with_envs(envs)
 }
 
+/// Run a workspace binary with forge identity and config lookups pointed at empty
+/// directories under `dir`, so the developer's forge profiles cannot leak in.
+pub fn run_resolved_isolated_identity(bin_name: &str, dir: &Path, args: &[&str]) -> CmdOutput {
+    let options = CmdOptions::new()
+        .with_cwd(dir)
+        .with_env("XDG_CONFIG_HOME", &dir.join("xdg-config").to_string_lossy())
+        .with_env("XDG_STATE_HOME", &dir.join("xdg-state").to_string_lossy())
+        .with_env_remove("FORGE_IDENTITY_PRINCIPAL");
+    run_resolved(bin_name, args, &options)
+}
+
 /// Resolve a workspace binary by name and run it with explicit options.
 pub fn run_resolved(bin_name: &str, args: &[&str], options: &CmdOptions) -> CmdOutput {
     let bin = crate::bin::resolve(bin_name);

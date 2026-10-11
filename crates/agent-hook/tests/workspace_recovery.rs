@@ -51,7 +51,7 @@ fn repo_key(repo_root: &Path) -> String {
 
 fn fixture() -> (Fixture, PathBuf) {
     let fixture = Fixture::new(POLICY);
-    git(&fixture.root, &["init", "--quiet"]);
+    git(&fixture.root, &["init", "--quiet", "-b", "master"]);
     git(
         &fixture.root,
         &["config", "user.email", "workspace@example.com"],

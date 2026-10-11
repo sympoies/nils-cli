@@ -77,6 +77,10 @@ use crate::{
     update_session_title_if_revision,
 };
 
+#[path = "serve_claude_completion.rs"]
+mod claude_completion;
+#[path = "serve_prompt_scan.rs"]
+mod prompt_scan;
 #[path = "serve_shell.rs"]
 mod shell;
 
@@ -1166,6 +1170,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         let federation_task = tokio::spawn(remote_outbox_loop(state.clone()));
         let codex_control_task = tokio::spawn(codex_control_loop(state.clone()));
         let auto_resume_task = tokio::spawn(auto_resume_loop(state.clone()));
+        let auth_incident_task = tokio::spawn(auth_incident_loop(state.clone()));
         let auto_retitle_task = tokio::spawn(auto_retitle_loop(state.clone()));
         let retitle_v3_recovery_task =
             tokio::spawn(recover_retitle_v3_operations_once(state.clone()));
@@ -1185,6 +1190,8 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         let binary_replaced = *stop_rx.borrow() == Some(ServeStop::BinaryReplaced);
         federation_task.abort();
         let _ = federation_task.await;
+        auth_incident_task.abort();
+        let _ = auth_incident_task.await;
         auto_resume_task.abort();
         let _ = auto_resume_task.await;
         auto_retitle_task.abort();
@@ -2312,70 +2319,6 @@ fn collect_activity_stream_sessions(
     })
 }
 
-async fn activity_completion_refresh_deadline(
-    log: &ActivityEventLog,
-    context: &CliContext,
-) -> Option<tokio::time::Instant> {
-    let ids: Vec<_> = log
-        .state
-        .lock()
-        .expect("activity log lock")
-        .latest_sessions
-        .iter()
-        .filter(|session| {
-            session.turn_state.as_ref().is_some_and(|state| {
-                state.current_turn.is_some() && state.source.provider.as_deref() == Some("claude")
-            })
-        })
-        .map(|session| session.id.clone())
-        .collect();
-    if ids.is_empty() {
-        return None;
-    }
-    let context = context.clone();
-    let deadline = tokio::task::spawn_blocking(move || {
-        ids.iter()
-            .filter_map(|id| {
-                let record = load_session_record(&context, id).ok()?;
-                activity::completion_deadline_for_view(&context, &record)
-            })
-            .min()
-    })
-    .await
-    .ok()
-    .flatten()?;
-    let delay = (deadline - jiff::Timestamp::now())
-        .try_into()
-        .unwrap_or(Duration::ZERO);
-    Some(tokio::time::Instant::now() + delay)
-}
-
-async fn activity_refresh_snapshot(
-    log: Arc<ActivityEventLog>,
-    lifecycle: watch::Sender<ActivityBrokerLifecycle>,
-    session_collector: SessionCollector,
-    context: CliContext,
-    tmux_bin: PathBuf,
-) -> bool {
-    match tokio::task::spawn_blocking(move || {
-        collect_activity_stream_sessions(&session_collector, &context, &tmux_bin)
-    })
-    .await
-    {
-        Ok(Ok(sessions)) => {
-            log.publish_snapshot(sessions);
-            true
-        }
-        Ok(Err(_)) | Err(_) => {
-            degrade_activity_broker(
-                &lifecycle,
-                "activity stream snapshot refresh failed; activity stream disabled",
-            );
-            false
-        }
-    }
-}
-
 #[cfg(test)]
 async fn activity_change_loop(
     log: Arc<ActivityEventLog>,
@@ -2409,7 +2352,8 @@ async fn activity_change_loop_inner(
     let mut lifecycle_rx = lifecycle.subscribe();
     let mut last_refresh_started_at = None;
     loop {
-        let completion_deadline = activity_completion_refresh_deadline(&log, &context).await;
+        let completion_deadline =
+            claude_completion::activity_completion_refresh_deadline(&log, &context).await;
         let completion_refresh = async {
             match completion_deadline {
                 Some(deadline) => tokio::time::sleep_until(deadline).await,
@@ -2507,7 +2451,7 @@ async fn activity_change_loop_inner(
         if let Some(observer) = &controls.refresh_started {
             let _ = observer.send(started_at);
         }
-        if !activity_refresh_snapshot(
+        if !claude_completion::activity_refresh_snapshot(
             log.clone(),
             lifecycle.clone(),
             session_collector.clone(),
@@ -2575,7 +2519,11 @@ pub(crate) fn envelope_ok(data: Value) -> Response {
 }
 
 fn envelope_status(status: StatusCode, data: Value) -> Response {
-    (
+    let session_id = data
+        .pointer("/session/id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut response = (
         status,
         Json(json!({
             "schema_version": serve_schema(),
@@ -2583,10 +2531,21 @@ fn envelope_status(status: StatusCode, data: Value) -> Response {
             "data": data,
         })),
     )
-        .into_response()
+        .into_response();
+    if let Some(id) = session_id {
+        response
+            .extensions_mut()
+            .insert(crate::lifecycle::ResponseSessionId(id));
+    }
+    response
 }
 
 pub(crate) fn envelope_err(err: CliError) -> Response {
+    let session_id = err
+        .details()
+        .and_then(|d| d["session_id"].as_str())
+        .map(str::to_owned);
+    let retained_error = err.clone();
     let data = err.into_inner();
     let status = match data.code.as_str() {
         "session-not-found"
@@ -2660,7 +2619,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
     {
         map.insert("details".to_string(), details);
     }
-    (
+    let mut response = (
         status,
         Json(json!({
             "schema_version": serve_schema(),
@@ -2668,11 +2627,18 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
             "error": error,
         })),
     )
-        .into_response()
+        .into_response();
+    response.extensions_mut().insert(retained_error);
+    if let Some(id) = session_id {
+        response
+            .extensions_mut()
+            .insert(crate::lifecycle::ResponseSessionId(id));
+    }
+    response
 }
 
 pub(crate) fn status_json(status: StatusCode, code: &str, message: &str) -> Response {
-    (
+    let mut response = (
         status,
         Json(json!({
             "schema_version": serve_schema(),
@@ -2680,10 +2646,14 @@ pub(crate) fn status_json(status: StatusCode, code: &str, message: &str) -> Resp
             "error": { "code": code, "message": message },
         })),
     )
-        .into_response()
+        .into_response();
+    response
+        .extensions_mut()
+        .insert(CliError::runtime(code, message, None));
+    response
 }
 
-fn join_err() -> Response {
+pub(crate) fn join_err() -> Response {
     envelope_err(CliError::runtime(
         "serve-task-failed",
         "internal task failed",
@@ -5547,11 +5517,26 @@ async fn history_resume_handler(
         return response;
     }
     let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = history_resume_handler_inner(State(state), headers, AxPath(id.clone())).await;
+    crate::lifecycle::response(&context, &id, "history-resume", before, response).await
+}
+
+async fn history_resume_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
     let tmux_bin = state.tmux_bin.clone();
     let catalog = state.history_catalog.clone();
     let profiles = state.launch_profiles.clone();
     let machine = state.machine.clone();
     let result = tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("history-resume");
         let history = catalog.resolve_fresh(&id).map_err(history_resume_catalog_error)?;
         let expected_id = provider_history::stable_history_id(
             &history.provider,
@@ -6754,6 +6739,37 @@ async fn create_handler(
     headers: HeaderMap,
     Json(body): Json<CreateBody>,
 ) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let operation = if body.provider_resume_id.is_some() {
+        "import"
+    } else {
+        "create"
+    };
+    let id = match crate::lifecycle::start_id(
+        &state.context,
+        body.id.as_deref(),
+        AgentKind::from_name(&body.agent).unwrap_or(AgentKind::Codex),
+        match &body.title {
+            CreateTitleInput::Value(title) => Some(title.as_str()),
+            _ => None,
+        },
+    ) {
+        Ok(id) => id,
+        Err(error) => return envelope_err(error),
+    };
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = create_handler_inner(State(state), headers, Json(body)).await;
+    crate::lifecycle::response(&context, &id, operation, before, response).await
+}
+
+async fn create_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    Json(body): Json<CreateBody>,
+) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
     }
@@ -6890,6 +6906,7 @@ async fn create_handler(
             format: nils_common::cli_contract::OutputFormat::Json,
         };
         return match tokio::task::spawn_blocking(move || {
+            let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
             start_provider_resume_session(&context, args)
         })
         .await
@@ -6903,6 +6920,7 @@ async fn create_handler(
     }
     let explicit_account = body.codex_account;
     let (selected_account, selection_source) = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
         resolve_initial_codex_account(agent, explicit_account)
     })
     .await
@@ -6916,6 +6934,7 @@ async fn create_handler(
     let claude_account = if agent == AgentKind::Claude && launch_profile.is_none() {
         let explicit_claude_account = body.claude_account;
         match tokio::task::spawn_blocking(move || {
+            let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
             crate::claude_account::resolve_initial_account(explicit_claude_account)
         })
         .await
@@ -7001,10 +7020,11 @@ async fn create_handler(
         format: nils_common::cli_contract::OutputFormat::Json,
     };
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("create");
         crate::start_session_with_claude_account(
             &context,
             args,
-            StartFailureDisposition::ReturnSession,
+            StartFailureDisposition::ReturnError,
             crate::PromptDelivery::ResilientBeforeSubmit,
             claude_account,
         )
@@ -7484,6 +7504,22 @@ async fn session_account_handler(
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response =
+        session_account_handler_inner(State(state), headers, AxPath(id.clone()), Json(body)).await;
+    crate::lifecycle::response(&context, &id, "account-switch", before, response).await
+}
+
+async fn session_account_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    Json(body): Json<AccountSwitchBody>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
     let Some(expected_session_incarnation) = body
         .expected_session_incarnation
         .as_deref()
@@ -7498,6 +7534,7 @@ async fn session_account_handler(
     let resolve_context = state.context.clone();
     let requested_id = id.clone();
     let resolved_record = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         load_session_record(&resolve_context, &requested_id)
     })
     .await
@@ -7529,6 +7566,7 @@ async fn session_account_handler(
     let precheck_account = body.account.clone();
     let expected_session_incarnation = expected_session_incarnation.to_string();
     let launch_id = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         crate::session_account::codex_switch_precheck(
             &record,
             &expected_session_incarnation,
@@ -7554,6 +7592,7 @@ async fn session_account_handler(
     let begin_account = body.account.clone();
     let supports_unbound_account_queue = body.supports_unbound_account_queue;
     let revision = match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         crate::codex_account::begin_switch_binding(
             &begin_context,
             &begin_id,
@@ -7574,6 +7613,7 @@ async fn session_account_handler(
             let queue_launch_id = launch_id.clone();
             let queue_account = body.account.clone();
             return match tokio::task::spawn_blocking(move || {
+                let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
                 crate::session_account::codex_queue_switch(
                     &queue_context,
                     &queue_id,
@@ -7608,6 +7648,7 @@ async fn session_account_handler(
             let finish_launch_id = launch_id.clone();
             let finish_account = body.account.clone();
             let _ = tokio::task::spawn_blocking(move || {
+                let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
                 crate::codex_account::finish_binding(
                     &finish_context,
                     &finish_id,
@@ -7637,6 +7678,7 @@ async fn claude_account_switch_handler(
     let context = state.context.clone();
     let tmux_bin = state.tmux_bin.clone();
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("account-switch");
         crate::session_account::claude_switch_locked(
             &context,
             &id,
@@ -8068,6 +8110,80 @@ async fn auto_resume_cancel_handler(
         Ok(Ok(view)) => envelope_ok(json!({ "machine": state.machine, "auto_resume": view })),
         Ok(Err(err)) => envelope_err(err),
         Err(_) => join_err(),
+    }
+}
+
+async fn auth_incident_loop(state: Arc<ServeState>) {
+    let mut interval = tokio::time::interval(Duration::from_secs(15));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        let context = state.context.clone();
+        let discovery_tmux = state.tmux_bin.clone();
+        let records = tokio::task::spawn_blocking(move || {
+            let mut records = Vec::new();
+            let mut command = ProcessCommand::new(&discovery_tmux);
+            command.args(["list-sessions", "-F", "#{session_name}"]);
+            let live_tmux = crate::run_output_with_timeout_and_strict_cap(
+                command,
+                Duration::from_millis(250),
+                64 * 1024,
+            )
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::to_string)
+                    .collect::<HashSet<_>>()
+            });
+            if let Ok(entries) = fs::read_dir(context.state_dir.join("sessions")) {
+                for entry in entries.flatten() {
+                    if let Some(id) = entry.file_name().to_str()
+                        && let Ok(record) = crate::load_session_record(&context, id)
+                        && record.mode == "interactive"
+                        && matches!(record.agent.as_str(), "claude" | "codex")
+                        && record.runtime.is_some()
+                    {
+                        let terminal_available = live_tmux
+                            .as_ref()
+                            .map(|sessions| sessions.contains(&record.tmux_session));
+                        records.push((record, terminal_available));
+                    }
+                }
+            }
+            records
+        })
+        .await;
+        let Ok(records) = records else {
+            continue;
+        };
+        // Bound concurrent sampling and mailbox requests; no provider text is
+        // copied to the async scheduler or diagnostic output.
+        let mut tasks = tokio::task::JoinSet::new();
+        for (record, terminal_available) in records {
+            if tasks.len() >= 4 {
+                let _ = tasks.join_next().await;
+            }
+            let context = state.context.clone();
+            let tmux = state.tmux_bin.clone();
+            let machine = state.machine.clone();
+            tasks.spawn_blocking(move || {
+                if let Err(error) = crate::auth_incident::tick(
+                    &context,
+                    &record,
+                    &tmux,
+                    &machine,
+                    terminal_available,
+                ) {
+                    eprintln!(
+                        "warning: provider authentication observation degraded: {}",
+                        error.code()
+                    );
+                }
+            });
+        }
+        while tasks.join_next().await.is_some() {}
     }
 }
 
@@ -9417,6 +9533,20 @@ async fn resume_handler(
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = resume_handler_inner(State(state), headers, AxPath(id.clone())).await;
+    crate::lifecycle::response(&context, &id, "resume", before, response).await
+}
+
+async fn resume_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
     }
@@ -9424,6 +9554,7 @@ async fn resume_handler(
     let tmux = state.tmux_bin.clone();
     let launch_profiles = state.launch_profiles.clone();
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("resume");
         validate_launch_profile_resume(&context, &id, &launch_profiles)?;
         resume_session_by_id(&context, &id, &tmux)
     })
@@ -9902,6 +10033,21 @@ async fn delete_handler(
     AxPath(id): AxPath<String>,
     query: Result<Query<DeleteQuery>, QueryRejection>,
 ) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = delete_handler_inner(State(state), headers, AxPath(id.clone()), query).await;
+    crate::lifecycle::response(&context, &id, "delete", before, response).await
+}
+
+async fn delete_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    query: Result<Query<DeleteQuery>, QueryRejection>,
+) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
     }
@@ -9917,6 +10063,7 @@ async fn delete_handler(
     let delete_id = id.clone();
     let machine = state.machine.clone();
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("delete");
         crate::delete_session_guarding_children(
             &context,
             &machine,
@@ -9945,6 +10092,21 @@ async fn archive_handler(
     if let Some(response) = deny_unauthorized(&state, &headers) {
         return response;
     }
+    let context = state.context.clone();
+    let before = load_session_record(&context, &id).ok();
+    let response = archive_handler_inner(State(state), headers, AxPath(id.clone()), body).await;
+    crate::lifecycle::response(&context, &id, "archive", before, response).await
+}
+
+async fn archive_handler_inner(
+    State(state): State<Arc<ServeState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Result<Json<ArchiveBody>, JsonRejection>,
+) -> Response {
+    if let Some(response) = deny_unauthorized(&state, &headers) {
+        return response;
+    }
     let Json(body) = match body {
         Ok(body) => body,
         Err(_) => {
@@ -9961,6 +10123,7 @@ async fn archive_handler(
     let response_machine = machine.clone();
     let starred = body.starred;
     match tokio::task::spawn_blocking(move || {
+        let _journal_owner = crate::lifecycle::ServeGuard::enter("archive");
         let children =
             crate::lineage::guard_children(&context, &machine, &id, body.orphan_children)?;
         let (archive, mut deleted) = archive_session_with_expected_incarnation(
@@ -10448,85 +10611,14 @@ impl ProviderPromptDiscoveryRegistry {
         }
     }
 
-    async fn resolve_source(&self, record: &crate::SessionRecord) -> Option<ProviderPromptSource> {
-        let key = ProviderPromptDiscoveryKey::from_record(record)?;
-        let slot = {
-            let mut entries = self.entries.lock().await;
-            entries.retain(|existing, _| existing.session_id != key.session_id || existing == &key);
-            if !entries.contains_key(&key) && entries.len() >= PROVIDER_PROMPT_DISCOVERY_MAX_ENTRIES
-            {
-                // Stable admission avoids turning every list pass above the
-                // registry bound into another expensive cold-recovery scan.
-                return None;
-            }
-            entries
-                .entry(key.clone())
-                .or_insert_with(|| {
-                    Arc::new(tokio::sync::Mutex::new(
-                        ProviderPromptDiscoverySlot::default(),
-                    ))
-                })
-                .clone()
-        };
-        loop {
-            let mut state = slot.lock().await;
-            if let Some(source) = state.source.clone() {
-                return Some(source);
-            }
-            let now = Instant::now();
-            if state.next_scan_at.is_some_and(|next| now < next) {
-                return None;
-            }
-            let mut progress = state.progress.subscribe();
-            if state.in_flight {
-                drop(state);
-                let _ = progress.changed().await;
-                continue;
-            }
-            state.in_flight = true;
-            state.scan_attempts = state.scan_attempts.saturating_add(1);
-            drop(state);
-
-            let resolver = self.resolver.clone();
-            let scan_permits = self.scan_permits.clone();
-            let candidate = record.clone();
-            let task_slot = slot.clone();
-            tokio::spawn(async move {
-                let source = match scan_permits.acquire_owned().await {
-                    Ok(_permit) => tokio::task::spawn_blocking(move || resolver(&candidate))
-                        .await
-                        .ok()
-                        .flatten(),
-                    Err(_) => None,
-                };
-                let mut state = task_slot.lock().await;
-                state.in_flight = false;
-                if let Some(source) = source {
-                    state.source = Some(source);
-                    state.next_scan_at = None;
-                } else {
-                    state.next_scan_at = Some(Instant::now() + state.backoff);
-                    state.backoff = next_provider_prompt_discovery_backoff(state.backoff);
-                }
-                state.progress.send_modify(|version| {
-                    *version = version.wrapping_add(1);
-                });
-            });
-            let _ = progress.changed().await;
-        }
-    }
-
     async fn last_prompt_projection(
         &self,
         record: &crate::SessionRecord,
     ) -> Option<LastPromptProjection> {
         let key = ProviderPromptDiscoveryKey::from_record(record)?;
-        let Some(source) = self.resolve_source(record).await else {
-            return Some(LastPromptProjection {
-                state: LastPromptState::Unavailable,
-                continuity: self.continuity_for_key(&key).await,
-                prompt: None,
-            });
+        let source = match self.cached_source_or_start_scan(record, &key).await {
+            Ok(source) => source,
+            Err(projection) => return Some(projection),
         };
         let Some(slot) = self.entries.lock().await.get(&key).cloned() else {
             return Some(LastPromptProjection {
@@ -10758,12 +10850,6 @@ impl ProviderPromptDiscoveryRegistry {
         }
         count
     }
-}
-
-fn next_provider_prompt_discovery_backoff(current: Duration) -> Duration {
-    current
-        .saturating_mul(2)
-        .min(PROVIDER_PROMPT_DISCOVERY_MAX_BACKOFF)
 }
 
 impl AttachSubscription {
@@ -12530,7 +12616,7 @@ async fn remote_outbox_loop(state: Arc<ServeState>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    include!("serve_claude_completion_tests.rs");
     use axum::body::Body;
     use axum::http::Request;
     use nils_test_support::{EnvGuard, GlobalStateLock};
@@ -12573,6 +12659,24 @@ mod tests {
 
         assert!(old.exists());
         assert!(identity.changed());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_http_refusal_keeps_exact_error_and_records_pre_engine_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let st = state(tmp.path(), Some(TOKEN), PathBuf::from("/unavailable/tmux"));
+        let (status, body) = call(
+            router(st.clone()),
+            post_json("/sessions/missing/resume", Some(TOKEN), json!({})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let cause = crate::load_session_record(&st.context, "missing").unwrap_err();
+        assert_eq!(body["error"]["code"], cause.code());
+        assert_eq!(body["error"]["message"], cause.message());
+        let journal = crate::lifecycle::read(&st.context, "missing", 100).unwrap();
+        assert_eq!(journal["records"].as_array().unwrap().len(), 1);
+        assert_eq!(journal["records"][0]["caller"]["kind"], "serve");
     }
 
     #[tokio::test]
@@ -15558,21 +15662,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn provider_prompt_discovery_backoff_doubles_and_caps() {
-        let mut backoff = PROVIDER_PROMPT_PENDING_POLL_INTERVAL;
-        let mut observed = Vec::new();
-        for _ in 0..8 {
-            backoff = next_provider_prompt_discovery_backoff(backoff);
-            observed.push(backoff);
-        }
-        assert_eq!(observed[0], Duration::from_secs(1));
-        assert_eq!(observed[1], Duration::from_secs(2));
-        assert_eq!(observed[2], Duration::from_secs(4));
-        assert_eq!(observed[5], PROVIDER_PROMPT_DISCOVERY_MAX_BACKOFF);
-        assert_eq!(observed[7], PROVIDER_PROMPT_DISCOVERY_MAX_BACKOFF);
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pending_provider_prompt_scan_survives_lead_waiter_cancellation() {
         let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -15677,12 +15766,18 @@ mod tests {
             })
             .collect();
 
-        for record in &records {
-            assert!(registry.last_prompt(record).await.is_none());
-        }
-        while started.load(Ordering::SeqCst) < PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS {
-            tokio::task::yield_now().await;
-        }
+        // Source discovery runs in the background, so recoveries start on the
+        // list passes after it resolves.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while started.load(Ordering::SeqCst) < PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS {
+                for record in &records {
+                    assert!(registry.last_prompt(record).await.is_none());
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("recoveries start");
         for record in &records {
             assert!(registry.last_prompt(record).await.is_none());
         }
@@ -18097,6 +18192,46 @@ esac
         .unwrap();
     }
 
+    fn assert_serve_lifecycle(dir: &Path, id: &str, expected: &[(&str, usize)]) {
+        let context = CliContext {
+            state_dir: dir.to_path_buf(),
+            host: None,
+        };
+        let journal = crate::lifecycle::read(&context, id, 100).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        let operations = [
+            "start",
+            "import",
+            "create",
+            "resume",
+            "stop",
+            "delete",
+            "archive",
+            "account-switch",
+            "history-resume",
+        ];
+        let rows = rows
+            .iter()
+            .filter(|r| operations.contains(&r["operation"].as_str().unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.len(),
+            expected.iter().map(|(_, n)| n).sum::<usize>(),
+            "{journal}"
+        );
+        for (operation, count) in expected {
+            let matching = rows
+                .iter()
+                .filter(|r| r["operation"] == *operation)
+                .collect::<Vec<_>>();
+            assert_eq!(matching.len(), *count, "{journal}");
+            assert!(
+                matching.iter().all(|r| r["caller"]["kind"] == "serve"),
+                "{journal}"
+            );
+        }
+    }
+
     async fn call(app: Router, req: Request<Body>) -> (StatusCode, Value) {
         let resp = app.oneshot(req).await.unwrap();
         let status = resp.status();
@@ -19402,7 +19537,7 @@ esac
         };
 
         assert!(
-            !activity_refresh_snapshot(
+            !claude_completion::activity_refresh_snapshot(
                 broker.log.clone(),
                 broker.lifecycle.clone(),
                 failing_collector,
@@ -19464,121 +19599,6 @@ esac
         let snapshot = subscription.next_event().await.expect("stream snapshot");
         assert_eq!(snapshot.sessions, Some(Vec::new()));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn activity_stream_settles_claude_stop_without_later_hooks_or_polling() {
-        assert_claude_completion_stream(false).await;
-    }
-
-    #[tokio::test]
-    async fn activity_stream_settles_claude_stop_with_pending_attention() {
-        assert_claude_completion_stream(true).await;
-    }
-
-    async fn assert_claude_completion_stream(pending_attention: bool) {
-        use std::os::unix::fs::PermissionsExt;
-        let tmp = tempfile::TempDir::new().unwrap();
-        let context = CliContext {
-            state_dir: tmp.path().join("state"),
-            host: None,
-        };
-        let record: crate::SessionRecord = serde_json::from_value(json!({
-            "schema_version":"agent-session.session.v1", "id":"completion-stream",
-            "agent":"claude", "mode":"interactive", "title":null,
-            "cwd":tmp.path(), "tmux_session":"hs-claude-completion-stream",
-            "prompt_file":null, "log_file":null,
-            "created_at":jiff::Timestamp::now().to_string(), "updated_at":jiff::Timestamp::now().to_string(),
-            "runtime":{"kind":"tmux", "tmux_session":"hs-claude-completion-stream",
-                "generation":1, "started_at":jiff::Timestamp::now().to_string(), "launch_id":"launch-stream"}
-        })).unwrap();
-        let dir = context.state_dir.join("sessions").join(&record.id);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join("session.json"),
-            serde_json::to_vec(&record).unwrap(),
-        )
-        .unwrap();
-        crate::activity::activate_runtime(&context, &record).unwrap();
-        let names = if pending_attention {
-            vec!["UserPromptSubmit", "PermissionRequest", "Stop"]
-        } else {
-            vec!["UserPromptSubmit", "Stop"]
-        };
-        for name in names {
-            let payload = serde_json::to_vec(&json!({"hook_event_name":name, "turn_id":"turn-1",
-                "stop_hook_active":false, "background_tasks":[]}))
-            .unwrap();
-            crate::activity::ingest_provider_hook_input(
-                &context,
-                crate::AgentKind::Claude,
-                None,
-                crate::activity::ProviderHookInput {
-                    id: &record.id,
-                    runtime_id: "launch-stream",
-                    payload: &payload,
-                    attention_authority: None,
-                },
-            )
-            .unwrap();
-        }
-        let tmux = tmp.path().join("fake-tmux");
-        fs::write(&tmux, "#!/bin/sh\ncase \"$1\" in\n list-windows) printf 'hs-claude-completion-stream\\t100\\n' ;;\n display-message) printf 'Claude\\n' ;;\n capture-pane) printf '❯ \\n' ;;\nesac\n").unwrap();
-        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
-        let collector = default_session_collector();
-        let broker = ActivityBroker::for_test_with_session_collector(
-            MACHINE,
-            &context,
-            &tmux,
-            collector.clone(),
-        );
-        // Keep the notification channel open but send no changes: collector side
-        // effects must not accidentally act as a completion timer.
-        let (_change_tx, change_rx) = mpsc::channel(1);
-        let change_loop = tokio::spawn(activity_change_loop(
-            broker.log.clone(),
-            broker.lifecycle.clone(),
-            collector,
-            context,
-            tmux,
-            change_rx,
-        ));
-        broker.loops.lock().unwrap().push(change_loop);
-        let mut subscription = broker.subscribe(None).unwrap();
-        let first = subscription.next_event().await.unwrap();
-        assert_eq!(
-            first.sessions.as_ref().unwrap()[0]
-                .turn_state
-                .as_ref()
-                .unwrap()
-                .phase,
-            if pending_attention {
-                crate::activity::TurnPhase::NeedsInput
-            } else {
-                crate::activity::TurnPhase::Working
-            }
-        );
-        let completed = tokio::time::timeout(Duration::from_secs(3), async {
-            loop {
-                let event = subscription.next_event().await.unwrap();
-                if event.sessions.as_ref().is_some_and(|sessions| {
-                    sessions.iter().any(|session| {
-                        session
-                            .turn_state
-                            .as_ref()
-                            .is_some_and(|state| state.phase == crate::activity::TurnPhase::Waiting)
-                    })
-                }) {
-                    break;
-                }
-            }
-        })
-        .await;
-        broker.shutdown().await;
-        assert!(
-            completed.is_ok(),
-            "Stop settled in state_for_view but never reached stream subscribers"
-        );
     }
 
     #[tokio::test]
@@ -20703,6 +20723,7 @@ esac
         assert_eq!(status, StatusCode::OK, "body={body}");
         let managed_id = body["data"]["session"]["id"].as_str().unwrap();
         assert_eq!(managed_id, "kept-dsh");
+        assert_serve_lifecycle(tmp.path(), managed_id, &[("history-resume", 1)]);
         assert_eq!(body["data"]["session"]["title_mode"], "pinned");
         assert_eq!(
             body["data"]["session"]["title"],
@@ -21246,6 +21267,7 @@ esac
             crate::board::closed_reasons_for_test(&context),
             vec![("archive-me".to_string(), "archived".to_string())]
         );
+        assert_serve_lifecycle(tmp.path(), "archive-me", &[("archive", 2)]);
     }
 
     #[tokio::test]
@@ -22143,7 +22165,7 @@ esac
     }
 
     #[tokio::test]
-    async fn deleted_runtime_helper_returns_a_durable_safe_startup_failure() {
+    async fn lifecycle_review_deleted_runtime_helper_returns_reachable_failure() {
         let lock = GlobalStateLock::new();
         let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
@@ -22189,35 +22211,85 @@ esac
         )
         .await;
 
-        assert_eq!(create_status, StatusCode::OK, "body={create_body}");
-        let session = &create_body["data"]["session"];
-        assert_eq!(session["status"], "stopped");
-        assert_eq!(session["startup"]["state"], "failed");
-        assert_eq!(session["startup"]["stage"], "proxy");
         assert_eq!(
-            session["startup"]["failure_code"],
-            "runtime-helper-unavailable"
+            create_status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "body={create_body}"
         );
         assert_eq!(
-            session["startup"]["message"],
+            create_body["error"]["code"],
+            "codex-app-server-proxy-binary-unavailable"
+        );
+        assert_eq!(
+            create_body["error"]["message"],
+            "the agent-session runtime helper is unavailable"
+        );
+        let record_path = tmp.path().join("sessions/deleted-helper/session.json");
+        let record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+        let startup = &record["startup"];
+        assert_eq!(
+            create_body["error"]["details"]["session_id"],
+            "deleted-helper"
+        );
+        assert_eq!(create_body["error"]["details"]["startup"], *startup);
+        assert_eq!(startup["state"], "failed");
+        assert_eq!(startup["stage"], "proxy");
+        assert_eq!(startup["failure_code"], "runtime-helper-unavailable");
+        assert_eq!(
+            startup["message"],
             "Session runtime helper is unavailable after an upgrade."
         );
         assert!(!create_body.to_string().contains("token-secret"));
         assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
 
-        let record_path = tmp.path().join("sessions/deleted-helper/session.json");
-        let record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
-        assert_eq!(record["startup"], session["startup"]);
+        let journal = crate::lifecycle::read(&st.context, "deleted-helper", 10).unwrap();
+        assert_eq!(
+            journal["records"][0]["result"]["code"],
+            create_body["error"]["code"]
+        );
+        assert_eq!(journal["records"][0]["caller"]["kind"], "serve");
         let (list_status, list_body) = call(router(st.clone()), get("/sessions")).await;
         assert_eq!(list_status, StatusCode::OK, "body={list_body}");
-        assert_eq!(
-            list_body["data"]["sessions"][0]["startup"],
-            session["startup"]
-        );
+        assert_eq!(list_body["data"]["sessions"][0]["startup"], *startup);
         let (glance_status, glance_body) =
             call(router(st), get("/sessions/deleted-helper/glance")).await;
         assert_eq!(glance_status, StatusCode::OK, "body={glance_body}");
-        assert_eq!(glance_body["data"]["glance"]["startup"], session["startup"]);
+        assert_eq!(glance_body["data"]["glance"]["startup"], *startup);
+    }
+
+    #[tokio::test]
+    async fn lifecycle_review_create_failure_retains_cleanup_projection() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launcher = fake_agent(tmp.path(), "fixture-provider");
+        let tmux = executable(
+            &tmp.path().join("failed-tmux"),
+            "#!/bin/sh\ncase \"$1\" in\n new-session) exit 0 ;;\n display-message) printf '%s\\n' 'malformed identity'; exit 0 ;;\n has-session) exit 0 ;;\n *) exit 0 ;;\nesac\n",
+        );
+        let profile = AgentLaunchProfiles::from_json(
+            &json!([{
+                "id":"fixture-profile", "label":"Fixture", "agent":"claude", "agent_bin":launcher
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let mut st = state(tmp.path(), Some(TOKEN), tmux);
+        Arc::get_mut(&mut st).unwrap().launch_profiles = profile;
+        let (status, body) = call(router(st), post_json("/sessions", Some(TOKEN), json!({
+            "id":"cleanup-failure", "agent":"claude", "agent_profile":"fixture-profile", "cwd":tmp.path()
+        }))).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        let retained: Value = serde_json::from_slice(
+            &fs::read(tmp.path().join("sessions/cleanup-failure/session.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["error"]["details"]["session_id"], "cleanup-failure");
+        assert_eq!(body["error"]["details"]["startup"], retained["startup"]);
+        assert!(retained["startup"]["cleanup"].is_object(), "{retained}");
+        assert_eq!(
+            body["error"]["details"]["cleanup"],
+            retained["startup"]["cleanup"]
+        );
+        assert_serve_lifecycle(tmp.path(), "cleanup-failure", &[("create", 1)]);
     }
 
     #[tokio::test]
@@ -23029,7 +23101,7 @@ esac
         );
 
         let (status, body) = call(
-            router(st),
+            router(st.clone()),
             post_json(
                 "/sessions",
                 Some(TOKEN),
@@ -23069,6 +23141,17 @@ esac
                 .and_then(|runtime| runtime.extra.get("agent_profile_graceful_shutdown"))
                 .and_then(Value::as_str),
             Some("double-ctrl-c")
+        );
+        let id = body["data"]["session"]["id"].as_str().unwrap();
+        let journal = crate::lifecycle::read(&st.context, id, 100).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        assert_eq!(
+            rows.iter().filter(|r| r["operation"] == "create").count(),
+            1
+        );
+        assert_eq!(
+            rows.iter().find(|r| r["operation"] == "create").unwrap()["result"]["ok"],
+            true
         );
     }
 
@@ -23454,6 +23537,15 @@ esac
 
     #[tokio::test]
     async fn fresh_profile_session_resume_preserves_context_or_fails_closed_without_proof() {
+        fresh_profile_session_resume_fixture(false).await;
+    }
+
+    #[tokio::test]
+    async fn fresh_profile_session_resume_fails_closed_with_malformed_broker_runtime_identity() {
+        fresh_profile_session_resume_fixture(true).await;
+    }
+
+    async fn fresh_profile_session_resume_fixture(malformed_broker_identity: bool) {
         let lock = GlobalStateLock::new();
         let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
         let tmp = tempfile::TempDir::new().unwrap();
@@ -23570,6 +23662,39 @@ esac
         drop(first_pane);
         let stopped_record = load_session_record(&st.context, "fresh-profile").unwrap();
         crate::coordination::revoke(&st.context, &stopped_record).unwrap();
+        {
+            let mut locked = crate::coordination::lock_registry(&st.context).unwrap();
+            let mut registry = serde_json::to_value(&locked.registry).unwrap();
+            let broker = &mut registry["brokers"]["fresh-profile"];
+            assert_eq!(broker["state"], "stopped");
+            assert_eq!(broker["capability_digest"], "");
+            assert_eq!(
+                broker["runtime_identity"],
+                serde_json::to_value(
+                    crate::persisted_tmux_runtime_identity(&stopped_record)
+                        .unwrap()
+                        .unwrap()
+                )
+                .unwrap()
+            );
+            if malformed_broker_identity {
+                // Present but malformed evidence must not use the
+                // compatibility path for a missing runtime identity.
+                broker["runtime_identity"] = json!({});
+                locked.registry = serde_json::from_value(registry).unwrap();
+                locked.save().unwrap();
+            }
+        }
+        let old_incarnation = crate::coordination::incarnation(&stopped_record).unwrap();
+        let heartbeat = crate::coordination::heartbeat_path(&st.context.state_dir, "fresh-profile");
+        fs::write(&heartbeat, format!("{old_incarnation}:0\n")).unwrap();
+        assert!(heartbeat.exists(), "retain the expired heartbeat sidecar");
+        assert!(!crate::coordination::broker::heartbeat_fresh(
+            &st.context,
+            "fresh-profile",
+            &old_incarnation,
+            0,
+        ));
         fs::remove_file(&running).unwrap();
         let (list_status, list_body) = call(router(st.clone()), get("/sessions")).await;
         assert_eq!(list_status, StatusCode::OK, "body={list_body}");
@@ -23615,8 +23740,8 @@ esac
             calls.contains("resume fresh-provider-id"),
             "managed resume must use the captured provider id: {calls:?}"
         );
-        #[cfg(not(target_os = "linux"))]
-        {
+        let supports_stopped_runtime_proof = cfg!(any(target_os = "linux", target_os = "macos"));
+        if malformed_broker_identity || !supports_stopped_runtime_proof {
             assert_eq!(
                 resume_status,
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -23645,9 +23770,10 @@ esac
                 retained["provider_resume"]["session_id"],
                 "fresh-provider-id"
             );
-        }
-        #[cfg(target_os = "linux")]
-        {
+            let old_runtime = stopped_record.runtime.as_ref().unwrap();
+            assert_eq!(retained["runtime"]["generation"], old_runtime.generation);
+            assert_eq!(retained["runtime"]["launch_id"], old_runtime.launch_id);
+        } else {
             assert_eq!(resume_status, StatusCode::OK, "body={resume_body}");
             assert_eq!(
                 resume_body["data"]["session"]["cwd"],
@@ -23657,6 +23783,28 @@ esac
                 resume_body["data"]["session"]["agent_profile"],
                 "codex-profile"
             );
+            let resumed = &resume_body["data"]["session"];
+            assert_eq!(
+                resumed["provider_resume"]["session_id"],
+                "fresh-provider-id"
+            );
+            let retained: Value = serde_json::from_str(
+                &fs::read_to_string(tmp.path().join("sessions/fresh-profile/session.json"))
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(retained["cwd"], cwd.to_string_lossy().as_ref());
+            assert_eq!(retained["runtime"]["agent_profile"], "codex-profile");
+            assert_eq!(
+                retained["provider_resume"]["session_id"],
+                "fresh-provider-id"
+            );
+            let old_runtime = stopped_record.runtime.as_ref().unwrap();
+            assert_eq!(
+                retained["runtime"]["generation"],
+                old_runtime.generation + 1
+            );
+            assert_ne!(retained["runtime"]["launch_id"], old_runtime.launch_id);
             let terminate = ProcessCommand::new(&tmux)
                 .args([
                     "if-shell",
@@ -24168,6 +24316,7 @@ esac
                 Some(TOKEN),
                 json!({
                     "agent": "codex",
+                    "id": "import-failure",
                     "provider_resume_id": "missing-codex-id"
                 }),
             ),
@@ -24179,6 +24328,13 @@ esac
             body["error"]["details"]["provider_resume_id"],
             "missing-codex-id"
         );
+        let journal = crate::lifecycle::read(&st.context, "import-failure", 100).unwrap();
+        let rows = journal["records"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["operation"], "import");
+        assert_eq!(rows[0]["caller"]["kind"], "serve");
+        assert_eq!(rows[0]["result"]["code"], body["error"]["code"]);
+        assert!(!journal.to_string().contains("missing-codex-id"));
     }
 
     #[tokio::test]
@@ -26785,6 +26941,7 @@ esac
             calls.contains(launcher.to_string_lossy().as_ref()),
             "managed resume must use the durable launcher: {calls:?}"
         );
+        assert_serve_lifecycle(tmp.path(), "profile-resume", &[("resume", 1)]);
     }
 
     #[tokio::test]
@@ -27786,9 +27943,29 @@ esac
     }
 
     #[tokio::test]
-    async fn maintenance_reused_numeric_tmux_offers_fenced_no_signal_record_removal() {
+    async fn maintenance_reused_numeric_tmux_allows_fenced_retry_delete() {
+        assert_fenced_maintenance_removal(false).await;
+        assert_fenced_maintenance_removal(true).await;
+    }
+
+    async fn assert_fenced_maintenance_removal(record_only: bool) {
         let tmp = tempfile::TempDir::new().unwrap();
         let (mut st, calls) = reused_numeric_tmux_fixture(tmp.path());
+        if record_only {
+            // Missing identity evidence still requires the v2 no-signal fallback.
+            let path = tmp.path().join("sessions/reused-numeric-tmux/session.json");
+            let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            record
+                .as_object_mut()
+                .unwrap()
+                .remove("delete_tmux_identity");
+            std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        }
+        let action = if record_only {
+            "remove_console_record"
+        } else {
+            "retry_delete"
+        };
         let provider_root = tmp.path().join("provider/sessions");
         std::fs::create_dir_all(&provider_root).unwrap();
         let provider_history = provider_root.join("rollout.jsonl");
@@ -27844,20 +28021,26 @@ esac
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let preview = &body["data"]["maintenance"];
-        assert_eq!(preview["state"], "blocked", "{preview}");
-        assert_eq!(preview["issue"]["kind"], "runtime_identity_unavailable");
+        if record_only {
+            assert_eq!(preview["state"], "blocked", "{preview}");
+            assert_eq!(preview["issue"]["kind"], "runtime_identity_unavailable");
+        } else {
+            assert_eq!(preview["state"], "healthy", "{preview}");
+            assert!(preview["issue"].is_null());
+            assert_eq!(preview["boundary"]["kind"], "none");
+        }
         assert_eq!(preview["boundary"]["safe_process_count"], 0);
         assert!(
             preview["actions"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|a| a["id"] == "remove_console_record")
+                .any(|a| a["id"] == action)
         );
         let action_route = "/sessions/reused-numeric-tmux/maintenance/actions";
         let mut request = json!({
             "schema_version": "agent-session.session-maintenance.v2", "operation": "delete",
-            "action": "remove_console_record", "expected_session_incarnation": preview["session_incarnation"],
+            "action": action, "expected_session_incarnation": preview["session_incarnation"],
             "expected_session_generation": preview["session_generation"], "expected_preview_digest": preview["preview_digest"],
             "confirmed": false,
         });
@@ -27899,10 +28082,13 @@ esac
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(
-            body["data"]["maintenance_result"]["outcome"],
+        let expected = if record_only {
             "record_removed"
-        );
+        } else {
+            "deleted"
+        };
+        assert_eq!(body["data"]["maintenance_result"]["outcome"], expected);
+        assert_eq!(body["data"]["maintenance_result"]["status"], expected);
         assert!(!tmp.path().join("sessions/reused-numeric-tmux").exists());
         st.history_catalog.invalidate();
         let (status, history_after) =
@@ -27931,7 +28117,7 @@ esac
     }
 
     #[tokio::test]
-    async fn maintenance_reused_numeric_tmux_keeps_record_removal_v2_delete_only() {
+    async fn maintenance_reused_numeric_tmux_uses_safe_retry_in_both_contracts() {
         let tmp = tempfile::TempDir::new().unwrap();
         let (st, _) = reused_numeric_tmux_fixture(tmp.path());
         for (operation, schema) in [
@@ -27945,7 +28131,7 @@ esac
             )).await;
             assert_eq!(status, StatusCode::OK, "{body}");
             let preview = &body["data"]["maintenance"];
-            assert_eq!(preview["state"], "blocked", "{preview}");
+            assert_eq!(preview["state"], "healthy", "{preview}");
             assert!(
                 !preview["actions"]
                     .as_array()
@@ -30631,6 +30817,11 @@ esac
             )),
             "{calls:?}"
         );
+        assert_serve_lifecycle(
+            tmp.path(),
+            "claude-switch",
+            &[("account-switch", 1), ("resume", 1)],
+        );
     }
 
     #[tokio::test]
@@ -31145,6 +31336,107 @@ esac
         }
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn generation_two_legacy_broker_resume_ignores_recycled_numeric_selector() {
+        use crate::coordination::broker::test_support;
+        let _lock = GlobalStateLock::new();
+        for prior_boot in [true, false] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let cwd = tmp.path().join("repo");
+            fs::create_dir_all(&cwd).unwrap();
+            let context = CliContext {
+                state_dir: tmp.path().to_path_buf(),
+                host: None,
+            };
+            seed_resumable_session(
+                tmp.path(),
+                "broker-reboot",
+                "codex",
+                "managed-runtime",
+                &cwd,
+                &[
+                    "resume",
+                    "resume-session-id",
+                    "--cd",
+                    cwd.to_str().unwrap(),
+                    "--no-alt-screen",
+                ],
+            );
+            let mut record = load_session_record(&context, "broker-reboot").unwrap();
+            let old = record.runtime.as_ref().unwrap().launch_id.clone();
+            record.runtime.as_mut().unwrap().generation = 2;
+            let mut identity =
+                test_support::process_group_identity(test_support::exited_process_group());
+            identity["launch_id"] = json!(old);
+            identity["session_id"] = json!("$7");
+            if prior_boot {
+                let boot = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+                assert_ne!(crate::linux_boot_id().unwrap(), boot);
+                identity["pid_namespace"]["boot_id"] = json!(boot);
+            }
+            record.extra.remove("tmux_runtime_never_launched");
+            record
+                .extra
+                .insert("delete_tmux_identity".to_string(), identity.clone());
+            crate::write_session_record(&context, &record).unwrap();
+            test_support::seed_live_broker(&context, &record.id, &old, identity);
+            test_support::make_legacy_broker(&context, &record.id, false);
+            let registry_path = tmp.path().join("coordination/registry.json");
+            let mut registry: Value =
+                serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+            registry["brokers"][&record.id]["generation"] = json!(2);
+            assert!(registry["brokers"][&record.id]["runtime_identity"].is_null());
+            fs::write(
+                &registry_path,
+                serde_json::to_vec_pretty(&registry).unwrap(),
+            )
+            .unwrap();
+
+            let log = tmp.path().join("tmux.log");
+            let tmux = resume_tmux(tmp.path(), &log);
+            let script = fs::read_to_string(&tmux).unwrap().replace(
+                "has-session)",
+                "has-session) if [ \"$3\" = '$7' ]; then exit 0; fi;",
+            );
+            fs::write(&tmux, script).unwrap();
+            assert_eq!(
+                crate::verified_tmux_status_with_timeout(&tmux, "$7", Duration::from_secs(1)),
+                "running"
+            );
+            assert_eq!(
+                crate::verified_tmux_status_with_timeout(
+                    &tmux,
+                    "=managed-runtime",
+                    Duration::from_secs(1)
+                ),
+                "stopped"
+            );
+            let provider_resume = serde_json::to_value(&record.provider_resume).unwrap();
+            let result = crate::resume_session_locked(&context, record, &tmux)
+                .unwrap_or_else(|error| panic!("prior_boot={prior_boot}: {error:?}"));
+            assert_eq!(result.session.status, "running");
+            let resumed = load_session_record(&context, "broker-reboot").unwrap();
+            assert_eq!(resumed.runtime.as_ref().unwrap().generation, 3);
+            assert_ne!(resumed.runtime.as_ref().unwrap().launch_id, old);
+            assert_eq!(
+                serde_json::to_value(&resumed.provider_resume).unwrap(),
+                provider_resume
+            );
+            assert_eq!(
+                crate::verified_tmux_status_with_timeout(&tmux, "$7", Duration::from_secs(1)),
+                "running",
+                "the unrelated numeric target must remain live"
+            );
+            assert!(
+                !fs::read_to_string(&log)
+                    .unwrap()
+                    .lines()
+                    .any(|call| call.starts_with("kill-session"))
+            );
+        }
+    }
+
     #[test]
     fn legacy_resume_allows_tmux_to_reuse_the_stopped_internal_session_id() {
         use crate::coordination::broker::test_support;
@@ -31222,6 +31514,88 @@ esac
         let view = serde_json::to_value(crate::claude_account::view_for_record(&resumed)).unwrap();
         assert_eq!(view["selected_account"], "beta");
         assert!(view.get("next").is_none());
+    }
+
+    #[test]
+    fn claude_stopped_broker_switch_and_failed_switch_retry_preserve_the_conversation() {
+        use crate::coordination::broker::test_support;
+        for failed_switch_retry in [false, true] {
+            let lock = GlobalStateLock::new();
+            let tmp = tempfile::TempDir::new().unwrap();
+            let cwd = tmp.path().join("repo");
+            fs::create_dir_all(&cwd).unwrap();
+            let broker = claude_broker_fixture(&lock, tmp.path());
+            let context = CliContext {
+                state_dir: tmp.path().to_path_buf(),
+                host: None,
+            };
+            seed_bound_claude_session(tmp.path(), "broker-switch", &cwd, "alpha");
+            let mut record = load_session_record(&context, "broker-switch").unwrap();
+            let old = record.runtime.as_ref().unwrap().launch_id.clone();
+            let provider = serde_json::to_value(record.provider_resume.as_ref().unwrap()).unwrap();
+            let mut identity =
+                test_support::process_group_identity(test_support::verified_absent_process_group());
+            identity["launch_id"] = json!(old);
+            #[cfg(target_os = "macos")]
+            {
+                identity["macos_boot_id"] = json!(crate::capture_macos_boot_id().unwrap());
+            }
+            record.extra.remove("tmux_runtime_never_launched");
+            record
+                .extra
+                .insert("delete_tmux_identity".to_string(), identity.clone());
+            crate::claude_account::queue_next(&mut record, "beta").unwrap();
+            if failed_switch_retry {
+                let stopped = record.clone();
+                crate::claude_account::mark_next_resume_failed(
+                    &mut record,
+                    &stopped,
+                    "session-incarnation-conflict",
+                )
+                .unwrap();
+            }
+            crate::write_session_record(&context, &record).unwrap();
+            test_support::seed_live_broker(&context, &record.id, &old, identity);
+            if failed_switch_retry {
+                crate::coordination::revoke(&context, &record).unwrap();
+                fs::remove_file(crate::coordination::heartbeat_path(
+                    &context.state_dir,
+                    &record.id,
+                ))
+                .unwrap();
+            }
+            let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
+            let script = fs::read_to_string(&tmux).unwrap().replace(
+                r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then"#,
+                r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then gate="$(dirname "$heartbeat")/broker-provisioned"; (i=0; while [ ! -f "$gate" ] && [ "$i" -lt 1000 ]; do i=$((i + 1)); sleep 0.01; done; printf '%s:%s\n' "$incarnation" "$(date +%s)" > "$heartbeat"; chmod 600 "$heartbeat") >/dev/null 2>&1 & fi; if false; then"#,
+            );
+            fs::write(&tmux, script).unwrap();
+            if failed_switch_retry {
+                crate::resume_session_locked(&context, record, &tmux)
+                    .expect("documented retry must replace the stopped broker");
+            } else {
+                crate::session_account::resume_after_switch_stop(&context, &record.id, &tmux)
+                    .expect("verified account switch stop must retire its broker");
+            }
+            let resumed = load_session_record(&context, "broker-switch").unwrap();
+            assert_eq!(
+                serde_json::to_value(resumed.provider_resume.as_ref().unwrap()).unwrap(),
+                provider
+            );
+            assert_ne!(resumed.runtime.as_ref().unwrap().launch_id, old);
+            let view =
+                serde_json::to_value(crate::claude_account::view_for_record(&resumed)).unwrap();
+            assert_eq!(view["selected_account"], "beta");
+            assert!(view.get("next").is_none());
+            assert!(
+                fs::read_to_string(tmp.path().join("tmux.log"))
+                    .unwrap()
+                    .contains(&format!(
+                        "CLAUDE_CONFIG_DIR={}",
+                        broker.config_dir("beta").display()
+                    ))
+            );
+        }
     }
 
     /// The killed runtime's broker still has a fresh heartbeat when the switch
@@ -31852,8 +32226,17 @@ esac
         let home = tmp.path().join("home");
         let alpha_repo = home.join("Project/sympoies/alpha");
         let beta_repo = home.join("Project/sympoies/beta");
-        std::fs::create_dir_all(alpha_repo.join(".git")).unwrap();
-        std::fs::create_dir_all(beta_repo.join(".git")).unwrap();
+        for repo in [&alpha_repo, &beta_repo] {
+            std::fs::create_dir_all(repo).unwrap();
+            assert!(
+                std::process::Command::new("/usr/bin/git")
+                    .args(["init", "--quiet"])
+                    .current_dir(repo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
         let _home = EnvGuard::set(&lock, "HOME", home.to_str().unwrap());
         let tmux = minimal_tmux(tmp.path());
         let st = state(tmp.path(), Some(TOKEN), tmux);
@@ -32282,6 +32665,7 @@ esac
             assert_eq!(status, StatusCode::OK, "body={body}");
             assert_eq!(body["ok"], true);
             assert_eq!(body["data"]["deleted"]["deleted"], true);
+            assert_serve_lifecycle(tmp.path(), &id, &[("delete", 1)]);
             assert!(!session_dir.exists(), "{agent} metadata must be removed");
             assert!(
                 !runtime_metadata.exists(),
@@ -39218,7 +39602,7 @@ esac
         }
     }
 
-    fn provider_discovery_record(
+    pub(super) fn provider_discovery_record(
         id: &str,
         tmux_session: &str,
         launch_id: &str,

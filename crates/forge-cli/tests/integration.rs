@@ -31,6 +31,7 @@ mod integration {
     mod pr_pending_review;
     mod pr_review;
     mod pr_review_handoff;
+    mod pr_review_handoff_sync;
     mod pr_review_loop;
     mod pr_reviews;
     mod pr_wait_checks;
@@ -40,6 +41,7 @@ mod integration {
     mod read_metadata;
     mod repo_bootstrap;
     mod repo_bootstrap_github;
+    mod repo_bootstrap_gitlab;
     mod repo_freeze;
     mod repo_push_default;
     mod repo_security;

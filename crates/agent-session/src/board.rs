@@ -268,7 +268,7 @@ pub(crate) fn project_record(
         .and_then(Value::as_object)
         .map(project_turn_state)
         .unwrap_or(Value::Null);
-    Some(json!({
+    let mut projected = json!({
         "machine": machine,
         "session_id": session_id,
         "session_incarnation": nullable("session_incarnation"),
@@ -292,7 +292,29 @@ pub(crate) fn project_record(
         "role": nullable("role"),
         "lineage": project_lineage(view),
         "work": project_work(view),
-    }))
+    });
+    if let Some(incident) = view.get("auth_incident").and_then(|value| {
+        serde_json::from_value::<crate::auth_incident::AuthIncident>(value.clone()).ok()
+    }) {
+        projected["auth_incident"] = json!(incident);
+    }
+    if let Some(health) = view
+        .get("auth_detection_health")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            matches!(
+                *value,
+                "structured"
+                    | "degraded_terminal_fallback"
+                    | "degraded_source_unavailable"
+                    | "degraded_store_unavailable"
+                    | "degraded_queue_capacity"
+            )
+        })
+    {
+        projected["auth_detection_health"] = json!(health);
+    }
+    Some(projected)
 }
 
 /// A session reference as `{machine, session_id, session_created_at}`; the
@@ -417,7 +439,15 @@ fn project_turn_state(turn_state: &Map<String, Value>) -> Value {
         })
         .unwrap_or(Value::Null);
     let last_turn = object(turn_state, "last_turn")
-        .map(|last| json!({ "outcome": pick(&last, "outcome") }))
+        .map(|last| {
+            let mut projected = json!({ "outcome": pick(&last, "outcome") });
+            if let Some(kind @ ("authentication" | "provider_capacity")) =
+                last.get("provider_failure_kind").and_then(Value::as_str)
+            {
+                projected["provider_failure_kind"] = json!(kind);
+            }
+            projected
+        })
         .unwrap_or(Value::Null);
     let source = object(turn_state, "source")
         .map(|source| json!({ "confidence": pick(&source, "confidence") }))

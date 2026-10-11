@@ -25,9 +25,13 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
   - bash scripts/ci/tests/publish-order-audit.test.sh
   - bash scripts/ci/tests/docs-hygiene-audit.test.sh
+  - bash scripts/ci/tests/file-size-audit.test.sh
+  - bash scripts/ci/tests/docs-prose-audit.test.sh
   - bash scripts/ci/tests/prepare-private-release-workflow.test.sh
   - bash scripts/ci/skill-shell-suites.sh
   - bash scripts/ci/test-stale-audit.sh --strict
+  - bash scripts/ci/file-size-audit.sh --strict
+  - bash scripts/ci/docs-prose-audit.sh --strict
   - bash scripts/ci/workspace-version-lockstep.sh --strict
   - bash scripts/ci/crate-naming-audit.sh
   - bash scripts/ci/publish-order-audit.sh --strict
@@ -47,6 +51,8 @@ Modes:
     Run documentation-only checks:
       - bash scripts/ci/docs-placement-audit.sh --strict
       - bash scripts/ci/docs-hygiene-audit.sh --strict
+      - bash scripts/ci/tests/docs-prose-audit.test.sh
+      - bash scripts/ci/docs-prose-audit.sh --strict
       - bash scripts/ci/markdownlint-audit.sh --strict
       - bash scripts/ci/cli-output-contract-lint.sh --strict
     Skip fmt/clippy/workspace tests/zsh completion tests.
@@ -66,7 +72,7 @@ Environment:
     For a CI lane whose sibling lane already runs the doc tests.
   NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS=1
     Skip the audits whose result does not depend on the OS:
-    test-stale-audit, completion-freshness-audit, completion-flag-parity-audit.
+    test-stale-audit, file-size-audit, completion-freshness-audit, completion-flag-parity-audit.
     For a CI lane whose sibling lane already runs them.
 
 Exit codes:
@@ -76,6 +82,7 @@ Exit codes:
 USAGE
 }
 
+original_args=("$@")
 docs_only=0
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -95,7 +102,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-required_cmds=(git node npx rg)
+required_cmds=(git node npx rg python3)
 if [[ "$docs_only" -eq 0 ]]; then
   required_cmds+=(cargo python3 zsh)
 fi
@@ -139,6 +146,10 @@ fi
 
 cd "$repo_root"
 
+if [[ "$docs_only" -eq 0 && "${NILS_CLI_GATE_ACTIVE:-0}" != "1" ]]; then
+  exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh" "${original_args[@]}"
+fi
+
 source "$repo_root/scripts/ci/test-env.sh"
 
 run() {
@@ -175,10 +186,13 @@ run bash scripts/ci/markdownlint-audit.sh --strict
 run bash scripts/ci/cli-output-contract-lint.sh --strict
 run bash scripts/ci/forge-cli-fixture-lint.sh --strict
 if [[ "$docs_only" -eq 1 ]]; then
+  run bash scripts/ci/tests/docs-prose-audit.test.sh
+  run bash scripts/ci/docs-prose-audit.sh --strict
   echo "ok: docs-only nils-cli checks passed"
   exit 0
 fi
 
+run python3 scripts/ci/tests/gate-resources.test.py
 run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/install-local-release-binaries.test.sh
 run bash scripts/ci/tests/completion-freshness-audit.test.sh
@@ -194,9 +208,13 @@ run bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
 run bash scripts/ci/tests/publish-order-audit.test.sh
 run bash scripts/ci/tests/docs-hygiene-audit.test.sh
 run bash scripts/ci/tests/workspace-test-stale-audit.test.sh
+run bash scripts/ci/tests/file-size-audit.test.sh
+run bash scripts/ci/tests/docs-prose-audit.test.sh
 run bash scripts/ci/tests/prepare-private-release-workflow.test.sh
 run bash scripts/ci/skill-shell-suites.sh
 run_os_independent_audit bash scripts/ci/test-stale-audit.sh --strict
+run_os_independent_audit bash scripts/ci/file-size-audit.sh --strict
+run_os_independent_audit bash scripts/ci/docs-prose-audit.sh --strict
 run bash scripts/ci/workspace-version-lockstep.sh --strict
 run bash scripts/ci/crate-naming-audit.sh
 run bash scripts/ci/publish-order-audit.sh --strict
