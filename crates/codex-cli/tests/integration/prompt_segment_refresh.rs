@@ -606,7 +606,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
             ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
             ("CODEX_AUTO_REFRESH_ENABLED", "true"),
             ("CODEX_AUTH_REMOTE_SSH", "auth-host"),
-            ("CODEX_AUTH_REMOTE_NAME", "gamania"),
+            ("CODEX_AUTH_REMOTE_NAME", "acct1"),
             ("CODEX_AUTH_REMOTE_REFRESH", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
             ("CODEX_PROMPT_SEGMENT_STALE_SUFFIX", " (STALE)"),
@@ -643,7 +643,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
     );
 
     assert!(captured_args.contains("--name alpha"));
-    assert!(!captured_args.contains("--name gamania"));
+    assert!(!captured_args.contains("--name acct1"));
     assert!(captured_args.contains("--refresh"));
 
     let usage_requests = requests
@@ -708,7 +708,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
             ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
             ("CODEX_AUTO_REFRESH_ENABLED", "true"),
             ("CODEX_AUTH_REMOTE_SSH", "auth-host"),
-            ("CODEX_AUTH_REMOTE_NAME", "gamania"),
+            ("CODEX_AUTH_REMOTE_NAME", "acct1"),
             ("CODEX_AUTH_REMOTE_REFRESH", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
             ("CODEX_PROMPT_SEGMENT_CURL_CONNECT_TIMEOUT_SECONDS", "1"),
@@ -723,7 +723,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
 
     let captured_args = fs::read_to_string(&args_file).expect("read ssh args");
     assert!(captured_args.contains("--name alpha"));
-    assert!(!captured_args.contains("--name gamania"));
+    assert!(!captured_args.contains("--name acct1"));
     assert!(captured_args.contains("--refresh"));
 }
 
@@ -784,7 +784,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
             ("CODEX_PROMPT_SEGMENT_ENABLED", "true"),
             ("CODEX_AUTO_REFRESH_ENABLED", "false"),
             ("CODEX_AUTH_REMOTE_SSH", "auth-host"),
-            ("CODEX_AUTH_REMOTE_NAME", "gamania"),
+            ("CODEX_AUTH_REMOTE_NAME", "acct1"),
             ("CODEX_AUTH_REMOTE_REFRESH", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
             ("CODEX_PROMPT_SEGMENT_STALE_SUFFIX", " (STALE)"),

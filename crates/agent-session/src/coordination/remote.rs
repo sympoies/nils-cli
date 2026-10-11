@@ -1100,6 +1100,29 @@ fn projection(item: &Retained) -> Value {
     }
     value
 }
+/// Read-only reconciliation of the daemon's provider-incident outbox across
+/// runtime replacement. New sends still require the current capability.
+pub(crate) fn auth_incident_receipt(
+    context: &CliContext,
+    session: &str,
+    key: &str,
+    expected_digest: &str,
+) -> Result<Option<Value>, CliError> {
+    let locked = lock_journal(context)?;
+    match locked
+        .registry
+        .find(|item| item.sender.principal() == session && item.idempotency_key == key)
+    {
+        Some(item) if item.request_digest != expected_digest => Err(CliError::data(
+            "idempotency-key-conflict",
+            "authentication notification identity differs",
+            None,
+        )),
+        Some(item) => Ok(Some(projection(&item))),
+        None => Ok(None),
+    }
+}
+
 pub(crate) fn delivery(
     context: &CliContext,
     session: &str,
@@ -1533,6 +1556,7 @@ fn receive_admitted(
         forwarded_at_epoch: None,
         category: envelope.category,
         forwarding: envelope.forwarding,
+        resume_carry: None,
         body_bytes: envelope.body.len(),
         body: envelope.body,
     };
@@ -1818,6 +1842,10 @@ fn receive_replay(
         )
     })
 }
+
+#[cfg(test)]
+#[path = "remote_inbox_regressions.rs"]
+mod inbox_regressions;
 
 #[cfg(test)]
 mod tests {
@@ -2115,7 +2143,7 @@ mod tests {
             }
         }
     }
-    fn fixture() -> (tempfile::TempDir, CliContext) {
+    pub(super) fn fixture() -> (tempfile::TempDir, CliContext) {
         let temp = tempfile::TempDir::new().expect("private temp root");
         let context = CliContext {
             state_dir: fs::canonicalize(temp.path()).expect("canonical state root"),
@@ -2174,7 +2202,7 @@ mod tests {
         drop(locked);
         (temp, context)
     }
-    fn envelope() -> Envelope {
+    pub(super) fn envelope() -> Envelope {
         Envelope {
             category: None,
             forwarding: None,

@@ -807,6 +807,168 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
         assert_eq!(out.status.code(), Some(65));
         assert!(String::from_utf8_lossy(&out.stdout).contains("identity_credential_missing"));
     }
+
+    #[test]
+    fn identity_explain_accepts_configured_self_hosted_gitlab_nested_target() {
+        let policy = format!(
+            "{}\n\n[[rules]]\nid='nested-project'\nprincipal='contributor'\nrepo='gitlab.example.invalid/group/subgroup/project'\nprofile='account-a'\n\n[[rules]]\nid='gitlab-com-project'\nprincipal='contributor'\nrepo='gitlab.com/group/subgroup/project'\nprofile='account-a'\n",
+            POLICY.replacen(
+                "version = 1",
+                "version = 1\ngitlab_hosts = ['gitlab.example.invalid']",
+                1
+            )
+        );
+        let f = Fixture::new(&policy);
+        let out = f
+            .bare_command()
+            .args([
+                "--provider",
+                "gitlab",
+                "--host",
+                "gitlab.example.invalid",
+                "--repo",
+                "group/subgroup/project",
+                "identity",
+                "explain",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["data"]["selection"]["matched_rule"], "nested-project");
+        assert_eq!(
+            value["data"]["selection"]["target"]["repo"],
+            "group/subgroup/project"
+        );
+    }
+
+    #[test]
+    fn identity_explain_resolves_nested_gitlab_from_authoring_remote() {
+        let policy = format!(
+            "{}\n\n[[rules]]\nid='nested-project'\nprincipal='contributor'\nrepo='gitlab.example.invalid/group/subgroup/project'\nprofile='account-a'\n\n[[rules]]\nid='gitlab-com-project'\nprincipal='contributor'\nrepo='gitlab.com/group/subgroup/project'\nprofile='account-a'\n",
+            POLICY.replacen(
+                "version = 1",
+                "version = 1\ngitlab_hosts = ['gitlab.example.invalid']",
+                1
+            )
+        );
+        let f = Fixture::new(&policy);
+        let repo = tempfile::tempdir().unwrap();
+        assert!(
+            Command::new("git")
+                .current_dir(repo.path())
+                .args(["init", "--quiet", "--initial-branch=main"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .current_dir(repo.path())
+                .args([
+                    "remote",
+                    "add",
+                    "origin",
+                    "ssh://git@altssh.gitlab.com/group/subgroup/project.git",
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let out = f
+            .bare_command()
+            .current_dir(repo.path())
+            .args([
+                "--provider",
+                "gitlab",
+                "identity",
+                "explain",
+                "--operation",
+                "commit",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(
+            value["data"]["selection"]["matched_rule"],
+            "gitlab-com-project"
+        );
+        assert_eq!(value["data"]["selection"]["target"]["host"], "gitlab.com");
+        assert_eq!(
+            value["data"]["selection"]["target"]["repo"],
+            "group/subgroup/project"
+        );
+    }
+
+    #[test]
+    fn identity_doctor_rejects_gitlab_before_gh_authentication() {
+        let policy = format!(
+            "{}\n\n[[rules]]\nid='nested-project'\nprincipal='contributor'\nrepo='gitlab.example.invalid/group/subgroup/project'\nprofile='account-a'\n",
+            POLICY.replacen(
+                "version = 1",
+                "version = 1\ngitlab_hosts = ['gitlab.example.invalid']",
+                1
+            )
+        );
+        let f = Fixture::new(&policy);
+        fs::write(
+            &f.gh,
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FIXTURE_CALL_LOG\"\nexit 91\n",
+        )
+        .unwrap();
+        let out = f
+            .bare_command()
+            .args([
+                "--provider",
+                "gitlab",
+                "--host",
+                "gitlab.example.invalid",
+                "--repo",
+                "group/subgroup/project",
+                "identity",
+                "doctor",
+                "--operation",
+                "commit",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(65));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("identity_provider_unsupported"));
+        assert!(!f.home.path().join("calls").exists());
+    }
+
+    #[test]
+    fn identity_explain_names_gitlab_hosts_when_self_hosted_authority_is_unconfigured() {
+        let f = Fixture::new(POLICY);
+        let out = f
+            .bare_command()
+            .args([
+                "--provider",
+                "gitlab",
+                "--host",
+                "gitlab.example.invalid",
+                "--repo",
+                "group/subgroup/project",
+                "identity",
+                "explain",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(65));
+        let diagnostic = String::from_utf8_lossy(&out.stdout);
+        assert!(diagnostic.contains("gitlab_hosts"), "{diagnostic}");
+    }
     #[test]
     fn identity_commit_diagnostics_share_authoring_remote_selection_and_explicit_override() {
         let policy = format!(

@@ -2,10 +2,9 @@
 //! resolving it.
 //!
 //! Spec / ops: `cli.forge-cli.pr.review-threads.reply.v1`. GitHub-first: the
-//! thread node id (`PRRT_...` from the read surface) keys the
-//! `addPullRequestReviewThreadReply` mutation (`pullRequestReviewThreadId`).
-//! Unlike `pr review-threads resolve`, this op never resolves — it only
-//! appends the reply and surfaces the new comment url.
+//! thread node id (`PRRT_...` from the read surface) identifies the root comment.
+//! REST's comment-reply endpoint appends a comment without creating a new
+//! native review that could supersede an approval. This op never resolves.
 //!
 //! GitLab and Local have no GitHub-shaped thread-mutation surface, so they
 //! return a structured `provider_unsupported` error (GitHub-first in v1).
@@ -28,9 +27,30 @@ use crate::validations::{no_agent_attribution, no_local_path};
 const SCHEMA: &str = "pr.review-threads.reply";
 const SCHEMA_VERSION: u32 = 1;
 
-/// GitHub mutation that posts a reply onto an existing review thread and
-/// returns the new comment's url.
-const GITHUB_REPLY_MUTATION: &str = "mutation($tid: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $tid, body: $body}) { comment { url } } }";
+/// Read only the root comment and permissions for the selected thread.
+const GITHUB_REPLY_TARGET_QUERY: &str = "query($tid: ID!) { node(id: $tid) { ... on PullRequestReviewThread { id isResolved viewerCanResolve comments(first: 1) { nodes { fullDatabaseId } } } } }";
+
+/// Offline mutation plan with an explicit read dependency. The REST plan's
+/// `${root_comment_id}` is bound from the target query, never sent literally.
+#[derive(Serialize)]
+pub(crate) struct ThreadMutationDryRunPayload {
+    #[serde(flatten)]
+    pub mutation: DryRunPayload,
+    pub target_plan: Vec<String>,
+    pub root_comment_id_source: &'static str,
+}
+
+pub(crate) fn dry_run_payload(
+    ctx: &ProviderContext,
+    thread: &str,
+    mutation: DryRunPayload,
+) -> ThreadMutationDryRunPayload {
+    ThreadMutationDryRunPayload {
+        mutation,
+        target_plan: build_reply_target_call(ctx, thread).plan_argv(),
+        root_comment_id_source: "/data/node/comments/nodes/0/fullDatabaseId",
+    }
+}
 
 /// Envelope payload for `cli.forge-cli.pr.review-threads.reply.v1`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -77,20 +97,28 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     no_local_path(&body, "reply")?;
     no_agent_attribution(&body, "reply")?;
 
-    let call = build_reply_call(&ctx, &args.thread, &body);
+    let call = build_reply_call(&ctx, args.id, "${root_comment_id}", &body)?;
 
     if global.dry_run {
-        let payload = DryRunPayload::new(ctx.provider, &call);
+        let payload = dry_run_payload(&ctx, &args.thread, DryRunPayload::new(ctx.provider, &call));
         return Ok(emit_success(
             schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
             payload,
             format,
-            |p| println!("would run: {plan}", plan = p.plan.join(" ")),
+            |p| {
+                println!("would read reply target: {}", p.target_plan.join(" "));
+                println!(
+                    "would run after binding root_comment_id: {}",
+                    p.mutation.plan.join(" ")
+                );
+            },
         ));
     }
 
     pr_review_threads::ensure_thread_belongs_to_pr(runner, &ctx, args.id, &args.thread)?;
 
+    let target = read_reply_target(runner, &ctx, &args.thread)?;
+    let call = build_reply_call(&ctx, args.id, &target.comment_id, &body)?;
     let output = runner.run(&call)?;
     let comment_url = parse_comment_url(&output.stdout);
 
@@ -122,19 +150,100 @@ fn ensure_github(ctx: &ProviderContext) -> Result<(), ForgeError> {
     }
 }
 
-pub(crate) fn build_reply_call(ctx: &ProviderContext, thread_id: &str, body: &str) -> BackendCall {
-    debug_assert!(matches!(ctx.provider, Provider::GitHub));
+pub(crate) struct ReplyTarget {
+    pub comment_id: String,
+    pub can_resolve: bool,
+    pub resolved: bool,
+}
+
+/// Read the root comment for REST replies and resolution permission before any
+/// mutation. Callers first prove thread membership in the selected PR.
+pub(crate) fn read_reply_target<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    thread_id: &str,
+) -> Result<ReplyTarget, ForgeError> {
+    let output = runner.run(&build_reply_target_call(ctx, thread_id))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&output.stdout).map_err(|_| reply_target_incomplete())?;
+    let node = value
+        .pointer("/data/node")
+        .ok_or_else(reply_target_incomplete)?;
+    if node.get("id").and_then(|v| v.as_str()) != Some(thread_id) {
+        return Err(reply_target_incomplete());
+    }
+    let id = node
+        .pointer("/comments/nodes/0/fullDatabaseId")
+        .ok_or_else(reply_target_incomplete)?;
+    let comment_id = id
+        .as_u64()
+        .or_else(|| id.as_str().and_then(|s| s.parse::<u64>().ok()))
+        .filter(|id| *id > 0)
+        .ok_or_else(reply_target_incomplete)?
+        .to_string();
+    Ok(ReplyTarget {
+        comment_id,
+        can_resolve: node
+            .get("viewerCanResolve")
+            .and_then(|v| v.as_bool())
+            .ok_or_else(reply_target_incomplete)?,
+        resolved: node
+            .get("isResolved")
+            .and_then(|v| v.as_bool())
+            .ok_or_else(reply_target_incomplete)?,
+    })
+}
+
+fn build_reply_target_call(ctx: &ProviderContext, thread_id: &str) -> BackendCall {
     let mut argv = vec![OsString::from("api"), OsString::from("graphql")];
     ctx.push_github_api_hostname(&mut argv);
     argv.extend([
         OsString::from("-f"),
-        OsString::from(format!("query={GITHUB_REPLY_MUTATION}")),
+        OsString::from(format!("query={GITHUB_REPLY_TARGET_QUERY}")),
         OsString::from("-f"),
         OsString::from(format!("tid={thread_id}")),
+    ]);
+    BackendCall::new(BackendProgram::Gh, argv)
+}
+
+fn reply_target_incomplete() -> ForgeError {
+    ForgeError::validation(
+        schema_err(),
+        "review_snapshot_incomplete",
+        "review thread reply target or viewer permissions are missing",
+        None,
+    )
+}
+
+pub(crate) fn build_reply_call(
+    ctx: &ProviderContext,
+    number: u64,
+    comment_id: &str,
+    body: &str,
+) -> Result<BackendCall, ForgeError> {
+    debug_assert!(matches!(ctx.provider, Provider::GitHub));
+    let repository = ctx.repo.as_deref().ok_or_else(|| {
+        ForgeError::validation(
+            schema_err(),
+            "repo_required",
+            "GitHub review-thread replies require --repo owner/name or a recognised remote",
+            None,
+        )
+    })?;
+    let mut argv = vec![
+        OsString::from("api"),
+        OsString::from(format!(
+            "repos/{repository}/pulls/{number}/comments/{comment_id}/replies"
+        )),
+    ];
+    ctx.push_github_api_hostname(&mut argv);
+    argv.extend([
+        OsString::from("--method"),
+        OsString::from("POST"),
         OsString::from("-f"),
         OsString::from(format!("body={body}")),
     ]);
-    BackendCall::new(BackendProgram::Gh, argv)
+    Ok(BackendCall::new(BackendProgram::Gh, argv))
 }
 
 /// Pull the new comment url out of the mutation response. Best-effort: an
@@ -144,7 +253,7 @@ fn parse_comment_url(stdout: &str) -> String {
     serde_json::from_str::<serde_json::Value>(stdout.trim())
         .ok()
         .as_ref()
-        .and_then(|v| v.pointer("/data/addPullRequestReviewThreadReply/comment/url"))
+        .and_then(|v| v.get("html_url"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string()
@@ -224,7 +333,7 @@ mod tests {
                 _ => "github.com".into(),
             },
             source: DetectionSource::Flag,
-            repo: None,
+            repo: Some("acme/widgets".into()),
         }
     }
 
@@ -250,32 +359,36 @@ mod tests {
     }
 
     #[test]
-    fn build_reply_call_uses_add_reply_mutation_with_tid_and_body() {
-        let call = build_reply_call(&ctx(Provider::GitHub), "PRRT_abc", "ack");
+    fn build_reply_call_uses_plain_rest_reply_with_body() {
+        let call = build_reply_call(&ctx(Provider::GitHub), 7, "9", "ack").unwrap();
         let argv = call.plan_argv();
         assert_eq!(call.program, BackendProgram::Gh);
-        assert!(argv.iter().any(|s| s == "graphql"));
         assert!(
             argv.iter()
-                .any(|s| s.contains("addPullRequestReviewThreadReply"))
+                .any(|s| s == "repos/acme/widgets/pulls/7/comments/9/replies")
         );
-        assert!(argv.iter().any(|s| s.contains("pullRequestReviewThreadId")));
-        assert!(argv.iter().any(|s| s == "tid=PRRT_abc"));
+        assert!(argv.iter().any(|s| s == "POST"));
         assert!(argv.iter().any(|s| s == "body=ack"));
-        // Reply must NOT resolve.
-        assert!(!argv.iter().any(|s| s.contains("resolveReviewThread")));
+        assert!(!argv.iter().any(|s| s.contains("mutation(")));
     }
 
     #[test]
     fn build_reply_call_adds_hostname_for_enterprise_host() {
         let mut ctx = ctx(Provider::GitHub);
         ctx.host = "internal.ghe.com".into();
-        let argv = build_reply_call(&ctx, "PRRT_abc", "ack").plan_argv();
+        let argv = build_reply_call(&ctx, 7, "9", "ack").unwrap().plan_argv();
         let pos = argv
             .iter()
             .position(|s| s == "--hostname")
             .expect("enterprise host must be passed to gh api");
         assert_eq!(argv[pos + 1], "internal.ghe.com");
+    }
+
+    fn reply_target_json() -> BackendSuccess {
+        BackendSuccess {
+            stdout: r#"{"data":{"node":{"id":"PRRT_abc","viewerCanResolve":true,"isResolved":false,"comments":{"nodes":[{"fullDatabaseId":"9"}]}}}}"#.into(),
+            stderr: String::new(),
+        }
     }
 
     fn pr_view_json(number: u64) -> BackendSuccess {
@@ -310,8 +423,9 @@ mod tests {
         let runner = ScriptedRunner::new(vec![
             pr_view_json(7),
             github_threads_json(&["PRRT_abc"]),
+            reply_target_json(),
             BackendSuccess {
-                stdout: r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"url":"https://github.com/acme/widgets/pull/7#discussion_r9"}}}}"#
+                stdout: r#"{"html_url":"https://github.com/acme/widgets/pull/7#discussion_r9"}"#
                     .into(),
                 stderr: String::new(),
             },
@@ -328,14 +442,14 @@ mod tests {
         let calls = runner.calls();
         assert_eq!(
             calls.len(),
-            3,
-            "view + thread validation run before the reply mutation"
+            4,
+            "membership and root-comment reads precede the reply"
         );
         assert!(
-            calls[2]
+            calls[3]
                 .1
                 .iter()
-                .any(|s| s.contains("addPullRequestReviewThreadReply"))
+                .any(|s| s == "repos/acme/widgets/pulls/7/comments/9/replies")
         );
     }
 
@@ -357,7 +471,7 @@ mod tests {
         assert!(
             !calls.iter().any(|(_, argv)| argv
                 .iter()
-                .any(|s| s.contains("addPullRequestReviewThreadReply"))),
+                .any(|s| s == "repos/acme/widgets/pulls/7/comments/9/replies")),
             "reply mutation must not run when the thread is not on the PR"
         );
     }
@@ -424,12 +538,7 @@ mod tests {
 
     #[test]
     fn parse_comment_url_extracts_url_or_empty() {
-        assert_eq!(
-            parse_comment_url(
-                r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"url":"u"}}}}"#
-            ),
-            "u"
-        );
+        assert_eq!(parse_comment_url(r#"{"html_url":"u"}"#), "u");
         assert_eq!(parse_comment_url("{}"), "");
         assert_eq!(parse_comment_url("not json"), "");
     }

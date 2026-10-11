@@ -170,6 +170,102 @@ fn identity_strict_policy_errors_never_echo_source_canary() {
     assert!(Target::new("github.com:443", "sandbox/widget").is_err());
     assert!(Target::new("github.com", "sandbox/../widget").is_err());
 }
+
+#[test]
+fn gitlab_targets_allow_nested_groups_but_github_targets_remain_two_components() {
+    for hosts in [
+        "['GitLab.example.invalid']",
+        "['gitlab.example.invalid', 'gitlab.example.invalid']",
+        "['github.com']",
+        "['gitlab.com']",
+        "['altssh.gitlab.com']",
+        "['gitlab.example.invalid:8443']",
+    ] {
+        assert_eq!(
+            Policy::parse(&FIXTURE.replacen(
+                "version = 1",
+                &format!("version = 1\ngitlab_hosts = {hosts}"),
+                1,
+            ))
+            .unwrap_err()
+            .code,
+            "identity_policy_invalid",
+            "accepted gitlab_hosts value {hosts}"
+        );
+    }
+    assert_eq!(
+        Target::new_gitlab("gitlab.example.invalid", "group/subgroup/project")
+            .unwrap()
+            .repo,
+        "group/subgroup/project"
+    );
+    assert!(Target::new("github.com", "group/subgroup/project").is_err());
+    assert_eq!(
+        Target::new_gitlab("altssh.gitlab.com", "group/subgroup/project")
+            .unwrap()
+            .host,
+        "gitlab.com"
+    );
+    let policy = Policy::parse(&format!(
+        "{}\n\n[[rules]]\nid='gitlab-project'\nprincipal='contributor'\nrepo='gitlab.example.invalid/group/subgroup/project'\nprofile='account-a'\n",
+        FIXTURE.replacen("version = 1", "version = 1\ngitlab_hosts = ['gitlab.example.invalid']", 1)
+    )).unwrap();
+    assert_eq!(
+        policy
+            .resolve(
+                "contributor",
+                &Target::new_gitlab("gitlab.example.invalid", "group/subgroup/project").unwrap(),
+                None,
+                Operation::Commit,
+            )
+            .unwrap()
+            .matched_rule,
+        "gitlab-project"
+    );
+}
+
+#[test]
+fn nested_gitlab_organization_rules_match_only_their_namespace() {
+    let text = FIXTURE
+        .replacen(
+            "version = 1",
+            "version = 1\ngitlab_hosts = ['gitlab.example.invalid']",
+            1,
+        )
+        .replace(
+            "repo = \"github.com/sandbox/widget\"",
+            "org = \"gitlab.example.invalid/group/subgroup\"",
+        );
+    let policy = Policy::parse(&text).unwrap();
+    let matching = Target::new_gitlab("gitlab.example.invalid", "group/subgroup/project").unwrap();
+    assert_eq!(
+        policy
+            .resolve("contributor", &matching, None, Operation::Commit)
+            .unwrap()
+            .matched_rule,
+        "contributor-widget"
+    );
+    let parent_only = Policy::parse(&text.replace(
+        "gitlab.example.invalid/group/subgroup",
+        "gitlab.example.invalid/group",
+    ))
+    .unwrap();
+    assert_eq!(
+        parent_only
+            .resolve("contributor", &matching, None, Operation::Commit)
+            .unwrap_err()
+            .code,
+        "identity_repository_unknown"
+    );
+    let sibling = Target::new_gitlab("gitlab.example.invalid", "group/other/project").unwrap();
+    assert_eq!(
+        policy
+            .resolve("contributor", &sibling, None, Operation::Commit)
+            .unwrap_err()
+            .code,
+        "identity_repository_unknown"
+    );
+}
 #[test]
 fn identity_operation_allowlist_does_not_fallback_to_org_profile() {
     let p = Policy::parse(&FIXTURE.replacen(
@@ -382,6 +478,75 @@ mod execution {
                 true
             )
             .is_err()
+        );
+    }
+    #[test]
+    fn target_for_remote_classifies_nested_gitlab_and_requires_self_host_configuration() {
+        let lock = GlobalStateLock::new();
+        let home = tempfile::tempdir().unwrap();
+        let repo = init_repo();
+        let _config = EnvGuard::set(&lock, "XDG_CONFIG_HOME", home.path().to_str().unwrap());
+        raw_git(
+            repo.path(),
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@GITLAB.COM:group/subgroup/project.git",
+            ],
+        );
+        assert_eq!(
+            identity::target_for_remote(Some(repo.path()), "origin", false)
+                .unwrap()
+                .0
+                .repo,
+            "group/subgroup/project"
+        );
+        raw_git(
+            repo.path(),
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "ssh://git@altssh.gitlab.com/group/subgroup/project.git",
+            ],
+        );
+        assert_eq!(
+            identity::target_for_remote(Some(repo.path()), "origin", false)
+                .unwrap()
+                .0
+                .host,
+            "gitlab.com"
+        );
+        raw_git(
+            repo.path(),
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "git@GITLAB.EXAMPLE.INVALID:group/subgroup/project.git",
+            ],
+        );
+        assert_eq!(
+            identity::target_for_remote(Some(repo.path()), "origin", false)
+                .unwrap_err()
+                .code,
+            "identity_gitlab_host_not_configured_add_gitlab_hosts"
+        );
+        raw_git(
+            repo.path(),
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/group/subgroup/project.git",
+            ],
+        );
+        assert_eq!(
+            identity::target_for_remote(Some(repo.path()), "origin", false)
+                .unwrap_err()
+                .code,
+            "identity_target_invalid"
         );
     }
     #[test]
@@ -616,7 +781,15 @@ mod execution {
             })
             .unwrap()
             .to_string();
-        let fixture = FIXTURE.replace("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", &fingerprint);
+        let fixture = format!(
+            "{}\n\n[[rules]]\nid='nested-gitlab-project'\nprincipal='contributor'\nrepo='gitlab.example.invalid/group/subgroup/project'\nprofile='account-a'\n",
+            FIXTURE
+                .replace(
+                    "version = 1",
+                    "version = 1\ngitlab_hosts = ['gitlab.example.invalid']"
+                )
+                .replace("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", &fingerprint)
+        );
         install(home.path(), &fixture);
         raw_git(
             repo.path(),
@@ -624,7 +797,7 @@ mod execution {
                 "remote",
                 "add",
                 "origin",
-                "https://github.com/sandbox/widget.git",
+                "git@GITLAB.EXAMPLE.INVALID:group/subgroup/project.git",
             ],
         );
         raw_git(
@@ -714,6 +887,40 @@ mod execution {
                 )
             );
         }
+        raw_git(
+            repo.path(),
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/sandbox/widget.git",
+            ],
+        );
+        let github_output = git::run_output_in(
+            repo.path(),
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                "feat: GitHub identity fixture",
+            ],
+        )
+        .unwrap();
+        assert!(
+            github_output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&github_output.stderr)
+        );
+        assert!(
+            git::run_output_in(repo.path(), &["verify-commit", "HEAD"])
+                .unwrap()
+                .status
+                .success()
+        );
+        assert_eq!(
+            raw_git(repo.path(), &["log", "-1", "--format=%ae|%ce|%GF"]).trim(),
+            format!("contributor-a@example.invalid|contributor-a@example.invalid|{fingerprint}")
+        );
         let audit =
             fs::read_to_string(home.path().join("state/forge-cli/identity-audit.jsonl")).unwrap();
         assert!(audit.contains("execution_succeeded"));

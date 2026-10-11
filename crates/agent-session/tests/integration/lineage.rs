@@ -630,6 +630,20 @@ fn delete_refuses_a_session_whose_effective_children_remain() {
     )
     .expect("gone tmux");
     fs::set_permissions(&gone_tmux, fs::Permissions::from_mode(0o755)).expect("gone tmux mode");
+    // Pre-warm the fixture: the first exec of a freshly written script pays a
+    // host EDR/filesystem cold-start tail that can exceed the product's bounded
+    // termination-probe budget, turning the probe into verification-failed
+    // (sympoies/nils-cli#2131). Exec it once here so the product's first exec
+    // runs warm. The script's `display-message` path is side-effect-free and
+    // exits 1 by design, which is the fixture's "session absent" answer.
+    let prewarm = std::process::Command::new(&gone_tmux)
+        .arg("display-message")
+        .output()
+        .expect("prewarm fake tmux");
+    assert!(
+        prewarm.status.code() == Some(1),
+        "fake tmux prewarm exited unexpectedly: {prewarm:?}"
+    );
     for id in ["guard-parent", "guard-child", "guard-steward"] {
         let path = Path::new(&fixture.state)
             .join("sessions")

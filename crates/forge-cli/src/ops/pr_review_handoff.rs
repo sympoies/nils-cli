@@ -622,11 +622,22 @@ pub(crate) fn ensure_published<R: BackendRunner>(
     });
     let mut passing = false;
     for r in candidates {
-        let body = if r.summary_truncated || r.author_type.as_deref() == Some("Bot") {
+        let body = if r.summary_truncated
+            || r.author_type.as_deref() == Some("Bot")
+            || (r.state == "COMMENTED" && r.summary.trim().is_empty())
+        {
             read_complete_report(runner, ctx, number, r, &handoff.review_author)?
         } else {
             r.summary.clone()
         };
+        // REST thread replies, including resolve --note, create empty native
+        // COMMENTED reviews. They carry no report or replacement verdict.
+        if r.state == "COMMENTED"
+            && body.trim().is_empty()
+            && native_review_contains_only_replies(runner, ctx, number, r)?
+        {
+            continue;
+        }
         if publication_is_known_other_interval(chain, &body) {
             continue;
         }
@@ -691,6 +702,60 @@ fn matches_designated_author(review: &pr_reviews::NativeReviewSummary, expected:
                     .eq_ignore_ascii_case(&expected[..expected.len() - 5]));
     }
     review.author.eq_ignore_ascii_case(expected)
+}
+
+fn native_review_contains_only_replies<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+    selected: &pr_reviews::NativeReviewSummary,
+) -> Result<bool, ForgeError> {
+    let id = selected
+        .database_id
+        .ok_or_else(|| fail("review_snapshot_incomplete", "native review id is missing"))?;
+    let repo = ctx
+        .repo
+        .as_deref()
+        .ok_or_else(|| fail("repo_required", "designated review requires a repository"))?;
+    let mut argv = vec!["api".into()];
+    ctx.push_github_api_hostname(&mut argv);
+    argv.push(
+        format!("repos/{repo}/pulls/{number}/reviews/{id}/comments?per_page=100&page=1").into(),
+    );
+    let output = runner.run(&BackendCall::new(BackendProgram::Gh, argv))?;
+    if output.stdout.len() > 8 * 1024 * 1024 {
+        return Err(fail(
+            "review_snapshot_incomplete",
+            "native review comments exceed their bound",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(&output.stdout).map_err(|_| {
+        fail(
+            "review_snapshot_incomplete",
+            "native review comments are invalid",
+        )
+    })?;
+    let comments = value
+        .as_array()
+        .filter(|comments| comments.len() < 100)
+        .ok_or_else(|| {
+            fail(
+                "review_snapshot_incomplete",
+                "native review comments are incomplete",
+            )
+        })?;
+    for comment in comments {
+        if comment["pull_request_review_id"].as_u64() != Some(id) {
+            return Err(fail(
+                "review_snapshot_incomplete",
+                "native review comment provenance is missing or changed",
+            ));
+        }
+        if comment["in_reply_to_id"].as_u64().is_none_or(|id| id == 0) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn read_complete_report<R: BackendRunner>(

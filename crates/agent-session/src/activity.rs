@@ -1713,6 +1713,13 @@ fn activity_matches_runtime(document: &ActivityDocument, record: &SessionRecord)
         !runtime.launch_id.is_empty()
             && document.runtime_id == runtime.launch_id
             && document.runtime_generation == runtime.generation
+            && match (
+                document.provider_session_id.as_ref(),
+                provider_session_for_runtime(record, &runtime.launch_id),
+            ) {
+                (Some(observed), Ok(Some(expected))) => *observed == expected,
+                _ => true,
+            }
     })
 }
 
@@ -2347,6 +2354,72 @@ pub(crate) fn runtime_is_unhealthy(context: &CliContext, record: &SessionRecord)
     )
 }
 
+/// Commit the resume record and activity projection under the same lifecycle
+/// and activity fences. A write failure restores the old snapshot; the private
+/// provider observation remains available to the explicit recovery command.
+pub(crate) fn with_conversation_rebind<T>(
+    context: &CliContext,
+    record: &SessionRecord,
+    reset: bool,
+    persist: impl FnOnce() -> Result<T, CliError>,
+) -> Result<T, CliError> {
+    let dir = session_dir(context, &record.id);
+    let _lock = acquire_lock(&dir)?;
+    if !reset {
+        return persist();
+    }
+    let path = dir.join(ACTIVITY_FILE);
+    let previous = read_optional_activity_file(&path)?;
+    let unhealthy = read_optional_activity_file(&dir.join(ACTIVITY_UNHEALTHY_FILE))?;
+    let existing = previous
+        .as_deref()
+        .and_then(|bytes| serde_json::from_slice::<ActivityDocument>(bytes).ok());
+    let runtime = record.runtime.as_ref().ok_or_else(|| {
+        CliError::data(
+            "runtime-id-missing",
+            "session runtime identity is missing",
+            None,
+        )
+    })?;
+    let now = now();
+    let mut state = starting_state(
+        now,
+        existing
+            .as_ref()
+            .map_or(1, |doc| doc.state.revision.saturating_add(1)),
+        None,
+    );
+    state.phase = TurnPhase::Waiting;
+    state.source = TurnSource {
+        kind: SourceKind::ProviderHook,
+        provider: Some(record.agent.clone()),
+        confidence: Confidence::Authoritative,
+        extra: Map::new(),
+    };
+    let mut document = activity_document_for_runtime(
+        record,
+        &runtime.launch_id,
+        runtime.generation,
+        state,
+        Map::new(),
+    )?;
+    // Keep the replay index position. Old-conversation events are rejected by
+    // their projected provider identity; already seen events stay deduplicated.
+    if let Some(existing) = existing {
+        document.seen_event_count = existing.seen_event_count;
+    }
+    let result = (|| {
+        write_document(&path, &mut document)?;
+        restore_activity_file(&dir.join(ACTIVITY_UNHEALTHY_FILE), None)?;
+        persist()
+    })();
+    if result.is_err() {
+        restore_activity_file(&path, previous.as_deref())?;
+        restore_activity_file(&dir.join(ACTIVITY_UNHEALTHY_FILE), unhealthy.as_deref())?;
+    }
+    result
+}
+
 pub(crate) fn capture_snapshot(
     context: &CliContext,
     id: &str,
@@ -2739,6 +2812,8 @@ fn ingest_event_with_lock(
         drop(_health_fence);
         drop(_lock);
         drop(record_lock);
+        crate::auth_incident::observe_activity(context, &record, &event, &state)
+            .unwrap_or_else(|_| eprintln!("warning: provider authentication reporting degraded"));
         arm_auto_resume_from_event(context, &record, &event, &state, &now())?;
         return Ok(ActivityResult {
             id: record.id,
@@ -2754,6 +2829,8 @@ fn ingest_event_with_lock(
         drop(_health_fence);
         drop(_lock);
         drop(record_lock);
+        crate::auth_incident::observe_activity(context, &record, &event, &state)
+            .unwrap_or_else(|_| eprintln!("warning: provider authentication reporting degraded"));
         arm_auto_resume_from_event(context, &record, &event, &state, &received_at)?;
         return Ok(ActivityResult {
             id: record.id,
@@ -2825,6 +2902,8 @@ fn ingest_event_with_lock(
     drop(_health_fence);
     drop(_lock);
     drop(record_lock);
+    crate::auth_incident::observe_activity(context, &record, &event, &state)
+        .unwrap_or_else(|_| eprintln!("warning: provider authentication reporting degraded"));
     arm_auto_resume_from_event(context, &record, &event, &state, &received_at)?;
     Ok(ActivityResult {
         id: record.id,
@@ -3200,6 +3279,28 @@ pub(crate) fn ingest_provider_hook_input(
                 ));
             }
         }
+    }
+    if agent == AgentKind::Claude
+        && raw_event_name == Some("SessionStart")
+        && raw.get("source").and_then(Value::as_str) == Some("clear")
+        && raw.get("agent_id").is_none()
+        && let Some(session_id) = raw.get("session_id").and_then(Value::as_str)
+    {
+        let record = load_session_record(context, id)?;
+        if record.agent != "claude"
+            || record
+                .runtime
+                .as_ref()
+                .is_none_or(|runtime| runtime.launch_id != runtime_id)
+        {
+            return Err(CliError::data(
+                "provider-hook-runtime-mismatch",
+                "provider hook runtime does not match the active session runtime",
+                None,
+            ));
+        }
+        crate::conversation::observe_native(context, &record, session_id)?;
+        return Ok(true);
     }
     if agent == AgentKind::Claude
         && matches!(
@@ -6080,6 +6181,31 @@ mod tests {
     }
 
     #[test]
+    fn auth_loss_claude_hook_projects_failure_kind() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+        activate_runtime(&context, &created.record).unwrap();
+        let runtime_id = &created.record.runtime.as_ref().unwrap().launch_id;
+        let raw = json!({"hook_event_name":"StopFailure", "error":"authentication_failed", "session_id":"session-1"});
+        let failure = normalize_provider_hook(AgentKind::Claude, None, runtime_id, &raw)
+            .unwrap()
+            .unwrap();
+        let result = ingest_event(&context, &created.record.id, failure).unwrap();
+        assert_eq!(
+            result.turn_state.last_turn.unwrap().provider_failure_kind(),
+            Some("authentication")
+        );
+        let incident: Value = serde_json::from_slice(
+            &fs::read(session_dir(&context, &created.record.id).join("auth-incidents.json"))
+                .expect("durable auth incident"),
+        )
+        .unwrap();
+        assert_eq!(incident["incidents"][0]["provider"], "claude");
+        assert_eq!(incident["incidents"][0]["runtime_incarnation"], *runtime_id);
+        assert!(!incident.to_string().contains("authentication_failed"));
+    }
+
+    #[test]
     fn timed_activity_lock_wait_is_bounded() {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let _held = acquire_lock(tmp.path()).expect("held lock");
@@ -6129,6 +6255,54 @@ mod tests {
 
     fn test_session(tmp: &tempfile::TempDir) -> (CliContext, crate::CreatedRecord) {
         test_session_for_agent(tmp, AgentKind::Codex)
+    }
+
+    #[test]
+    fn native_claude_clear_rebinds_resume_and_resets_completed_turn() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+        activate_runtime(&context, &created.record).unwrap();
+        let runtime_id = &created.record.runtime.as_ref().unwrap().launch_id;
+        for (kind, id) in [
+            (TurnEventKind::TurnStarted, "old-start"),
+            (TurnEventKind::TurnCompleted, "old-complete"),
+        ] {
+            let mut old = event(kind, id);
+            old.provider = "claude".into();
+            old.runtime_id = runtime_id.clone();
+            ingest_event(&context, &created.record.id, old).unwrap();
+        }
+        assert!(
+            state_for_view(&context, &created.record)
+                .unwrap()
+                .last_turn
+                .is_some()
+        );
+        let payload = serde_json::to_vec(&json!({
+            "hook_event_name": "SessionStart", "source": "clear", "session_id": "fresh-session"
+        }))
+        .unwrap();
+        ingest_provider_hook_input(
+            &context,
+            AgentKind::Claude,
+            None,
+            ProviderHookInput {
+                id: &created.record.id,
+                runtime_id,
+                payload: &payload,
+                attention_authority: None,
+            },
+        )
+        .unwrap();
+        let rebound = load_session_record(&context, &created.record.id).unwrap();
+        assert_eq!(
+            rebound.provider_resume.as_ref().unwrap().session_id,
+            "fresh-session"
+        );
+        let turn = state_for_view(&context, &rebound).unwrap();
+        assert_eq!(turn.phase, TurnPhase::Waiting);
+        assert!(turn.current_turn.is_none());
+        assert!(turn.last_turn.is_none());
     }
 
     #[test]
@@ -9548,14 +9722,19 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) {
                     } else {
                         "completed".to_string()
                     },
-                    extra: if event.failure_reason.as_deref() == Some("provider_capacity") {
+                    extra: if matches!(
+                        event.failure_reason.as_deref(),
+                        Some("provider_capacity" | "authentication")
+                    ) {
                         let mut extra = extra;
                         extra.insert(
                             "provider_failure_kind".to_string(),
-                            json!("provider_capacity"),
+                            json!(event.failure_reason),
                         );
                         extra
                     } else {
+                        let mut extra = extra;
+                        extra.remove("provider_failure_kind");
                         extra
                     },
                 });

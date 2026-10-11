@@ -25,6 +25,9 @@ pub enum Activation {
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     pub version: u32,
+    /// Explicit self-hosted GitLab authorities. GitLab.com is recognized directly.
+    #[serde(default)]
+    pub gitlab_hosts: Vec<String>,
     #[serde(default)]
     pub activation: Activation,
     #[serde(default)]
@@ -105,6 +108,22 @@ impl Target {
             repo: repo.to_ascii_lowercase(),
         })
     }
+    /// Construct a GitLab target, whose project path may include nested groups.
+    pub fn new_gitlab(host: &str, repo: &str) -> Result<Self> {
+        let host = canonical_host(host)?;
+        let parts: Vec<_> = repo.split('/').collect();
+        if parts.len() < 2
+            || parts
+                .iter()
+                .any(|p| !identifier(p) || *p == "." || *p == "..")
+        {
+            return Err(Error::new("identity_target_invalid"));
+        }
+        Ok(Self {
+            host,
+            repo: repo.to_ascii_lowercase(),
+        })
+    }
     /// Host-only scope for cross-repository API reads. Repository writes and Git
     /// operations still require a concrete repository through `new`.
     pub fn cross_repository(host: &str) -> Result<Self> {
@@ -121,7 +140,9 @@ impl Target {
         }
     }
     pub fn org(&self) -> String {
-        format!("{}/{}", self.host, self.repo.split('/').next().unwrap())
+        let mut parts: Vec<_> = self.repo.split('/').collect();
+        parts.pop();
+        format!("{}/{}", self.host, parts.join("/"))
     }
     pub fn from_key(key: &str) -> Result<Self> {
         let (host, repo) = key
@@ -160,6 +181,22 @@ impl Policy {
         let invalid = || Error::new("identity_policy_invalid");
         if self.version != 1 {
             return Err(Error::new("identity_policy_version"));
+        }
+        if self
+            .gitlab_hosts
+            .iter()
+            .any(|host| match Target::new_gitlab(host, "group/project") {
+                Ok(target) => {
+                    host != &host.to_ascii_lowercase()
+                        || target.host != *host
+                        || host == "github.com"
+                        || host == "gitlab.com"
+                }
+                Err(_) => true,
+            })
+            || self.gitlab_hosts.iter().collect::<BTreeSet<_>>().len() != self.gitlab_hosts.len()
+        {
+            return Err(invalid());
         }
         if self.principals.is_empty() || self.profiles.is_empty() || self.credentials.is_empty() {
             return Err(invalid());
@@ -223,7 +260,7 @@ impl Policy {
                 return Err(invalid());
             }
             for repo in &principal.default_repositories {
-                if Target::from_key(repo)?.key() != *repo {
+                if self.target_from_key(repo)?.key() != *repo {
                     return Err(invalid());
                 }
             }
@@ -256,12 +293,12 @@ impl Policy {
                 return Err(invalid());
             }
             if let Some(repo) = &rule.repo
-                && Target::from_key(repo)?.key() != *repo
+                && self.target_from_key(repo)?.key() != *repo
             {
                 return Err(invalid());
             }
             if let Some(org) = &rule.org {
-                let probe = Target::from_key(&format!("{org}/probe"))?;
+                let probe = self.target_from_key(&format!("{org}/probe"))?;
                 if probe.org() != *org {
                     return Err(invalid());
                 }
@@ -280,12 +317,27 @@ impl Policy {
                 return Err(invalid());
             }
             for repo in &rule.repositories {
-                if Target::from_key(repo)?.key() != *repo {
+                if self.target_from_key(repo)?.key() != *repo {
                     return Err(invalid());
                 }
             }
         }
         Ok(())
+    }
+    fn target_from_key(&self, key: &str) -> Result<Target> {
+        let (host, repo) = key
+            .split_once('/')
+            .ok_or(Error::new("identity_target_invalid"))?;
+        if host == "gitlab.com"
+            || self
+                .gitlab_hosts
+                .iter()
+                .any(|configured| configured == host)
+        {
+            Target::new_gitlab(host, repo)
+        } else {
+            Target::new(host, repo)
+        }
     }
     pub fn resolve(
         &self,

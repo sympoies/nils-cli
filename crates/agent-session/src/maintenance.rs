@@ -365,7 +365,7 @@ fn assess(
     tmux_bin: &Path,
     operation: MaintenanceOperation,
 ) -> Result<PreviewAssessment, CliError> {
-    let status = if recorded_runtime_is_from_prior_macos_boot(record) {
+    let status = if recorded_runtime_is_from_prior_boot(record) {
         "stopped".to_string()
     } else {
         live_status_with_timeout(
@@ -468,7 +468,7 @@ fn assess(
     if statuses.contains(&ProcessGroupStatus::Unknown) {
         return Ok(blocked_assessment(
             "runtime_identity_unavailable",
-            "the recorded runtime boundary could not be verified",
+            "the recorded process boundary liveness probe was unavailable",
             "stopped",
             "unknown",
             0,
@@ -479,12 +479,14 @@ fn assess(
         // A restarted tmux server can reuse an older numeric selector for an
         // unrelated session. All prior identities share this tmux target and
         // their process boundaries were checked above. Match ordinary retry's
-        // stopped verifier before claiming healthy; keep termination fail-closed
-        // and use the existing no-signal fallback only if the managed name is absent.
-        if verify_stopped_tmux_runtime(tmux_bin, &identity, Duration::ZERO).is_err() {
+        // stopped verifier before claiming healthy: the exact managed name
+        // must be absent as well as every recorded process boundary stopped.
+        if let Err(reason) =
+            verify_stopped_tmux_runtime(tmux_bin, &record.tmux_session, &identity, Duration::ZERO)
+        {
             return Ok(blocked_assessment(
                 "runtime_identity_unavailable",
-                "the recorded tmux runtime could not be verified stopped",
+                reason.message(),
                 "stopped",
                 "none",
                 0,
@@ -1042,17 +1044,25 @@ fn maintenance_failure_error(
         SessionTerminationFailure::ProcessStillRunning => "process_boundary_live",
         SessionTerminationFailure::RuntimeIdentityChanged
         | SessionTerminationFailure::RuntimeIdentityMismatch => "runtime_identity_changed",
-        SessionTerminationFailure::RuntimeIdentityUnavailable => "runtime_identity_unavailable",
+        SessionTerminationFailure::RuntimeIdentityUnavailable
+        | SessionTerminationFailure::ProcessIdentityUnavailable => "runtime_identity_unavailable",
         SessionTerminationFailure::KillFailed
         | SessionTerminationFailure::KillTimeout
         | SessionTerminationFailure::KillError => "unknown",
-        SessionTerminationFailure::VerificationFailed => "runtime_identity_unavailable",
+        SessionTerminationFailure::VerificationFailed
+        | SessionTerminationFailure::TmuxStatusUnavailable
+        | SessionTerminationFailure::ProcessStatusUnavailable => "runtime_identity_unavailable",
     };
     safe_maintenance_failure(
         &record.id,
         operation,
         kind,
-        !matches!(reason, SessionTerminationFailure::VerificationFailed) && reason.retryable(),
+        !matches!(
+            reason,
+            SessionTerminationFailure::VerificationFailed
+                | SessionTerminationFailure::TmuxStatusUnavailable
+                | SessionTerminationFailure::ProcessStatusUnavailable
+        ) && reason.retryable(),
     )
 }
 

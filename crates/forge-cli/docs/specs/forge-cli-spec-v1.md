@@ -131,8 +131,8 @@ Parity matrix (v1):
 | `pr review validate [id]`                   | local review body/thread-file validation; with `--check-diff`, `gh api repos/{repo}/pulls/{id}/files`                                        | local validation only; `--check-diff` unsupported in v1                | schema/privacy preflight plus optional GitHub diff-coordinate validation                                                 |
 | `pr ready <id>`                             | `gh pr ready <id>`                                                                                                                           | `glab mr update <id> --ready`                                          | exact                                                                                                                    |
 | `pr review-threads list <id>`               | `gh api graphql` (`reviewThreads` connection)                                                                                                | `glab api …/merge_requests/<iid>/discussions`                          | normalized thread state                                                                                                  |
-| `pr review-threads resolve <id> --thread …` | `gh api graphql` (`addPullRequestReviewThreadReply` then `resolveReviewThread`)                                                              | unsupported in v1                                                      | GitHub-only seam                                                                                                         |
-| `pr review-threads reply <id> --thread …`   | `gh api graphql` (`addPullRequestReviewThreadReply`)                                                                                         | unsupported in v1                                                      | GitHub-only seam                                                                                                         |
+| `pr review-threads resolve <id> --thread …` | `gh api` REST reply when a note is supplied, then GraphQL `resolveReviewThread`                                                              | unsupported in v1                                                      | GitHub-only seam                                                                                                         |
+| `pr review-threads reply <id> --thread …`   | `gh api` REST review-comment reply                                                                                                           | unsupported in v1                                                      | GitHub-only seam                                                                                                         |
 | `pr reviews <id>`                           | `gh api graphql` (native `reviews` connection plus `headRefOid`)                                                                             | unsupported in v1                                                      | GitHub-only normalized current-head/stale review snapshot                                                                |
 | `pr pending-review inspect <id> --review …` | PR view + exact-node complete paginated body/inline-comment snapshot                                                                         | unsupported in v1                                                      | GitHub-only receipt-aware read with stable snapshot digest                                                               |
 | `pr pending-review resume-submit <id> …`    | exact pending snapshot CAS + `submitPullRequestReview`, or submitted-review read-back                                                        | unsupported in v1                                                      | GitHub-only idempotent recovery for one receipt-bound transaction                                                        |
@@ -829,9 +829,14 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   `check <id> --expected-head <sha>` requires a reviewer-owned closed observation
   after handover and a canonical native report bound to the same PR, base,
   head, and appointed author. GitHub login comparison is case-insensitive.
-  Reviews are considered newest-first. A report is skipped only when its
-  single canonical binding identifies a different handoff retained in the
-  verified chain. The newest remaining appointed-author review must be
+  Reviews are considered newest-first. A report is skipped when its single
+  canonical binding identifies a different handoff retained in the verified
+  chain. An empty `COMMENTED` review from the appointed author on the current
+  head is also skipped after complete native body/actor readback and a bounded
+  review-comment read confirms only thread replies, or no comments. Root inline
+  comments retain normal report validation. Missing or mismatched provenance,
+  invalid data, or a full 100-comment page returns `review_snapshot_incomplete`
+  rather than treating a partial result as empty. The newest remaining appointed-author review must be
   `COMMENTED` or `APPROVED`, have a `pass` or `follow-up-pass` verdict, and
   postdate handover. A report in the same timestamp second fails closed. Long
   summaries use bounded native-body read-back with verified identity and head.
@@ -1388,22 +1393,32 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   `--dry-run` remains offline and does not perform this validation lookup.
 - `pr review-threads resolve <id> --thread <thread_id>
   [--note <text> | --note-file <path>]`:
-  - With `--note` / `--note-file`, posts a reply first via
-    `addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId,
-    body })`, then resolves via `resolveReviewThread(input: { threadId
-    })`. Without a note, only resolves.
+  - Reads the root comment database id and resolution permission. With
+    `--note` / `--note-file`, posts a REST reply to
+    `repos/{repo}/pulls/{id}/comments/{root_comment_id}/replies`, then resolves
+    via GraphQL `resolveReviewThread`. Without a note, only resolves.
+    Missing resolution permission fails with `review_thread_resolve_forbidden`
+    before posting a note; an invalid reply target fails with
+    `review_snapshot_incomplete`.
   - Idempotent: `resolveReviewThread` succeeds on an already-resolved
     thread, so resolving twice is success rather than an error.
   - Output schema: `cli.forge-cli.pr.review-threads.resolve.v1`,
     `data = { provider, thread_id, resolved, replied }`.
 - `pr review-threads reply <id> --thread <thread_id>
   --body <text> | --body-file <path>`:
-  - Posts a reply via `addPullRequestReviewThreadReply` only; never
-    resolves the thread.
+  - Reads the root comment database id and posts a REST review-comment reply;
+    never resolves the thread. An invalid root target fails with
+    `review_snapshot_incomplete`.
   - Output schema: `cli.forge-cli.pr.review-threads.reply.v1`,
     `data = { provider, thread_id, comment_url }`.
 - The `no_local_path` privacy guard runs over the reply note / body
   before the backend call, matching `pr comment`.
+- GitHub may wrap a REST reply in an empty native `COMMENTED` review. The
+  designated admission check preserves an earlier canonical approval only
+  after verifying this empty review contains no root inline comments.
+- Offline dry-run output includes `target_plan`, `root_comment_id_source`, and
+  the mutation plan with a `${root_comment_id}` placeholder; it does not claim that a
+  live reply target or resolution permission has been validated.
 
 ### `pr merge`
 

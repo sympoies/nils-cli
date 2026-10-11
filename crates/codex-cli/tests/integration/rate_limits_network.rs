@@ -729,7 +729,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
         &[
             ("CODEX_AUTO_REFRESH_ENABLED", "true"),
             ("CODEX_AUTH_REMOTE_SSH", "auth-host"),
-            ("CODEX_AUTH_REMOTE_NAME", "gamania"),
+            ("CODEX_AUTH_REMOTE_NAME", "acct1"),
             ("CODEX_AUTH_REMOTE_REFRESH", "true"),
             ("CODEX_CHATGPT_BASE_URL", &server.url()),
             ("CODEX_RATE_LIMITS_DEFAULT_ALL_ENABLED", "false"),
@@ -746,7 +746,7 @@ printf '%s\n' "$REMOTE_AUTH_PAYLOAD"
 
     let captured_args = fs::read_to_string(&args_file).expect("read ssh args");
     assert!(captured_args.contains("--name alpha"));
-    assert!(!captured_args.contains("--name gamania"));
+    assert!(!captured_args.contains("--name acct1"));
     assert!(captured_args.contains("--refresh"));
 
     let requests = server.take_requests();

@@ -2256,9 +2256,11 @@ fn codex_turn_completion_error(
             Some(crate::codex_app_server::StructuredFailureKind::UsageExhausted) => {
                 provider_quota_exceeded()
             }
-            Some(crate::codex_app_server::StructuredFailureKind::ProviderCapacity) | None => {
-                provider_unavailable()
-            }
+            Some(
+                crate::codex_app_server::StructuredFailureKind::ProviderCapacity
+                | crate::codex_app_server::StructuredFailureKind::Authentication,
+            )
+            | None => provider_unavailable(),
         }),
         Some("interrupted") => Some(provider_unavailable()),
         _ => Some(provider_malformed()),
@@ -4441,7 +4443,7 @@ mod tests {
     fn provider_config_accepts_subscription_deepseek_local_and_command_shapes() {
         for (raw, kind) in [
             (
-                r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex"}"#,
+                r#"{"provider":"codex_subscription","account":"omega","codex_bin":"/usr/bin/codex"}"#,
                 "codex_subscription",
             ),
             (
@@ -4473,7 +4475,7 @@ mod tests {
         assert!(dynamic.is_ok());
 
         for invalid in [
-            r#"{"provider":"codex_subscription","account":"sym","account_selection":"default_with_capacity","codex_bin":"/usr/bin/codex"}"#,
+            r#"{"provider":"codex_subscription","account":"omega","account_selection":"default_with_capacity","codex_bin":"/usr/bin/codex"}"#,
             r#"{"provider":"codex_subscription","account_selection":"unknown","codex_bin":"/usr/bin/codex"}"#,
             r#"{"provider":"codex_subscription","codex_bin":"/usr/bin/codex"}"#,
             // The account is a broker nickname, so it follows the shared rule.
@@ -4488,12 +4490,12 @@ mod tests {
     #[test]
     fn provider_config_accepts_a_bounded_local_fallback_after_codex_luna() {
         let config = RetitleConfig::parse(
-            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low","timeout_ms":20000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":100000,"max_output_tokens":160,"temperature":0,"json_response":true}}"#,
+            r#"{"provider":"codex_subscription","account":"omega","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low","timeout_ms":20000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":100000,"max_output_tokens":160,"temperature":0,"json_response":true}}"#,
         );
         assert!(config.is_ok());
 
         let over_budget = RetitleConfig::parse(
-            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","timeout_ms":45000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":120000}}"#,
+            r#"{"provider":"codex_subscription","account":"omega","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","timeout_ms":45000,"fallback":{"provider":"openai_compatible","base_url":"http://127.0.0.1:1237/v1","model":"qwen3.6-apex-compact","timeout_ms":120000}}"#,
         );
         assert_eq!(over_budget.unwrap_err(), "config_invalid");
 
@@ -4584,7 +4586,7 @@ mod tests {
         let broker = tmp.path().join("broker");
         std::fs::write(
             &broker,
-            "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"gamania\",\"plan\":\"team\"}'\n",
+            "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"account\":\"acct1\",\"plan\":\"team\"}'\n",
         )
         .unwrap();
         std::fs::set_permissions(&broker, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -4605,7 +4607,7 @@ mod tests {
 
         let readiness = RetitleService::from_environment().readiness();
         assert_eq!(readiness.status, "ready");
-        assert_eq!(readiness.account.as_deref(), Some("gamania"));
+        assert_eq!(readiness.account.as_deref(), Some("acct1"));
         assert_eq!(readiness.plan.as_deref(), Some("team"));
     }
 
@@ -4625,10 +4627,10 @@ shift
 if [ "$stage" = "$1" ]; then sleep 3; fi
 case "$1" in
   select)
-    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","plan":"team"}'
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","plan":"team"}'
     ;;
   resolve)
-    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"gamania","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture","plan":"team"}'
+    printf '%s\n' '{"schema_version":"agent-session.codex-auth-broker.v1","account":"acct1","access_token":"fixture-token","chatgpt_account_id":"workspace-fixture","plan":"team"}'
     ;;
   *) exit 2 ;;
 esac
@@ -4971,7 +4973,7 @@ esac
     #[test]
     fn clipboard_turn_uses_a_separate_bounded_schema_and_task_instruction() {
         let config = RetitleConfig::parse(
-            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-6-luna","reasoning_effort":"low"}"#,
+            r#"{"provider":"codex_subscription","account":"omega","codex_bin":"/usr/bin/codex","model":"gpt-6-luna","reasoning_effort":"low"}"#,
         )
         .unwrap();
         let params = codex_thread_start_params_for_task(
@@ -5058,7 +5060,7 @@ esac
     #[test]
     fn codex_thread_start_applies_the_configured_reasoning_effort() {
         let config = RetitleConfig::parse(
-            r#"{"provider":"codex_subscription","account":"sym","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low"}"#,
+            r#"{"provider":"codex_subscription","account":"omega","codex_bin":"/usr/bin/codex","model":"gpt-5.6-luna","reasoning_effort":"low"}"#,
         )
         .unwrap();
         let params = codex_thread_start_params_for_task(

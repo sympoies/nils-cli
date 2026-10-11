@@ -2,13 +2,11 @@
 //! posting a reply first.
 //!
 //! Spec / ops: `cli.forge-cli.pr.review-threads.resolve.v1`. GitHub-first:
-//! the thread node id (`PRRT_...` from the read surface) is the single handle
-//! used for both the reply mutation (`addPullRequestReviewThreadReply`,
-//! keyed by `pullRequestReviewThreadId`) and the resolve mutation
-//! (`resolveReviewThread`, keyed by `threadId`). With `--note` / `--note-file`
-//! the reply runs first, then the resolve; without a note only the resolve
-//! runs. GitHub's `resolveReviewThread` is idempotent, so resolving an
-//! already-resolved thread is success — never an error.
+//! the thread node id (`PRRT_...` from the read surface) keys ownership and
+//! permission reads and the `resolveReviewThread` mutation. With `--note` /
+//! `--note-file`, a plain REST comment reply precedes resolution, after checking
+//! `viewerCanResolve`. An already-resolved thread succeeds without a second
+//! resolution mutation.
 //!
 //! GitLab and Local have no GitHub-shaped thread-mutation surface, so they
 //! return a structured `provider_unsupported` error (GitHub-first in v1).
@@ -23,16 +21,13 @@ use crate::cli::{BINARY, GlobalFlags, PrReviewThreadResolveArgs};
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::ops::pr_comment::read_body_with_file_flag;
-use crate::ops::{pr_review_threads, review_state};
+use crate::ops::{pr_review_thread_reply, pr_review_threads, review_state};
 use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
 use crate::validations::{no_agent_attribution, no_local_path};
 
 const SCHEMA: &str = "pr.review-threads.resolve";
 const SCHEMA_VERSION: u32 = 1;
-
-/// GitHub mutation that posts a reply onto an existing review thread.
-const GITHUB_REPLY_MUTATION: &str = "mutation($tid: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $tid, body: $body}) { comment { url } } }";
 
 /// GitHub mutation that resolves a review thread. Idempotent: resolving an
 /// already-resolved thread succeeds.
@@ -93,7 +88,10 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
 
     let reply_call = note
         .as_deref()
-        .map(|body| build_reply_call(&ctx, &args.thread, body));
+        .map(|body| {
+            pr_review_thread_reply::build_reply_call(&ctx, args.id, "${root_comment_id}", body)
+        })
+        .transpose()?;
     let resolve_call = build_resolve_call(&ctx, &args.thread);
 
     if global.dry_run {
@@ -107,27 +105,54 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         plan.extend(resolve_plan.plan.clone());
         return Ok(emit_success(
             schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
-            DryRunPayload {
-                provider: ctx.provider.as_str(),
-                plan,
-                review_convergence: None,
-            },
+            pr_review_thread_reply::dry_run_payload(
+                &ctx,
+                &args.thread,
+                DryRunPayload {
+                    provider: ctx.provider.as_str(),
+                    plan,
+                    review_convergence: None,
+                },
+            ),
             format,
-            |p| println!("would run: {plan}", plan = p.plan.join(" ")),
+            |p| {
+                println!(
+                    "would read resolution permissions and reply target: {}",
+                    p.target_plan.join(" ")
+                );
+                println!(
+                    "would run after binding root_comment_id and checking permissions: {}",
+                    p.mutation.plan.join(" ")
+                );
+            },
         ));
     }
 
     pr_review_threads::ensure_thread_belongs_to_pr(runner, &ctx, args.id, &args.thread)?;
 
-    let replied = if let Some(call) = &reply_call {
-        runner.run(call)?;
+    let target = pr_review_thread_reply::read_reply_target(runner, &ctx, &args.thread)?;
+    if !target.resolved && !target.can_resolve {
+        return Err(ForgeError::validation(
+            schema_err(),
+            "review_thread_resolve_forbidden",
+            "the invoking identity cannot resolve this review thread; use an identity with resolution permission before posting a note",
+            Some("field=viewerCanResolve; mutation_started=false".to_string()),
+        ));
+    }
+    let replied = if let Some(body) = note.as_deref() {
+        runner.run(&pr_review_thread_reply::build_reply_call(
+            &ctx,
+            args.id,
+            &target.comment_id,
+            body,
+        )?)?;
         true
     } else {
         false
     };
-    // GitHub's resolveReviewThread is idempotent; a successful call means the
-    // thread is resolved regardless of its prior state.
-    runner.run(&resolve_call)?;
+    if !target.resolved {
+        runner.run(&resolve_call)?;
+    }
 
     Ok(emit_success(
         schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
@@ -168,21 +193,6 @@ pub(crate) fn build_resolve_call(ctx: &ProviderContext, thread_id: &str) -> Back
         OsString::from(format!("query={GITHUB_RESOLVE_MUTATION}")),
         OsString::from("-f"),
         OsString::from(format!("tid={thread_id}")),
-    ]);
-    BackendCall::new(BackendProgram::Gh, argv)
-}
-
-pub(crate) fn build_reply_call(ctx: &ProviderContext, thread_id: &str, body: &str) -> BackendCall {
-    debug_assert!(matches!(ctx.provider, Provider::GitHub));
-    let mut argv = vec![OsString::from("api"), OsString::from("graphql")];
-    ctx.push_github_api_hostname(&mut argv);
-    argv.extend([
-        OsString::from("-f"),
-        OsString::from(format!("query={GITHUB_REPLY_MUTATION}")),
-        OsString::from("-f"),
-        OsString::from(format!("tid={thread_id}")),
-        OsString::from("-f"),
-        OsString::from(format!("body={body}")),
     ]);
     BackendCall::new(BackendProgram::Gh, argv)
 }
@@ -265,7 +275,7 @@ mod tests {
                 _ => "github.com".into(),
             },
             source: DetectionSource::Flag,
-            repo: None,
+            repo: Some("acme/widgets".into()),
         }
     }
 
@@ -318,29 +328,39 @@ mod tests {
     }
 
     #[test]
-    fn build_reply_call_uses_add_reply_mutation_with_tid_and_body() {
-        let call = build_reply_call(&ctx(Provider::GitHub), "PRRT_abc", "ack");
+    fn build_reply_call_uses_plain_rest_reply_with_body() {
+        let call = pr_review_thread_reply::build_reply_call(&ctx(Provider::GitHub), 7, "9", "ack")
+            .unwrap();
         let argv = call.plan_argv();
         assert_eq!(call.program, BackendProgram::Gh);
         assert!(
             argv.iter()
-                .any(|s| s.contains("addPullRequestReviewThreadReply"))
+                .any(|s| s == "repos/acme/widgets/pulls/7/comments/9/replies")
         );
-        assert!(argv.iter().any(|s| s.contains("pullRequestReviewThreadId")));
-        assert!(argv.iter().any(|s| s == "tid=PRRT_abc"));
+        assert!(argv.iter().any(|s| s == "POST"));
         assert!(argv.iter().any(|s| s == "body=ack"));
+        assert!(!argv.iter().any(|s| s.contains("mutation(")));
     }
 
     #[test]
     fn build_reply_call_adds_hostname_for_enterprise_host() {
         let mut ctx = ctx(Provider::GitHub);
         ctx.host = "internal.ghe.com".into();
-        let argv = build_reply_call(&ctx, "PRRT_abc", "ack").plan_argv();
+        let argv = pr_review_thread_reply::build_reply_call(&ctx, 7, "9", "ack")
+            .unwrap()
+            .plan_argv();
         let pos = argv
             .iter()
             .position(|s| s == "--hostname")
             .expect("enterprise host must be passed to gh api");
         assert_eq!(argv[pos + 1], "internal.ghe.com");
+    }
+
+    fn reply_target_json() -> BackendSuccess {
+        BackendSuccess {
+            stdout: r#"{"data":{"node":{"id":"PRRT_abc","viewerCanResolve":true,"isResolved":false,"comments":{"nodes":[{"fullDatabaseId":"9"}]}}}}"#.into(),
+            stderr: String::new(),
+        }
     }
 
     fn pr_view_json(number: u64) -> BackendSuccess {
@@ -375,6 +395,7 @@ mod tests {
         let runner = ScriptedRunner::new(vec![
             pr_view_json(7),
             github_threads_json(&["PRRT_abc"]),
+            reply_target_json(),
             BackendSuccess {
                 stdout: r#"{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}"#.into(),
                 stderr: String::new(),
@@ -392,10 +413,10 @@ mod tests {
         let calls = runner.calls();
         assert_eq!(
             calls.len(),
-            3,
-            "view + thread validation run before the resolve mutation"
+            4,
+            "membership and permission reads precede resolution"
         );
-        assert!(calls[2].1.iter().any(|s| s.contains("resolveReviewThread")));
+        assert!(calls[3].1.iter().any(|s| s.contains("resolveReviewThread")));
     }
 
     #[test]
@@ -426,6 +447,7 @@ mod tests {
         let runner = ScriptedRunner::new(vec![
             pr_view_json(7),
             github_threads_json(&["PRRT_abc"]),
+            reply_target_json(),
             BackendSuccess {
                 stdout: r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"url":"u"}}}}"#
                     .into(),
@@ -448,16 +470,71 @@ mod tests {
         let calls = runner.calls();
         assert_eq!(
             calls.len(),
-            4,
-            "view + thread validation run before reply then resolve"
+            5,
+            "membership and permission reads precede reply and resolution"
         );
         assert!(
-            calls[2]
+            calls[3]
                 .1
                 .iter()
-                .any(|s| s.contains("addPullRequestReviewThreadReply"))
+                .any(|s| s == "repos/acme/widgets/pulls/7/comments/9/replies")
         );
-        assert!(calls[3].1.iter().any(|s| s.contains("resolveReviewThread")));
+        assert!(calls[4].1.iter().any(|s| s.contains("resolveReviewThread")));
+    }
+
+    #[test]
+    fn resolve_permission_is_checked_before_posting_a_note() {
+        let runner = ScriptedRunner::new(vec![
+            pr_view_json(7), github_threads_json(&["PRRT_abc"]),
+            BackendSuccess { stdout: r#"{"data":{"node":{"id":"PRRT_abc","viewerCanResolve":false,"isResolved":false,"comments":{"nodes":[{"fullDatabaseId":"9"}]}}}}"#.into(), stderr: String::new() },
+            BackendSuccess { stdout: "{}".into(), stderr: String::new() },
+        ]);
+        let err = run_with(
+            &runner,
+            &global(ProviderFlag::Github, false),
+            args("PRRT_abc", Some("Fixed in the current head."), None),
+            OutputFormat::Json,
+            |_| Some("git@github.com:acme/widgets.git".into()),
+        )
+        .expect_err("permission refusal before note");
+        assert_eq!(err.kind(), "review_thread_resolve_forbidden");
+        assert_eq!(runner.calls().len(), 3);
+        assert!(
+            !runner
+                .calls()
+                .iter()
+                .any(|(_, argv)| argv.iter().any(|s| s.contains("mutation(") || s == "POST"))
+        );
+    }
+
+    #[test]
+    fn resolution_note_is_a_plain_comment_reply() {
+        let runner = ScriptedRunner::new(vec![pr_view_json(7), github_threads_json(&["PRRT_abc"]),
+            BackendSuccess { stdout: r#"{"data":{"node":{"id":"PRRT_abc","viewerCanResolve":true,"isResolved":false,"comments":{"nodes":[{"fullDatabaseId":"9"}]}}}}"#.into(), stderr: String::new() },
+            BackendSuccess { stdout: r#"{"html_url":"https://github.com/acme/widgets/pull/7#discussion_r10"}"#.into(), stderr: String::new() },
+            BackendSuccess { stdout: r#"{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}"#.into(), stderr: String::new() },
+        ]);
+        run_with(
+            &runner,
+            &global(ProviderFlag::Github, false),
+            args("PRRT_abc", Some("Fixed."), None),
+            OutputFormat::Json,
+            |_| Some("git@github.com:acme/widgets.git".into()),
+        )
+        .unwrap();
+        let calls = runner.calls();
+        assert!(
+            calls.iter().any(|(_, argv)| argv
+                .iter()
+                .any(|s| s == "repos/acme/widgets/pulls/7/comments/9/replies")),
+            "{calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|(_, argv)| argv
+                .iter()
+                .any(|s| s.contains("addPullRequestReviewThreadReply"))),
+            "{calls:?}"
+        );
     }
 
     #[test]

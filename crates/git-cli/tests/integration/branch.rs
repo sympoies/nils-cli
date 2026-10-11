@@ -256,7 +256,39 @@ fn branch_cleanup_reports_failed_deletion_for_linked_worktree_branch() {
 }
 
 #[test]
-fn branch_cleanup_remove_worktrees_flag_deletes_linked_worktree_branch() {
+fn branch_cleanup_retains_dirty_linked_worktree() {
+    let harness = GitCliHarness::new();
+    let dir = setup_repo_with_branches();
+    let target = dir.path().join("retained-worktree");
+    git(
+        dir.path(),
+        &[
+            "worktree",
+            "add",
+            target.to_str().unwrap(),
+            "feature-merged",
+        ],
+    );
+    std::fs::write(target.join("unfinished.txt"), "retain").unwrap();
+    let output = run_with_stdin(
+        &harness,
+        dir.path(),
+        &["branch", "cleanup", "--remove-worktrees"],
+        "y\n",
+    );
+    assert_ne!(
+        output.code, 0,
+        "dirty linked checkout must survive branch cleanup"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("unfinished.txt")).unwrap(),
+        "retain"
+    );
+    assert!(git(dir.path(), &["branch", "--list", "feature-merged"]).contains("feature-merged"));
+}
+
+#[test]
+fn branch_cleanup_remove_worktrees_retains_unmanaged_worktree_branch() {
     let harness = GitCliHarness::new();
     let dir = setup_repo_with_branches();
 
@@ -274,21 +306,10 @@ fn branch_cleanup_remove_worktrees_flag_deletes_linked_worktree_branch() {
         "y\n",
     );
 
-    assert_eq!(output.code, 0);
-    assert!(
-        output
-            .stdout_text()
-            .contains("⚠️  Linked worktrees to remove (--remove-worktrees):")
-    );
-    assert!(output.stdout_text().contains("feature-merged"));
-    assert!(
-        output
-            .stdout_text()
-            .contains("✅ Removed 1 linked worktree(s).")
-    );
-    assert!(output.stdout_text().contains("✅ Deleted 1 branch(es)."));
-    assert!(!linked_worktree.exists());
-    assert_eq!(git(dir.path(), &["branch", "--list", "feature-merged"]), "");
+    assert_ne!(output.code, 0);
+    assert!(output.stderr_text().contains("removal-unmanaged"));
+    assert!(linked_worktree.exists());
+    assert!(git(dir.path(), &["branch", "--list", "feature-merged"]).contains("feature-merged"));
 }
 
 #[test]
@@ -314,7 +335,7 @@ fn branch_cleanup_squash_detects_real_multi_commit_squash() {
 }
 
 #[test]
-fn branch_cleanup_squash_remove_worktrees_deletes_squashed_branch_with_worktree() {
+fn branch_cleanup_squash_remove_worktrees_retains_unmanaged_worktree_branch() {
     let harness = GitCliHarness::new();
     let dir = setup_repo_with_real_squash();
 
@@ -337,23 +358,12 @@ fn branch_cleanup_squash_remove_worktrees_deletes_squashed_branch_with_worktree(
         "y\n",
     );
 
-    assert_eq!(output.code, 0);
-    assert!(output.stdout_text().contains("  - feature-multi-squash"));
+    assert_ne!(output.code, 0);
+    assert!(output.stderr_text().contains("removal-unmanaged"));
+    assert!(linked_worktree.exists());
     assert!(
-        output
-            .stdout_text()
-            .contains("⚠️  Linked worktrees to remove (--remove-worktrees):")
-    );
-    assert!(
-        output
-            .stdout_text()
-            .contains("✅ Removed 1 linked worktree(s).")
-    );
-    assert!(output.stdout_text().contains("✅ Deleted 1 branch(es)."));
-    assert!(!linked_worktree.exists());
-    assert_eq!(
-        git(dir.path(), &["branch", "--list", "feature-multi-squash"]),
-        ""
+        git(dir.path(), &["branch", "--list", "feature-multi-squash"])
+            .contains("feature-multi-squash")
     );
 }
 

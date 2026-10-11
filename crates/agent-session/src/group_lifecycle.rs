@@ -2518,6 +2518,20 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&repaired_tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // Pre-warm the fixture: the first exec of a freshly written script pays a
+        // host EDR/filesystem cold-start tail that can exceed the product's bounded
+        // termination-probe budget, turning the probe into verification-failed
+        // (sympoies/nils-cli#2131). Exec it once here so the product's first exec
+        // runs warm. The script is side-effect-free and exits 1 by design, which
+        // is the fixture's "session absent" answer.
+        let prewarm = std::process::Command::new(&repaired_tmux)
+            .arg("display-message")
+            .output()
+            .expect("prewarm fake tmux");
+        assert!(
+            prewarm.status.code() == Some(1),
+            "fake tmux prewarm exited unexpectedly: {prewarm:?}"
+        );
         let execution =
             execute_group_cleanup(&context, "main", request.clone(), repaired_tmux.clone())
                 .unwrap();
@@ -2610,6 +2624,20 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // Pre-warm the fixture: the first exec of a freshly written script pays a
+        // host EDR/filesystem cold-start tail that can exceed the product's bounded
+        // termination-probe budget, turning the probe into verification-failed
+        // (sympoies/nils-cli#2131). Exec it once here so the product's first exec
+        // runs warm. The script is side-effect-free and exits 1 by design, which
+        // is the fixture's "session absent" answer.
+        let prewarm = std::process::Command::new(&tmux)
+            .arg("display-message")
+            .output()
+            .expect("prewarm fake tmux");
+        assert!(
+            prewarm.status.code() == Some(1),
+            "fake tmux prewarm exited unexpectedly: {prewarm:?}"
+        );
         let mut main = cleanup_test_session("main", "inc");
         crate::mark_tmux_runtime_never_launched(&mut main);
         fs::create_dir_all(session_dir(&context, &main.id)).unwrap();
@@ -2696,6 +2724,20 @@ mod tests {
             )
             .unwrap();
             fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+            // Pre-warm the fixture: the first exec of a freshly written script pays a
+            // host EDR/filesystem cold-start tail that can exceed the product's bounded
+            // termination-probe budget, turning the probe into verification-failed
+            // (sympoies/nils-cli#2131). Exec it once here so the product's first exec
+            // runs warm. The script is side-effect-free and exits 1 by design, which
+            // is the fixture's "session absent" answer.
+            let prewarm = std::process::Command::new(&tmux)
+                .arg("display-message")
+                .output()
+                .expect("prewarm fake tmux");
+            assert!(
+                prewarm.status.code() == Some(1),
+                "fake tmux prewarm exited unexpectedly: {prewarm:?}"
+            );
             let mut main = cleanup_test_session("main", "inc");
             crate::mark_tmux_runtime_never_launched(&mut main);
             fs::create_dir_all(session_dir(&context, &main.id)).unwrap();
@@ -3072,6 +3114,20 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // Pre-warm the fixture: the first exec of a freshly written script pays a
+        // host EDR/filesystem cold-start tail that can exceed the product's bounded
+        // termination-probe budget, turning the probe into verification-failed
+        // (sympoies/nils-cli#2131). Exec it once here so the product's first exec
+        // runs warm. The script is side-effect-free and exits 1 by design, which
+        // is the fixture's "session absent" answer.
+        let prewarm = std::process::Command::new(&tmux)
+            .arg("display-message")
+            .output()
+            .expect("prewarm fake tmux");
+        assert!(
+            prewarm.status.code() == Some(1),
+            "fake tmux prewarm exited unexpectedly: {prewarm:?}"
+        );
         let execution =
             execute_group_cleanup(&context, "main-c", request.clone(), tmux.clone()).unwrap();
         assert_eq!(
@@ -3130,6 +3186,20 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // Pre-warm the fixture: the first exec of a freshly written script pays a
+        // host EDR/filesystem cold-start tail that can exceed the product's bounded
+        // termination-probe budget, turning the probe into verification-failed
+        // (sympoies/nils-cli#2131). Exec it once here so the product's first exec
+        // runs warm. The script is side-effect-free and exits 1 by design, which
+        // is the fixture's "session absent" answer.
+        let prewarm = std::process::Command::new(&tmux)
+            .arg("display-message")
+            .output()
+            .expect("prewarm fake tmux");
+        assert!(
+            prewarm.status.code() == Some(1),
+            "fake tmux prewarm exited unexpectedly: {prewarm:?}"
+        );
         fs::write(
             context.state_dir.join("group-cleanup-interrupt-test"),
             "main_deleted_uncheckpointed",
@@ -3247,6 +3317,20 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // Pre-warm the fixture: the first exec of a freshly written script pays a
+        // host EDR/filesystem cold-start tail that can exceed the product's bounded
+        // termination-probe budget, turning the probe into verification-failed
+        // (sympoies/nils-cli#2131). Exec it once here so the product's first exec
+        // runs warm. The script is side-effect-free and exits 1 by design, which
+        // is the fixture's "session absent" answer.
+        let prewarm = std::process::Command::new(&tmux)
+            .arg("display-message")
+            .output()
+            .expect("prewarm fake tmux");
+        assert!(
+            prewarm.status.code() == Some(1),
+            "fake tmux prewarm exited unexpectedly: {prewarm:?}"
+        );
         fs::write(
             context.state_dir.join("group-cleanup-interrupt-test"),
             "main_deleted_uncheckpointed",

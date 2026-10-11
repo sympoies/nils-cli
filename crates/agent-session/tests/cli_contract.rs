@@ -1,6 +1,97 @@
 use std::process::Command;
 
 use nils_test_support::bin;
+use pretty_assertions::assert_eq;
+
+#[test]
+fn readiness_parse_errors_use_the_command_envelope() {
+    for args in [
+        vec!["readiness", "--format", "json", "--bogus"],
+        vec![
+            "--state-dir",
+            "fixture-state",
+            "readiness",
+            "--format",
+            "json",
+            "--bogus",
+        ],
+        vec![
+            "--state-dir=fixture-state",
+            "--host",
+            "fixture-host",
+            "readiness",
+            "--format",
+            "json",
+            "--bogus",
+        ],
+    ] {
+        let mut command = Command::new(bin::resolve("agent-session"));
+        nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+        let output = command.args(args).output().expect("readiness parse error");
+        assert_eq!(output.status.code(), Some(64));
+        let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(envelope["schema_version"], "cli.agent-session.readiness.v1");
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["error"]["code"], "parse-error");
+    }
+    let output = Command::new(bin::resolve("agent-session"))
+        .args([
+            "--state-dir",
+            "readiness",
+            "message",
+            "send",
+            "--format",
+            "json",
+            "--bogus",
+        ])
+        .output()
+        .unwrap();
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        envelope["schema_version"], "cli.agent-session.message-send.v1",
+        "a global option value must not select readiness"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_root_option_values_keep_command_parse_envelopes() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    for (option, command_args, schema) in [
+        (
+            b"--state-dir=".as_slice(),
+            &["message", "send"][..],
+            "cli.agent-session.message-send.v1",
+        ),
+        (
+            b"--host=".as_slice(),
+            &["message", "send"][..],
+            "cli.agent-session.message-send.v1",
+        ),
+        (
+            b"--state-dir=".as_slice(),
+            &["readiness"][..],
+            "cli.agent-session.readiness.v1",
+        ),
+    ] {
+        let mut root_option = option.to_vec();
+        root_option.push(0xff);
+        let mut command = Command::new(bin::resolve("agent-session"));
+        nils_test_support::cmd::strip_ambient_managed_session_env(&mut command);
+        let output = command
+            .arg(OsString::from_vec(root_option))
+            .args(command_args)
+            .args(["--format", "json", "--bogus"])
+            .output()
+            .expect("non-UTF-8 root option parse error");
+        assert_eq!(output.status.code(), Some(64));
+        let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(envelope["schema_version"], schema);
+        assert_eq!(envelope["error"]["code"], "parse-error");
+    }
+}
 
 #[test]
 fn service_mailbox_surface_requires_no_managed_sender() {
@@ -128,4 +219,19 @@ fn account_commands_report_typed_json_errors() {
         .output()
         .expect("agent-session account switch without --account");
     assert_eq!(output.status.code(), Some(64), "--account is required");
+}
+
+#[test]
+fn conversation_clear_and_rebind_are_discoverable() {
+    for verb in ["clear", "rebind"] {
+        let output = Command::new(bin::resolve("agent-session"))
+            .args([verb, "--help"])
+            .output()
+            .expect("conversation lifecycle help");
+        assert!(output.status.success(), "missing supported {verb} command");
+        let help = String::from_utf8_lossy(&output.stdout);
+        for flag in ["--expect-idle", "--format", "--tmux-bin"] {
+            assert!(help.contains(flag), "missing {flag}: {help}");
+        }
+    }
 }

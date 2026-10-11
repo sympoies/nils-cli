@@ -15,6 +15,7 @@ RUN_STDERR=""
 ROOT_HELP_TEXT=""
 ENSURE_BIN_ERROR=""
 PLATFORM_EXE_SUFFIX=""
+TARGET_DEBUG_DIR=""
 PARITY_RESULTS_DIR=""
 
 declare -a PATH_PARTS=()
@@ -571,7 +572,7 @@ ensure_binaries() {
   local -a bins=( "$@" )
 
   ENSURE_BIN_ERROR=""
-  local target_dir="$repo_root/target/debug"
+  local target_dir="$TARGET_DEBUG_DIR"
   local -a missing=()
   local binary
   for binary in "${bins[@]}"; do
@@ -742,6 +743,10 @@ main() {
   repo_root="$(cd "$script_dir/../.." && pwd)"
   local matrix_path="$repo_root/docs/specs/completion-coverage-matrix-v1.md"
 
+  # shellcheck source=scripts/ci/lib/cargo-target-dir.sh
+  source "$script_dir/lib/cargo-target-dir.sh"
+  TARGET_DEBUG_DIR="$(resolve_cargo_target_dir "$repo_root")/debug"
+
   if [[ ! -f "$matrix_path" ]]; then
     echo "FAIL: missing completion matrix: $matrix_path" >&2
     return 2
@@ -802,7 +807,7 @@ main() {
     audited_bins+=( "$binary" )
     (
       FAILURES=()
-      audit_binary "$repo_root" "$binary" "$repo_root/target/debug/${binary}${PLATFORM_EXE_SUFFIX}"
+      audit_binary "$repo_root" "$binary" "$TARGET_DEBUG_DIR/${binary}${PLATFORM_EXE_SUFFIX}"
       if (( ${#FAILURES[@]} > 0 )); then
         printf '%s\0' "${FAILURES[@]}"
       fi >"$PARITY_RESULTS_DIR/${binary}.partial"
