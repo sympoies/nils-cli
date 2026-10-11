@@ -35,7 +35,7 @@ use files::production_tool_path;
 use files::{
     copy_file, copy_tree, create_private_dir, hash_file, reject_symlink_components, run_tool,
 };
-use receipts::{read_receipt, write_receipt};
+use receipts::{read_receipt, set_pending_rollback, write_receipt};
 
 const RECEIPT_SCHEMA: &str = "macos-agent.backend-receipt.v1";
 const LIFECYCLE_LOCK_FILE: &str = ".backend-lifecycle.lock";
@@ -268,6 +268,11 @@ impl BackendPaths {
 
     fn pending_receipt(&self) -> PathBuf {
         self.receipts().join("pending.json")
+    }
+
+    /// Present only while the pending receipt was staged by a rollback.
+    fn pending_rollback_marker(&self) -> PathBuf {
+        self.receipts().join("pending-rollback")
     }
 
     fn version_root(&self, tag: &str) -> PathBuf {
@@ -534,6 +539,7 @@ fn install_into_staging(
     }
     // Persist recovery authority before retiring the accepted app. All outgoing
     // runtime validation and daemon retirement have already succeeded.
+    set_pending_rollback(paths, false)?;
     write_receipt(&paths.pending_receipt(), &new_receipt)?;
     reconcile_apps(paths, lock, true)?;
     replace_stable_app(paths, &new_receipt)?;
@@ -1059,11 +1065,11 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
         }
         let pending = read_receipt(&paths.pending_receipt())?
             .ok_or_else(|| backend_error("pending backend activation receipt is unavailable"))?;
-        // A rollback stages the previous receipt as pending; an install stages a new one.
-        let pending_rollback = read_receipt(&paths.previous_receipt())?.is_some_and(|previous| {
-            previous.tag == pending.tag && previous.commit == pending.commit
-        });
+        // Receipts alone cannot tell a staged rollback from a reinstall of the
+        // previous release, so a rollback marks its pending receipt explicitly.
+        let pending_rollback = paths.pending_rollback_marker().exists();
         recover_pending(&paths, &lock, strict)?;
+        set_pending_rollback(&paths, false)?;
         if pending_rollback
             && read_receipt(&paths.current_receipt())?.is_some_and(|current| {
                 current.tag == pending.tag && current.commit == pending.commit
@@ -1106,12 +1112,14 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
         });
     }
     retire_transition_daemons(&outgoing)?;
+    set_pending_rollback(&paths, true)?;
     write_receipt(&paths.pending_receipt(), &previous)?;
     reconcile_apps(&paths, &lock, true)?;
     if !stable_app_matches(&paths, &previous)? {
         replace_stable_app(&paths, &previous)?;
     }
     recover_pending(&paths, &lock, strict)?;
+    set_pending_rollback(&paths, false)?;
     status_unlocked(&lock, &paths, false, strict)
 }
 

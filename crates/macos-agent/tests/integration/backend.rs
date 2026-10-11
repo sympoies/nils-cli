@@ -275,6 +275,53 @@ fn review_repair_rollback_after_interrupted_install_restores_the_predecessor() {
 }
 
 #[test]
+fn review_repair_rollback_after_interrupted_reinstall_of_the_previous_release_restores_it() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let root = cwd.path().join("backend");
+    let old = candidate(cwd.path(), "v4.6.0", '6');
+    let new = candidate(cwd.path(), "v4.8.0", '8');
+    authorize_rollback(&new, &old);
+    for release in [&old, &new] {
+        let out = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            release,
+            &["backend", "install"],
+        );
+        assert_eq!(out.code, 0, "{}", out.stderr_text());
+    }
+    let rolled_back = run_backend(&harness, cwd.path(), &root, &new, &["backend", "rollback"]);
+    assert_eq!(rolled_back.code, 0, "{}", rolled_back.stderr_text());
+    // previous and the interrupted reinstall's pending receipt now both name v4.8.0.
+    let failed = run_backend_probe_mode(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--error-format", "json", "backend", "install"],
+        "app_launch_failed",
+    );
+    assert_eq!(failed.code, 69, "{}", failed.stderr_text());
+    assert!(root.join("receipts/pending.json").exists());
+    let rollback = run_backend(
+        &harness,
+        cwd.path(),
+        &root,
+        &new,
+        &["--format", "json", "backend", "rollback"],
+    );
+    assert_eq!(rollback.code, 0, "{}", rollback.stderr_text());
+    assert_eq!(rollback.stdout_json()["result"]["current"]["tag"], "v4.6.0");
+    assert_eq!(
+        rollback.stdout_json()["result"]["previous"]["tag"],
+        "v4.8.0"
+    );
+    assert!(!root.join("receipts/pending.json").exists());
+}
+
+#[test]
 fn review_repair_rollback_pre_replacement_failure_retry_reaches_the_target() {
     for app_in_backup in [false, true] {
         let harness = common::MacosAgentHarness::new();
