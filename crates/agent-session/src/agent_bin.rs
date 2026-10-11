@@ -34,6 +34,20 @@ fn unpinned_agent_bin(agent: AgentKind) -> PathBuf {
     Path::new("/nonexistent/agent-session-unpinned-test-agent").join(agent.as_str())
 }
 
+/// Environment for a unit test that creates a session without pinning a provider:
+/// removes ambient provider binary pins (for example an operator wrapper that
+/// execs the installed CLI) and the Codex account broker, so the default above applies.
+#[cfg(test)]
+pub(crate) fn unpinned_provider_env(
+    lock: &nils_test_support::GlobalStateLock,
+) -> [nils_test_support::EnvGuard; 3] {
+    [
+        nils_test_support::EnvGuard::remove(lock, "AGENT_SESSION_CODEX_BIN"),
+        nils_test_support::EnvGuard::remove(lock, "AGENT_SESSION_CLAUDE_BIN"),
+        nils_test_support::EnvGuard::remove(lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER"),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_agent_bin;

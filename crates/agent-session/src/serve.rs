@@ -21082,7 +21082,7 @@ esac
     #[tokio::test]
     async fn http_create_keeps_shell_metacharacters_in_literal_agent_argv() {
         let lock = GlobalStateLock::new();
-        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+        let _unpinned = crate::agent_bin::unpinned_provider_env(&lock);
         let tmp = tempfile::TempDir::new().unwrap();
         let cwd = tmp.path().join("repo");
         fs::create_dir_all(&cwd).unwrap();
@@ -31131,7 +31131,7 @@ esac
     #[tokio::test]
     async fn create_records_workdir_usage_for_recent_first_search() {
         let lock = GlobalStateLock::new();
-        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+        let _unpinned = crate::agent_bin::unpinned_provider_env(&lock);
         let tmp = tempfile::TempDir::new().unwrap();
         let home = tmp.path().join("home");
         let alpha_repo = home.join("Project/sympoies/alpha");
