@@ -39,7 +39,7 @@ pub(super) fn applies(document: &ActivityDocument, event: &TurnEvent) -> bool {
 /// change its prompt ID without announcing a new turn. The exact current Stop
 /// plus an idle signal in the bound conversation closes the stopped turn; a
 /// known older completion or any later accepted work/attention cannot do so.
-fn reconciles_claude_idle(
+pub(super) fn reconciles_claude_idle(
     document: &ActivityDocument,
     event: &TurnEvent,
     current: &CurrentTurn,
@@ -51,12 +51,23 @@ fn reconciles_claude_idle(
     ) else {
         return false;
     };
-    event.kind == TurnEventKind::TurnCompleted
+    completion_id != current_id
+        && event.kind == TurnEventKind::TurnCompleted
         && event.provider == AgentKind::Claude.as_str()
         && event.runtime_id == document.runtime_id
         && event.source_kind == SourceKind::ProviderHook
         && event.confidence == Confidence::Observed
         && event.provider_session_id.as_ref() == Some(conversation_id)
+        && document.pending_completion.as_ref().is_some_and(|pending| {
+            pending.event.kind == TurnEventKind::StopObserved
+                && pending.event.completion_candidate
+                && pending.event.runtime_id == document.runtime_id
+                && pending.event.provider == AgentKind::Claude.as_str()
+                && pending.event.provider_session_id.as_ref() == Some(conversation_id)
+                && pending.event.provider_turn_id.as_ref() == Some(current_id)
+                && pending.event.source_kind == SourceKind::ProviderHook
+                && pending.event.confidence == Confidence::Observed
+        })
         && document.state.phase == TurnPhase::Working
         && document.state.source.kind == SourceKind::ProviderHook
         && document.state.source.provider.as_deref() == Some(AgentKind::Claude.as_str())
