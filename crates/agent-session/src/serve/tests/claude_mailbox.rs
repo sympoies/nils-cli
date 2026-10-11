@@ -177,8 +177,7 @@ esac
     assert_eq!(notification["state"], "prompt_submitted");
 }
 
-#[tokio::test]
-async fn known_claude_mailbox_dispatch_wakes_once_despite_unrelated_history() {
+async fn known_claude_mailbox_fixture(missing_transcript: bool) {
     let lock = GlobalStateLock::new();
     let _entries = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_RESUME_SCAN_MAX_ENTRIES", "60");
     let _time = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_RESUME_SCAN_SLICE_MS", "60000");
@@ -312,6 +311,20 @@ esac
         .pop()
         .expect("candidate");
 
+    if missing_transcript {
+        fs::remove_file(&transcript).expect("remove recipient transcript");
+        dispatch_coordination_notification(state.clone(), candidate).await;
+        let notification = notification_fixture(tmp.path());
+        assert_eq!(notification["state"], "queued");
+        assert_eq!(
+            notification["last_reason"],
+            "provider-observation-unavailable"
+        );
+        assert_eq!(notification["attempted_generation"], 0);
+        assert!(!captured_prompt.exists());
+        return;
+    }
+
     let prompt = crate::coordination::notification_prompt(&candidate);
     let observed = format!(
         "{}\n",
@@ -369,4 +382,14 @@ esac
         .expect("notification");
     assert!(!notification.to_string().contains(canary));
     assert_eq!(notification["state"], "prompt_submitted");
+}
+
+#[tokio::test]
+async fn known_claude_mailbox_dispatch_wakes_once_despite_unrelated_history() {
+    known_claude_mailbox_fixture(false).await;
+}
+
+#[tokio::test]
+async fn known_claude_mailbox_dispatch_keeps_missing_source_receipt_honest() {
+    known_claude_mailbox_fixture(true).await;
 }

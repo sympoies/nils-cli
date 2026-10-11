@@ -229,3 +229,44 @@ fn known_claude_source_rejects_symlinks_and_non_regular_files() {
     let _socket = UnixListener::bind(&target).expect("socket");
     assert!(resolve_provider_prompt_source_from_roots(&recipient, None, Some(&root)).is_none());
 }
+
+#[test]
+fn known_claude_source_retains_legacy_filename_discovery() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let root = tmp.path().join("projects");
+    fs::create_dir_all(root.join("project")).expect("project");
+    let transcript = root.join("project/legacy.jsonl");
+    fs::write(&transcript, claude_metadata("claude-id")).expect("legacy transcript");
+    let source = resolve_provider_prompt_source_from_roots(
+        &record("claude", "claude-id"),
+        None,
+        Some(&root),
+    )
+    .expect("unambiguous legacy transcript");
+    assert_eq!(source.path, transcript);
+}
+
+#[cfg(unix)]
+#[test]
+fn known_claude_source_rejects_unreadable_transcript() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let root = tmp.path().join("projects");
+    fs::create_dir_all(root.join("project")).expect("project");
+    let transcript = root.join("project/claude-id.jsonl");
+    fs::write(&transcript, claude_metadata("claude-id")).expect("transcript");
+    fs::set_permissions(&transcript, fs::Permissions::from_mode(0o000)).expect("unreadable");
+    // Privileged runners may read mode-000 files; assert failure when the OS
+    // actually refuses access rather than claiming chmod itself proves it.
+    if File::open(&transcript).is_err() {
+        assert!(
+            resolve_provider_prompt_source_from_roots(
+                &record("claude", "claude-id"),
+                None,
+                Some(&root),
+            )
+            .is_none()
+        );
+    }
+    fs::set_permissions(&transcript, fs::Permissions::from_mode(0o600)).expect("restore");
+}

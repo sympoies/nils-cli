@@ -14,6 +14,8 @@ use crate::{
     session_effective_provider_config_dir,
 };
 
+mod claude_source;
+
 pub(crate) const PROVIDER_PROMPT_CAPABILITY: &str = "provider-prompt.v1";
 pub const MAX_PROVIDER_PROMPT_BYTES: usize = 16 * 1024;
 const MAX_PROVIDER_LINE_BYTES: usize = 256 * 1024;
@@ -1293,12 +1295,7 @@ fn resolve_provider_prompt_source_from_roots(
         ),
         AgentKind::Claude => (
             ProviderKind::Claude,
-            resolve_provider_transcript_path_from_roots(
-                AgentKind::Claude,
-                &resume.session_id,
-                codex_root,
-                claude_root,
-            )?,
+            claude_source::resolve(claude_root?, &resume.session_id)?,
         ),
         AgentKind::Dsh => return None,
     };

@@ -811,6 +811,15 @@ canonical message admitted to the exact recipient incarnation, including remote
 deliveries and carried guidance. Migrated timestamps are recovered from those
 records; existing upper bounds and original attempted timestamps are retained.
 
+Claude transcript observation first probes the known conversation's
+`<conversation-id>.jsonl` filename in each project directory under the
+session's effective provider configuration root. The bounded walk reads only
+exact filename candidates and requires one regular, readable primary transcript
+with matching conversation identity and a non-empty cwd. An incomplete walk,
+ambiguous source, unsafe candidate, or unavailable metadata leaves observation
+unavailable. Legacy filename discovery remains available when no exact candidate
+exists; an incomplete or unsafe exact lookup never falls back to a partial match.
+
 Busy app-server Codex without an authoritative steerable turn, attached or
 busy terminal runtimes, rate-limited, controller-unavailable, and
 provider-not-ready targets remain queued with a bounded safe reason. A
