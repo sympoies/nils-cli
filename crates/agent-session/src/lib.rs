@@ -419,8 +419,7 @@ fn command_format(command: &Command) -> OutputFormat {
         Command::Broker(args) => match &args.command {
             cli::BrokerCommand::Identity(args) | cli::BrokerCommand::Status(args) => args.format,
             cli::BrokerCommand::Adopt(args) | cli::BrokerCommand::Reconcile(args) => args.format,
-            cli::BrokerCommand::RetireStopped(args) => args.format,
-            cli::BrokerCommand::Stop(args) => args.format,
+            cli::BrokerCommand::RetireStopped(args) | cli::BrokerCommand::Stop(args) => args.format,
             cli::BrokerCommand::Heartbeat(args) => args.format,
         },
         Command::Message(args) => match &args.command {
