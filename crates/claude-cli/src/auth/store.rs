@@ -502,6 +502,9 @@ pub fn write_active_access_only(
     let config_updated = write_config_account(&config_file, account, Map::new())?;
 
     let keychain = keychain::project(&access, keychain_mode)?;
+    if let Some(token) = non_empty_str(access.get("accessToken")) {
+        crate::prompt_segment::bind_prompt_token(token);
+    }
     Ok(ActiveWrite {
         credentials_file,
         config_updated,
@@ -775,5 +778,36 @@ mod tests {
         assert!(validate_profile_name("team.json").is_err());
         assert!(validate_profile_name("../team").is_err());
         assert!(validate_profile_name("").is_err());
+    }
+
+    #[test]
+    fn active_credential_switch_rebinds_prompt_usage_to_the_new_account() {
+        use nils_test_support::{EnvGuard, GlobalStateLock};
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config");
+        let cache = tmp.path().join("cache");
+        std::fs::create_dir_all(&config).unwrap();
+        let _config = EnvGuard::set(&lock, CONFIG_DIR_ENV, config.to_str().unwrap());
+        let _cache = EnvGuard::set(
+            &lock,
+            "CLAUDE_PROMPT_SEGMENT_CACHE_DIR",
+            cache.to_str().unwrap(),
+        );
+        let _keychain = EnvGuard::set(&lock, "CLAUDE_AUTH_KEYCHAIN", "off");
+
+        crate::prompt_segment::bind_prompt_token("token-account-a");
+        let oauth = json!({"accessToken": "token-account-b"});
+        write_active_access_only(
+            oauth.as_object().unwrap(),
+            &Map::new(),
+            keychain::Mode::Auto,
+        )
+        .unwrap();
+
+        assert_eq!(
+            crate::prompt_segment::prompt_token_key().as_deref(),
+            Some(crate::prompt_segment::token_key("token-account-b").as_str())
+        );
     }
 }

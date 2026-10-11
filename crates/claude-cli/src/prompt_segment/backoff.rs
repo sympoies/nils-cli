@@ -178,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_snapshot_keeps_account_and_cooldown_together() {
+    fn prompt_account_switch_rebinds_snapshot_to_the_activated_token() {
         let lock = GlobalStateLock::new();
         let tmp = tempfile::tempdir().unwrap();
         let _cache = EnvGuard::set(
@@ -188,6 +188,7 @@ mod tests {
         );
         bind_prompt_token("fixture-alpha");
         let snapshot = prompt_snapshot();
+        assert_eq!(snapshot.0, Some(token_key("fixture-alpha")));
         let other = Backoff::acquire("fixture-beta").unwrap();
         other.record(now_epoch(), None).unwrap();
         bind_prompt_token("fixture-beta");

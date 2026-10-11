@@ -389,6 +389,28 @@ fn diag_rate_limits_without_a_target_reads_the_active_login() {
 }
 
 #[test]
+fn diag_rate_limits_active_account_switch_does_not_fall_back_to_previous_windows() {
+    let fx = Fixture::new();
+    fx.write_active_login("access-alpha", FUTURE_MS);
+    let alpha = fx.run(&["diag", "rate-limits", "--format", "json"]);
+    assert_exit(&alpha, 0);
+    let alpha_payload: Value = serde_json::from_str(&stdout(&alpha)).expect("json");
+    assert_eq!(alpha_payload["result"]["source"], "network");
+
+    fx.write_active_login("access-delta", FUTURE_MS);
+    let beta = fx.run(&["diag", "rate-limits", "--format", "json"]);
+    assert_exit(&beta, 1);
+    let beta_payload: Value = serde_json::from_str(&stdout(&beta)).expect("json");
+    assert_eq!(beta_payload["result"]["source"], "network");
+    assert_eq!(beta_payload["result"]["reason_code"], "rate_limited");
+    assert!(
+        beta_payload["result"]["windows"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+    );
+}
+
+#[test]
 fn diag_rate_limits_all_text_renders_the_shared_accounts_table() {
     let fx = Fixture::new();
     fx.write_profile("alpha", "access-alpha", FUTURE_MS);

@@ -12,6 +12,19 @@ mod refresh;
 pub(crate) mod render;
 pub mod usage;
 
+pub(crate) fn token_key(token: &str) -> String {
+    backoff::token_key(token)
+}
+
+pub(crate) fn bind_prompt_token(token: &str) {
+    backoff::bind_prompt_token(token);
+}
+
+#[cfg(test)]
+pub(crate) fn prompt_token_key() -> Option<String> {
+    backoff::prompt_key()
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct PromptSegmentOptions {
     pub no_5h: bool,
