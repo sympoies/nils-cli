@@ -105,6 +105,9 @@ struct RemoteError {
     class: ErrorClass,
     message: String,
     operation: Option<String>,
+    // Absent from older peers; omitted when empty so older clients see the same envelope.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1058,6 +1061,9 @@ fn remote_error_to_cli(error: RemoteError) -> CliError {
     if let Some(operation) = error.operation {
         result = result.with_operation(operation);
     }
+    for hint in error.hints {
+        result = result.with_hint(hint);
+    }
     result
 }
 
@@ -1066,6 +1072,11 @@ fn remote_error(error: &CliError) -> RemoteError {
         class: error.class(),
         message: crate::journal::sanitize_output(error.message(), EvidenceMode::Minimal),
         operation: error.operation().map(str::to_string),
+        hints: error
+            .hints()
+            .iter()
+            .map(|hint| crate::journal::sanitize_output(hint, EvidenceMode::Minimal))
+            .collect(),
     }
 }
 
@@ -1317,11 +1328,21 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        MAX_REMOTE_SESSION_ROOTS, ProcessGroupChild, TransferredFile, collect_files,
+        MAX_REMOTE_SESSION_ROOTS, ProcessGroupChild, RemoteError, TransferredFile, collect_files,
         create_bounded_remote_session, decode_transferred, install_transferred_files,
         install_transferred_journal, read_bounded_line, remove_session, validate_host,
         validate_relative,
     };
+
+    #[test]
+    fn remote_error_hints_are_optional_in_both_directions() {
+        let older: RemoteError =
+            serde_json::from_str(r#"{"class":"backend","message":"m","operation":null}"#)
+                .expect("an envelope without hints still parses");
+        assert!(older.hints.is_empty());
+        let encoded = serde_json::to_value(&older).expect("encode");
+        assert!(encoded.get("hints").is_none(), "{encoded}");
+    }
 
     #[test]
     fn host_is_an_argv_value_but_still_rejects_option_and_shell_shapes() {
