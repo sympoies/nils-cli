@@ -9,10 +9,12 @@ Rules:
   - A file under a `tests/` or `benches/` directory is test-only.
   - A file reached through an out-of-line `#[cfg(test)] mod x;` declaration is
     test-only, and so is every file that a test-only file declares with `mod y;`.
-  - In any other file, each top-level `#[cfg(test)]` or `#[cfg(all(test, ..))]`
-    item counts as test lines, from its attribute through the end of the item.
+  - In any other file, each top-level `#[cfg(test)]` item, or `#[cfg(all(..))]`
+    item with `test` as one of the top-level `all` arguments in any position,
+    counts as test lines, from its attribute through the end of the item.
     An item ends at the first `;` or `{` outside `(..)` and `[..]`; a `{`
-    block ends at its matching `}`. `#[cfg(any(test, ..))]` is not test-only.
+    block ends at its matching `}`. `test` under `any(..)` or `not(..)` is not
+    test-only.
   - Implementation lines are the total lines minus the test lines.
 
 Comments, string literals, raw strings and char literals are masked before brace
@@ -43,17 +45,60 @@ TOKEN_RE = re.compile(
 )
 BLOCK_DELIM_RE = re.compile(r"/\*|\*/")
 BRACE_RE = re.compile(r"[{}]")
-# A test-gated attribute: `test`, or `all(test, ..)`. `any(test, ..)` is also
-# compiled outside tests, so it does not make an item test-only.
-TEST_CFG_ATTR = r"#\[cfg\((?:test|all\(\s*test\b[^\]]*)\)\]"
-CFG_TEST_RE = re.compile(TEST_CFG_ATTR)
+# A test-gated attribute is `#[cfg(test)]` or `#[cfg(all(.., test, ..))]` with
+# `test` as one top-level argument of `all`, in any position. `test` inside
+# `any(..)` or `not(..)` is also compiled outside tests, so it does not make an
+# item test-only.
+CFG_OPEN_RE = re.compile(r"#\[cfg\(")
 # Brackets are tracked so that a `;` in `[u8; 32]` or `(..)` does not end an item.
 ITEM_BOUNDARY_RE = re.compile(r"[{};()\[\]]")
 MOD_DECL_RE = re.compile(r"\bmod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
-CFG_TEST_MOD_RE = re.compile(
-    TEST_CFG_ATTR + r"\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
+# What may follow a test-gated attribute for an out-of-line `mod x;` declaration.
+MOD_AFTER_TEST_CFG_RE = re.compile(
+    r"\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
     r"mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
 )
+
+
+def split_top_level(text):
+    """Split a cfg predicate argument list on commas outside parentheses."""
+    parts, depth, start = [], 0, 0
+    for index, char in enumerate(text):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append(text[start:index].strip())
+            start = index + 1
+    tail = text[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def is_test_predicate(predicate):
+    predicate = predicate.strip()
+    if predicate == "test":
+        return True
+    match = re.fullmatch(r"all\s*\((.*)\)", predicate, re.DOTALL)
+    return bool(match) and "test" in split_top_level(match.group(1))
+
+
+def test_cfg_attrs(masked):
+    """Yield (start, end) offsets of each test-gated `#[cfg(..)]` attribute."""
+    for match in CFG_OPEN_RE.finditer(masked):
+        depth, index = 1, match.end()
+        while index < len(masked) and depth:
+            if masked[index] == "(":
+                depth += 1
+            elif masked[index] == ")":
+                depth -= 1
+            index += 1
+        if depth or not masked.startswith("]", index):
+            continue
+        if is_test_predicate(masked[match.end():index - 1]):
+            yield match.start(), index + 1
 
 
 def blank(fragment):
@@ -120,7 +165,7 @@ class SourceFile:
 
         self.test_lines = self._in_file_test_lines()
         self.mod_decls = self._top_level_mods(MOD_DECL_RE)
-        self.cfg_test_mods = self._top_level_mods(CFG_TEST_MOD_RE)
+        self.cfg_test_mods = self._cfg_test_mods()
 
     def line_of(self, pos):
         return bisect.bisect_left(self.line_breaks, pos) + 1
@@ -131,11 +176,11 @@ class SourceFile:
 
     def _in_file_test_lines(self):
         lines = set()
-        for attr in CFG_TEST_RE.finditer(self.masked):
-            if self.depth_at(attr.start()) != 0:
+        for start, end in test_cfg_attrs(self.masked):
+            if self.depth_at(start) != 0:
                 continue
-            item_end = self._item_end(attr.end())
-            first = self.line_of(attr.start())
+            item_end = self._item_end(end)
+            first = self.line_of(start)
             last = min(self.line_of(item_end), self.total)
             lines.update(range(first, last + 1))
         return lines
@@ -167,6 +212,16 @@ class SourceFile:
             if self.events[close][1] == -1 and self.depths[close] == 0:
                 return self.event_positions[close]
         return len(self.masked)
+
+    def _cfg_test_mods(self):
+        names = []
+        for start, end in test_cfg_attrs(self.masked):
+            if self.depth_at(start) != 0:
+                continue
+            match = MOD_AFTER_TEST_CFG_RE.match(self.masked, end)
+            if match:
+                names.append(match.group(1))
+        return names
 
     def _top_level_mods(self, pattern):
         names = []
