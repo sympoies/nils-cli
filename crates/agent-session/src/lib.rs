@@ -15677,15 +15677,13 @@ exit 1
     fn absent_managed_name_requires_a_stopped_process_boundary() {
         let _isolation = nils_test_support::isolate_forge_identity();
         let stub = nils_test_support::StubBinDir::new();
-        stub.write_exe(
-            "tmux",
-            r#"#!/bin/sh
-if [ "$3" = '$7' ]; then exit 0; fi
-printf '%s\n' "can't find session: $3" >&2
-exit 1
-"#,
-        );
         let tmux = stub.path().join("tmux");
+        // Model the tmux status as stopped through the probe seam rather than a
+        // script launch: a launch races the probe's 100 ms budget (#2131).
+        let _status = super::tmux_probe_fixture::install_status(
+            &tmux,
+            super::tmux_probe_fixture::Status::Stopped,
+        );
         let mut pane = TestProcessGroup::spawn();
         let identity: TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
             "session_id": "$7", "pane_id": "%7", "pane_pid": pane.pid(),
