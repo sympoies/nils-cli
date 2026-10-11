@@ -57,10 +57,17 @@ if command == 'load-buffer':
     (root / 'buffer').write_bytes(pathlib.Path(args[-1]).read_bytes())
 elif command == 'paste-buffer':
     with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
+    if (root / 'inject-draft').exists():
+        with (root / 'composer').open('a') as out: out.write(' user addition')
+    if (root / 'start-after-paste').exists():
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
 elif command == 'send-keys' and args[-1] == 'Enter':
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
     (root / 'composer').write_text('')
 elif command == 'capture-pane':
+    if (root / 'capture-fails').exists(): sys.exit(1)
     text = (root / 'composer').read_text()
     if provider == 'claude': print('────────────────────────────\n❯ ' + text + '\n────────────────────────────\n  status')
     else: print('› ' + (text or 'Ask Codex to do anything') + '\n\n  status')
@@ -148,7 +155,7 @@ fn guarded_send_draft_present_refuses_without_pasting() {
         let fixture = Fixture::new(provider);
         fs::write(fixture.root().join("composer"), "user draft").unwrap();
         let output = fixture.send(&["--require-empty-composer"]);
-        let value = fixture.refused(&output, "send-guard-unsupported");
+        let value = fixture.refused(&output, "send-composer-not-empty");
         assert_eq!(value["error"]["details"]["guard"], "empty_composer");
         fixture.no_delivery();
         assert_eq!(
@@ -166,7 +173,7 @@ fn guarded_send_turn_started_after_caller_check_refuses_without_pasting() {
         // turn before send's final admission; pane adapters cannot fence it.
         fs::write(fixture.root().join("start-turn"), "").unwrap();
         let output = fixture.send(&["--require-idle"]);
-        let value = fixture.refused(&output, "send-guard-unsupported");
+        let value = fixture.refused(&output, "send-session-not-idle");
         assert_eq!(value["error"]["details"]["guard"], "idle");
         fixture.no_delivery();
     }
@@ -177,6 +184,8 @@ fn guarded_send_identity_and_key_happy_path_submits_once() {
     for provider in ["claude", "codex"] {
         let fixture = Fixture::new(provider);
         let output = fixture.send(&[
+            "--require-idle",
+            "--require-empty-composer",
             "--expect-runtime",
             "runtime-one",
             "--expect-provider-session",
@@ -189,6 +198,7 @@ fn guarded_send_identity_and_key_happy_path_submits_once() {
             output.stdout_json()["data"]["submission"]["outcome"],
             "submitted"
         );
+        assert_eq!(output.stdout_json()["data"]["guards"]["atomic"], false);
         assert_eq!(
             fixture
                 .calls()
@@ -255,4 +265,75 @@ fn guarded_send_unguarded_output_remains_compatible() {
     assert_eq!(value["data"]["sent_text"], true);
     assert!(value["data"].get("guards").is_none());
     assert!(value["data"].get("idempotency_key").is_none());
+}
+
+#[test]
+fn guarded_send_post_paste_mismatch_preserves_composer_without_submit() {
+    for provider in ["claude", "codex"] {
+        let fixture = Fixture::new(provider);
+        fs::write(fixture.root().join("inject-draft"), "").unwrap();
+        let output = fixture.send(&[
+            "--require-idle",
+            "--require-empty-composer",
+            "--idempotency-key",
+            "mismatch",
+        ]);
+        fixture.refused(&output, "send-composer-mismatch");
+        assert_eq!(
+            fixture
+                .calls()
+                .iter()
+                .filter(|call| call[0] == "paste-buffer")
+                .count(),
+            1
+        );
+        assert!(!fixture.root().join("submissions").exists());
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("composer")).unwrap(),
+            "continue-fixture user addition"
+        );
+        let repeated = fixture.send(&["--idempotency-key", "mismatch"]);
+        fixture.refused(&repeated, "send-idempotency-key-used");
+    }
+}
+
+#[test]
+fn guarded_send_turn_start_after_paste_refuses_without_submit() {
+    let fixture = Fixture::new("claude");
+    fs::write(fixture.root().join("start-after-paste"), "").unwrap();
+    let output = fixture.send(&["--require-idle", "--require-empty-composer"]);
+    fixture.refused(&output, "send-session-not-idle");
+    assert_eq!(
+        fixture
+            .calls()
+            .iter()
+            .filter(|call| call[0] == "paste-buffer")
+            .count(),
+        1
+    );
+    assert!(!fixture.root().join("submissions").exists());
+}
+
+#[test]
+fn guarded_send_unobservable_capture_and_activity_fail_closed() {
+    let fixture = Fixture::new("claude");
+    fs::write(fixture.root().join("capture-fails"), "").unwrap();
+    fixture.refused(
+        &fixture.send(&["--require-empty-composer"]),
+        "send-composer-unobservable",
+    );
+    fixture.no_delivery();
+    fs::remove_file(fixture.root().join("capture-fails")).unwrap();
+    fs::remove_file(fixture.root().join("state/sessions/guarded/activity.json")).unwrap();
+    fixture.refused(&fixture.send(&["--require-idle"]), "send-idle-unobservable");
+    fixture.no_delivery();
+}
+
+#[test]
+fn guarded_send_unsupported_provider_checks_fail_closed() {
+    let fixture = Fixture::new("dsh");
+    for flag in ["--require-idle", "--require-empty-composer"] {
+        fixture.refused(&fixture.send(&[flag]), "send-guard-unsupported");
+        fixture.no_delivery();
+    }
 }
