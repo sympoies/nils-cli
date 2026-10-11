@@ -15820,19 +15820,9 @@ mod tests {
         let registry = Arc::new(ProviderPromptDiscoveryRegistry::default());
         assert!(registry.resolve_source(&record).await.is_some());
 
-        std::fs::write(
-            &first,
-            format!(
-                "{}\n",
-                json!({
-                    "type":"user",
-                    "sessionId":"different-provider-id",
-                    "cwd":record.cwd.clone(),
-                    "message":{"role":"user","content":"mismatch"}
-                })
-            ),
-        )
-        .expect("replace cached transcript");
+        // The cached source disappears; a still-present mismatched exact file is
+        // covered separately, because it must fail closed.
+        std::fs::remove_file(&first).expect("remove cached transcript");
         let second = claude_config
             .join("projects/-second")
             .join(format!("{provider_id}.jsonl"));
@@ -37993,6 +37983,10 @@ esac
 
     mod claude_mailbox {
         include!("serve/tests/claude_mailbox.rs");
+    }
+
+    mod provider_prompt_source {
+        include!("serve/tests/provider_prompt_source.rs");
     }
 
     #[tokio::test]
