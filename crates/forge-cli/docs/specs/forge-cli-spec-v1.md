@@ -868,16 +868,19 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
     The base tip and branch name come from one provider read.
   - `git merge-tree --write-tree` of H and B is conflict-free, and its tree
     equals H'^{tree}.
+
   Every git fact is evaluated in a throwaway bare repository that borrows only
   the caller's object store. The caller's attributes (including merge drivers
   in the checkout or `info/attributes`), config, refs, replacement refs and
   hooks never shape the result.
+
   Any other case keeps the re-review refusal `awaiting_designated_review` with
   detail `sync_carry_over=<reason>`. That includes a conflicted sync, a later
   commit, a forged tree, a base parent off the target branch, a changed or
   unrecorded base branch, and objects missing locally. Hard stops, open
   findings, author binding, interval binding, and newest-report ownership still
   apply, so a newer report on H' supersedes the PASS on H.
+
   A live `check` appends a `review-sync-carry-over` record once (`review_url`,
   `reviewed_head`, `head`, `base_commit`, `merge_tree`) and reports it as
   `sync_carry_over`; `--dry-run` reports it without writing. Any session with
@@ -885,12 +888,14 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   coordinator. The record is never trusted alone, because every admission
   recomputes it. Delivery and merge gates re-verify the carry-over and admit
   it only when that exact record is in the active interval; otherwise they
-  refuse and point to `check`. For a carried merge, the merge payload's
-  `review_loop.head_sha` is the reviewed head H. `inspect` reports the
-  recorded carry-over for the current head as-is, without re-verifying it, and
-  its `status` stays derived from the handoff (for example
-  `review-scope-changed` after the base moved). Provider-side reviews are
-  never changed.
+  refuse and point to `check`.
+
+  For a carried merge, the merge payload's `review_loop.head_sha` is the
+  reviewed head H. `inspect` reports the recorded carry-over for the current
+  head as-is, without re-verifying it, and its `status` stays derived from
+  the handoff (for example `review-scope-changed` after the base moved).
+  Provider-side reviews are never changed.
+
   Forge-cli releases before this change fail closed when they read a ledger
   that contains the new record kind or a handoff `base_ref`. The fleet must
   run this release before the first live carry-over or assignment writes one.
