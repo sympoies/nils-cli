@@ -494,6 +494,7 @@ the receipt is explicitly marked `applied: false`. A retained terminal receipt
 without the admission member conservatively denies this exception. Journal
 read uncertainty denies only this changed-ID exception. IDs outside the bounded
 retention window are treated as unseen.
+
 It completes the stopped turn under its original ID and journals the raw idle
 ID separately. No command or conversation content is collected or inferred.
 
