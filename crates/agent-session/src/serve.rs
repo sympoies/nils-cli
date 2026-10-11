@@ -15820,19 +15820,9 @@ mod tests {
         let registry = Arc::new(ProviderPromptDiscoveryRegistry::default());
         assert!(registry.resolve_source(&record).await.is_some());
 
-        std::fs::write(
-            &first,
-            format!(
-                "{}\n",
-                json!({
-                    "type":"user",
-                    "sessionId":"different-provider-id",
-                    "cwd":record.cwd.clone(),
-                    "message":{"role":"user","content":"mismatch"}
-                })
-            ),
-        )
-        .expect("replace cached transcript");
+        // The cached source disappears; a still-present mismatched exact file is
+        // covered separately, because it must fail closed.
+        std::fs::remove_file(&first).expect("remove cached transcript");
         let second = claude_config
             .join("projects/-second")
             .join(format!("{provider_id}.jsonl"));
@@ -37991,180 +37981,12 @@ esac
         );
     }
 
-    #[tokio::test]
-    async fn claude_notification_requires_detached_stop_and_observes_exact_new_prompt() {
-        let tmp = tempfile::TempDir::new().expect("tempdir");
-        seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
-        seed_session_with_runtime(tmp.path(), "beta", "claude", "hs-claude-beta");
-        let command_log = tmp.path().join("tmux-commands.log");
-        let captured_prompt = tmp.path().join("captured-prompt");
-        let attached_state = tmp.path().join("attached-state");
-        fs::write(&attached_state, b"1\n").expect("attached state");
-        let tmux = tmp.path().join("tmux");
-        fs::write(
-            &tmux,
-            format!(
-                r#"#!/bin/sh
-printf '%s\n' "$*" >> {}
-case "$1" in
-  has-session) exit 0 ;;
-  display-message)
-    read value < {}
-    printf '%s\n' "$value"
-    exit 0
-    ;;
-  load-buffer)
-    for value in "$@"; do last="$value"; done
-    cp "$last" {}
-    exit 0
-    ;;
-  paste-buffer|send-keys|delete-buffer) exit 0 ;;
-  *) exit 1 ;;
-esac
-"#,
-                shell_words::quote(&command_log.to_string_lossy()),
-                shell_words::quote(&attached_state.to_string_lossy()),
-                shell_words::quote(&captured_prompt.to_string_lossy())
-            ),
-        )
-        .expect("tmux script");
-        let mut permissions = fs::metadata(&tmux).expect("tmux metadata").permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&tmux, permissions).expect("tmux permissions");
+    mod claude_mailbox {
+        include!("serve/tests/claude_mailbox.rs");
+    }
 
-        let state = state(tmp.path(), Some(TOKEN), tmux.clone());
-        let alpha = load_session_record(&state.context, "alpha").expect("alpha");
-        let beta = load_session_record(&state.context, "beta").expect("beta");
-        let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
-        provision_ready_coordination_fixture(&state.context, &beta);
-        crate::activity::activate_runtime(&state.context, &beta).expect("activate beta");
-        let launch_id = beta
-            .runtime
-            .as_ref()
-            .expect("beta runtime")
-            .launch_id
-            .clone();
-        let stop = serde_json::from_value(json!({
-            "schema_version": crate::activity::TURN_EVENT_VERSION,
-            "event_id": "claude-notification-stop",
-            "runtime_id": launch_id,
-            "provider": "claude",
-            "kind": "stop_observed",
-            "confidence": "observed"
-        }))
-        .expect("stop event");
-        crate::activity::ingest_event(&state.context, &beta.id, stop).expect("ingest stop");
-        let activity_path = session_dir(&state.context, &beta.id).join("activity.json");
-        let mut activity: Value =
-            serde_json::from_slice(&fs::read(&activity_path).expect("activity"))
-                .expect("activity json");
-        activity["last_provider_event_at"] = json!("2000-01-01T00:00:00Z");
-        fs::write(
-            &activity_path,
-            serde_json::to_vec_pretty(&activity).expect("serialize activity"),
-        )
-        .expect("write activity");
-
-        let canary = "CLAUDE-MAILBOX-BODY-MUST-NOT-REACH-PROMPT";
-        let (status, sent) = call(
-            router(state.clone()),
-            post_coordination(
-                "/sessions/beta/messages/v1",
-                alpha_capability.trim(),
-                json!({
-                    "body": canary,
-                    "idempotency_key": "claude-notification-0001",
-                    "reply_to": null,
-                    "expires_in": null
-                }),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{sent}");
-        let candidate = crate::coordination::pending_notifications(&state.context)
-            .expect("pending notifications")
-            .pop()
-            .expect("candidate");
-
-        let transcript = tmp.path().join("claude.jsonl");
-        fs::write(&transcript, b"").expect("transcript");
-        let attached_tail = ProviderPromptTail::open_path(
-            ProviderKind::Claude,
-            "provider-beta",
-            transcript.clone(),
-            Duration::ZERO,
-        )
-        .expect("tail");
-        let prompt = crate::coordination::notification_prompt(&candidate);
-        assert!(matches!(
-            start_terminal_coordination_notification(
-                &state.context,
-                &tmux,
-                &candidate,
-                &prompt,
-                attached_tail,
-                AgentKind::Claude,
-            ),
-            Err(TerminalNotificationStartError::Known("recipient-attached"))
-        ));
-        assert!(!captured_prompt.exists());
-
-        fs::write(&attached_state, b"0\n").expect("detach session");
-        let tail = ProviderPromptTail::open_path(
-            ProviderKind::Claude,
-            "provider-beta",
-            transcript.clone(),
-            Duration::ZERO,
-        )
-        .expect("tail");
-        let tail = start_terminal_coordination_notification(
-            &state.context,
-            &tmux,
-            &candidate,
-            &prompt,
-            tail,
-            AgentKind::Claude,
-        )
-        .expect("start notification");
-        assert_eq!(
-            fs::read_to_string(&captured_prompt).expect("captured prompt"),
-            prompt
-        );
-        assert!(!prompt.contains(canary));
-        let commands = fs::read_to_string(&command_log).expect("command log");
-        assert!(commands.contains("display-message -p -t hs-claude-beta:0.0"));
-        assert!(commands.contains("paste-buffer"));
-        assert!(!commands.contains("paste-buffer -p"));
-        assert!(commands.contains("send-keys -t hs-claude-beta:0.0 Enter"));
-
-        let observed = format!(
-            "{}\n",
-            json!({
-                "type": "user",
-                "sessionId": "provider-beta",
-                "isSidechain": false,
-                "isMeta": false,
-                "promptSource": "typed",
-                "message": { "role": "user", "content": prompt }
-            })
-        );
-        fs::write(&transcript, observed).expect("append observed prompt");
-        assert!(observe_terminal_coordination_prompt(tail, &prompt));
-        crate::coordination::mark_notification_submitted(&state.context, &candidate)
-            .expect("mark submitted");
-
-        let registry: Value = serde_json::from_slice(
-            &fs::read(tmp.path().join("coordination/registry.json")).expect("registry"),
-        )
-        .expect("registry json");
-        let notification = registry["notifications"]
-            .as_object()
-            .expect("notifications")
-            .values()
-            .next()
-            .expect("notification");
-        assert!(!notification.to_string().contains(canary));
-        assert_eq!(notification["state"], "prompt_submitted");
+    mod provider_prompt_source {
+        include!("serve/tests/provider_prompt_source.rs");
     }
 
     #[tokio::test]
