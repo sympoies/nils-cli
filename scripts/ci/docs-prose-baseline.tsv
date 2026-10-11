@@ -4,7 +4,6 @@ crates/agent-hook/README.md	9	45
 crates/agent-hook/docs/specs/agent-hook-v1.md	20	61
 crates/agent-hook/docs/specs/finish-line-acceptance-v1.md	3	23
 crates/agent-memory/README.md	1	13
-crates/agent-session/README.md	5	40
 crates/agent-session/docs/provider-turn-signal-evidence.md	4	54
 crates/agent-session/docs/runbooks/serve-daemon.md	2	14
 crates/agent-session/docs/specs/activity-stream-v1.md	1	13
