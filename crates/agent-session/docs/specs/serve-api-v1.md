@@ -21,7 +21,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `POST /shells/{owner}` | Bearer | [Emergency shells](#emergency-shells) |
 | `DELETE /shells/{owner}` | Bearer + incarnation body | [Emergency shells](#emergency-shells) |
 | `GET /shells/{owner}/attach?incarnation=...` | Bearer + incarnation query | [Emergency shells](#emergency-shells) |
-| `GET /sessions` | Open | This specification |
+| `GET /sessions` | Open | This specification; [context usage v1](session-context-usage-v1.md) |
 | `POST /sessions` | Bearer | This specification |
 | `GET /history/sessions` | Bearer | This specification |
 | `GET /history/sessions/{history_id}/messages` | Bearer | This specification |

@@ -15,6 +15,7 @@ pub mod codex_account;
 pub mod codex_app_server;
 mod codex_runtime_dir;
 pub mod completion;
+mod context_usage;
 mod conversation;
 #[doc(hidden)]
 pub mod coordination;
@@ -92,6 +93,7 @@ use serde_json::{Value, json};
 
 use cli::{AgentKind, Cli, Command, SpecialKey};
 use digest_format::valid_sha256;
+use display_metadata::SessionTitleStateView;
 
 pub const SESSION_DOCUMENT_VERSION: &str = "agent-session.session.v1";
 const SESSION_RESUME_DOCUMENT_VERSION: &str = "agent-session.resume.v1";
@@ -1045,25 +1047,6 @@ impl From<SessionTitleStateInput> for SessionTitleState {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct SessionTitleStateView {
-    topic: Option<String>,
-    topic_source: SessionTitleTopicSource,
-    references: Vec<String>,
-    activity: Option<String>,
-}
-
-impl From<&SessionTitleState> for SessionTitleStateView {
-    fn from(state: &SessionTitleState) -> Self {
-        Self {
-            topic: state.topic.clone(),
-            topic_source: state.topic_source.clone(),
-            references: state.references.clone(),
-            activity: state.activity.clone(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProviderResume {
     provider: String,
@@ -1647,6 +1630,8 @@ struct DurableResumeRecord {
 
 #[derive(Debug, Serialize)]
 pub struct SessionView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_usage: Option<context_usage::ContextUsage>,
     #[serde(flatten)]
     model_settings: session_model::ModelSettings,
     pub id: String,
@@ -8023,6 +8008,7 @@ fn session_view_from_parts(
     });
     let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
+        context_usage: context_usage::projection(context, record),
         model_settings: session_model::ModelSettings::for_record(record),
         id: record.id.clone(),
         agent: record.agent.clone(),
