@@ -594,6 +594,9 @@ fn recover_pending(
     {
         verify_transition_receipt_app(&paths.stable_app, lock, current, strict)?;
         replace_stable_cli(paths, lock, current, strict)?;
+        // Retirement may have succeeded before the transaction was interrupted.
+        // Keep recovery authority until the accepted app is running again.
+        reconcile_apps(paths, lock, false)?;
         remove_transaction_dir(&incoming)?;
         remove_transaction_dir(&backup)?;
         return fs::remove_file(paths.pending_receipt())
@@ -607,6 +610,9 @@ fn recover_pending(
         fs::rename(&backup, &paths.stable_app)
             .map_err(|_| backend_error("failed to restore the previous stable app"))?;
         replace_stable_cli(paths, lock, current, strict)?;
+        // Retirement may have succeeded before the transaction was interrupted.
+        // Keep recovery authority until the accepted app is running again.
+        reconcile_apps(paths, lock, false)?;
         remove_transaction_dir(&incoming)?;
         return fs::remove_file(paths.pending_receipt())
             .map_err(|_| backend_error("failed to abandon interrupted backend activation"));
@@ -1050,8 +1056,16 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
                 "an interrupted backend activation requires a non-dry-run recovery",
             ));
         }
+        let pending = read_receipt(&paths.pending_receipt())?
+            .ok_or_else(|| backend_error("pending backend activation receipt is unavailable"))?;
         recover_pending(&paths, &lock, strict)?;
-        return status_unlocked(&lock, &paths, false, strict);
+        if read_receipt(&paths.current_receipt())?
+            .is_some_and(|current| current.tag == pending.tag && current.commit == pending.commit)
+        {
+            // A recovered committed rollback must not be reversed by another one.
+            return status_unlocked(&lock, &paths, false, strict);
+        }
+        // Recovery abandoned a pre-replacement attempt; perform the requested rollback.
     }
     let current = read_receipt(&paths.current_receipt())?
         .ok_or_else(|| backend_error("no current backend receipt exists"))?;

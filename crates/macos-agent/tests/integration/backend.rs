@@ -234,6 +234,185 @@ fn review_repair_rollback_launch_failure_retry_keeps_the_target() {
 }
 
 #[test]
+fn review_repair_rollback_pre_replacement_failure_retry_reaches_the_target() {
+    for app_in_backup in [false, true] {
+        let harness = common::MacosAgentHarness::new();
+        let cwd = TempDir::new().expect("cwd");
+        let root = cwd.path().join("backend");
+        let old = candidate(cwd.path(), "v4.6.0", '6');
+        let new = candidate(cwd.path(), "v4.8.0", '8');
+        authorize_rollback(&new, &old);
+        for release in [&old, &new] {
+            let out = run_backend(
+                &harness,
+                cwd.path(),
+                &root,
+                release,
+                &["backend", "install"],
+            );
+            assert_eq!(out.code, 0, "{}", out.stderr_text());
+        }
+        let current = fs::read(root.join("receipts/current.json")).expect("current");
+        let target = fs::read(root.join("receipts/previous.json")).expect("target");
+        let obstruction = root.join("stable/.nils-peekaboo-incoming");
+        fs::write(&obstruction, b"staging obstruction").expect("obstruction");
+        let failure_trace = cwd.path().join("failed-rollback-actions");
+        let failed = run_backend_probe_mode_with_runtime_trace(
+            &harness,
+            cwd.path(),
+            &root,
+            &new,
+            &["--error-format", "json", "backend", "rollback"],
+            "ready",
+            &failure_trace,
+        );
+        assert_eq!(failed.code, 69, "{}", failed.stderr_text());
+        assert!(
+            fs::read_to_string(failure_trace)
+                .expect("actions")
+                .contains("retire-owned-apps")
+        );
+        assert_eq!(
+            fs::read(root.join("receipts/current.json")).expect("current"),
+            current
+        );
+        assert_eq!(
+            fs::read(root.join("receipts/pending.json")).expect("pending"),
+            target
+        );
+        assert_eq!(
+            sha256(&root.join("stable/Peekaboo.app/Contents/MacOS/Peekaboo")),
+            read_lock(&new.lock)["assets"][1]["executable_sha256"],
+        );
+        fs::remove_file(obstruction).expect("clear obstruction");
+        if app_in_backup {
+            fs::rename(
+                root.join("stable/Peekaboo.app"),
+                root.join("stable/.nils-peekaboo-backup"),
+            )
+            .expect("interrupted app rename");
+        }
+        let recovery_trace = cwd.path().join("retry-rollback-actions");
+        let retried = run_backend_probe_mode_with_runtime_trace(
+            &harness,
+            cwd.path(),
+            &root,
+            &new,
+            &["--format", "json", "backend", "rollback"],
+            "ready",
+            &recovery_trace,
+        );
+        assert_eq!(retried.code, 0, "{}", retried.stderr_text());
+        assert_eq!(retried.stdout_json()["result"]["current"]["tag"], "v4.6.0");
+        assert_eq!(retried.stdout_json()["result"]["previous"]["tag"], "v4.8.0");
+        assert_eq!(
+            sha256(&root.join("stable/Peekaboo.app/Contents/MacOS/Peekaboo")),
+            read_lock(&old.lock)["assets"][1]["executable_sha256"],
+        );
+        assert!(!root.join("receipts/pending.json").exists());
+        let actions = fs::read_to_string(recovery_trace).expect("actions");
+        assert_eq!(
+            actions
+                .lines()
+                .filter(|line| matches!(*line, "ensure-single-app" | "retire-owned-apps"))
+                .collect::<Vec<_>>(),
+            vec![
+                "ensure-single-app",
+                "retire-owned-apps",
+                "ensure-single-app"
+            ],
+            "restore the accepted app before continuing the requested rollback",
+        );
+    }
+}
+
+#[test]
+fn review_repair_rollback_abandoned_recovery_launch_failure_keeps_pending() {
+    for app_in_backup in [false, true] {
+        let harness = common::MacosAgentHarness::new();
+        let cwd = TempDir::new().expect("cwd");
+        let root = cwd.path().join("backend");
+        let old = candidate(cwd.path(), "v4.6.0", '6');
+        let new = candidate(cwd.path(), "v4.8.0", '8');
+        authorize_rollback(&new, &old);
+        for release in [&old, &new] {
+            let out = run_backend(
+                &harness,
+                cwd.path(),
+                &root,
+                release,
+                &["backend", "install"],
+            );
+            assert_eq!(out.code, 0, "{}", out.stderr_text());
+        }
+        let current = fs::read(root.join("receipts/current.json")).expect("current");
+        let target = fs::read(root.join("receipts/previous.json")).expect("target");
+        let obstruction = root.join("stable/.nils-peekaboo-incoming");
+        fs::write(&obstruction, b"staging obstruction").expect("obstruction");
+        let failed = run_backend(&harness, cwd.path(), &root, &new, &["backend", "rollback"]);
+        assert_eq!(failed.code, 69, "{}", failed.stderr_text());
+        assert_eq!(
+            fs::read(root.join("receipts/pending.json")).expect("pending"),
+            target
+        );
+        fs::remove_file(obstruction).expect("clear obstruction");
+        if app_in_backup {
+            fs::rename(
+                root.join("stable/Peekaboo.app"),
+                root.join("stable/.nils-peekaboo-backup"),
+            )
+            .expect("interrupted app rename");
+        }
+        let trace = cwd.path().join("failed-recovery-actions");
+        let failed_recovery = run_backend_probe_mode_with_runtime_trace(
+            &harness,
+            cwd.path(),
+            &root,
+            &new,
+            &["--error-format", "json", "backend", "rollback"],
+            "app_launch_failed",
+            &trace,
+        );
+        assert_eq!(
+            failed_recovery.code,
+            69,
+            "{}",
+            failed_recovery.stderr_text()
+        );
+        assert_eq!(
+            fs::read(root.join("receipts/current.json")).expect("current"),
+            current
+        );
+        assert_eq!(
+            fs::read(root.join("receipts/previous.json")).expect("target"),
+            target
+        );
+        assert_eq!(
+            fs::read(root.join("receipts/pending.json")).expect("pending"),
+            target
+        );
+        assert_eq!(
+            fs::read_to_string(trace)
+                .expect("actions")
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["ensure-single-app"],
+            "failed restoration must not retire the accepted app or discard recovery authority",
+        );
+        let retried = run_backend(
+            &harness,
+            cwd.path(),
+            &root,
+            &new,
+            &["--format", "json", "backend", "rollback"],
+        );
+        assert_eq!(retried.code, 0, "{}", retried.stderr_text());
+        assert_eq!(retried.stdout_json()["result"]["current"]["tag"], "v4.6.0");
+        assert!(!root.join("receipts/pending.json").exists());
+    }
+}
+
+#[test]
 fn upgrade_acceptance_stable_cli_survives_upgrade_and_rollback_and_is_verified() {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("cwd");
