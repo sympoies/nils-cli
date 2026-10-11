@@ -14,7 +14,6 @@ members = [
   "crates/agent-hook",
   "crates/memo",
   "crates/agent-session",
-  "crates/main-agent",
   "crates/claude-cli",
   "crates/codex-cli",
   "crates/docker-tools",

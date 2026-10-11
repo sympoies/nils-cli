@@ -30,9 +30,6 @@ const MAX_EXECUTABLE_CAPABILITIES: usize = 17;
 const MAX_DISPATCH_CHILD_OUTPUT: usize = 512 * 1024;
 const RULE_CHILD_DEADLINE: Duration = HANDLER_TIMEOUT;
 const SESSION_COORDINATION_HANDLER: &str = "session-coordination-guard.py";
-const TYPED_BOOTSTRAP_AUTHORIZATION_SCHEMA: &str =
-    "runtime-kit.session-coordination-bootstrap-authorization.v1";
-const TYPED_BOOTSTRAP_AUTHORIZATION_CODE: &str = "typed-main-agent-bootstrap-authorized";
 pub(crate) const ACTIVITY_STOP_RECONCILIATION_REQUIRED: &str =
     "activity-stop-reconciliation-required";
 const ACTIVITY_DEGRADED_AUDITED_READ_ONLY: &str = "activity-degraded-audited-read-only";
@@ -389,11 +386,6 @@ fn evaluate_with_io(
     let mut advised = BTreeSet::new();
     let mut downgraded_by = None;
     let mut execution_budgets = ExecutionBudgets::new();
-    let activity_recovery_candidate = exact_capability_recovery_candidate_for_session_coordination(
-        request,
-        raw,
-        prepared.session_coordination.is_some(),
-    );
     let operation_effect = if prepared.rules.iter().any(|prepared_rule| {
         prepared_rule.mode.executes()
             && (prepared_rule.rule.timeout_posture == TimeoutPosture::EffectGated
@@ -525,16 +517,6 @@ fn evaluate_with_io(
             liveness.as_ref(),
         ) {
             Ok(outcome) => outcome,
-            Err(error)
-                if activity_recovery_candidate
-                    && activity_capability(&rule.capability)
-                    && activity_runtime_fault(&error) =>
-            {
-                simple(
-                    DecisionAction::Allow,
-                    "activity-recovery-deferred-to-coordination",
-                )
-            }
             Err(error)
                 if activity_capability(&rule.capability)
                     && error.code == "session-activity-identity-incomplete" =>
@@ -713,28 +695,6 @@ fn activity_degradation_outcome(
         },
         lane_reason,
     )
-}
-
-fn exact_capability_recovery_candidate_for_session_coordination(
-    request: &NormalizedRequest,
-    raw: &[u8],
-    has_session_coordination: bool,
-) -> bool {
-    has_session_coordination
-        && request.event == "PreToolUse"
-        && request.matcher.as_deref() == Some("Bash")
-        && crate::adapter::exact_main_agent_capability_recovery_command(raw)
-}
-
-fn exact_bootstrap_candidate_for_session_coordination(
-    request: &NormalizedRequest,
-    raw: &[u8],
-    has_session_coordination: bool,
-) -> bool {
-    has_session_coordination
-        && request.event == "PreToolUse"
-        && request.matcher.as_deref() == Some("Bash")
-        && crate::adapter::exact_main_agent_bootstrap_command(raw)
 }
 
 fn evaluate_shadow(
@@ -1036,15 +996,11 @@ pub fn apply_session_coordination(
             StopCoordinationOutcome::NotRun,
         ));
     }
-    let typed_bootstrap_may_supersede_owner =
-        exact_bootstrap_candidate_for_session_coordination(request, raw, true)
-            && owner_active_foreign_is_only_block(loaded, &decision);
     if decision.action == DecisionAction::Block
         && !matches!(
             request.event.as_str(),
             "PostToolUse" | "PostToolUseFailure" | "Stop"
         )
-        && !typed_bootstrap_may_supersede_owner
     {
         return Ok(crate::degradation::apply_stop_reentry(
             request,
@@ -1155,12 +1111,6 @@ pub fn apply_session_coordination(
             },
         ),
     };
-    if typed_bootstrap_may_supersede_owner
-        && outcome.action == DecisionAction::Allow
-        && outcome.code == TYPED_BOOTSTRAP_AUTHORIZATION_CODE
-    {
-        supersede_owner_active_foreign(loaded, &mut decision);
-    }
     merge_coordination_outcome(&mut decision, &rule.id, outcome)?;
     Ok(crate::degradation::apply_stop_reentry(
         request,
@@ -1168,63 +1118,6 @@ pub fn apply_session_coordination(
         decision,
         coordination_outcome,
     ))
-}
-
-fn owner_active_foreign_is_only_block(
-    loaded: Option<&LoadedPolicy>,
-    decision: &NormalizedDecision,
-) -> bool {
-    let Some(loaded) = loaded else {
-        return false;
-    };
-    let mut owner_block = false;
-    for reason in &decision.reasons {
-        if reason.disposition == "transform" {
-            return false;
-        }
-        if reason.disposition != "block" {
-            continue;
-        }
-        let owner_rule = loaded.bundle.rules.iter().any(|rule| {
-            rule.id == reason.rule_id && matches!(rule.capability, Capability::OwnerLiveness { .. })
-        });
-        if !owner_rule || reason.code != "owner-active-foreign" {
-            return false;
-        }
-        owner_block = true;
-    }
-    owner_block
-}
-
-fn supersede_owner_active_foreign(
-    loaded: Option<&LoadedPolicy>,
-    decision: &mut NormalizedDecision,
-) {
-    let Some(loaded) = loaded else {
-        return;
-    };
-    for reason in &mut decision.reasons {
-        let owner_rule = loaded.bundle.rules.iter().any(|rule| {
-            rule.id == reason.rule_id && matches!(rule.capability, Capability::OwnerLiveness { .. })
-        });
-        if owner_rule && reason.code == "owner-active-foreign" && reason.disposition == "block" {
-            reason.code = "owner-liveness-superseded-by-typed-bootstrap".to_string();
-            reason.disposition = "allow".to_string();
-        }
-    }
-    decision.action = decision
-        .reasons
-        .iter()
-        .map(|reason| match reason.disposition.as_str() {
-            "allow" => DecisionAction::Allow,
-            "warn" => DecisionAction::Warn,
-            "context" => DecisionAction::Context,
-            "transform" => DecisionAction::Transform,
-            "block" => DecisionAction::Block,
-            _ => DecisionAction::Block,
-        })
-        .max_by_key(|action| rank(*action))
-        .unwrap_or(DecisionAction::Allow);
 }
 
 fn coordination_timeout_outcome(
@@ -1931,13 +1824,6 @@ fn run_session_coordination(
     session_coordination_outcome(&output.stdout)
 }
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TypedBootstrapAuthorization {
-    schema_version: String,
-    authorization: String,
-}
-
 const SESSION_COORDINATION_RESULT_SCHEMA: &str = "runtime-kit.session-coordination-result.v1";
 
 #[derive(Clone, Copy, Debug, serde::Deserialize, PartialEq, Eq)]
@@ -1963,16 +1849,6 @@ struct TypedSessionCoordinationResult {
 }
 
 fn session_coordination_outcome(stdout: &[u8]) -> Result<CoordinationHandlerOutcome, HookError> {
-    if let Ok(value) = crate::strict_json::from_slice(stdout)
-        && let Ok(authorization) = serde_json::from_value::<TypedBootstrapAuthorization>(value)
-        && authorization.schema_version == TYPED_BOOTSTRAP_AUTHORIZATION_SCHEMA
-        && authorization.authorization == TYPED_BOOTSTRAP_AUTHORIZATION_CODE
-    {
-        return Ok(CoordinationHandlerOutcome {
-            outcome: simple(DecisionAction::Allow, TYPED_BOOTSTRAP_AUTHORIZATION_CODE),
-            status: CoordinationHandlerStatus::Clean,
-        });
-    }
     if let Ok(value) = crate::strict_json::from_slice(stdout)
         && let Ok(result) = serde_json::from_value::<TypedSessionCoordinationResult>(value)
         && result.schema_version == SESSION_COORDINATION_RESULT_SCHEMA
@@ -2385,6 +2261,16 @@ mod tests {
     }
 
     #[test]
+    fn retired_bootstrap_payload_cannot_attest_clean_coordination() {
+        let result = session_coordination_outcome(
+            br#"{"schema_version":"runtime-kit.session-coordination-bootstrap-authorization.v1","authorization":"typed-main-agent-bootstrap-authorized"}"#,
+        )
+        .unwrap();
+        pretty_assertions::assert_eq!(result.status, CoordinationHandlerStatus::Unavailable);
+        pretty_assertions::assert_eq!(result.outcome.code, SESSION_COORDINATION_HANDLER);
+    }
+
+    #[test]
     fn activity_helper_resolution_survives_cwd_drift() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -2588,51 +2474,6 @@ mod tests {
             execution_path: Some(root.to_path_buf()),
             binding_roots: vec![root.to_path_buf()],
             dsh_subject: None,
-        }
-    }
-
-    #[test]
-    fn exact_bootstrap_candidate_requires_a_selected_coordination_rule() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let mut request = owner_request(temp.path());
-        request.matcher = Some("Bash".to_string());
-        let exact = br#"{
-          "hook_event_name": "PreToolUse",
-          "tool_name": "Bash",
-          "tool_input": {
-            "command": "'/trusted release/main-agent' bootstrap --idempotency-key bootstrap-12345678 --format json"
-          }
-        }"#;
-        assert!(exact_bootstrap_candidate_for_session_coordination(
-            &request, exact, true
-        ));
-        assert!(!exact_bootstrap_candidate_for_session_coordination(
-            &request, exact, false
-        ));
-
-        for command in [
-            "./main-agent bootstrap --idempotency-key bootstrap-12345678 --format json",
-            "main-agent bootstrap --format json --idempotency-key bootstrap-12345678",
-            "main-agent bootstrap --idempotency-key short --format json",
-            "main-agent bootstrap --idempotency-key bootstrap-12345678 --format json extra",
-            "main-agent bootstrap --idempotency-key bootstrap-12345678 --format json; touch forbidden",
-            "sh -c 'main-agent bootstrap --idempotency-key bootstrap-12345678 --format json'",
-            "/tmp/$(touch>/tmp/owner-bypass)/main-agent bootstrap --idempotency-key bootstrap-12345678 --format json",
-            "/${ATTACKER_BIN}/main-agent bootstrap --idempotency-key bootstrap-12345678 --format json",
-            "/tmp/`touch /tmp/owner-bypass`/main-agent bootstrap --idempotency-key bootstrap-12345678 --format json",
-            "/tmp/$((1+1))/main-agent bootstrap --idempotency-key bootstrap-12345678 --format json",
-            "/trusted/bin/main-agent bootstrap --idempotency-key bootstrap-12345678 --format json > /tmp/result",
-        ] {
-            let raw = serde_json::to_vec(&serde_json::json!({
-                "hook_event_name": "PreToolUse",
-                "tool_name": "Bash",
-                "tool_input": {"command": command}
-            }))
-            .expect("provider request");
-            assert!(
-                !exact_bootstrap_candidate_for_session_coordination(&request, &raw, true),
-                "unexpected deferral for {command}"
-            );
         }
     }
 

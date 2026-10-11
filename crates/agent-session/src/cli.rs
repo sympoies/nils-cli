@@ -112,12 +112,6 @@ pub enum Command {
     /// Internal metadata-only bridge for a managed Codex remote TUI.
     #[command(name = "codex-app-server-proxy", hide = true)]
     CodexAppServerProxy(CodexAppServerProxyArgs),
-    /// Internal exact-child supervisor for an explicitly armed Main Agent canary.
-    #[command(name = "provider-stop-canary-supervisor", hide = true)]
-    ProviderStopCanarySupervisor(ProviderStopCanarySupervisorArgs),
-    /// Internal crash guardian for the exact provider-owned process session.
-    #[command(name = "provider-stop-canary-guardian", hide = true)]
-    ProviderStopCanaryGuardian(ProviderStopCanarySupervisorArgs),
     /// Delete session state and kill the tmux session if it is still alive.
     Delete(DeleteArgs),
     /// Print shell completion script.
@@ -146,33 +140,10 @@ pub struct CodexAppServerProxyArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ProviderStopCanarySupervisorArgs {
-    /// Managed session id whose exact Codex child this supervisor owns.
-    #[arg(long)]
-    pub id: String,
-
-    /// Internal pinned cgroup device passed only from supervisor to guardian.
-    #[arg(long, hide = true)]
-    pub cgroup_device: Option<u64>,
-
-    /// Internal pinned cgroup inode passed only from supervisor to guardian.
-    #[arg(long, hide = true)]
-    pub cgroup_inode: Option<u64>,
-}
-
-#[derive(Debug, Args)]
 pub struct StartArgs {
     /// Internal: the serve daemon owns the Codex app-server control connection.
     #[arg(skip)]
     pub app_server_managed: bool,
-
-    /// Internal: arm the exact-child provider stop canary wrapper.
-    #[arg(skip)]
-    pub provider_stop_canary: bool,
-
-    /// Internal: assignment selector for the armed canary reservation sidecar.
-    #[arg(skip)]
-    pub provider_stop_canary_assignment_id: Option<String>,
 
     /// Internal: account nickname selected by the serve daemon.
     #[arg(skip)]
@@ -1639,7 +1610,7 @@ pub enum AgentKind {
     /// DeepSeek Harness, launched through a launch profile or an external runtime
     // A tmux pane started through a server-owned launch profile, or an
     // external-runtime worker owned by the dsh-runtime-kit bundle
-    // (`main-agent worker start`). A plain profile-less start is refused.
+    // A plain profile-less start is refused.
     Dsh,
 }
 

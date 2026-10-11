@@ -4,9 +4,6 @@ pub(crate) fn completion_deadline_for_view(
     context: &CliContext,
     record: &SessionRecord,
 ) -> Option<jiff::Timestamp> {
-    if crate::dsh_external::is_external_record(record) {
-        return None;
-    }
     let dir = session_dir(context, &record.id);
     if let Some(runtime) = &record.runtime
         && !matches!(

@@ -288,13 +288,8 @@ for path in changed:
     else:
         workspace_reasons.append(f"unclassified workspace path changed: {path}")
 
-# Packages whose tests drive each other's binaries: the agent-session integration
-# tests run `main-agent`, which ships from nils-main-agent, and `main-agent`
-# launches `agent-session` workers. Select them together so neither is validated
-# against a missing or stale sibling.
-coupled_packages = [{"nils-agent-session", "nils-main-agent"}]
-# Coupling and reverse dependencies reach one fixed point: a newly selected
-# consumer can itself need a coupled binary, whose consumers must also run.
+# Reverse dependencies reach one fixed point: a newly selected consumer's own
+# consumers must also run.
 workspace_ids = {package["name"]: package_id for package_id, package in workspace_packages.items()}
 selected_ids = {workspace_ids[name] for name in packages}
 pending = sorted(selected_ids)
@@ -303,11 +298,6 @@ while pending:
     source = resolved_packages[source_id]["name"]
     additions = [(package_id, f"reverse dependency of {source}")
                  for package_id in sorted(reverse_dependencies[source_id])]
-    for group in coupled_packages:
-        if source_id in workspace_members and source in group:
-            additions.extend((workspace_ids[name], f"coupled with {source}")
-                             for name in sorted(group - {source})
-                             if name in workspace_ids)
     for package_id, reason in additions:
         # Traverse external intermediaries, but build/lint/test workspace
         # members only. Filtering before traversal would truncate that closure.

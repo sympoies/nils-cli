@@ -69,21 +69,6 @@ print((root / 'metadata.json').read_text())
     def test_leaf_does_not_select_forward_dependencies(self):
         self.assert_scope(['crates/leaf/src/lib.rs'], ['leaf'])
 
-    def test_coupling_also_expands_reverse_dependents(self):
-        plan = self.assert_scope(['crates/nils-agent-session/src/lib.rs'],
-                                 ['nils-agent-session', 'nils-main-agent', 'coupled-consumer'])
-        self.assertIn('nils-main-agent: coupled with nils-agent-session',
-                      plan['LOCAL_FAST_PACKAGE_REASON'])
-
-    def test_reverse_dependent_can_trigger_binary_coupling(self):
-        metadata_path = Path(self.temp.name) / 'metadata.json'
-        metadata = json.loads(metadata_path.read_text())
-        session = next(n for n in metadata['resolve']['nodes'] if n['id'] == 'nils-agent-session')
-        session['deps'].append({'pkg': 'leaf', 'name': 'leaf', 'dep_kinds': []})
-        metadata_path.write_text(json.dumps(metadata))
-        self.assert_scope(['crates/leaf/src/lib.rs'],
-                          ['leaf', 'nils-agent-session', 'nils-main-agent', 'coupled-consumer'])
-
     def test_shared_packages_escalate(self):
         metadata_path = Path(self.temp.name) / 'metadata.json'
         metadata = json.loads(metadata_path.read_text())

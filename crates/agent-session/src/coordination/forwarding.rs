@@ -130,8 +130,8 @@ fn invalid() -> CliError {
     )
 }
 
-/// Called only under the registry lock and the controller's authorized carry guard.
-/// Historical hop endpoints stay immutable; this records the local receiver transfer.
+/// Build historical recipient-transfer fixtures for immutable audit validation.
+#[cfg(test)]
 pub(super) fn record_recipient_transfer(
     message: &mut StoredMessage,
     machine: &str,
