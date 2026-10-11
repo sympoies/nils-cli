@@ -22,7 +22,6 @@ or integrating a specific subsystem.
 
 - [Session context usage v1](specs/session-context-usage-v1.md): optional raw
   context-window facts, provider binding, bounded reads, and freshness.
-
 - [Session display metadata v1](specs/session-display-metadata-v1.md): explicit
   roles, persisted auto/pinned titles, and exact-session revision-fenced updates.
 - [Serve API v1](specs/serve-api-v1.md): HTTP and WebSocket endpoints,
