@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -32,6 +33,8 @@ print((root / 'metadata.json').read_text())
 ''')
         cargo.chmod(0o755)
         self.env = dict(os.environ, PATH=f'{directory}{os.pathsep}{os.environ["PATH"]}')
+        self.assertEqual(shutil.which("cargo", path=self.env["PATH"]), str(cargo))
+        self.assertTrue(os.access(cargo, os.X_OK), "fake cargo must be executable")
 
     def plan(self, *paths):
         args = [arg for path in paths for arg in ('--changed-file', path)]
@@ -93,6 +96,24 @@ print((root / 'metadata.json').read_text())
         self.assertIn('--offline', args)
         self.assertIn('--locked', args)
         self.assertIn('--all-features', args)
+
+    def test_metadata_failure_reports_one_actionable_error_without_a_plan(self):
+        cargo = Path(self.temp.name) / 'cargo'
+        cargo.write_text("""#!/usr/bin/env python3
+import sys
+print('fixture metadata unavailable', file=sys.stderr)
+sys.exit(101)
+""")
+        result = subprocess.run(
+            ['bash', str(SCRIPT), '--plan-only', '--changed-file', 'crates/leaf/src/lib.rs'],
+            cwd=ROOT, env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
+        self.assertIn('cargo metadata --offline --locked --all-features', result.stderr)
+        self.assertIn('cache', result.stderr.lower())
+        self.assertIn('lockfile', result.stderr.lower())
 
     def test_build_and_graph_inputs_escalate(self):
         for path in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain', 'rust-toolchain.toml',
