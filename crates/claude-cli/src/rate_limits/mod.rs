@@ -95,6 +95,7 @@ enum Fetch {
         values: WeeklyValues,
         windows: Vec<RateLimitWindow>,
         limit_resets: Value,
+        owner_key: Option<String>,
     },
     NoWindow {
         limit_resets: Value,
@@ -202,8 +203,10 @@ impl RateLimitsProvider for ClaudeRateLimits {
         }
         let mut errors = Vec::new();
         match fetch(target) {
-            Fetch::Windows { values, .. } => {
-                write_cache(&name, &values);
+            Fetch::Windows {
+                values, owner_key, ..
+            } => {
+                write_cache(&name, &values, owner_key.as_deref());
                 return OneLineFetch {
                     line: shared_values::one_line_from_values(&values, format_local_datetime)
                         .map(normalize_one_line),
@@ -211,7 +214,7 @@ impl RateLimitsProvider for ClaudeRateLimits {
                 };
             }
             Fetch::NoWindow { .. } => {
-                if let Some(fetch) = stale_one_line(&name, &mut errors) {
+                if let Some(fetch) = stale_one_line_for_target(target, &name, &mut errors) {
                     return fetch;
                 }
                 return OneLineFetch {
@@ -223,7 +226,7 @@ impl RateLimitsProvider for ClaudeRateLimits {
             }
             Fetch::Failed { message, .. } => errors.push(message),
         }
-        if let Some(mut fetch) = stale_one_line(&name, &mut errors) {
+        if let Some(mut fetch) = stale_one_line_for_target(target, &name, &mut errors) {
             errors.push(format!("{TOOL}-async: falling back to cache"));
             fetch.err = errors.join("\n");
             return fetch;
@@ -248,23 +251,38 @@ impl RateLimitsProvider for ClaudeRateLimits {
             };
         }
         match fetch(target) {
-            Fetch::Windows { values, .. } => {
-                write_cache(&name, &values);
+            Fetch::Windows {
+                values, owner_key, ..
+            } => {
+                write_cache(&name, &values, owner_key.as_deref());
                 OneLineFetch {
                     line: shared_values::one_line_from_values(&values, format_local_datetime),
                     ..Default::default()
                 }
             }
-            Fetch::NoWindow { .. } => OneLineFetch {
-                line: cache::read_allow_stale(&name, now_epoch())
-                    .ok()
-                    .and_then(|read| {
-                        shared_values::one_line_from_cache(&read.entry, format_local_datetime)
-                    }),
-                no_window: true,
-                ..Default::default()
-            },
-            Fetch::Failed { message, .. } => {
+            Fetch::NoWindow { .. } => {
+                let owner_key = active_owner_key(target);
+                OneLineFetch {
+                    line: cache::read_allow_stale_owned(&name, &owner_key, now_epoch())
+                        .ok()
+                        .and_then(|read| {
+                            shared_values::one_line_from_cache(&read.entry, format_local_datetime)
+                        }),
+                    no_window: true,
+                    ..Default::default()
+                }
+            }
+            Fetch::Failed {
+                message, reason, ..
+            } => {
+                if reason == Some(ProviderUsageReason::RateLimited) {
+                    let mut errors = Vec::new();
+                    if let Some(mut result) = stale_one_line_for_target(target, &name, &mut errors)
+                    {
+                        result.stale = true;
+                        return result;
+                    }
+                }
                 if debug {
                     eprintln!("{message}");
                 }
@@ -283,7 +301,7 @@ impl RateLimitsProvider for ClaudeRateLimits {
         let entry = if cached {
             cache::read_for_cached_mode(&name, now_epoch()).ok()
         } else {
-            cache::read_allow_stale(&name, now_epoch())
+            cache::read_allow_stale_owned(&name, &active_owner_key(target), now_epoch())
                 .ok()
                 .map(|read| read.entry)
         };
@@ -433,7 +451,13 @@ fn json_result(
     let identity = provider.identity(target);
     let name = identity.name.clone();
     if cached {
-        return from_cache(identity, "cache", &name, true);
+        let mut result = from_cache(identity, "cache", &name, true);
+        if read_target_login(target)
+            .is_ok_and(|login| crate::prompt_segment::client::backoff_active(&login.access_token))
+        {
+            result.reason_code = Some(ProviderUsageReason::RateLimited);
+        }
+        return result;
     }
 
     match fetch(target) {
@@ -441,15 +465,16 @@ fn json_result(
             values,
             windows,
             limit_resets,
+            owner_key,
         } => {
-            write_cache(&name, &values);
+            write_cache(&name, &values, owner_key.as_deref());
             let summary = schema::summary_from_weekly_values(&values, format_local_with_offset);
             let mut result = sanitize(RateLimitResult::ok(identity, "network", summary, windows));
             result.limit_resets = Some(limit_resets);
             result
         }
         Fetch::NoWindow { limit_resets } => {
-            let fallback_result = from_cache(identity.clone(), "cache-fallback", &name, false);
+            let fallback_result = from_owned_cache(target, identity.clone(), &name);
             if fallback_result.ok {
                 return fallback_result;
             }
@@ -462,9 +487,15 @@ fn json_result(
             message,
             reason,
         } => {
-            if fallback == CacheFallbackPolicy::AnyFailure {
-                let fallback_result = from_cache(identity.clone(), "cache-fallback", &name, false);
+            if fallback == CacheFallbackPolicy::AnyFailure
+                || (reason == Some(ProviderUsageReason::RateLimited)
+                    && !shared_env::env_truthy(ASYNC_JSON_NO_CACHE_FALLBACK_ENV))
+            {
+                let mut fallback_result = from_owned_cache(target, identity.clone(), &name);
                 if fallback_result.ok {
+                    if reason == Some(ProviderUsageReason::RateLimited) {
+                        fallback_result.reason_code = reason;
+                    }
                     return fallback_result;
                 }
             }
@@ -494,6 +525,38 @@ fn from_cache(
         Err(message) => {
             RateLimitResult::error(identity, source, "cache-read-failed", message, None, None)
         }
+    }
+}
+
+fn from_owned_cache(target: &Path, identity: TargetIdentity, name: &str) -> RateLimitResult {
+    let Some(owner_key) = read_target_login(target)
+        .ok()
+        .map(|login| crate::prompt_segment::token_key(&login.access_token))
+    else {
+        return RateLimitResult::error(
+            identity,
+            "network",
+            "cache-owner-unavailable",
+            format!("{TOOL}: active account changed; cache fallback unavailable"),
+            None,
+            None,
+        );
+    };
+    match cache::read_allow_stale_owned(name, &owner_key, now_epoch()) {
+        Ok(read) => sanitize(RateLimitResult::from_cache(
+            identity,
+            "cache-fallback",
+            &read.entry,
+            format_local_with_offset,
+        )),
+        Err(message) => RateLimitResult::error(
+            identity,
+            "cache-fallback",
+            "cache-read-failed",
+            message,
+            None,
+            None,
+        ),
     }
 }
 
@@ -533,8 +596,20 @@ fn cached_one_line(name: &str) -> OneLineFetch {
     }
 }
 
-fn stale_one_line(name: &str, errors: &mut Vec<String>) -> Option<OneLineFetch> {
-    match cache::read_allow_stale(name, now_epoch()) {
+fn active_owner_key(target: &Path) -> String {
+    read_target_login(target)
+        .ok()
+        .map(|login| crate::prompt_segment::token_key(&login.access_token))
+        .unwrap_or_default()
+}
+
+fn stale_one_line_for_target(
+    target: &Path,
+    name: &str,
+    errors: &mut Vec<String>,
+) -> Option<OneLineFetch> {
+    let owner_key = active_owner_key(target);
+    match cache::read_allow_stale_owned(name, &owner_key, now_epoch()) {
         Ok(read) => {
             shared_values::one_line_from_cache(&read.entry, format_local_datetime).map(|line| {
                 OneLineFetch {
@@ -544,15 +619,19 @@ fn stale_one_line(name: &str, errors: &mut Vec<String>) -> Option<OneLineFetch> 
                 }
             })
         }
-        Err(err) => {
-            errors.push(err);
+        Err(message) => {
+            errors.push(message);
             None
         }
     }
 }
 
-fn write_cache(name: &str, values: &WeeklyValues) {
-    let _ = cache::write(name, now_epoch(), values);
+fn write_cache(name: &str, values: &WeeklyValues, owner_key: Option<&str>) {
+    if let Some(owner_key) = owner_key {
+        let _ = cache::write_owned(name, now_epoch(), values, owner_key);
+    } else {
+        let _ = cache::write(name, now_epoch(), values);
+    }
 }
 
 fn fetch(target: &Path) -> Fetch {
@@ -588,11 +667,16 @@ fn fetch(target: &Path) -> Fetch {
             };
         }
     };
-    parse_usage_body(&body)
+    let mut result = parse_usage_body(&body);
+    if let Fetch::Windows { owner_key, .. } = &mut result {
+        *owner_key = Some(crate::prompt_segment::token_key(&login.access_token));
+    }
+    result
 }
 
 fn request_failure_reason(failure: &RequestFailure) -> ProviderUsageReason {
     match failure {
+        RequestFailure::Backoff => ProviderUsageReason::RateLimited,
         RequestFailure::Client => ProviderUsageReason::Unknown,
         RequestFailure::Transport { timeout: true } => ProviderUsageReason::Timeout,
         RequestFailure::Transport { timeout: false } => ProviderUsageReason::ServiceUnavailable,
@@ -662,6 +746,7 @@ fn parse_usage_body(body: &str) -> Fetch {
         values,
         windows,
         limit_resets,
+        owner_key: None,
     }
 }
 
