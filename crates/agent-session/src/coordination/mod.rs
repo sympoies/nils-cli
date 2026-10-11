@@ -8,6 +8,8 @@ mod forwarding;
 pub mod mailbox;
 mod notification;
 pub use notification::NotificationProjection;
+pub mod readiness;
+pub use readiness::checkpoint_path_for_state;
 pub(crate) mod remote;
 pub(crate) mod retirement;
 pub(crate) mod server;
@@ -2303,17 +2305,6 @@ pub(crate) fn capability_path_for_state(
         .join("coordination")
         .join(format!(
             "capability-{}",
-            digest_bytes(incarnation.as_bytes())
-        ))
-}
-
-pub fn checkpoint_path_for_state(state_dir: &Path, session_id: &str, incarnation: &str) -> PathBuf {
-    state_dir
-        .join("sessions")
-        .join(session_id)
-        .join("coordination")
-        .join(format!(
-            "main-agent-checkpoint-{}.json",
             digest_bytes(incarnation.as_bytes())
         ))
 }

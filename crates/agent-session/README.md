@@ -85,6 +85,7 @@ agent-session serve --bind 127.0.0.1:8781 --token-stdin
 agent-session command <id>
 agent-session attach <id>
 agent-session logs <id>
+agent-session readiness --format json
 agent-session delete <id>
 agent-session completion zsh
 main-agent capabilities --provider codex --format json

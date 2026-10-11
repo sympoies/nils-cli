@@ -77,6 +77,8 @@ use crate::{
     update_session_title_if_revision,
 };
 
+#[path = "serve_prompt_scan.rs"]
+mod prompt_scan;
 #[path = "serve_shell.rs"]
 mod shell;
 
@@ -10624,85 +10626,14 @@ impl ProviderPromptDiscoveryRegistry {
         }
     }
 
-    async fn resolve_source(&self, record: &crate::SessionRecord) -> Option<ProviderPromptSource> {
-        let key = ProviderPromptDiscoveryKey::from_record(record)?;
-        let slot = {
-            let mut entries = self.entries.lock().await;
-            entries.retain(|existing, _| existing.session_id != key.session_id || existing == &key);
-            if !entries.contains_key(&key) && entries.len() >= PROVIDER_PROMPT_DISCOVERY_MAX_ENTRIES
-            {
-                // Stable admission avoids turning every list pass above the
-                // registry bound into another expensive cold-recovery scan.
-                return None;
-            }
-            entries
-                .entry(key.clone())
-                .or_insert_with(|| {
-                    Arc::new(tokio::sync::Mutex::new(
-                        ProviderPromptDiscoverySlot::default(),
-                    ))
-                })
-                .clone()
-        };
-        loop {
-            let mut state = slot.lock().await;
-            if let Some(source) = state.source.clone() {
-                return Some(source);
-            }
-            let now = Instant::now();
-            if state.next_scan_at.is_some_and(|next| now < next) {
-                return None;
-            }
-            let mut progress = state.progress.subscribe();
-            if state.in_flight {
-                drop(state);
-                let _ = progress.changed().await;
-                continue;
-            }
-            state.in_flight = true;
-            state.scan_attempts = state.scan_attempts.saturating_add(1);
-            drop(state);
-
-            let resolver = self.resolver.clone();
-            let scan_permits = self.scan_permits.clone();
-            let candidate = record.clone();
-            let task_slot = slot.clone();
-            tokio::spawn(async move {
-                let source = match scan_permits.acquire_owned().await {
-                    Ok(_permit) => tokio::task::spawn_blocking(move || resolver(&candidate))
-                        .await
-                        .ok()
-                        .flatten(),
-                    Err(_) => None,
-                };
-                let mut state = task_slot.lock().await;
-                state.in_flight = false;
-                if let Some(source) = source {
-                    state.source = Some(source);
-                    state.next_scan_at = None;
-                } else {
-                    state.next_scan_at = Some(Instant::now() + state.backoff);
-                    state.backoff = next_provider_prompt_discovery_backoff(state.backoff);
-                }
-                state.progress.send_modify(|version| {
-                    *version = version.wrapping_add(1);
-                });
-            });
-            let _ = progress.changed().await;
-        }
-    }
-
     async fn last_prompt_projection(
         &self,
         record: &crate::SessionRecord,
     ) -> Option<LastPromptProjection> {
         let key = ProviderPromptDiscoveryKey::from_record(record)?;
-        let Some(source) = self.resolve_source(record).await else {
-            return Some(LastPromptProjection {
-                state: LastPromptState::Unavailable,
-                continuity: self.continuity_for_key(&key).await,
-                prompt: None,
-            });
+        let source = match self.cached_source_or_start_scan(record, &key).await {
+            Ok(source) => source,
+            Err(projection) => return Some(projection),
         };
         let Some(slot) = self.entries.lock().await.get(&key).cloned() else {
             return Some(LastPromptProjection {
@@ -10934,12 +10865,6 @@ impl ProviderPromptDiscoveryRegistry {
         }
         count
     }
-}
-
-fn next_provider_prompt_discovery_backoff(current: Duration) -> Duration {
-    current
-        .saturating_mul(2)
-        .min(PROVIDER_PROMPT_DISCOVERY_MAX_BACKOFF)
 }
 
 impl AttachSubscription {
@@ -15752,21 +15677,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn provider_prompt_discovery_backoff_doubles_and_caps() {
-        let mut backoff = PROVIDER_PROMPT_PENDING_POLL_INTERVAL;
-        let mut observed = Vec::new();
-        for _ in 0..8 {
-            backoff = next_provider_prompt_discovery_backoff(backoff);
-            observed.push(backoff);
-        }
-        assert_eq!(observed[0], Duration::from_secs(1));
-        assert_eq!(observed[1], Duration::from_secs(2));
-        assert_eq!(observed[2], Duration::from_secs(4));
-        assert_eq!(observed[5], PROVIDER_PROMPT_DISCOVERY_MAX_BACKOFF);
-        assert_eq!(observed[7], PROVIDER_PROMPT_DISCOVERY_MAX_BACKOFF);
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pending_provider_prompt_scan_survives_lead_waiter_cancellation() {
         let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -15871,12 +15781,18 @@ mod tests {
             })
             .collect();
 
-        for record in &records {
-            assert!(registry.last_prompt(record).await.is_none());
-        }
-        while started.load(Ordering::SeqCst) < PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS {
-            tokio::task::yield_now().await;
-        }
+        // Source discovery runs in the background, so recoveries start on the
+        // list passes after it resolves.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while started.load(Ordering::SeqCst) < PROVIDER_PROMPT_RECOVERY_MAX_CONCURRENT_SCANS {
+                for record in &records {
+                    assert!(registry.last_prompt(record).await.is_none());
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("recoveries start");
         for record in &records {
             assert!(registry.last_prompt(record).await.is_none());
         }
@@ -32325,8 +32241,17 @@ esac
         let home = tmp.path().join("home");
         let alpha_repo = home.join("Project/sympoies/alpha");
         let beta_repo = home.join("Project/sympoies/beta");
-        std::fs::create_dir_all(alpha_repo.join(".git")).unwrap();
-        std::fs::create_dir_all(beta_repo.join(".git")).unwrap();
+        for repo in [&alpha_repo, &beta_repo] {
+            std::fs::create_dir_all(repo).unwrap();
+            assert!(
+                std::process::Command::new("/usr/bin/git")
+                    .args(["init", "--quiet"])
+                    .current_dir(repo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
         let _home = EnvGuard::set(&lock, "HOME", home.to_str().unwrap());
         let tmux = minimal_tmux(tmp.path());
         let st = state(tmp.path(), Some(TOKEN), tmux);
@@ -39692,7 +39617,7 @@ esac
         }
     }
 
-    fn provider_discovery_record(
+    pub(super) fn provider_discovery_record(
         id: &str,
         tmux_session: &str,
         launch_id: &str,

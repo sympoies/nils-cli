@@ -18,6 +18,7 @@ pub mod completion;
 mod conversation;
 #[doc(hidden)]
 pub mod coordination;
+mod coordination_routing;
 mod diagnose;
 mod display_metadata;
 #[doc(hidden)]
@@ -309,7 +310,7 @@ where
                 _ => "parse-error",
             };
             let message = render_clap_message(&err);
-            if let Some(command) = coordination_leaf_from_raw_args(&raw_args) {
+            if let Some(command) = coordination_routing::leaf_from_raw_args(&raw_args) {
                 return render_error(command, format, CliError::usage(code, message, None));
             }
             return emit_parse_error(BINARY, format, code, &message);
@@ -329,7 +330,7 @@ fn dispatch(cli: Cli) -> i32 {
         Ok(context) => context,
         Err(err) => {
             return render_error(
-                coordination_command_name(&cli.command).unwrap_or("error"),
+                coordination_routing::command_name(&cli.command).unwrap_or("error"),
                 format,
                 err,
             );
@@ -357,6 +358,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Activity(args) => run_activity(&context, args),
         Command::WorkContext(args) => coordination::run_work_context(&context, args),
         Command::Broker(args) => coordination::run_broker(&context, args),
+        Command::Readiness(args) => coordination::readiness::run(&context, args),
         Command::Message(args) => coordination::run_message(&context, args),
         Command::Metadata(args) => metadata::run_metadata(&context, args),
         Command::Lineage(args) => lineage::run_lineage(&context, args),
@@ -374,103 +376,9 @@ fn dispatch(cli: Cli) -> i32 {
     }
 }
 
-fn coordination_command_name(command: &Command) -> Option<&'static str> {
-    match command {
-        Command::WorkContext(args) => Some(match &args.command {
-            cli::WorkContextCommand::Status(_) => "work-context-status",
-            cli::WorkContextCommand::Set(_) => "work-context-set",
-            cli::WorkContextCommand::Clear(_) => "work-context-clear",
-            cli::WorkContextCommand::Advise(_) => "work-context-advise",
-            cli::WorkContextCommand::Acknowledge(_) => "work-context-acknowledge",
-            cli::WorkContextCommand::Claim(_) => "work-context-claim",
-            cli::WorkContextCommand::Show(_) => "work-context-show",
-            cli::WorkContextCommand::Check(_) => "work-context-check",
-            cli::WorkContextCommand::Renew(_) => "work-context-renew",
-            cli::WorkContextCommand::Release(_) => "work-context-release",
-            cli::WorkContextCommand::Admit(_) => "work-context-admit",
-            cli::WorkContextCommand::Complete(_) => "work-context-complete",
-            cli::WorkContextCommand::Reconcile(_) => "work-context-reconcile",
-        }),
-        Command::Broker(args) => Some(match &args.command {
-            cli::BrokerCommand::Identity(_) => "broker-identity",
-            cli::BrokerCommand::Status(_) => "broker-status",
-            cli::BrokerCommand::Adopt(_) => "broker-adopt",
-            cli::BrokerCommand::Reconcile(_) => "broker-reconcile",
-            cli::BrokerCommand::RetireStopped(_) => "broker-retire-stopped",
-            cli::BrokerCommand::Stop(_) => "broker-stop",
-            cli::BrokerCommand::Heartbeat(_) => "broker-heartbeat",
-        }),
-        Command::Message(args) => Some(match &args.command {
-            cli::MessageCommand::Audit(_) => "message-audit",
-            cli::MessageCommand::Peers(_) => "message-peers",
-            cli::MessageCommand::Delivery(_) => "message-delivery",
-            cli::MessageCommand::ServiceSend(_) => "message-service-send",
-            cli::MessageCommand::Send(_) => "message-send",
-            cli::MessageCommand::Forward(_) => "message-forward",
-            cli::MessageCommand::Inbox(_) => "message-inbox",
-            cli::MessageCommand::Show(_) => "message-show",
-            cli::MessageCommand::Ack(_) => "message-ack",
-            cli::MessageCommand::Reply(_) => "message-reply",
-            cli::MessageCommand::Wait(_) => "message-wait",
-            cli::MessageCommand::Reminder(_) => "message-reminder",
-        }),
-        Command::Metadata(args) => Some(match &args.command {
-            cli::MetadataCommand::Attach(_) => "metadata-attach",
-            cli::MetadataCommand::Show(_) => "metadata-show",
-        }),
-        Command::Account(args) => Some(match &args.command {
-            cli::AccountCommand::Show(_) => "account-show",
-            cli::AccountCommand::Switch(_) => "account-switch",
-        }),
-        _ => None,
-    }
-}
-
-fn coordination_leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
-    args.windows(2).find_map(|pair| {
-        let group = pair[0].to_str()?;
-        let leaf = pair[1].to_str()?;
-        match (group, leaf) {
-            ("work-context", "status") => Some("work-context-status"),
-            ("work-context", "set") => Some("work-context-set"),
-            ("work-context", "clear") => Some("work-context-clear"),
-            ("work-context", "advise") => Some("work-context-advise"),
-            ("work-context", "acknowledge") => Some("work-context-acknowledge"),
-            ("work-context", "claim") => Some("work-context-claim"),
-            ("work-context", "show") => Some("work-context-show"),
-            ("work-context", "check") => Some("work-context-check"),
-            ("work-context", "renew") => Some("work-context-renew"),
-            ("work-context", "release") => Some("work-context-release"),
-            ("work-context", "admit") => Some("work-context-admit"),
-            ("work-context", "complete") => Some("work-context-complete"),
-            ("work-context", "reconcile") => Some("work-context-reconcile"),
-            ("broker", "identity") => Some("broker-identity"),
-            ("broker", "status") => Some("broker-status"),
-            ("broker", "adopt") => Some("broker-adopt"),
-            ("broker", "reconcile") => Some("broker-reconcile"),
-            ("broker", "retire-stopped") => Some("broker-retire-stopped"),
-            ("broker", "stop") => Some("broker-stop"),
-            ("message", "audit") => Some("message-audit"),
-            ("message", "send") => Some("message-send"),
-            ("message", "peers") => Some("message-peers"),
-            ("message", "delivery") => Some("message-delivery"),
-            ("message", "inbox") => Some("message-inbox"),
-            ("message", "show") => Some("message-show"),
-            ("message", "ack") => Some("message-ack"),
-            ("message", "reply") => Some("message-reply"),
-            ("message", "wait") => Some("message-wait"),
-            ("message", "reminder") => Some("message-reminder"),
-            ("metadata", "attach") => Some("metadata-attach"),
-            ("metadata", "show") => Some("metadata-show"),
-            ("account", "show") => Some("account-show"),
-            ("account", "switch") => Some("account-switch"),
-            _ => None,
-        }
-    })
-}
-
 fn command_format(command: &Command) -> OutputFormat {
     match command {
+        Command::Readiness(args) => args.format,
         Command::Start(args) => args.format,
         Command::Run(args) => args.format,
         Command::List(args) => args.format,
@@ -2398,6 +2306,7 @@ fn start_session_inner_unjournaled(
         ));
     }
     let cwd = resolve_cwd(args.cwd.as_deref())?;
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
     let provider_plan = initial_provider_resume_plan(
         args.agent,
@@ -2795,6 +2704,7 @@ fn start_run_session_unjournaled(
 ) -> Result<StartView, CliError> {
     validate_agent_args(args.agent, &args.agent_args)?;
     let cwd = resolve_cwd(args.cwd.as_deref())?;
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let prompt = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?;
     let prompt = prompt
         .filter(|value| !value.trim().is_empty())
@@ -3061,6 +2971,7 @@ fn start_resolved_provider_resume_session(
     cwd: PathBuf,
     provider_resume: ProviderResume,
 ) -> Result<StartView, CliError> {
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
     let initial_lineage = args.initial_lineage;
@@ -10829,6 +10740,7 @@ fn resume_session_locked(
 ) -> Result<ResumeSessionOutcome, CliError> {
     ensure_session_lifecycle_mutation_allowed(context, &record)?;
     orchestration::ensure_session_not_quarantined(context, &record)?;
+    let _worktree_lifecycle = acquire_worktree_lifecycle(context, Path::new(&record.cwd))?;
     match session_status(context, tmux_bin, &record).as_str() {
         "running" => {
             return Ok(ResumeSessionOutcome {
@@ -18625,6 +18537,118 @@ fn resolve_state_dir(explicit: Option<PathBuf>) -> Result<PathBuf, CliError> {
     Ok(normalize_path(&home.join(".local/state/agent-session")))
 }
 
+/// Resolve nested cwd to its physical Git checkout, without inherited Git
+/// retargeting. Ordinary non-repository directories have no checkout fence.
+fn resolve_worktree_lifecycle_root(
+    state: &Path,
+    cwd: &Path,
+) -> Result<Option<PathBuf>, nils_common::worktree_lifecycle::Error> {
+    use nils_common::worktree_lifecycle::{self, Error};
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let cwd = fs::canonicalize(cwd).map_err(|_| Error::Unavailable)?;
+    if !cwd.ancestors().any(|path| path.join(".git").exists()) {
+        return worktree_lifecycle::prior_checkout_root(state, &cwd);
+    }
+    // This identity probe cannot use a PATH shim that reports a different
+    // checkout key from the one removal uses.
+    let mut command = ProcessCommand::new("/usr/bin/git");
+    command
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    for (key, _) in std::env::vars_os() {
+        if key.as_bytes().starts_with(b"GIT_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("LC_ALL", "C");
+    let mut child = command.spawn().map_err(|_| Error::Unavailable)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::Unavailable);
+            }
+        }
+    };
+    if !status.success() {
+        return Err(Error::Unavailable);
+    }
+    let mut bytes = Vec::new();
+    child
+        .stdout
+        .take()
+        .ok_or(Error::Unavailable)?
+        .take(65_537)
+        .read_to_end(&mut bytes)
+        .map_err(|_| Error::Unavailable)?;
+    if bytes.len() > 65_536 || bytes.pop() != Some(b'\n') || bytes.is_empty() {
+        return Err(Error::Unavailable);
+    }
+    let root = fs::canonicalize(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+        .map_err(|_| Error::Unavailable)?;
+    if !cwd.starts_with(&root) {
+        return Err(Error::Unavailable);
+    }
+    Ok(Some(root))
+}
+
+fn acquire_worktree_lifecycle(
+    context: &CliContext,
+    cwd: &Path,
+) -> Result<Option<nils_common::worktree_lifecycle::Guard>, CliError> {
+    use nils_common::worktree_lifecycle::{self, Error};
+    let adapt = |error| {
+        let code = match error {
+            Error::Busy => "worktree-lifecycle-busy",
+            Error::Changed => "worktree-lifecycle-changed",
+            Error::Unavailable => "worktree-lifecycle-unavailable",
+            Error::StateRootMismatch => "worktree-lifecycle-state-root-mismatch",
+        };
+        CliError::runtime(
+            code,
+            "checkout startup must wait until lifecycle proof is available",
+            Some(json!({ "retryable": matches!(error, Error::Busy) })),
+        )
+    };
+    let namespace = worktree_lifecycle::state_home().map_err(adapt)?;
+    let Some(root) = resolve_worktree_lifecycle_root(&namespace, cwd).map_err(adapt)? else {
+        return Ok(None);
+    };
+    let _state_root = private_session_state_root(context)?;
+    let mut guard = worktree_lifecycle::Guard::acquire_startup(&namespace, &root).map_err(adapt)?;
+    // Only linked worktrees can be removal targets. Primary checkouts may host
+    // independent session inventories without acquiring a removal binding.
+    if root.join(".git").is_file() {
+        guard
+            .bind_session_state(&context.state_dir)
+            .map_err(adapt)?;
+    }
+    // A removal that won after root resolution must not allow startup to
+    // publish a session for the now-missing checkout or nested cwd.
+    if resolve_worktree_lifecycle_root(&namespace, cwd)
+        .map_err(adapt)?
+        .as_ref()
+        != Some(&root)
+    {
+        return Err(adapt(Error::Changed));
+    }
+    guard.verify().map_err(adapt)?;
+    Ok(Some(guard))
+}
+
 fn resolve_cwd(explicit: Option<&Path>) -> Result<PathBuf, CliError> {
     let cwd = match explicit {
         Some(path) => absolute_path(path)?,
@@ -19677,6 +19701,91 @@ mod tests {
         strip_trailing_blank_lines, tmux_launch_may_have_created_runtime,
         try_acquire_session_record_lock, write_session_record,
     };
+
+    #[test]
+    fn worktree_lifecycle_blocks_provider_import_and_existing_resume() {
+        use super::*;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let checkout = tmp.path().join("checkout");
+        fs::create_dir(&checkout).unwrap();
+        assert!(
+            ProcessCommand::new("git")
+                .current_dir(&checkout)
+                .args(["init", "--quiet"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let context = CliContext {
+            state_dir: tmp.path().join("state"),
+            host: None,
+        };
+        let record = create_record(RecordRequest {
+            context: &context,
+            agent: AgentKind::Codex,
+            mode: "interactive",
+            coordination_mode: cli::CoordinationMode::Advisory,
+            title: None,
+            title_state: None,
+            explicit_id: Some("existing"),
+            cwd: &checkout,
+            prompt: None,
+            log_file_name: None,
+            provider_resume: None,
+            agent_args: Vec::new(),
+            agent_bin: None,
+        })
+        .unwrap()
+        .record;
+        let record_path = context.state_dir.join("sessions/existing/session.json");
+        let before = fs::read(&record_path).unwrap();
+        let _guard = nils_common::worktree_lifecycle::Guard::acquire(
+            &nils_common::worktree_lifecycle::state_home().unwrap(),
+            &checkout,
+        )
+        .unwrap();
+        let args = ProviderResumeImportArgs {
+            agent: AgentKind::Codex,
+            title_mode: display_metadata::TitleMode::Auto,
+            provider_resume_id: "provider-fixture".into(),
+            title: None,
+            title_state: None,
+            id: Some("imported".into()),
+            coordination_mode: cli::CoordinationMode::Advisory,
+            tmux_bin: Some(tmp.path().join("never-launch")),
+            agent_bin: None,
+            agent_profile: None,
+            provider_config_dir: None,
+            profile_auto_resume_supported: None,
+            profile_graceful_shutdown: None,
+            codex_usage_account: None,
+            agent_args: Vec::new(),
+            initial_lineage: InitialLineage {
+                seed: lineage::LineageSeed::root("fixture", "user", "test"),
+                work: None,
+                role: None,
+            },
+            format: OutputFormat::Json,
+        };
+        let provider_resume = ProviderResume {
+            provider: "codex".into(),
+            session_id: "provider-fixture".into(),
+            captured_at: "2030-01-01T00:00:00Z".into(),
+            capture_method: "fixture".into(),
+            resume_args: Vec::new(),
+            extra: BTreeMap::new(),
+        };
+        let imported =
+            start_resolved_provider_resume_session(&context, args, checkout, provider_resume)
+                .unwrap_err();
+        pretty_assertions::assert_eq!(imported.code(), "worktree-lifecycle-busy");
+        assert!(!context.state_dir.join("sessions/imported").exists());
+        let resumed = resume_session_locked(&context, record, &tmp.path().join("never-launch"))
+            .err()
+            .expect("resume must retain the barrier");
+        pretty_assertions::assert_eq!(resumed.code(), "worktree-lifecycle-busy");
+        pretty_assertions::assert_eq!(fs::read(record_path).unwrap(), before);
+    }
 
     #[test]
     fn managed_dsh_profile_assigns_provider_identity_before_launch() {
@@ -22008,9 +22117,9 @@ exit 1
             assert!(deleted.deleted);
         }
     }
-
     #[test]
     fn absent_managed_name_requires_a_stopped_process_boundary() {
+        let _isolation = nils_test_support::isolate_forge_identity();
         let stub = nils_test_support::StubBinDir::new();
         stub.write_exe(
             "tmux",
@@ -26107,7 +26216,7 @@ fi
             ),
         )
         .unwrap();
-        fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        nils_test_support::make_executable_and_warm(&tmux);
 
         let error = terminate_without_process_runtime_for_test(
             &context,

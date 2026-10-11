@@ -1052,11 +1052,25 @@ mod tests {
     /// panic in one test does not cascade-fail the other.
     static ENV_GH_BIN_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// Point forge identity and config lookups at an empty per-test directory,
+    /// so the developer's forge profiles cannot leak into a process-runner test.
+    /// The returned directory must outlive the test.
+    fn isolate_forge_config() -> tempfile::TempDir {
+        let dir = tempfile::TempDir::new().expect("isolated config dir");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", dir.path().join("xdg-config"));
+            std::env::set_var("XDG_STATE_HOME", dir.path().join("xdg-state"));
+            std::env::remove_var("FORGE_IDENTITY_PRINCIPAL");
+        }
+        dir
+    }
+
     #[test]
     fn process_runner_applies_call_local_host_over_ambient_hosts() {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = ENV_GH_BIN_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _config = isolate_forge_config();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let stub = dir.path().join("gh");
         std::fs::write(
@@ -1087,6 +1101,7 @@ mod tests {
     #[test]
     fn process_runner_reports_missing_backend() {
         let _guard = ENV_GH_BIN_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _config = isolate_forge_config();
         let runner = ProcessRunner;
         // Use a path that definitely does not exist.
         unsafe {
@@ -1105,11 +1120,12 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = ENV_GH_BIN_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _config = isolate_forge_config();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let stub = dir.path().join("gh");
         std::fs::write(
             &stub,
-            "#!/bin/sh\necho 'https://alice:credential-value@github.com/o/r' >&2\nsleep 2\necho should-not-complete\n",
+            "#!/bin/sh\necho 'https://alice:credential-value@github.com/o/r' >&2\nsleep 30\necho should-not-complete\n",
         )
         .expect("write stub");
         let mut perms = std::fs::metadata(&stub).expect("metadata").permissions();
@@ -1122,8 +1138,11 @@ mod tests {
         }
         let call = BackendCall::new(BackendProgram::Gh, ["search", "prs"]);
         let started = std::time::Instant::now();
+        // The stub must write its stderr line before the timeout fires. Shell
+        // startup takes a few ms unloaded but exceeds 50 ms under parallel load,
+        // which made the detail race. This budget is a fallback with a wide margin.
         let err = runner
-            .run_with_timeout(&call, Some(Duration::from_millis(50)))
+            .run_with_timeout(&call, Some(Duration::from_millis(1000)))
             .expect_err("timeout");
         unsafe {
             std::env::remove_var(ENV_GH_BIN);
@@ -1134,7 +1153,7 @@ mod tests {
         assert!(!detail.contains("credential-value"), "{detail}");
         assert!(detail.contains("github.com/o/r"), "{detail}");
         assert!(
-            started.elapsed() < Duration::from_secs(1),
+            started.elapsed() < Duration::from_secs(10),
             "timeout should kill the child promptly"
         );
     }
@@ -1144,6 +1163,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = ENV_GH_BIN_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _config = isolate_forge_config();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let stub = dir.path().join("gh");
         std::fs::write(&stub, "#!/bin/sh\nyes 0123456789 | head -c 2097152\n").expect("write stub");
@@ -1170,6 +1190,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = ENV_GH_BIN_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _config = isolate_forge_config();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let stub = dir.path().join("gh");
         std::fs::write(
@@ -1230,6 +1251,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = ENV_GH_BIN_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _config = isolate_forge_config();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let stub = dir.path().join("gh");
         std::fs::write(
@@ -1258,6 +1280,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = ENV_GH_BIN_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _config = isolate_forge_config();
         let dir = tempfile::TempDir::new().expect("tempdir");
         let stub = dir.path().join("gh");
         std::fs::write(
