@@ -35,6 +35,7 @@ use completion_receipts::{JournalEntry, append_journal_entry};
 #[path = "activity/event_validation.rs"]
 mod event_validation;
 use event_validation::validate_event;
+pub(crate) mod pending;
 mod provider;
 #[path = "activity/state_view.rs"]
 mod state_view;
@@ -2557,21 +2558,7 @@ fn ingest_event_with_lock(
     validate_event(&event, admission)?;
     let observed = load_session_record(context, id)?;
 
-    let record_lock = match lock_mode {
-        ActivityLockMode::Blocking => crate::acquire_session_record_lock(context, &observed.id)?,
-        ActivityLockMode::NonBlocking => {
-            crate::try_acquire_session_record_lock(context, &observed.id)?.ok_or_else(|| {
-                CliError::runtime(
-                    "activity-lock-busy",
-                    "activity state is busy",
-                    Some(json!({ "id": observed.id })),
-                )
-            })?
-        }
-        ActivityLockMode::Timed(timeout) => {
-            crate::acquire_session_record_lock_timed(context, &observed.id, timeout)?
-        }
-    };
+    let record_lock = pending::acquire_record(context, &observed.id, lock_mode)?;
     let record = load_session_record(context, &observed.id)?;
     crate::ensure_same_session_identity(&observed, &record)?;
     if !session_accepts_activity_provider(&record, &event.provider) {

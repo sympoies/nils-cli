@@ -7575,15 +7575,13 @@ async fn send_handler(
         }
     }
     let context = state.context.clone();
-    let args = cli::SendArgs {
+    let args = crate::send::unguarded_args(
         id,
-        text: body.text,
-        text_stdin: false,
+        body.text,
         keys,
-        allow_blocked: body.allow_blocked,
-        tmux_bin: Some(state.tmux_bin.clone()),
-        format: nils_common::cli_contract::OutputFormat::Json,
-    };
+        body.allow_blocked,
+        state.tmux_bin.clone(),
+    );
     match tokio::task::spawn_blocking(move || crate::send_to_session(&context, args)).await {
         Ok(Ok(sent)) => envelope_ok(json!({ "machine": state.machine, "sent": sent })),
         Ok(Err(err)) => envelope_err(err),

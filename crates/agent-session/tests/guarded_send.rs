@@ -55,6 +55,10 @@ if command == 'show-environment':
     sys.exit(1)
 if command == 'load-buffer':
     (root / 'buffer').write_bytes(pathlib.Path(args[-1]).read_bytes())
+    if (root / 'start-on-load').exists():
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
 elif command == 'paste-buffer':
     with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
     if (root / 'inject-draft').exists():
@@ -69,8 +73,12 @@ elif command == 'send-keys' and args[-1] == 'Enter':
 elif command == 'capture-pane':
     if (root / 'capture-fails').exists(): sys.exit(1)
     text = (root / 'composer').read_text()
-    if provider == 'claude': print('────────────────────────────\n❯ ' + text + '\n────────────────────────────\n  status')
-    else: print('› ' + (text or 'Ask Codex to do anything') + '\n\n  status')
+    if provider == 'claude':
+        shown = text if text else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
+        print('────────────────────────────\n❯\u00a0' + shown + '\n────────────────────────────\n  status')
+    else:
+        shown = text if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
+        print('› ' + shown + '\n\n  status')
 "#;
         let tmux = temp.path().join("tmux");
         fs::write(&tmux, script).unwrap();
@@ -336,4 +344,88 @@ fn guarded_send_unsupported_provider_checks_fail_closed() {
         fixture.refused(&fixture.send(&[flag]), "send-guard-unsupported");
         fixture.no_delivery();
     }
+}
+
+#[test]
+fn guarded_send_pending_provider_event_refuses_without_pasting() {
+    use std::os::fd::AsRawFd;
+    let fixture = Fixture::new("claude");
+    let intent = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(
+            fixture
+                .root()
+                .join("state/sessions/guarded/.activity-ingress.lock"),
+        )
+        .unwrap();
+    // SAFETY: intent owns this valid descriptor; this is synthetic state only.
+    assert_eq!(unsafe { libc::flock(intent.as_raw_fd(), libc::LOCK_SH) }, 0);
+    let output = fixture.send(&["--require-idle"]);
+    fixture.refused(&output, "send-provider-event-pending");
+    fixture.no_delivery();
+}
+
+#[test]
+fn guarded_send_concurrent_same_key_delivers_once() {
+    let fixture = Fixture::new("claude");
+    let mut codes = std::thread::scope(|scope| {
+        let first = scope.spawn(|| fixture.send(&["--idempotency-key", "concurrent"]));
+        let second = scope.spawn(|| fixture.send(&["--idempotency-key", "concurrent"]));
+        let outputs = [first.join().unwrap(), second.join().unwrap()];
+        for output in &outputs {
+            if output.code != 0 {
+                fixture.refused(output, "send-idempotency-key-used");
+            }
+        }
+        outputs.map(|output| output.code)
+    });
+    codes.sort();
+    assert_eq!(codes, [0, 1]);
+    assert_eq!(
+        fixture
+            .calls()
+            .iter()
+            .filter(|call| call[0] == "paste-buffer")
+            .count(),
+        1
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn guarded_send_ambiguous_composer_fails_closed() {
+    for (provider, draft) in [
+        ("codex", "Ask Codex to do anything"),
+        ("claude", "[Pasted text #1 +2 lines]"),
+        ("claude", "Try \"edit <filepath> to...\""),
+    ] {
+        let fixture = Fixture::new(provider);
+        fs::write(fixture.root().join("composer"), draft).unwrap();
+        fixture.refused(
+            &fixture.send(&["--require-empty-composer"]),
+            "send-composer-unobservable",
+        );
+        fixture.no_delivery();
+    }
+}
+
+#[test]
+fn guarded_send_turn_start_during_buffer_load_refuses_without_pasting() {
+    let fixture = Fixture::new("claude");
+    fs::write(fixture.root().join("start-on-load"), "").unwrap();
+    fixture.refused(
+        &fixture.send(&["--require-idle", "--idempotency-key", "load-race"]),
+        "send-session-not-idle",
+    );
+    assert!(fixture.calls().iter().any(|call| call[0] == "load-buffer"));
+    fixture.no_delivery();
 }

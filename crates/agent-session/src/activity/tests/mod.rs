@@ -1182,3 +1182,52 @@ mod completion_review;
 mod provider_hooks;
 mod replay_journal;
 mod turn_completion;
+
+#[test]
+fn guarded_send_probe_delays_ingestion_without_dropping_event() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (context, created) = test_session(&tmp);
+    activate_runtime(&context, &created.record).expect("activate runtime");
+    let mut started = event(TurnEventKind::TurnStarted, "guard-probe-start");
+    started.runtime_id = created
+        .record
+        .runtime
+        .as_ref()
+        .expect("runtime")
+        .launch_id
+        .clone();
+    let probe = pending::probe_lock(&context, &created.record.id)
+        .expect("probe")
+        .expect("exclusive");
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let id = created.record.id.clone();
+    let worker_context = context.clone();
+    let worker = thread::spawn(move || {
+        ready_tx.send(()).expect("ready");
+        done_tx
+            .send(ingest_event(&worker_context, &id, started))
+            .expect("done");
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("started");
+    assert!(matches!(
+        done_rx.recv_timeout(Duration::from_millis(100)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    drop(probe);
+    let applied = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("unblocked")
+        .expect("applied");
+    worker.join().expect("worker");
+    assert_eq!(applied.turn_state.phase, TurnPhase::Working);
+    assert_eq!(
+        activity_status(&context, &created.record.id)
+            .expect("activity")
+            .turn_state
+            .phase,
+        TurnPhase::Working
+    );
+}

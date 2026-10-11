@@ -20,6 +20,9 @@ or integrating a specific subsystem.
 
 ## Stable contracts
 
+- [Send v1](specs/send-v1.md): submission-time continuation guards, observation
+  limits, durable idempotency claims, and refusal codes.
+
 - [Session context usage v1](specs/session-context-usage-v1.md): optional raw
   context-window facts, provider binding, bounded reads, and freshness.
 - [Session display metadata v1](specs/session-display-metadata-v1.md): explicit
