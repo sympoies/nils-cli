@@ -1,5 +1,5 @@
 use super::*;
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 
 fn claude_hook(
     context: &CliContext,
@@ -246,6 +246,119 @@ fn older_retained_idle_rejected_after_three_turns_but_unseen_compact_id_complete
         &context,
         &created.record,
         "unseen-compact",
+        "Notification",
+        json!({"notification_type": "idle_prompt"}),
+    );
+    assert_eq!(idle.turn_state.phase, TurnPhase::Waiting);
+    assert_eq!(
+        idle.turn_state.last_turn.unwrap().provider_turn_id,
+        stopped.current_turn.unwrap().provider_turn_id
+    );
+}
+
+#[test]
+fn retained_completion_without_admission_bit_denies_changed_prompt_idle() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+    activate_runtime(&context, &created.record).unwrap();
+    claude_hook(
+        &context,
+        &created.record,
+        "X",
+        "UserPromptSubmit",
+        json!({}),
+    );
+    let completed = claude_hook(
+        &context,
+        &created.record,
+        "X",
+        "Notification",
+        json!({"notification_type": "idle_prompt"}),
+    );
+    assert_eq!(completed.turn_state.phase, TurnPhase::Waiting);
+    let x = completed.turn_state.last_turn.unwrap().provider_turn_id;
+    let journal = session_dir(&context, &created.record.id).join(ACTIVITY_JOURNAL_FILE);
+    let contents = fs::read_to_string(&journal).unwrap();
+    let mut retained: Value = serde_json::from_str(contents.lines().last().unwrap()).unwrap();
+    assert_eq!(retained["applied"], true);
+    retained.as_object_mut().unwrap().remove("applied");
+    let entry: JournalEntry = serde_json::from_value(retained.clone()).unwrap();
+    assert_eq!(entry.event.kind, TurnEventKind::TurnCompleted);
+    assert_eq!(entry.event.provider_turn_id, x);
+    assert_eq!(entry.applied, None);
+    // Preserve an actually accepted old-format completion after Start(X) rotates
+    // out. No inferred acceptance bit or earlier X evidence survives.
+    write_atomic(
+        &journal,
+        format!("{retained}\n").as_bytes(),
+        SECRET_FILE_MODE,
+    )
+    .unwrap();
+    for turn in ["A", "B"] {
+        claude_hook(
+            &context,
+            &created.record,
+            turn,
+            "UserPromptSubmit",
+            json!({}),
+        );
+    }
+    let rejected = claude_hook(
+        &context,
+        &created.record,
+        "rejected-unseen",
+        "Notification",
+        json!({"notification_type": "idle_prompt"}),
+    );
+    assert_eq!(rejected.turn_state.phase, TurnPhase::Working);
+    let rejected_receipt: JournalEntry = serde_json::from_str(
+        fs::read_to_string(&journal)
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(rejected_receipt.applied, Some(false));
+    let stopped = claude_hook(
+        &context,
+        &created.record,
+        "B",
+        "Stop",
+        json!({"stop_hook_active": false, "background_tasks": []}),
+    )
+    .turn_state;
+    hold_completion_candidate(&context, &created.record);
+    let entries: Vec<JournalEntry> = fs::read_to_string(&journal)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(entries.iter().any(|entry| {
+        entry.event.provider_turn_id == x
+            && entry.event.kind == TurnEventKind::TurnCompleted
+            && entry.applied.is_none()
+    }));
+    assert!(!entries.iter().any(|entry| {
+        entry.event.provider_turn_id == x && entry.event.kind == TurnEventKind::TurnStarted
+    }));
+    assert_ne!(stopped.last_turn.as_ref().unwrap().provider_turn_id, x);
+    let late = claude_hook(
+        &context,
+        &created.record,
+        "X",
+        "Notification",
+        json!({"notification_type": "idle_prompt"}),
+    );
+    assert_eq!(
+        late.turn_state, stopped,
+        "retained terminal X is known despite missing admission bit"
+    );
+    // An explicitly rejected receipt still supplies no accepted old-turn proof.
+    let idle = claude_hook(
+        &context,
+        &created.record,
+        "rejected-unseen",
         "Notification",
         json!({"notification_type": "idle_prompt"}),
     );
