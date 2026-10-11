@@ -1521,6 +1521,7 @@ fn receive_admitted(
         forwarded_at_epoch: None,
         category: envelope.category,
         forwarding: envelope.forwarding,
+        resume_carry: None,
         body_bytes: envelope.body.len(),
         body: envelope.body,
     };
@@ -1808,13 +1809,17 @@ fn receive_replay(
 }
 
 #[cfg(test)]
+#[path = "remote_inbox_regressions.rs"]
+mod inbox_regressions;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::{assert_eq, assert_ne};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     const TOKEN: &str = "fixture-private-session-capability-0000000000001";
-    fn fixture() -> (tempfile::TempDir, CliContext) {
+    pub(super) fn fixture() -> (tempfile::TempDir, CliContext) {
         let temp = tempfile::TempDir::new().expect("private temp root");
         let context = CliContext {
             state_dir: temp.path().to_path_buf(),
@@ -1873,7 +1878,7 @@ mod tests {
         drop(locked);
         (temp, context)
     }
-    fn envelope() -> Envelope {
+    pub(super) fn envelope() -> Envelope {
         Envelope {
             category: None,
             forwarding: None,
