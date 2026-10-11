@@ -12,6 +12,7 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/markdownlint-audit.sh --strict
   - bash scripts/ci/cli-output-contract-lint.sh --strict
   - bash scripts/ci/forge-cli-fixture-lint.sh --strict
+  - bash scripts/ci/tests/node-scope.test.sh
   - bash scripts/ci/tests/install-local-release-binaries.test.sh
   - bash scripts/ci/tests/completion-freshness-audit.test.sh
   - bash scripts/ci/tests/completion-flag-parity-audit.test.sh
@@ -151,6 +152,7 @@ if [[ "$docs_only" -eq 0 && "${NILS_CLI_GATE_ACTIVE:-0}" != "1" ]]; then
 fi
 
 source "$repo_root/scripts/ci/test-env.sh"
+source "$repo_root/scripts/ci/lib/node-scope.sh"
 
 run() {
   local -a cmd=( "$@" )
@@ -194,14 +196,15 @@ fi
 
 run python3 scripts/ci/tests/gate-resources.test.py
 run bash scripts/ci/tests/test-env.test.sh
+run bash scripts/ci/tests/node-scope.test.sh
 run bash scripts/ci/tests/install-local-release-binaries.test.sh
 run bash scripts/ci/tests/completion-freshness-audit.test.sh
 run bash scripts/ci/tests/completion-flag-parity-audit.test.sh
 run bash scripts/ci/tests/local-fast-checks.test.sh
 run bash scripts/ci/tests/detect-docs-only.test.sh
 run bash scripts/ci/tests/detect-release-only.test.sh
-run node scripts/ci/tests/release-ci-gate.test.cjs
-run node scripts/ci/tests/peekaboo-release-check.test.cjs
+run node_scoped node scripts/ci/tests/release-ci-gate.test.cjs
+run node_scoped node scripts/ci/tests/peekaboo-release-check.test.cjs
 run bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh
 run bash scripts/ci/tests/release-workflow-contract.test.sh
 run bash scripts/ci/tests/shared-helper-adoption-audit.test.sh

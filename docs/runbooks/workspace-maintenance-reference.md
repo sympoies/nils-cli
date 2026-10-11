@@ -38,6 +38,12 @@ Docs-only checks require:
 - `npx`
 - `python3`
 
+Node.js commands in these checks (`npx` for Markdown lint and the `node` release
+tests) run through `scripts/ci/lib/node-scope.sh`. Where `systemd-run --user`
+can start a scope, each one runs with `MemoryMax=6G` and no swap, nested under
+`NILS_CLI_GATE_SLICE` when a gate sets it. Elsewhere, for example on macOS or a
+hosted runner, the command runs unchanged.
+
 Local fast changed-scope checks also require:
 
 - `python3`
@@ -449,6 +455,7 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/markdownlint-audit.sh --strict`
 - `bash scripts/ci/cli-output-contract-lint.sh --strict`
 - `bash scripts/ci/forge-cli-fixture-lint.sh --strict`
+- `bash scripts/ci/tests/node-scope.test.sh`
 - `bash scripts/ci/tests/install-local-release-binaries.test.sh`
 - `bash scripts/ci/tests/completion-freshness-audit.test.sh`
 - `bash scripts/ci/tests/completion-flag-parity-audit.test.sh`

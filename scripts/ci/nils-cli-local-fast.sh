@@ -521,6 +521,7 @@ require_cmd rg
 run bash scripts/ci/tempdir-leak-audit.sh
 run python3 scripts/ci/tests/gate-resources.test.py
 run bash scripts/ci/tests/test-env.test.sh
+run bash scripts/ci/tests/node-scope.test.sh
 run bash scripts/ci/tests/tempdir-leak-audit.test.sh
 run bash scripts/ci/tests/tempdir-leak-probe.test.sh
 
