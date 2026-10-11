@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
-use crate::cli::{fake_agent, fake_tmux, run, spawn_test_process_group, tmux_calls};
+use crate::cli::{fake_agent, fake_tmux, run, sha256_hex, spawn_test_process_group, tmux_calls};
 
 #[test]
 fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
@@ -115,6 +115,31 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
             thread::sleep(Duration::from_millis(5));
         }
         assert!(!pane.is_running(), "fake tmux must stop the original pane");
+        // The fake pane exits without the owned launch wrapper, so emulate the
+        // wrapper's authenticated broker stop; macOS resume requires it.
+        let capability = state.join(format!(
+            "sessions/launch-env/coordination/capability-{}",
+            sha256_hex(record["runtime"]["launch_id"].as_str().unwrap())
+        ));
+        let broker_stopped = run(
+            tmp.path(),
+            &[
+                "--state-dir",
+                state.to_str().unwrap(),
+                "broker",
+                "stop",
+                "--session",
+                "launch-env",
+                "--exit-code",
+                "0",
+                "--capability-file",
+                capability.to_str().unwrap(),
+                "--format",
+                "json",
+            ],
+            &[],
+        );
+        assert_eq!(broker_stopped.code, 0, "{}", broker_stopped.stderr_text());
         // Resume needs a new live identity after the original group is reaped.
         let resumed_pane = spawn_test_process_group();
         let resumed_pane_pid = resumed_pane.pid().to_string();
