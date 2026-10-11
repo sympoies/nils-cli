@@ -1178,5 +1178,5 @@ fn test_session(tmp: &tempfile::TempDir) -> (CliContext, crate::CreatedRecord) {
 
 mod provider_hooks;
 mod replay_journal;
-
+mod turn_completion;
 mod claude_completion;
