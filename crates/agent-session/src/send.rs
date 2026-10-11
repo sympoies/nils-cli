@@ -1,4 +1,4 @@
-//! Terminal send delivery; opt-in guards leave the legacy path unchanged.
+//! Terminal send delivery; opt-in guards preserve unguarded delivery.
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;

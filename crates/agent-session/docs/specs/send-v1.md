@@ -56,6 +56,7 @@ Other providers or runtime kinds fail closed for these checks. Exact composer
 verification supports an unambiguous, single visible input line. Dialogs,
 unknown layouts, wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
+
 Guard captures use `tmux capture-pane -p -e`. The native Codex placeholder and
 Claude `Try "…"` hint count as empty only when every hint character carries
 dim styling (SGR 2). An unstyled or partially styled hint fails closed, as do
@@ -108,6 +109,6 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-submit-stuck` | Text remains after the single guarded Enter; the claim is retained. |
 
 Observation refusals include the failed `guard` and `stage` (`admission` or
-`submit`), `atomic: false`, and whether paste preceded the check. Legacy
+`submit`), `atomic: false`, and whether paste preceded the check. Existing
 session/runtime and I/O failure reasons still apply. A nonzero exit after
 claiming must never be treated as permission to resend the same delivery.
