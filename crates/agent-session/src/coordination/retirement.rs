@@ -117,27 +117,14 @@ fn retire_locked(context: &CliContext, args: BrokerRetireStoppedArgs) -> Result<
             && lease.session_incarnation == args.incarnation
             && !matches!(lease.state.as_str(), "completed" | "abandoned")
     });
-    let claims_unfenced = locked
-        .registry
-        .claims
-        .iter()
-        .filter(|claim| {
-            claim.session_id == id
-                && claim.session_incarnation == args.incarnation
-                && claim.state == "active"
-        })
-        .all(|claim| {
-            super::claim_mutation_fence_absent(context, &id, &args.incarnation, claim)
-                .unwrap_or(false)
-        });
+    // Claim-mutation fences, authority quarantine and runtime-stop fences were retired
+    // with Main Agent (#2301); the in-flight notification submission is the remaining fence.
     let lifecycle_unfenced = super::ensure_notification_submission_not_in_progress(
         &locked.registry,
         &id,
         &args.incarnation,
     )
-    .is_ok()
-        && crate::orchestration::ensure_session_not_authority_quarantined(context, &record).is_ok()
-        && crate::orchestration::ensure_session_not_runtime_stop_fenced(context, &record).is_ok();
+    .is_ok();
     let state_retirable = broker.as_ref().is_some_and(|b| {
         matches!(
             b.state.as_str(),
@@ -155,7 +142,6 @@ fn retire_locked(context: &CliContext, args: BrokerRetireStoppedArgs) -> Result<
         proof("process-group-absent", group_absent),
         proof("prior-runtime-boundaries-absent", prior_absent),
         proof("operations-quiescent", operations_quiescent),
-        proof("claims-unfenced", claims_unfenced),
         proof("lifecycle-unfenced", lifecycle_unfenced),
         proof("broker-state", state_retirable),
     ];

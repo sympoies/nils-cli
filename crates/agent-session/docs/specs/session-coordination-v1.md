@@ -974,13 +974,13 @@ requires the same PID namespace and complete process inspection; on macOS it
 requires the same kernel boot UUID, signal-zero absence and a bounded complete
 process-group snapshot. Missing, malformed, permission-denied, live, or reused
 evidence refuses retirement. Prior runtime boundaries must also be absent.
-Unresolved operations (including expired `reconcile_pending` leases), retained
-claim mutation fences, notification submission, authority quarantine, and
-runtime-stop fences refuse apply; resolve them through their owning workflow.
+Unresolved operations (including expired `reconcile_pending` leases) and an
+in-flight notification submission refuse apply; resolve them through their
+owning workflow.
 
 Apply repeats kernel, tmux and heartbeat probes immediately before saving.
 One atomic registry replacement sets the broker to `stopped`, revokes its
-authentication digest, releases its active unfenced claims, removes advisory
+authentication digest, releases its active claims, removes advisory
 state, and stores the idempotent receipt. The session and provider-resume
 identity remain intact. Private capability, heartbeat and checkpoint removal
 then completes under both locks. `coordination-retirement-cleanup-pending`
