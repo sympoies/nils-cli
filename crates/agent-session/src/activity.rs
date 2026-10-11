@@ -33,6 +33,7 @@ mod provider;
 mod state_view;
 pub use state_view::state_for_view;
 pub(crate) mod shadow;
+mod stream_shadow_observation;
 
 use provider::{normalize_provider_hook, normalize_provider_notification};
 
@@ -232,14 +233,7 @@ pub(crate) struct StreamActivityDiagnosticView {
     pub(crate) reason: String,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub(crate) struct StreamShadowObservationView {
-    pub(crate) observer_version: String,
-    pub(crate) rule_id: String,
-    pub(crate) observed_at: String,
-    pub(crate) projection: String,
-    pub(crate) disagrees: bool,
-}
+pub(crate) use stream_shadow_observation::StreamShadowObservationView;
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub(crate) struct StreamAttentionView {
@@ -646,6 +640,7 @@ pub(crate) fn stream_projection(state: &TurnState) -> StreamTurnState {
                         | "provider_projection_unavailable"
                         | "runtime_activity_unhealthy"
                         | "activity_state_unavailable"
+                        | "interrupted_suspected"
                 )
             })
             .map(|diagnostic| StreamActivityDiagnosticView {
