@@ -47,6 +47,8 @@ pub mod shell;
 pub mod slug;
 pub mod usage_cache_policy;
 pub mod usage_time;
+#[cfg(unix)]
+pub mod worktree_lifecycle;
 
 pub fn greeting(name: &str) -> String {
     format!("Hello, {name}!")

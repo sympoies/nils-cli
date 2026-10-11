@@ -59,6 +59,8 @@ struct Inbox {
     expires_at_epoch: i64,
     #[serde(default)]
     category: Option<MessageCategory>,
+    #[serde(default)]
+    resume_carry: Option<super::mailbox::ResumeCarry>,
 }
 #[derive(Default, Deserialize)]
 #[serde(default)]
@@ -155,6 +157,7 @@ struct Record {
     reason_code: Option<&'static str>,
     recipient_status: RecipientStatus,
     notification: Option<Value>,
+    resume_carry: Option<super::mailbox::ResumeCarry>,
     anomalies: Vec<&'static str>,
 }
 fn metadata_key(source: &str, id: &str, sender: &Value, recipient: &remote::Address) -> String {
@@ -465,6 +468,7 @@ fn snapshot_at(
                 reason_code: None,
                 recipient_status: status,
                 notification,
+                resume_carry: m.resume_carry.clone(),
                 anomalies: vec![],
             };
             if row
@@ -561,6 +565,7 @@ fn snapshot_at(
                 reason_code: reason(o.reason.as_deref()),
                 recipient_status: RecipientStatus::default(),
                 notification: None,
+                resume_carry: None,
                 anomalies: vec![],
             };
             match state {

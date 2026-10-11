@@ -53,6 +53,10 @@ Open only the references relevant to the requested change:
 - Every user-facing CLI must expose root `-V, --version`.
 - For clap-based CLIs, set `#[command(version)]` on the root `Parser`.
 - `--help` output should show `-V, --version`.
+- Put new code in new modules, not in files listed in
+  `scripts/ci/file-size-baseline.tsv`; baselined files cannot grow, not even by
+  a `mod` line. Check with `bash scripts/ci/file-size-audit.sh --strict`. See
+  the file-size ratchet in `docs/runbooks/workspace-maintenance-reference.md`.
 
 ## Local Helpers
 

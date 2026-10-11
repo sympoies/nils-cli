@@ -196,7 +196,9 @@ run_command_to_file() {
   fi
 }
 
-target_debug_dir="$repo_root/target/debug"
+# shellcheck source=scripts/ci/lib/cargo-target-dir.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/cargo-target-dir.sh"
+target_debug_dir="$(resolve_cargo_target_dir "$repo_root")/debug"
 
 build_binaries() {
   local stdout_file="$1"

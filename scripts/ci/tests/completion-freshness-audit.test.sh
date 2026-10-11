@@ -18,6 +18,10 @@ if [[ ! -f "$script" ]]; then
   exit 2
 fi
 
+# The audit honors an ambient isolated target; keep the default-layout
+# assertions below independent of the caller's environment.
+unset CARGO_TARGET_DIR
+
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/completion-freshness-test.XXXXXX")"
 cleanup() {
   rm -rf "$tmp"
@@ -224,10 +228,189 @@ assert_stale_asset_fails() {
   echo "ok ($status)"
 }
 
+
+# Build a second synthetic root that has NO target/debug, so a binary is only
+# reachable through an isolated cargo target directory.
+make_isolated_root() {
+  local root="$1"
+  mkdir -p "$root/docs/specs" "$root/completions/bash" "$root/completions/zsh"
+  # Header rows plus the single `fake-cli` row of the shared synthetic matrix.
+  sed -n '1,3p' "$tmp/docs/specs/completion-coverage-matrix-v1.md" >"$root/docs/specs/completion-coverage-matrix-v1.md"
+  printf '%s\n' "bash completion v1" >"$root/completions/bash/fake-cli"
+  printf '%s\n' "zsh completion v1" >"$root/completions/zsh/_fake-cli"
+}
+
+install_fake_cli() {
+  local target_dir="$1"
+  mkdir -p "$target_dir/debug"
+  cp "$tmp/target/debug/fake-cli" "$target_dir/debug/fake-cli"
+}
+
+run_isolated() {
+  # Run from an unrelated cwd so relative CARGO_TARGET_DIR must resolve against
+  # the audited root (where cargo runs), not the caller's directory.
+  local root="$1"
+  shift
+  (cd "$tmp" && env "$@" bash "$script" --root "$root" --skip-build 2>&1)
+}
+
+assert_isolated_absolute_target_passes() {
+  echo "== absolute CARGO_TARGET_DIR (with spaces) resolves the built binary =="
+  local root="$tmp/iso-abs-root"
+  local target="$tmp/iso abs target"
+  make_isolated_root "$root"
+  install_fake_cli "$target"
+  local output
+  if ! output="$(run_isolated "$root" "CARGO_TARGET_DIR=$target")"; then
+    echo "FAIL: absolute isolated target should pass"
+    echo "$output"
+    exit 1
+  fi
+  if ! grep -qF "PASS: completion freshness audit (required=1, snapshots_checked=2," <<<"$output"; then
+    echo "FAIL: absolute isolated target did not compare both shells"
+    echo "$output"
+    exit 1
+  fi
+  if [[ -e "$root/target" ]]; then
+    echo "FAIL: audit must not create or require the default target directory"
+    exit 1
+  fi
+  echo "ok"
+}
+
+assert_isolated_relative_target_passes() {
+  echo "== relative CARGO_TARGET_DIR (with spaces) resolves against the audited root =="
+  local root="$tmp/iso-rel-root"
+  make_isolated_root "$root"
+  install_fake_cli "$root/rel target"
+  local output
+  if ! output="$(run_isolated "$root" "CARGO_TARGET_DIR=rel target")"; then
+    echo "FAIL: relative isolated target should pass"
+    echo "$output"
+    exit 1
+  fi
+  if ! grep -qF "PASS: completion freshness audit (required=1, snapshots_checked=2," <<<"$output"; then
+    echo "FAIL: relative isolated target did not compare both shells"
+    echo "$output"
+    exit 1
+  fi
+  echo "ok"
+}
+
+assert_isolated_target_still_detects_stale_asset() {
+  echo "== isolated target still enforces the completion comparison =="
+  local root="$tmp/iso-stale-root"
+  local target="$tmp/iso stale target"
+  make_isolated_root "$root"
+  install_fake_cli "$target"
+  printf '%s\n' "stale zsh completion" >"$root/completions/zsh/_fake-cli"
+  local output status
+  set +e
+  output="$(run_isolated "$root" "CARGO_TARGET_DIR=$target")"
+  status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    echo "FAIL: stale asset must fail under an isolated target"
+    echo "$output"
+    exit 1
+  fi
+  if ! grep -qF "FAIL: fake-cli: stale zsh completion asset: completions/zsh/_fake-cli" <<<"$output"; then
+    echo "FAIL: stale asset not reported under an isolated target"
+    echo "$output"
+    exit 1
+  fi
+  echo "ok ($status)"
+}
+
+assert_isolated_target_missing_binary_fails() {
+  echo "== genuinely missing binary in the isolated target still fails =="
+  local root="$tmp/iso-missing-root"
+  local target="$tmp/iso missing target"
+  make_isolated_root "$root"
+  mkdir -p "$target/debug"
+  # A binary in the default location must not mask the missing isolated one.
+  install_fake_cli "$root/target"
+  local output status
+  set +e
+  output="$(run_isolated "$root" "CARGO_TARGET_DIR=$target")"
+  status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    echo "FAIL: missing isolated binary must fail"
+    echo "$output"
+    exit 1
+  fi
+  if ! grep -qF "fake-cli: missing built binary: $target/debug/fake-cli" <<<"$output"; then
+    echo "FAIL: missing isolated binary did not name the effective target path"
+    echo "$output"
+    exit 1
+  fi
+  echo "ok ($status)"
+}
+
+assert_default_target_when_unset() {
+  echo "== unset CARGO_TARGET_DIR keeps the default target/debug layout =="
+  local root="$tmp/iso-default-root"
+  make_isolated_root "$root"
+  install_fake_cli "$root/target"
+  local output
+  if ! output="$(run_isolated "$root" "CARGO_TARGET_DIR=")"; then
+    echo "FAIL: empty CARGO_TARGET_DIR should use the default target directory"
+    echo "$output"
+    exit 1
+  fi
+  echo "ok"
+}
+
+assert_cargo_metadata_target_directory_used() {
+  echo "== cargo metadata target_directory is used when CARGO_TARGET_DIR is unset =="
+  local root="$tmp/iso-meta-root"
+  local target="$tmp/iso meta target"
+  make_isolated_root "$root"
+  install_fake_cli "$target"
+  printf '%s\n' '[workspace]' >"$root/Cargo.toml"
+
+  local stub_dir="$tmp/stub-bin"
+  mkdir -p "$stub_dir"
+  cat >"$stub_dir/cargo" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "metadata" ]]; then
+  printf '{"packages":[],"target_directory":"%s"}\n' "$STUB_TARGET_DIRECTORY"
+  exit 0
+fi
+echo "unexpected cargo invocation: $*" >&2
+exit 64
+EOF
+  chmod +x "$stub_dir/cargo"
+
+  local output
+  if ! output="$(run_isolated "$root" "PATH=$stub_dir:$PATH" "STUB_TARGET_DIRECTORY=$target")"; then
+    echo "FAIL: metadata target_directory should locate the binary"
+    echo "$output"
+    exit 1
+  fi
+
+  # CARGO_TARGET_DIR takes precedence over metadata, matching cargo.
+  local other="$tmp/iso meta other"
+  install_fake_cli "$other"
+  if ! output="$(run_isolated "$root" "PATH=$stub_dir:$PATH" "STUB_TARGET_DIRECTORY=$tmp/does-not-exist" "CARGO_TARGET_DIR=$other")"; then
+    echo "FAIL: CARGO_TARGET_DIR should take precedence over cargo metadata"
+    echo "$output"
+    exit 1
+  fi
+  echo "ok"
+}
+
 assert_fresh_assets_pass
 assert_dynamic_cli_skipped
 assert_dynamic_cli_missing_asset_fails
 assert_stale_asset_fails
+assert_isolated_absolute_target_passes
+assert_isolated_relative_target_passes
+assert_isolated_target_still_detects_stale_asset
+assert_isolated_target_missing_binary_fails
+assert_default_target_when_unset
+assert_cargo_metadata_target_directory_used
 
 echo
 echo "PASS: completion-freshness-audit.test.sh"

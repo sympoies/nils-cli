@@ -17,9 +17,10 @@ Description:
     fails here too.
   - Runs third-party artifact audit when Cargo manifests, Cargo.lock, the
     generator scripts, or the generated third-party artifact files change.
-  - Runs package-scoped fmt/clippy/tests for non-shared crate changes.
+  - Builds, lints, and tests changed non-shared packages and their transitive
+    workspace reverse dependencies (including dev/build dependencies).
   - Escalates to a workspace Rust gate for shared crates or workspace-level
-    files where package-scoped checks can miss reverse-dependency breakage.
+    files, manifests, toolchain/configuration files, and build scripts.
 
 Options:
   --base <ref>            Diff base for committed changes.
@@ -45,6 +46,7 @@ if ! command -v cargo >/dev/null 2>&1 && [[ -x "${CARGO_HOME:-$HOME/.cargo}/bin/
   export PATH
 fi
 
+original_args=("$@")
 base="${NILS_CLI_LOCAL_FAST_BASE:-origin/main}"
 plan_only=0
 declare -a forced_changed_files=()
@@ -123,11 +125,6 @@ run() {
   fi
 }
 
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nils-cli-local-fast.XXXXXX")"
-trap 'rm -rf "$tmp_dir"' EXIT
-changed_file_list="$tmp_dir/changed-files.txt"
-plan_file="$tmp_dir/plan.tsv"
-
 collect_changed_files() {
   if [[ "${#forced_changed_files[@]}" -gt 0 ]]; then
     printf '%s\n' "${forced_changed_files[@]}" | sed '/^$/d' | sort -u
@@ -149,9 +146,15 @@ collect_changed_files() {
   } | sed '/^$/d' | sort -u
 }
 
-collect_changed_files >"$changed_file_list"
-
-python3 - "$repo_root" "$changed_file_list" >"$plan_file" <<'PY'
+# Consume the plan once across the admission re-exec. Keep it private to this
+# handoff, and do not pass it to audits or Cargo children.
+if [[ "${NILS_CLI_GATE_ACTIVE:-0}" == "1" && -n "${NILS_CLI_LOCAL_FAST_PLAN:-}" ]]; then
+  plan="$NILS_CLI_LOCAL_FAST_PLAN"
+  unset NILS_CLI_LOCAL_FAST_PLAN
+else
+  unset NILS_CLI_LOCAL_FAST_PLAN
+  changed_input="$(collect_changed_files)"
+  plan="$(python3 - "$repo_root" "$changed_input" <<'PY'
 import json
 import pathlib
 import shutil
@@ -159,10 +162,9 @@ import subprocess
 import sys
 
 repo = pathlib.Path(sys.argv[1])
-changed_path = pathlib.Path(sys.argv[2])
 changed = [
     line.strip()
-    for line in changed_path.read_text(encoding="utf-8").splitlines()
+    for line in sys.argv[2].splitlines()
     if line.strip()
 ]
 
@@ -201,7 +203,7 @@ if shutil.which("cargo") is None:
     sys.exit(2)
 
 metadata_raw = subprocess.check_output(
-    ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+    ["cargo", "metadata", "--offline", "--locked", "--all-features", "--format-version", "1"],
     cwd=repo,
     text=True,
 )
@@ -209,13 +211,32 @@ metadata = json.loads(metadata_raw)
 
 crate_roots = []
 package_has_doctests = {}
-for package in metadata["packages"]:
+workspace_members = set(metadata["workspace_members"])
+resolved_packages = {package["id"]: package for package in metadata["packages"]}
+workspace_packages = {
+    package["id"]: package
+    for package in metadata["packages"]
+    if package["id"] in workspace_members
+}
+build_scripts = set()
+for package in workspace_packages.values():
     manifest = pathlib.Path(package["manifest_path"])
     root = manifest.parent.relative_to(repo).as_posix()
     has_doctests = any(target.get("doctest") for target in package.get("targets", []))
     crate_roots.append((root, package["name"]))
     package_has_doctests[package["name"]] = has_doctests
+    for target in package.get("targets", []):
+        if "custom-build" in target.get("kind", []):
+            build_scripts.add(pathlib.Path(target["src_path"]).relative_to(repo).as_posix())
 crate_roots.sort(key=lambda item: len(item[0]), reverse=True)
+
+# Resolve by package ID, not the dependency's possibly renamed import name.
+# Metadata is unfiltered by target and includes all features and dependency
+# kinds, so optional, platform-specific, dev and build consumers participate.
+reverse_dependencies = {package_id: set() for package_id in resolved_packages}
+for node in metadata["resolve"]["nodes"]:
+    for dependency in node["deps"]:
+        reverse_dependencies[dependency["pkg"]].add(node["id"])
 
 shared_packages = {"nils-common", "nils-term", "nils-test-support", "nils-scrub"}
 
@@ -228,6 +249,7 @@ def package_for_path(path):
 
 
 packages = set()
+package_reasons = {}
 workspace_reasons = []
 shell_files = []
 docs_checks = False
@@ -238,6 +260,14 @@ for path in changed:
 
     if path in {"THIRD_PARTY_LICENSES.md", "THIRD_PARTY_NOTICES.md"}:
         workspace_reasons.append(f"third-party artifact output changed: {path}")
+
+    if pathlib.PurePosixPath(path).name in {"Cargo.toml", "Cargo.lock"}:
+        workspace_reasons.append(f"workspace manifest changed: {path}")
+        continue
+    if (pathlib.PurePosixPath(path).name in {"rust-toolchain", "rust-toolchain.toml", "build.rs"}
+            or ".cargo" in pathlib.PurePosixPath(path).parts or path in build_scripts):
+        workspace_reasons.append(f"build configuration or script changed: {path}")
+        continue
 
     if is_doc_path(path):
         docs_checks = True
@@ -250,11 +280,10 @@ for path in changed:
             workspace_reasons.append(f"shared package changed: {package_name}")
         else:
             packages.add(package_name)
+            package_reasons.setdefault(package_name, set()).add(f"changed path: {path}")
         continue
 
-    if path in {"Cargo.toml", "Cargo.lock"}:
-        workspace_reasons.append(f"workspace manifest changed: {path}")
-    elif path.startswith((".agents/", ".github/", ".cargo/", ".config/", "scripts/", "tests/", "completions/")):
+    if path.startswith((".agents/", ".github/", ".cargo/", ".config/", "scripts/", "tests/", "completions/")):
         workspace_reasons.append(f"workspace-level path changed: {path}")
     else:
         workspace_reasons.append(f"unclassified workspace path changed: {path}")
@@ -264,9 +293,31 @@ for path in changed:
 # launches `agent-session` workers. Select them together so neither is validated
 # against a missing or stale sibling.
 coupled_packages = [{"nils-agent-session", "nils-main-agent"}]
-for group in coupled_packages:
-    if packages & group:
-        packages |= group
+# Coupling and reverse dependencies reach one fixed point: a newly selected
+# consumer can itself need a coupled binary, whose consumers must also run.
+workspace_ids = {package["name"]: package_id for package_id, package in workspace_packages.items()}
+selected_ids = {workspace_ids[name] for name in packages}
+pending = sorted(selected_ids)
+while pending:
+    source_id = pending.pop(0)
+    source = resolved_packages[source_id]["name"]
+    additions = [(package_id, f"reverse dependency of {source}")
+                 for package_id in sorted(reverse_dependencies[source_id])]
+    for group in coupled_packages:
+        if source_id in workspace_members and source in group:
+            additions.extend((workspace_ids[name], f"coupled with {source}")
+                             for name in sorted(group - {source})
+                             if name in workspace_ids)
+    for package_id, reason in additions:
+        # Traverse external intermediaries, but build/lint/test workspace
+        # members only. Filtering before traversal would truncate that closure.
+        if package_id in workspace_members:
+            name = workspace_packages[package_id]["name"]
+            package_reasons.setdefault(name, set()).add(reason)
+            packages.add(name)
+        if package_id not in selected_ids:
+            selected_ids.add(package_id)
+            pending.append(package_id)
 
 if not changed:
     mode = "none"
@@ -293,6 +344,8 @@ for path in changed:
     emit("changed", path)
 for package_name in sorted(packages):
     emit("package", package_name)
+    for reason in sorted(package_reasons[package_name]):
+        emit("package_reason", f"{package_name}: {reason}")
 for package_name in sorted(packages):
     if package_has_doctests.get(package_name, False):
         emit("package_doctest", package_name)
@@ -301,6 +354,8 @@ for reason in sorted(set(workspace_reasons)):
 for shell_file in sorted(set(shell_files)):
     emit("shell", shell_file)
 PY
+)"
+fi
 
 mode=""
 docs_checks=0
@@ -308,6 +363,7 @@ docs_hygiene=0
 third_party_artifacts=0
 changed_count=0
 declare -a packages=()
+declare -a package_reasons=()
 declare -a package_doctests=()
 declare -a reasons=()
 declare -a changed_files=()
@@ -321,12 +377,13 @@ while IFS=$'\t' read -r key value; do
     third_party_artifacts) third_party_artifacts="$value" ;;
     changed_count) changed_count="$value" ;;
     package) packages+=("$value") ;;
+    package_reason) package_reasons+=("$value") ;;
     package_doctest) package_doctests+=("$value") ;;
     reason) reasons+=("$value") ;;
     changed) changed_files+=("$value") ;;
     shell) shell_files+=("$value") ;;
   esac
-done <"$plan_file"
+done <<<"$plan"
 
 if [[ -z "$mode" ]]; then
   echo "error: local-fast planner did not emit a mode" >&2
@@ -346,6 +403,9 @@ print_plan() {
   for package in "${packages[@]}"; do
     echo "LOCAL_FAST_PACKAGE=$package"
   done
+  for reason in "${package_reasons[@]}"; do
+    echo "LOCAL_FAST_PACKAGE_REASON=$reason"
+  done
   for package in "${package_doctests[@]}"; do
     echo "LOCAL_FAST_PACKAGE_DOCTEST=$package"
   done
@@ -356,6 +416,13 @@ print_plan() {
     echo "LOCAL_FAST_SHELL=$shell_file"
   done
 }
+
+# Decide noncode modes before admission, and reuse this exact plan in the
+# admitted worker. Planning uses no temporary directory or EXIT trap.
+if [[ "$plan_only" -eq 0 && "${NILS_CLI_GATE_ACTIVE:-0}" != "1" &&
+      ( "$mode" == "packages" || "$mode" == "workspace" ) ]]; then
+  NILS_CLI_LOCAL_FAST_PLAN="$plan" exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "${BASH:-bash}" "$repo_root/scripts/ci/nils-cli-local-fast.sh" "${original_args[@]}"
+fi
 
 print_plan
 
@@ -462,9 +529,19 @@ done
 # `mem::forget`). Any Rust change can introduce one, so run it unconditionally.
 require_cmd rg
 run bash scripts/ci/tempdir-leak-audit.sh
+run python3 scripts/ci/tests/gate-resources.test.py
 run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/tempdir-leak-audit.test.sh
 run bash scripts/ci/tests/tempdir-leak-probe.test.sh
+
+# file-size-audit ratchets Rust source sizes against a committed baseline. It
+# needs no build, so it runs for every code change set, as CI does.
+run bash scripts/ci/file-size-audit.sh --strict --base "$base"
+run bash scripts/ci/tests/file-size-audit.test.sh
+
+# docs-prose-audit checks every changed file set, including code-only changes.
+run bash scripts/ci/docs-prose-audit.sh --strict --base "$base"
+run bash scripts/ci/tests/docs-prose-audit.test.sh
 
 if [[ "$third_party_artifacts" -eq 1 ]]; then
   run bash scripts/ci/third-party-artifacts-audit.sh --strict

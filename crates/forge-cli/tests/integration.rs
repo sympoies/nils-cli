@@ -40,6 +40,7 @@ mod integration {
     mod read_metadata;
     mod repo_bootstrap;
     mod repo_bootstrap_github;
+    mod repo_bootstrap_gitlab;
     mod repo_freeze;
     mod repo_push_default;
     mod repo_security;
