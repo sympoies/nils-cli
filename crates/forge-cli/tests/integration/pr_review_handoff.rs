@@ -2025,6 +2025,7 @@ fn scope_refresh_requires_publication_after_the_new_handoff() {
     let seeded = records(h.clone(), Some(HEAD));
     h.base_sha = HEAD.into();
     h.assignment_generation = 2;
+    h.base_ref = Some("main".into());
     let refresh = ReviewStateRecord::new(
         "acme/widgets",
         7,
