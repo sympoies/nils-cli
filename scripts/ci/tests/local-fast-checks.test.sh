@@ -21,21 +21,34 @@ fi
 
 python3 "$repo_root/scripts/ci/tests/local-fast-graph.test.py"
 
-# These routing assertions need workspace ownership and target kinds, not a
-# registry cache. The synthetic suite above exercises resolved graph edges.
+# These routing assertions use manifest-only workspace metadata, including
+# declared path dependencies. External resolved edges remain covered above.
 fixture_bin="$(mktemp -d)"
 trap 'rm -rf "$fixture_bin"' EXIT
 python3 - "$repo_root" "$fixture_bin/metadata.json" <<'PY'
 import json
+from pathlib import Path
 import subprocess
 import sys
 
 metadata = json.loads(subprocess.check_output(
     ['cargo', 'metadata', '--no-deps', '--offline', '--locked', '--format-version', '1'],
     cwd=sys.argv[1], text=True))
-metadata['resolve'] = {'nodes': [
-    {'id': member, 'deps': []} for member in metadata['workspace_members']
-]}
+members = set(metadata['workspace_members'])
+packages = {package['name']: package for package in metadata['packages']
+            if package['id'] in members}
+nodes = []
+for package in packages.values():
+    deps = []
+    for dependency in package['dependencies']:
+        target = packages.get(dependency['name'])
+        path = dependency.get('path')
+        if target is not None and path is not None:
+            target_root = Path(target['manifest_path']).parent.resolve()
+            if Path(path).resolve() == target_root:
+                deps.append({'pkg': target['id']})
+    nodes.append({'id': package['id'], 'deps': deps})
+metadata['resolve'] = {'nodes': nodes}
 with open(sys.argv[2], 'w') as fixture:
     json.dump(metadata, fixture)
 PY
@@ -47,6 +60,12 @@ PY
 chmod +x "$fixture_bin/cargo"
 
 plan_for() {
+  local selected_cargo
+  selected_cargo="$(PATH="$fixture_bin:$PATH" type -P cargo)"
+  if [[ "$selected_cargo" != "$fixture_bin/cargo" || ! -x "$fixture_bin/cargo" ]]; then
+    echo "FAIL: planner must use the executable metadata fixture" >&2
+    return 1
+  fi
   PATH="$fixture_bin:$PATH" bash "$script" --plan-only "$@"
 }
 
@@ -100,6 +119,9 @@ assert_library_package_keeps_doctests() {
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-api-testing-core"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE_DOCTEST=nils-api-testing-core"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-api-grpc"
+  assert_contains "$FUNCNAME" "$output" \
+    "LOCAL_FAST_PACKAGE_REASON=nils-api-grpc: reverse dependency of nils-api-testing-core"
   echo "ok"
 }
 

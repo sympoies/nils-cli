@@ -104,6 +104,10 @@ import sys
 print('fixture metadata unavailable', file=sys.stderr)
 sys.exit(101)
 """)
+        result = self.failed_plan()
+        self.assertIn('exit status 101', result.stderr)
+
+    def failed_plan(self):
         result = subprocess.run(
             ['bash', str(SCRIPT), '--plan-only', '--changed-file', 'crates/leaf/src/lib.rs'],
             cwd=ROOT, env=self.env, text=True, capture_output=True)
@@ -114,6 +118,24 @@ sys.exit(101)
         self.assertIn('cargo metadata --offline --locked --all-features', result.stderr)
         self.assertIn('cache', result.stderr.lower())
         self.assertIn('lockfile', result.stderr.lower())
+        self.assertIn('cargo fetch', result.stderr)
+        self.assertNotIn(self.temp.name, result.stderr)
+        return result
+
+    def test_invalid_metadata_reports_one_error_without_a_plan(self):
+        (Path(self.temp.name) / 'metadata.json').write_text('not valid JSON')
+        result = self.failed_plan()
+        self.assertIn('exit status 0', result.stderr)
+        self.assertIn('invalid JSON', result.stderr)
+
+    def test_metadata_spawn_error_reports_one_error_without_a_plan(self):
+        interpreter = Path(self.temp.name) / 'missing-interpreter'
+        self.assertFalse(interpreter.exists())
+        cargo = Path(self.temp.name) / 'cargo'
+        cargo.write_text(f'#!{interpreter}\n')
+        result = self.failed_plan()
+        self.assertIn('exit status unavailable', result.stderr)
+        self.assertIn('command could not start', result.stderr)
 
     def test_build_and_graph_inputs_escalate(self):
         for path in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain', 'rust-toolchain.toml',
