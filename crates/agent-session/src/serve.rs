@@ -1405,14 +1405,6 @@ fn router(state: Arc<ServeState>) -> Router {
         )
         .route("/sessions/{id}/attach", get(attach_handler))
         .route(
-            "/sessions/{id}/orchestration/group-cleanup",
-            get(group_cleanup_preview_handler).post(group_cleanup_execute_handler),
-        )
-        .route(
-            "/sessions/{id}/orchestration/group-archive",
-            get(group_archive_preview_handler).post(group_archive_execute_handler),
-        )
-        .route(
             "/sessions/{id}",
             patch(update_session_handler).delete(delete_handler),
         )
@@ -5990,18 +5982,8 @@ async fn enrich_last_prompts(state: &Arc<ServeState>, sessions: &mut [SessionVie
         }
         let context = state.context.clone();
         let id = session.id.clone();
-        let managed_worker = session
-            .orchestration
-            .as_ref()
-            .is_some_and(|orchestration| orchestration.role == "worker");
-        let Ok(Ok((record, launch_prompt))) = tokio::task::spawn_blocking(move || {
-            let record = load_session_record(&context, &id)?;
-            let launch_prompt = managed_worker
-                .then(|| managed_worker_launch_prompt(&context, &record))
-                .flatten();
-            Ok::<_, CliError>((record, launch_prompt))
-        })
-        .await
+        let Ok(Ok(record)) =
+            tokio::task::spawn_blocking(move || load_session_record(&context, &id)).await
         else {
             continue;
         };
@@ -6012,44 +5994,9 @@ async fn enrich_last_prompts(state: &Arc<ServeState>, sessions: &mut [SessionVie
         {
             session.last_prompt_state = Some(projection.state);
             session.last_prompt_continuity = projection.continuity;
-            session.last_prompt = projection
-                .prompt
-                .filter(|prompt| !is_launch_prompt(prompt, launch_prompt.as_deref()));
+            session.last_prompt = projection.prompt;
         }
     }
-}
-
-/// Reads a managed worker's launch prompt: the session's own private
-/// `prompt.md`, which the controller wrote. That prompt is the generated
-/// bootstrap instruction (it names a machine-local executable), never human
-/// input, so the latest-prompt preview withholds it.
-fn managed_worker_launch_prompt(context: &CliContext, record: &SessionRecord) -> Option<String> {
-    let expected = crate::session_dir(context, &record.id).join("prompt.md");
-    if Path::new(record.prompt_file.as_deref()?) != expected {
-        return None;
-    }
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&expected)
-        .ok()?;
-    let limit = crate::provider_prompt::MAX_PROVIDER_PROMPT_BYTES as u64;
-    if !file.metadata().ok()?.is_file() {
-        return None;
-    }
-    let mut prompt = String::new();
-    file.take(limit + 1).read_to_string(&mut prompt).ok()?;
-    (prompt.len() as u64 <= limit).then_some(prompt)
-}
-
-fn is_launch_prompt(prompt: &LastPrompt, launch_prompt: Option<&str>) -> bool {
-    launch_prompt.is_some_and(|launch| {
-        if prompt.truncated {
-            launch.starts_with(&prompt.text)
-        } else {
-            launch == prompt.text
-        }
-    })
 }
 
 async fn codex_accounts_handler(
@@ -6979,8 +6926,6 @@ async fn create_handler_inner(
         }
         .into(),
         app_server_managed: true,
-        provider_stop_canary: false,
-        provider_stop_canary_assignment_id: None,
         initial_codex_account: selected_account.clone(),
         initial_codex_account_source: selection_source,
         initial_title_state: title_state,
@@ -7040,7 +6985,6 @@ async fn create_handler_inner(
             &context,
             args,
             StartFailureDisposition::ReturnError,
-            crate::PromptDelivery::ResilientBeforeSubmit,
             claude_account,
         )
     })
@@ -10183,124 +10127,6 @@ async fn archive_handler_inner(
     }
 }
 
-async fn group_cleanup_preview_handler(
-    State(state): State<Arc<ServeState>>,
-    headers: HeaderMap,
-    AxPath(id): AxPath<String>,
-) -> Response {
-    if let Some(resp) = deny_unauthorized(&state, &headers) {
-        return resp;
-    }
-    let context = state.context.clone();
-    match tokio::task::spawn_blocking(move || {
-        crate::group_lifecycle::preview_group_cleanup(&context, &id)
-    })
-    .await
-    {
-        Ok(Ok(cleanup)) => envelope_ok(json!({ "machine": state.machine, "cleanup": cleanup })),
-        Ok(Err(err)) => envelope_err(err),
-        Err(_) => join_err(),
-    }
-}
-
-async fn group_cleanup_execute_handler(
-    State(state): State<Arc<ServeState>>,
-    headers: HeaderMap,
-    AxPath(id): AxPath<String>,
-    body: Result<Json<crate::group_lifecycle::GroupCleanupRequest>, JsonRejection>,
-) -> Response {
-    if let Some(resp) = deny_unauthorized(&state, &headers) {
-        return resp;
-    }
-    let request = match coordination_json(body) {
-        Ok(request) => request,
-        Err(response) => return response,
-    };
-    let context = state.context.clone();
-    let tmux = state.tmux_bin.clone();
-    match tokio::task::spawn_blocking(move || {
-        crate::group_lifecycle::execute_group_cleanup(&context, &id, request, tmux)
-    })
-    .await
-    {
-        Ok(Ok(execution)) => {
-            for fence in &execution.deleted_registry_fences {
-                cleanup_deleted_session_registries(&state, fence).await;
-            }
-            envelope_ok(json!({ "machine": state.machine, "cleanup": execution.value }))
-        }
-        Ok(Err(err)) => envelope_err(err),
-        Err(_) => join_err(),
-    }
-}
-
-async fn group_archive_preview_handler(
-    State(state): State<Arc<ServeState>>,
-    headers: HeaderMap,
-    AxPath(id): AxPath<String>,
-) -> Response {
-    if let Some(resp) = deny_unauthorized(&state, &headers) {
-        return resp;
-    }
-    let context = state.context.clone();
-    match tokio::task::spawn_blocking(move || {
-        crate::group_lifecycle::preview_group_cleanup(&context, &id)
-    })
-    .await
-    {
-        Ok(Ok(cleanup)) => envelope_ok(json!({
-            "machine": state.machine,
-            "archive": {
-                "schema_version": "agent-session.main-agent-group-archive.v1",
-                "cleanup": cleanup,
-            },
-        })),
-        Ok(Err(err)) => envelope_err(err),
-        Err(_) => join_err(),
-    }
-}
-
-async fn group_archive_execute_handler(
-    State(state): State<Arc<ServeState>>,
-    headers: HeaderMap,
-    AxPath(id): AxPath<String>,
-    body: Result<Json<crate::group_lifecycle::GroupArchiveRequest>, JsonRejection>,
-) -> Response {
-    if let Some(resp) = deny_unauthorized(&state, &headers) {
-        return resp;
-    }
-    let request = match coordination_json(body) {
-        Ok(request) => request,
-        Err(response) => return response,
-    };
-    let context = state.context.clone();
-    let tmux = state.tmux_bin.clone();
-    match tokio::task::spawn_blocking(move || {
-        crate::group_lifecycle::execute_group_archive(&context, &id, request, tmux)
-    })
-    .await
-    {
-        Ok(Ok(execution)) => {
-            if !execution.deleted_registry_fences.is_empty() {
-                state.history_catalog.invalidate();
-            }
-            for fence in &execution.deleted_registry_fences {
-                cleanup_deleted_session_registries(&state, fence).await;
-            }
-            envelope_ok(json!({
-                "machine": state.machine,
-                "archive": {
-                    "schema_version": crate::group_lifecycle::GROUP_ARCHIVE_RESULT_SCHEMA,
-                    "completed": execution.value["completed"],
-                    "cleanup": execution.value,
-                },
-            }))
-        }
-        Ok(Err(err)) => envelope_err(err),
-        Err(_) => join_err(),
-    }
-}
-
 async fn attach_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
@@ -12692,6 +12518,25 @@ mod tests {
         let journal = crate::lifecycle::read(&st.context, "missing", 100).unwrap();
         assert_eq!(journal["records"].as_array().unwrap().len(), 1);
         assert_eq!(journal["records"][0]["caller"]["kind"], "serve");
+    }
+
+    #[tokio::test]
+    async fn retired_group_routes_are_absent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        for route in ["group-cleanup", "group-archive"] {
+            let uri = format!("/sessions/retired/orchestration/{route}");
+            for method in ["GET", "POST"] {
+                let request = Request::builder()
+                    .method(method)
+                    .uri(&uri)
+                    .header("authorization", format!("Bearer {TOKEN}"))
+                    .body(Body::empty())
+                    .unwrap();
+                let response = router(st.clone()).oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            }
+        }
     }
 
     #[tokio::test]
@@ -18868,33 +18713,6 @@ esac
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(body["error"]["code"], "unauthorized");
 
-        let (status, body) = call(
-            router(st.clone()),
-            get("/sessions/steer/orchestration/group-archive"),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(body["error"]["code"], "unauthorized");
-
-        let (status, body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/steer/orchestration/group-archive",
-                None,
-                json!({
-                    "schema_version": crate::group_lifecycle::GROUP_ARCHIVE_REQUEST_SCHEMA,
-                    "expected_main_incarnation": "launch-steer",
-                    "expected_run_revision": 1,
-                    "expected_plan_digest": format!("sha256:{}", "a".repeat(64)),
-                    "mode": "safe",
-                    "idempotency_key": "archive-001"
-                }),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(body["error"]["code"], "unauthorized");
-
         let response = router(st)
             .oneshot(get_auth("/activity/events", Some(TOKEN)))
             .await
@@ -22909,165 +22727,6 @@ esac
         );
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn sessions_list_withholds_a_managed_worker_launch_prompt_preview() {
-        use std::os::unix::fs::PermissionsExt;
-        let lock = GlobalStateLock::new();
-        let tmp = tempfile::TempDir::new().expect("tempdir");
-        let state_dir = tmp.path().join("state");
-        let codex_home = tmp.path().join("codex-home");
-        let transcript = codex_home.join("sessions/2026/09/session.jsonl");
-        std::fs::create_dir_all(transcript.parent().expect("transcript parent"))
-            .expect("transcript dir");
-        let id = "managed-preview";
-        let provider_id = "managed-preview-provider";
-        let launch_prompt = "Main Agent Mode is explicitly active for this managed worker assignment. Run exactly `/opt/pkg/Cellar/nils-cli/1.29.0/bin/main-agent bootstrap --idempotency-key bootstrap-0123 --format json` now.";
-        let prompt_line = |text: &str| {
-            format!(
-                "{}\n",
-                json!({
-                    "type":"event_msg",
-                    "payload":{"type":"user_message","message":text}
-                })
-            )
-        };
-        std::fs::write(
-            &transcript,
-            format!(
-                "{}\n{}",
-                json!({
-                    "type":"session_meta",
-                    "payload":{
-                        "id":provider_id,
-                        "session_id":provider_id,
-                        "cwd":"/tmp",
-                        "source":"cli",
-                        "timestamp":"2099-01-01T00:00:00Z"
-                    }
-                }),
-                prompt_line(launch_prompt)
-            ),
-        )
-        .expect("transcript");
-        let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", codex_home.to_str().unwrap());
-        seed_session_with_runtime(&state_dir, id, "codex", &format!("hs-codex-{id}"));
-        let session_dir = state_dir.join("sessions").join(id);
-        let prompt_path = session_dir.join("prompt.md");
-        std::fs::write(&prompt_path, launch_prompt).expect("launch prompt");
-        std::fs::set_permissions(&prompt_path, std::fs::Permissions::from_mode(0o600))
-            .expect("launch prompt mode");
-        let record_path = session_dir.join("session.json");
-        let mut record: Value =
-            serde_json::from_slice(&std::fs::read(&record_path).expect("session record"))
-                .expect("session json");
-        record["prompt_file"] = json!(prompt_path);
-        record["provider_resume"] = json!({
-            "provider":"codex",
-            "session_id":provider_id,
-            "captured_at":"2099-01-01T00:00:00Z",
-            "capture_method":"codex-explicit-session-id",
-            "resume_args":["resume", provider_id]
-        });
-        std::fs::write(
-            &record_path,
-            serde_json::to_vec_pretty(&record).expect("session json"),
-        )
-        .expect("session record");
-        let reference = |session_id: &str| {
-            json!({
-                "session_id": session_id,
-                "session_incarnation": format!("launch-{session_id}"),
-                "session_created_at": "2000-01-01T00:00:00Z"
-            })
-        };
-        let orchestration_root = state_dir.join("orchestration");
-        std::fs::create_dir_all(&orchestration_root).expect("orchestration root");
-        std::fs::set_permissions(&orchestration_root, std::fs::Permissions::from_mode(0o700))
-            .expect("orchestration mode");
-        let registry_path = orchestration_root.join("registry.json");
-        std::fs::write(
-            &registry_path,
-            serde_json::to_vec_pretty(&json!({
-                "schema_version": "agent-session.orchestration-registry.v2",
-                "runs": {
-                    "run-one": {
-                        "schema_version": "agent-session.orchestration-run.v1",
-                        "run_id": "run-one",
-                        "revision": 2,
-                        "state": "active",
-                        "tier": "direct",
-                        "objective_summary": "Deliver the program wave",
-                        "objective_packet_digest": format!("sha256:{}", "a".repeat(64)),
-                        "controller": reference("preview-main"),
-                        "created_at": "2099-01-01T00:00:00Z",
-                        "updated_at": "2099-01-01T00:00:00Z"
-                    }
-                },
-                "assignments": {
-                    "assignment-one": {
-                        "schema_version": "agent-session.orchestration-assignment.v2",
-                        "assignment_id": "assignment-one",
-                        "run_id": "run-one",
-                        "revision": 3,
-                        "state": "working",
-                        "task_summary": "Title workers from their task",
-                        "private_packet_digest": format!("sha256:{}", "b".repeat(64)),
-                        "primary_manager": reference("preview-main"),
-                        "worker": reference(id),
-                        "created_at": "2099-01-01T00:00:00Z",
-                        "updated_at": "2099-01-01T00:00:00Z"
-                    }
-                },
-                "receipts": {}
-            }))
-            .expect("registry json"),
-        )
-        .expect("registry");
-        std::fs::set_permissions(&registry_path, std::fs::Permissions::from_mode(0o600))
-            .expect("registry mode");
-        let tmux_calls = tmp.path().join("tmux.calls");
-        let tmux = failing_delete_tmux(tmp.path(), &state_dir, id, 77, &tmux_calls);
-        let state = state(&state_dir, Some(TOKEN), tmux);
-
-        let current = |expected: Option<&'static str>| {
-            let state = state.clone();
-            async move {
-                tokio::time::timeout(Duration::from_secs(5), async {
-                    loop {
-                        let (_, body) = call(router(state.clone()), get("/sessions")).await;
-                        let session = body["data"]["sessions"][0].clone();
-                        if session["last_prompt_state"] == "current"
-                            && session["last_prompt"]["text"].as_str() == expected
-                        {
-                            break session;
-                        }
-                        tokio::task::yield_now().await;
-                    }
-                })
-                .await
-                .expect("current last prompt")
-            }
-        };
-        let withheld = current(None).await;
-        assert_eq!(withheld["orchestration"]["role"], "worker");
-        assert!(
-            !withheld.to_string().contains("bootstrap"),
-            "a managed worker's generated launch prompt must never reach the preview: {withheld}"
-        );
-
-        OpenOptions::new()
-            .append(true)
-            .open(&transcript)
-            .expect("append transcript")
-            .write_all(prompt_line("please also cover the blocked case").as_bytes())
-            .expect("append prompt");
-        let later = current(Some("please also cover the blocked case")).await;
-        assert_eq!(
-            later["last_prompt"]["text"],
-            "please also cover the blocked case"
-        );
-    }
-
     #[tokio::test]
     async fn create_uses_and_persists_a_ready_server_launch_profile() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -25686,12 +25345,6 @@ esac
         for (id, agent, runtime_kind, unsupported) in [
             ("retained-hermes", "hermes", "tmux", true),
             ("dsh-pane", "dsh", "tmux", false),
-            (
-                "dsh-external",
-                "dsh",
-                crate::dsh_external::DSH_RUNTIME_KIND,
-                false,
-            ),
             ("codex-pane", "codex", "tmux", false),
             ("claude-pane", "claude", "tmux", false),
         ] {
@@ -27024,6 +26677,88 @@ esac
             !calls.contains("new-session"),
             "serve resume must not replace unprovable runtimes: {calls:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn retired_external_runtime_maintenance_and_delete_preserve_durable_state() {
+        use pretty_assertions::assert_eq;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().to_path_buf(),
+            host: None,
+        };
+        let (record, files) =
+            crate::tests::retired_external_record_fixture(&context, "retained-external");
+        let tmux = executable(
+            &tmp.path().join("absent-retired-tmux"),
+            "#!/bin/sh\nprintf '%s\\n' \"can't find session: absent\" >&2\nexit 1\n",
+        );
+        let _probe =
+            crate::tmux_probe_fixture::install(&tmux, crate::tmux_probe_fixture::Probe::Stopped);
+        let st = state(tmp.path(), Some(TOKEN), tmux);
+        for (operation, actions) in [
+            (
+                "delete",
+                vec![
+                    "remove_console_record",
+                    "retry_delete",
+                    "terminate_runtime_then_delete",
+                ],
+            ),
+            ("resume", vec!["terminate_runtime_then_resume"]),
+        ] {
+            let (status, body) = call(router(st.clone()), get_auth(
+                &format!("/sessions/{}/maintenance?operation={operation}&schema_version=agent-session.session-maintenance.v2", record.id), Some(TOKEN),
+            )).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let preview = &body["data"]["maintenance"];
+            assert_eq!(preview["state"], "blocked");
+            assert!(
+                preview["actions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|action| action["destructive"] == false)
+            );
+            for action in actions {
+                let (status, body) = call(router(st.clone()), post_json(
+                    &format!("/sessions/{}/maintenance/actions", record.id), Some(TOKEN),
+                    json!({
+                        "schema_version": "agent-session.session-maintenance.v2", "operation": operation,
+                        "action": action, "expected_session_incarnation": preview["session_incarnation"],
+                        "expected_session_generation": preview["session_generation"],
+                        "expected_preview_digest": preview["preview_digest"], "confirmed": true
+                    }),
+                )).await;
+                assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+                assert_eq!(body["error"]["code"], "session-maintenance-failed");
+                assert_eq!(
+                    body["error"]["details"]["kind"],
+                    "runtime_identity_unavailable"
+                );
+                assert_eq!(body["error"]["details"]["session_metadata_retained"], true);
+            }
+        }
+        let request = Request::builder()
+            .method("DELETE")
+            .uri(format!("/sessions/{}", record.id))
+            .header("authorization", format!("Bearer {TOKEN}"))
+            .body(Body::empty())
+            .unwrap();
+        let (status, body) = call(router(st.clone()), request).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(body["error"]["code"], "session-termination-failed");
+        let (status, body) = call(router(st), post_json(
+            &format!("/sessions/{}/archive", record.id), Some(TOKEN),
+            json!({ "expected_session_incarnation": record.runtime.as_ref().unwrap().launch_id }),
+        )).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(body["error"]["code"], "session-termination-failed");
+        for (path, bytes) in files {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
+        assert!(crate::board::closed_reasons_for_test(&context).is_empty());
+        assert!(!provider_history::archive_root(&context.state_dir).exists());
     }
 
     #[tokio::test]
@@ -29588,33 +29323,6 @@ esac
 
         let (status, body) = call(
             router(st.clone()),
-            get("/sessions/steer/orchestration/group-cleanup"),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(body["error"]["code"], "unauthorized");
-
-        let (status, body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/steer/orchestration/group-cleanup",
-                None,
-                json!({
-                    "schema_version": crate::group_lifecycle::GROUP_CLEANUP_REQUEST_SCHEMA,
-                    "expected_main_incarnation": "launch-steer",
-                    "expected_run_revision": 1,
-                    "expected_plan_digest": format!("sha256:{}", "a".repeat(64)),
-                    "mode": "safe",
-                    "idempotency_key": "cleanup-001"
-                }),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(body["error"]["code"], "unauthorized");
-
-        let (status, body) = call(
-            router(st.clone()),
             put_json(
                 "/sessions/steer/account",
                 None,
@@ -29636,613 +29344,6 @@ esac
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(body["error"]["code"], "unauthorized");
-    }
-
-    #[tokio::test]
-    async fn group_archive_excludes_related_sessions_and_retries_missing_identity() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let state_dir = tmp.path().join("state");
-        let cleanup_tmux = tmp.path().join("tmux-missing-session");
-        fs::write(
-            &cleanup_tmux,
-            "#!/bin/sh\nprintf \"%s\\n\" \"can't find session: test\" >&2\nexit 1\n",
-        )
-        .unwrap();
-        fs::set_permissions(&cleanup_tmux, fs::Permissions::from_mode(0o700)).unwrap();
-        let st = state(&state_dir, Some(TOKEN), cleanup_tmux);
-
-        let mut main =
-            provider_discovery_record("archive-main", "hs-archive-main", "launch-archive-main", 1);
-        crate::mark_tmux_runtime_never_launched(&mut main);
-        fs::create_dir_all(session_dir(&st.context, &main.id)).unwrap();
-        crate::write_session_record(&st.context, &main).unwrap();
-
-        let mut worker = provider_discovery_record(
-            "archive-worker",
-            "hs-archive-worker",
-            "launch-archive-worker",
-            1,
-        );
-        worker.provider_resume = None;
-        crate::mark_tmux_runtime_never_launched(&mut worker);
-        fs::create_dir_all(session_dir(&st.context, &worker.id)).unwrap();
-        crate::write_session_record(&st.context, &worker).unwrap();
-
-        let mut collaborator = provider_discovery_record(
-            "archive-collaborator",
-            "hs-archive-collaborator",
-            "launch-archive-collaborator",
-            1,
-        );
-        crate::mark_tmux_runtime_never_launched(&mut collaborator);
-        fs::create_dir_all(session_dir(&st.context, &collaborator.id)).unwrap();
-        crate::write_session_record(&st.context, &collaborator).unwrap();
-
-        let mut borrower = provider_discovery_record(
-            "archive-borrower",
-            "hs-archive-borrower",
-            "launch-archive-borrower",
-            1,
-        );
-        crate::mark_tmux_runtime_never_launched(&mut borrower);
-        fs::create_dir_all(session_dir(&st.context, &borrower.id)).unwrap();
-        crate::write_session_record(&st.context, &borrower).unwrap();
-
-        let session_ref = |record: &SessionRecord| crate::orchestration::SessionRef {
-            machine: None,
-            session_id: record.id.clone(),
-            session_incarnation: record.runtime.as_ref().unwrap().launch_id.clone(),
-            session_created_at: record.created_at.clone(),
-        };
-        let main_ref = session_ref(&main);
-        let worker_ref = session_ref(&worker);
-        let collaborator_ref = session_ref(&collaborator);
-        let borrower_ref = session_ref(&borrower);
-        {
-            let mut locked = crate::orchestration::lock_registry(&st.context).unwrap();
-            locked.registry.runs.insert(
-                "archive-run".to_string(),
-                crate::orchestration::RunRecord {
-                    schema_version: crate::orchestration::RUN_SCHEMA.to_string(),
-                    run_id: "archive-run".to_string(),
-                    revision: 1,
-                    state: "active".to_string(),
-                    tier: "program".to_string(),
-                    objective_summary: "Archive the managed group".to_string(),
-                    objective_packet_digest: format!("sha256:{}", "a".repeat(64)),
-                    controller: main_ref.clone(),
-                    durable_refs: Vec::new(),
-                    ephemeral: false,
-                    checkpoint: None,
-                    created_at: "2030-01-01T00:00:00Z".to_string(),
-                    updated_at: "2030-01-01T00:00:00Z".to_string(),
-                },
-            );
-            locked.registry.assignments.insert(
-                "archive-assignment".to_string(),
-                crate::orchestration::AssignmentRecord {
-                    schema_version: crate::orchestration::ASSIGNMENT_SCHEMA.to_string(),
-                    assignment_id: "archive-assignment".to_string(),
-                    run_id: "archive-run".to_string(),
-                    revision: 1,
-                    state: "accepted".to_string(),
-                    task_summary: "Archive one managed worker".to_string(),
-                    private_packet_digest: format!("sha256:{}", "b".repeat(64)),
-                    primary_manager: main_ref,
-                    worker: Some(worker_ref),
-                    previous_worker: None,
-                    collaborators: vec![collaborator_ref],
-                    borrowed_by: vec![crate::orchestration::TimedRelationship {
-                        session: borrower_ref,
-                        expires_at: "2099-12-31T00:00:00Z".to_string(),
-                        expires_at_epoch: 4_102_358_400,
-                    }],
-                    repository: None,
-                    worktree: None,
-                    base_ref: None,
-                    scopes: Vec::new(),
-                    durable_refs: Vec::new(),
-                    depends_on: Vec::new(),
-                    checkpoint: None,
-                    result_summary: None,
-                    blocker_summary: None,
-                    submit_recovery: None,
-                    worker_quarantine: None,
-                    account_handoff: None,
-                    runtime_stop: None,
-                    claim_revocation: None,
-                    readiness_stop_proof: None,
-                    created_at: "2030-01-01T00:00:00Z".to_string(),
-                    updated_at: "2030-01-01T00:00:00Z".to_string(),
-                },
-            );
-            locked.save().unwrap();
-        }
-
-        let (preview_status, preview_body) = call(
-            router(st.clone()),
-            get_auth(
-                "/sessions/archive-main/orchestration/group-archive",
-                Some(TOKEN),
-            ),
-        )
-        .await;
-        assert_eq!(preview_status, StatusCode::OK, "body={preview_body}");
-        let cleanup = &preview_body["data"]["archive"]["cleanup"];
-        assert_eq!(cleanup["workers"].as_array().unwrap().len(), 1);
-        let request = json!({
-            "schema_version": crate::group_lifecycle::GROUP_ARCHIVE_REQUEST_SCHEMA,
-            "expected_main_incarnation": main.runtime.as_ref().unwrap().launch_id,
-            "expected_run_revision": cleanup["run_revision"],
-            "expected_plan_digest": cleanup["plan_digest"],
-            "mode": "safe",
-            "idempotency_key": "group-archive-retry-0001",
-        });
-
-        let main_history_id =
-            provider_history::stable_history_id("claude", None, "archive-main-provider");
-        let main_archive_path = provider_history::archive_root(&st.context.state_dir)
-            .join(format!("{main_history_id}.json"));
-        let mut stale_incarnation = request.clone();
-        stale_incarnation["expected_main_incarnation"] = json!("stale-main-incarnation");
-        stale_incarnation["idempotency_key"] = json!("group-archive-stale-incarnation");
-        let (status, body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/archive-main/orchestration/group-archive",
-                Some(TOKEN),
-                stale_incarnation,
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body={body}");
-        assert_eq!(body["error"]["code"], "main-session-incarnation-conflict");
-
-        let mut stale_plan = request.clone();
-        stale_plan["expected_plan_digest"] = json!(format!("sha256:{}", "c".repeat(64)));
-        stale_plan["idempotency_key"] = json!("group-archive-stale-plan");
-        let (status, body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/archive-main/orchestration/group-archive",
-                Some(TOKEN),
-                stale_plan,
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body={body}");
-        assert_eq!(body["error"]["code"], "group-cleanup-plan-conflict");
-        assert!(!main_archive_path.exists());
-
-        let interrupt = st.context.state_dir.join("group-cleanup-interrupt-test");
-        fs::write(&interrupt, "authority_sealed").unwrap();
-        let (status, body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/archive-main/orchestration/group-archive",
-                Some(TOKEN),
-                request.clone(),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "body={body}");
-        assert_eq!(body["error"]["code"], "group-cleanup-test-interrupted");
-
-        for id in [&worker.id, &main.id] {
-            let delete = Request::builder()
-                .method("DELETE")
-                .uri(format!("/sessions/{id}"))
-                .header("authorization", format!("Bearer {TOKEN}"))
-                .body(Body::empty())
-                .unwrap();
-            let (status, body) = call(router(st.clone()), delete).await;
-            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body={body}");
-            assert_eq!(body["error"]["code"], "worker-group-cleanup-fenced");
-        }
-        fs::remove_file(interrupt).unwrap();
-
-        let (first_status, first_body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/archive-main/orchestration/group-archive",
-                Some(TOKEN),
-                request.clone(),
-            ),
-        )
-        .await;
-        assert_eq!(first_status, StatusCode::OK, "body={first_body}");
-        assert_eq!(first_body["data"]["archive"]["completed"], false);
-        assert_eq!(
-            first_body["data"]["archive"]["cleanup"]["failure"]["code"],
-            "provider-session-unavailable"
-        );
-        assert!(session_dir(&st.context, &worker.id).is_dir());
-        assert!(session_dir(&st.context, &main.id).is_dir());
-
-        let mut changed_archive = request.clone();
-        changed_archive["mode"] = json!("force");
-        let (status, body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/archive-main/orchestration/group-archive",
-                Some(TOKEN),
-                changed_archive,
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
-        assert_eq!(body["error"]["code"], "idempotency-conflict");
-
-        let cleanup_request = json!({
-            "schema_version": crate::group_lifecycle::GROUP_CLEANUP_REQUEST_SCHEMA,
-            "expected_main_incarnation": main.runtime.as_ref().unwrap().launch_id,
-            "expected_run_revision": cleanup["run_revision"],
-            "expected_plan_digest": cleanup["plan_digest"],
-            "mode": "safe",
-            "idempotency_key": "group-archive-retry-0001",
-        });
-        let (status, body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/archive-main/orchestration/group-cleanup",
-                Some(TOKEN),
-                cleanup_request,
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CONFLICT, "body={body}");
-        assert_eq!(body["error"]["code"], "idempotency-conflict");
-
-        worker.provider_resume = Some(crate::ProviderResume {
-            provider: "claude".to_string(),
-            session_id: "archive-worker-provider".to_string(),
-            captured_at: "2026-09-05T00:00:00Z".to_string(),
-            capture_method: "claude-explicit-session-id".to_string(),
-            resume_args: vec![
-                "--resume".to_string(),
-                "archive-worker-provider".to_string(),
-            ],
-            extra: std::collections::BTreeMap::new(),
-        });
-        crate::write_session_record(&st.context, &worker).unwrap();
-
-        let (retry_status, retry_body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/archive-main/orchestration/group-archive",
-                Some(TOKEN),
-                request,
-            ),
-        )
-        .await;
-        assert_eq!(retry_status, StatusCode::OK, "body={retry_body}");
-        assert_eq!(retry_body["data"]["archive"]["completed"], true);
-        assert_eq!(
-            retry_body["data"]["archive"]["cleanup"]["workers"][0]["outcome"],
-            "deleted"
-        );
-        assert!(!session_dir(&st.context, &worker.id).exists());
-        assert!(!session_dir(&st.context, &main.id).exists());
-        assert!(session_dir(&st.context, &collaborator.id).is_dir());
-        assert!(session_dir(&st.context, &borrower.id).is_dir());
-
-        for provider_id in ["archive-worker-provider", "archive-main-provider"] {
-            let history_id = provider_history::stable_history_id("claude", None, provider_id);
-            let archive_path = provider_history::archive_root(&st.context.state_dir)
-                .join(format!("{history_id}.json"));
-            assert!(archive_path.is_file(), "missing archive for {provider_id}");
-        }
-        let collaborator_history_id =
-            provider_history::stable_history_id("claude", None, "archive-collaborator-provider");
-        assert!(
-            !provider_history::archive_root(&st.context.state_dir)
-                .join(format!("{collaborator_history_id}.json"))
-                .exists(),
-            "collaborator must remain outside the archive group"
-        );
-        let borrower_history_id =
-            provider_history::stable_history_id("claude", None, "archive-borrower-provider");
-        assert!(
-            !provider_history::archive_root(&st.context.state_dir)
-                .join(format!("{borrower_history_id}.json"))
-                .exists(),
-            "borrowed session must remain outside the archive group"
-        );
-        // Failed and conflicting attempts removed nothing; the completed group
-        // archive closed exactly the worker and then the main session.
-        assert_eq!(
-            crate::board::closed_reasons_for_test(&st.context),
-            vec![
-                (worker.id.clone(), "archived".to_string()),
-                (main.id.clone(), "archived".to_string()),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn group_cleanup_success_replay_finishes_all_daemon_registry_evictions() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let state_dir = tmp.path().join("state");
-        let calls = tmp.path().join("attach-calls.log");
-        let source = tmp.path().join("attach-source.fifo");
-        let writer_guard = FixtureWriterGuard::new(tmp.path(), &source);
-        create_private_fifo(&source).unwrap();
-        let tmux = fanout_tmux(tmp.path(), &calls, &source, writer_guard.identity_dir());
-        let cleanup_tmux = tmp.path().join("tmux-missing-session");
-        fs::write(
-            &cleanup_tmux,
-            "#!/bin/sh\nprintf \"%s\\n\" \"can't find session: test\" >&2\nexit 1\n",
-        )
-        .unwrap();
-        fs::set_permissions(&cleanup_tmux, fs::Permissions::from_mode(0o700)).unwrap();
-        let mut st = state(&state_dir, Some(TOKEN), tmux.clone());
-
-        let mut main =
-            provider_discovery_record("cleanup-main", "hs-cleanup-main", "launch-cleanup-main", 1);
-        crate::mark_tmux_runtime_never_launched(&mut main);
-        fs::create_dir_all(session_dir(&st.context, &main.id)).unwrap();
-        crate::write_session_record(&st.context, &main).unwrap();
-
-        let mut worker = provider_discovery_record(
-            "cleanup-worker",
-            "hs-cleanup-worker",
-            "launch-cleanup-worker",
-            1,
-        );
-        crate::mark_tmux_runtime_never_launched(&mut worker);
-        fs::create_dir_all(session_dir(&st.context, &worker.id)).unwrap();
-        crate::write_session_record(&st.context, &worker).unwrap();
-        let main_incarnation = main.runtime.as_ref().unwrap().launch_id.clone();
-        let worker_incarnation = worker.runtime.as_ref().unwrap().launch_id.clone();
-        let main_ref = crate::orchestration::SessionRef {
-            machine: None,
-            session_id: main.id.clone(),
-            session_incarnation: main_incarnation.clone(),
-            session_created_at: main.created_at.clone(),
-        };
-        let worker_ref = crate::orchestration::SessionRef {
-            machine: None,
-            session_id: worker.id.clone(),
-            session_incarnation: worker_incarnation.clone(),
-            session_created_at: worker.created_at.clone(),
-        };
-        {
-            let mut locked = crate::orchestration::lock_registry(&st.context).unwrap();
-            locked.registry.runs.insert(
-                "cleanup-run".to_string(),
-                crate::orchestration::RunRecord {
-                    schema_version: crate::orchestration::RUN_SCHEMA.to_string(),
-                    run_id: "cleanup-run".to_string(),
-                    revision: 1,
-                    state: "active".to_string(),
-                    tier: "program".to_string(),
-                    objective_summary: "Replay daemon cleanup fences".to_string(),
-                    objective_packet_digest: format!("sha256:{}", "a".repeat(64)),
-                    controller: main_ref.clone(),
-                    durable_refs: Vec::new(),
-                    ephemeral: false,
-                    checkpoint: None,
-                    created_at: "2030-01-01T00:00:00Z".to_string(),
-                    updated_at: "2030-01-01T00:00:00Z".to_string(),
-                },
-            );
-            locked.registry.assignments.insert(
-                "cleanup-assignment".to_string(),
-                crate::orchestration::AssignmentRecord {
-                    schema_version: crate::orchestration::ASSIGNMENT_SCHEMA.to_string(),
-                    assignment_id: "cleanup-assignment".to_string(),
-                    run_id: "cleanup-run".to_string(),
-                    revision: 1,
-                    state: "accepted".to_string(),
-                    task_summary: "Replay cleanup fences".to_string(),
-                    private_packet_digest: format!("sha256:{}", "b".repeat(64)),
-                    primary_manager: main_ref,
-                    worker: Some(worker_ref),
-                    previous_worker: None,
-                    collaborators: Vec::new(),
-                    borrowed_by: Vec::new(),
-                    repository: None,
-                    worktree: None,
-                    base_ref: None,
-                    scopes: Vec::new(),
-                    durable_refs: Vec::new(),
-                    depends_on: Vec::new(),
-                    checkpoint: None,
-                    result_summary: None,
-                    blocker_summary: None,
-                    submit_recovery: None,
-                    worker_quarantine: None,
-                    account_handoff: None,
-                    runtime_stop: None,
-                    claim_revocation: None,
-                    readiness_stop_proof: None,
-                    created_at: "2030-01-01T00:00:00Z".to_string(),
-                    updated_at: "2030-01-01T00:00:00Z".to_string(),
-                },
-            );
-            locked.save().unwrap();
-        }
-        let preview = crate::group_lifecycle::preview_group_cleanup(&st.context, &main.id).unwrap();
-        let request = crate::group_lifecycle::GroupCleanupRequest {
-            schema_version: crate::group_lifecycle::GROUP_CLEANUP_REQUEST_SCHEMA.to_string(),
-            expected_main_incarnation: main_incarnation,
-            expected_run_revision: preview["run_revision"].as_u64().unwrap(),
-            expected_plan_digest: preview["plan_digest"].as_str().unwrap().to_string(),
-            mode: crate::group_lifecycle::GroupCleanupMode::Safe,
-            idempotency_key: "cleanup-registry-replay-0001".to_string(),
-        };
-
-        let (handle, _commands) = codex_app_server::control_channel();
-        st.codex_controls.lock().unwrap().insert(
-            worker.id.clone(),
-            CodexControlEntry {
-                launch_id: worker_incarnation,
-                handle,
-            },
-        );
-        let (main_handle, _main_commands) = codex_app_server::control_channel();
-        st.codex_controls.lock().unwrap().insert(
-            main.id.clone(),
-            CodexControlEntry {
-                launch_id: main.runtime.as_ref().unwrap().launch_id.clone(),
-                handle: main_handle,
-            },
-        );
-        let _worker_subscription = st
-            .attach_brokers
-            .subscribe(&st.context, &tmux, &worker)
-            .await
-            .unwrap();
-        let _main_subscription = st
-            .attach_brokers
-            .subscribe(&st.context, &tmux, &main)
-            .await
-            .unwrap();
-        assert!(
-            st.provider_prompt_discovery
-                .resolve_source(&worker)
-                .await
-                .is_none()
-        );
-        assert!(
-            st.provider_prompt_discovery
-                .resolve_source(&main)
-                .await
-                .is_none()
-        );
-
-        fs::remove_file(session_dir(&st.context, &worker.id).join("session.json"))
-            .expect("remove worker record for provisional failure");
-        let first = crate::group_lifecycle::execute_group_cleanup(
-            &st.context,
-            &main.id,
-            request.clone(),
-            cleanup_tmux.clone(),
-        )
-        .unwrap();
-        assert_eq!(
-            first.value["completed"], false,
-            "first cleanup result must be provisional: {}",
-            first.value
-        );
-        assert_eq!(first.value["failure"]["stage"], "worker_cleanup");
-        crate::write_session_record(&st.context, &worker).unwrap();
-        Arc::get_mut(&mut st)
-            .expect("exclusive serve state")
-            .tmux_bin = cleanup_tmux;
-        assert!(st.codex_controls.lock().unwrap().contains_key(&worker.id));
-        assert!(st.codex_controls.lock().unwrap().contains_key(&main.id));
-        assert_eq!(st.attach_brokers.subscriber_count(&worker.id).await, 1);
-        assert_eq!(st.attach_brokers.subscriber_count(&main.id).await, 1);
-        assert_eq!(st.provider_prompt_discovery.entry_count().await, 2);
-
-        let (status, body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/cleanup-main/orchestration/group-cleanup",
-                Some(TOKEN),
-                json!({
-                    "schema_version": request.schema_version,
-                    "expected_main_incarnation": request.expected_main_incarnation,
-                    "expected_run_revision": request.expected_run_revision,
-                    "expected_plan_digest": request.expected_plan_digest,
-                    "mode": "safe",
-                    "idempotency_key": request.idempotency_key
-                }),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "body={body}");
-        assert_eq!(
-            body["data"]["cleanup"]["completed"], true,
-            "provisional cleanup did not converge: {body}"
-        );
-        assert!(!st.codex_controls.lock().unwrap().contains_key(&worker.id));
-        assert!(!st.codex_controls.lock().unwrap().contains_key(&main.id));
-        assert_eq!(st.attach_brokers.subscriber_count(&worker.id).await, 0);
-        assert_eq!(st.attach_brokers.subscriber_count(&main.id).await, 0);
-        assert_eq!(st.provider_prompt_discovery.entry_count().await, 0);
-
-        // Re-seed every daemon registry after the successful execution. The
-        // next request is a pure terminal receipt replay, so these assertions
-        // prove replay returns and reapplies every durable registry fence.
-        fs::create_dir_all(session_dir(&st.context, &worker.id)).unwrap();
-        fs::create_dir_all(session_dir(&st.context, &main.id)).unwrap();
-        let (worker_replay_handle, _worker_replay_commands) = codex_app_server::control_channel();
-        st.codex_controls.lock().unwrap().insert(
-            worker.id.clone(),
-            CodexControlEntry {
-                launch_id: worker.runtime.as_ref().unwrap().launch_id.clone(),
-                handle: worker_replay_handle,
-            },
-        );
-        let (main_replay_handle, _main_replay_commands) = codex_app_server::control_channel();
-        st.codex_controls.lock().unwrap().insert(
-            main.id.clone(),
-            CodexControlEntry {
-                launch_id: main.runtime.as_ref().unwrap().launch_id.clone(),
-                handle: main_replay_handle,
-            },
-        );
-        let _worker_replay_subscription = st
-            .attach_brokers
-            .subscribe(&st.context, &tmux, &worker)
-            .await
-            .unwrap();
-        let _main_replay_subscription = st
-            .attach_brokers
-            .subscribe(&st.context, &tmux, &main)
-            .await
-            .unwrap();
-        assert!(
-            st.provider_prompt_discovery
-                .resolve_source(&worker)
-                .await
-                .is_none()
-        );
-        assert!(
-            st.provider_prompt_discovery
-                .resolve_source(&main)
-                .await
-                .is_none()
-        );
-        assert!(st.codex_controls.lock().unwrap().contains_key(&worker.id));
-        assert!(st.codex_controls.lock().unwrap().contains_key(&main.id));
-        assert_eq!(st.attach_brokers.subscriber_count(&worker.id).await, 1);
-        assert_eq!(st.attach_brokers.subscriber_count(&main.id).await, 1);
-        assert_eq!(st.provider_prompt_discovery.entry_count().await, 2);
-
-        let (replay_status, replay_body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/cleanup-main/orchestration/group-cleanup",
-                Some(TOKEN),
-                json!({
-                    "schema_version": request.schema_version,
-                    "expected_main_incarnation": request.expected_main_incarnation,
-                    "expected_run_revision": request.expected_run_revision,
-                    "expected_plan_digest": request.expected_plan_digest,
-                    "mode": "safe",
-                    "idempotency_key": request.idempotency_key
-                }),
-            ),
-        )
-        .await;
-        assert_eq!(replay_status, StatusCode::OK);
-        assert_eq!(
-            replay_body["data"]["cleanup"], body["data"]["cleanup"],
-            "terminal group-cleanup replay must be stable"
-        );
-        assert!(!st.codex_controls.lock().unwrap().contains_key(&worker.id));
-        assert!(!st.codex_controls.lock().unwrap().contains_key(&main.id));
-        assert_eq!(st.attach_brokers.subscriber_count(&worker.id).await, 0);
-        assert_eq!(st.attach_brokers.subscriber_count(&main.id).await, 0);
-        assert_eq!(st.provider_prompt_discovery.entry_count().await, 0);
-
-        writer_guard
-            .wait_for_started_and_reaped(4)
-            .expect("tmux target closes must reap all fixture writers");
-        writer_guard.cleanup().expect("cleanup fixture writers");
     }
 
     #[tokio::test]
@@ -35179,6 +34280,7 @@ exit 0
             &self.identity_dir
         }
 
+        #[cfg(target_os = "linux")]
         fn wait_for_started_and_reaped(&self, expected: usize) -> io::Result<()> {
             let deadline = Instant::now() + Duration::from_secs(2);
             loop {

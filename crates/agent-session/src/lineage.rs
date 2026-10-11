@@ -27,7 +27,6 @@ const MAX_TIMESTAMP_BYTES: usize = 64;
 pub(crate) const STARTER_SESSION: &str = "session";
 pub(crate) const STARTER_CONSOLE: &str = "console";
 pub(crate) const STARTER_OPERATOR: &str = "operator";
-pub(crate) const STARTER_MAIN_AGENT: &str = "main-agent";
 pub(crate) const VIA_CLI: &str = "cli";
 pub(crate) const VIA_CONSOLE: &str = "console";
 pub(crate) const VIA_HTTP: &str = "http";
@@ -561,10 +560,7 @@ impl LineageSeed {
         {
             return Err(lineage_invalid("unsupported lineage schema_version"));
         }
-        let parented = matches!(
-            input.starter.kind.as_str(),
-            STARTER_SESSION | STARTER_MAIN_AGENT
-        );
+        let parented = matches!(input.starter.kind.as_str(), STARTER_SESSION);
         let known_kind = parented
             || matches!(
                 input.starter.kind.as_str(),
@@ -596,7 +592,7 @@ impl LineageSeed {
             }
             _ => {
                 return Err(lineage_invalid(
-                    "a session or main-agent start names its parent and root with depth 1 or more; a console or operator start names neither, with depth 0",
+                    "a session start names its parent and root with depth 1 or more; a console or operator start names neither, with depth 0",
                 ));
             }
         };
@@ -682,21 +678,6 @@ fn own_machine(context: &CliContext, record: &SessionRecord) -> String {
         .map(|lineage| lineage.machine.clone())
         .filter(|machine| !machine.is_empty())
         .unwrap_or_else(|| crate::board::machine_identity(None, context))
-}
-
-/// Lineage and work for a Main Agent worker started by `owner`.
-pub fn main_agent_worker(
-    context: &CliContext,
-    owner: &SessionRecord,
-) -> Result<(LineageSeed, Option<SessionWork>), CliError> {
-    let machine = own_machine(context, owner);
-    let seed = LineageSeed::child_of(&machine, &machine, owner, STARTER_MAIN_AGENT, VIA_CLI)?;
-    let work = WorkRequest {
-        inherit: true,
-        ..WorkRequest::default()
-    }
-    .resolve(owner.work.as_ref());
-    Ok((seed, work))
 }
 
 /// A session reference with a bounded machine label, a valid session id, an
@@ -1231,64 +1212,6 @@ mod tests {
         ] {
             assert!(WorkRequest::from_request_json(&value).is_err(), "{value}");
         }
-    }
-
-    #[test]
-    fn main_agent_workers_are_children_of_their_owner_and_inherit_its_work() {
-        let context = CliContext {
-            state_dir: std::path::PathBuf::from("/nonexistent"),
-            host: Some("lineage-host".to_string()),
-        };
-        let machine = crate::board::machine_identity(None, &context);
-        let owner: SessionRecord = serde_json::from_value(json!({
-            "schema_version": "agent-session.session.v1",
-            "id": "main-owner",
-            "agent": "codex",
-            "mode": "interactive",
-            "title": null,
-            "cwd": "/w",
-            "tmux_session": "hs-codex-main-owner",
-            "prompt_file": null,
-            "log_file": null,
-            "created_at": "2026-10-01T00:00:00Z",
-            "updated_at": "2026-10-01T00:00:00Z",
-            "runtime": {
-                "kind": "tmux",
-                "tmux_session": "hs-codex-main-owner",
-                "generation": 2,
-                "started_at": "2026-10-01T00:00:00Z",
-                "launch_id": "owner-launch"
-            },
-            "work": {"program": {"provider": "github", "repository": "a/b", "number": 1},
-                     "issues": [], "inherited": false, "revision": 4}
-        }))
-        .unwrap();
-        let (seed, work) = main_agent_worker(&context, &owner).unwrap();
-        let lineage = seed.finalize("worker", "2026-10-01T01:00:00Z");
-        let owner_ref = json!({
-            "machine": machine,
-            "session_id": "main-owner",
-            "session_created_at": "2026-10-01T00:00:00Z",
-        });
-        let mut parent = owner_ref.clone();
-        parent["session_incarnation"] = json!("owner-launch");
-        assert_eq!(
-            json!(lineage),
-            json!({
-                "schema_version": LINEAGE_SCHEMA,
-                "machine": machine,
-                "parent": parent,
-                "root": owner_ref,
-                "depth": 1,
-                "starter": {"kind": "main-agent", "via": "cli"},
-                "budget": null,
-            })
-        );
-        let work = work.unwrap();
-        assert_eq!(
-            (work.program, work.issues, work.inherited, work.revision),
-            (Some(issue("a/b", 1)), Vec::new(), true, 1)
-        );
     }
 
     #[test]
