@@ -312,12 +312,15 @@ For Claude and Codex, two consecutive samples of the provider interrupt marker,
 at least 15 seconds apart, may project `phase: unknown` with
 `diagnostic.reason: interrupted_suspected` and inferred terminal-heuristic
 provenance. This is uncertainty, not confirmed `interrupted` or `waiting`: the
-open turn and last-turn outcome remain intact. Runtime launch/generation and
-activity revision fence both samples; a new prompt or any newer hook invalidates
-them. Claude samples the current viewport rather than scrollback, and a
-nonempty prompt row after its latest interrupt marker invalidates that marker.
-An earlier turn's marker cannot establish idleness for a fresh turn. Claude
-requires an empty idle composer; its drafts cannot produce this projection.
+open turn and last-turn outcome remain intact.
+
+Runtime launch/generation and activity revision fence both samples; a new
+prompt or any newer hook invalidates them. Claude samples the current viewport
+rather than scrollback, and a nonempty prompt row after its latest interrupt
+marker invalidates that marker. An earlier turn's marker cannot establish
+idleness for a fresh turn. Claude requires an empty idle composer; its drafts
+cannot produce this projection.
+
 Codex uses the `Conversation interrupted` marker; plain composer
 text cannot distinguish a placeholder from a draft and supplies no completion
 or waiting evidence. Claude also recognizes a Running tool status below the
@@ -326,6 +329,7 @@ a newer interrupt. A working indicator, attention, missing marker, stale sample,
 or runtime replacement cannot produce this projection. A ready serve
 activity broker refreshes on a 15-second timer even without
 hooks or HTTP polling, and completed shadow writes refresh stream snapshots.
+
 Sample timestamp changes alone update the cache without broadcasting a new
 snapshot; changed rules or turn-state projections still reach subscribers.
 Sampling is throttled to once per 15 seconds for each runtime, including across
