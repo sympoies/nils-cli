@@ -489,7 +489,9 @@ accepted qualifying Stop candidate for the exact current turn in the same runtim
 and bound provider conversation. An active, background-task, or reentrant Stop
 cannot authorize this exception. It requires working state, no later accepted
 work or attention, no pending attention, and an idle ID absent from both the
-known previous turn and accepted turn metadata in the retained journal. Journal
+known previous turn and correlated turn metadata in the retained journal unless
+the receipt is explicitly marked `applied: false`. A retained terminal receipt
+without the admission member conservatively denies this exception. Journal
 read uncertainty denies only this changed-ID exception. IDs outside the bounded
 retention window are treated as unseen.
 It completes the stopped turn under its original ID and journals the raw idle

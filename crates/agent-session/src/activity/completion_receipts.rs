@@ -18,11 +18,6 @@ pub(super) fn allows_reconciliation(
     };
     !entries.iter().any(|entry| {
         entry.applied != Some(false)
-            && (entry.applied == Some(true)
-                || !matches!(
-                    entry.event.kind,
-                    TurnEventKind::TurnCompleted | TurnEventKind::TurnFailed
-                ))
             && entry.event.runtime_id == event.runtime_id
             && entry.event.provider == event.provider
             && entry.event.provider_session_id == event.provider_session_id
