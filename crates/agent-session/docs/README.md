@@ -6,6 +6,10 @@ or integrating a specific subsystem.
 
 ## Operator runbooks
 
+- [Session lifecycle operations](runbooks/session-lifecycle.md): sending input
+  and prompt submission outcomes, clear and rebind, resume, verified deletion,
+  startup logs, DSH launch, account switching, model settings, and secret
+  safety.
 - [Lifecycle incident evidence](runbooks/lifecycle-journal.md): bounded per-session
   lifecycle records, refusal proof steps, retention, and runtime exit observations.
 - [Work coordination](runbooks/work-coordination.md): coordination modes,

@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::{auth, cache, client, render};
+use super::{auth, backoff, cache, client, render};
 
 const USAGE_SCHEMA_VERSION: &str = "claude-cli.usage.v1";
 const USAGE_COMMAND: &str = "usage";
@@ -228,16 +228,26 @@ fn resolve_usage(source: UsageSource, trace: &mut SourceTrace) -> UsageResult {
     match source {
         UsageSource::Auto => {
             let started = Instant::now();
-            let oauth_reason = match try_oauth(cache_file.as_ref()) {
+            let (oauth_reason, account_key) = match try_oauth(cache_file.as_ref()) {
                 Ok(result) => {
                     trace.record("oauth", started.elapsed(), None, true);
                     return result;
                 }
-                Err(reason) => {
+                Err((reason, key)) => {
                     trace.record("oauth", started.elapsed(), Some(reason), false);
-                    reason
+                    (reason, key)
                 }
             };
+
+            if oauth_reason == ProviderUsageReason::RateLimited {
+                return trace_read_account_cache(
+                    trace,
+                    cache_file.as_ref(),
+                    account_key.as_deref(),
+                )
+                .map(|result| result_with_reason(result, oauth_reason))
+                .unwrap_or_else(|| empty_result(cache_file, "usage unavailable", oauth_reason));
+            }
 
             let started = Instant::now();
             let cli_reason = match try_claude_cli(cache_file.as_ref()) {
@@ -267,9 +277,17 @@ fn resolve_usage(source: UsageSource, trace: &mut SourceTrace) -> UsageResult {
                     trace.record("oauth", started.elapsed(), None, true);
                     result
                 }
-                Err(reason) => {
+                Err((reason, key)) => {
                     trace.record("oauth", started.elapsed(), Some(reason), false);
-                    empty_result(cache_file, "oauth usage unavailable", reason)
+                    if reason == ProviderUsageReason::RateLimited {
+                        trace_read_account_cache(trace, cache_file.as_ref(), key.as_deref())
+                            .map(|result| result_with_reason(result, reason))
+                            .unwrap_or_else(|| {
+                                empty_result(cache_file, "oauth usage unavailable", reason)
+                            })
+                    } else {
+                        empty_result(cache_file, "oauth usage unavailable", reason)
+                    }
                 }
             }
         }
@@ -312,13 +330,17 @@ fn trace_transcript_reason(trace: &mut SourceTrace) -> Option<ProviderUsageReaso
     reason
 }
 
-fn try_oauth(cache_file: Option<&PathBuf>) -> Result<UsageResult, ProviderUsageReason> {
-    let token = auth::resolve_access_token().ok_or(ProviderUsageReason::AuthRequired)?;
-    let body = client::fetch_usage(&token.value).map_err(|error| error.reason())?;
-    let value: Value = serde_json::from_str(&body).map_err(|_| ProviderUsageReason::Unknown)?;
-    let usage = render::parse_usage_value(&value).ok_or(ProviderUsageReason::Unknown)?;
+fn try_oauth(
+    cache_file: Option<&PathBuf>,
+) -> Result<UsageResult, (ProviderUsageReason, Option<String>)> {
+    let token = auth::resolve_access_token().ok_or((ProviderUsageReason::AuthRequired, None))?;
+    let key = Some(backoff::token_key(&token.value));
+    let body = client::fetch_usage(&token.value).map_err(|error| (error.reason(), key.clone()))?;
+    let value: Value =
+        serde_json::from_str(&body).map_err(|_| (ProviderUsageReason::Unknown, key.clone()))?;
+    let usage = render::parse_usage_value(&value).ok_or((ProviderUsageReason::Unknown, key))?;
     if let Some(cache_file) = cache_file {
-        let _ = cache::write_cache_file(cache_file, &body);
+        let _ = cache::write_oauth_cache_file(cache_file, &body, &token.value);
     }
     Ok(result_from_usage(
         "oauth",
@@ -347,12 +369,30 @@ fn try_claude_cli(cache_file: Option<&PathBuf>) -> Result<UsageResult, ProviderU
     ))
 }
 
+fn trace_read_account_cache(
+    trace: &mut SourceTrace,
+    cache_file: Option<&PathBuf>,
+    key: Option<&str>,
+) -> Option<UsageResult> {
+    let started = Instant::now();
+    let result = key.and_then(|key| read_cache_matching(cache_file, Some(key)));
+    trace.record("cache", started.elapsed(), None, result.is_some());
+    result
+}
+
 fn read_cache(cache_file: Option<&PathBuf>) -> Option<UsageResult> {
+    read_cache_matching(cache_file, None)
+}
+
+fn read_cache_matching(cache_file: Option<&PathBuf>, key: Option<&str>) -> Option<UsageResult> {
     let cache_file = cache_file?;
     if cache::cache_display_expired(cache_file) {
         return None;
     }
     let raw = cache::read_cache_file(cache_file)?;
+    if key.is_some_and(|key| !cache::matches_token_key(cache_file, &raw, key)) {
+        return None;
+    }
     let value: Value = serde_json::from_str(&raw).ok()?;
     let usage = render::parse_usage_value(&value)?;
     Some(result_from_usage(

@@ -2,7 +2,10 @@ use anyhow::{Context, Result};
 use nils_common::env as shared_env;
 use nils_common::fs as shared_fs;
 use nils_common::usage_cache_policy;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+
+use super::backoff;
 use std::time::{Duration, SystemTime};
 
 const CACHE_FILE_NAME: &str = "usage.json";
@@ -145,6 +148,42 @@ pub fn write_cache_file(path: &Path, body: &str) -> Result<()> {
         .with_context(|| format!("failed to write cache: {}", path.display()))
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+struct CacheOwner {
+    token_key: String,
+    body_digest: String,
+}
+
+fn body_digest(body: &str) -> String {
+    Sha256::digest(body.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+pub(crate) fn write_oauth_cache_file(path: &Path, body: &str, token: &str) -> Result<()> {
+    write_cache_file(path, body)?;
+    let owner = CacheOwner {
+        token_key: backoff::token_key(token),
+        body_digest: body_digest(body),
+    };
+    shared_fs::write_atomic(
+        &path.with_extension("owner.json"),
+        &serde_json::to_vec(&owner)?,
+        shared_fs::SECRET_FILE_MODE,
+    )?;
+    Ok(())
+}
+
+/// The body digest binds ownership to the exact payload even if another
+/// account concurrently replaces the global cache or a metadata write fails.
+pub(crate) fn matches_token_key(path: &Path, body: &str, key: &str) -> bool {
+    std::fs::read(path.with_extension("owner.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<CacheOwner>(&bytes).ok())
+        .is_some_and(|owner| owner.token_key == key && owner.body_digest == body_digest(body))
+}
+
 pub fn snapshot(path: &Path) -> CacheSnapshot {
     snapshot_at(path, SystemTime::now())
 }
@@ -211,6 +250,27 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::fs::File;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn oauth_cache_ownership_does_not_survive_payload_replacement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("usage.json");
+        super::write_oauth_cache_file(&path, "first payload", "fixture-alpha").unwrap();
+        let alpha = super::backoff::token_key("fixture-alpha");
+        assert!(super::matches_token_key(&path, "first payload", &alpha));
+        assert!(!super::matches_token_key(
+            &path,
+            "first payload",
+            &super::backoff::token_key("fixture-beta")
+        ));
+        // Another writer can replace the data before writing its sidecar.
+        super::write_cache_file(&path, "replacement payload").unwrap();
+        assert!(!super::matches_token_key(
+            &path,
+            "replacement payload",
+            &alpha
+        ));
+    }
 
     #[test]
     fn cache_stale_treats_zero_ttl_as_stale() {
