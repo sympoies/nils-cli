@@ -275,6 +275,7 @@ esac
         "event_id": "claude-notification-stop",
         "runtime_id": launch_id,
         "provider": "claude",
+        "provider_session_id": beta.provider_resume.as_ref().expect("known provider conversation").session_id,
         "kind": "stop_observed",
         "confidence": "observed"
     }))
