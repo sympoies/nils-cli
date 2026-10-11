@@ -1,5 +1,3 @@
-use std::process::Command;
-
 #[test]
 fn service_mailbox_http_acceptance() {
     run_fixture(&[]);
@@ -18,7 +16,7 @@ fn service_mailbox_preserves_existing_machine_identity() {
 fn run_fixture(extra_args: &[&str]) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/service-mailbox-acceptance.mjs");
-    let mut command = Command::new("node");
+    let mut command = nils_test_support::node::command();
     command
         .arg(fixture)
         .arg("--agent-session-bin")

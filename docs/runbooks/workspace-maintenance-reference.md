@@ -44,6 +44,9 @@ can start a scope, each one runs with `MemoryMax=6G` and no swap, nested under
 `NILS_CLI_GATE_SLICE` when a gate sets it. Inside such a gate the scope is
 required: if it cannot start, the check fails without running Node. Outside a
 gate, for example on macOS or a hosted runner, the command runs unchanged.
+Rust tests that launch Node use `nils_test_support::node::command()`, which
+applies the same scope and fail-closed rule; do not call `Command::new("node")`
+directly.
 
 Local fast changed-scope checks also require:
 
