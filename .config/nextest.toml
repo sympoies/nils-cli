@@ -24,7 +24,6 @@
 # flaky event, so no retries would have turned most `main` pushes red.
 #
 # Still flaking as of #1667's second window, and worth their own investigation:
-# `nils-agent-session` `main_agent_worker_start_distinct_null_id_requests_hold_distinct_authority_fences`,
 # `launch_profile_readiness_timeout_kills_its_process_group`,
 # `delete_exhausts_bounded_identity_churn_without_losing_current_runtime`,
 # and `nils-claude-cli` `spawn_retry_is_bounded_and_limited_to_would_block`.
@@ -104,18 +103,10 @@ filter = 'package(nils-agent-hook) & test(=codex_apply_patch_target_binding_meet
 threads-required = "num-test-threads"
 priority = 100
 
-# These fixtures coordinate same-release subprocesses across bounded barrier
-# and transcript-observation windows. Give each the complete CI thread pool so
-# unrelated coverage work cannot consume the process admission they validate.
-[[profile.ci.overrides]]
-filter = 'package(nils-agent-session) & test(/(main_agent_worker_start_(definitive_recovery_failure_converges_at_(deadline|final_checkpoint|takeover)_boundary|preserves_ambiguous_initial_enter_without_redelivery|timeout_reports_exact_submitted_prompt|waits_for_late_bootstrap_after_recovery_failure))/)'
-threads-required = "num-test-threads"
-priority = 100
-
 # The longest tests (20-90 s each) start right after the exclusive ones, so
 # they overlap with the short tests instead of forming the tail of the run.
 [[profile.ci.overrides]]
-filter = 'package(nils-agent-session) & test(/(main_agent_worker_start_finalizer_takeover_resumes_the_same_recovery_attempt|main_agent_submit_recovery_rechecks_authority_inside_the_serialized_send_boundary|main_agent_submit_recovery_fences_concurrent_manager_mutations_until_resolved|two_root_http_federation_acceptance|claimed_runtime_stop_preserves_the_active_claim_for_reconcile_stopped|generated_200_mib_history_converges_through_catalog_refresh_reload_reducer_and_title)/)'
+filter = 'package(nils-agent-session) & test(/(two_root_http_federation_acceptance|generated_200_mib_history_converges_through_catalog_refresh_reload_reducer_and_title)/)'
 priority = 50
 
 # This full-window fixture has its own 60 s deadline so timeout failures

@@ -147,29 +147,10 @@ pub(crate) fn send(context: &CliContext, args: MessageSendArgs) -> Result<Value,
     {
         return super::remote::cli_send(context, args);
     }
-    send_impl(context, args, false, || Ok(()))
+    send_impl(context, args)
 }
 
-pub fn send_with_commit_authorization<G, F>(
-    context: &CliContext,
-    args: MessageSendArgs,
-    authorize: F,
-) -> Result<Value, CliError>
-where
-    F: FnOnce() -> Result<G, CliError>,
-{
-    send_impl(context, args, true, authorize)
-}
-
-fn send_impl<G, F>(
-    context: &CliContext,
-    args: MessageSendArgs,
-    require_active_sender_claim: bool,
-    authorize: F,
-) -> Result<Value, CliError>
-where
-    F: FnOnce() -> Result<G, CliError>,
-{
+fn send_impl(context: &CliContext, args: MessageSendArgs) -> Result<Value, CliError> {
     let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
     let (record, sender_incarnation) =
         authenticate_from_file(context, &args.from_session, Some(&capability_file))?;
@@ -189,10 +170,8 @@ where
         None,
         None,
         None,
-        require_active_sender_claim,
         args.category,
         None,
-        authorize,
     )
 }
 
@@ -267,10 +246,8 @@ pub(crate) fn forward(context: &CliContext, args: MessageForwardArgs) -> Result<
         None,
         None,
         Some(digest),
-        false,
         None,
         Some(&request),
-        || Ok(()),
     )
 }
 
@@ -673,10 +650,8 @@ pub(crate) fn reply(context: &CliContext, args: MessageReplyArgs) -> Result<Valu
         Some(&original.sender_incarnation),
         Some(args.if_revision),
         Some(digest),
-        false,
         args.category,
         None,
-        || Ok(()),
     )
 }
 
@@ -781,7 +756,7 @@ pub(crate) fn wait_with_cancellation(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn send_authenticated<G, F>(
+fn send_authenticated(
     context: &CliContext,
     sender_session_id: &str,
     sender_incarnation: &str,
@@ -796,14 +771,9 @@ fn send_authenticated<G, F>(
     expected_recipient_incarnation: Option<&str>,
     expected_parent_revision: Option<u64>,
     request_digest_override: Option<String>,
-    require_active_sender_claim: bool,
     category: Option<MessageCategory>,
     forward_request: Option<&super::forwarding::Request>,
-    authorize: F,
-) -> Result<Value, CliError>
-where
-    F: FnOnce() -> Result<G, CliError>,
-{
+) -> Result<Value, CliError> {
     if sender_session_id == recipient_session_id && reply_to.is_some() {
         return Err(CliError::data(
             "reply-depth-exceeded",
@@ -893,25 +863,6 @@ where
     )? {
         return Ok(replay);
     }
-    if require_active_sender_claim
-        && !locked.registry.claims.iter().any(|claim| {
-            claim.session_id == sender_session_id
-                && claim.session_incarnation == sender_incarnation
-                && claim.state == "active"
-        })
-    {
-        return Err(CliError::data(
-            "claim-not-active",
-            "no matching active work claim exists",
-            None,
-        ));
-    }
-    // Keep the returned guard alive through the coordination save. Main Agent
-    // delivery uses this to hold the orchestration registry after revalidating
-    // assignment ownership, while handoff takes the same locks in coordination
-    // -> orchestration order. A message therefore commits wholly before a
-    // handoff or is rejected against the handed-off assignment.
-    let _authorization_guard = authorize()?;
     let broker = locked
         .registry
         .brokers
@@ -1068,91 +1019,6 @@ where
     Ok(outcome)
 }
 
-pub(crate) fn carry_forward_unread_controller_guidance_with_authorization<G, F>(
-    context: &CliContext,
-    recipient_session_id: &str,
-    previous_incarnation: &str,
-    current_incarnation: &str,
-    controller_session_id: &str,
-    controller_incarnation: &str,
-    authorize: F,
-) -> Result<usize, CliError>
-where
-    F: FnOnce() -> Result<G, CliError>,
-{
-    let now = now_epoch();
-    let mut locked = lock_registry(context)?;
-    let broker = locked
-        .registry
-        .brokers
-        .get(recipient_session_id)
-        .filter(|broker| {
-            broker.incarnation == current_incarnation
-                && broker.state == "ready"
-                && super::broker::capability_available(
-                    context,
-                    recipient_session_id,
-                    current_incarnation,
-                    &broker.capability_digest,
-                )
-                && super::broker::heartbeat_fresh(
-                    context,
-                    recipient_session_id,
-                    current_incarnation,
-                    broker.heartbeat_epoch,
-                )
-        })
-        .ok_or_else(|| {
-            CliError::runtime(
-                "resume-guidance-recipient-unavailable",
-                "the resumed worker coordination identity is not authoritative",
-                None,
-            )
-        })?;
-    let _ = broker;
-    let _authorization_guard = authorize()?;
-    let machine = crate::board::machine_identity(None, context);
-
-    let mut carried = 0usize;
-    for message in &mut locked.registry.messages {
-        if message.recipient_session_id == recipient_session_id
-            && message.recipient_incarnation == previous_incarnation
-            && !super::remote::is_remote_sender(&message.sender_session_id)
-            && message.sender_session_id == controller_session_id
-            && message.sender_incarnation == controller_incarnation
-            && message.state == "unread"
-            && message.expires_at_epoch > now
-        {
-            super::forwarding::record_recipient_transfer(
-                message,
-                &machine,
-                current_incarnation,
-                super::remote::Address {
-                    machine: machine.clone(),
-                    session_id: controller_session_id.into(),
-                    session_incarnation: controller_incarnation.into(),
-                },
-                now,
-            )?;
-            message.recipient_incarnation = current_incarnation.to_string();
-            message.revision = message.revision.saturating_add(1);
-            message.forwarded_from_incarnation = Some(previous_incarnation.to_string());
-            message.forwarded_at_epoch = Some(now);
-            carried = carried.saturating_add(1);
-        }
-    }
-    if carried > 0 {
-        let _ = super::notification::schedule(
-            &mut locked.registry,
-            recipient_session_id,
-            current_incarnation,
-            now,
-        );
-        locked.save()?;
-    }
-    Ok(carried)
-}
-
 /// Same-session resume continuity (`sympoies/nils-cli#2302`).
 ///
 /// The caller holds the registry lock and has just proven `previous_incarnation`
@@ -1161,11 +1027,9 @@ where
 /// no mail can still be admitted for the predecessor afterwards. Only unread,
 /// unexpired mail moves, in place: the message ID, sender, timestamps, expiry
 /// and category stay unchanged and the revision advances, so a copy can never be
-/// handled twice. Read or terminal mail, other session IDs and guidance from a
-/// Main Agent controller of this session (which keeps its own authorized
-/// continuity and quarantine) stay with their original incarnation. Mail
-/// created before this session record existed belongs to an earlier session
-/// that reused the ID and is never carried.
+/// handled twice. Read or terminal mail and other session IDs stay with their
+/// original incarnation. Mail created before this session record existed
+/// belongs to an earlier session that reused the ID and is never carried.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn carry_unread_after_verified_resume(
     context: &CliContext,
@@ -1182,9 +1046,6 @@ pub(super) fn carry_unread_after_verified_resume(
     let Ok(session_created) = session_created_at.parse::<jiff::Timestamp>() else {
         return 0;
     };
-    let Some(controllers) = main_agent_controllers(context, session_id) else {
-        return 0;
-    };
     let machine = crate::board::machine_identity(None, context);
     let mut carried = 0usize;
     for message in &mut registry.messages {
@@ -1193,7 +1054,6 @@ pub(super) fn carry_unread_after_verified_resume(
             || message.state != "unread"
             || message.expires_at_epoch <= now
             || persisted_before(message, session_created)
-            || controllers.contains(&message.sender_session_id)
             || super::forwarding::record_resume_transfer(
                 message,
                 &machine,
@@ -1239,97 +1099,6 @@ fn persisted_before(message: &StoredMessage, session_created: jiff::Timestamp) -
     } else {
         message.created_at_epoch < session_created.as_second()
     }
-}
-
-/// Local controllers whose guidance to `session_id` Main Agent reconciles
-/// itself; `None` when that relationship cannot be read (carry nothing).
-fn main_agent_controllers(
-    context: &CliContext,
-    session_id: &str,
-) -> Option<std::collections::BTreeSet<String>> {
-    let registry = crate::orchestration::load_registry_readonly(context).ok()?;
-    Some(
-        registry
-            .assignments
-            .values()
-            .filter(|assignment| {
-                assignment
-                    .worker
-                    .iter()
-                    .chain(assignment.previous_worker.iter())
-                    .any(|worker| worker.session_id == session_id)
-            })
-            .map(|assignment| assignment.primary_manager.session_id.clone())
-            .collect(),
-    )
-}
-
-pub(crate) fn quarantine_orphaned_controller_guidance_with_authorization<G, F>(
-    context: &CliContext,
-    recipient_session_id: &str,
-    current_incarnation: &str,
-    controller_session_id: &str,
-    controller_incarnation: &str,
-    authorize: F,
-) -> Result<usize, CliError>
-where
-    F: FnOnce() -> Result<G, CliError>,
-{
-    let now = now_epoch();
-    let mut locked = lock_registry(context)?;
-    locked
-        .registry
-        .brokers
-        .get(recipient_session_id)
-        .filter(|broker| {
-            broker.incarnation == current_incarnation
-                && broker.state == "ready"
-                && super::broker::capability_available(
-                    context,
-                    recipient_session_id,
-                    current_incarnation,
-                    &broker.capability_digest,
-                )
-                && super::broker::heartbeat_fresh(
-                    context,
-                    recipient_session_id,
-                    current_incarnation,
-                    broker.heartbeat_epoch,
-                )
-        })
-        .ok_or_else(|| {
-            CliError::runtime(
-                "guidance-quarantine-recipient-unavailable",
-                "the current worker coordination identity is not authoritative",
-                None,
-            )
-        })?;
-    let _authorization_guard = authorize()?;
-
-    let mut changed = false;
-    let mut quarantined = 0usize;
-    for message in &mut locked.registry.messages {
-        if message.recipient_session_id == recipient_session_id
-            && message.recipient_incarnation != current_incarnation
-            && !super::remote::is_remote_sender(&message.sender_session_id)
-            && message.sender_session_id == controller_session_id
-            && message.sender_incarnation == controller_incarnation
-            && message.expires_at_epoch > now
-            && matches!(message.state.as_str(), "unread" | "quarantined")
-        {
-            if message.state == "unread" {
-                message.state = "quarantined".to_string();
-                message.revision = message.revision.saturating_add(1);
-                message.terminal_at_epoch = Some(now);
-                changed = true;
-            }
-            quarantined = quarantined.saturating_add(1);
-        }
-    }
-    if changed {
-        locked.save()?;
-    }
-    Ok(quarantined)
 }
 
 pub(crate) fn read_body(path: &Path) -> Result<String, CliError> {
