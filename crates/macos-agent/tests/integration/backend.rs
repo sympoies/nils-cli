@@ -267,7 +267,10 @@ fn review_repair_rollback_after_interrupted_install_restores_the_predecessor() {
     );
     assert_eq!(rollback.code, 0, "{}", rollback.stderr_text());
     assert_eq!(rollback.stdout_json()["result"]["current"]["tag"], "v4.6.0");
-    assert_eq!(rollback.stdout_json()["result"]["previous"]["tag"], "v4.8.0");
+    assert_eq!(
+        rollback.stdout_json()["result"]["previous"]["tag"],
+        "v4.8.0"
+    );
     assert!(!root.join("receipts/pending.json").exists());
 }
 
