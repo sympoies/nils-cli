@@ -24,6 +24,7 @@ mod diagnose;
 mod digest_format;
 mod display_metadata;
 mod forge_identity;
+mod launch_env;
 mod lifecycle;
 #[doc(hidden)]
 pub mod lineage;
@@ -35,6 +36,7 @@ mod provider_history;
 pub mod provider_prompt;
 mod retitle;
 mod retitle_v3;
+mod runtime_environment;
 mod send_submit;
 mod serve;
 mod serve_config;
@@ -94,6 +96,7 @@ use serde_json::{Value, json};
 use cli::{AgentKind, Cli, Command, SpecialKey};
 use digest_format::valid_sha256;
 use display_metadata::SessionTitleStateView;
+use runtime_environment::add_runtime_tmux_environment;
 
 pub const SESSION_DOCUMENT_VERSION: &str = "agent-session.session.v1";
 const SESSION_RESUME_DOCUMENT_VERSION: &str = "agent-session.resume.v1";
@@ -430,6 +433,9 @@ pub fn render_clap_message(err: &clap::Error) -> String {
 
 fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
     let format = args.format;
+    if let Err(error) = launch_env::from_flags(&args.launch_env) {
+        return render_error(START_COMMAND, format, error);
+    }
     if args.forge_initiator.is_some() && non_empty_env("AGENT_SESSION_ID").is_some() {
         return render_error(
             START_COMMAND,
@@ -520,6 +526,10 @@ fn start_via_console(
 ) -> Result<Value, CliError> {
     let cwd = absolute_path(args.cwd.as_deref().unwrap_or(Path::new(".")))?;
     let mut session = json!({ "agent": args.agent.as_str(), "cwd": cwd.to_string_lossy() });
+    let launch_env = launch_env::from_flags(&args.launch_env)?;
+    if !launch_env.is_empty() {
+        session["launch_env"] = json!(launch_env);
+    }
     if args.title_mode == "pinned" {
         session["title_mode"] = json!(args.title_mode);
     }
@@ -1632,6 +1642,7 @@ struct DurableResumeRecord {
 pub struct SessionView {
     #[serde(skip_serializing_if = "Option::is_none")]
     context_usage: Option<context_usage::ContextUsage>,
+    launch_env: launch_env::LaunchEnv,
     #[serde(flatten)]
     model_settings: session_model::ModelSettings,
     pub id: String,
@@ -1725,6 +1736,7 @@ pub struct StartView {
 }
 
 pub(crate) struct ProviderResumeImportArgs {
+    pub(crate) launch_env: launch_env::LaunchEnv,
     pub(crate) agent: AgentKind,
     pub(crate) title_mode: display_metadata::TitleMode,
     pub(crate) provider_resume_id: String,
@@ -2054,6 +2066,7 @@ fn start_session_inner_unjournaled(
     failure_disposition: StartFailureDisposition,
     claude_account: Option<InitialClaudeAccount>,
 ) -> Result<StartView, CliError> {
+    let launch_env = launch_env::from_flags(&args.launch_env)?;
     if args.agent == AgentKind::Dsh && args.initial_agent_profile.is_none() {
         // Refused before any durable side effect: a dsh pane is launched only
         // through a server-owned launch profile.
@@ -2107,6 +2120,7 @@ fn start_session_inner_unjournaled(
         .record
         .extra
         .insert("title_mode".into(), json!(args.title_mode));
+    launch_env::store(&mut created.record, &launch_env);
     persist_initial_profile_context(
         context,
         &mut created,
@@ -2611,6 +2625,7 @@ pub(crate) fn start_dsh_history_resume_session_unjournaled(
         )]),
     };
     let start_args = ProviderResumeImportArgs {
+        launch_env: launch_env::LaunchEnv::new(),
         agent: AgentKind::Dsh,
         title_mode: args.title_mode,
         provider_resume_id,
@@ -2638,6 +2653,7 @@ fn start_resolved_provider_resume_session(
     cwd: PathBuf,
     provider_resume: ProviderResume,
 ) -> Result<StartView, CliError> {
+    launch_env::validate(&args.launch_env)?;
     let _worktree_lifecycle = acquire_worktree_lifecycle(context, &cwd)?;
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
     let agent_bin = resolve_agent_bin(args.agent, args.agent_bin.as_deref());
@@ -2665,6 +2681,7 @@ fn start_resolved_provider_resume_session(
         .record
         .extra
         .insert("title_mode".into(), json!(args.title_mode));
+    launch_env::store(&mut created.record, &args.launch_env);
     persist_initial_profile_context(
         context,
         &mut created,
@@ -6238,112 +6255,6 @@ fn establish_coordination_broker_with_previous(
     coordination::activate_ready(context, record)
 }
 
-fn add_runtime_tmux_environment(
-    command: &mut ProcessCommand,
-    state_dir: &Path,
-    record: &SessionRecord,
-) -> Result<(), CliError> {
-    let runtime_id = record
-        .runtime
-        .as_ref()
-        .map(|runtime| runtime.launch_id.as_str())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            CliError::data(
-                "runtime-id-missing",
-                "session runtime is missing its launch id",
-                Some(json!({ "id": record.id })),
-            )
-        })?;
-    for key in [
-        "AGENT_SESSION_TOKEN",
-        "AGENT_SESSION_RELAY_URL",
-        "AGENT_SESSION_RELAY_TOKEN",
-        "AGENT_SESSION_RELAY_INGRESS_TOKEN",
-        "AGENT_CONSOLE_COORDINATION_RELAYS",
-    ] {
-        command.env_remove(key).arg("-e").arg(key);
-    }
-    for value in [
-        format!("AGENT_SESSION_ID={}", record.id),
-        format!("AGENT_SESSION_STATE_DIR={}", display_path(state_dir)),
-        format!("AGENT_SESSION_RUNTIME_ID={runtime_id}"),
-        format!(
-            "AGENT_SESSION_COORDINATION_MODE={}",
-            record.coordination_mode.as_str()
-        ),
-        format!(
-            "{}={}",
-            coordination::CAPABILITY_ENV,
-            display_path(&coordination::capability_path_for_state(
-                state_dir, &record.id, runtime_id
-            ))
-        ),
-        format!(
-            "{}={}",
-            coordination::CHECKPOINT_ENV,
-            display_path(&coordination::checkpoint_path_for_state(
-                state_dir, &record.id, runtime_id
-            ))
-        ),
-        format!(
-            "{}={}",
-            codex_app_server::ATTENTION_AUTHORITY_ENV,
-            codex_app_server::attention_authority(record)
-        ),
-    ] {
-        command.arg("-e").arg(value);
-    }
-
-    if let (Some(agent), Some(config_dir)) = (
-        AgentKind::from_name(&record.agent),
-        session_effective_provider_config_dir(record),
-    ) {
-        let env_key = match agent {
-            AgentKind::Codex => Some("CODEX_HOME"),
-            AgentKind::Claude => Some("CLAUDE_CONFIG_DIR"),
-            AgentKind::Dsh => None,
-        };
-        if let Some(env_key) = env_key {
-            let mut assignment = OsString::from(format!("{env_key}="));
-            assignment.push(config_dir);
-            command.arg("-e").arg(assignment);
-        }
-    }
-    if AgentKind::from_name(&record.agent) == Some(AgentKind::Claude) {
-        // Managed panes are attached as plain terminals whose scrollback the
-        // client owns, so Claude stays on its main-screen renderer just as
-        // Codex gets --no-alt-screen. Without this, Claude Code picks its
-        // alt-screen renderer on fresh installs or rollout gates, and touch
-        // scrolling becomes a wheel round trip into its virtual viewport.
-        command
-            .arg("-e")
-            .arg("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1");
-    }
-    if let Some(path) = env::var_os("PATH") {
-        // A long-lived tmux server keeps the environment from when that server
-        // started. Pin each new session to the current daemon PATH so provider
-        // hooks cannot resolve an older agent-session helper after a staged
-        // daemon upgrade.
-        let mut assignment = OsString::from("PATH=");
-        assignment.push(path);
-        command.arg("-e").arg(assignment);
-    }
-    // Pinning PATH alone is not enough: AGENT_SESSION_BIN outranks PATH when
-    // agent-hook resolves the activity helper, so a value cached by the tmux
-    // server survives the PATH pin and fail-closes every UserPromptSubmit and
-    // Stop in a session created long after the helper moved. Pin the executable
-    // that is launching this session, which `HELD_LAUNCH_SCRIPT` already binds
-    // as `broker_bin` for the session's whole life, so this adds no lifetime
-    // coupling the runtime does not already have. See sympoies/nils-cli#1414.
-    if let Ok(helper) = resolve_agent_session_executable() {
-        let mut assignment = OsString::from("AGENT_SESSION_BIN=");
-        assignment.push(helper);
-        command.arg("-e").arg(assignment);
-    }
-    Ok(())
-}
-
 fn normalize_title(title: Option<String>) -> Result<Option<String>, CliError> {
     let Some(title) = title else {
         return Ok(None);
@@ -8009,6 +7920,7 @@ fn session_view_from_parts(
     let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
         context_usage: context_usage::projection(context, record),
+        launch_env: launch_env::projection(record.extra.get("launch_env")),
         model_settings: session_model::ModelSettings::for_record(record),
         id: record.id.clone(),
         agent: record.agent.clone(),
@@ -12712,6 +12624,7 @@ pub(crate) fn dsh_provider_lease_scope(record: &SessionRecord) -> Result<Option<
 }
 
 fn validate_stored_agent_args(record: &SessionRecord, agent: AgentKind) -> Result<(), CliError> {
+    launch_env::from_record(record)?;
     let flag = match agent {
         AgentKind::Codex => record
             .agent_args
@@ -14239,6 +14152,9 @@ fn tail_lines(text: &str, tail: usize) -> String {
 }
 
 #[cfg(test)]
+mod provider_resume_import_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{
         AgentKind, CliContext, DeleteResult, RecordRequest, SessionRegistryFence,
@@ -14250,91 +14166,6 @@ mod tests {
         strip_trailing_blank_lines, tmux_launch_may_have_created_runtime,
         try_acquire_session_record_lock, write_session_record,
     };
-
-    #[test]
-    fn worktree_lifecycle_blocks_provider_import_and_existing_resume() {
-        use super::*;
-        let tmp = tempfile::TempDir::new().unwrap();
-        let checkout = tmp.path().join("checkout");
-        fs::create_dir(&checkout).unwrap();
-        assert!(
-            ProcessCommand::new("git")
-                .current_dir(&checkout)
-                .args(["init", "--quiet"])
-                .status()
-                .unwrap()
-                .success()
-        );
-        let context = CliContext {
-            state_dir: tmp.path().join("state"),
-            host: None,
-        };
-        let record = create_record(RecordRequest {
-            context: &context,
-            agent: AgentKind::Codex,
-            mode: "interactive",
-            coordination_mode: cli::CoordinationMode::Advisory,
-            title: None,
-            title_state: None,
-            explicit_id: Some("existing"),
-            cwd: &checkout,
-            prompt: None,
-            log_file_name: None,
-            provider_resume: None,
-            agent_args: Vec::new(),
-            agent_bin: None,
-        })
-        .unwrap()
-        .record;
-        let record_path = context.state_dir.join("sessions/existing/session.json");
-        let before = fs::read(&record_path).unwrap();
-        let _guard = nils_common::worktree_lifecycle::Guard::acquire(
-            &nils_common::worktree_lifecycle::state_home().unwrap(),
-            &checkout,
-        )
-        .unwrap();
-        let args = ProviderResumeImportArgs {
-            agent: AgentKind::Codex,
-            title_mode: display_metadata::TitleMode::Auto,
-            provider_resume_id: "provider-fixture".into(),
-            title: None,
-            title_state: None,
-            id: Some("imported".into()),
-            coordination_mode: cli::CoordinationMode::Advisory,
-            tmux_bin: Some(tmp.path().join("never-launch")),
-            agent_bin: None,
-            agent_profile: None,
-            provider_config_dir: None,
-            profile_auto_resume_supported: None,
-            profile_graceful_shutdown: None,
-            codex_usage_account: None,
-            agent_args: Vec::new(),
-            initial_lineage: InitialLineage {
-                seed: lineage::LineageSeed::root("fixture", "user", "test"),
-                work: None,
-                role: None,
-            },
-            format: OutputFormat::Json,
-        };
-        let provider_resume = ProviderResume {
-            provider: "codex".into(),
-            session_id: "provider-fixture".into(),
-            captured_at: "2030-01-01T00:00:00Z".into(),
-            capture_method: "fixture".into(),
-            resume_args: Vec::new(),
-            extra: BTreeMap::new(),
-        };
-        let imported =
-            start_resolved_provider_resume_session(&context, args, checkout, provider_resume)
-                .unwrap_err();
-        pretty_assertions::assert_eq!(imported.code(), "worktree-lifecycle-busy");
-        assert!(!context.state_dir.join("sessions/imported").exists());
-        let resumed = resume_session_locked(&context, record, &tmp.path().join("never-launch"))
-            .err()
-            .expect("resume must retain the barrier");
-        pretty_assertions::assert_eq!(resumed.code(), "worktree-lifecycle-busy");
-        pretty_assertions::assert_eq!(fs::read(record_path).unwrap(), before);
-    }
 
     #[test]
     fn managed_dsh_profile_assigns_provider_identity_before_launch() {
