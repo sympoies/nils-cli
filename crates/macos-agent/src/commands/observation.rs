@@ -83,13 +83,12 @@ pub fn qualify_mcp_result(
     if let Some(content) = content.as_array_mut() {
         // Peekaboo returns both human-readable and JSON-in-text tool content.
         for item in content.iter_mut() {
-            if item.get("type").and_then(Value::as_str) == Some("text") {
-                if let Some(text) = item.get("text").and_then(Value::as_str) {
-                    if let Ok(mut parsed) = serde_json::from_str::<Value>(text) {
-                        qualify_ax_lists(&mut parsed);
-                        item["text"] = Value::String(parsed.to_string());
-                    }
-                }
+            if item.get("type").and_then(Value::as_str) == Some("text")
+                && let Some(text) = item.get("text").and_then(Value::as_str)
+                && let Ok(mut parsed) = serde_json::from_str::<Value>(text)
+            {
+                qualify_ax_lists(&mut parsed);
+                item["text"] = Value::String(parsed.to_string());
             }
         }
         content.insert(0, json!({"type":"text", "text":VISIBILITY_NOTICE}));
