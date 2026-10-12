@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sympoies/nils-cli/blob/main/scripts/ci/merge-plan.schema.v1.json",
+  "title": "Affected-scope merge plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "action", "scope", "inputs", "digests", "changes", "selected_packages", "reasons", "error"],
+  "properties": {
+    "schema_version": {"const": "nils-cli.merge-plan.v1"},
+    "status": {"enum": ["READY", "PLAN_ERROR"]},
+    "action": {"enum": ["VALIDATE", "HOLD"]},
+    "scope": {"enum": ["NONE", "SCOPED", "FULL", null]},
+    "inputs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["base", "head", "candidate", "tree"],
+      "properties": {
+        "base": {"type": ["string", "null"]}, "head": {"type": ["string", "null"]},
+        "candidate": {"type": ["string", "null"]},
+        "tree": {"type": ["string", "null"]}
+      }
+    },
+    "digests": {
+      "type": "object", "additionalProperties": false, "required": ["plan"],
+      "properties": {
+        "selector": {"$ref": "#/$defs/digest"}, "policy": {"$ref": "#/$defs/digest"},
+        "registry": {"$ref": "#/$defs/digest"}, "schema": {"$ref": "#/$defs/digest"},
+        "diff": {"$ref": "#/$defs/digest"}, "base_metadata": {"$ref": "#/$defs/digest"},
+        "candidate_metadata": {"$ref": "#/$defs/digest"}, "plan": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "changes": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false, "required": ["status", "paths"],
+        "properties": {
+          "status": {"type": "string", "pattern": "^(A|D|M|T|[RC][0-9]{1,3})$"},
+          "paths": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"type": "string"}}
+        }
+      }
+    },
+    "selected_packages": {
+      "type": "array", "uniqueItems": true, "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "name", "manifest_path"],
+        "properties": {
+          "id": {"type": "string"}, "name": {"type": "string"}, "manifest_path": {"type": "string"}
+        }
+      }
+    },
+    "reasons": {
+      "type": "array", "uniqueItems": true, "items": {
+        "type": "object", "additionalProperties": false, "required": ["code", "path", "package_id"],
+        "properties": {
+          "code": {"type": "string"}, "path": {"type": "string"}, "package_id": {"type": "string"}
+        }
+      }
+    },
+    "error": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["code", "stage", "retryable", "next_action", "recovery"],
+          "properties": {
+            "code": {"enum": ["INPUT_INVALID", "CANDIDATE_MISMATCH", "SELECTOR_FAILED", "GIT_FAILED", "SNAPSHOT_FAILED", "DIFF_FAILED", "POLICY_FAILED", "METADATA_FAILED"]},
+            "stage": {"type": "string"}, "retryable": {"type": "boolean"},
+            "next_action": {"const": "repair_plan_inputs"},
+            "recovery": {"type": "object", "additionalProperties": false}
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "PLAN_ERROR"}}},
+      "then": {
+        "properties": {
+          "action": {"const": "HOLD"}, "scope": {"type": "null"},
+          "selected_packages": {"maxItems": 0}, "reasons": {"maxItems": 0},
+          "error": {"type": "object"}
+        }
+      },
+      "else": {
+        "properties": {
+          "action": {"const": "VALIDATE"}, "scope": {"enum": ["NONE", "SCOPED", "FULL"]},
+          "error": {"type": "null"},
+          "inputs": {
+            "properties": {
+              "base": {"$ref": "#/$defs/oid"}, "head": {"$ref": "#/$defs/oid"},
+              "candidate": {"$ref": "#/$defs/oid"}, "tree": {"$ref": "#/$defs/oid"}
+            }
+          },
+          "digests": {"required": ["selector", "policy", "registry", "schema", "diff", "base_metadata", "candidate_metadata", "plan"]}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "oid": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"}
+  }
+}

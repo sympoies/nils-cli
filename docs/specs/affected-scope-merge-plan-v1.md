@@ -1,0 +1,142 @@
+# Affected-scope merge plan v1
+
+## Purpose and boundary
+
+The standalone planner produces an affected-package decision for exact commits.
+It does not execute checks, authorize merge, or replace a gate receipt. Current
+local-fast behavior, required CI checks, and gate ownership remain unchanged.
+
+Run the trusted launcher from an installation or checkout controlled by the
+maintainer:
+
+```bash
+python3 scripts/ci/nils-cli-merge-plan.py \
+  --repo "$REPOSITORY" --base "$BASE_COMMIT" --head "$REVIEWED_HEAD" \
+  --candidate "$CANDIDATE_MERGE" --tree "$CANDIDATE_TREE"
+```
+
+`--repo` defaults to the current directory. B, H, and M must be full lowercase
+commit object IDs; branch names and abbreviated IDs are refused. M must have
+exactly two ordered parents, B then H. T is read from M; `--tree` optionally
+asserts the expected T. The caller owns the authenticity of the trusted base,
+the reviewed head, and candidate provenance. The planner does not construct M.
+Git replacement objects and external diff/text conversion are disabled.
+
+## Trusted inputs
+
+The launcher reads and executes `scripts/ci/lib/merge_plan.py` from **B**, not
+from H, M, or the working directory. That selector loads these files from B:
+
+- [Policy](../../scripts/ci/merge-plan-policy.v1.json): versioned escalation and
+  recognized documentation patterns.
+- [Extra-input registry](../../scripts/ci/merge-plan-extra-inputs.v1.json):
+  versioned non-Cargo inputs and their workspace consumers.
+- [Output schema](../../scripts/ci/merge-plan.schema.v1.json): the v1 plan contract.
+
+There is no candidate or working-directory fallback. A base that predates this
+contract yields `PLAN_ERROR/HOLD`; initial rollout must land through the existing
+complete gate. Policy, registry, selector, and schema edits under `scripts/`
+therefore use the old trusted policy and escalate to FULL until they land.
+
+Exact B and M trees are materialized in temporary directories from Git blobs,
+including executable modes and symlinks. `.gitattributes` export exclusions do
+not remove files from these snapshots. Submodules cannot be materialized by this
+planner and yield HOLD. Neither the working tree nor index participates.
+
+Each snapshot runs:
+
+```bash
+cargo metadata --offline --locked --all-features --format-version 1
+```
+
+No target filter or `--no-deps` is used. Cargo and the appropriate toolchain and
+registry cache must already be available. The caller must provide its normal
+resource containment and environment for metadata; this command does not fetch,
+compile packages, create a test gate, or manage a gate slot. Cargo configuration
+and toolchain availability can affect whether planning succeeds. Any metadata
+failure, invalid resolved graph, or workspace root outside the snapshot yields
+HOLD, including documentation-only and always-escalate diffs.
+
+## Selection rules
+
+Changes are the exact B→M `git diff --name-status -z --find-renames=50% -l0`
+records. NUL framing preserves whitespace and non-UTF-8 filenames (escaped in
+JSON). Rename records include both old and new paths. Deletions, executable-mode
+changes, and symlink type changes participate. Unknown or malformed diff records
+fail closed.
+
+Workspace packages are mapped by manifest directory. Package IDs, rather than
+renamed dependency imports or package names, key the union of the B and M
+resolved graphs. Snapshot-root portions of path IDs normalize to `repo:`; output
+manifest paths are repository relative. Reverse-dependency traversal reaches a
+fixed point through all resolved packages, including external intermediaries.
+Normal, optional, target-specific, dev, and build edges are included. Only
+candidate workspace packages are selected for validation. A deleted or
+unmappable owner or consumer escalates to FULL.
+
+Selection order for each changed path is:
+
+1. Always-escalate patterns and Cargo custom-build target paths from either tree
+   take precedence over documentation and extra-input rules. The policy includes
+   manifests/lockfiles, toolchain/build inputs, shared crates and test support,
+   CI/configuration, release/scripts/completions, and sensitive lifecycle and
+   credential surfaces.
+2. Map the path to its workspace owner in either tree.
+3. Apply **every** matching extra-input rule, including rules for paths already
+   owned by a crate. Add each consumer and its transitive reverse dependencies.
+4. Recognized documentation with no owner or registry rule records a documentation
+   reason. Every other unknown path escalates to FULL.
+
+The registry uses case-sensitive `fnmatch` patterns over repository-relative
+POSIX paths (`*` can include `/`). Each rule has a unique `id`, nonempty `paths`,
+and nonempty `packages` containing Cargo workspace package names. Missing or
+removed consumers escalate to FULL; malformed registry or policy versions HOLD.
+In-crate fixtures and generated/include files map to their owning crate by
+default; register additional consumers when Cargo does not represent the edge.
+The initial registry covers binary consumers, a shared identity fixture, and an
+included workspace runbook. The registry does not claim to discover arbitrary
+runtime dependencies automatically.
+
+## Output and failure contract
+
+Stdout is one canonical JSON object matching `nils-cli.merge-plan.v1`. Objects
+have sorted keys; package, reason, and change arrays are sorted and deduplicated
+where appropriate. There are no timestamps, command diagnostics, or temporary
+paths. Identical inputs and successful metadata graphs produce identical bytes.
+
+- `status: READY`, `action: VALIDATE`, exit 0: planning succeeded. `scope` is
+  `SCOPED`, `FULL`, or `NONE`; `selected_packages` identifies candidate workspace
+  packages by ID/name/manifest. FULL selects every candidate workspace package.
+  Documentation can have an empty package selection; NONE means an empty diff.
+  Neither case is a validation PASS or merge authorization.
+- `status: PLAN_ERROR`, `action: HOLD`, exit 1: no usable scope. `scope` is null
+  and package/reason arrays are empty. The fixed `error.code` and `error.stage`
+  identify input, selector, policy, diff, snapshot, Git, or metadata failure.
+  Retry after repairing inputs; stderr from Git/Cargo is never published in the
+  plan. Argument-parser usage errors exit 2 before planning.
+
+`inputs` binds B/H/M/T. `digests` binds SHA-256 of the trusted selector, policy,
+registry, schema, raw NUL diff, and normalized base/candidate package graphs.
+Graph digests cover workspace ID/name/manifest mappings, all resolved reverse
+edges (including external nodes), and custom build sources. Available digests
+are retained on failure. `digests.plan` is SHA-256 of canonical JSON of the full
+object **before** inserting that digest itself. No digest is a signature or proof
+of successful validation; consumers must check status/action and exact inputs.
+
+## Validation
+
+The selector and command matrix uses Python 3 and `jsonschema` for schema
+validation, plus Git and Cargo for disposable fixtures:
+
+```bash
+python3 scripts/ci/tests/merge-plan.test.py
+```
+
+The matrix covers both-tree/transitive/dependency-kind selection, external
+intermediaries, renamed imports, old/new rename names, deletion, executable and
+symlink changes, extra inputs, escalation precedence, unknown inputs, complete
+metadata failures, input binding, trusted-base isolation, schema validity, and
+byte-for-byte deterministic output. A real Cargo workspace with only path
+dependencies exercises optional, target-specific, dev, and build dependencies
+without network access or compilation. The suite is separate from existing CI
+required-check and gate entrypoints.
