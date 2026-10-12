@@ -290,7 +290,8 @@ impl Admission<'_> {
 
 fn capture_styled(tmux_bin: &Path, target: &str, timeout: Duration) -> Option<String> {
     let mut command = std::process::Command::new(tmux_bin);
-    command.args(["capture-pane", "-p", "-e", "-t", target]);
+    // Preserve occupied trailing spaces without padding the row to pane width.
+    command.args(["capture-pane", "-p", "-e", "-N", "-T", "-t", target]);
     let output =
         run_output_with_timeout_and_strict_cap(command, timeout, PANE_OBSERVATION_MAX_OUTPUT_BYTES)
             .ok()?;

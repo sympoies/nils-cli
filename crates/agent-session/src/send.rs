@@ -88,7 +88,9 @@ pub(crate) fn send_to_session(
     let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
     if submits {
         codex_app_server::ensure_manual_input_capability(context, &record)?;
-        codex_account::authorize_terminal_input_locked(context, &mut record)?;
+        if !args.guards.enabled() {
+            codex_account::authorize_terminal_input_locked(context, &mut record)?;
+        }
     }
     if args.guards.enabled() {
         return guarded(
@@ -337,9 +339,10 @@ fn guarded(
     manual_input: &mut ManualInputSection,
     hold_started: Instant,
 ) -> Result<SendResult, CliError> {
+    let observed = record.clone();
     let admission = send_guard::Admission {
         context,
-        record: &record,
+        record: &observed,
         args: &args.guards,
         tmux_bin,
         verify_composer: carries_literal_text(text.as_deref()) && !args.keys.is_empty(),
@@ -347,11 +350,8 @@ fn guarded(
     };
     admission.check_key()?;
     admission.check(None, "admission")?;
-    auto_resume::cancel_for_manual_input_locked(
-        context,
-        &record.id,
-        &Timestamp::now().to_string(),
-    )?;
+    let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
+    let mut input_prepared = false;
     let target = format!("{}:0.0", record.tmux_session);
     let literal = text
         .as_deref()
@@ -371,7 +371,8 @@ fn guarded(
             || {
                 admission.check(None, "admission")?;
                 admission.claim_key()?;
-                admission.check(None, "admission")
+                admission.check(None, "admission")?;
+                prepare_guarded_input(context, &mut record, submits, &mut input_prepared)
             },
         );
         let _ = fs::remove_file(temp);
@@ -412,6 +413,7 @@ fn guarded(
         if text.as_deref().is_some_and(crate::text_is_bare_newline) {
             manual_input.arm(context, &record)?;
             admission.check(None, "submit")?;
+            prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
             send_tmux_key(tmux_bin, &target, SpecialKey::Enter)?;
         }
         for key in &args.keys {
@@ -419,6 +421,7 @@ fn guarded(
                 manual_input.arm(context, &record)?;
             }
             admission.check(literal, "submit")?;
+            prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
             send_tmux_key(tmux_bin, &target, *key)?;
         }
         None
@@ -448,4 +451,26 @@ fn guarded(
         submission,
         guards: Some(send_guard::GuardReport { atomic: false }),
     })
+}
+
+/// Publish control state only after final admission, immediately before input.
+/// Once input may have reached the pane, retain these effects on later refusal.
+fn prepare_guarded_input(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    submits: bool,
+    prepared: &mut bool,
+) -> Result<(), CliError> {
+    if !*prepared {
+        if submits {
+            codex_account::authorize_terminal_input_locked(context, record)?;
+        }
+        auto_resume::cancel_for_manual_input_locked(
+            context,
+            &record.id,
+            &Timestamp::now().to_string(),
+        )?;
+        *prepared = true;
+    }
+    Ok(())
 }
