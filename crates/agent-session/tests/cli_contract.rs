@@ -294,8 +294,8 @@ fn launch_env_allowlist_is_configurable_and_refuses_credentials() {
 
 #[test]
 fn guarded_send_clap_contract_accepts_independent_opt_ins() {
+    use agent_session::cli::{Cli, Command as SessionCommand};
     use clap::{CommandFactory, Parser};
-    use nils_agent_session::cli::{Cli, Command as SessionCommand};
     Cli::command().debug_assert();
     let parsed = Cli::try_parse_from([
         "agent-session",
