@@ -22,6 +22,9 @@ use super::{
     request_digest, store_receipt, timestamp,
 };
 
+#[path = "notification_inspection.rs"]
+mod notification_inspection;
+
 pub(crate) const BROKER_VERSION: &str = "agent-session.coordination-broker.v1";
 pub(crate) const DSH_PROVIDER_LEASE_FAILURE_FILE: &str = ".dsh-provider-lease-failure";
 const DSH_PROVIDER_LEASES_DIR: &str = "provider-session-leases";
@@ -80,6 +83,8 @@ fn prepare_checkpoint_file(path: &Path) -> Result<bool, CliError> {
 struct BrokerStatus {
     schema_version: String,
     session_id: String,
+    session_incarnation: String,
+    notification: Option<notification_inspection::NotificationInspection>,
     state: String,
     generation: u64,
     capability_available: bool,
@@ -902,80 +907,7 @@ pub(crate) fn stop(context: &CliContext, args: BrokerStopArgs) -> Result<Value, 
 }
 
 pub(crate) fn status(context: &CliContext, args: BrokerStatusArgs) -> Result<Value, CliError> {
-    let authenticated_incarnation = if args.authenticated {
-        Some(authenticate_from_file(context, &args.session, args.capability_file.as_deref())?.1)
-    } else {
-        None
-    };
-    let locked = lock_registry(context)?;
-    let broker = locked
-        .registry
-        .brokers
-        .get(&args.session)
-        .filter(|broker| {
-            authenticated_incarnation
-                .as_ref()
-                .is_none_or(|incarnation| broker.incarnation == *incarnation)
-        })
-        .ok_or_else(unavailable)?;
-    let incarnation = broker.incarnation.clone();
-    let claim = locked
-        .registry
-        .claims
-        .iter()
-        .find(|claim| {
-            claim.session_id == args.session
-                && claim.session_incarnation == incarnation
-                && claim.state == "active"
-        })
-        .map(|claim| ClaimSummary {
-            claim_id: claim.claim_id.clone(),
-            revision: claim.revision,
-            state: claim.state.clone(),
-            expires_at: claim.expires_at.clone(),
-        });
-    let operation = OperationSummary {
-        active: locked
-            .registry
-            .operations
-            .iter()
-            .filter(|lease| {
-                lease.session_id == args.session
-                    && lease.session_incarnation == incarnation
-                    && lease.state == "active"
-            })
-            .count(),
-        uncertain: locked
-            .registry
-            .operations
-            .iter()
-            .filter(|lease| {
-                lease.session_id == args.session
-                    && lease.session_incarnation == incarnation
-                    && matches!(lease.state.as_str(), "completing" | "reconcile_pending")
-            })
-            .count(),
-    };
-    json_value(BrokerStatus {
-        schema_version: BROKER_VERSION.to_string(),
-        session_id: args.session.clone(),
-        state: broker.state.clone(),
-        generation: broker.generation,
-        capability_available: capability_available(
-            context,
-            &args.session,
-            &incarnation,
-            &broker.capability_digest,
-        ),
-        heartbeat_fresh: heartbeat_fresh(
-            context,
-            &args.session,
-            &incarnation,
-            broker.heartbeat_epoch,
-        ),
-        claim,
-        operation,
-    })
+    notification_inspection::status(context, args)
 }
 
 pub(crate) fn recover(
@@ -2021,6 +1953,8 @@ mod tests {
         let value = serde_json::to_value(BrokerStatus {
             schema_version: BROKER_VERSION.to_string(),
             session_id: "session".to_string(),
+            session_incarnation: "runtime".to_string(),
+            notification: None,
             state: "ready".to_string(),
             generation: 1,
             capability_available: true,

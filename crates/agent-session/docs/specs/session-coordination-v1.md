@@ -410,7 +410,44 @@ grant new authority.
 Broker projections use `agent-session.coordination-broker.v1` and expose only
 state (`starting`, `ready`, `degraded`, `lost`, `stopped`), generation,
 capability availability, heartbeat freshness, claim summary, and operation
-summary. They never expose a PID as authority, a credential path, or a token.
+summary, plus the additive receipt diagnostics below. They never expose a PID
+as authority, a credential path, or a token.
+
+`agent-session broker status --session ID --format json` places the projection
+at `data` in `cli.agent-session.broker-status.v1`. Existing fields and schema
+versions remain compatible. `data.session_incarnation` comes from the current
+session record; a broker from a different incarnation is unavailable.
+`--authenticated --capability-file FILE` retains the exact recipient capability
+and fresh-heartbeat checks. Both modes read one locked registry snapshot and
+never save normalization, renew a lease, acknowledge mail, claim a generation,
+probe the prompt controller, submit a prompt, or wake a recipient.
+
+`data.notification` is `null` when that incarnation has no receipt. Otherwise
+it contains only this fixed set of metadata fields:
+
+| Field | Meaning and source |
+| --- | --- |
+| `state` | Normalized receipt state: `queued`, `attempting`, `attempt_unknown`, `prompt_submitted`, or `undeliverable`. Submission is not consumption. Invalid stored states normalize to `undeliverable`. |
+| `generation`, `attempted_generation`, `notified_generation` | Nonnegative receipt counters; an older attempt remains distinct from a newer queued generation. |
+| `queued_at_epoch` | Current generation queue time, recovered when needed from canonical local unread admission metadata. Remote sender clocks are not used. |
+| `attempted_queued_at_epoch` | Queue time retained for the attempted prompt, independent of newer mail or transcript compaction. |
+| `attempted_at_epoch`, `updated_at_epoch`, `next_attempt_at_epoch` | Attempt, receipt update, and scheduled retry times from the normalized snapshot. Existing normalization may recover a missing update time or requeue a newer generation at observation time. |
+| `last_reason` | Existing stable reason allowlist; unrecognized text becomes `notification-state-invalid`. An absent reason is `null`. |
+| `live_unread_count` | Nonexpired canonical unread messages for the exact recipient incarnation. Remote senders count; read, acknowledged, expired, and other-incarnation messages do not. |
+| `resolved` | `live_unread_count == 0` or `generation <= notified_generation`. Drained mail can leave a queued but inert receipt; resolution alone proves neither submission nor acknowledgement. |
+| `controller_available` | `null`: status performs no controller probe, so availability is unknown. |
+| `source` | `registry: "canonical-local"`; `normalization_applied` reports changes to this incarnation's in-memory receipt snapshot. `queued_at` is `stored-receipt`, `canonical-unread-admission`, or `unavailable`. |
+| `observed_at_epoch` | Time the locked registry snapshot was observed. |
+
+All epoch values are absolute Unix times in whole seconds. Receipt timestamps
+with the historical zero sentinel, negative values, or values outside the supported
+timestamp range project as `null`. Recovery follows the existing notification
+normalization contract, including local forwarding/admission time; it changes
+only the projected snapshot. Attempts keep their retained queue timestamp.
+No raw stored reason, sender identity, message body, transcript, capability, or
+private path appears in this bounded diagnostic object. Receipt inspection
+makes reminder state observable; live wake and intermittent inbox acceptance
+remain separate delivery evidence.
 
 ## Scope grammar and canonicalization
 

@@ -208,3 +208,78 @@ fn inspection_distinguishes_drained_mail_from_submitted_prompt_and_sanitizes_leg
     assert!(!text.contains("capability_digest"));
     assert!(!text.contains("capability_file"));
 }
+
+#[test]
+fn authenticated_inspection_preserves_registry_and_refuses_wrong_capability() {
+    let (_dir, context) = fixture(
+        json!({"current": receipt("attempt_unknown", "current")}),
+        json!([message("current", "unread", i64::MAX)]),
+    );
+    let token = "synthetic-current-recipient-capability-material";
+    let capability = capability_path(&context, "session", "current");
+    write_atomic(&capability, token.as_bytes(), SECRET_FILE_MODE).unwrap();
+    let path = registry_path(&context);
+    let mut registry: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    registry["brokers"]["session"]["capability_digest"] = json!(digest_bytes(token.as_bytes()));
+    write_atomic(
+        &path,
+        &serde_json::to_vec(&registry).unwrap(),
+        SECRET_FILE_MODE,
+    )
+    .unwrap();
+    let before = fs::read(&path).unwrap();
+    let value = status(
+        &context,
+        BrokerStatusArgs {
+            session: "session".into(),
+            capability_file: Some(capability.clone()),
+            authenticated: true,
+            format: nils_common::cli_contract::OutputFormat::Json,
+        },
+    )
+    .unwrap();
+    assert_eq!(value["session_incarnation"], "current");
+    assert_eq!(value["notification"]["live_unread_count"], 1);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let wrong = context.state_dir.join("wrong-capability");
+    write_atomic(
+        &wrong,
+        b"synthetic-other-recipient-capability-material",
+        SECRET_FILE_MODE,
+    )
+    .unwrap();
+    let error = status(
+        &context,
+        BrokerStatusArgs {
+            session: "session".into(),
+            capability_file: Some(wrong),
+            authenticated: true,
+            format: nils_common::cli_contract::OutputFormat::Json,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "coordination-unauthorized");
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(!value.to_string().contains(token));
+}
+
+#[test]
+fn inspection_refuses_a_broker_from_a_prior_record_incarnation() {
+    let (_dir, context) = fixture(json!({}), json!([]));
+    let mut record = crate::load_session_record(&context, "session").unwrap();
+    record.runtime.as_mut().unwrap().launch_id = "replacement".into();
+    crate::write_session_record(&context, &record).unwrap();
+    let before = fs::read(registry_path(&context)).unwrap();
+    let error = status(
+        &context,
+        BrokerStatusArgs {
+            session: "session".into(),
+            capability_file: None,
+            authenticated: false,
+            format: nils_common::cli_contract::OutputFormat::Json,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "coordination-broker-lost");
+    assert_eq!(fs::read(registry_path(&context)).unwrap(), before);
+}
