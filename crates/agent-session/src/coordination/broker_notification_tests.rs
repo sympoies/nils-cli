@@ -159,6 +159,32 @@ fn inspection_recovers_local_queue_time_without_changing_the_attempt_or_registry
 }
 
 #[test]
+fn inspection_recovers_historical_queue_time_from_stored_attempt_metadata() {
+    let historical = |id: &str, attempted_at: i64| {
+        let mut stored = receipt("notification_attempting", "current");
+        stored["message_id"] = json!(id);
+        stored["generation"] = json!(0);
+        stored["attempted_generation"] = json!(0);
+        stored["queued_at_epoch"] = json!(0);
+        stored["attempted_at_epoch"] = json!(attempted_at);
+        stored
+    };
+    let (_dir, context) = fixture(
+        json!({
+            "historical-first": historical("historical-first", 10),
+            "historical-second": historical("historical-second", 20)
+        }),
+        json!([]),
+    );
+    let notification = inspect(&context)["notification"].clone();
+    assert_eq!(notification["queued_at_epoch"], 20);
+    assert_eq!(notification["source"]["queued_at"], "stored-receipt");
+    assert_eq!(notification["source"]["normalization_applied"], true);
+    assert_eq!(notification["live_unread_count"], 0);
+    assert_eq!(notification["resolved"], true);
+}
+
+#[test]
 fn inspection_counts_remote_unread_mail_but_excludes_other_incarnations_and_expiry() {
     let (_dir, context) = fixture(
         json!({"current": receipt("attempting", "current")}),
