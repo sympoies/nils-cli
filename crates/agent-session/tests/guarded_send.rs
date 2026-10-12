@@ -53,6 +53,13 @@ if command == 'has-session':
 if command == 'show-environment':
     key = args[-1]
     values = {'AGENT_SESSION_ID': 'guarded', 'AGENT_SESSION_RUNTIME_ID': 'runtime-one', 'AGENT_SESSION_STATE_DIR': str(root / 'state')}
+    if key == 'AGENT_SESSION_RUNTIME_ID':
+        path = root / 'runtime-read-count'
+        count = int(path.read_text()) + 1 if path.exists() else 1
+        path.write_text(str(count))
+        if (root / 'flip-second-runtime-read').exists() and count == 2:
+            values[key] = 'runtime-replaced'
+        if (root / 'runtime-replaced').exists(): values[key] = 'runtime-replaced'
     if key in values: print(key + '=' + values[key]); sys.exit(0)
     sys.exit(1)
 if command == 'load-buffer':
@@ -74,6 +81,7 @@ elif command == 'paste-buffer':
 elif command == 'send-keys' and args[-1] == 'Enter':
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
     (root / 'composer').write_text('')
+    if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
 elif command == 'capture-pane':
     count_path = root / 'capture-count'
     count = int(count_path.read_text()) + 1 if count_path.exists() else 1
@@ -175,7 +183,7 @@ elif command == 'capture-pane':
     fn refused(&self, output: &CmdOutput, code: &str) -> Value {
         assert_eq!(output.code, 1, "{}", output.stderr_text());
         let value = output.stdout_json();
-        assert_eq!(value["error"]["code"], code);
+        assert_eq!(value["error"]["code"], code, "{value}");
         value
     }
 }

@@ -129,7 +129,7 @@ fn guarded_send_trailing_space_payload_submits_once() {
                 "trailing-space",
             ],
         );
-        assert_eq!(output.code, 0, "{}", output.stderr_text());
+        assert_eq!(output.code, 0, "{}", output.stdout_json());
         assert_eq!(
             output.stdout_json()["data"]["submission"]["enter_presses"],
             1
@@ -164,10 +164,10 @@ fn guarded_send_second_admission_refusal_preserves_control_state() {
     let fixture = Fixture::new("codex");
     let _capability = fixture.bind_codex();
     let recovery = fixture.arm_recovery();
-    fs::write(fixture.root().join("fail-second-capture"), "").unwrap();
+    fs::write(fixture.root().join("flip-second-runtime-read"), "").unwrap();
     fixture.refused(
-        &fixture.send(&["--require-empty-composer"]),
-        "send-composer-unobservable",
+        &fixture.send_text(None, &["--expect-runtime", "runtime-one"]),
+        "send-identity-mismatch",
     );
     fixture.unchanged_control_state(&recovery);
 }
@@ -180,7 +180,6 @@ fn guarded_send_load_time_refusal_preserves_control_state() {
             ("capture-fails-on-load", "send-composer-unobservable"),
         ] {
             let fixture = Fixture::new(provider);
-            let _capability = (provider == "codex").then(|| fixture.bind_codex());
             let recovery = fixture.arm_recovery();
             fs::write(fixture.root().join(marker), "").unwrap();
             fixture.refused(
@@ -202,13 +201,27 @@ fn guarded_send_admitted_input_updates_control_state() {
     let fixture = Fixture::new("codex");
     let _capability = fixture.bind_codex();
     fixture.arm_recovery();
-    let output = fixture.send(&["--require-empty-composer", "--idempotency-key", "admitted"]);
-    assert_eq!(output.code, 0, "{}", output.stderr_text());
+    // App-server supports identity-only key input, not composer observations.
+    let output = fixture.send_text(
+        None,
+        &[
+            "--expect-runtime",
+            "runtime-one",
+            "--idempotency-key",
+            "admitted",
+        ],
+    );
+    assert_eq!(output.code, 0, "{}", output.stdout_json());
     fixture.input_control_state();
     assert_eq!(
-        output.stdout_json()["data"]["submission"]["enter_presses"],
+        fixture
+            .calls()
+            .iter()
+            .filter(|call| call[0] == "send-keys")
+            .count(),
         1
     );
+    assert!(fixture.calls().iter().all(|call| call[0] != "paste-buffer"));
     assert_eq!(
         fs::read_to_string(fixture.root().join("submissions"))
             .unwrap()
@@ -223,31 +236,48 @@ fn guarded_send_post_input_refusal_retains_control_state() {
     let fixture = Fixture::new("codex");
     let _capability = fixture.bind_codex();
     fixture.arm_recovery();
-    fs::write(fixture.root().join("inject-draft"), "").unwrap();
+    fs::write(fixture.root().join("replace-after-enter"), "").unwrap();
+    // The first key is delivered; runtime identity changes before the second.
     fixture.refused(
-        &fixture.send(&[
-            "--require-empty-composer",
-            "--idempotency-key",
-            "post-input",
-        ]),
-        "send-composer-mismatch",
+        &fixture.send_text(
+            None,
+            &[
+                "--expect-runtime",
+                "runtime-one",
+                "--idempotency-key",
+                "post-input",
+                "--key",
+                "enter",
+            ],
+        ),
+        "send-identity-mismatch",
     );
     fixture.input_control_state();
     assert_eq!(
         fixture
             .calls()
             .iter()
-            .filter(|call| call[0] == "paste-buffer")
+            .filter(|call| call[0] == "send-keys")
             .count(),
         1
     );
-    assert!(fixture.calls().iter().all(|call| call[0] != "send-keys"));
-    assert_eq!(
-        fs::read_to_string(fixture.root().join("composer")).unwrap(),
-        "continue-fixture user addition"
-    );
+    assert!(fixture.calls().iter().all(|call| call[0] != "paste-buffer"));
+    let submissions = fs::read_to_string(fixture.root().join("submissions")).unwrap();
+    assert_eq!(submissions.lines().count(), 1);
     fixture.refused(
-        &fixture.send(&["--idempotency-key", "post-input"]),
+        &fixture.send_text(
+            None,
+            &[
+                "--expect-runtime",
+                "runtime-one",
+                "--idempotency-key",
+                "post-input",
+            ],
+        ),
         "send-idempotency-key-used",
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root().join("submissions")).unwrap(),
+        submissions
     );
 }
