@@ -1,20 +1,41 @@
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
-use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use nils_common::fs::{SECRET_FILE_MODE, sha256_file, write_atomic};
+use nils_common::fs::{SECRET_FILE_MODE, sha256_file};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::CliError;
 use crate::lock::{
-    AssetLock, NotarizationPolicy, PeekabooLock, RollbackReleaseLock, bridge_build_number,
+    AssetLock, NotarizationPolicy, PeekabooLock, RollbackReleaseLock, RuntimeLibraryLock,
+    bridge_build_number,
 };
 use crate::process;
 use crate::test_mode;
+
+pub(crate) mod app;
+mod archive;
+mod files;
+mod receipts;
+use archive::{
+    ArchiveKind, download_asset, extract_archive, validate_archive_listing, validate_symlink_tree,
+    verify_app_metadata, verify_architectures, verify_archive_digest, verify_signature,
+    verify_version,
+};
+#[cfg(test)]
+use archive::{classify_cli_notarization_assessment, validate_archive_path};
+#[cfg(all(test, target_os = "macos"))]
+use files::allowed_platform_symlink;
+#[cfg(test)]
+use files::production_tool_path;
+use files::{
+    copy_file, copy_tree, create_private_dir, hash_file, reject_symlink_components, run_tool,
+};
+use receipts::{read_receipt, set_pending_rollback, write_receipt};
 
 const RECEIPT_SCHEMA: &str = "macos-agent.backend-receipt.v1";
 const LIFECYCLE_LOCK_FILE: &str = ".backend-lifecycle.lock";
@@ -249,6 +270,11 @@ impl BackendPaths {
         self.receipts().join("pending.json")
     }
 
+    /// The target receipt of a rollback that has not fully finished.
+    fn pending_rollback_marker(&self) -> PathBuf {
+        self.receipts().join("pending-rollback.json")
+    }
+
     fn version_root(&self, tag: &str) -> PathBuf {
         self.root.join("versions").join(tag)
     }
@@ -262,9 +288,13 @@ impl BackendPaths {
     }
 
     pub fn current_cli(&self) -> Result<PathBuf, CliError> {
-        let receipt = read_receipt(&self.current_receipt())?
+        read_receipt(&self.current_receipt())?
             .ok_or_else(|| backend_error("the locked Peekaboo backend is not installed"))?;
-        Ok(self.cli_for(&receipt.tag))
+        Ok(self.stable_cli())
+    }
+
+    fn stable_cli(&self) -> PathBuf {
+        self.root.join("stable").join("peekaboo")
     }
 
     pub fn stable_app(&self) -> &Path {
@@ -292,6 +322,9 @@ fn status_unlocked(
     let current = read_receipt(&paths.current_receipt())?;
     let previous = read_receipt(&paths.previous_receipt())?;
     let verified = current.as_ref().is_some_and(|receipt| {
+        if !stable_cli_matches(paths, lock, receipt).unwrap_or(false) {
+            return false;
+        }
         if receipt.tag == lock.tag && receipt.commit == lock.commit {
             verify_receipt(paths, lock, receipt, false).is_ok()
         } else {
@@ -346,12 +379,28 @@ pub fn install(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> {
         }
         recover_pending(&paths, &lock, strict)?;
     }
+    let staged_rollback = read_receipt(&paths.pending_rollback_marker())?;
+    if dry_run && staged_rollback.is_some() {
+        return Err(backend_error(
+            "an interrupted backend rollback requires a non-dry-run recovery",
+        ));
+    }
     if let Some(current) = read_receipt(&paths.current_receipt())?
         && current.tag == lock.tag
         && current.commit == lock.commit
         && verify_receipt(&paths, &lock, &current, strict).is_ok()
         && verify_receipt_app(&paths.stable_app, &lock, &current, strict).is_ok()
     {
+        if !dry_run {
+            replace_stable_cli(&paths, &lock, &current, strict)?;
+            reconcile_apps(&paths, &lock, false)?;
+            // A rollback onto this verified release committed before its record was
+            // cleared; settle it so the next rollback is a new request. A record that
+            // names another release stopped before staging and still awaits a retry.
+            if staged_rollback.as_ref() == Some(&current) {
+                set_pending_rollback(&paths, None)?;
+            }
+        }
         return status_unlocked(&lock, &paths, dry_run, strict);
     }
     refuse_unowned_app(&paths)?;
@@ -422,6 +471,10 @@ fn install_into_staging(
             "verified archives do not contain the locked executables",
         ));
     }
+    verify_cli_runtime_libraries(
+        cli_source.parent().expect("CLI source parent"),
+        lock.cli_asset(),
+    )?;
     verify_version(&cli_source, &lock.tag)?;
     verify_architectures(&cli_source, &lock.cli_asset().architectures)?;
     verify_architectures(&app_binary, &lock.app_asset().architectures)?;
@@ -448,6 +501,15 @@ fn install_into_staging(
     let cli_target = version_stage.join("cli").join("peekaboo");
     let app_target = version_stage.join("app").join("Peekaboo.app");
     copy_file(&cli_source, &cli_target, 0o755)?;
+    copy_cli_runtime_libraries(
+        cli_source.parent().expect("CLI source parent"),
+        cli_target.parent().expect("CLI target parent"),
+        lock.cli_asset(),
+    )?;
+    verify_cli_runtime_libraries(
+        cli_target.parent().expect("CLI target parent"),
+        lock.cli_asset(),
+    )?;
     copy_tree(&app_source, &app_target)?;
 
     let version_root = paths.version_root(&lock.tag);
@@ -487,17 +549,13 @@ fn install_into_staging(
         let outgoing = verify_transition_runtime(paths, lock, old, strict)?;
         retire_transition_daemons(&outgoing)?;
     }
+    // Persist recovery authority before retiring the accepted app. All outgoing
+    // runtime validation and daemon retirement have already succeeded.
+    set_pending_rollback(paths, None)?;
     write_receipt(&paths.pending_receipt(), &new_receipt)?;
+    reconcile_apps(paths, lock, true)?;
     replace_stable_app(paths, &new_receipt)?;
-    if let Some(old) = old_current.as_ref()
-        && old.tag != new_receipt.tag
-    {
-        write_receipt(&paths.previous_receipt(), old)?;
-    }
-    write_receipt(&paths.current_receipt(), &new_receipt)?;
-    fs::remove_file(paths.pending_receipt())
-        .map_err(|_| backend_error("failed to finalize backend activation receipt"))?;
-    Ok(())
+    recover_pending(paths, lock, strict)
 }
 
 fn recover_pending(
@@ -524,20 +582,40 @@ fn recover_pending(
     let backup = paths.stable_app.with_file_name(STABLE_APP_BACKUP);
     if stable_app_matches(paths, &pending)? {
         verify_receipt_app(&paths.stable_app, lock, &pending, strict)?;
-        finalize_pending(paths, &pending, current.as_ref(), &incoming, &backup)?;
+        finalize_pending(
+            paths,
+            lock,
+            &pending,
+            current.as_ref(),
+            &incoming,
+            &backup,
+            strict,
+        )?;
         return Ok(());
     }
     if !paths.stable_app.exists() && app_path_matches(&incoming, &pending)? {
         verify_receipt_app(&incoming, lock, &pending, strict)?;
         fs::rename(&incoming, &paths.stable_app)
             .map_err(|_| backend_error("failed to recover the staged stable app"))?;
-        finalize_pending(paths, &pending, current.as_ref(), &incoming, &backup)?;
+        finalize_pending(
+            paths,
+            lock,
+            &pending,
+            current.as_ref(),
+            &incoming,
+            &backup,
+            strict,
+        )?;
         return Ok(());
     }
     if let Some(current) = current.as_ref()
         && stable_app_matches(paths, current)?
     {
         verify_transition_receipt_app(&paths.stable_app, lock, current, strict)?;
+        replace_stable_cli(paths, lock, current, strict)?;
+        // Retirement may have succeeded before the transaction was interrupted.
+        // Keep recovery authority until the accepted app is running again.
+        reconcile_apps(paths, lock, false)?;
         remove_transaction_dir(&incoming)?;
         remove_transaction_dir(&backup)?;
         return fs::remove_file(paths.pending_receipt())
@@ -550,6 +628,10 @@ fn recover_pending(
         verify_transition_receipt_app(&backup, lock, current, strict)?;
         fs::rename(&backup, &paths.stable_app)
             .map_err(|_| backend_error("failed to restore the previous stable app"))?;
+        replace_stable_cli(paths, lock, current, strict)?;
+        // Retirement may have succeeded before the transaction was interrupted.
+        // Keep recovery authority until the accepted app is running again.
+        reconcile_apps(paths, lock, false)?;
         remove_transaction_dir(&incoming)?;
         return fs::remove_file(paths.pending_receipt())
             .map_err(|_| backend_error("failed to abandon interrupted backend activation"));
@@ -567,11 +649,19 @@ fn recover_pending(
 
 fn finalize_pending(
     paths: &BackendPaths,
+    lock: &PeekabooLock,
     pending: &Receipt,
     current: Option<&Receipt>,
     incoming: &Path,
     backup: &Path,
+    strict: bool,
 ) -> Result<(), CliError> {
+    replace_stable_cli(paths, lock, pending, strict)?;
+    reconcile_apps(paths, lock, false).map_err(|error| {
+        error.with_hint(
+            "activation remains pending; retry the same backend operation to recover the target",
+        )
+    })?;
     if let Some(current) = current
         && current.tag != pending.tag
     {
@@ -596,8 +686,21 @@ pub fn verify(strict: bool) -> Result<VerificationReport, CliError> {
     ensure_supported_platform()?;
     let lock = PeekabooLock::embedded()?;
     let paths = BackendPaths::resolve()?;
-    let _guard = LifecycleLock::acquire(&paths.root, LifecycleLockMode::Shared)?;
-    verify_unlocked(strict, &lock, &paths)
+    let _guard = LifecycleLock::acquire(&paths.root, LifecycleLockMode::Exclusive)?;
+    if !paths.stable_cli().exists() {
+        let receipt = read_receipt(&paths.current_receipt())?
+            .ok_or_else(|| backend_error("the accepted backend receipt is unavailable"))?;
+        if receipt.tag == lock.tag && receipt.commit == lock.commit {
+            verify_receipt(&paths, &lock, &receipt, strict)?;
+        } else {
+            verify_receipt_any_version(&paths, &lock, &receipt, strict)?;
+        }
+        verify_receipt_app(&paths.stable_app, &lock, &receipt, strict)?;
+        replace_stable_cli(&paths, &lock, &receipt, strict)?;
+    }
+    let report = verify_unlocked(strict, &lock, &paths)?;
+    reconcile_apps(&paths, &lock, false)?;
+    Ok(report)
 }
 
 fn verify_unlocked(
@@ -618,6 +721,16 @@ fn verify_unlocked(
     }
     let (active_cli_asset, active_app_asset, minimum_macos) =
         release_contract_for_receipt(lock, &receipt)?;
+    if !stable_cli_matches(paths, lock, &receipt)? {
+        return Err(backend_error(
+            "the stable CLI is missing or changed; run backend verify to migrate a version-specific layout; changed files are never overwritten",
+        ));
+    }
+    verify_signature(&paths.stable_cli(), active_cli_asset, false, strict)?;
+    verify_version(&paths.stable_cli(), &receipt.tag)?;
+    if strict {
+        verify_architectures(&paths.stable_cli(), &active_cli_asset.architectures)?;
+    }
     verify_signature(&paths.stable_app, active_app_asset, true, strict)?;
     verify_app_metadata(
         &paths.stable_app,
@@ -642,6 +755,11 @@ fn verify_unlocked(
         ),
         passed("version", "active CLI reports the locked version"),
         passed("stable_app", "stable app is owned by the current receipt"),
+        passed("stable_cli", "stable CLI is owned by the current receipt"),
+        passed(
+            "runtime_libraries",
+            "active CLI auxiliary runtime libraries match their immutable release contract",
+        ),
     ];
     if strict {
         checks.extend([
@@ -696,7 +814,7 @@ pub fn doctor(strict: bool) -> Result<DoctorReport, CliError> {
     let backend = verify_unlocked(strict, &lock, &paths)?;
     let receipt = read_receipt(&paths.current_receipt())?
         .ok_or_else(|| backend_error("the verified backend receipt is unavailable"))?;
-    let (_, app_asset, _) = release_contract_for_receipt(&lock, &receipt)?;
+    let (cli_asset, app_asset, _) = release_contract_for_receipt(&lock, &receipt)?;
     let binary = paths.current_cli()?;
     let mut permissions = None;
     let mut bridge = None;
@@ -711,11 +829,39 @@ pub fn doctor(strict: bool) -> Result<DoctorReport, CliError> {
         let argument_refs = arguments.iter().map(String::as_str).collect::<Vec<_>>();
         let output = run_tool(&binary, &argument_refs);
         let (status, message) =
-            evaluate_capability_probe(&probe.id, output, &receipt.tag, &app_asset.bridge_build);
+            evaluate_capability_probe(&probe.id, &output, &receipt.tag, &app_asset.bridge_build);
+        let message = if probe.id == "permissions" && status != "pass" {
+            let value = output
+                .as_ref()
+                .ok()
+                .filter(|output| !output.timed_out && !output.stdout_truncated)
+                .and_then(|output| {
+                    serde_json::from_slice::<serde_json::Value>(&output.stdout).ok()
+                });
+            let authority = match value
+                .as_ref()
+                .and_then(|value| value.pointer("/data/source"))
+                .and_then(serde_json::Value::as_str)
+            {
+                Some("local" | "process") => format!("Peekaboo CLI (team {})", cli_asset.team_id),
+                _ => format!(
+                    "Peekaboo GUI app ({}, team {})",
+                    app_asset
+                        .bundle_id
+                        .as_deref()
+                        .unwrap_or("unreported bundle"),
+                    app_asset.team_id
+                ),
+            };
+            value.as_ref().and_then(|value| missing_permission_message(value, &authority))
+                .unwrap_or_else(|| format!("Screen Recording and Accessibility could not be assessed for {authority}; confirm this authority in System Settings > Privacy & Security, then rerun doctor"))
+        } else {
+            message.into()
+        };
         let check = CheckResult {
             id: probe.id.clone(),
             status,
-            message: message.into(),
+            message,
         };
         if probe.id == "permissions" {
             permissions = Some(check.clone());
@@ -727,8 +873,11 @@ pub fn doctor(strict: bool) -> Result<DoctorReport, CliError> {
     }
     let permissions = permissions
         .ok_or_else(|| backend_error("mandatory permissions probe result is unavailable"))?;
-    let bridge =
+    let mut bridge =
         bridge.ok_or_else(|| backend_error("mandatory Bridge probe result is unavailable"))?;
+    if bridge.status != "pass" && permissions.status == "blocked" {
+        bridge.message = format!("{}; {}", bridge.message, permissions.message);
+    }
     let runtime = if paths.stable_app().is_dir() {
         passed("runtime", "stable Peekaboo app path is ready")
     } else {
@@ -779,7 +928,7 @@ pub fn acquire_verified_backend() -> Result<VerifiedBackend, CliError> {
     let obsolete_runtimes = obsolete_runtime_contracts(&lock, &receipt);
     Ok(VerifiedBackend {
         path,
-        runtime_identity: receipt.cli_binary_sha256[..16].into(),
+        runtime_identity: cli_runtime_identity(cli_asset),
         cli_bridge_build: Some(cli_asset.bridge_build.clone()),
         app_bridge_build: Some(app_asset.bridge_build.clone()),
         obsolete_runtimes,
@@ -789,7 +938,7 @@ pub fn acquire_verified_backend() -> Result<VerifiedBackend, CliError> {
 
 fn evaluate_capability_probe(
     id: &str,
-    output: Result<process::ProcessOutput, CliError>,
+    output: &Result<process::ProcessOutput, CliError>,
     locked_tag: &str,
     expected_app_build: &str,
 ) -> (&'static str, &'static str) {
@@ -870,6 +1019,24 @@ fn evaluate_capability_probe(
     }
 }
 
+pub(crate) fn missing_permission_message(
+    value: &serde_json::Value,
+    authority: &str,
+) -> Option<String> {
+    let rows = value.pointer("/data/permissions")?.as_array()?;
+    let missing = ["Screen Recording", "Accessibility"]
+        .into_iter()
+        .filter(|name| {
+            rows.iter().any(|row| {
+                row.get("name").and_then(serde_json::Value::as_str) == Some(name)
+                    && row.get("isRequired").and_then(serde_json::Value::as_bool) == Some(true)
+                    && row.get("isGranted").and_then(serde_json::Value::as_bool) == Some(false)
+            })
+        })
+        .collect::<Vec<_>>();
+    (!missing.is_empty()).then(|| format!("{} missing or pending for {authority}; confirm this authority in System Settings > Privacy & Security, restart it, then rerun doctor", missing.join(" and ")))
+}
+
 pub(crate) fn bridge_handshake_matches(
     value: &serde_json::Value,
     expected_host: &str,
@@ -902,6 +1069,41 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
             LifecycleLockMode::Exclusive
         },
     )?;
+    // Receipts alone cannot tell a staged rollback from a reinstall of the previous
+    // release, so a rollback records its target until it has fully finished.
+    let staged_rollback = read_receipt(&paths.pending_rollback_marker())?;
+    let pending_exists = paths.pending_receipt().exists();
+    if dry_run && (pending_exists || staged_rollback.is_some()) {
+        return Err(backend_error(
+            "an interrupted backend activation requires a non-dry-run recovery",
+        ));
+    }
+    if pending_exists {
+        let pending = read_receipt(&paths.pending_receipt())?
+            .ok_or_else(|| backend_error("pending backend activation receipt is unavailable"))?;
+        recover_pending(&paths, &lock, strict)?;
+        set_pending_rollback(&paths, None)?;
+        if staged_rollback.is_some()
+            && read_receipt(&paths.current_receipt())?.is_some_and(|current| {
+                current.tag == pending.tag && current.commit == pending.commit
+            })
+        {
+            // A recovered committed rollback must not be reversed by another one.
+            return status_unlocked(&lock, &paths, false, strict);
+        }
+        // Recovery abandoned a pre-replacement attempt or completed an interrupted
+        // install; perform the requested rollback.
+    } else if let Some(target) = staged_rollback {
+        if read_receipt(&paths.current_receipt())?.as_ref() == Some(&target) {
+            // The rollback committed before its record was cleared; do not reverse it.
+            // Authenticate the active target first and keep the record on failure.
+            verify_unlocked(strict, &lock, &paths)?;
+            set_pending_rollback(&paths, None)?;
+            return status_unlocked(&lock, &paths, false, strict);
+        }
+        // The rollback stopped before staging its receipt; start it again.
+        set_pending_rollback(&paths, None)?;
+    }
     let current = read_receipt(&paths.current_receipt())?
         .ok_or_else(|| backend_error("no current backend receipt exists"))?;
     let previous = read_receipt(&paths.previous_receipt())?
@@ -933,12 +1135,109 @@ pub fn rollback(dry_run: bool, strict: bool) -> Result<BackendStatus, CliError> 
         });
     }
     retire_transition_daemons(&outgoing)?;
+    set_pending_rollback(&paths, Some(&previous))?;
     write_receipt(&paths.pending_receipt(), &previous)?;
+    reconcile_apps(&paths, &lock, true)?;
     if !stable_app_matches(&paths, &previous)? {
         replace_stable_app(&paths, &previous)?;
     }
     recover_pending(&paths, &lock, strict)?;
+    set_pending_rollback(&paths, None)?;
     status_unlocked(&lock, &paths, false, strict)
+}
+
+#[derive(Debug, Serialize)]
+pub struct PruneReport {
+    pub dry_run: bool,
+    pub retained: Vec<String>,
+    /// Removed versions, or the removal plan when dry_run is true.
+    pub removed: Vec<String>,
+}
+
+pub fn prune(dry_run: bool, strict: bool) -> Result<PruneReport, CliError> {
+    ensure_supported_platform()?;
+    let lock = PeekabooLock::embedded()?;
+    let paths = BackendPaths::resolve()?;
+    let _guard = LifecycleLock::acquire(
+        &paths.root,
+        if dry_run {
+            LifecycleLockMode::Shared
+        } else {
+            LifecycleLockMode::Exclusive
+        },
+    )?;
+    if paths.pending_receipt().exists() {
+        return Err(backend_error(
+            "recover the pending activation with backend install before pruning",
+        ));
+    }
+    verify_unlocked(strict, &lock, &paths)?;
+    let current = read_receipt(&paths.current_receipt())?
+        .ok_or_else(|| backend_error("the accepted backend receipt is unavailable"))?;
+    let mut retained = BTreeSet::from([current.tag]);
+    if let Some(previous) = read_receipt(&paths.previous_receipt())? {
+        verify_transition_receipt(&paths, &lock, &previous, strict)?;
+        retained.insert(previous.tag);
+    }
+    let versions = paths.root.join("versions");
+    reject_symlink_components(&versions)?;
+    let mut inactive = Vec::new();
+    for entry in fs::read_dir(&versions)
+        .map_err(|_| backend_error("failed to inspect cached backend versions"))?
+    {
+        let entry = entry.map_err(|_| backend_error("failed to inspect a cached version"))?;
+        let tag = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| backend_error("cached version has an invalid name"))?;
+        if !safe_tag(&tag) || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            return Err(backend_error(
+                "refusing to prune an unowned or symlinked cache entry",
+            ));
+        }
+        if !retained.contains(&tag) {
+            inactive.push(tag);
+        }
+    }
+    inactive.sort();
+    inactive.truncate(32);
+    // Inspect the entire bounded plan before deleting anything. An open CLI or
+    // app executable means the version is still in use and must be retained.
+    for tag in &inactive {
+        for (executable, authority) in [
+            (paths.cli_for(tag), "CLI"),
+            (paths.app_for(tag).join("Contents/MacOS/Peekaboo"), "app"),
+        ] {
+            reject_symlink_components(&executable)?;
+            let output = run_tool(
+                Path::new("lsof"),
+                &["-t", "--", &executable.to_string_lossy()],
+            )?;
+            if output.timed_out
+                || output.signal.is_some()
+                || output.stdout_truncated
+                || output.stderr_truncated
+                || !output.stderr.is_empty()
+                || !output.stdout.is_empty()
+                || output.exit_code != 1
+            {
+                return Err(backend_error(format!(
+                    "cached backend {tag} {authority} is still in use or could not be assessed; quit it and rerun prune --dry-run before pruning",
+                )));
+            }
+        }
+    }
+    if !dry_run {
+        for tag in &inactive {
+            fs::remove_dir_all(paths.version_root(tag))
+                .map_err(|_| backend_error("failed to remove an inactive cached version"))?;
+        }
+    }
+    Ok(PruneReport {
+        dry_run,
+        retained: retained.into_iter().collect(),
+        removed: inactive,
+    })
 }
 
 fn security_posture(policy: NotarizationPolicy) -> &'static str {
@@ -968,13 +1267,10 @@ fn verify_transition_runtime(
 ) -> Result<VerifiedTransitionRuntime, CliError> {
     verify_transition_receipt(paths, lock, receipt, strict)?;
     let (cli_asset, _, _) = release_contract_for_transition_receipt(lock, receipt)?;
-    let identity = cli_asset
-        .executable_sha256
-        .get(..16)
-        .ok_or_else(|| backend_error("locked CLI digest cannot identify its runtime"))?;
+    let identity = cli_runtime_identity(cli_asset);
     Ok(VerifiedTransitionRuntime {
         binary: paths.cli_for(&receipt.tag),
-        contract: RuntimeContract::new(identity.into(), cli_asset.bridge_build.clone()),
+        contract: RuntimeContract::new(identity, cli_asset.bridge_build.clone()),
     })
 }
 
@@ -1009,6 +1305,13 @@ fn verify_receipt(
         receipt,
         &lock.cli_asset().executable_sha256,
         &lock.app_asset().executable_sha256,
+    )?;
+    verify_cli_runtime_libraries(
+        paths
+            .cli_for(&receipt.tag)
+            .parent()
+            .expect("version CLI parent"),
+        lock.cli_asset(),
     )?;
     verify_version(&paths.cli_for(&receipt.tag), &receipt.tag)?;
     if strict {
@@ -1084,6 +1387,13 @@ fn verify_historical_receipt(
         receipt,
         &release.cli_asset().executable_sha256,
         &release.app_asset().executable_sha256,
+    )?;
+    verify_cli_runtime_libraries(
+        paths
+            .cli_for(&receipt.tag)
+            .parent()
+            .expect("version CLI parent"),
+        release.cli_asset(),
     )?;
     verify_version(&paths.cli_for(&receipt.tag), &receipt.tag)?;
     if strict {
@@ -1183,6 +1493,268 @@ fn refuse_unowned_app(paths: &BackendPaths) -> Result<(), CliError> {
 
 fn stable_app_matches(paths: &BackendPaths, receipt: &Receipt) -> Result<bool, CliError> {
     app_path_matches(&paths.stable_app, receipt)
+}
+
+fn reconcile_apps(
+    paths: &BackendPaths,
+    lock: &PeekabooLock,
+    retire_all: bool,
+) -> Result<(), CliError> {
+    let mut owned = Vec::new();
+    if paths.stable_app.exists() {
+        let mut owned_stable = false;
+        for path in [
+            paths.current_receipt(),
+            paths.previous_receipt(),
+            paths.pending_receipt(),
+        ] {
+            if let Some(receipt) = read_receipt(&path)?
+                && stable_app_matches(paths, &receipt)?
+            {
+                verify_transition_receipt(paths, lock, &receipt, false)?;
+                verify_transition_receipt_app(&paths.stable_app, lock, &receipt, false)?;
+                owned_stable = true;
+                break;
+            }
+        }
+        if !owned_stable {
+            return Err(backend_error("refusing to reconcile an unowned stable app"));
+        }
+        owned.push(
+            fs::canonicalize(&paths.stable_app)
+                .map_err(|_| backend_error("failed to resolve the owned stable app"))?,
+        );
+    }
+    let contracts = std::iter::once((
+        lock.tag.as_str(),
+        lock.app_asset(),
+        lock.minimum_macos.as_str(),
+    ))
+    .chain(
+        lock.rollback_releases
+            .iter()
+            .chain(&lock.upgrade_from_releases)
+            .map(|release| {
+                (
+                    release.tag.as_str(),
+                    release.app_asset(),
+                    release.minimum_macos.as_str(),
+                )
+            }),
+    );
+    for (tag, asset, minimum_macos) in contracts {
+        let path = paths.app_for(tag);
+        let binary = path.join(&asset.executable);
+        if !binary.is_file() {
+            continue;
+        }
+        reject_symlink_components(&path)?;
+        if hash_file(&binary)? == asset.executable_sha256
+            && verify_signature(&path, asset, true, false).is_ok()
+            && verify_app_metadata(&path, asset, tag, minimum_macos).is_ok()
+        {
+            owned.push(
+                fs::canonicalize(&path)
+                    .map_err(|_| backend_error("failed to resolve an owned cached app"))?,
+            );
+        }
+    }
+    let stable = fs::canonicalize(&paths.stable_app).unwrap_or_else(|_| paths.stable_app.clone());
+    app::reconcile(
+        &owned,
+        &stable,
+        lock.app_asset()
+            .bundle_id
+            .as_deref()
+            .ok_or_else(|| backend_error("locked app bundle identity is unavailable"))?,
+        retire_all,
+    )
+}
+
+fn stable_cli_matches(
+    paths: &BackendPaths,
+    lock: &PeekabooLock,
+    receipt: &Receipt,
+) -> Result<bool, CliError> {
+    let path = paths.stable_cli();
+    reject_symlink_components(&path)?;
+    let (asset, _, _) = release_contract_for_transition_receipt(lock, receipt)?;
+    Ok(path.is_file()
+        && hash_file(&path)? == receipt.cli_binary_sha256
+        && verify_cli_runtime_libraries(path.parent().expect("stable CLI parent"), asset).is_ok())
+}
+
+fn copy_cli_runtime_libraries(
+    source: &Path,
+    destination: &Path,
+    asset: &AssetLock,
+) -> Result<(), CliError> {
+    for library in &asset.runtime_libraries {
+        copy_file(
+            &source.join(&library.name),
+            &destination.join(&library.name),
+            0o755,
+        )?;
+    }
+    Ok(())
+}
+
+fn verify_cli_runtime_libraries(directory: &Path, asset: &AssetLock) -> Result<(), CliError> {
+    for library in &asset.runtime_libraries {
+        let path = directory.join(&library.name);
+        verify_cli_runtime_library(&path, library, asset)?;
+    }
+    for entry in fs::read_dir(directory)
+        .map_err(|_| backend_error("unable to inspect the CLI runtime closure"))?
+    {
+        let entry =
+            entry.map_err(|_| backend_error("unable to inspect the CLI runtime closure"))?;
+        if entry.path().extension().is_some_and(|ext| ext == "dylib")
+            && !entry.file_name().to_string_lossy().starts_with("._")
+            && !asset
+                .runtime_libraries
+                .iter()
+                .any(|library| entry.file_name() == library.name.as_str())
+        {
+            return Err(backend_error(
+                "an unowned auxiliary CLI runtime library is present",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verify_cli_runtime_library(
+    path: &Path,
+    library: &RuntimeLibraryLock,
+    asset: &AssetLock,
+) -> Result<(), CliError> {
+    reject_symlink_components(path)?;
+    if hash_file(path)? != library.sha256 {
+        return Err(backend_error(
+            "CLI runtime library digest does not match the embedded lock",
+        ));
+    }
+    // Libraries inherit the archive's exact Developer ID authority and team.
+    // The CLI and app retain their existing mandatory notarization gates.
+    verify_signature(path, asset, false, false)?;
+    verify_architectures(path, &library.architectures)
+}
+
+fn replace_stable_cli(
+    paths: &BackendPaths,
+    lock: &PeekabooLock,
+    receipt: &Receipt,
+    strict: bool,
+) -> Result<(), CliError> {
+    // The exclusive lifecycle lease and pending receipt cover the whole closure.
+    // Each file uses atomic rename; interrupted mixed closures are reconciled
+    // only when every existing component belongs to an authenticated receipt.
+    verify_transition_receipt(paths, lock, receipt, strict)?;
+    let (asset, _, _) = release_contract_for_transition_receipt(lock, receipt)?;
+    let destination = paths.stable_cli();
+    reject_symlink_components(&destination)?;
+    let parent = destination.parent().expect("stable CLI parent");
+    let mut receipts = vec![receipt.clone()];
+    for path in [paths.current_receipt(), paths.pending_receipt()] {
+        if let Some(prior) = read_receipt(&path)? {
+            verify_transition_receipt(paths, lock, &prior, strict)?;
+            receipts.push(prior);
+        }
+    }
+    if destination.exists() {
+        let digest = hash_file(&destination)?;
+        if !receipts
+            .iter()
+            .any(|prior| digest == prior.cli_binary_sha256)
+        {
+            return Err(backend_error(
+                "refusing to replace a changed or unowned stable CLI",
+            ));
+        }
+    }
+    let mut existing_libraries = Vec::new();
+    if parent.exists() {
+        for entry in fs::read_dir(parent)
+            .map_err(|_| backend_error("unable to inspect stable CLI runtime libraries"))?
+        {
+            let entry = entry
+                .map_err(|_| backend_error("unable to inspect stable CLI runtime libraries"))?;
+            if entry.path().extension().is_none_or(|ext| ext != "dylib") {
+                continue;
+            }
+            reject_symlink_components(&entry.path())?;
+            let digest = hash_file(&entry.path())?;
+            let mut owned = false;
+            for prior in &receipts {
+                let (prior_asset, _, _) = release_contract_for_transition_receipt(lock, prior)?;
+                if let Some(library) = prior_asset.runtime_libraries.iter().find(|library| {
+                    entry.file_name() == library.name.as_str() && digest == library.sha256
+                }) {
+                    verify_cli_runtime_library(&entry.path(), library, prior_asset)?;
+                    owned = true;
+                    break;
+                }
+            }
+            if !owned {
+                return Err(backend_error(
+                    "refusing to replace a changed or unowned stable CLI runtime library",
+                ));
+            }
+            existing_libraries.push(entry.path());
+        }
+    }
+    if stable_cli_matches(paths, lock, receipt)? {
+        return Ok(());
+    }
+    create_private_dir(parent)?;
+    let incoming = parent.join(".peekaboo-incoming");
+    reject_symlink_components(&incoming)?;
+    copy_file(&paths.cli_for(&receipt.tag), &incoming, 0o755)?;
+    if hash_file(&incoming)? != receipt.cli_binary_sha256 {
+        return Err(backend_error("stable CLI staging digest mismatch"));
+    }
+    verify_signature(&incoming, asset, false, strict)?;
+    let source = paths.cli_for(&receipt.tag);
+    for library in &asset.runtime_libraries {
+        let staged = parent.join(format!(".{}-incoming", library.name));
+        reject_symlink_components(&staged)?;
+        copy_file(
+            &source
+                .parent()
+                .expect("version CLI parent")
+                .join(&library.name),
+            &staged,
+            0o755,
+        )?;
+        verify_cli_runtime_library(&staged, library, asset)?;
+    }
+    for library in &asset.runtime_libraries {
+        fs::rename(
+            parent.join(format!(".{}-incoming", library.name)),
+            parent.join(&library.name),
+        )
+        .map_err(|_| backend_error("failed to atomically activate a stable CLI runtime library"))?;
+    }
+    for path in existing_libraries {
+        if !asset
+            .runtime_libraries
+            .iter()
+            .any(|library| path.file_name() == Some(library.name.as_ref()))
+        {
+            fs::remove_file(path).map_err(|_| {
+                backend_error("failed to retire a previous stable CLI runtime library")
+            })?;
+        }
+    }
+    fs::rename(&incoming, &destination)
+        .map_err(|_| backend_error("failed to atomically activate the stable CLI"))?;
+    if !stable_cli_matches(paths, lock, receipt)? {
+        return Err(backend_error(
+            "the activated stable CLI runtime closure does not match the lock",
+        ));
+    }
+    Ok(())
 }
 
 fn app_path_matches(app: &Path, receipt: &Receipt) -> Result<bool, CliError> {
@@ -1313,8 +1885,30 @@ fn app_contract_for_receipt<'a>(
     Ok((app, minimum_macos))
 }
 
+fn cli_runtime_identity(asset: &AssetLock) -> String {
+    if asset.runtime_libraries.is_empty() {
+        return asset.executable_sha256[..16].into();
+    }
+    let mut digest = Sha256::new();
+    digest.update(asset.executable_sha256.as_bytes());
+    for library in &asset.runtime_libraries {
+        digest.update([0]);
+        digest.update(library.name.as_bytes());
+        digest.update([0]);
+        digest.update(library.sha256.as_bytes());
+    }
+    digest
+        .finalize()
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn obsolete_runtime_contracts(lock: &PeekabooLock, receipt: &Receipt) -> Vec<RuntimeContract> {
-    let active_identity = &receipt.cli_binary_sha256[..16];
+    let active_identity = release_contract_for_transition_receipt(lock, receipt)
+        .map(|(asset, _, _)| cli_runtime_identity(asset))
+        .unwrap_or_else(|_| receipt.cli_binary_sha256[..16].to_string());
     let current = std::iter::once((lock.tag.as_str(), lock.commit.as_str(), lock.cli_asset()));
     let rollback = lock.rollback_releases.iter().map(|release| {
         (
@@ -1336,557 +1930,12 @@ fn obsolete_runtime_contracts(lock: &PeekabooLock, receipt: &Receipt) -> Vec<Run
         .chain(upgrade_from)
         .filter(|(tag, commit, _)| *tag != receipt.tag || *commit != receipt.commit)
         .filter_map(|(_, _, asset)| {
-            let identity = asset.executable_sha256[..16].to_string();
+            let identity = cli_runtime_identity(asset);
             let key = (identity.clone(), asset.bridge_build.clone());
             (identity != active_identity && seen.insert(key.clone()))
                 .then(|| RuntimeContract::new(key.0, key.1))
         })
         .collect()
-}
-
-fn download_asset(asset: &AssetLock, downloads: &Path) -> Result<PathBuf, CliError> {
-    let destination = downloads.join(&asset.name);
-    if test_mode::enabled()
-        && let Some(fixtures) = std::env::var_os("NILS_MACOS_AGENT_TEST_ASSET_DIR")
-    {
-        let fixture = PathBuf::from(fixtures).join(&asset.name);
-        fs::copy(&fixture, &destination)
-            .map_err(|_| backend_error(format!("test asset `{}` is unavailable", asset.name)))?;
-        return Ok(destination);
-    }
-    let args = vec![
-        "--fail".into(),
-        "--location".into(),
-        "--silent".into(),
-        "--show-error".into(),
-        "--proto".into(),
-        "=https".into(),
-        "--tlsv1.2".into(),
-        "--output".into(),
-        destination.to_string_lossy().into_owned(),
-        asset.url.clone(),
-    ];
-    let output = process::run(
-        &backend_tool("curl")?,
-        &args,
-        &[],
-        &[],
-        None,
-        Duration::from_secs(300),
-    )
-    .map_err(|_| backend_error("failed to start the HTTPS downloader"))?;
-    if output.timed_out || output.exit_code != 0 {
-        return Err(backend_error(format!(
-            "failed to download locked asset `{}`",
-            asset.name
-        )));
-    }
-    Ok(destination)
-}
-
-fn verify_archive_digest(path: &Path, asset: &AssetLock) -> Result<(), CliError> {
-    if hash_file(path)? != asset.sha256 {
-        return Err(backend_error(format!(
-            "SHA256 mismatch for locked asset `{}`",
-            asset.name
-        )));
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ArchiveKind {
-    TarGz,
-    Zip,
-}
-
-fn validate_archive_listing(path: &Path, kind: ArchiveKind) -> Result<(), CliError> {
-    let (program, args) = match kind {
-        ArchiveKind::TarGz => (
-            backend_tool("tar")?,
-            vec!["-tzf".into(), path.to_string_lossy().into_owned()],
-        ),
-        ArchiveKind::Zip => (
-            backend_tool("unzip")?,
-            vec!["-Z1".into(), path.to_string_lossy().into_owned()],
-        ),
-    };
-    let output = process::run(&program, &args, &[], &[], None, Duration::from_secs(30))
-        .map_err(|_| backend_error("failed to inspect a locked archive"))?;
-    if output.exit_code != 0 || output.timed_out || output.stdout_truncated {
-        return Err(backend_error(
-            "locked archive listing failed or exceeded its bound",
-        ));
-    }
-    let listing = String::from_utf8(output.stdout)
-        .map_err(|_| backend_error("locked archive listing is not UTF-8"))?;
-    let mut count = 0usize;
-    for raw in listing.lines() {
-        count += 1;
-        if count > 20_000 {
-            return Err(backend_error("locked archive contains too many entries"));
-        }
-        validate_archive_path(raw)?;
-    }
-    if count == 0 {
-        return Err(backend_error("locked archive is empty"));
-    }
-    Ok(())
-}
-
-fn validate_archive_path(raw: &str) -> Result<(), CliError> {
-    let path = Path::new(raw);
-    if raw.is_empty()
-        || path.is_absolute()
-        || raw.contains('\0')
-        || path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
-    {
-        return Err(backend_error("locked archive contains an unsafe path"));
-    }
-    Ok(())
-}
-
-fn extract_archive(path: &Path, destination: &Path, kind: ArchiveKind) -> Result<(), CliError> {
-    let (program, args) = match kind {
-        ArchiveKind::TarGz => (
-            backend_tool("tar")?,
-            vec![
-                "-xzf".into(),
-                path.to_string_lossy().into_owned(),
-                "-C".into(),
-                destination.to_string_lossy().into_owned(),
-            ],
-        ),
-        ArchiveKind::Zip => (
-            backend_tool("unzip")?,
-            vec![
-                "-q".into(),
-                path.to_string_lossy().into_owned(),
-                "-d".into(),
-                destination.to_string_lossy().into_owned(),
-            ],
-        ),
-    };
-    let output = process::run(&program, &args, &[], &[], None, Duration::from_secs(120))
-        .map_err(|_| backend_error("failed to start archive extraction"))?;
-    if output.exit_code != 0 || output.timed_out {
-        return Err(backend_error("locked archive extraction failed"));
-    }
-    Ok(())
-}
-
-fn validate_symlink_tree(root: &Path) -> Result<(), CliError> {
-    let canonical_root = root
-        .canonicalize()
-        .map_err(|_| backend_error("failed to resolve archive staging root"))?;
-    visit_tree(root, &mut |path, file_type| {
-        if !file_type.is_symlink() {
-            return Ok(());
-        }
-        let target =
-            fs::read_link(path).map_err(|_| backend_error("failed to inspect archive symlink"))?;
-        if target.is_absolute() {
-            return Err(backend_error("locked archive contains an absolute symlink"));
-        }
-        let resolved = path
-            .canonicalize()
-            .map_err(|_| backend_error("locked archive contains a broken symlink"))?;
-        if !resolved.starts_with(&canonical_root) {
-            return Err(backend_error(
-                "locked archive symlink escapes the staging root",
-            ));
-        }
-        Ok(())
-    })
-}
-
-fn visit_tree(
-    path: &Path,
-    visitor: &mut impl FnMut(&Path, fs::FileType) -> Result<(), CliError>,
-) -> Result<(), CliError> {
-    for entry in
-        fs::read_dir(path).map_err(|_| backend_error("failed to inspect extracted archive"))?
-    {
-        let entry =
-            entry.map_err(|_| backend_error("failed to inspect extracted archive entry"))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|_| backend_error("failed to classify extracted archive entry"))?;
-        let entry_path = entry.path();
-        visitor(&entry_path, file_type)?;
-        if file_type.is_dir() {
-            visit_tree(&entry_path, visitor)?;
-        }
-    }
-    Ok(())
-}
-
-fn verify_version(binary: &Path, tag: &str) -> Result<(), CliError> {
-    let output = run_tool(binary, &["--version"])?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if output.exit_code != 0 || output.timed_out || !text.contains(tag.trim_start_matches('v')) {
-        return Err(backend_error(
-            "Peekaboo version probe does not match the receipt",
-        ));
-    }
-    Ok(())
-}
-
-fn verify_architectures(binary: &Path, expected: &[String]) -> Result<(), CliError> {
-    let args = ["-archs".into(), binary.to_string_lossy().into_owned()];
-    let output = run_tool(
-        Path::new("lipo"),
-        &args.iter().map(String::as_str).collect::<Vec<_>>(),
-    )?;
-    let actual = String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let actual_set = actual.iter().cloned().collect::<BTreeSet<_>>();
-    let expected_set = expected.iter().cloned().collect::<BTreeSet<_>>();
-    if output.exit_code != 0
-        || output.timed_out
-        || output.stdout_truncated
-        || actual.is_empty()
-        || actual_set.len() != actual.len()
-        || expected_set.is_empty()
-        || expected_set.len() != expected.len()
-        || actual_set != expected_set
-    {
-        return Err(backend_error(
-            "Peekaboo executable architecture does not match the lock",
-        ));
-    }
-    Ok(())
-}
-
-fn verify_app_metadata(
-    app: &Path,
-    asset: &AssetLock,
-    tag: &str,
-    minimum_macos: &str,
-) -> Result<(), CliError> {
-    let raw = fs::read_to_string(app.join("Contents/Info.plist"))
-        .map_err(|_| backend_error("Peekaboo app metadata is unavailable"))?;
-    let document = roxmltree::Document::parse_with_options(
-        &raw,
-        roxmltree::ParsingOptions {
-            allow_dtd: true,
-            nodes_limit: 16_384,
-            entity_resolver: None,
-        },
-    )
-    .map_err(|_| backend_error("Peekaboo app metadata is malformed"))?;
-    let dictionary = document
-        .descendants()
-        .find(|node| node.has_tag_name("dict"))
-        .ok_or_else(|| backend_error("Peekaboo app metadata dictionary is unavailable"))?;
-    let bundle_build = bridge_build_number(&asset.bridge_build, tag)
-        .ok_or_else(|| backend_error("locked Peekaboo app build identity is malformed"))?;
-    for (key, expected) in [
-        (
-            "CFBundleIdentifier",
-            asset.bundle_id.as_deref().unwrap_or_default(),
-        ),
-        ("CFBundleShortVersionString", tag.trim_start_matches('v')),
-        ("CFBundleVersion", bundle_build),
-        ("LSMinimumSystemVersion", minimum_macos),
-    ] {
-        if expected.is_empty() || plist_string(dictionary, key).as_deref() != Some(expected) {
-            return Err(backend_error(
-                "Peekaboo app metadata does not match the lock",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn plist_string(dictionary: roxmltree::Node<'_, '_>, key: &str) -> Option<String> {
-    let elements = dictionary
-        .children()
-        .filter(roxmltree::Node::is_element)
-        .collect::<Vec<_>>();
-    let mut matches = elements.as_chunks::<2>().0.iter().filter_map(|pair| {
-        (pair[0].has_tag_name("key")
-            && pair[0].text() == Some(key)
-            && pair[1].has_tag_name("string"))
-        .then(|| pair[1].text().map(str::to_string))
-        .flatten()
-    });
-    let value = matches.next()?;
-    matches.next().is_none().then_some(value)
-}
-
-fn verify_signature(
-    path: &Path,
-    asset: &AssetLock,
-    app: bool,
-    require_cli_assessment: bool,
-) -> Result<NotarizationAssessment, CliError> {
-    let path_text = path.to_string_lossy().into_owned();
-    let mut verify_args = vec!["--verify", "--deep", "--strict", "--verbose=2"];
-    verify_args.push(&path_text);
-    let verify = run_tool(Path::new("codesign"), &verify_args)?;
-    if verify.exit_code != 0 || verify.timed_out {
-        return Err(backend_error("Peekaboo code signature verification failed"));
-    }
-    let metadata_args = vec!["-dv", "--verbose=4", &path_text];
-    let metadata = run_tool(Path::new("codesign"), &metadata_args)?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&metadata.stdout),
-        String::from_utf8_lossy(&metadata.stderr)
-    );
-    if metadata.exit_code != 0
-        || !text.contains(&asset.signing_authority)
-        || !text.contains(&format!("TeamIdentifier={}", asset.team_id))
-    {
-        return Err(backend_error(
-            "Peekaboo signing identity does not match the lock",
-        ));
-    }
-    if app {
-        let assessment = run_tool(Path::new("spctl"), &["-a", "-vv", &path_text])?;
-        let assessment_text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&assessment.stdout),
-            String::from_utf8_lossy(&assessment.stderr)
-        );
-        if assessment.exit_code != 0
-            || assessment.timed_out
-            || !assessment_text.contains("source=Notarized Developer ID")
-        {
-            return Err(backend_error(
-                "Peekaboo app Gatekeeper/notary assessment failed",
-            ));
-        }
-        return Ok(NotarizationAssessment::Passed);
-    } else if require_cli_assessment {
-        let assessment = run_tool(
-            Path::new("codesign"),
-            &["-vvvv", "-R=notarized", "--check-notarization", &path_text],
-        )?;
-        return classify_cli_notarization_assessment(
-            asset.notarization.policy,
-            assessment.exit_code,
-            assessment.timed_out,
-            assessment.signal,
-        );
-    }
-    Ok(NotarizationAssessment::NotAssessed)
-}
-
-fn classify_cli_notarization_assessment(
-    policy: NotarizationPolicy,
-    exit_code: i32,
-    timed_out: bool,
-    signal: Option<i32>,
-) -> Result<NotarizationAssessment, CliError> {
-    if timed_out {
-        return Err(backend_error(
-            "Peekaboo CLI notarization assessment timed out",
-        ));
-    }
-    if signal.is_some() {
-        return Err(backend_error(
-            "Peekaboo CLI notarization assessment terminated by signal",
-        ));
-    }
-    if exit_code == 0 {
-        return Ok(NotarizationAssessment::Passed);
-    }
-    match policy {
-        NotarizationPolicy::Required => {
-            Err(backend_error("Peekaboo CLI notarization assessment failed"))
-        }
-        NotarizationPolicy::Waived => Ok(NotarizationAssessment::Waived),
-    }
-}
-
-fn run_tool(program: &Path, args: &[&str]) -> Result<process::ProcessOutput, CliError> {
-    let program = if program.components().count() == 1 {
-        let name = program
-            .to_str()
-            .ok_or_else(|| backend_error("required backend tool name is invalid"))?;
-        backend_tool(name)?
-    } else {
-        program.to_path_buf()
-    };
-    let args = args
-        .iter()
-        .map(|arg| (*arg).to_string())
-        .collect::<Vec<_>>();
-    process::run(&program, &args, &[], &[], None, Duration::from_secs(30))
-        .map_err(|_| backend_error("required backend verification tool is unavailable"))
-}
-
-fn backend_tool(name: &str) -> Result<PathBuf, CliError> {
-    let logical = Path::new(name);
-    if let Some(path) = test_mode::verification_tool_override(logical) {
-        return Ok(path);
-    }
-    production_tool_path(name)
-        .map(Path::to_path_buf)
-        .ok_or_else(|| backend_error("required backend tool is not allowlisted"))
-}
-
-fn production_tool_path(name: &str) -> Option<&'static Path> {
-    match name {
-        "curl" => Some(Path::new("/usr/bin/curl")),
-        "tar" => Some(Path::new("/usr/bin/tar")),
-        "unzip" => Some(Path::new("/usr/bin/unzip")),
-        "lipo" => Some(Path::new("/usr/bin/lipo")),
-        "codesign" => Some(Path::new("/usr/bin/codesign")),
-        "spctl" => Some(Path::new("/usr/sbin/spctl")),
-        _ => None,
-    }
-}
-
-fn copy_tree(source: &Path, destination: &Path) -> Result<(), CliError> {
-    let metadata = fs::symlink_metadata(source)
-        .map_err(|_| backend_error("failed to inspect a backend file during activation"))?;
-    if metadata.file_type().is_symlink() {
-        let target = fs::read_link(source)
-            .map_err(|_| backend_error("failed to read an internal app symlink"))?;
-        if target.is_absolute() {
-            return Err(backend_error("refusing to copy an absolute app symlink"));
-        }
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|_| backend_error("failed to create app symlink parent"))?;
-        }
-        symlink(target, destination)
-            .map_err(|_| backend_error("failed to copy an internal app symlink"))?;
-        return Ok(());
-    }
-    if metadata.is_dir() {
-        fs::create_dir_all(destination)
-            .map_err(|_| backend_error("failed to create backend app directory"))?;
-        fs::set_permissions(destination, metadata.permissions())
-            .map_err(|_| backend_error("failed to preserve backend app permissions"))?;
-        for entry in fs::read_dir(source)
-            .map_err(|_| backend_error("failed to enumerate backend app directory"))?
-        {
-            let entry = entry.map_err(|_| backend_error("failed to read backend app entry"))?;
-            copy_tree(&entry.path(), &destination.join(entry.file_name()))?;
-        }
-        return Ok(());
-    }
-    copy_file(source, destination, metadata.permissions().mode())
-}
-
-fn copy_file(source: &Path, destination: &Path, mode: u32) -> Result<(), CliError> {
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|_| backend_error("failed to create backend file parent"))?;
-    }
-    fs::copy(source, destination).map_err(|_| backend_error("failed to copy backend file"))?;
-    fs::set_permissions(destination, fs::Permissions::from_mode(mode))
-        .map_err(|_| backend_error("failed to set backend file permissions"))?;
-    Ok(())
-}
-
-fn create_private_dir(path: &Path) -> Result<(), CliError> {
-    reject_symlink_components(path)?;
-    fs::create_dir_all(path)
-        .map_err(|_| backend_error("failed to create private backend storage"))?;
-    reject_symlink_components(path)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .map_err(|_| backend_error("failed to secure private backend storage"))?;
-    Ok(())
-}
-
-fn reject_symlink_components(path: &Path) -> Result<(), CliError> {
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component.as_os_str());
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                if allowed_platform_symlink(&current) {
-                    continue;
-                }
-                return Err(backend_error(
-                    "private backend storage path contains a symlink",
-                ));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
-            Err(_) => {
-                return Err(backend_error(
-                    "failed to inspect private backend storage path",
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn allowed_platform_symlink(path: &Path) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        let expected_target = match path.to_str() {
-            Some("/var") => Path::new("private/var"),
-            Some("/tmp") => Path::new("private/tmp"),
-            Some("/etc") => Path::new("private/etc"),
-            _ => return false,
-        };
-        fs::read_link(path).ok().as_deref() == Some(expected_target)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-        false
-    }
-}
-
-fn hash_file(path: &Path) -> Result<String, CliError> {
-    sha256_file(path).map_err(|_| backend_error("failed to hash a backend file"))
-}
-
-fn read_receipt(path: &Path) -> Result<Option<Receipt>, CliError> {
-    let raw = match fs::read(path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err(backend_error("failed to read a backend receipt")),
-    };
-    let receipt = serde_json::from_slice::<Receipt>(&raw)
-        .map_err(|_| backend_error("backend receipt is malformed"))?;
-    if receipt.schema_version != RECEIPT_SCHEMA
-        || !safe_tag(&receipt.tag)
-        || !receipt_digests_are_valid(&receipt)
-    {
-        return Err(backend_error("backend receipt is unsupported or unsafe"));
-    }
-    Ok(Some(receipt))
-}
-
-fn receipt_digests_are_valid(receipt: &Receipt) -> bool {
-    [
-        &receipt.cli_archive_sha256,
-        &receipt.app_archive_sha256,
-        &receipt.cli_binary_sha256,
-        &receipt.app_binary_sha256,
-    ]
-    .into_iter()
-    .all(|digest| {
-        digest.len() == 64
-            && digest
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    })
-}
-
-fn write_receipt(path: &Path, receipt: &Receipt) -> Result<(), CliError> {
-    let body = serde_json::to_vec_pretty(receipt)
-        .map_err(|_| backend_error("failed to encode backend receipt"))?;
-    write_atomic(path, &body, SECRET_FILE_MODE)
-        .map_err(|_| backend_error("failed to atomically write backend receipt"))
 }
 
 fn safe_tag(tag: &str) -> bool {
@@ -1965,8 +2014,9 @@ mod tests {
     use super::{
         LIFECYCLE_LOCK_FILE, LifecycleLock, LifecycleLockMode, NotarizationAssessment,
         RECEIPT_SCHEMA, Receipt, app_contract_for_receipt, classify_cli_notarization_assessment,
-        create_private_dir, macos_version_supported, obsolete_runtime_contracts,
-        production_tool_path, safe_tag, validate_archive_path, validate_symlink_tree,
+        cli_runtime_identity, create_private_dir, macos_version_supported,
+        obsolete_runtime_contracts, production_tool_path, safe_tag, validate_archive_path,
+        validate_symlink_tree,
     };
     use crate::lock::{NotarizationPolicy, PeekabooLock};
 
@@ -2125,6 +2175,21 @@ mod tests {
     }
 
     #[test]
+    fn daemon_runtime_identity_binds_the_locked_auxiliary_library() {
+        let lock = PeekabooLock::embedded().expect("lock");
+        let asset = lock.cli_asset();
+        let identity = cli_runtime_identity(asset);
+        let mut changed = asset.clone();
+        changed.runtime_libraries[0].sha256 = "a".repeat(64);
+        assert_ne!(cli_runtime_identity(&changed), identity);
+        changed.runtime_libraries.clear();
+        assert_eq!(
+            cli_runtime_identity(&changed),
+            asset.executable_sha256[..16]
+        );
+    }
+
+    #[test]
     fn inactive_locked_releases_become_exact_obsolete_runtime_contracts() {
         let mut lock = PeekabooLock::embedded().expect("lock");
         let mut historical_cli = lock.cli_asset().clone();
@@ -2135,7 +2200,7 @@ mod tests {
                 tag: "v3.9.2".into(),
                 commit: "2".repeat(40),
                 minimum_macos: "15.0".into(),
-                assets: vec![historical_cli, lock.app_asset().clone()],
+                assets: vec![historical_cli.clone(), lock.app_asset().clone()],
             });
         let receipt = Receipt {
             schema_version: RECEIPT_SCHEMA.into(),
@@ -2149,7 +2214,10 @@ mod tests {
         };
 
         let contracts = obsolete_runtime_contracts(&lock, &receipt);
-        assert_eq!(contracts.len(), 3);
+        assert_eq!(contracts.len(), 4);
+        assert!(contracts.iter().any(|contract| {
+            contract.identity() == "adc07d5064647251" && contract.bridge_build() == "4.4.0 (4.4.0)"
+        }));
         assert!(contracts.iter().any(|contract| {
             contract.identity() == "795176aaf84396b2" && contract.bridge_build() == "4.2.2 (4.2.2)"
         }));
@@ -2157,7 +2225,7 @@ mod tests {
             contract.identity() == "6380687e62cf42d1" && contract.bridge_build() == "3.9.3 (3.9.3)"
         }));
         assert!(contracts.iter().any(|contract| {
-            contract.identity() == "2222222222222222"
+            contract.identity() == cli_runtime_identity(&historical_cli)
                 && contract.bridge_build() == "3.9.2 (historical)"
         }));
     }

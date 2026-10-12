@@ -297,6 +297,96 @@ exec "$NILS_MACOS_AGENT_REMOTE_BIN" "$@"
     );
 }
 
+#[test]
+fn ssh_exec_preparation_failure_keeps_the_remote_permission_hint() {
+    let harness = common::MacosAgentHarness::new();
+    let cwd = TempDir::new().expect("cwd");
+    let fake_peekaboo = cwd.path().join("peekaboo");
+    write_executable(
+        &fake_peekaboo,
+        r#"#!/bin/sh
+case " $* " in
+  *" permissions status "*)
+    echo '{"success":true,"data":{"source":"local","permissions":[{"name":"Screen Recording","isRequired":true,"isGranted":false},{"name":"Accessibility","isRequired":true,"isGranted":false}]}}'
+    exit 0 ;;
+esac
+printf '%s\n' '{"success":true,"data":{}}'
+"#,
+    );
+    let ssh_log = cwd.path().join("ssh-argv.log");
+    let fake_ssh = cwd.path().join("ssh");
+    write_executable(
+        &fake_ssh,
+        r#"#!/bin/sh
+while [ "$1" = "-o" ]; do shift 2; done
+[ "$1" = "--" ] && shift
+shift
+printf '%s\n' "$@" >> "$NILS_MACOS_AGENT_SSH_LOG"
+shift
+"$NILS_MACOS_AGENT_REMOTE_BIN" "$@"
+"#,
+    );
+    // A directory cannot take the runtime trace, so the remote runtime preparation fails.
+    let unwritable_trace = cwd.path().join("runtime-trace");
+    fs::create_dir(&unwritable_trace).expect("trace directory");
+    let options = harness
+        .cmd_options(cwd.path())
+        .with_env(
+            "NILS_MACOS_AGENT_PEEKABOO_BIN",
+            fake_peekaboo.to_str().expect("peekaboo"),
+        )
+        .with_env("NILS_MACOS_AGENT_SSH_BIN", fake_ssh.to_str().expect("ssh"))
+        .with_env(
+            "NILS_MACOS_AGENT_REMOTE_BIN",
+            harness.macos_agent_bin().to_str().expect("agent"),
+        )
+        .with_env(
+            "NILS_MACOS_AGENT_REMOTE_ROOT",
+            cwd.path().join("remote-sessions").to_str().expect("remote"),
+        )
+        .with_env("NILS_MACOS_AGENT_SSH_LOG", ssh_log.to_str().expect("log"))
+        .with_env(
+            "NILS_MACOS_AGENT_TEST_RUNTIME_ACTION_TRACE",
+            unwritable_trace.to_str().expect("trace"),
+        );
+    let out = harness.run_with_options(
+        cwd.path(),
+        &[
+            "--error-format",
+            "json",
+            "exec",
+            "--host",
+            "fixture-role",
+            "--runtime",
+            "process",
+            "--out-dir",
+            cwd.path().join("journal").to_str().expect("out"),
+            "--",
+            "see",
+            "--json",
+        ],
+        options,
+    );
+    assert_ne!(out.code, 0, "{}", out.stderr_text());
+    assert!(
+        fs::read_to_string(&ssh_log)
+            .expect("ssh log")
+            .contains("macos-agent\n__remote\n"),
+        "the failure must come back through the SSH transport"
+    );
+    let error = &out.stderr_json()["error"];
+    assert_eq!(error["class"], "backend");
+    assert_eq!(error["message"], "failed to record a test runtime action");
+    assert_eq!(error["operation"], "runtime.test-trace");
+    let hints = error["hints"].as_array().expect("remote hints survive SSH");
+    assert!(
+        hints.iter().any(|hint| hint
+            .as_str()
+            .is_some_and(|hint| hint.contains("missing or pending for Peekaboo CLI"))),
+        "{hints:?}"
+    );
+}
+
 fn write_executable(path: &std::path::Path, body: &str) {
     fs::write(path, body).expect("write executable");
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod executable");

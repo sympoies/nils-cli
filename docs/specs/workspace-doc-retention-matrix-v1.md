@@ -108,6 +108,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/git-cli/docs/specs/dirty-checkout-adoption-json-contract-v1.md`
 - `crates/git-cli/docs/specs/git-cli-remote-surfaces.md`
 - `crates/git-cli/docs/specs/git-cli-worktree-convention.md`
+- `crates/macos-agent/docs/runbooks/backend-upgrade-v1.md`
 - `crates/macos-agent/docs/specs/macos-agent-journal-v2.md`
 - `crates/memo/docs/runbooks/memo-agent-workflow.md`
 - `crates/memo/docs/specs/memo-command-contract-v1.md`
