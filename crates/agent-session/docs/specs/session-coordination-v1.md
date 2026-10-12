@@ -1263,9 +1263,10 @@ capabilities and bodies never appear in delivery status or diagnostic logs.
 Peer discovery returns raw `agent-session.remote-peers.v1`, with `peers` containing
 `machine`, `session_id`, `session_incarnation`, and `messaging_supported`.
 The optional `messaging_unavailable_reason` string may be absent or null.
-Recognized unsupported reasons are `daemon-unsupported`, `coordination-disabled`,
-and `coordination-unavailable`; missing, null, or unrecognized reasons use the
-generic unsupported observation without copying upstream text.
+Recognized reasons are `daemon-unsupported`, `coordination-disabled`, and
+`coordination-unavailable`; missing, null, or unrecognized reasons use the generic
+unsupported observation without copying upstream text. `coordination-unavailable`
+is transient rather than a definitive lack of messaging support.
 `GET /sessions` advertises `data.coordination.remote_messaging_supported`;
 per-session `coordination_mode` and `coordination.coordination_available` determine
 current recipient readiness.
@@ -1278,8 +1279,12 @@ using `message peers`. Absence may also reflect an omitted unavailable-host
 snapshot and does not prove deletion or lack of capability. Failed or invalid
 peer discovery retains `remote-messaging-unavailable`.
 A discovered exact peer whose `messaging_supported` is not true returns
-`remote-messaging-unsupported`. Neither refusal enqueues an envelope. Idempotent
-replay precedes discovery and keeps the original recipient incarnation.
+`remote-messaging-unsupported` for definitive or unknown unsupported reasons. An
+explicit `coordination-unavailable` row receives one fresh discovery attempt bound
+to the initially selected recipient incarnation. A persistent transient failure
+returns `remote-messaging-unavailable`; no replacement incarnation is selected.
+Neither refusal enqueues an envelope. Idempotent replay precedes discovery and
+keeps the original recipient incarnation.
 
 Source outbox submission returns a raw delivery projection (wrapped in the usual
 CLI envelope for CLI callers): `message_id`, `state`, `sender`, `recipient`,
@@ -1287,14 +1292,15 @@ CLI envelope for CLI callers): `message_id`, `state`, `sender`, `recipient`,
 `rejected`, or `delivery-unknown`. Network errors retry five seconds after the
 request finishes until expiry. Due entries are selected by their retry deadline,
 so a repeatedly timed-out entry cannot starve later messages. A retryable
-transport failure (`remote-messaging-unavailable`, `coordination-unavailable`)
+transport failure (`remote-messaging-unavailable`, `coordination-unavailable`,
+including an unsupported refusal explicitly classified as coordination unavailable)
 also defers every other already-attempted queued envelope for the same
 destination address (machine, session and incarnation) to the same retry
 deadline. An unavailable session or offline machine then costs one probe per
 destination session per retry interval and cannot delay due envelopes for other
 destinations. A fresh envelope still gets its own first attempt. The worker wakes
-on enqueue or the next pending deadline and sleeps indefinitely when no entries
-remain queued. No registry, journal or session lock spans network I/O.
+on enqueue or the next pending deadline and sleeps indefinitely when no queued
+envelopes or pending failure notices require work. No registry, journal or session lock spans network I/O.
 A source restart preserves the original envelope and
 recipient incarnation. Retries with the same idempotency key and content return
 the original identity without rediscovery; changed content is rejected. Only
@@ -1313,6 +1319,16 @@ including the case where the receiver saved the message but its response was los
 An admission rejection on the first attempt is `rejected`; after any prior
 unconfirmed attempt it is conservatively `delivery-unknown`, retaining the last
 reason. In particular, replacement after a lost response cannot prove nondelivery.
+
+Terminal session-origin failures are reconciled into one local sender-mailbox
+notice from the daemon's `agent-session-delivery` service origin. Its bounded
+body contains the original message ID, a fixed reason code, delivery inspection
+and retry guidance; it contains no original body, credential, or upstream error
+text. The original sender incarnation remains the recipient: replacement never
+retargets the notice. Existing mailbox admission and notifications apply. A
+stable notice ID and retained ingress receipt prevent duplication after restart
+or acknowledgement; unavailable notice persistence is retried without changing
+the original terminal delivery state or replaying its remote envelope.
 
 Destination receipts are retained until 24 hours after envelope expiry (maximum seven days),
 up to 4096 receipts; capacity rejects instead of evicting live deduplication IDs.
