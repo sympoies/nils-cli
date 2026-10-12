@@ -596,7 +596,10 @@ pub(crate) fn provision_with_previous(
             coordination_mode: record.coordination_mode,
             capability_digest: digest_bytes(token.as_bytes()),
             generation,
-            state: "starting".to_string(),
+            // A provisioned owner is usable only with its exact fresh heartbeat.
+            // Publishing this reservation avoids a second registry transaction
+            // on the first-heartbeat readiness path.
+            state: "ready".to_string(),
             heartbeat_at: String::new(),
             heartbeat_epoch: 0,
             runtime_identity: runtime.as_ref().map(|runtime| runtime.identity.clone()),
@@ -641,27 +644,7 @@ pub(crate) fn activate_ready(context: &CliContext, record: &SessionRecord) -> Re
         }
         thread::sleep(Duration::from_millis(20));
     }
-    let path = capability_path(context, &record.id, &incarnation);
-    let token = read_private_capability(&path)?;
-    let now = now_epoch();
-    let mut locked = lock_registry(context)?;
-    let broker = locked
-        .registry
-        .brokers
-        .get_mut(&record.id)
-        .filter(|broker| {
-            broker.incarnation == incarnation
-                && broker.state == "starting"
-                && super::digest_eq(
-                    &broker.capability_digest,
-                    &digest_bytes(token.trim().as_bytes()),
-                )
-        })
-        .ok_or_else(unavailable)?;
-    broker.state = "ready".to_string();
-    broker.heartbeat_at = timestamp(now);
-    broker.heartbeat_epoch = now;
-    locked.save()?;
+    ensure_ready(context, record)?;
     let _ = fs::remove_file(dsh_provider_lease_conflict_path(context, record));
     Ok(())
 }
@@ -669,19 +652,22 @@ pub(crate) fn activate_ready(context: &CliContext, record: &SessionRecord) -> Re
 pub(crate) fn ensure_ready(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
     let incarnation = incarnation(record)?;
     let token = read_private_capability(&capability_path(context, &record.id, &incarnation))?;
-    let locked = lock_registry(context)?;
-    locked
-        .registry
-        .brokers
+    let state = super::heartbeat_state::load(context)?;
+    state
+        .owners
         .get(&record.id)
-        .filter(|broker| {
-            broker.incarnation == incarnation
-                && broker.state == "ready"
+        .filter(|owner| {
+            owner.incarnation == incarnation
+                && record
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|runtime| runtime.generation == owner.generation)
+                && owner.state == "ready"
                 && super::digest_eq(
-                    &broker.capability_digest,
+                    &owner.capability_digest,
                     &digest_bytes(token.trim().as_bytes()),
                 )
-                && heartbeat_fresh(context, &record.id, &incarnation, broker.heartbeat_epoch)
+                && heartbeat_fresh(context, &record.id, &incarnation, 0)
         })
         .ok_or_else(unavailable)?;
     Ok(())
@@ -1406,7 +1392,11 @@ pub(crate) fn run_heartbeat_sidecar(
             HeartbeatAuthorization::Revoked => break,
             HeartbeatAuthorization::Unknown => {
                 // Skip this beat rather than claim liveness we could not check.
-                thread::sleep(Duration::from_secs(2));
+                thread::sleep(if established_owner {
+                    Duration::from_secs(2)
+                } else {
+                    STARTUP_RUNTIME_RETRY_INTERVAL
+                });
                 continue;
             }
         }
@@ -1448,7 +1438,6 @@ pub(crate) fn run_heartbeat_sidecar(
                 break;
             }
         }
-        let _ = super::claims::drain_completion_events(context);
         let now = now_epoch();
         write_atomic(
             &super::heartbeat_path(&context.state_dir, &args.session),
@@ -1456,6 +1445,11 @@ pub(crate) fn run_heartbeat_sidecar(
             SECRET_FILE_MODE,
         )
         .map_err(|_| unavailable())?;
+        // First liveness is independent of registry maintenance. Empty queues
+        // do not enter the shared registry at all.
+        if super::heartbeat_state::load(context).is_ok_and(|state| state.completion_pending) {
+            let _ = super::claims::drain_completion_events(context);
+        }
         thread::sleep(Duration::from_secs(2));
     }
     if established_owner
@@ -1590,14 +1584,14 @@ fn heartbeat_advanced_since(
 enum HeartbeatAuthorization {
     Authorized,
     Revoked,
-    /// The registry could not be read, typically because the lock is busy.
-    /// That is contention, not revocation, so the sidecar skips this beat and
+    /// The private broker index could not be read. Uncertain storage is not
+    /// revocation, so the sidecar skips this beat and
     /// retries instead of exiting (sympoies/nils-cli#1860).
     Unknown,
 }
 
-// Read-only: an observational lock runs no claim or lease maintenance and
-// never rewrites the registry, so a 2 s beat does not add write load.
+// Read-only: the broker index contains no retained mail and requires no
+// registry lock, so a two-second beat does not join the writer queue.
 fn heartbeat_owner_authorization(
     context: &CliContext,
     args: &BrokerHeartbeatArgs,
@@ -1605,22 +1599,24 @@ fn heartbeat_owner_authorization(
     let Ok(token) = read_private_capability(&args.capability_file) else {
         return HeartbeatAuthorization::Revoked;
     };
-    let Ok(locked) = super::lock_registry_observational(context) else {
+    let Ok(state) = super::heartbeat_state::load(context) else {
         return HeartbeatAuthorization::Unknown;
     };
-    let authorized = locked
-        .registry
-        .brokers
-        .get(&args.session)
-        .is_some_and(|broker| {
-            broker.incarnation == args.incarnation
-                && broker.generation == args.generation
-                && matches!(broker.state.as_str(), "starting" | "recovering" | "ready")
-                && super::digest_eq(
-                    &broker.capability_digest,
-                    &digest_bytes(token.trim().as_bytes()),
-                )
-        });
+    let authorized = state.owners.get(&args.session).is_some_and(|broker| {
+        broker.incarnation == args.incarnation
+            && broker.generation == args.generation
+            && matches!(broker.state.as_str(), "starting" | "recovering" | "ready")
+            && capability_available(
+                context,
+                &args.session,
+                &args.incarnation,
+                &broker.capability_digest,
+            )
+            && super::digest_eq(
+                &broker.capability_digest,
+                &digest_bytes(token.trim().as_bytes()),
+            )
+    });
     if authorized {
         HeartbeatAuthorization::Authorized
     } else {
@@ -2708,8 +2704,64 @@ mod tests {
         assert!(heartbeat_fresh(&context, "session", "old", 0));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn heartbeat_authorization_treats_a_busy_registry_lock_as_unknown_not_revoked() {
+    fn managed_first_heartbeat_and_readiness_survive_registry_contention() {
+        use pretty_assertions::assert_eq;
+        let temporary = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: temporary.path().join("state"),
+            host: None,
+        };
+        let mut identity = test_support::process_group_identity(unsafe { libc::getpgrp() });
+        identity["launch_id"] = json!("old");
+        let mut record = seed_retirable_broker(&context, identity.clone());
+        record.extra.insert("delete_tmux_identity".into(), identity);
+        crate::write_session_record(&context, &record).unwrap();
+        // Provision a fresh owner; preserve a separate existing broker throughout.
+        let capability_file = provision(&context, &record).unwrap();
+        test_support::seed_live_broker(&context, "existing", "existing-inc", json!({}));
+        fs::remove_file(super::super::heartbeat_path(&context.state_dir, &record.id)).unwrap();
+        let existing_before =
+            fs::read(super::super::heartbeat_path(&context.state_dir, "existing")).unwrap();
+        let held = super::super::lock_private_store(&context, "registry.lock").unwrap();
+        let sidecar_context = context.clone();
+        let args = BrokerHeartbeatArgs {
+            session: record.id.clone(),
+            incarnation: "old".into(),
+            generation: 1,
+            capability_file,
+            format: nils_common::cli_contract::OutputFormat::Json,
+        };
+        let start = Instant::now();
+        let sidecar = thread::spawn(move || run_heartbeat_sidecar(&sidecar_context, args));
+        let result = activate_ready(&context, &record);
+        let readiness_elapsed = start.elapsed();
+        // Hold the shared lock across the old two-second readiness boundary.
+        thread::sleep(Duration::from_millis(2200).saturating_sub(start.elapsed()));
+        drop(held);
+        fs::remove_file(crate::session_dir(&context, &record.id).join("session.json")).unwrap();
+        sidecar.join().unwrap().unwrap();
+        eprintln!("fixture readiness_ms={}", readiness_elapsed.as_millis());
+        assert!(
+            result.is_ok(),
+            "readiness failed after {readiness_elapsed:?}: {result:?}"
+        );
+        assert!(readiness_elapsed < Duration::from_secs(2));
+        assert_eq!(
+            fs::read(super::super::heartbeat_path(&context.state_dir, "existing")).unwrap(),
+            existing_before
+        );
+        let locked = lock_registry(&context).unwrap();
+        assert_eq!(
+            locked.registry.brokers["existing"].incarnation,
+            "existing-inc"
+        );
+        assert_eq!(locked.registry.brokers[&record.id].state, "ready");
+    }
+
+    #[test]
+    fn heartbeat_authorization_is_independent_of_registry_lock_contention() {
         let temporary = tempfile::TempDir::new().expect("temporary state");
         let context = CliContext {
             state_dir: temporary.path().join("state"),
@@ -2737,11 +2789,12 @@ mod tests {
             );
             locked.save().expect("seed broker");
         }
-        let capability_file = temporary.path().join("capability");
+        let capability_file = capability_path(&context, "session", "inc");
+        fs::create_dir_all(capability_file.parent().unwrap()).unwrap();
         fs::write(&capability_file, token).expect("capability");
         fs::set_permissions(&capability_file, fs::Permissions::from_mode(0o600))
             .expect("private capability");
-        let args = BrokerHeartbeatArgs {
+        let mut args = BrokerHeartbeatArgs {
             session: "session".to_string(),
             incarnation: "inc".to_string(),
             generation: 1,
@@ -2753,12 +2806,25 @@ mod tests {
             HeartbeatAuthorization::Authorized
         );
 
-        // Another process holding the registry past the lock timeout is contention,
-        // not revocation: the sidecar must keep its beat loop alive.
+        args.generation = 2;
+        assert_eq!(
+            heartbeat_owner_authorization(&context, &args),
+            HeartbeatAuthorization::Revoked
+        );
+        args.generation = 1;
+        args.incarnation = "other".into();
+        assert_eq!(
+            heartbeat_owner_authorization(&context, &args),
+            HeartbeatAuthorization::Revoked
+        );
+        args.incarnation = "inc".into();
+
+        // A new owner must authorize before the readiness deadline even while
+        // another process holds the shared registry beyond that deadline.
         let held = super::super::lock_private_store(&context, "registry.lock").expect("hold lock");
         assert_eq!(
             heartbeat_owner_authorization(&context, &args),
-            HeartbeatAuthorization::Unknown
+            HeartbeatAuthorization::Authorized
         );
         drop(held);
 

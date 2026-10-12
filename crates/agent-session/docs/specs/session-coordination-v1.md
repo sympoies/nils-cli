@@ -412,6 +412,28 @@ state (`starting`, `ready`, `degraded`, `lost`, `stopped`), generation,
 capability availability, heartbeat freshness, claim summary, and operation
 summary. They never expose a PID as authority, a credential path, or a token.
 
+### Managed first-heartbeat readiness
+
+Provisioning commits a broker reservation in `ready` state before releasing the
+held launch. This reservation is not active presence or execution authority:
+the exact incarnation, capability, generation, runtime identity, and fresh
+identity-bound heartbeat remain required. The first beat and readiness check
+read the private `broker-state.json` index, which contains broker selectors and
+a completion-pending bit, without parsing retained mailbox data or acquiring
+the registry flock.
+
+The first-beat deadline remains two seconds, polled every
+20 ms; uncertain initial storage is retried within that budget rather than
+adding a two-second sleep. Existing pre-index state has a read-only atomic
+registry snapshot fallback until a mutating registry owner installs the index.
+
+The registry remains the writer and transaction owner. It publishes reductions
+in heartbeat authority before registry commit and additions afterwards. Failed
+publication therefore denies liveness rather than retaining revoked authority.
+Completion work runs after heartbeat publication; an empty completion queue
+never acquires the registry. Read-only public snapshots open one validated
+atomic registry inode without taking or creating the writer lock.
+
 ## Scope grammar and canonicalization
 
 Repositories are canonical lowercase `owner/name` values. Provider references
@@ -636,6 +658,7 @@ Limits are normative:
 - expiry: 24 hours default, 7 days maximum;
 - per session: 256 messages and 4 MiB stored bytes;
 - per registry: 68 MiB stored bytes;
+- retained terminal mail: 1024 records and 4 MiB body bytes per registry;
 - send rate: 30 messages per sender-recipient pair per minute, burst 10;
 - inbox page: 50 default, 100 maximum;
 - wait: 60 seconds maximum;
@@ -648,6 +671,13 @@ Wait is cancellable, bounded, and returns on state/revision change
 without busy looping. HTTP cancellation releases its bounded wait worker rather
 than leaving a detached 60-second task. Cleanup never evicts live unread mail
 to admit new data; quota exhaustion returns a typed error.
+
+Full registry maintenance prunes expired replay receipts and compacts the oldest acknowledged,
+expired, or deleted mail until both terminal-history limits hold. This may
+shorten terminal audit history below its normal retention window. Live unread
+and read mail are preserved. Unexpired idempotency receipts retain their
+original replay window and are never evicted by history compaction. Registry
+writes use compact JSON; existing pretty-printed registries remain readable.
 
 Self-recursive/cyclic reply chains, invalid UTF-8, controls forbidden by the
 JSON contract, stale target incarnation, permission drift, corrupt state,

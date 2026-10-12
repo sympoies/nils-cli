@@ -37478,7 +37478,7 @@ exit 0
 printf '%s\n' "$*" >> {}
 case "$1" in
   has-session)
-    if [ -f {} ] && grep -q '"state": "attempting"' {}; then exit 1; fi
+    if [ -f {} ] && grep -q '"state"[[:space:]]*:[[:space:]]*"attempting"' {}; then exit 1; fi
     exit 0
     ;;
   display-message) printf '0\n'; exit 0 ;;
@@ -38004,7 +38004,7 @@ printf '%s\n' "$*" >> {}
 case "$1" in
   has-session) exit 0 ;;
   display-message)
-    if grep -q '"state": "attempting"' {}; then
+    if grep -q '"state"[[:space:]]*:[[:space:]]*"attempting"' {}; then
       printf '1\n'
     else
       printf '0\n'

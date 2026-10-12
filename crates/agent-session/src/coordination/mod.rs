@@ -5,6 +5,7 @@ pub mod claims;
 pub(crate) mod console_start;
 pub mod context;
 mod forwarding;
+mod heartbeat_state;
 pub mod mailbox;
 mod notification;
 pub use notification::NotificationProjection;
@@ -29,7 +30,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use jiff::Timestamp;
-use nils_common::fs::{SECRET_FILE_MODE, write_atomic};
+use nils_common::fs::SECRET_FILE_MODE;
+#[cfg(test)]
+use nils_common::fs::write_atomic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -156,10 +159,6 @@ impl Drop for LockedRegistry {
 }
 
 impl LockedRegistry {
-    fn into_registry(mut self) -> Registry {
-        std::mem::take(&mut self.registry)
-    }
-
     pub fn save(&mut self) -> Result<(), CliError> {
         if self.registry.schema_version.is_empty() {
             self.registry.schema_version = REGISTRY_VERSION.to_string();
@@ -170,7 +169,7 @@ impl LockedRegistry {
         ) {
             return Err(store_corrupt());
         }
-        let bytes = serde_json::to_vec_pretty(&self.registry).map_err(|_| store_corrupt())?;
+        let bytes = serde_json::to_vec(&self.registry).map_err(|_| store_corrupt())?;
         if bytes.len() as u64 > MAX_REGISTRY_BYTES {
             return Err(quota_exceeded(
                 "coordination registry byte limit exceeded",
@@ -179,7 +178,7 @@ impl LockedRegistry {
                 MAX_REGISTRY_BYTES as usize,
             ));
         }
-        write_atomic(&self.path, &bytes, SECRET_FILE_MODE).map_err(|_| store_unavailable())
+        heartbeat_state::persist(&self.path, &self.registry, &bytes)
     }
 }
 
@@ -1212,6 +1211,7 @@ fn lock_registry_within(
         }
     }
     if maintenance == RegistryMaintenance::Full {
+        renewed |= mailbox::maintain_retention(&mut registry, now);
         renewed |= prune_stale_stopped_brokers(context, &mut registry, now);
     }
     if maintenance == RegistryMaintenance::Full {
@@ -1289,15 +1289,17 @@ fn lock_registry_within(
     if maintenance == RegistryMaintenance::Full {
         renewed |= claims::reclaim_expired_inactive_operations(context, &mut registry, now);
     }
-    if renewed {
-        let bytes = serde_json::to_vec_pretty(&registry).map_err(|_| store_corrupt())?;
-        write_atomic(&path, &bytes, SECRET_FILE_MODE).map_err(|_| store_unavailable())?;
-    }
-    Ok(LockedRegistry {
+    let mut locked = LockedRegistry {
         _lock: lock,
         path,
         registry,
-    })
+    };
+    if renewed {
+        locked.save()?;
+    } else if maintenance == RegistryMaintenance::Full {
+        heartbeat_state::initialize(&locked.path, &locked.registry)?;
+    }
+    Ok(locked)
 }
 
 fn coordination_root(context: &CliContext) -> Result<PathBuf, CliError> {
@@ -1434,69 +1436,13 @@ pub(crate) fn clean_expired(registry: &mut Registry, now: i64) -> bool {
                 })
         },
     );
-    for message in &mut registry.messages {
-        if !matches!(
-            message.state.as_str(),
-            "acknowledged" | "expired" | "deleted"
-        ) && message.expires_at_epoch <= now
-        {
-            message.state = "expired".to_string();
-            message.revision = message.revision.saturating_add(1);
-            message.terminal_at_epoch = Some(now);
-            changed = true;
-        } else if matches!(
-            message.state.as_str(),
-            "acknowledged" | "expired" | "deleted"
-        ) && message.terminal_at_epoch.is_none()
-        {
-            message.terminal_at_epoch = Some(now);
-            changed = true;
-        }
-    }
-    let removed_messages: std::collections::BTreeSet<_> = registry
-        .messages
-        .iter()
-        .filter(|message| {
-            message.terminal_at_epoch.is_some_and(|terminal| {
-                let retention = if message.state == "acknowledged" {
-                    ACKNOWLEDGED_MESSAGE_RETENTION_SECS
-                } else {
-                    TERMINAL_RETENTION_SECS
-                };
-                terminal <= now.saturating_sub(retention)
-            })
-        })
-        .map(|message| message.message_id.clone())
-        .collect();
-    let message_count = registry.messages.len();
-    let notification_count = registry.notifications.len();
+    changed |= mailbox::maintain_retention(registry, now);
     let operation_count = registry.operations.len();
     let claim_count = registry.claims.len();
-    let receipt_count = registry.receipts.len();
     let cursor_count = registry.cursors.len();
     let completion_event_count = registry.completion_events.len();
     let acknowledgement_count = registry.advisory_acknowledgements.len();
     let observation_count = registry.advisory_observations.len();
-    registry
-        .messages
-        .retain(|message| !removed_messages.contains(&message.message_id));
-    let retained_notification_targets: std::collections::BTreeSet<_> = registry
-        .messages
-        .iter()
-        .map(|message| {
-            (
-                message.recipient_session_id.clone(),
-                message.recipient_incarnation.clone(),
-            )
-        })
-        .collect();
-    registry.notifications.retain(|key, receipt| {
-        !removed_messages.contains(key)
-            && retained_notification_targets.contains(&(
-                receipt.target_session_id.clone(),
-                receipt.target_incarnation.clone(),
-            ))
-    });
     registry.operations.retain(|operation| {
         operation
             .terminal_at_epoch
@@ -1507,9 +1453,6 @@ pub(crate) fn clean_expired(registry: &mut Registry, now: i64) -> bool {
             .terminal_at_epoch
             .is_none_or(|terminal| terminal > now.saturating_sub(TERMINAL_RETENTION_SECS))
     });
-    registry
-        .receipts
-        .retain(|_, receipt| receipt.expires_at_epoch > now);
     registry
         .cursors
         .retain(|_, cursor| cursor.expires_at_epoch > now);
@@ -1531,11 +1474,8 @@ pub(crate) fn clean_expired(registry: &mut Registry, now: i64) -> bool {
             })
     });
     changed
-        || registry.messages.len() != message_count
-        || registry.notifications.len() != notification_count
         || registry.operations.len() != operation_count
         || registry.claims.len() != claim_count
-        || registry.receipts.len() != receipt_count
         || registry.cursors.len() != cursor_count
         || registry.advisory_acknowledgements.len() != acknowledgement_count
         || registry.advisory_observations.len() != observation_count
@@ -1906,17 +1846,25 @@ pub(crate) fn public_summary(context: &CliContext, session_id: &str) -> Coordina
         .unwrap_or_default()
 }
 
-pub(crate) fn public_summary_registry_snapshot(context: &CliContext) -> Option<Registry> {
-    let registry_path = context.state_dir.join("coordination").join(REGISTRY_FILE);
-    if matches!(
-        fs::symlink_metadata(&registry_path),
-        Err(error) if error.kind() == io::ErrorKind::NotFound
-    ) {
-        return None;
+/// `write_atomic` publishes complete immutable inodes. Observational readers
+/// open one validated inode without joining the exclusive writer queue.
+fn read_registry_snapshot(context: &CliContext) -> Result<Registry, CliError> {
+    let path = heartbeat_state::observational_root(context)?.join(REGISTRY_FILE);
+    let bytes = read_private_file(&path, MAX_REGISTRY_BYTES).map_err(|_| store_unavailable())?;
+    let registry: Registry = serde_json::from_slice(&bytes).map_err(|_| store_corrupt())?;
+    if !registry.schema_version.is_empty()
+        && !matches!(
+            registry.schema_version.as_str(),
+            REGISTRY_VERSION | LEGACY_REGISTRY_VERSION
+        )
+    {
+        return Err(store_corrupt());
     }
-    // Move the data out, then release the flock. A session list reuses this one
-    // snapshot across all rows and runs filesystem-backed checks outside it.
-    Some(lock_registry_observational(context).ok()?.into_registry())
+    Ok(registry)
+}
+
+pub(crate) fn public_summary_registry_snapshot(context: &CliContext) -> Option<Registry> {
+    read_registry_snapshot(context).ok()
 }
 
 pub(crate) fn public_summary_from_registry(
@@ -2185,6 +2133,45 @@ mod tests {
     }
 
     #[test]
+    fn public_snapshot_of_large_registry_does_not_wait_for_writer_lock() {
+        let temporary = tempfile::TempDir::new().unwrap();
+        let context = CliContext {
+            state_dir: temporary.path().join("state"),
+            host: None,
+        };
+        let mut locked = lock_registry_observational(&context).unwrap();
+        // Generic synthetic history, never a copy of a live registry.
+        for index in 0..5855 {
+            locked.registry.receipts.insert(
+                format!("receipt-{index}"),
+                IdempotencyReceipt {
+                    principal: format!("principal-{}", index % 126),
+                    incarnation: "fixture".into(),
+                    operation: "message-send".into(),
+                    digest: "fixture-digest".into(),
+                    outcome: json!({"message_id": index, "body": "x".repeat(2100)}),
+                    expires_at_epoch: now_epoch() + RECEIPT_TTL_SECS,
+                },
+            );
+        }
+        locked.save().unwrap();
+        let bytes = fs::metadata(&locked.path).unwrap().len();
+        let start = Instant::now();
+        let snapshot = public_summary_registry_snapshot(&context);
+        let elapsed = start.elapsed();
+        eprintln!(
+            "fixture registry_bytes={bytes} snapshot_ms={}",
+            elapsed.as_millis()
+        );
+        assert!(
+            snapshot.is_some(),
+            "atomic observational snapshot must remain available under contention"
+        );
+        assert!(elapsed < LOCK_TIMEOUT);
+        assert_eq!(snapshot.unwrap().receipts.len(), 5855);
+    }
+
+    #[test]
     fn public_summary_does_not_maintain_the_registry() {
         let temporary = tempfile::TempDir::new().expect("temporary state");
         let state_dir = temporary.path().join("state");
@@ -2216,9 +2203,16 @@ mod tests {
 
         let snapshot = public_summary_registry_snapshot(&context).expect("registry snapshot");
         assert_eq!(snapshot.notifications.len(), 1);
+        assert!(
+            !coordination.join(REGISTRY_LOCK).exists(),
+            "observation must not create a lock file"
+        );
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(SECRET_FILE_MODE)
             .open(coordination.join(REGISTRY_LOCK))
             .expect("registry lock");
         // The snapshot must not retain the lock while row projections use it.

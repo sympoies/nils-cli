@@ -1478,6 +1478,133 @@ fn evict_terminal_messages(
         .retain(|key, _| !evicted.contains(key));
 }
 
+/// History-only maintenance. Completion proofs and live claim/operation state
+/// remain owned by their existing expiry and recovery consumers.
+pub(super) fn maintain_retention(registry: &mut Registry, now: i64) -> bool {
+    let mut changed = false;
+    let message_count = registry.messages.len();
+    let notification_count = registry.notifications.len();
+    let receipt_count = registry.receipts.len();
+    for message in &mut registry.messages {
+        if !matches!(
+            message.state.as_str(),
+            "acknowledged" | "expired" | "deleted"
+        ) && message.expires_at_epoch <= now
+        {
+            message.state = "expired".to_string();
+            message.revision = message.revision.saturating_add(1);
+            message.terminal_at_epoch = Some(now);
+            changed = true;
+        } else if matches!(
+            message.state.as_str(),
+            "acknowledged" | "expired" | "deleted"
+        ) && message.terminal_at_epoch.is_none()
+        {
+            message.terminal_at_epoch = Some(now);
+            changed = true;
+        }
+    }
+    let removed_messages: std::collections::BTreeSet<_> = registry
+        .messages
+        .iter()
+        .filter(|message| {
+            message.terminal_at_epoch.is_some_and(|terminal| {
+                let retention = if message.state == "acknowledged" {
+                    super::ACKNOWLEDGED_MESSAGE_RETENTION_SECS
+                } else {
+                    super::TERMINAL_RETENTION_SECS
+                };
+                terminal <= now.saturating_sub(retention)
+            })
+        })
+        .map(|message| message.message_id.clone())
+        .collect();
+    registry
+        .messages
+        .retain(|message| !removed_messages.contains(&message.message_id));
+    let retained_notification_targets: std::collections::BTreeSet<_> = registry
+        .messages
+        .iter()
+        .map(|message| {
+            (
+                message.recipient_session_id.clone(),
+                message.recipient_incarnation.clone(),
+            )
+        })
+        .collect();
+    registry.notifications.retain(|key, receipt| {
+        !removed_messages.contains(key)
+            && retained_notification_targets.contains(&(
+                receipt.target_session_id.clone(),
+                receipt.target_incarnation.clone(),
+            ))
+    });
+    registry
+        .receipts
+        .retain(|_, receipt| receipt.expires_at_epoch > now);
+    changed |= compact_terminal_records(registry);
+    changed
+        || registry.messages.len() != message_count
+        || registry.notifications.len() != notification_count
+        || registry.receipts.len() != receipt_count
+}
+
+// Retained terminal bodies are audit history, not live delivery or replay
+// authority. Replay receipts keep their original TTL and are never evicted.
+const MAX_TERMINAL_MESSAGES: usize = 1024;
+const MAX_TERMINAL_BYTES: usize = 4 * 1024 * 1024;
+
+pub(super) fn compact_terminal_records(registry: &mut Registry) -> bool {
+    let mut terminal: Vec<_> = registry
+        .messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message.state.as_str(),
+                "acknowledged" | "expired" | "deleted"
+            )
+        })
+        .map(|message| {
+            (
+                message.terminal_at_epoch.unwrap_or(0),
+                message.message_id.clone(),
+                message.body_bytes,
+            )
+        })
+        .collect();
+    let mut bytes = terminal.iter().map(|(_, _, bytes)| *bytes).sum::<usize>();
+    let mut count = terminal.len();
+    terminal.sort();
+    let mut evicted = std::collections::BTreeSet::new();
+    for (_, id, size) in terminal {
+        if count <= MAX_TERMINAL_MESSAGES && bytes <= MAX_TERMINAL_BYTES {
+            break;
+        }
+        count -= 1;
+        bytes = bytes.saturating_sub(size);
+        evicted.insert(id);
+    }
+    registry
+        .messages
+        .retain(|message| !evicted.contains(&message.message_id));
+    // Notifications are keyed by recipient rather than by message in v1. Keep
+    // any receipt whose exact target still has retained mail.
+    let targets: std::collections::BTreeSet<_> = registry
+        .messages
+        .iter()
+        .map(|message| {
+            (
+                &message.recipient_session_id,
+                &message.recipient_incarnation,
+            )
+        })
+        .collect();
+    registry.notifications.retain(|_, receipt| {
+        targets.contains(&(&receipt.target_session_id, &receipt.target_incarnation))
+    });
+    !evicted.is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1567,6 +1694,67 @@ mod tests {
             error.details().map(|details| details["quota"].clone()),
             Some(serde_json::json!("recipient-bytes"))
         );
+    }
+
+    #[test]
+    fn maintenance_bounds_retained_terminal_mail_without_evicting_live_mail_or_receipts() {
+        use pretty_assertions::assert_eq;
+        let mut registry = Registry::default();
+        for index in 0..1100 {
+            registry
+                .messages
+                .push(quota_message(index, "recipient", "acknowledged", 8192));
+        }
+        registry
+            .messages
+            .push(quota_message(1100, "recipient", "unread", 5));
+        registry.receipts.insert(
+            "retained-replay".into(),
+            super::super::IdempotencyReceipt {
+                principal: "sender".into(),
+                incarnation: "incarnation".into(),
+                operation: "send".into(),
+                digest: "fixture".into(),
+                outcome: serde_json::json!({"message_id": "message-0"}),
+                expires_at_epoch: NOW + 86400,
+            },
+        );
+        let before = registry.messages.len();
+        let before_bytes = registry
+            .messages
+            .iter()
+            .map(|m| m.body_bytes)
+            .sum::<usize>();
+        super::super::clean_expired(&mut registry, NOW);
+        eprintln!(
+            "fixture terminal_count_before={before} terminal_count_after={} body_bytes_before={before_bytes} body_bytes_after={}",
+            registry.messages.len(),
+            registry
+                .messages
+                .iter()
+                .map(|m| m.body_bytes)
+                .sum::<usize>()
+        );
+        assert_eq!(registry.receipts.len(), 1);
+        assert_eq!(
+            registry.receipts["retained-replay"].outcome["message_id"],
+            "message-0"
+        );
+        assert!(
+            registry.messages.len() < before,
+            "terminal mail must compact before its TTL or the whole-registry cap"
+        );
+        assert!(registry.messages.len() <= 1025);
+        assert!(
+            registry
+                .messages
+                .iter()
+                .filter(|m| m.state == "acknowledged")
+                .map(|m| m.body_bytes)
+                .sum::<usize>()
+                <= 4 * 1024 * 1024
+        );
+        assert_eq!(registry.messages.last().unwrap().message_id, "message-1100");
     }
 
     #[test]
