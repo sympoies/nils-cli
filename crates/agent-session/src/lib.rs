@@ -2,6 +2,7 @@ mod account_broker;
 #[doc(hidden)]
 pub mod activity;
 mod activity_ingress;
+mod agent_bin;
 mod auth_incident;
 #[doc(hidden)]
 pub mod auto_resume;
@@ -93,6 +94,7 @@ pub(crate) use nils_provider_resume::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use agent_bin::resolve_agent_bin;
 use cli::{AgentKind, Cli, Command, SpecialKey};
 use digest_format::valid_sha256;
 use display_metadata::SessionTitleStateView;
@@ -13189,22 +13191,6 @@ fn validate_host(host: &str) -> Result<(), CliError> {
         ));
     }
     Ok(())
-}
-
-fn resolve_agent_bin(agent: AgentKind, explicit: Option<&Path>) -> PathBuf {
-    if let Some(path) = explicit {
-        return path.to_path_buf();
-    }
-    let env_key = match agent {
-        AgentKind::Codex => "AGENT_SESSION_CODEX_BIN",
-        AgentKind::Claude => "AGENT_SESSION_CLAUDE_BIN",
-        // A dsh pane always launches its profile's agent_bin; the resolved
-        // name is only ever used in typed-refusal diagnostics.
-        AgentKind::Dsh => "AGENT_SESSION_DSH_BIN",
-    };
-    non_empty_env(env_key)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(agent.as_str()))
 }
 
 fn resolve_session_id(
