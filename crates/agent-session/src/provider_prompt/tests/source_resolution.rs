@@ -169,6 +169,37 @@ fn known_claude_source_resolves_without_reading_unrelated_history() {
     assert!(ProviderPromptTail::open_source_at_eof(source).is_some());
 }
 
+#[cfg(unix)]
+#[test]
+fn known_claude_source_resolves_symlinked_projects_root() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let shared = tmp.path().join("shared-projects");
+    let project = shared.join("project");
+    fs::create_dir_all(&project).expect("shared project");
+    let transcript = project.join("claude-id.jsonl");
+    fs::write(&transcript, claude_metadata("claude-id")).expect("matching primary transcript");
+    let config_dir = tmp.path().join("account-config");
+    fs::create_dir_all(&config_dir).expect("account config");
+    let root = config_dir.join("projects");
+    symlink(&shared, &root).expect("account projects link");
+
+    let resolved = claude_source::resolve(&root, "claude-id")
+        .expect("a session-bound projects root symlink must resolve its readable known transcript");
+    assert_eq!(
+        resolved,
+        fs::canonicalize(&transcript).expect("canonical transcript")
+    );
+    let source = resolve_provider_prompt_source_from_roots(
+        &record("claude", "claude-id"),
+        None,
+        Some(&root),
+    )
+    .expect("provider prompt source through the account binding");
+    assert!(ProviderPromptTail::open_source_at_eof(source).is_some());
+}
+
 #[test]
 fn known_claude_source_rejects_ambiguous_and_mismatched_metadata() {
     let tmp = tempfile::TempDir::new().expect("tempdir");

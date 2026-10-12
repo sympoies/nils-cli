@@ -10,6 +10,14 @@ use super::{
 };
 
 pub(super) fn resolve(root: &Path, session_id: &str) -> Option<PathBuf> {
+    // The root comes from the session's configuration binding. Resolve its
+    // account link without following project or transcript links during discovery.
+    let canonical_root = if fs::symlink_metadata(root).ok()?.file_type().is_symlink() {
+        Some(fs::canonicalize(root).ok()?)
+    } else {
+        None
+    };
+    let root = canonical_root.as_deref().unwrap_or(root);
     match known_source(root, session_id) {
         Ok(Some(path)) => Some(path),
         // Retain discovery for older/noncanonical transcript filenames, but

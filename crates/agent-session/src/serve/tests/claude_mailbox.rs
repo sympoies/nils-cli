@@ -177,7 +177,7 @@ esac
     assert_eq!(notification["state"], "prompt_submitted");
 }
 
-async fn known_claude_mailbox_fixture(missing_transcript: bool) {
+async fn known_claude_mailbox_fixture(missing_transcript: bool, linked_projects_root: bool) {
     let lock = GlobalStateLock::new();
     let _entries = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_RESUME_SCAN_MAX_ENTRIES", "60");
     let _time = EnvGuard::set(&lock, "AGENT_SESSION_CLAUDE_RESUME_SCAN_SLICE_MS", "60000");
@@ -186,6 +186,12 @@ async fn known_claude_mailbox_fixture(missing_transcript: bool) {
     seed_session_with_runtime(tmp.path(), "beta", "claude", "hs-claude-beta");
     let provider_root = tmp.path().join("profile-config");
     let projects = provider_root.join("projects");
+    if linked_projects_root {
+        let shared = tmp.path().join("shared-projects");
+        fs::create_dir_all(&shared).expect("shared projects root");
+        fs::create_dir_all(&provider_root).expect("bound provider config");
+        std::os::unix::fs::symlink(&shared, &projects).expect("account projects link");
+    }
     for project in 0..55 {
         let dir = projects.join(format!("project-{project:02}"));
         fs::create_dir_all(&dir).expect("project directory");
@@ -386,10 +392,16 @@ esac
 
 #[tokio::test]
 async fn known_claude_mailbox_dispatch_wakes_once_despite_unrelated_history() {
-    known_claude_mailbox_fixture(false).await;
+    known_claude_mailbox_fixture(false, false).await;
 }
 
 #[tokio::test]
 async fn known_claude_mailbox_dispatch_keeps_missing_source_receipt_honest() {
-    known_claude_mailbox_fixture(true).await;
+    known_claude_mailbox_fixture(true, false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn known_claude_mailbox_dispatch_wakes_once_through_symlinked_projects_root() {
+    known_claude_mailbox_fixture(false, true).await;
 }
