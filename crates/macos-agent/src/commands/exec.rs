@@ -135,7 +135,9 @@ pub fn run_local(
                     .any(|arg| arg == "--roi" || arg.starts_with("--roi=")),
             )
         });
-    if observation_scope.is_some() && let Some(value) = parsed.as_mut() {
+    if observation_scope.is_some()
+        && let Some(value) = parsed.as_mut()
+    {
         observation::qualify_ax_lists(value);
     }
     let malformed_json = args
