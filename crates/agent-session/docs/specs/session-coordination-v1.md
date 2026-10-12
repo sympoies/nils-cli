@@ -1278,6 +1278,7 @@ An absent exact address in a valid snapshot returns
 using `message peers`. Absence may also reflect an omitted unavailable-host
 snapshot and does not prove deletion or lack of capability. Failed or invalid
 peer discovery retains `remote-messaging-unavailable`.
+
 A discovered exact peer whose `messaging_supported` is not true returns
 `remote-messaging-unsupported` for definitive or unknown unsupported reasons. An
 explicit `coordination-unavailable` row receives one fresh discovery attempt bound
