@@ -1848,6 +1848,10 @@ fn receive_replay(
 mod inbox_regressions;
 
 #[cfg(test)]
+#[path = "remote_delivery_failure_regressions.rs"]
+mod delivery_failure_regressions;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::{assert_eq, assert_ne};
