@@ -1,4 +1,6 @@
 //! Admission regressions use a modeled tmux executable and synthetic records.
+#[path = "guarded_send/repair.rs"]
+mod repair;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -13,7 +15,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(provider: &str) -> Self {
-        let temp = tempfile::TempDir::new().expect("fixture");
+        let temp = tempfile::tempdir_in("/tmp").expect("short fixture socket paths");
         let dir = temp.path().join("state/sessions/guarded");
         fs::create_dir_all(&dir).unwrap();
         let record = json!({
@@ -55,6 +57,8 @@ if command == 'show-environment':
     sys.exit(1)
 if command == 'load-buffer':
     (root / 'buffer').write_bytes(pathlib.Path(args[-1]).read_bytes())
+    if (root / 'draft-on-load').exists(): (root / 'composer').write_text('new user draft')
+    if (root / 'capture-fails-on-load').exists(): (root / 'capture-fails').touch()
     if (root / 'start-on-load').exists():
         p = root / 'state/sessions/guarded/activity.json'
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
@@ -71,6 +75,10 @@ elif command == 'send-keys' and args[-1] == 'Enter':
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
     (root / 'composer').write_text('')
 elif command == 'capture-pane':
+    count_path = root / 'capture-count'
+    count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+    count_path.write_text(str(count))
+    if (root / 'fail-second-capture').exists() and count == 2: sys.exit(1)
     if (root / 'capture-fails').exists(): sys.exit(1)
     if (root / 'capture-oversize').exists():
         if provider == 'claude': print('────────────────────────────\n❯ \x1b[2mTry \"edit <filepath> to...\"\x1b[22m\n────────────────────────────')
@@ -78,11 +86,14 @@ elif command == 'capture-pane':
         print('x' * (2 * 1024 * 1024))
         sys.exit(0)
     text = (root / 'composer').read_text()
+    # Native capture trims occupied spaces without -N; -T excludes unused cells.
+    occupied = text if '-N' in args else text.rstrip(' ')
+    padding = ' ' * 8 if '-N' in args and '-T' not in args else ''
     if provider == 'claude':
-        shown = text if text else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
+        shown = occupied + padding if text else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
         print('────────────────────────────\n❯\u00a0' + shown + '\n────────────────────────────\n  status')
     else:
-        shown = text if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
+        shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
         print('› ' + shown + '\n\n  status')
 "#;
         let tmux = temp.path().join("tmux");
@@ -113,6 +124,10 @@ elif command == 'capture-pane':
     }
 
     fn send(&self, extra: &[&str]) -> CmdOutput {
+        self.send_text(Some("continue-fixture"), extra)
+    }
+
+    fn send_text(&self, text: Option<&str>, extra: &[&str]) -> CmdOutput {
         let state = self.root().join("state");
         let tmux = self.root().join("tmux");
         let mut args = vec![
@@ -124,11 +139,12 @@ elif command == 'capture-pane':
             tmux.to_str().unwrap(),
             "--format",
             "json",
-            "--text",
-            "continue-fixture",
             "--key",
             "enter",
         ];
+        if let Some(text) = text {
+            args.extend_from_slice(&["--text", text]);
+        }
         args.extend_from_slice(extra);
         run_resolved(
             "agent-session",
