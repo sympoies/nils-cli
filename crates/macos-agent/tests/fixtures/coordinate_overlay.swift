@@ -19,7 +19,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
 
         let primary = window(title: "Coordinate Fixture", x: 200, y: 200)
         let content = primary.contentView!
-        counter.frame = NSRect(x: 20, y: 100, width: 280, height: 24)
+        counter.frame = NSRect(x: 20, y: 150, width: 280, height: 24)
         content.addSubview(counter)
         let increment = NSButton(title: "Increment counter", target: self, action: #selector(incrementCounter))
         increment.frame = NSRect(x: 20, y: 20, width: 180, height: 32)

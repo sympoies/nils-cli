@@ -102,6 +102,7 @@ requires fresh observation. Structured upstream refusals/failures return exit
 receipts and hints and does not retry or relax focus/occlusion guards. MCP
 coordinate errors preserve canonical `_meta` fields and add
 `_meta["macos-agent/coordinate_click"]` with the same guidance/classification.
+
 JSON-RPC coordinate errors add the diagnostic to
 `error.data["macos-agent/coordinate_click"]`, preserving the error code,
 message and existing data fields. Non-object error data is preserved verbatim;
