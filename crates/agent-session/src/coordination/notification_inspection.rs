@@ -133,14 +133,25 @@ fn inspect(
     observed_at_epoch: i64,
 ) -> Option<NotificationInspection> {
     let stored = selected_receipts(registry, session, incarnation);
-    let stored_queue_times: Vec<_> = registry
+    // Recover queue provenance from the selected stored receipt metadata alone,
+    // using the same migration rules without canonical unread admission.
+    let mut stored_registry = Registry {
+        notifications: registry
+            .notifications
+            .iter()
+            .filter(|(_, receipt)| {
+                receipt.target_session_id == session && receipt.target_incarnation == incarnation
+            })
+            .map(|(key, receipt)| (key.clone(), receipt.clone()))
+            .collect(),
+        ..Registry::default()
+    };
+    notification::normalize_registry(&mut stored_registry, observed_at_epoch);
+    let stored_queued_at_epoch = stored_registry
         .notifications
         .values()
-        .filter(|receipt| {
-            receipt.target_session_id == session && receipt.target_incarnation == incarnation
-        })
-        .map(|receipt| receipt.queued_at_epoch)
-        .collect();
+        .next()
+        .map(|receipt| receipt.queued_at_epoch);
     notification::normalize_registry(registry, observed_at_epoch);
     let receipt = registry.notifications.values().find(|receipt| {
         receipt.target_session_id == session && receipt.target_incarnation == incarnation
@@ -178,7 +189,7 @@ fn inspect(
             normalization_applied: stored != selected_receipts(registry, session, incarnation),
             queued_at: if queued_at_epoch.is_none() {
                 "unavailable"
-            } else if stored_queue_times.contains(&receipt.queued_at_epoch) {
+            } else if stored_queued_at_epoch == Some(receipt.queued_at_epoch) {
                 "stored-receipt"
             } else {
                 "canonical-unread-admission"
