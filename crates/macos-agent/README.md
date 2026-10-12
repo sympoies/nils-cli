@@ -82,6 +82,29 @@ macos-agent exec \
   -- click --app Calculator --on C --json
 ```
 
+Observation responses carry `observation_scope.ax_visibility = "unverified"`.
+AX bounds, labels, and actionable status do not prove that a control is visible:
+an opaque overlay can cover it. `see --roi` bounds the requested pixels, not a
+visible semantic or privacy boundary for AX metadata. Returned `ui_elements`
+carry `adapter_visibility = "unverified"`; text observations include the same
+warning. MCP `see` and `inspect_ui` include a warning and
+`_meta["macos-agent/observation_scope"]`, with flags on structured AX lists.
+Fresh AX reads do not establish raster visibility; inspect a bounded image
+before acting and discard AX payloads when only visible content is authorized.
+
+Failed coordinate clicks expose `coordinate_click` with the upstream reason,
+message, dispatch evidence, and recovery guidance. `not_dispatched` requires
+explicit upstream evidence; focus preparation may still have changed state.
+`dispatched` does not confirm the intended effect. Unknown or uncertain failed
+coordinate delivery is journaled as `unknown_mutation`, never replayed, and
+requires fresh observation. Structured upstream refusals/failures return exit
+70 even if Peekaboo exits zero. The adapter preserves original action JSON,
+receipts and hints and does not retry or relax focus/occlusion guards. MCP
+coordinate errors preserve canonical `_meta` fields and add
+`_meta["macos-agent/coordinate_click"]` with the same guidance/classification.
+Only fixed protocol refusal identifiers and bounded uppercase error codes
+survive sensitive mode; free-form messages remain suppressed.
+
 Use `--runtime app|daemon|auto|process` to select the effective Peekaboo
 authority. `app` is the stable default: it reuses the owned app only when its
 exact locked Bridge build is ready, otherwise launches a new stable app
