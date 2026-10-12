@@ -815,7 +815,9 @@ Claude transcript observation first probes the known conversation's
 `<conversation-id>.jsonl` filename in each project directory under the
 session's effective provider configuration root. The bounded walk reads only
 exact filename candidates and requires one regular, readable primary transcript
-with matching conversation identity and a non-empty cwd. An incomplete walk,
+with matching conversation identity and a non-empty cwd. A session-bound
+`projects` root symlink is resolved to its canonical directory before the walk;
+project-directory and transcript symlinks are still not followed. An incomplete walk,
 ambiguous source, unsafe candidate, or unavailable metadata leaves observation
 unavailable. Discovery for noncanonical filenames remains available when no exact
 candidate
