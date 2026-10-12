@@ -5002,19 +5002,6 @@ fn open_provider_turn(document: &mut ActivityDocument, provider_turn_id: Option<
     });
 }
 
-fn claude_event_matches_open_turn(document: &ActivityDocument, event: &TurnEvent) -> bool {
-    event.provider == "claude"
-        && event.source_kind == SourceKind::ProviderHook
-        && event.provider_turn_id.as_ref().is_some_and(|turn| {
-            document
-                .state
-                .current_turn
-                .as_ref()
-                .and_then(|current| current.provider_turn_id.as_ref())
-                == Some(turn)
-        })
-}
-
 fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool {
     if matches!(
         event.kind,
@@ -5142,33 +5129,7 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool 
                 document.state.phase = TurnPhase::Working;
             }
         }
-        TurnEventKind::StopObserved => {
-            // Stop ends same-turn permission UI even if another hook continues.
-            if claude_event_matches_open_turn(document, event) {
-                document
-                    .pending_attention
-                    .retain(|pending| pending.kind != "approval");
-                refresh_attention(document);
-                if document.pending_attention.is_empty() && document.overflow_attention.is_none() {
-                    document.state.phase = TurnPhase::Working;
-                }
-            }
-            // Matching Stop hooks run concurrently. Only an inactive Stop with
-            // no background tasks is a candidate, and later events cancel it.
-            if event.completion_candidate
-                && document.state.current_turn.as_ref().is_some_and(|turn| {
-                    event.provider_turn_id.is_none()
-                        || turn.provider_turn_id.is_none()
-                        || event.provider_turn_id == turn.provider_turn_id
-                })
-            {
-                document.pending_completion = Some(JournalEntry {
-                    received_at: at.to_string(),
-                    event: event.clone(),
-                    applied: Some(true),
-                });
-            }
-        }
+        TurnEventKind::StopObserved => claude_completion::observe_stop(document, event, at),
         TurnEventKind::TurnCompleted | TurnEventKind::TurnFailed => {
             completion_admission::close_turn(document, event, at);
         }

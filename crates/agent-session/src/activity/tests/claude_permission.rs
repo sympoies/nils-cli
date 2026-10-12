@@ -1,4 +1,5 @@
 use super::*;
+use pretty_assertions::assert_eq;
 
 #[test]
 fn claude_permission_latch_preserves_parallel_requests_and_wrong_turn() {
@@ -129,4 +130,3 @@ fn claude_permission_stop_preserves_uncorrelated_and_nonapproval_attention() {
         "optional tool metadata invalidated a progress event"
     );
 }
-

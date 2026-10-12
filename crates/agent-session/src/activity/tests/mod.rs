@@ -1178,6 +1178,7 @@ fn test_session(tmp: &tempfile::TempDir) -> (CliContext, crate::CreatedRecord) {
 }
 
 mod claude_completion;
+mod claude_permission;
 mod completion_review;
 mod provider_hooks;
 mod replay_journal;
@@ -1231,5 +1232,3 @@ fn guarded_send_probe_delays_ingestion_without_dropping_event() {
         TurnPhase::Working
     );
 }
-
-mod claude_permission;
