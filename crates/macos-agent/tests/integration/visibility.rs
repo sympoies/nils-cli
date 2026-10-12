@@ -330,15 +330,25 @@ fn mcp_fixture_status(
     result: Value,
     expected_code: i32,
 ) -> (Value, Value) {
+    mcp_response_fixture(
+        tool,
+        arguments,
+        json!({"jsonrpc":"2.0","id":1,"result":result}),
+        expected_code,
+    )
+}
+
+fn mcp_response_fixture(
+    tool: &str,
+    arguments: Value,
+    response: Value,
+    expected_code: i32,
+) -> (Value, Value) {
     let harness = common::MacosAgentHarness::new();
     let cwd = TempDir::new().expect("cwd");
     let fake = cwd.path().join("peekaboo");
     let payload = cwd.path().join("response.json");
-    fs::write(
-        &payload,
-        json!({"jsonrpc":"2.0","id":1,"result":result}).to_string(),
-    )
-    .expect("response");
+    fs::write(&payload, response.to_string()).expect("response");
     fs::write(
         &fake,
         r#"#!/bin/sh
@@ -390,6 +400,51 @@ done
         .find(|step| step["mcp_tool"] == tool || step["mcp_method"] == "session")
         .expect("tool or terminal step");
     (frame, step)
+}
+
+#[test]
+fn mcp_coordinate_protocol_errors_preserve_error_and_expose_replay_guidance() {
+    for data in [
+        None,
+        Some(json!({"detail":"Synthetic validation detail"})),
+        Some(json!("Synthetic detail")),
+    ] {
+        let mut error = json!({"code":-32602,"message":"Invalid arguments"});
+        if let Some(data) = &data {
+            error["data"] = data.clone();
+        }
+        let (frame, step) = mcp_response_fixture(
+            "click",
+            json!({"coords":"20,30","foreground":true}),
+            json!({"jsonrpc":"2.0","id":1,"error":error}),
+            0,
+        );
+        assert!(frame.get("result").is_none());
+        assert_eq!(frame["error"]["code"], error["code"]);
+        assert_eq!(frame["error"]["message"], error["message"]);
+        let diagnostic = if data.as_ref().is_some_and(|data| !data.is_object()) {
+            assert_eq!(frame["error"]["data"], error["data"]);
+            &frame["error"]["macos-agent/coordinate_click"]
+        } else {
+            if let Some(data) = &data {
+                for (key, value) in data.as_object().expect("data object") {
+                    assert_eq!(&frame["error"]["data"][key], value);
+                }
+            }
+            &frame["error"]["data"]["macos-agent/coordinate_click"]
+        };
+        assert_eq!(diagnostic["dispatch"], "unknown");
+        assert!(
+            diagnostic["guidance"]
+                .as_str()
+                .expect("guidance")
+                .contains("Do not replay")
+        );
+        assert_eq!(step["status"], "unknown");
+        assert_eq!(step["failure_class"], "unknown_mutation");
+        assert_eq!(step["replay_class"], "never");
+        assert_eq!(step["retries"], 0);
+    }
 }
 
 #[test]

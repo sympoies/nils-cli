@@ -670,6 +670,21 @@ fn qualify_coordinate_response(
                 *metadata = serde_json::json!({});
             }
             metadata["macos-agent/coordinate_click"] = serde_json::json!(diagnostic);
+        } else if let Some(error) = response
+            .get_mut("error")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            // JSON-RPC permits arbitrary error data. Preserve non-object data
+            // verbatim and use an error-object extension for the diagnostic.
+            if error.get("data").is_some_and(|data| !data.is_object()) {
+                error.insert(
+                    "macos-agent/coordinate_click".into(),
+                    serde_json::json!(diagnostic),
+                );
+            } else {
+                let data = error.entry("data").or_insert_with(|| serde_json::json!({}));
+                data["macos-agent/coordinate_click"] = serde_json::json!(diagnostic);
+            }
         }
     }
     (status, class)
