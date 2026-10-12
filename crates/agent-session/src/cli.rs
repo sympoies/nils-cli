@@ -1295,6 +1295,9 @@ pub struct SendArgs {
     #[arg(long = "allow-blocked")]
     pub allow_blocked: bool,
 
+    #[command(flatten)]
+    pub guards: crate::send_guard::GuardArgs,
+
     /// tmux binary override.
     #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
     pub tmux_bin: Option<PathBuf>,

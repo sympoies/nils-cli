@@ -2682,7 +2682,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__send)
-            opts="-h --text --text-stdin --key --allow-blocked --tmux-bin --format --state-dir --host --help"
+            opts="-h --text --text-stdin --key --allow-blocked --expect-runtime --expect-provider-session --require-idle --require-empty-composer --idempotency-key --tmux-bin --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2694,6 +2694,18 @@ _agent__session() {
                     ;;
                 --key)
                     COMPREPLY=($(compgen -W "enter escape backspace c-c up down left shift-left right tab" -- "${cur}"))
+                    return 0
+                    ;;
+                --expect-runtime)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-provider-session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 --tmux-bin)
