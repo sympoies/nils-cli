@@ -149,7 +149,9 @@ elif command == 'capture-pane':
         run_resolved(
             "agent-session",
             &args,
-            &CmdOptions::new().with_cwd(self.root()),
+            &CmdOptions::new()
+                .with_cwd(self.root())
+                .with_env_remove_prefix("AGENT_SESSION_"),
         )
     }
 
