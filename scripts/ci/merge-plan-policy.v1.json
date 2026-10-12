@@ -7,6 +7,7 @@
     ".agents/**", ".github/**", ".config/**", "scripts/**", "tests/**", "completions/**",
     "crates/nils-common/**", "crates/nils-term/**", "crates/nils-test-support/**", "crates/nils-scrub/**",
     "crates/agent-session/**", "crates/forge-cli/**",
+    "crates/*/docs/specs/*.schema.json", "docs/specs/*.schema.json",
     "THIRD_PARTY_LICENSES.md", "THIRD_PARTY_NOTICES.md"
   ],
   "documentation": [

@@ -3,6 +3,9 @@ import fnmatch
 import hashlib
 import json
 import os
+import posixpath
+import shutil
+import unicodedata
 from pathlib import Path, PurePosixPath
 import subprocess
 import tempfile
@@ -203,6 +206,8 @@ def select(changes, base_metadata, candidate_metadata, policy, registry):
             if consumer not in reached:
                 reached.add(consumer)
                 pending.append(consumer)
+    if not full and selected and selected == set(packages):
+        escalate('ALL_WORKSPACE_PACKAGES', '')
     if full:
         selected = set(packages)
     return {'scope': 'FULL' if full else ('SCOPED' if changes else 'NONE'),
@@ -220,34 +225,118 @@ def git(repo, *args):
 
 
 def snapshot(repo, commit, destination):
-    """Materialize blobs, preserving modes/symlinks, without export-ignore attrs."""
-    entries = git(repo, 'ls-tree', '-r', '-z', commit).split(b'\0')
-    for entry in entries:
-        if not entry:
-            continue
-        info, raw_path = entry.split(b'\t', 1)
-        mode, kind, oid = info.decode('ascii').split()
-        path = raw_path.decode('utf-8', errors='surrogateescape')
-        if kind != 'blob' or not valid_path(path):
-            raise PlanError('SNAPSHOT_FAILED', 'snapshot')
-        target = destination / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        content = git(repo, 'cat-file', 'blob', oid)
-        if mode == '120000':
-            target.symlink_to(content.decode('utf-8', errors='surrogateescape'))
-        elif mode in ('100644', '100755'):
-            target.write_bytes(content)
-            target.chmod(0o755 if mode == '100755' else 0o644)
-        else:
-            raise PlanError('SNAPSHOT_FAILED', 'snapshot')
-
-
-def metadata(snapshot_root, stage):
+    """Preflight portable names, then create blobs through no-follow dir fds."""
+    entries = []
+    aliases = {}
+    links = []
+    root_fd = None
     try:
-        result = subprocess.run(['cargo', 'metadata', '--offline', '--locked', '--all-features',
-                                 '--format-version', '1'], cwd=snapshot_root, check=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                env=dict(os.environ, RUSTUP_AUTO_INSTALL='0'))
+        for entry in git(repo, 'ls-tree', '-r', '-z', commit).split(b'\0'):
+            if not entry:
+                continue
+            info, raw_path = entry.split(b'\t', 1)
+            mode, kind, oid = info.decode('ascii').split()
+            path = raw_path.decode('utf-8', errors='surrogateescape')
+            if kind != 'blob' or mode not in ('100644', '100755', '120000') or not valid_path(path):
+                raise ValueError()
+            parts = path.split('/')
+            # Reject aliases even on case-sensitive hosts so one tree has one
+            # decision on supported filesystems, including Unicode normalization.
+            for count in range(1, len(parts) + 1):
+                prefix = '/'.join(parts[:count])
+                key = unicodedata.normalize('NFD', prefix).casefold()
+                if key in aliases and aliases[key] != prefix:
+                    raise ValueError()
+                aliases[key] = prefix
+            entries.append((mode, oid, path))
+
+        root_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        for mode, oid, path in entries:
+            content = git(repo, 'cat-file', 'blob', oid)
+            parts = path.split('/')
+            parent_fd = os.dup(root_fd)
+            try:
+                for part in parts[:-1]:
+                    try:
+                        os.mkdir(part, 0o755, dir_fd=parent_fd)
+                    except FileExistsError:
+                        pass
+                    next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                      dir_fd=parent_fd)
+                    os.close(parent_fd)
+                    parent_fd = next_fd
+                if mode == '120000':
+                    target = content.decode('utf-8', errors='surrogateescape')
+                    normalized = posixpath.normpath(posixpath.join(posixpath.dirname(path), target))
+                    if (not target or target.startswith('/') or normalized == '..'
+                            or normalized.startswith('../')):
+                        raise ValueError()
+                    os.symlink(target, parts[-1], dir_fd=parent_fd)
+                    links.append(destination / path)
+                else:
+                    permissions = 0o755 if mode == '100755' else 0o644
+                    fd = os.open(parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 permissions, dir_fd=parent_fd)
+                    with os.fdopen(fd, 'wb') as output:
+                        output.write(content)
+                        os.fchmod(output.fileno(), permissions)
+            finally:
+                os.close(parent_fd)
+        for link in links:
+            if not link.resolve().is_relative_to(destination.resolve()):
+                raise ValueError()
+    except (OSError, ValueError, RuntimeError):
+        raise PlanError('SNAPSHOT_FAILED', 'snapshot') from None
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
+
+
+def metadata_configuration(base_root, candidate_root, changes):
+    # Changed Cargo/toolchain configuration cannot be evaluated safely with the
+    # old trusted context while claiming an exact candidate metadata graph.
+    for change in changes:
+        for path in change['paths']:
+            parts = PurePosixPath(path).parts
+            if ('.cargo' in parts or parts[-1] in ('rust-toolchain', 'rust-toolchain.toml')):
+                raise PlanError('METADATA_FAILED', 'candidate_configuration')
+    # Config can include other files, select programs, or override dependencies
+    # through paths relative to a snapshot. Until those inputs can be trusted
+    # without changing the candidate graph, HOLD even on unchanged root config.
+    for root in (base_root, candidate_root):
+        if any((root / path).exists() for path in ('.cargo/config', '.cargo/config.toml')):
+            raise PlanError('METADATA_FAILED', 'candidate_configuration')
+    # Also bind toolchain bytes when its root file is an internal symlink.
+    for path in ('rust-toolchain', 'rust-toolchain.toml'):
+        base = base_root / path
+        candidate = candidate_root / path
+        try:
+            before = base.read_bytes() if base.is_file() else None
+            after = candidate.read_bytes() if candidate.is_file() else None
+        except OSError:
+            raise PlanError('METADATA_FAILED', 'candidate_configuration') from None
+        if before != after:
+            raise PlanError('METADATA_FAILED', 'candidate_configuration')
+
+
+def metadata(snapshot_root, stage, trusted_root):
+    try:
+        cargo = shutil.which('cargo')
+        rustc = shutil.which('rustc')
+        if cargo is None or rustc is None:
+            raise ValueError()
+        # Both manifests use B's cwd/config/toolchain. M's .cargo and programs
+        # cannot choose compiler tooling; ambient executables are caller-trusted.
+        environment = dict(os.environ, RUSTUP_AUTO_INSTALL='0',
+                           RUSTC=str(Path(rustc).absolute()),
+                           RUSTC_WRAPPER='', RUSTC_WORKSPACE_WRAPPER='',
+                           CARGO_BUILD_RUSTC=str(Path(rustc).absolute()),
+                           CARGO_BUILD_RUSTC_WRAPPER='', CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER='')
+        result = subprocess.run([str(Path(cargo).absolute()), 'metadata', '--manifest-path',
+                                 str(snapshot_root / 'Cargo.toml'), '--offline', '--locked',
+                                 '--all-features', '--format-version', '1'],
+                                cwd=trusted_root, check=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=environment)
         value = json.loads(result.stdout)
         if Path(value['workspace_root']).resolve() != snapshot_root.resolve():
             raise ValueError()
@@ -291,8 +380,9 @@ def generate(repo, inputs, selector_digest):
             candidate_dir.mkdir()
             snapshot(repo, inputs['base'], base_dir)
             snapshot(repo, inputs['candidate'], candidate_dir)
-            base_metadata, plan['digests']['base_metadata'] = metadata(base_dir, 'base_metadata')
-            candidate_metadata, plan['digests']['candidate_metadata'] = metadata(candidate_dir, 'candidate_metadata')
+            metadata_configuration(base_dir, candidate_dir, plan['changes'])
+            base_metadata, plan['digests']['base_metadata'] = metadata(base_dir, 'base_metadata', base_dir)
+            candidate_metadata, plan['digests']['candidate_metadata'] = metadata(candidate_dir, 'candidate_metadata', base_dir)
             plan.update(select(plan['changes'], base_metadata, candidate_metadata, policy, registry))
         plan.update(status='READY', action='VALIDATE')
     except PlanError as error:

@@ -9,6 +9,7 @@ import subprocess
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import jsonschema
 
@@ -66,9 +67,32 @@ class SelectorTests(unittest.TestCase):
         base = graph(self.root, edges)
         candidate = graph(self.root, [('unrelated', 'leaf', None, None)])
         result = self.select([{'status': 'M', 'paths': ['crates/base/src/lib.rs']}], base, candidate)
-        self.assertEqual(result['scope'], 'SCOPED')
+        self.assertEqual(result['scope'], 'FULL')
+        self.assertIn('ALL_WORKSPACE_PACKAGES', [r['code'] for r in result['reasons']])
         self.assertEqual(set(self.names(result)), set(('base', 'mid', 'leaf', 'dev', 'build',
                                                      'optional', 'target', 'unrelated')))
+
+    def test_proper_subset_reverse_closure_remains_scoped(self):
+        metadata = graph(self.root, [('mid', 'base', None, None), ('leaf', 'mid', None, None)])
+        result = self.select([{'status': 'M', 'paths': ['crates/base/src/lib.rs']}], metadata, metadata)
+        self.assertEqual(result['scope'], 'SCOPED')
+        self.assertEqual(set(self.names(result)), {'base', 'mid', 'leaf'})
+
+    def test_public_schema_contracts_escalate_before_owner_or_docs(self):
+        contracts = (
+            'crates/agent-workflow-primitives/docs/specs/test-first-evidence-mutation-receipt-v1.schema.json',
+            'crates/codex-cli/docs/specs/execution-capsule-receipt-v1.schema.json',
+            'crates/codex-cli/docs/specs/execution-capsule-error-v1.schema.json',
+            'crates/leaf/docs/specs/response-v1.schema.json',
+        )
+        for path in contracts:
+            with self.subTest(path=path):
+                result = self.select([{'status': 'M', 'paths': [path]}])
+                self.assertEqual(result['scope'], 'FULL')
+                self.assertIn('ALWAYS_ESCALATE', [r['code'] for r in result['reasons']])
+        control = self.select([{'status': 'M', 'paths': ['crates/leaf/tests/fixtures/response.schema.json']}])
+        self.assertEqual(control['scope'], 'SCOPED')
+        self.assertEqual(self.names(control), ['leaf'])
 
     def test_external_intermediary_is_traversed(self):
         external = {'id': 'registry+example#external@1.0.0', 'name': 'external',
@@ -220,14 +244,17 @@ import importlib.util
 spec = importlib.util.spec_from_file_location('suite', Path(os.environ['TEST_SUITE_DIR'])/'merge-plan.test.py')
 suite = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(suite)
-assert sys.argv[1:] == ['metadata', '--offline', '--locked', '--all-features', '--format-version', '1']
-if os.environ.get('FAIL_METADATA') or (os.environ.get('FAIL_CANDIDATE') and Path.cwd().name == 'candidate'):
+snapshot = Path(sys.argv[sys.argv.index('--manifest-path') + 1]).parent
+assert Path.cwd().name == 'base'
+assert sys.argv[1:] == ['metadata', '--manifest-path', str(snapshot/'Cargo.toml'), '--offline', '--locked', '--all-features', '--format-version', '1']
+assert os.environ['RUSTC_WRAPPER'] == os.environ['RUSTC_WORKSPACE_WRAPPER'] == ''
+if os.environ.get('FAIL_METADATA') or (os.environ.get('FAIL_CANDIDATE') and snapshot.name == 'candidate'):
     print('/private/fixture sensitive metadata diagnostic', file=sys.stderr)
     sys.exit(101)
 if os.environ.get('BAD_METADATA'):
     print('{}')
 else:
-    print(json.dumps(suite.graph(Path.cwd())))
+    print(json.dumps(suite.graph(snapshot)))
 ''')
         cargo.chmod(0o755)
         self.env.update(PATH=f'{self.tools}{os.pathsep}{os.environ["PATH"]}',
@@ -246,6 +273,130 @@ else:
         return subprocess.run(['python3', str(LAUNCHER), '--repo', str(self.repo),
                                '--base', self.base, '--head', self.head, '--candidate', self.candidate, *extra],
                               env=dict(self.env, **env), capture_output=True, text=True)
+
+    def selector_module(self):
+        spec = importlib.util.spec_from_file_location('snapshot_selector', LIB)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_snapshot_rejects_case_and_unicode_aliases_before_writes(self):
+        module = self.selector_module()
+        for first, second in (('A', 'a'), ('dir/A', 'dir/a'), ('é', 'e\u0301'),
+                              ('Dir/a', 'dir/b'), ('A', 'a/file')):
+            with self.subTest(names=(first, second)):
+                destination = Path(self.temp.name) / ('snapshot-' + str(len(first)))
+                destination.mkdir(exist_ok=True)
+                entries = (f'120000 blob one\t{first}\0' + f'100644 blob two\t{second}\0').encode()
+                def read_git(repo, *args):
+                    return entries if args[0] == 'ls-tree' else b'safe.txt'
+                with mock.patch.object(module, 'git', side_effect=read_git):
+                    with self.assertRaises(module.PlanError):
+                        module.snapshot(self.repo, self.candidate, destination)
+                self.assertEqual(list(destination.iterdir()), [])
+
+    def test_snapshot_parent_symlink_cannot_overwrite_external_fixture(self):
+        module = self.selector_module()
+        outside = Path(self.temp.name) / 'outside'
+        victim = outside / 'leaf/src/lib.rs'
+        victim.parent.mkdir(parents=True)
+        victim.write_text('preserved')
+        destination = Path(self.temp.name) / 'snapshot'
+        destination.mkdir()
+        (destination / 'crates').symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(module.PlanError):
+            module.snapshot(self.repo, self.candidate, destination)
+        self.assertEqual(victim.read_text(), 'preserved')
+
+    def test_snapshot_external_symlink_is_hold_without_touching_target(self):
+        victim = Path(self.temp.name) / 'outside-target'
+        victim.write_text('preserved')
+        (self.repo / 'crates/leaf/src/link').symlink_to(victim)
+        self.head = self.commit(self.base)
+        self.candidate = self.commit(self.base, self.head)
+        result = self.run_plan()
+        plan = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(plan['error']['code'], 'SNAPSHOT_FAILED')
+        self.assertEqual(plan['action'], 'HOLD')
+        self.assertEqual(victim.read_text(), 'preserved')
+
+    def test_snapshot_safe_relative_links_and_executable_modes(self):
+        module = self.selector_module()
+        source = self.repo / 'crates/leaf/src/lib.rs'
+        source.chmod(0o755)
+        (source.parent / 'link').symlink_to('lib.rs')
+        head = self.commit(self.base)
+        destination = Path(self.temp.name) / 'snapshot'
+        destination.mkdir()
+        module.snapshot(self.repo, head, destination)
+        copied = destination / 'crates/leaf/src/lib.rs'
+        self.assertTrue(copied.stat().st_mode & 0o111)
+        self.assertTrue((copied.parent / 'link').is_symlink())
+        self.assertEqual((copied.parent / 'link').read_text(), copied.read_text())
+
+    def real_minimal_workspace(self):
+        cargo = shutil.which('cargo', path=os.environ['PATH'])
+        self.assertIsNotNone(cargo)
+        (self.repo / 'Cargo.toml').write_text(
+            '[workspace]\nresolver="2"\nmembers=["crates/leaf", "crates/mid"]\n')
+        for name in ('leaf', 'mid'):
+            root = self.repo / f'crates/{name}'
+            (root / 'src').mkdir(parents=True, exist_ok=True)
+            (root / 'src/lib.rs').write_text('')
+            (root / 'Cargo.toml').write_text(
+                f'[package]\nname="{name}"\nversion="0.1.0"\nedition="2021"\n')
+        subprocess.run([cargo, 'generate-lockfile', '--offline'], cwd=self.repo, env=os.environ,
+                       check=True, capture_output=True)
+        self.env['PATH'] = os.environ['PATH']
+        # Do not let ambient compiler overrides mask the compiler sentinel.
+        for key in ('RUSTC', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC',
+                    'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER'):
+            self.env.pop(key, None)
+
+    def sentinel_compiler(self):
+        marker = Path(self.temp.name) / 'compiler-ran'
+        compiler = self.repo / 'tools/compiler'
+        compiler.parent.mkdir(exist_ok=True)
+        compiler.write_text('#!/usr/bin/env python3\nfrom pathlib import Path\n' +
+                            f'Path({str(marker)!r}).write_text("executed")\nraise SystemExit(101)\n')
+        compiler.chmod(0o755)
+        return compiler, marker
+
+    def test_candidate_compiler_config_is_held_without_execution(self):
+        self.real_minimal_workspace()
+        self.base = self.commit()
+        compiler, marker = self.sentinel_compiler()
+        (self.repo / '.cargo').mkdir()
+        (self.repo / '.cargo/config.toml').write_text('[build]\nrustc = ' + json.dumps(str(compiler)) + '\n')
+        self.head = self.commit(self.base)
+        self.candidate = self.commit(self.base, self.head)
+        result = self.run_plan()
+        self.assertFalse(marker.exists(), 'candidate-selected compiler executed during planning')
+        self.assertEqual(result.returncode, 1)
+        plan = json.loads(result.stdout)
+        self.assertEqual((plan['status'], plan['action']), ('PLAN_ERROR', 'HOLD'))
+        self.assertEqual(plan['error']['code'], 'METADATA_FAILED')
+
+    def test_unchanged_base_compiler_config_cannot_select_candidate_program(self):
+        self.real_minimal_workspace()
+        compiler, marker = self.sentinel_compiler()
+        rustc = shutil.which('rustc', path=os.environ['PATH'])
+        self.assertIsNotNone(rustc)
+        compiler.write_text('#!/usr/bin/env python3\nimport os, sys\n' +
+                            f'os.execv({rustc!r}, [{rustc!r}, *sys.argv[1:]])\n')
+        (self.repo / '.cargo').mkdir()
+        (self.repo / '.cargo/config.toml').write_text('[build]\nrustc = "./tools/compiler"\n')
+        self.base = self.commit()
+        self.sentinel_compiler()
+        self.head = self.commit(self.base)
+        self.candidate = self.commit(self.base, self.head)
+        result = self.run_plan()
+        self.assertFalse(marker.exists(), 'candidate program ran through unchanged base configuration')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        plan = json.loads(result.stdout)
+        self.assertEqual((plan['status'], plan['action']), ('PLAN_ERROR', 'HOLD'))
+        self.assertEqual(plan['error']['stage'], 'candidate_configuration')
 
     def test_pinned_inputs_trusted_selector_and_deterministic_output(self):
         first = self.run_plan()

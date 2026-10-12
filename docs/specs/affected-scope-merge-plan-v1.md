@@ -39,22 +39,38 @@ complete gate. Policy, registry, selector, and schema edits under `scripts/`
 therefore use the old trusted policy and escalate to FULL until they land.
 
 Exact B and M trees are materialized in temporary directories from Git blobs,
-including executable modes and symlinks. `.gitattributes` export exclusions do
-not remove files from these snapshots. Submodules cannot be materialized by this
+including executable modes and safe relative symlinks. Case-folded or Unicode
+normalization aliases (including directory prefixes) are rejected before writes
+on every platform. Directory traversal and exclusive regular-file creation use
+no-follow file descriptors; external symlinks or symlink path components HOLD.
+`.gitattributes` export exclusions do not remove files from these snapshots. Submodules cannot be materialized by this
 planner and yield HOLD. Neither the working tree nor index participates.
 
-Each snapshot runs:
+Both snapshots run metadata from the trusted B snapshot directory, with an
+explicit manifest path for each snapshot:
 
 ```bash
-cargo metadata --offline --locked --all-features --format-version 1
+cargo metadata --manifest-path "$SNAPSHOT/Cargo.toml" \
+  --offline --locked --all-features --format-version 1
 ```
 
-No target filter or `--no-deps` is used. Cargo and the appropriate toolchain and
-registry cache must already be available. The caller must provide its normal
+No target filter or `--no-deps` is used. Cargo and rustc executable paths are
+bound from the caller's trusted PATH, compiler wrappers are disabled, and rustup
+auto-install is disabled. Candidate configuration and toolchain files never
+select metadata tooling. Cargo, rustc, the trusted base toolchain and registry
+cache must already be available. The caller must provide its normal
 resource containment and environment for metadata; this command does not fetch,
-compile packages, create a test gate, or manage a gate slot. Cargo configuration
-and toolchain availability can affect whether planning succeeds. Any metadata
-failure, invalid resolved graph, or workspace root outside the snapshot yields
+compile packages, create a test gate, or manage a gate slot.
+
+Root Cargo configuration in either snapshot, or any changed `.cargo`/toolchain
+input, yields `METADATA_FAILED` at `candidate_configuration` before Cargo runs.
+This conservative HOLD also applies to unchanged root configuration: includes,
+program selection and relative dependency overrides cannot be evaluated from B
+while claiming an exact M graph. Internal root toolchain symlink bytes are
+compared as well.
+
+Caller environment/cache and toolchain availability can affect whether planning
+succeeds. Any metadata failure, invalid resolved graph, or workspace root outside the snapshot yields
 HOLD, including documentation-only and always-escalate diffs.
 
 ## Selection rules
@@ -72,15 +88,18 @@ manifest paths are repository relative. Reverse-dependency traversal reaches a
 fixed point through all resolved packages, including external intermediaries.
 Normal, optional, target-specific, dev, and build edges are included. Only
 candidate workspace packages are selected for validation. A deleted or
-unmappable owner or consumer escalates to FULL.
+unmappable owner or consumer escalates to FULL. A nonempty selection covering
+every candidate workspace member is FULL with `ALL_WORKSPACE_PACKAGES`, even
+when it arose only from reverse-dependency closure.
 
 Selection order for each changed path is:
 
 1. Always-escalate patterns and Cargo custom-build target paths from either tree
    take precedence over documentation and extra-input rules. The policy includes
    manifests/lockfiles, toolchain/build inputs, shared crates and test support,
-   CI/configuration, release/scripts/completions, and sensitive lifecycle and
-   credential surfaces.
+   CI/configuration, release/scripts/completions, sensitive lifecycle/credential surfaces, and outward schemas in workspace or
+   crate `docs/specs/*.schema.json` contract locations. Test fixture schemas
+   remain owned by their crate.
 2. Map the path to its workspace owner in either tree.
 3. Apply **every** matching extra-input rule, including rules for paths already
    owned by a crate. Add each consumer and its transitive reverse dependencies.
@@ -125,7 +144,7 @@ of successful validation; consumers must check status/action and exact inputs.
 
 ## Validation
 
-The selector and command matrix uses Python 3 and `jsonschema` for schema
+The selector and command matrix uses Python 3.9 or later and `jsonschema` for schema
 validation, plus Git and Cargo for disposable fixtures:
 
 ```bash
@@ -136,7 +155,9 @@ The matrix covers both-tree/transitive/dependency-kind selection, external
 intermediaries, renamed imports, old/new rename names, deletion, executable and
 symlink changes, extra inputs, escalation precedence, unknown inputs, complete
 metadata failures, input binding, trusted-base isolation, schema validity, and
-byte-for-byte deterministic output. A real Cargo workspace with only path
+byte-for-byte deterministic output. Safe-link and proper-subset controls
+accompany alias/no-follow, compiler sentinel, whole-workspace and public-schema
+regressions. A real Cargo workspace with only path
 dependencies exercises optional, target-specific, dev, and build dependencies
 without network access or compilation. The suite is separate from existing CI
 required-check and gate entrypoints.
