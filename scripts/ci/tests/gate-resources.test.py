@@ -446,8 +446,13 @@ class ExistingCgroupFixtures(unittest.TestCase):
 
     def fixture_command(self, *command):
         helper = self.root / 'gate-resources.py'
+        meminfo = self.root / 'meminfo'
+        # The copied helper simulates Linux even on macOS; keep its headroom
+        # checks independent of the host's procfs and current memory pressure.
+        meminfo.write_text('MemTotal: 8388608 kB\nMemAvailable: 8388608 kB\n')
         source = (ROOT / 'scripts/ci/gate-resources.py').read_text()
         source = source.replace("PROC_SELF = Path('/proc/self')", f'PROC_SELF = Path({str(self.proc)!r})')
+        source = source.replace("Path('/proc/meminfo')", f'Path({str(meminfo)!r})')
         helper.write_text('import sys\nsys.platform = "linux"\n' + source)
         env = dict(os.environ, NILS_CLI_RESOURCE_STATE_DIR=str(self.root / 'state'),
                    NILS_CLI_GATE_MEMORY_MAX_GIB='6', NILS_CLI_GATE_MEMORY_HIGH_GIB='4',

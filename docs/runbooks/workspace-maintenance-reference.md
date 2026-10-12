@@ -334,7 +334,7 @@ worker. FIFO locks, the memory admission floor, runner/job caps and queue timeou
 remain active. The worker inherits the existing cgroup and retains the slot
 descriptor; interruption stops its process group before releasing admission.
 Workload exit status propagates unchanged. Existing-cgroup admission emits a
-`gate admission receipt: ` stderr line followed by JSON, for example:
+`gate admission receipt:` stderr prefix followed by a space and JSON, for example:
 
 ```json
 {"schema_version": "nils-cli.gate-admission.v1", "admission_mode": "existing-cgroup", "limits": {"memory.max": 6442450944, "memory.swap.max": 0, "memory.high": 4294967296}}
