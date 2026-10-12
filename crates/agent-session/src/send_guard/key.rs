@@ -20,7 +20,14 @@ fn path(context: &CliContext, record: &SessionRecord, key: &str) -> Result<PathB
     let mut digest = Sha256::new();
     digest.update(b"agent-session.send-key.v1\0");
     digest.update(key.as_bytes());
-    Ok(session_dir(context, &record.id).join(format!("send-key-{:x}.json", digest.finalize())))
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = digest.finalize();
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes.as_slice() {
+        hex.push(HEX[(byte >> 4) as usize] as char);
+        hex.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Ok(session_dir(context, &record.id).join(format!("send-key-{hex}.json")))
 }
 
 fn used(record: &SessionRecord) -> CliError {
