@@ -299,6 +299,52 @@ limits still apply. Interrupting the macOS supervisor terminates its workload
 process group before releasing admission. This fallback does not change
 `agent-hook`'s Linux-only contained-execution support.
 
+An already contained Linux workload can explicitly select existing-cgroup
+admission instead of creating a systemd unit:
+
+```bash
+NILS_CLI_GATE_MEMORY_MAX_GIB=6 NILS_CLI_GATE_MEMORY_HIGH_GIB=4 \
+  NILS_CLI_GATE_MIN_AVAILABLE_GIB=1 NILS_CLI_RUNNER_MAX=2 \
+  python3 scripts/ci/gate-resources.py --admission-mode existing-cgroup -- \
+  bash scripts/ci/nils-cli-checks-entrypoint.sh --local-fast
+```
+
+This argument is opt-in; no environment variable or automatic sandbox detection
+selects the mode. The default systemd path and macOS behavior are unchanged.
+The caller must provision an externally enforced hard cap that the workload
+cannot raise or escape, and expose the current cgroup v2 subtree read-only.
+A read-only bind alone does not prove immutable containment: another writable
+mount or delegated cgroup access may permit changing the limits. This gate
+observes limits; it does not establish a sandbox boundary or disable independent
+contained-runner requirements.
+
+The gate resolves actual membership from `/proc/self/cgroup` against the cgroup2
+mount roots in `/proc/self/mountinfo`, including a namespace rooted at the
+current cgroup. It accepts only a read-only mount, finite `memory.max` at or
+below `NILS_CLI_GATE_MEMORY_MAX_GIB`, and `memory.swap.max=0`. When present,
+`memory.high` must be finite and at or below `NILS_CLI_GATE_MEMORY_HIGH_GIB`;
+an absent `memory.high` is recorded as `null`. Missing or unreadable required
+files, malformed/unlimited/over-ceiling values, and cgroup v1 fail before
+launch with exit status 2 and a configuration diagnostic. Only the current
+cgroup's own limits are admitted; ancestor limits are not substituted for
+missing or unlimited values. The mode never writes kernel limits.
+
+Limits are read before queueing, after admission, and again in the foreground
+worker. FIFO locks, the memory admission floor, runner/job caps and queue timeout
+remain active. The worker inherits the existing cgroup and retains the slot
+descriptor; interruption stops its process group before releasing admission.
+Workload exit status propagates unchanged. Existing-cgroup admission emits a
+`gate admission receipt: ` stderr line followed by JSON, for example:
+
+```json
+{"schema_version": "nils-cli.gate-admission.v1", "admission_mode": "existing-cgroup", "limits": {"memory.max": 6442450944, "memory.swap.max": 0, "memory.high": 4294967296}}
+```
+
+Limits in the receipt are bytes, with no cgroup or local filesystem paths.
+The default path emits no new receipt. The
+[kernel cgroup v2 reference](https://docs.kernel.org/admin-guide/cgroup-v2.html)
+defines these memory limit interfaces.
+
 Use consistent semaphore and runner settings across callers on the same host.
 For example, on a host with capacity reserved for two gates:
 

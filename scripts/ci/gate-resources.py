@@ -17,6 +17,74 @@ import uuid
 GIB = 1024 ** 3
 SYSTEMD_RUN = '/usr/bin/systemd-run'
 SYSTEMCTL = '/usr/bin/systemctl'
+PROC_SELF = Path('/proc/self')
+
+
+def current_cgroup():
+    """Resolve kernel membership against the current mount namespace, never PATH/env."""
+    def read_proc(name):
+        try:
+            return (PROC_SELF / name).read_text()
+        except OSError as error:
+            raise RuntimeError(f'existing-cgroup cannot read /proc/self/{name}; '
+                               'provide readable procfs and a read-only cgroup v2 mount') from error
+
+    groups = [line[3:] for line in read_proc('cgroup').splitlines() if line.startswith('0::')]
+    if len(groups) != 1:
+        raise RuntimeError('existing-cgroup requires current cgroup v2 membership (0::); '
+                           'cgroup v1 is unsupported')
+
+    def kernel_path(value):
+        value = re.sub(r'\\([0-7]{3})', lambda match: chr(int(match[1], 8)), value)
+        if not value.startswith('/') or '..' in value.split('/'):
+            raise RuntimeError('existing-cgroup cannot resolve an unsafe kernel cgroup path')
+        return Path(value)
+
+    group = kernel_path(groups[0])
+    mounts = []
+    for line in read_proc('mountinfo').splitlines():
+        before, separator, after = line.partition(' - ')
+        fields, filesystem = before.split(), after.split()
+        if not separator or not filesystem or filesystem[0] != 'cgroup2' or len(fields) < 6:
+            continue
+        root, mount = kernel_path(fields[3]), kernel_path(fields[4])
+        try:
+            relative = group.relative_to(root)
+        except ValueError:
+            continue
+        mounts.append((len(root.parts), mount / relative, fields[5].split(',')))
+    if not mounts:
+        raise RuntimeError('existing-cgroup cannot resolve current membership on a cgroup v2 mount; '
+                           'mount the current cgroup subtree read-only in this namespace')
+    _, directory, options = max(mounts, key=lambda entry: entry[0])
+    if 'ro' not in options:
+        raise RuntimeError('existing-cgroup requires a read-only cgroup v2 mount; '
+                           'the caller must externally enforce an unchangeable hard cap')
+    return directory
+
+
+def existing_cgroup_limits(maximum, high):
+    """Observe the actual local limits; provisioning and immutable containment are external."""
+    directory = current_cgroup()
+    limits = {}
+    for name, ceiling in (('memory.max', maximum * GIB), ('memory.swap.max', 0),
+                          ('memory.high', high * GIB)):
+        try:
+            value = (directory / name).read_text().strip()
+        except FileNotFoundError as error:
+            if name == 'memory.high':
+                limits[name] = None
+                continue
+            raise RuntimeError(f'existing-cgroup cannot read required {name}; '
+                               'expose the current cgroup v2 memory limits read-only') from error
+        except OSError as error:
+            raise RuntimeError(f'existing-cgroup cannot read {name}; '
+                               'expose readable cgroup v2 memory limits') from error
+        if not re.fullmatch(r'[0-9]+', value) or int(value) > ceiling:
+            raise RuntimeError(f'existing-cgroup {name} must be a finite byte limit <= {ceiling}; '
+                               'configure compliant kernel limits before starting the gate')
+        limits[name] = int(value)
+    return limits
 
 
 def validate_systemd():
@@ -224,9 +292,12 @@ def stop_process_group(worker):
         worker.wait()
 
 
-def run_gate(command, linux):
+def run_gate(command, linux, admission_mode='systemd'):
     maximum = positive('NILS_CLI_GATE_MEMORY_MAX_GIB', 16, 1048576)
     high = positive('NILS_CLI_GATE_MEMORY_HIGH_GIB', max(1, maximum * 3 // 4), maximum)
+    existing = admission_mode == 'existing-cgroup'
+    if existing:
+        existing_cgroup_limits(maximum, high)
     minimum = positive('NILS_CLI_GATE_MIN_AVAILABLE_GIB', 20, 1048576)
     timeout = positive('NILS_CLI_GATE_TIMEOUT_SECONDS', 3600)
     slots = positive('NILS_CLI_GATE_SLOTS', 1, 64)
@@ -246,7 +317,7 @@ def run_gate(command, linux):
                       NEXTEST_TEST_THREADS=str(min(threads, nextest)),
                       RUST_TEST_THREADS=str(min(threads, rust)))
     ready = (lambda: available_memory() >= minimum * GIB) if linux else (lambda: True)
-    slice_name = f'nilsgate{uuid.uuid4().hex}.slice' if linux else None
+    slice_name = f'nilsgate{uuid.uuid4().hex}.slice' if linux and not existing else None
     with contextlib.closing(GateSemaphore(state_directory(), slots).acquire(
             timeout, ready, slice_name)) as lease:
         print(f'gate admitted: slots={slots} runners={threads} build_jobs={jobs} '
@@ -254,9 +325,18 @@ def run_gate(command, linux):
         os.environ['NILS_CLI_GATE_ACTIVE'] = '1'
         os.environ['NILS_CLI_GATE_SUPERVISOR_PID'] = str(os.getpid())
         worker = [sys.executable, str(Path(__file__).resolve()), '--inside', '--', *command]
-        if not linux:
-            print('gate: memory cgroup cap is a no-op on macOS; admission and concurrency limits remain active',
-                  file=sys.stderr)
+        if not linux or existing:
+            if existing:
+                # Recheck after queueing; only this explicit mode emits a receipt.
+                limits = existing_cgroup_limits(maximum, high)
+                print('gate admission receipt: ' + json.dumps({
+                    'schema_version': 'nils-cli.gate-admission.v1',
+                    'admission_mode': admission_mode, 'limits': limits}), file=sys.stderr, flush=True)
+                worker[3:3] = ['--admission-mode', admission_mode]
+                os.environ.pop('NILS_CLI_GATE_SLICE', None)
+            else:
+                print('gate: memory cgroup cap is a no-op on macOS; admission and concurrency limits remain active',
+                      file=sys.stderr)
             # Retain crash ownership in the foreground worker only. Its child
             # command closes unrelated FDs before background helpers can fork.
             foreground = subprocess.Popen(worker, start_new_session=True,
@@ -280,19 +360,33 @@ def main(arguments):
     inside = arguments[0:1] == ['--inside']
     if inside:
         arguments = arguments[1:]
+    admission_mode = 'systemd'
+    if arguments[0:1] == ['--admission-mode']:
+        if len(arguments) < 2 or arguments[1] not in ('systemd', 'existing-cgroup'):
+            raise ValueError('--admission-mode must be systemd or existing-cgroup')
+        admission_mode = arguments[1]
+        arguments = arguments[2:]
     if arguments[0:1] != ['--'] or len(arguments) < 2:
         raise ValueError('usage: gate-resources.py [--inside] -- command [args...]')
     command = arguments[1:]
+    existing = admission_mode == 'existing-cgroup'
+    if existing and sys.platform != 'linux':
+        raise RuntimeError('existing-cgroup admission is supported only on Linux')
     if inside:
         # A late scope launch after supervisor death must not start a workload.
         os.kill(int(os.environ['NILS_CLI_GATE_SUPERVISOR_PID']), 0)
         if sys.platform == 'linux':
             maximum = positive('NILS_CLI_GATE_MEMORY_MAX_GIB', 16, 1048576)
             high = positive('NILS_CLI_GATE_MEMORY_HIGH_GIB', max(1, maximum * 3 // 4), maximum)
-            subprocess.run(slice_command(os.environ['NILS_CLI_GATE_SLICE'], high, maximum),
-                           check=True, timeout=10)
+            if existing:
+                existing_cgroup_limits(maximum, high)
+            else:
+                subprocess.run(slice_command(os.environ['NILS_CLI_GATE_SLICE'], high, maximum),
+                               check=True, timeout=10)
         return subprocess.call(command)
     linux = sys.platform == 'linux'
+    if existing:
+        return run_gate(command, linux, admission_mode)
     if linux:
         validate_systemd()
     return run_gate(command, linux)
