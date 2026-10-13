@@ -4147,6 +4147,10 @@ fn provider_specs(agent: AgentKind) -> Vec<ProviderSpec> {
                 matcher: None,
             },
             ProviderSpec {
+                event: "PermissionDenied",
+                matcher: None,
+            },
+            ProviderSpec {
                 event: "PreToolUse",
                 matcher: None,
             },
@@ -5125,23 +5129,7 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool 
                 document.state.phase = TurnPhase::Working;
             }
         }
-        TurnEventKind::StopObserved => {
-            // Matching Stop hooks run concurrently. Only an inactive Stop with
-            // no background tasks is a candidate, and later events cancel it.
-            if event.completion_candidate
-                && document.state.current_turn.as_ref().is_some_and(|turn| {
-                    event.provider_turn_id.is_none()
-                        || turn.provider_turn_id.is_none()
-                        || event.provider_turn_id == turn.provider_turn_id
-                })
-            {
-                document.pending_completion = Some(JournalEntry {
-                    received_at: at.to_string(),
-                    event: event.clone(),
-                    applied: Some(true),
-                });
-            }
-        }
+        TurnEventKind::StopObserved => claude_completion::observe_stop(document, event, at),
         TurnEventKind::TurnCompleted | TurnEventKind::TurnFailed => {
             completion_admission::close_turn(document, event, at);
         }

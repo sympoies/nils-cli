@@ -442,3 +442,18 @@ remains working evidence when the renderer changes the work header; a stale
 interruption marker cannot override it. Composer text remains uncertainty because
 plain captures cannot distinguish renderer placeholders from drafts; it never
 confirms completion or waiting. Claude retains its empty-composer requirement.
+
+## Claude permission resolution addendum
+
+The [official hooks reference](https://code.claude.com/docs/en/hooks#permissionrequest),
+checked on 2026-10-07 through Claude Code 2.1.289, exposes no approval-resolved
+hook and no tool_use_id on PermissionRequest. Tool progress cannot safely clear
+a conservative latch: parallel calls can share both tool name and input. Known
+approvals clear at same-turn Stop; mismatched or missing prompt identity,
+clarification and ambiguous overflow remain conservative. StopFailure is terminal.
+PermissionDenied reports only auto-mode denial; a manual dialog denial has no
+resolution hook. Observing denial cannot resolve an unrelated open approval.
+No tool-name or input fingerprint is retained. Clearance is bounded by the
+earliest unambiguous terminal signal, not elapsed time from approval during a
+long tool. Managed policy must register observational PermissionDenied alongside
+its supporting decoder before deployment.
