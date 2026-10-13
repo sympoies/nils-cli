@@ -865,26 +865,7 @@ or uncertain operation before their generation CAS. Terminal-backed Codex and
 Claude use the controller-owned
 private-buffer paste plus a separate Enter after exact-incarnation,
 authoritative-idle, detached, live-runtime, authoritative-broker, no-claim, and
-no-operation checks. Terminal wakes additionally require an observably empty
-composer before claiming the attempt, then recheck after loading the private
-buffer and immediately before paste. A non-empty or unobservable composer
-leaves the generation queued with `recipient-composer-not-empty` or
-`recipient-composer-unobservable`; no text or key is delivered. The pending
-wake can be retried once the operator clears or submits the draft.
-
-After paste settlement, Enter is pressed once only if the composer contains
-exactly the controller's fixed reminder and the recipient is still idle and
-detached, with no pending provider-event ingress. A changed or unreadable
-composer leaves its contents untouched, sends no Enter, and retains an uncertain
-attempt for existing transcript reconciliation. There is no swallowed-Enter
-retry. Exact observation reuses the guarded-send styled composer parser;
-`tmux capture-pane -p -e -J` preserves occupied spaces and joins terminal soft
-wraps. Hidden text, hard-wrapped/multiline composers, ambiguous layouts, and
-unstyled empty hints fail closed. These are observations, not atomic input
-admission; the final observation-to-input race remains tracked in
-[#2374](https://github.com/sympoies/nils-cli/issues/2374).
-
-The short `queued -> attempting` CAS is a per-session
+no-operation checks. The short `queued -> attempting` CAS is a per-session
 submission fence: claim and operation admission returns
 `coordination-notification-submission-in-progress` with typed retry guidance
 until the submission boundary completes. Stop, delete, resume, runtime
@@ -906,6 +887,27 @@ an outcome. Pending reminder queue timestamps never precede the newest live unre
 canonical message admitted to the exact recipient incarnation, including remote
 deliveries and carried guidance. Migrated timestamps are recovered from those
 records; existing upper bounds and original attempted timestamps are retained.
+
+Terminal wakes additionally require an observably empty composer before claiming
+the attempt, then recheck after loading the private buffer and immediately
+before paste. A non-empty or unobservable composer leaves the generation queued
+with `recipient-composer-not-empty` or `recipient-composer-unobservable`; no
+text or key is delivered. The pending wake can be retried once the operator
+clears or submits the draft.
+
+After paste settlement, Enter is pressed once only if the composer contains
+exactly the controller's fixed reminder and the recipient is still idle and
+detached, with no pending provider-event ingress. A changed or unreadable
+composer leaves its contents untouched, sends no Enter, and retains an uncertain
+attempt for existing transcript reconciliation. There is no swallowed-Enter
+retry.
+
+Exact observation reuses the guarded-send styled composer parser;
+`tmux capture-pane -p -e -J` preserves occupied spaces and joins terminal soft
+wraps. Hidden text, hard-wrapped/multiline composers, ambiguous layouts, and
+unstyled empty hints fail closed. These are observations, not atomic input
+admission; the final observation-to-input race remains tracked in
+[#2374](https://github.com/sympoies/nils-cli/issues/2374).
 
 Claude transcript observation first probes the known conversation's
 `<conversation-id>.jsonl` filename in each project directory under the
