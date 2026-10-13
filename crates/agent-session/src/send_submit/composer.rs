@@ -135,3 +135,6 @@ fn styled_text(pane: &str) -> Option<(String, Vec<bool>)> {
     }
     Some((plain, styles))
 }
+
+#[cfg(test)]
+mod tests;
