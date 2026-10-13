@@ -89,6 +89,10 @@ pub struct ExecutionResult {
     pub evidence_mode: EvidenceMode,
     pub journal_step: String,
     pub upstream: UpstreamResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordinate_click: Option<CoordinateClickDiagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation_scope: Option<crate::commands::observation::ObservationScope>,
 }
 
 pub fn emit_json<T: Serialize>(command: &'static str, result: T) -> Result<(), CliError> {
@@ -98,4 +102,14 @@ pub fn emit_json<T: Serialize>(command: &'static str, result: T) -> Result<(), C
     })?;
     println!("{body}");
     Ok(())
+}
+
+/// Supplemental diagnostics never replace the upstream outcome or receipt.
+#[derive(Debug, Clone, Serialize)]
+pub struct CoordinateClickDiagnostic {
+    pub dispatch: &'static str,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub guidance: &'static str,
 }
