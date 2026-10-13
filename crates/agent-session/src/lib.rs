@@ -9640,29 +9640,7 @@ pub(crate) mod tmux_probe_fixture {
     /// `launch_id` must carry the record's own value when the flow persists
     /// this identity and a later call re-reads it: retrieval is fenced on the
     /// launch id, so a `None` launch id would not match a record that has one.
-    pub(crate) fn running_identity(
-        session_id: &str,
-        pane_id: &str,
-        pane_pid: libc::pid_t,
-        process_group_id: Option<libc::pid_t>,
-        launch_id: Option<&str>,
-    ) -> Probe {
-        Probe::Running(Box::new(TmuxRuntimeIdentity {
-            macos_boot_id: super::capture_macos_boot_id(),
-            launch_id: launch_id.map(str::to_owned),
-            session_id: session_id.to_owned(),
-            pane_id: pane_id.to_owned(),
-            pane_pid,
-            pane_start_time: None,
-            process_group_id,
-            process_session_id: None,
-            process_session_members: Vec::new(),
-            control_group_members: Vec::new(),
-            control_group: None,
-            cgroup_mount: None,
-            pid_namespace: None,
-        }))
-    }
+    include!("tests/tmux_probe_identity.rs");
 }
 
 fn capture_tmux_runtime_identity(

@@ -14,14 +14,14 @@ crates/agent-session/src/activity.rs	impl	5581
 crates/agent-session/src/codex_app_server.rs	impl	5524
 crates/agent-session/src/codex_app_server/tests/mod.rs	test	8669
 crates/agent-session/src/lib.rs	impl	13590
-crates/agent-session/src/lib.rs	test	6374
+crates/agent-session/src/lib.rs	test	6352
 crates/agent-session/src/provider_history.rs	impl	3079
 crates/agent-session/src/retitle.rs	impl	3408
 crates/agent-session/src/retitle_v3.rs	impl	3634
 crates/agent-session/src/retitle_v3.rs	test	3648
 crates/agent-session/src/serve.rs	impl	12260
 crates/agent-session/src/serve.rs	test	26046
-crates/agent-session/tests/integration/cli.rs	test	13488
+crates/agent-session/tests/integration/cli.rs	test	13018
 crates/agent-session/tests/integration/coordination.rs	test	5408
 crates/agent-workflow-primitives/src/heuristic_inbox.rs	impl	4085
 crates/agent-workflow-primitives/src/repo_retro.rs	impl	2487
