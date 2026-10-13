@@ -16,6 +16,7 @@ mod integration {
     mod issue_atoms;
     mod issue_tracker;
     mod kind_parity;
+    mod label_hold_compatibility;
     mod label_ops;
     mod ledger_blank_comment_probe;
     mod local_ops;

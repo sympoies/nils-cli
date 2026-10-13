@@ -376,6 +376,11 @@ Label-local flags:
   explicitly requested. It never deletes or renames labels by default.
 - `pr create` and `pr deliver` accept `--label <name>` repeatedly. Catalog
   validation is opt-in via `--label-catalog <path> --strict-labels`.
+  The compatibility `state::do-not-merge` hold may coexist with one ordinary workflow
+  `state::` label. It must still be known (or an allowed extension) and applicable
+  to the target. Two ordinary states still conflict in an exclusive state group,
+  with or without the hold. This shared selection rule applies to typed issue,
+  PR, and MR label validation; it does not lift merge holds or change the catalog.
 
 ## Atomic op surface
 

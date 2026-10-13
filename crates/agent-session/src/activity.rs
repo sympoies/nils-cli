@@ -25,6 +25,7 @@ use crate::{
 
 #[path = "activity/claude_completion.rs"]
 mod claude_completion;
+mod codex_completion;
 #[path = "activity/completion_admission.rs"]
 mod completion_admission;
 #[path = "activity/completion_receipts.rs"]
@@ -5012,8 +5013,7 @@ fn reduce(document: &mut ActivityDocument, event: &TurnEvent, at: &str) -> bool 
     }
     document.pending_completion = None;
     let previous_phase = document.state.phase.clone();
-    let mut source = provider_source(event);
-    source.extra = document.state.source.extra.clone();
+    let source = codex_completion::source_for_event(document, event);
     match event.kind {
         TurnEventKind::TurnStarted => {
             open_provider_turn(document, event.provider_turn_id.clone(), at);
