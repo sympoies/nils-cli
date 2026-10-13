@@ -1,3 +1,10 @@
+/// Models a live pane that reports the given identity: the probe
+/// succeeds and the flow proceeds to the kill step instead of racing
+/// a script launch against the bounded probe budget (sympoies/nils-cli#2131).
+///
+/// `launch_id` must carry the record's own value when the flow persists
+/// this identity and a later call re-reads it: retrieval is fenced on the
+/// launch id, so a `None` launch id would not match a record that has one.
 pub(crate) fn running_identity(
     session_id: &str,
     pane_id: &str,

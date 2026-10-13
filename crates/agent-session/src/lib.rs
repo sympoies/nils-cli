@@ -9633,13 +9633,6 @@ pub(crate) mod tmux_probe_fixture {
             })
     }
 
-    /// Models a live pane that reports the given identity: the probe
-    /// succeeds and the flow proceeds to the kill step instead of racing
-    /// a script launch against the bounded probe budget (sympoies/nils-cli#2131).
-    ///
-    /// `launch_id` must carry the record's own value when the flow persists
-    /// this identity and a later call re-reads it: retrieval is fenced on the
-    /// launch id, so a `None` launch id would not match a record that has one.
     include!("tests/tmux_probe_identity.rs");
 }
 
