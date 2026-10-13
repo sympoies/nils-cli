@@ -1673,7 +1673,7 @@ operations:
     validations:
       - query_repo_scope
     backends:
-      github: { program: gh, argv: [search, issues, "{query}", "{optional_repo_flag_and_raw_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest,updatedAt,labels"], env: { GH_HOST: "{resolved_authority}" } }
+      github: { program: gh, argv: [search, issues, "{query_keywords...}", "{optional_repo_flag_and_raw_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest,updatedAt,labels"], env: { GH_HOST: "{resolved_authority}" } }
       gitlab: provider_unsupported   # search is GitHub-only in v1
       local:  provider_unsupported
     output:
@@ -1699,11 +1699,47 @@ operations:
     validations:
       - query_repo_scope
     backends:
-      github: { program: gh, argv: [search, prs, "{query}", "{optional_repo_flag_and_raw_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest,updatedAt,labels"], env: { GH_HOST: "{resolved_authority}" } }
+      github: { program: gh, argv: [search, prs, "{query_keywords...}", "{optional_repo_flag_and_raw_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest,updatedAt,labels"], env: { GH_HOST: "{resolved_authority}" } }
       gitlab: provider_unsupported
       local:  provider_unsupported
     output:
       data: { provider: enum<github>, host, repo, query, match_fields, limit, item_count, limited, items: list<SearchItem> }
+
+  - id: search.completions
+    schema_version: cli.forge-cli.search.completions.v1
+    summary: Read raw closed-issue or merged-PR completion facts with resumable coverage.
+    inputs:
+      - { name: <query>, type: string, required: true }
+      - { name: --kind, type: "enum<issue|pr>", default: issue }
+      - { name: --since, type: RFC3339, required: true }
+      - { name: --until, type: RFC3339, required: true }
+      - { name: --page-size, type: integer, default: 100, range: "1..100" }
+      - { name: --max-pages, type: integer, default: 10, range: "1..10" }
+      - { name: --max-connection-pages, type: integer, default: 10, range: "1..100" }
+      - { name: --cursor, type: string }
+      - { name: --exclude-forks, type: bool, default: false }
+      - { name: --exclude-archived, type: bool, default: false }
+    validations:
+      - query_repo_scope
+      - "completion_window_invalid: valid RFC3339 since < until"
+      - "completion_cursor_invalid: continuation binds authority, query, kind, window and filters"
+    backends:
+      github: { program: gh, argv: [api, graphql, "{optional_hostname}", -f, "query={completion_query}", -F, "first={page_size}", "{query_or_node_and_cursor_fields}"], env: { GH_HOST: "{resolved_authority}" } }
+      gitlab: provider_unsupported
+      local: provider_unsupported
+    output:
+      data:
+        provider: enum<github>
+        host: string
+        repo: string
+        kind: enum<issue|pr>
+        query: string
+        effective_query: string
+        window: "{since, until}"
+        item_count: integer
+        items: "list<CompletionItem>; canonical identity, raw state/reason, timestamps, nullable author/type, repository fork/archive facts, PR statistics, raw labels and canonical cross-repo closing references"
+        pagination: "status, complete, traversal_complete, covered_from_start, resumed, start_cursor, next_cursor, pages_read, scanned, total_count, search_ceiling, pending_connections, reasons, failures"
+    notes: "Read-only; no scoring or label interpretation. Exact half-open completion window uses closedAt for issues and mergedAt for PRs, never updatedAt. Each nested connection exports complete and remaining_complete separately. Partial reads preserve facts and exit zero; inspect coverage. Search ceiling never becomes complete. See search-completions-v1.md."
 
   - id: search.refs-to
     schema_version: cli.forge-cli.search.refs-to.v1

@@ -21,6 +21,12 @@ use crate::error::ForgeError;
 use crate::ops;
 use crate::provider::ProviderHint;
 
+mod search;
+pub use search::{
+    CompletionKind, CompletionQueryArgs, SearchCommand, SearchMatchField, SearchQueryArgs,
+    SearchRefsToArgs,
+};
+
 /// Stable binary name used in `schema_version` literals (`cli.forge-cli.*`).
 pub const BINARY: &str = "forge-cli";
 
@@ -238,12 +244,12 @@ pub enum Command {
     Label(LabelArgs),
     /// Personal cross-repo work inbox.
     Inbox(InboxArgs),
-    /// Full-text / reverse-reference search over issues and PRs.
+    /// Full-text, completion-fact, and reverse-reference search over issues and PRs.
     ///
     /// `search` complements the other discovery surfaces, which serve distinct
     /// roles: `issue list` / `pr list` filter by structured fields (state,
     /// labels, author) within one repo; `inbox` is the personal cross-repo work
-    /// queue; `search` runs free-text (`issues` / `prs`) and reverse-reference
+    /// queue; `search` runs free-text (`issues` / `prs`), completion facts, and reverse-reference
     /// (`refs-to`) queries the structured lists cannot express. GitHub-only in
     /// v1; GitLab and Local return a structured `provider_unsupported` error.
     Search(SearchArgs),
@@ -2193,74 +2199,6 @@ pub struct ActivitySummaryArgs {
     /// Maximum repositories to include in the summary (default: 25).
     #[arg(long, default_value_t = 25)]
     pub limit: u32,
-}
-
-/// `search` subtree. Free-text / reverse-reference query over forge issues and
-/// PRs, scoped by explicit query qualifiers or a repository. GitHub-only in v1; GitLab / Local hit a
-/// structured `provider_unsupported` seam.
-#[derive(Subcommand, Debug)]
-pub enum SearchCommand {
-    /// Full-text search over issues (`gh search issues`).
-    Issues(SearchQueryArgs),
-    /// Full-text search over pull requests (`gh search prs`).
-    Prs(SearchQueryArgs),
-    /// List issues / PRs that reference a ref via cross-reference events.
-    #[command(name = "refs-to")]
-    RefsTo(SearchRefsToArgs),
-}
-
-/// Arguments for `search refs-to <ref>`.
-#[derive(Args, Debug, Clone)]
-pub struct SearchRefsToArgs {
-    /// Target issue / PR to find references to. Accepts a GitHub URL,
-    /// `owner/name#number`, or `#number` / `number` (repo from context).
-    #[arg(value_name = "REF")]
-    pub reference: String,
-    /// Cap the number of cross-reference events scanned (default: 30).
-    #[arg(long, default_value_t = 30)]
-    pub limit: u32,
-}
-
-/// Shared arguments for `search issues` / `search prs`.
-#[derive(Args, Debug, Clone)]
-pub struct SearchQueryArgs {
-    /// Free-text query passed to the provider's search primitive.
-    #[arg(value_name = "QUERY")]
-    pub query: String,
-    /// Restrict matching to these fields (comma-separated or repeatable).
-    /// Defaults to title, body, and comments.
-    #[arg(
-        long = "match",
-        value_enum,
-        value_delimiter = ',',
-        default_values_t = [SearchMatchField::Title, SearchMatchField::Body, SearchMatchField::Comments],
-        value_name = "FIELD"
-    )]
-    pub match_fields: Vec<SearchMatchField>,
-    /// Cap the number of returned results (default: 30).
-    #[arg(long, default_value_t = 30)]
-    pub limit: u32,
-}
-
-/// Field a `search` query may match on. Mirrors `gh search --match`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-#[clap(rename_all = "lower")]
-pub enum SearchMatchField {
-    Title,
-    Body,
-    Comments,
-}
-
-impl SearchMatchField {
-    /// Stable lower-case rendering used in the `gh search --match` value and
-    /// in the envelope's `match_fields`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SearchMatchField::Title => "title",
-            SearchMatchField::Body => "body",
-            SearchMatchField::Comments => "comments",
-        }
-    }
 }
 
 /// `inbox` subtree.

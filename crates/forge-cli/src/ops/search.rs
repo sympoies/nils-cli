@@ -16,6 +16,8 @@
 
 use std::ffi::OsString;
 
+mod completions;
+
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::Serialize;
 
@@ -104,6 +106,7 @@ pub struct SearchItem {
 pub(crate) fn query_scoped(command: &SearchCommand) -> bool {
     let query = match command {
         SearchCommand::Issues(args) | SearchCommand::Prs(args) => &args.query,
+        SearchCommand::Completions(args) => &args.query,
         SearchCommand::RefsTo(_) => return false,
     };
     let mut quoted = false;
@@ -212,6 +215,9 @@ fn run_github<R: BackendRunner>(
         SearchCommand::RefsTo(args) => {
             run_github_refs_to(runner, global, ctx, repo_slug, args, format)
         }
+        SearchCommand::Completions(args) => {
+            completions::run(runner, global, ctx, repo_slug, args, format)
+        }
     }
 }
 
@@ -225,7 +231,7 @@ fn run_github_search<R: BackendRunner>(
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
     let limit = limit_for_provider(args.limit);
-    let call = build_github_search_call(kind, repo_slug, &args.query, &args.match_fields, limit)
+    let call = build_github_search_call(kind, repo_slug, &args.query, &args.match_fields, limit)?
         .with_host(Provider::GitHub, &ctx.host);
     if global.dry_run {
         return Ok(emit_search_dry_run(
@@ -567,11 +573,11 @@ fn build_github_search_call(
     query: &str,
     match_fields: &[SearchMatchField],
     limit: u32,
-) -> BackendCall {
+) -> Result<BackendCall, ForgeError> {
+    let keywords = search_keywords(query)?;
     let mut argv = vec![
         OsString::from("search"),
         OsString::from(kind.gh_noun()),
-        OsString::from(query),
         OsString::from("--match"),
         OsString::from(match_csv(match_fields)),
         OsString::from("--limit"),
@@ -581,11 +587,63 @@ fn build_github_search_call(
     ];
     if !repo_locator.is_empty() {
         argv.splice(
-            3..3,
+            2..2,
             [OsString::from("--repo"), OsString::from(repo_locator)],
         );
     }
-    BackendCall::new(BackendProgram::Gh, argv)
+    // gh quotes each keyword's qualifier value. Passing the complete query
+    // as one keyword makes subsequent qualifiers part of the first value.
+    // Keep simple-query argv stable; option-like keywords follow `--`.
+    if keywords.iter().any(|keyword| keyword.starts_with('-')) {
+        argv.push(OsString::from("--"));
+        argv.extend(keywords.into_iter().map(OsString::from));
+    } else {
+        argv.splice(2..2, keywords.into_iter().map(OsString::from));
+    }
+    Ok(BackendCall::new(BackendProgram::Gh, argv))
+}
+
+fn search_keywords(query: &str) -> Result<Vec<String>, ForgeError> {
+    let mut keywords = Vec::new();
+    let mut keyword = String::new();
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in query.chars() {
+        if escaped {
+            keyword.push(character);
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == '"' {
+            quoted = !quoted;
+        } else if character.is_whitespace() && !quoted {
+            if !keyword.is_empty() {
+                keywords.push(std::mem::take(&mut keyword));
+            }
+        } else {
+            keyword.push(character);
+        }
+    }
+    if quoted || escaped {
+        return Err(ForgeError::validation(
+            schema_err(),
+            "query_invalid",
+            "search query has an unfinished quote or escape",
+            None,
+        ));
+    }
+    if !keyword.is_empty() {
+        keywords.push(keyword);
+    }
+    if keywords.is_empty() {
+        return Err(ForgeError::validation(
+            schema_err(),
+            "query_invalid",
+            "search query must not be empty",
+            None,
+        ));
+    }
+    Ok(keywords)
 }
 
 fn match_csv(fields: &[SearchMatchField]) -> String {
@@ -800,6 +858,7 @@ fn command_name(command: &SearchCommand) -> &'static str {
         SearchCommand::Issues(_) => "issues",
         SearchCommand::Prs(_) => "prs",
         SearchCommand::RefsTo(_) => "refs-to",
+        SearchCommand::Completions(_) => "completions",
     }
 }
 
@@ -877,6 +936,38 @@ mod tests {
     }
 
     #[test]
+    fn quoted_phrases_and_qualifiers_remain_separate_keywords() {
+        assert_eq!(
+            search_keywords(r#"repo:acme/widget label:"needs review" "exact phrase""#).unwrap(),
+            ["repo:acme/widget", "label:needs review", "exact phrase"]
+        );
+    }
+
+    #[test]
+    fn negative_qualifiers_are_separated_from_backend_options() {
+        let call = build_github_search_call(
+            SearchKind::Issues,
+            "",
+            "repo:acme/widget -label:wontfix",
+            &[SearchMatchField::Title],
+            30,
+        )
+        .unwrap();
+        let argv = argv_to_strings(&call.argv);
+        assert_eq!(
+            &argv[argv.len() - 3..],
+            ["--", "repo:acme/widget", "-label:wontfix"]
+        );
+    }
+
+    #[test]
+    fn incomplete_or_empty_queries_are_rejected_before_backend_work() {
+        for query in [" ", "label:\"unfinished", "trailing\\"] {
+            assert_eq!(search_keywords(query).unwrap_err().kind(), "query_invalid");
+        }
+    }
+
+    #[test]
     fn issues_call_builds_gh_search_issues_argv() {
         let call = build_github_search_call(
             SearchKind::Issues,
@@ -888,14 +979,16 @@ mod tests {
                 SearchMatchField::Comments,
             ],
             30,
-        );
+        )
+        .expect("valid query");
         assert_eq!(call.program, BackendProgram::Gh);
         assert_eq!(
             argv_to_strings(&call.argv),
             [
                 "search",
                 "issues",
-                "flaky retry",
+                "flaky",
+                "retry",
                 "--repo",
                 "acme/widget",
                 "--match",
@@ -916,7 +1009,8 @@ mod tests {
             "cache",
             &[SearchMatchField::Title],
             5,
-        );
+        )
+        .expect("valid query");
         assert_eq!(
             argv_to_strings(&call.argv),
             [
