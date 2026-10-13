@@ -16,7 +16,7 @@ fn check(input: &str, expected: &str, offset: usize, length: usize) {
 }
 
 // Deliberately synthetic; token lengths include the four-byte prefix.
-fn legacy() -> String {
+fn classic_token() -> String {
     format!("ghs_{}", "a".repeat(36))
 }
 
@@ -52,7 +52,7 @@ fn legacy_bare() {
 }
 case!(
     legacy_url,
-    legacy(),
+    classic_token(),
     "https://x-access-token:",
     "@example.invalid/repo"
 );
@@ -98,7 +98,7 @@ fn ordinary_dotted_identifiers_are_unchanged() {
 
 #[test]
 fn legacy_bearer() {
-    let token = legacy();
+    let token = classic_token();
     let input = format!("Bearer {token}");
     check(&input, "Bearer [REDACTED]", 7, token.len());
 }
@@ -108,4 +108,16 @@ fn stateless_bearer() {
     let token = format!("{}-", stateless(520));
     let input = format!("Bearer {token}");
     check(&input, "Bearer [REDACTED]", 7, token.len());
+}
+
+#[test]
+fn legacy_sentence_punctuation_is_preserved() {
+    for prefix in ["gho_", "ghp_", "ghu_", "ghs_", "ghr_"] {
+        let token = format!("{prefix}{}", "a".repeat(36));
+        for suffix in [".", "-", ". next"] {
+            let input = format!("{token}{suffix}");
+            let expected = format!("[REDACTED]{suffix}");
+            check(&input, &expected, 0, token.len());
+        }
+    }
 }

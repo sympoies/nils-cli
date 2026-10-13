@@ -64,8 +64,9 @@ pub fn assignment_secret_regex() -> &'static Regex {
     })
 }
 
-// GitHub bodies include JWT punctuation and may end in non-word characters.
-// Keep their full span; retain existing word boundaries for other token families.
+// Stateless installation tokens have a numeric application ID and a JWT body.
+// Match them before classic shapes and keep JWT tails without a word-boundary cutoff.
+// Classic shapes retain their alphabet so surrounding prose punctuation survives.
 /// Regex that matches bare token shapes (OpenAI, GitHub, Slack, generic
 /// `bearer ...`).
 pub fn token_secret_regex() -> &'static Regex {
@@ -74,11 +75,12 @@ pub fn token_secret_regex() -> &'static Regex {
         Regex::new(
             r#"(?ix)
             \b(
-                gh[opur]_[A-Za-z0-9_.-]{8,}
-                | ghs_[A-Za-z0-9_.-]{36,}
-                | bearer\s+(?:gh[opur]_[A-Za-z0-9_.-]{8,}|ghs_[A-Za-z0-9_.-]{36,})
+                ghs_[0-9]+_[A-Za-z0-9_.-]{28,}
+                | bearer\s+ghs_[0-9]+_[A-Za-z0-9_.-]{28,}
                 | (?:
                     sk-(?:proj-)?[A-Za-z0-9_-]{8,}
+                    | ghp_[A-Za-z0-9_]{8,}
+                    | gh[ousr]_[A-Za-z0-9_]{36,}
                     | github_pat_[A-Za-z0-9_]{8,}
                     | xox[baprs]-[A-Za-z0-9-]{8,}
                     | bearer\s+[A-Za-z0-9._~+/=-]{8,}
