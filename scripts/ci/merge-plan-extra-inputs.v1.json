@@ -1,0 +1,30 @@
+{
+  "schema_version": "nils-cli.merge-extra-inputs.v1",
+  "rules": [
+    {
+      "id": "docs-hook-binaries",
+      "paths": ["crates/agent-docs/**", "crates/agent-hook/**"],
+      "packages": ["nils-agent-docs", "nils-agent-hook"]
+    },
+    {
+      "id": "hook-session-binaries",
+      "paths": ["crates/agent-hook/**", "crates/agent-session/**"],
+      "packages": ["nils-agent-hook", "nils-agent-session"]
+    },
+    {
+      "id": "semantic-commit-integration-binary",
+      "paths": ["crates/semantic-commit/**"],
+      "packages": ["nils-semantic-commit", "nils-common", "nils-forge-cli"]
+    },
+    {
+      "id": "shared-identity-fixture",
+      "paths": ["crates/nils-common/tests/fixtures/identity/**"],
+      "packages": ["nils-common", "nils-git-cli", "nils-forge-cli"]
+    },
+    {
+      "id": "review-runbook-include",
+      "paths": ["docs/runbooks/review-specialists-primitive.md"],
+      "packages": ["nils-agent-workflow-primitives"]
+    }
+  ]
+}
