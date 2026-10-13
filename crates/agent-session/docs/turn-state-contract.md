@@ -334,8 +334,12 @@ therefore deserialize conservatively.
 Optional `diagnostic.reason` values are producer-owned allowlisted codes:
 `completion_evidence_pending`, `attention_authority_mismatch`,
 `provider_projection_unavailable`, `runtime_activity_unhealthy`,
-`activity_state_unavailable`, and `interrupted_suspected`. Free-form provider or
-runtime errors never cross the session-view or stream boundary.
+`activity_state_unavailable`, `interrupted_suspected`, and
+`codex_progress_quiet`. The quiet reason may include only the bounded
+`quiet_threshold_seconds`, `quiet_since`, and `quiet_signal` fields described
+above; it never proves completion, clears attention, or authorizes input.
+Free-form provider or runtime errors never cross the session-view or stream
+boundary.
 
 Optional `shadow_observation` is ordinarily diagnostics-only. It contains
 `observer_version`, a bounded `rule_id`, daemon `observed_at`, one of
