@@ -2285,7 +2285,7 @@ mod tests {
             reply_depth: 0,
         }
     }
-    fn config() -> Config {
+    pub(super) fn config() -> Config {
         Config {
             machine: "destination".into(),
             url: "http://127.0.0.1:1".into(),
@@ -2961,7 +2961,7 @@ mod tests {
         super::super::lock_registry_observational(&context)
             .expect("existing reader still available");
     }
-    fn own_outbox(key: &str, state: &str) -> Outbox {
+    pub(super) fn own_outbox(key: &str, state: &str) -> Outbox {
         let mut message = envelope();
         message.from = Address {
             machine: "destination".into(),
