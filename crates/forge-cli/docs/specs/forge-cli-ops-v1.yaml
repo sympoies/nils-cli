@@ -121,7 +121,7 @@ validations_catalog:
     error_kind: unchecked_task_items
     exit: DATA
   label_catalog:
-    rule: "when --strict-labels is set, every selected label exists in --label-catalog, applies to the target, and exclusive groups do not conflict"
+    rule: "when --strict-labels is set, every selected label exists in --label-catalog or is an allowed extension, applies to the target, and exclusive groups do not conflict; compatibility state::do-not-merge is independent of ordinary workflow state, so it can coexist with one ordinary state without lifting its merge hold"
     error_kind: label_unknown | label_not_applicable | label_group_conflict | label_catalog_missing
     exit: DATA
   query_repo_scope:
