@@ -24,6 +24,9 @@ use super::*;
       (corrected_record digest, reason omitted-findings) and complete `findings`.\n  \
       Use explicit --expected-state; only chain-proven omissions can be restored.\n  \
       Old history and budgets remain unchanged. New heads require all open findings.\n  \
+      An alias-bearing false-reopen stop requires correction.attempted_findings\n  \
+      containing the original attempted rows; its digest must match exactly.\n  \
+      After reassignment, observe ordinary inventory before retrying a correction.\n  \
       Check these shapes offline, with no pull request and no provider call, \
       using `pr review-loop validate --findings-file <path>`.\n\n\
       COMBINED DELIVERY OUTCOME\n  \

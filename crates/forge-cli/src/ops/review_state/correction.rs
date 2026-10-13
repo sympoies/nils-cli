@@ -1,6 +1,8 @@
 //! Append-only recovery for findings the previous omission transition fixed.
 use super::*;
 
+mod attempted_inventory;
+
 pub const INPUT_SCHEMA: &str = "forge-cli.review-loop-correction.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -8,6 +10,8 @@ pub const INPUT_SCHEMA: &str = "forge-cli.review-loop-correction.v1";
 pub struct CorrectionRequest {
     pub corrected_record: String,
     pub reason: CorrectionReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempted_findings: Option<Vec<ReviewFindingObservation>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,6 +26,8 @@ pub struct CorrectionReceipt {
     pub corrected_record: String,
     pub reason: CorrectionReason,
     pub restored_findings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempted_findings: Option<Vec<ReviewFindingObservation>>,
 }
 
 pub fn invalid(message: &str) -> ForgeError {
@@ -44,6 +50,7 @@ impl CorrectionRequest {
                 "correction must name a canonical state record digest",
             ));
         }
+        attempted_inventory::canonicalize(self.attempted_findings.as_deref())?;
         Ok(())
     }
 }
@@ -109,9 +116,17 @@ fn restore(
     head: &str,
     receipt: &CorrectionReceipt,
 ) -> Result<ReviewLoopState, ForgeError> {
+    if attempted_inventory::canonicalize(receipt.attempted_findings.as_deref())?
+        != receipt.attempted_findings
+    {
+        return Err(invalid(
+            "correction receipt requires canonical attempted proof",
+        ));
+    }
     let request = CorrectionRequest {
         corrected_record: receipt.corrected_record.clone(),
         reason: receipt.reason.clone(),
+        attempted_findings: receipt.attempted_findings.clone(),
     };
     let (target, prior) = context(records, head, &request)?;
     if receipt.restored_findings.is_empty()
@@ -151,18 +166,17 @@ fn restore(
             threads: finding.threads.clone(),
         })
         .collect();
-    if let Some(stop) = records
-        .iter()
-        .rev()
-        .find_map(state)
-        .and_then(|state| state.hard_stop.as_ref())
-        && stop.observation_digest
-            != review_observation_digest(head, &canonical_observations(&inventory_rows)?)?
-    {
-        return Err(invalid(
-            "correction cannot supersede a different attempted inventory",
-        ));
-    }
+    attempted_inventory::verify(
+        &corrected,
+        head,
+        &inventory_rows,
+        receipt.attempted_findings.as_deref(),
+        records
+            .iter()
+            .rev()
+            .find_map(state)
+            .and_then(|state| state.hard_stop.as_ref()),
+    )?;
     let blocking = |state: &ReviewLoopState| {
         state
             .findings
@@ -233,6 +247,8 @@ pub fn apply(
         ));
     }
     let inventory = canonical_observations(observations)?;
+    let attempted_findings =
+        attempted_inventory::canonicalize(request.attempted_findings.as_deref())?;
     if let Some(record) = chain
         .records
         .iter()
@@ -241,9 +257,17 @@ pub fn apply(
         && let ReviewStatePayload::ReviewLoopCorrection { state, correction } = &record.payload
         && correction.corrected_record == request.corrected_record
         && correction.reason == request.reason
+        && correction.attempted_findings == attempted_findings
         && state.head_sha == head
         && matches_inventory(state, &inventory)
     {
+        if super::super::pr_review_handoff::latest(chain).is_some_and(|handoff| {
+            record.assignment_generation != Some(handoff.assignment_generation)
+        }) {
+            return Err(invalid(
+                "a correction retry from an earlier assignment cannot establish a new interval; observe its ordinary inventory first",
+            ));
+        }
         return Ok(ReviewLoopTransition {
             state: state.clone(),
             changed: false,
@@ -273,6 +297,7 @@ pub fn apply(
         corrected_record: request.corrected_record.clone(),
         reason: request.reason.clone(),
         restored_findings,
+        attempted_findings,
     };
     let corrected = restore(&chain.records, head, &correction)?;
     if !matches_inventory(&corrected, &inventory) {
@@ -354,6 +379,7 @@ mod tests {
         let request = CorrectionRequest {
             corrected_record: erroneous.record_digest.clone(),
             reason: CorrectionReason::OmittedFindings,
+            attempted_findings: None,
         };
         let mut rows = rows;
         rows[1].status = ReviewFindingStatus::Fixed;
@@ -659,6 +685,7 @@ mod tests {
         let request = CorrectionRequest {
             corrected_record: records.last().unwrap().record_digest.clone(),
             reason: CorrectionReason::OmittedFindings,
+            attempted_findings: None,
         };
         let markers: Vec<_> = records.iter().map(|r| r.marker().unwrap()).collect();
         let chain = parse_chain(markers.iter().map(String::as_str), "acme/widgets", 7).unwrap();

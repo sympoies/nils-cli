@@ -1089,9 +1089,24 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   A matching unextended false-reopen stop
   may be cleared only for the identical attempted inventory; unrelated or already
   extended stops require their normal path.
-  A retry against the fresh corrected tip appends nothing. Chain parsing replays
-  the proof and rejects modified budgets or unrelated findings. Use a CLI version
-  that understands this new record kind to read a corrected chain.
+
+  If the original attempted rows used a lifecycle alias distinct from its root,
+  include those rows in optional `correction.attempted_findings`. They accept
+  the ordinary observation keys, including `lifecycle_fingerprint` and
+  `disposition`. Their digest must exactly match the stored stop, while their
+  canonical inventory must match the corrected dispositions, blocking bits,
+  roots, and threads. Proof without a false-reopen stop is refused.
+
+  The receipt retains normalized, sorted `attempted_findings` when supplied.
+  Omission of the optional proof leaves older receipt bytes unchanged.
+  Chain parsing replays the proof and rejects altered aliases, inventories,
+  budgets, or unrelated findings. Use a CLI version that understands this
+  record kind to read a corrected chain.
+
+  An identical retry against the fresh corrected tip appends nothing within
+  its original assignment. Reusing that receipt after reassignment fails as
+  `review_correction_invalid` before any provider write. Establish the new
+  reviewer interval with an ordinary observation inventory instead.
 - The default budget is five repair rounds, two consecutive no-progress rounds,
   and zero automatic reopens for a previously fixed lifecycle fingerprint.
   Same-head/same-findings retries append nothing. Only a new reviewed head

@@ -193,9 +193,12 @@ review_state_contract:
     chain: "one genesis; zero-based contiguous generations; previous_digest binds the unique prior record; byte-identical append retries are deduplicated, while conflicting duplicates, forks, stale, missing, or unreachable records fail as review_state_conflict"
   review_loop_correction:
     input_schema: forge-cli.review-loop-correction.v1
-    input: "existing observe findings-file wrapper; correction {corrected_record, reason: omitted-findings}; complete findings inventory; explicit current expected-state required"
+    input: "existing observe findings-file wrapper; correction {corrected_record, reason: omitted-findings, attempted_findings?}; complete canonical findings inventory; explicit current expected-state required"
     record_kind: review-loop-correction
     receipt_required: [corrected_record, reason, restored_findings]
+    receipt_optional: [attempted_findings]
+    attempted_findings: "optional original ordinary observation rows for an alias-bearing false-reopen stop; canonicalize input aliases and row order, preserve each lifecycle alias, require the stored attempted digest and identical canonical dispositions/blocking/roots/threads, and replay the normalized proof from the receipt; reject proof without a stop"
+    retry: "identical retry appends nothing only within the original assignment; an earlier-assignment correction cannot establish a new reviewer interval and is rejected before provider writes; observe ordinary inventory instead"
     admission: "chain-proven status-only omission at the current head; preserve history, lifecycle counters, budgets, and writer/head/tip gates; restore lost no-progress debt and its budget stop; allow only a matching unextended false-reopen stop; genuine reopens keep their budget fence"
     readback: "replay the correction against the prior chain; old records remain byte-identical; older clients must upgrade to understand the new record kind"
   review_run_receipt:
@@ -1007,6 +1010,7 @@ operations:
       - { name: --findings-file, type: path, required: true }
     validations:
       - review_findings_invalid
+      - review_correction_invalid
       - review_fingerprint_required
       - review_fingerprint_collision
     backends:
@@ -1014,7 +1018,7 @@ operations:
       gitlab: none
       local: none
     output:
-      data: object<{shape:enum<merge-envelope|observation-array>,row_count,identity_count,dispositions:[{disposition:enum<open|fixed|accepted|preference|follow-up>,count}],blocking_count,duplicate_identities?}>
+      data: object<{shape:enum<merge-envelope|observation-array|correction-envelope>,row_count,identity_count,dispositions:[{disposition:enum<open|fixed|accepted|preference|follow-up>,count}],blocking_count,duplicate_identities?}>
     notes: >-
       Provider-independent and network-free: the op takes no id, resolves no
       provider context, and runs no backend, so `--provider`, `--repo`,
