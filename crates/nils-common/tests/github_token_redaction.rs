@@ -36,14 +36,14 @@ macro_rules! case {
 }
 
 #[test]
-fn legacy_bare() {
+fn classic_bare() {
     for prefix in ["gho_", "ghp_", "ghu_", "ghs_", "ghr_"] {
         let token = format!("{prefix}{}", "a".repeat(36));
         check(&token, "[REDACTED]", 0, token.len());
     }
 }
 #[test]
-fn legacy_url() {
+fn classic_url() {
     let token = classic_token();
     let input = format!("https://x-access-token:{token}@example.invalid/repo");
     // The assignment redactor already removes the entire URL credential value.
@@ -91,7 +91,7 @@ fn ordinary_dotted_identifiers_are_unchanged() {
 }
 
 #[test]
-fn legacy_bearer() {
+fn classic_bearer() {
     let token = classic_token();
     let input = format!("Bearer {token}");
     check(&input, "[REDACTED]", 0, input.len());
@@ -105,7 +105,7 @@ fn stateless_bearer() {
 }
 
 #[test]
-fn legacy_sentence_punctuation_is_preserved() {
+fn classic_sentence_punctuation_is_preserved() {
     for prefix in ["gho_", "ghp_", "ghu_", "ghs_", "ghr_"] {
         let token = format!("{prefix}{}", "a".repeat(36));
         for suffix in [".", "-", ". next"] {
