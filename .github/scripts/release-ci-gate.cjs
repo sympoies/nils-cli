@@ -229,6 +229,79 @@ async function findTrustedMainCi({
   return trustedMainCiFromRuns({ github, context, runs, requiredChecks });
 }
 
+async function listMergeGroupRuns({ github, context, sha }) {
+  const fullName = `${context.repo.owner}/${context.repo.repo}`;
+  const runs = await listAll(
+    github,
+    github.rest.actions.listWorkflowRuns,
+    {
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      workflow_id: "ci.yml",
+      event: "merge_group",
+      head_sha: sha,
+      per_page: 100,
+    },
+    "workflow_runs",
+  );
+  return runs.filter(
+    (run) =>
+      run.event === "merge_group" &&
+      run.head_sha === sha &&
+      run.repository?.full_name === fullName,
+  );
+}
+
+async function trustedMergeGroupCiFromRuns({
+  github,
+  context,
+  runs,
+  requiredChecks = REQUIRED_CHECKS,
+  requireFullMarker = false,
+}) {
+  const trustedRuns = runs.filter(
+    (run) => run.status === "completed" && run.conclusion === "success",
+  );
+  if (trustedRuns.length !== 1) {
+    return null;
+  }
+
+  const run = trustedRuns[0];
+  if (
+    !(await hasSuccessfulRequiredJobs({
+      github,
+      context,
+      runId: run.id,
+      requiredChecks,
+      requireFullMarker,
+    }))
+  ) {
+    return null;
+  }
+
+  return { runId: run.id, runUrl: run.html_url };
+}
+
+async function findTrustedMergeGroupCi({
+  github,
+  context,
+  sha,
+  requiredChecks = REQUIRED_CHECKS,
+  requireFullMarker = false,
+}) {
+  if (!/^[0-9a-f]{40}$/i.test(sha || "")) {
+    return null;
+  }
+  const runs = await listMergeGroupRuns({ github, context, sha });
+  return trustedMergeGroupCiFromRuns({
+    github,
+    context,
+    runs,
+    requiredChecks,
+    requireFullMarker,
+  });
+}
+
 // Every same-repository `ci.yml` push run on `main` for exactly `sha`, in any
 // state. Trust and pending decisions both read this one listing.
 async function listMainPushRuns({ github, context, sha }) {
@@ -314,12 +387,21 @@ async function waitForTrustedMainCi({
   }
   const deadline = now() + deadlineMs;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const runs = await listMainPushRuns({ github, context, sha });
-    const trusted = await trustedMainCiFromRuns({ github, context, runs });
+    const [pushRuns, mergeGroupRuns] = await Promise.all([
+      listMainPushRuns({ github, context, sha }),
+      listMergeGroupRuns({ github, context, sha }),
+    ]);
+    const trusted = await trustedMainCiFromRuns({ github, context, runs: pushRuns }) ||
+      await trustedMergeGroupCiFromRuns({
+        github,
+        context,
+        runs: mergeGroupRuns,
+        requireFullMarker: true,
+      });
     if (trusted) {
       return trusted;
     }
-    if (!runs.some((run) => run.status !== "completed")) {
+    if (![...pushRuns, ...mergeGroupRuns].some((run) => run.status !== "completed")) {
       return null;
     }
     if (attempt === attempts) {
@@ -360,6 +442,38 @@ async function runReleaseGate({
   } catch (error) {
     core.warning(
       `Could not verify release PR CI provenance; falling back to exact-SHA check runs: ${error.message}`,
+    );
+  }
+
+  try {
+    const trusted = await findTrustedMergeGroupCi({
+      github,
+      context,
+      sha: context.sha,
+    });
+    if (trusted) {
+      core.info(
+        `Tagged commit ${context.sha} reuses trusted merge-group CI run ${trusted.runId}: ${trusted.runUrl}`,
+      );
+      return true;
+    }
+  } catch (error) {
+    core.warning(
+      `Could not verify merge-group CI provenance; checking push receipts and exact-SHA checks: ${error.message}`,
+    );
+  }
+
+  try {
+    const trusted = await findTrustedMainCi({ github, context, sha: context.sha });
+    if (trusted) {
+      core.info(
+        `Tagged commit ${context.sha} reuses trusted main push CI run ${trusted.runId}: ${trusted.runUrl}`,
+      );
+      return true;
+    }
+  } catch (error) {
+    core.warning(
+      `Could not verify main push CI provenance; falling back to exact-SHA check runs: ${error.message}`,
     );
   }
 
@@ -410,6 +524,7 @@ module.exports = {
   canonicalReleaseBranch,
   classifyLatestChecks,
   findTrustedMainCi,
+  findTrustedMergeGroupCi,
   findTrustedPullRequestCi,
   runReleaseGate,
   waitForTrustedMainCi,

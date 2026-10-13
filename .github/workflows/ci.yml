@@ -8,21 +8,24 @@ on:
   # A required merge queue runs every required check on its temporary merge
   # branch before landing the pull request.
   merge_group:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
 
-# A newer push to a pull request supersedes its older CI run. A main push run
-# is never cancelled while it is in progress, so every main commit that starts
-# CI gets a full verdict instead of a red "cancelled" mark; a newer push may
-# still replace a main run that is only pending. Merge-group runs are never
-# grouped.
+# A newer push to a pull request supersedes its older CI run. Merge-group runs
+# are never grouped. Main pushes run only the lightweight status lane; scheduled
+# and manually dispatched runs exercise the full workflow on main.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && 'main-push' || github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     # A release candidate waits at most 45 minutes (wall clock) for its base
-    # commit's push CI and then falls back to full CI. This bound only stops a
+    # commit's full CI receipt (merge-group, with legacy push support), then
+    # falls back to full CI. This bound only stops a
     # hung job: a timed-out changes job skips the required checks.
     timeout-minutes: 60
     permissions:
@@ -33,6 +36,7 @@ jobs:
       docs_only: ${{ steps.detect.outputs.docs_only }}
       head_sha: ${{ steps.detect.outputs.head_sha }}
       release_branch: ${{ steps.detect.outputs.release_branch }}
+      release_mode: ${{ steps.detect.outputs.release_mode }}
       release_candidate: ${{ steps.detect.outputs.release_candidate }}
       release_only: ${{ steps.finalize.outputs.release_only }}
     steps:
@@ -48,8 +52,8 @@ jobs:
           EVENT_SHA: ${{ github.sha }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
@@ -73,6 +77,10 @@ jobs:
             *) docs_only=false ;;
           esac
           release_candidate=false
+          release_mode=branch
+          if [ "${EVENT_NAME}" = "merge_group" ]; then
+            release_mode=merge-group
+          fi
           policy_dir="${RUNNER_TEMP}/release-policy"
           mkdir -p "${policy_dir}"
           release_detector="${policy_dir}/detect-release-only.sh"
@@ -85,17 +93,15 @@ jobs:
           else
             rm -f "${release_detector}" "${release_gate}"
           fi
-          if [ "${EVENT_NAME}" = "pull_request" ] && \
-             [ "${HEAD_REPOSITORY}" = "${REPOSITORY}" ] && \
+          if { [ "${EVENT_NAME}" = "pull_request" ] || [ "${EVENT_NAME}" = "merge_group" ]; } && \
+             { [ "${EVENT_NAME}" = "merge_group" ] || [ "${HEAD_REPOSITORY}" = "${REPOSITORY}" ]; } && \
              [ "${policy_available}" = "true" ] && \
-             [ -n "${HEAD_REF}" ]; then
-            release_candidate="$(
-              bash "${release_detector}" \
-                --base "${base}" \
-                --head "${head}" \
-                --branch "${HEAD_REF}" \
-                2>/dev/null || true
-            )"
+             { [ "${EVENT_NAME}" = "merge_group" ] || [ -n "${HEAD_REF}" ]; }; then
+            if [ "${EVENT_NAME}" = "merge_group" ]; then
+              release_candidate="$(bash "${release_detector}" --base "${base}" --head "${head}" --merge-group 2>/dev/null || true)"
+            else
+              release_candidate="$(bash "${release_detector}" --base "${base}" --head "${head}" --branch "${HEAD_REF}" 2>/dev/null || true)"
+            fi
           fi
           case "${release_candidate}" in
             true|false) ;;
@@ -105,8 +111,9 @@ jobs:
           echo "docs_only=${docs_only}" >> "$GITHUB_OUTPUT"
           echo "head_sha=${head}" >> "$GITHUB_OUTPUT"
           echo "release_branch=${HEAD_REF}" >> "$GITHUB_OUTPUT"
+          echo "release_mode=${release_mode}" >> "$GITHUB_OUTPUT"
           echo "release_candidate=${release_candidate}" >> "$GITHUB_OUTPUT"
-          echo "docs_only=${docs_only} release_candidate=${release_candidate} (base=${base}, head=${head})"
+          echo "docs_only=${docs_only} release_candidate=${release_candidate} release_mode=${release_mode} (base=${base}, head=${head})"
 
       - name: Prove full CI on exact base main commit
         id: base_ci
@@ -157,6 +164,7 @@ jobs:
           echo "release_only=${release_only}"
 
   cargo_deny:
+    if: github.event_name != 'push'
     name: cargo-deny (advisories + bans)
     runs-on: ubuntu-latest
     permissions:
@@ -174,6 +182,7 @@ jobs:
         run: bash scripts/ci/cargo-deny-audit.sh
 
   test:
+    if: github.event_name != 'push'
     needs: changes
     runs-on: ubuntu-24.04
     # Backstop for a hang outside a test, such as a stuck build, install, or
@@ -259,10 +268,15 @@ jobs:
               >"${policy_dir}/detect-release-only.sh"
             git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/release-only-checks.sh" \
               >"${policy_dir}/release-only-checks.sh"
+            mode_args=(--branch "${{ needs.changes.outputs.release_branch }}")
+            if [ "${{ needs.changes.outputs.release_mode }}" = "merge-group" ]; then
+              mode_args=(--merge-group)
+            fi
+            RELEASE_ONLY_DETECTOR="${policy_dir}/detect-release-only.sh" \
             bash "${policy_dir}/release-only-checks.sh" \
               --base "${{ needs.changes.outputs.base_sha }}" \
               --head "${{ needs.changes.outputs.head_sha }}" \
-              --branch "${{ needs.changes.outputs.release_branch }}"
+              "${mode_args[@]}"
           else
             bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
           fi
@@ -295,6 +309,7 @@ jobs:
   # beside `test` instead of in front of it. `coverage` requires this job, so a
   # failure here still blocks merge and the release gate.
   test_containment:
+    if: github.event_name != 'push'
     needs: changes
     runs-on: ubuntu-24.04
     # These steps run `cargo test`, so no nextest `slow-timeout` covers them and
@@ -354,6 +369,7 @@ jobs:
             -- --exact --nocapture
 
   test_macos:
+    if: github.event_name != 'push'
     needs: changes
     runs-on: macos-14
     # Backstop like the `test` job's, under the same two waits. The slowest of
@@ -445,10 +461,15 @@ jobs:
               >"${policy_dir}/detect-release-only.sh"
             git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/release-only-checks.sh" \
               >"${policy_dir}/release-only-checks.sh"
+            mode_args=(--branch "${{ needs.changes.outputs.release_branch }}")
+            if [ "${{ needs.changes.outputs.release_mode }}" = "merge-group" ]; then
+              mode_args=(--merge-group)
+            fi
+            RELEASE_ONLY_DETECTOR="${policy_dir}/detect-release-only.sh" \
             bash "${policy_dir}/release-only-checks.sh" \
               --base "${{ needs.changes.outputs.base_sha }}" \
               --head "${{ needs.changes.outputs.head_sha }}" \
-              --branch "${{ needs.changes.outputs.release_branch }}"
+              "${mode_args[@]}"
           else
             /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh
           fi
@@ -510,7 +531,7 @@ jobs:
     # A job skipped because a needed job failed concludes `skipped`, which a
     # required check accepts. Run anyway and fail below instead, because
     # test_containment is not itself a required check.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -564,7 +585,7 @@ jobs:
           path: target/coverage/coverage-summary.md
 
   coverage_badge:
-    if: github.event_name == 'push' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
     runs-on: ubuntu-latest
     needs:
       - changes
@@ -614,3 +635,28 @@ jobs:
 
           git commit -m "chore: update coverage badge"
           git push origin HEAD:coverage-badge
+
+  main_push:
+    if: github.event_name == 'push'
+    name: Main push status
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Record lightweight main update
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: echo "Main advanced to ${COMMIT_SHA}; full CI runs nightly and on demand."
+
+  nightly_failure_alert:
+    if: always() && github.event_name == 'schedule' && (needs.changes.result == 'failure' || needs.cargo_deny.result == 'failure' || needs.test.result == 'failure' || needs.test_containment.result == 'failure' || needs.test_macos.result == 'failure' || needs.coverage.result == 'failure' || needs.coverage_badge.result == 'failure')
+    name: Nightly full CI failure alert
+    needs: [changes, cargo_deny, test, test_containment, test_macos, coverage, coverage_badge]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Publish failure notification
+        run: |
+          echo "::error title=Nightly full CI failed::One or more full CI jobs failed on main."
+          echo "Nightly full CI failed on main. See the failed jobs in this workflow run." >> "$GITHUB_STEP_SUMMARY"
