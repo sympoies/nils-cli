@@ -352,24 +352,24 @@ fn nested_cursor_resume_is_a_fragment_not_whole_connection_completeness() {
 
 #[test]
 fn search_ceiling_is_explicit_even_after_all_accessible_rows() {
-    let args = args(CompletionKind::Issue);
-    let window = Window::new(&args).unwrap();
-    let query = window.query(&args, "").unwrap();
-    let mut progress = Cursor::new(cursor::scope(&ctx(), &query, &args));
-    progress.after = Some("S998".into());
-    progress.scanned = 998;
-    progress.total_count = Some(1001);
-    let fixture = Fixture::new(vec![page(
-        vec![
-            issue(999, "2030-01-01T12:00:00Z"),
-            issue(1000, "2030-01-01T12:00:00Z"),
-        ],
-        1001,
-        Some("S1000"),
-    )]);
-    let output =
-        serde_json::to_value(read(&fixture, &ctx(), "", args, window, query, progress)).unwrap();
+    let mut args = args(CompletionKind::Issue);
+    args.page_size = 100;
+    let pages = (0..10)
+        .map(|index| {
+            let last = (index + 1) * 100;
+            page(
+                (last - 99..=last)
+                    .map(|number| issue(number, "2030-01-01T12:00:00Z"))
+                    .collect(),
+                1001,
+                Some(&format!("S{last}")),
+            )
+        })
+        .collect();
+    let output = read_fixture(&Fixture::new(pages), args);
     assert_eq!(output["pagination"]["status"], "truncated");
+    assert_eq!(output["pagination"]["pages_read"], 10);
+    assert_eq!(output["pagination"]["scanned"], 1000);
     assert_eq!(output["pagination"]["search_ceiling"], true);
     assert_eq!(output["pagination"]["complete"], false);
     assert_eq!(output["pagination"]["next_cursor"], Value::Null);
