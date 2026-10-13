@@ -853,13 +853,14 @@ pub(crate) fn admit(context: &CliContext, args: WorkContextAdmitArgs) -> Result<
             Some(json!({ "evaluation": evaluation })),
         ));
     }
-    let activity = crate::activity::state_for_view(context, &record).ok_or_else(|| {
-        CliError::runtime(
-            "coordination-unavailable",
-            "controller-owned activity state is unavailable for operation admission",
-            None,
-        )
-    })?;
+    let activity =
+        crate::activity::controller_state_for_record(context, &record).ok_or_else(|| {
+            CliError::runtime(
+                "coordination-unavailable",
+                "controller-owned activity state is unavailable for operation admission",
+                None,
+            )
+        })?;
     if activity.phase != crate::activity::TurnPhase::Working {
         return Err(CliError::data(
             "operation-not-working",

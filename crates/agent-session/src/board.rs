@@ -467,13 +467,20 @@ fn project_turn_state(turn_state: &Map<String, Value>) -> Value {
     let source = object(turn_state, "source")
         .map(|source| json!({ "confidence": pick(&source, "confidence") }))
         .unwrap_or(Value::Null);
-    json!({
+    let mut projected = json!({
         "phase": pick(turn_state, "phase"),
         "phase_changed_at": pick(turn_state, "phase_changed_at"),
         "current_turn": current_turn,
         "last_turn": last_turn,
         "source": source,
-    })
+    });
+    if let Some(diagnostic) = object(turn_state, "diagnostic")
+        .as_ref()
+        .and_then(crate::activity::diagnostic_for_board)
+    {
+        projected["diagnostic"] = diagnostic;
+    }
+    projected
 }
 
 /// `(session_id, close_reason)` for every retained closed entry, in order.
