@@ -273,13 +273,19 @@ pub(crate) fn reminder(context: &CliContext, args: MessageReminderArgs) -> Resul
         &recipient_incarnation,
         &capability_file,
     )?;
+    let resolved = super::notification::resolve_drained_generation(
+        &mut locked.registry,
+        &record.id,
+        &recipient_incarnation,
+        now,
+    );
     let claimed = super::notification::claim_hook_reminder(
         &mut locked.registry,
         &record.id,
         &recipient_incarnation,
         now,
     );
-    if claimed.is_some() {
+    if claimed.is_some() || resolved {
         locked.save()?;
     }
     Ok(json!({

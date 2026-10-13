@@ -30,12 +30,11 @@ crates/agent-workflow-primitives/src/test_first_evidence.rs	impl	2156
 crates/agent-workflow-primitives/tests/integration/cli.rs	test	3672
 crates/codex-cli/src/agent/capsule.rs	impl	2626
 crates/codex-cli/tests/integration/execution_capsule.rs	test	3083
-crates/forge-cli/src/cli.rs	impl	3064
+crates/forge-cli/src/cli.rs	impl	2937
 crates/forge-cli/src/ops/inbox.rs	impl	2371
 crates/forge-cli/src/ops/pr_review.rs	impl	3930
 crates/forge-cli/src/ops/repo_bootstrap.rs	impl	2426
-crates/forge-cli/tests/integration/pr_deliver_chain.rs	test	3114
-crates/forge-cli/tests/integration/pr_merge.rs	test	3023
+crates/forge-cli/tests/integration/pr_deliver_chain.rs	test	3112
 crates/forge-cli/tests/integration/pr_pending_review.rs	test	3433
 crates/forge-cli/tests/integration/pr_review.rs	test	4840
 crates/git-cli/src/worktree/dirty_checkout_adoption.rs	impl	8302

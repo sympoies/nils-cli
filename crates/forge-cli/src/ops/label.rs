@@ -653,6 +653,11 @@ impl Catalog {
                     None,
                 ));
             }
+            // The compatibility merge hold is independent of ordinary workflow state.
+            // Membership/applicability above and the merge hold guard still apply.
+            if name == "state::do-not-merge" {
+                continue;
+            }
             if let Some(group) = self.group_for_label(name)
                 && group.exclusive
                 && let Some(previous) = seen_exclusive.insert(group.name.clone(), name.to_string())
