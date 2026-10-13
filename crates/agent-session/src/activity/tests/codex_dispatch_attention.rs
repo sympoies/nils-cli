@@ -50,11 +50,15 @@ impl Fixture {
         for path in [&policy, &config] {
             fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
         }
+        let helper = nils_test_support::bin::resolve("agent-session");
+        let dispatcher = nils_test_support::bin::resolve("agent-hook");
         let env = vec![
             EnvGuard::set(lock, "HOME", home.to_str().unwrap()),
             EnvGuard::set(lock, "XDG_CONFIG_HOME", config_home.to_str().unwrap()),
             EnvGuard::set(lock, "XDG_STATE_HOME", state_home.to_str().unwrap()),
             EnvGuard::remove(lock, "CODEX_HOME"),
+            EnvGuard::set(lock, "AGENT_SESSION_BIN", helper.to_str().unwrap()),
+            EnvGuard::set(lock, "AGENT_HOOK_BIN", dispatcher.to_str().unwrap()),
         ];
         assert_eq!(
             agent_hook::run_with_args([
@@ -72,7 +76,9 @@ impl Fixture {
         let doctor = run_resolved(
             "agent-hook",
             &["doctor", "--product", "codex", "--format", "json"],
-            &CmdOptions::new().without_ambient_managed_session_env(),
+            &CmdOptions::new()
+                .without_ambient_managed_session_env()
+                .with_env("AGENT_SESSION_BIN", helper.to_str().unwrap()),
         );
         assert_eq!(doctor.code, 0, "{}", doctor.stdout_text());
         assert_eq!(doctor.stdout_json()["data"][0]["status"], "converged");
