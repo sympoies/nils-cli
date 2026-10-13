@@ -2,6 +2,10 @@
 # and nullability deliberately remain distinct across the two concrete types.
 # Source: https://github.com/octokit/graphql-schema/blob/master/schema.graphql
 schema { query: Query }
+scalar ID
+scalar Int
+scalar String
+scalar Boolean
 scalar DateTime
 scalar URI
 interface Node { id: ID! }
