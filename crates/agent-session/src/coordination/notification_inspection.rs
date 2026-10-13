@@ -8,6 +8,7 @@ use crate::coordination::{
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct NotificationInspection {
     state: String,
+    delivery_state: &'static str,
     generation: u64,
     attempted_generation: u64,
     notified_generation: u64,
@@ -169,6 +170,13 @@ fn inspect(
     let queued_at_epoch = timestamp_or_none(receipt.queued_at_epoch);
     Some(NotificationInspection {
         state: receipt.state.clone(),
+        delivery_state: if live_unread_count == 0 {
+            "resolved"
+        } else if receipt.generation <= receipt.notified_generation {
+            "submitted"
+        } else {
+            "queued"
+        },
         generation: receipt.generation,
         attempted_generation: receipt.attempted_generation,
         notified_generation: receipt.notified_generation,
