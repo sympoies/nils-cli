@@ -2382,6 +2382,30 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':query -- Free-text query passed to the provider'\''s search primitive:_default' \
 && ret=0
 ;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'--kind=[Read closed issues or merged pull requests]:KIND:(issue pr)' \
+'--since=[Inclusive completion-window start, as an RFC 3339 timestamp]:TIMESTAMP:_default' \
+'--until=[Exclusive completion-window end, as an RFC 3339 timestamp]:TIMESTAMP:_default' \
+'--page-size=[Size of top-level and nested provider pages (1-100)]:PAGE_SIZE:_default' \
+'--max-pages=[Maximum search pages read in one call (1-10)]:MAX_PAGES:_default' \
+'--max-connection-pages=[Maximum pages read from each label or closing-reference connection (1-100)]:MAX_CONNECTION_PAGES:_default' \
+'--cursor=[Opaque continuation returned by a prior completion read]:CURSOR:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--exclude-forks[Exclude results whose canonical repository is a fork]' \
+'--exclude-archived[Exclude results whose canonical repository is archived]' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':query -- Structured provider query; repository qualifiers own scope:_default' \
+&& ret=0
+;;
 (refs-to)
 _arguments "${_arguments_options[@]}" : \
 '--limit=[Cap the number of cross-reference events scanned (default\: 30)]:LIMIT:_default' \
@@ -2415,6 +2439,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (prs)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(completions)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3610,6 +3638,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (refs-to)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -3811,7 +3843,7 @@ _forge-cli_commands() {
 'activity:Personal activity across forge repositories' \
 'label:Repository label catalog audit and ensure operations' \
 'inbox:Personal cross-repo work inbox' \
-'search:Full-text / reverse-reference search over issues and PRs' \
+'search:Full-text, completion-fact, and reverse-reference search over issues and PRs' \
 'repo:Repository helpers' \
 'security:GitHub security alert and configuration reads' \
 'identity:Explain or verify context-based forge identity selection' \
@@ -3980,7 +4012,7 @@ _forge-cli__subcmd__help_commands() {
 'activity:Personal activity across forge repositories' \
 'label:Repository label catalog audit and ensure operations' \
 'inbox:Personal cross-repo work inbox' \
-'search:Full-text / reverse-reference search over issues and PRs' \
+'search:Full-text, completion-fact, and reverse-reference search over issues and PRs' \
 'repo:Repository helpers' \
 'security:GitHub security alert and configuration reads' \
 'identity:Explain or verify context-based forge identity selection' \
@@ -4546,9 +4578,15 @@ _forge-cli__subcmd__help__subcmd__search_commands() {
     local commands; commands=(
 'issues:Full-text search over issues (\`gh search issues\`)' \
 'prs:Full-text search over pull requests (\`gh search prs\`)' \
+'completions:Read paginated closed issue or merged PR facts in a completion window' \
 'refs-to:List issues / PRs that reference a ref via cross-reference events' \
     )
     _describe -t commands 'forge-cli help search commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__search__subcmd__completions_commands] )) ||
+_forge-cli__subcmd__help__subcmd__search__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help search completions commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__search__subcmd__issues_commands] )) ||
 _forge-cli__subcmd__help__subcmd__search__subcmd__issues_commands() {
@@ -5866,20 +5904,32 @@ _forge-cli__subcmd__search_commands() {
     local commands; commands=(
 'issues:Full-text search over issues (\`gh search issues\`)' \
 'prs:Full-text search over pull requests (\`gh search prs\`)' \
+'completions:Read paginated closed issue or merged PR facts in a completion window' \
 'refs-to:List issues / PRs that reference a ref via cross-reference events' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli search commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__search__subcmd__completions_commands] )) ||
+_forge-cli__subcmd__search__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli search completions commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__search__subcmd__help_commands] )) ||
 _forge-cli__subcmd__search__subcmd__help_commands() {
     local commands; commands=(
 'issues:Full-text search over issues (\`gh search issues\`)' \
 'prs:Full-text search over pull requests (\`gh search prs\`)' \
+'completions:Read paginated closed issue or merged PR facts in a completion window' \
 'refs-to:List issues / PRs that reference a ref via cross-reference events' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'forge-cli search help commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__search__subcmd__help__subcmd__completions_commands] )) ||
+_forge-cli__subcmd__search__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli search help completions commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__search__subcmd__help__subcmd__help_commands] )) ||
 _forge-cli__subcmd__search__subcmd__help__subcmd__help_commands() {
