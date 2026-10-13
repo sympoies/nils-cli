@@ -1999,10 +1999,11 @@ backend implementations cannot diverge.
 18. **Merge freeze and merge queue (GitHub).** Right after the repository
     read, `pr merge` issues one GraphQL policy read (`ForgeMergePolicy`): the
     open issues labelled `merge-freeze`, the base branch's `mergeQueue`, and the
-    PR node id, queue membership, and state. The read is repeated immediately
-    before the merge or enqueue mutation, after the review-convergence and
-    review-loop rechecks, and the freeze gate runs again with the same
-    overrides. A freeze started while the gates ran therefore still blocks.
+    PR node id, queue membership, and state. The read is repeated after
+    review-convergence rechecks and before the final hold, stacked-branch, and
+    review-loop tip checks preceding merge or enqueue, and the freeze gate runs
+    again with the same overrides. A freeze started while the gates ran therefore
+    still blocks.
     - A failed or partial read fails closed with `merge_policy_unavailable`
       (`UNAVAILABLE 69`). One case is not a failure: a host whose schema has no
       merge queue (an older GitHub Enterprise Server) reports that `mergeQueue`
