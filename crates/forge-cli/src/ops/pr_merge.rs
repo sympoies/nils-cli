@@ -582,7 +582,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
     // read. Provider-side branch protection remains the atomic enforcement
     // layer for activity racing this final read and the merge mutation.
     if let Some(previous) = review_snapshot.as_ref() {
-        let final_snapshot = review_convergence::recheck_before_merge(
+        let final_snapshot = review_convergence::recheck_before_merge_with_thread_override(
             runner,
             ctx,
             args.id,
@@ -590,6 +590,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
             convergence_head,
             settings.review_policy,
             previous,
+            args.allow_unresolved_threads,
         )?;
         review_snapshot = Some(final_snapshot);
     }

@@ -704,7 +704,6 @@ fn pr_merge_keep_branch_conflicts_with_config_delete_branch_true() {
 fn pr_merge_gitlab_uses_api_merge_after_required_checks_pass() {
     let tempdir = make_gitlab_repo();
     let repo_path = tempdir.path().join("repo");
-
     let stub = StubEnv::new();
     let args_log = stub.tempdir.path().join("merge-args");
     let body = gitlab_merge_api_stub(&stub);
@@ -3021,3 +3020,4 @@ fi"#,
     assert!(!merged.exists());
     assert!(!enqueued.exists());
 }
+include!("pr_merge_native_observation.rs");
