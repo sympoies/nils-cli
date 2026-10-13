@@ -82,6 +82,7 @@ fn activity_stream_shadow_resampling_does_not_broadcast_unchanged_state() {
     state.phase_changed_at = "2026-10-07T00:00:15Z".into();
     state.diagnostic = Some(crate::activity::StreamActivityDiagnosticView {
         reason: "interrupted_suspected".into(),
+        quiet: None,
     });
     log.publish_snapshot(vec![resampled.clone()]);
     assert_eq!(
