@@ -1445,9 +1445,9 @@ pub(crate) fn run_heartbeat_sidecar(
             SECRET_FILE_MODE,
         )
         .map_err(|_| unavailable())?;
-        // First liveness is independent of registry maintenance. Empty queues
-        // do not enter the shared registry at all.
-        if super::heartbeat_state::load(context).is_ok_and(|state| state.completion_pending) {
+        // First liveness is independent of registry maintenance. A current empty
+        // projection skips the flock; older registry-only writes invalidate it.
+        if super::heartbeat_state::completion_drain_needed(context).is_ok_and(|needed| needed) {
             let _ = super::claims::drain_completion_events(context);
         }
         thread::sleep(Duration::from_secs(2));
@@ -2842,5 +2842,179 @@ mod tests {
             heartbeat_owner_authorization(&context, &args),
             HeartbeatAuthorization::Revoked
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn seed_completion_queue(
+        context: &CliContext,
+        record: &SessionRecord,
+    ) -> super::super::Registry {
+        let mut registry = super::super::read_registry_snapshot(context).unwrap();
+        registry.operations.push(
+            serde_json::from_value(json!({
+                "schema_version": "agent-session.operation-lease.v1",
+                "lease_id": "fixture-lease", "session_id": record.id,
+                "session_incarnation": "old", "claim_id": "fixture-claim",
+                "claim_revision": 1, "operation": "edit", "targets": [],
+                "state": "active", "revision": 1, "started_at": "",
+                "expires_at": "", "expires_at_epoch": now_epoch() + 1800,
+                "execution_token_digest": "fixture-token"
+            }))
+            .unwrap(),
+        );
+        registry.completion_events.push(
+            serde_json::from_value(json!({
+                "schema_version": "agent-session.operation-completion-event.v1",
+                "event_id": "fixture-event", "session_id": record.id,
+                "session_incarnation": "old", "lease_id": "fixture-lease",
+                "if_revision": 1, "execution_token_digest": "fixture-token",
+                "outcome": "pass", "idempotency_key": "fixture-completion",
+                "request_digest": "fixture-request", "created_at_epoch": now_epoch()
+            }))
+            .unwrap(),
+        );
+        registry
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn legacy_registry_only_completion_after_caller_loss_is_drained_by_new_sidecar() {
+        let temporary = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: temporary.path().join("state"),
+            host: None,
+        };
+        let mut identity = test_support::process_group_identity(unsafe { libc::getpgrp() });
+        identity["launch_id"] = json!("old");
+        let mut record = seed_retirable_broker(&context, identity.clone());
+        record.extra.insert("delete_tmux_identity".into(), identity);
+        crate::write_session_record(&context, &record).unwrap();
+        let capability_file = provision(&context, &record).unwrap();
+        assert!(
+            !super::super::heartbeat_state::load(&context)
+                .unwrap()
+                .completion_pending
+        );
+        let registry = seed_completion_queue(&context, &record);
+        // Emulate an older writer: commit the durable event under the fixture
+        // flock without touching the broker index, then lose the caller.
+        let held = super::super::lock_private_store(&context, "registry.lock").unwrap();
+        write_atomic(
+            &context.state_dir.join("coordination/registry.json"),
+            &serde_json::to_vec(&registry).unwrap(),
+            SECRET_FILE_MODE,
+        )
+        .unwrap();
+        drop(held);
+        let sidecar_context = context.clone();
+        let session = record.id.clone();
+        let sidecar = thread::spawn(move || {
+            run_heartbeat_sidecar(
+                &sidecar_context,
+                BrokerHeartbeatArgs {
+                    session,
+                    incarnation: "old".into(),
+                    generation: 1,
+                    capability_file,
+                    format: nils_common::cli_contract::OutputFormat::Json,
+                },
+            )
+        });
+        let started = Instant::now();
+        let completed = loop {
+            // An opened inode can be replaced before its private-file check;
+            // unavailable observation is not evidence that recovery failed.
+            if let Ok(registry) = super::super::read_registry_snapshot(&context)
+                && registry.completion_events.is_empty()
+            {
+                break Some(registry);
+            }
+            if started.elapsed() > Duration::from_secs(3) {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        let recovery_elapsed = started.elapsed();
+        fs::remove_file(crate::session_dir(&context, &record.id).join("session.json")).unwrap();
+        sidecar.join().unwrap().unwrap();
+        let registry = completed
+            .expect("durable older-writer completion remained hidden behind a stale false index");
+        assert_eq!(registry.operations[0].state, "completed");
+        assert!(
+            super::super::idempotency_replay(
+                &registry,
+                "fixture-completion",
+                &record.id,
+                "old",
+                "work-context-complete",
+                "fixture-request",
+            )
+            .unwrap()
+            .is_some()
+        );
+        eprintln!(
+            "fixture legacy_completion_recovery_ms={}",
+            recovery_elapsed.as_millis()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn legacy_registry_only_drain_reconciles_stale_true_after_empty_observation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: temporary.path().join("state"),
+            host: None,
+        };
+        let mut identity = test_support::process_group_identity(unsafe { libc::getpgrp() });
+        identity["launch_id"] = json!("old");
+        let record = seed_retirable_broker(&context, identity);
+        provision(&context, &record).unwrap();
+        let registry = seed_completion_queue(&context, &record);
+        {
+            let mut locked = lock_registry(&context).unwrap();
+            locked.registry = registry;
+            locked.save().unwrap();
+        }
+        assert!(
+            super::super::heartbeat_state::load(&context)
+                .unwrap()
+                .completion_pending
+        );
+        let mut registry = super::super::read_registry_snapshot(&context).unwrap();
+        assert_eq!(
+            super::super::claims::drain_completion_events_in_registry(&mut registry, now_epoch())
+                .unwrap(),
+            1
+        );
+        let held = super::super::lock_private_store(&context, "registry.lock").unwrap();
+        write_atomic(
+            &context.state_dir.join("coordination/registry.json"),
+            &serde_json::to_vec(&registry).unwrap(),
+            SECRET_FILE_MODE,
+        )
+        .unwrap();
+        drop(held);
+        assert_eq!(
+            super::super::claims::drain_completion_events(&context).unwrap(),
+            0
+        );
+        assert!(
+            !super::super::heartbeat_state::load(&context)
+                .unwrap()
+                .completion_pending,
+            "empty queue observation must clear stale true rather than rejoin the writer queue"
+        );
+        // The next heartbeat's actual queue predicate must avoid another lock,
+        // even with a contender holding it beyond the usual acquisition budget.
+        let held = super::super::lock_private_store(&context, "registry.lock").unwrap();
+        let started = Instant::now();
+        assert!(!super::super::heartbeat_state::completion_drain_needed(&context).unwrap());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        eprintln!(
+            "fixture second_empty_probe_ms={}",
+            started.elapsed().as_millis()
+        );
+        drop(held);
     }
 }

@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use nils_common::fs::{SECRET_FILE_MODE, write_atomic};
@@ -58,6 +59,47 @@ pub(super) struct State {
     schema_version: String,
     pub owners: BTreeMap<String, Owner>,
     pub completion_pending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion_registry: Option<RegistryStamp>,
+}
+
+/// Atomic registry replacement changes this stamp, including for an older
+/// writer that does not know about the index. It is observation, not authority.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct RegistryStamp {
+    device: u64,
+    inode: u64,
+    bytes: u64,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+}
+
+fn registry_stamp(path: &Path) -> Result<Option<RegistryStamp>, CliError> {
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(store_unavailable()),
+    };
+    let metadata = file.metadata().map_err(|_| store_unavailable())?;
+    if !metadata.is_file()
+        || metadata.len() > super::MAX_REGISTRY_BYTES
+        || metadata.mode() & 0o077 != 0
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.nlink() != 1
+    {
+        return Err(store_untrusted());
+    }
+    Ok(Some(RegistryStamp {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        bytes: metadata.len(),
+        modified_seconds: metadata.mtime(),
+        modified_nanoseconds: metadata.mtime_nsec(),
+    }))
 }
 
 impl State {
@@ -85,6 +127,7 @@ impl State {
                 })
                 .collect(),
             completion_pending: !registry.completion_events.is_empty(),
+            completion_registry: None,
         }
     }
 }
@@ -111,6 +154,33 @@ pub(super) fn load(context: &CliContext) -> Result<State, CliError> {
     Ok(State::from_registry(&super::read_registry_snapshot(
         context,
     )?))
+}
+
+/// Called only after publishing the heartbeat. A false bit is trusted only for
+/// the committed registry file observed by its writer or a locked queue drain.
+pub(super) fn completion_drain_needed(context: &CliContext) -> Result<bool, CliError> {
+    let state = load(context)?;
+    Ok(state.completion_pending
+        || state.completion_registry.is_none()
+        || state.completion_registry
+            != registry_stamp(&observational_root(context)?.join(super::REGISTRY_FILE))?)
+}
+
+/// Caller holds the registry flock and has observed the committed queue. Keep
+/// existing heartbeat authority (including failed-publication fences) intact.
+pub(super) fn refresh_completion(
+    context: &CliContext,
+    registry: &Registry,
+) -> Result<(), CliError> {
+    let root = observational_root(context)?;
+    let path = root.join(FILE);
+    let previous = read(&path)?;
+    let mut state = previous
+        .clone()
+        .unwrap_or_else(|| State::from_registry(registry));
+    state.completion_pending = !registry.completion_events.is_empty();
+    state.completion_registry = registry_stamp(&root.join(super::REGISTRY_FILE))?;
+    publish(&path, &state, previous.as_ref())
 }
 
 fn publish(path: &Path, state: &State, previous: Option<&State>) -> Result<(), CliError> {
@@ -154,7 +224,8 @@ fn persist_with_commit(
             Ok(bytes) => {
                 let committed: Registry =
                     serde_json::from_slice(&bytes).map_err(|_| store_corrupt())?;
-                let state = State::from_registry(&committed);
+                let mut state = State::from_registry(&committed);
+                state.completion_registry = registry_stamp(registry_path)?;
                 publish(&path, &state, None)?;
                 previous = Some(state);
             }
@@ -162,11 +233,12 @@ fn persist_with_commit(
             Err(_) => return Err(store_unavailable()),
         }
     }
-    let next = State::from_registry(registry);
+    let mut next = State::from_registry(registry);
     let mut fenced = previous.clone().unwrap_or_else(|| State {
         schema_version: VERSION.into(),
         owners: BTreeMap::new(),
         completion_pending: false,
+        completion_registry: None,
     });
     fenced.owners.retain(|id, owner| {
         next.owners
@@ -176,6 +248,7 @@ fn persist_with_commit(
     fenced.completion_pending |= next.completion_pending;
     publish(&path, &fenced, previous.as_ref())?;
     commit(bytes)?;
+    next.completion_registry = registry_stamp(registry_path)?;
     publish(&path, &next, Some(&fenced))
 }
 
@@ -184,7 +257,9 @@ pub(super) fn initialize(registry_path: &Path, registry: &Registry) -> Result<()
     // Only a mutating registry owner installs the pre-index projection. Read-only
     // observation never migrates or rewrites either file.
     if read(&path)?.is_none() {
-        publish(&path, &State::from_registry(registry), None)?;
+        let mut state = State::from_registry(registry);
+        state.completion_registry = registry_stamp(registry_path)?;
+        publish(&path, &state, None)?;
     }
     Ok(())
 }
@@ -192,7 +267,7 @@ pub(super) fn initialize(registry_path: &Path, registry: &Registry) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_ne};
     use serde_json::json;
 
     fn seed_registry() -> Registry {
@@ -268,17 +343,75 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_mailbox_commit_does_not_rewrite_heartbeat_authority() {
-        use std::os::unix::fs::MetadataExt;
+    fn mailbox_commit_refreshes_completion_stamp_without_changing_heartbeat_authority() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("registry.json");
         let mut registry = seed_registry();
         persist(&path, &registry, &serde_json::to_vec(&registry).unwrap()).unwrap();
         let state_path = path.with_file_name(FILE);
-        let inode = std::fs::metadata(&state_path).unwrap().ino();
+        let before = read(&state_path).unwrap().unwrap();
         registry.fingerprint_epoch = 2;
         persist(&path, &registry, &serde_json::to_vec(&registry).unwrap()).unwrap();
-        assert_eq!(std::fs::metadata(state_path).unwrap().ino(), inode);
+        let after = read(&state_path).unwrap().unwrap();
+        assert_eq!(after.owners, before.owners);
+        assert_ne!(after.completion_registry, before.completion_registry);
+        assert_eq!(after.completion_registry, registry_stamp(&path).unwrap());
+    }
+
+    #[test]
+    fn unstamped_legacy_index_observes_empty_queue_once_and_preserves_authority() {
+        let tmp = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().into(),
+            host: None,
+        };
+        let root = tmp.path().join("coordination");
+        fs::create_dir(&root).unwrap();
+        let registry = seed_registry();
+        let path = root.join(super::super::REGISTRY_FILE);
+        persist(&path, &registry, &serde_json::to_vec(&registry).unwrap()).unwrap();
+        let before = read(&root.join(FILE)).unwrap().unwrap();
+        // An existing index from before the stamp field is additive migration
+        // state, not corruption. Its false bit needs one committed observation.
+        let mut unstamped = serde_json::to_value(&before).unwrap();
+        unstamped
+            .as_object_mut()
+            .unwrap()
+            .remove("completion_registry");
+        write_atomic(
+            &root.join(FILE),
+            &serde_json::to_vec(&unstamped).unwrap(),
+            SECRET_FILE_MODE,
+        )
+        .unwrap();
+        assert!(completion_drain_needed(&context).unwrap());
+        refresh_completion(&context, &registry).unwrap();
+        let held = super::super::lock_private_store(&context, "registry.lock").unwrap();
+        assert!(!completion_drain_needed(&context).unwrap());
+        assert_eq!(load(&context).unwrap().owners, before.owners);
+        drop(held);
+    }
+
+    #[test]
+    fn empty_completion_refresh_keeps_failed_commit_authority_fences() {
+        let tmp = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: tmp.path().into(),
+            host: None,
+        };
+        let root = tmp.path().join("coordination");
+        fs::create_dir(&root).unwrap();
+        let path = root.join(super::super::REGISTRY_FILE);
+        let committed = seed_registry();
+        persist(&path, &committed, &serde_json::to_vec(&committed).unwrap()).unwrap();
+        let mut revoked = committed.clone();
+        revoked.brokers.clear();
+        assert!(
+            persist_with_commit(&path, &revoked, b"unused", |_| Err(store_unavailable())).is_err()
+        );
+        refresh_completion(&context, &committed).unwrap();
+        assert!(load(&context).unwrap().owners.is_empty());
+        assert!(!completion_drain_needed(&context).unwrap());
     }
 
     #[test]

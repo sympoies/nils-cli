@@ -430,8 +430,18 @@ registry snapshot fallback until a mutating registry owner installs the index.
 The registry remains the writer and transaction owner. It publishes reductions
 in heartbeat authority before registry commit and additions afterwards. Failed
 publication therefore denies liveness rather than retaining revoked authority.
+
 Completion work runs after heartbeat publication; an empty completion queue
-never acquires the registry. Read-only public snapshots open one validated
+skips the registry when its projection matches the committed registry file.
+The index records that file's device, inode, size and modification time. A
+registry-only atomic replacement by an older writer invalidates the projection,
+so the next beat performs a locked queue observation and refreshes the file stamp
+and pending bit
+even when the queue is empty. An existing unstamped index similarly needs one
+observation. These metadata probes never parse the registry or confer heartbeat
+authority.
+
+Read-only public snapshots open one validated
 atomic registry inode without taking or creating the writer lock.
 
 ## Scope grammar and canonicalization
