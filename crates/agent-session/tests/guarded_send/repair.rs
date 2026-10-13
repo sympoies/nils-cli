@@ -1,4 +1,6 @@
 //! Review regressions: native capture fidelity and zero-input refusal state.
+#[path = "appserver.rs"]
+mod appserver;
 use std::fs;
 use std::os::fd::AsRawFd;
 
