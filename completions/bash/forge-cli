@@ -5990,7 +5990,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__merge)
-            opts="-h --expected-head --expected-base --method --keep-branch --allow-non-default-base --allow-unresolved-threads --allow-unresolved-threads-reason --review-convergence --allow-no-checks --allow-no-checks-reason --allow-unchecked-tasks --allow-unchecked-tasks-reason --allow-merge-freeze --allow-merge-freeze-reason --queue-timeout --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --expected-head --expected-base --method --keep-branch --delete-branch-even-if-stacked --allow-non-default-base --allow-unresolved-threads --allow-unresolved-threads-reason --review-convergence --allow-no-checks --allow-no-checks-reason --allow-unchecked-tasks --allow-unchecked-tasks-reason --allow-merge-freeze --allow-merge-freeze-reason --queue-timeout --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
