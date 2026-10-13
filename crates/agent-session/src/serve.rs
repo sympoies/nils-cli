@@ -14506,19 +14506,19 @@ mod tests {
             .parse::<libc::pid_t>()
             .unwrap();
         let cleanup_deadline = Instant::now() + Duration::from_millis(500);
-        let result = loop {
+        let (result, error) = loop {
             // SAFETY: signal 0 only probes whether the dedicated process group remains.
             let result = unsafe { libc::kill(-process_group, 0) };
-            if result == -1 || Instant::now() >= cleanup_deadline {
-                break result;
+            let error = io::Error::last_os_error().raw_os_error();
+            // macOS can report EPERM while the group's zombies are being reaped.
+            // Only ESRCH proves disappearance within the existing cleanup budget.
+            if (result == -1 && error == Some(libc::ESRCH)) || Instant::now() >= cleanup_deadline {
+                break (result, error);
             }
             std::thread::sleep(Duration::from_millis(10));
         };
         assert_eq!(result, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        );
+        assert_eq!(error, Some(libc::ESRCH));
     }
 
     #[test]
