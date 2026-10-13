@@ -109,7 +109,7 @@ pub(super) fn github_merge_stub(
     )
 }
 
-fn review_loop_marker(with_open_finding: bool) -> String {
+pub(super) fn review_loop_marker(with_open_finding: bool) -> String {
     let mut findings = BTreeMap::new();
     if with_open_finding {
         findings.insert(
@@ -200,7 +200,7 @@ fn github_merge_stub_with_checks(
 /// The merge stub with a caller-provided merge-policy response and extra
 /// `api graphql` case arms (for the merge-queue enqueue and poll requests).
 #[allow(clippy::too_many_arguments)]
-fn github_merge_stub_full(
+pub(super) fn github_merge_stub_full(
     stub: &StubEnv,
     review_nodes: &str,
     thread_nodes: &str,
