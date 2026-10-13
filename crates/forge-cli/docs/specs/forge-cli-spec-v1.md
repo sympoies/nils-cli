@@ -2198,8 +2198,9 @@ report which field matched, which the GitHub path never does).
   slug; the resolved authority is selected separately through the call-local
   `GH_HOST` binding. `--match` defaults to `title,body,comments` and is
   narrowable. A body-only hit the structured `issue list` cannot surface is
-  returned; an empty result is a well-formed empty envelope. Structured query
-  qualifiers are separate backend keywords, preserving quoted values; empty
+  returned; an empty result is a well-formed empty envelope.
+
+  Structured query qualifiers are separate backend keywords, preserving quoted values; empty
   queries and unfinished quotes/escapes fail as `query_invalid`.
 - `search completions <query> --kind issue|pr --since <timestamp> --until <timestamp>`
   emits `cli.forge-cli.search.completions.v1` through paginated GraphQL reads.
