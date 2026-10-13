@@ -85,6 +85,8 @@ mod claude_completion;
 mod create_body;
 #[path = "serve_prompt_scan.rs"]
 mod prompt_scan;
+#[path = "serve_remote_outbox.rs"]
+mod remote_outbox;
 use create_body::CreateBody;
 #[path = "serve_shell.rs"]
 mod shell;
@@ -1172,7 +1174,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             return exit::RUNTIME;
         }
         let app = router(state.clone());
-        let federation_task = tokio::spawn(remote_outbox_loop(state.clone()));
+        let federation_task = tokio::spawn(remote_outbox::run(state.clone()));
         let codex_control_task = tokio::spawn(codex_control_loop(state.clone()));
         let auto_resume_task = tokio::spawn(auto_resume_loop(state.clone()));
         let auth_incident_task = tokio::spawn(auth_incident_loop(state.clone()));
@@ -12309,36 +12311,6 @@ async fn remote_receive_handler(
         Err(_) => join_err(),
     }
 }
-async fn remote_outbox_loop(state: Arc<ServeState>) {
-    let Some(config) = state.federation.clone() else {
-        return;
-    };
-    loop {
-        let context = state.context.clone();
-        let config = config.clone();
-        let deadline = match tokio::task::spawn_blocking(move || {
-            crate::coordination::remote::drain(&context, &config)
-        })
-        .await
-        {
-            Ok(Ok(value)) => value,
-            _ => Some(crate::coordination::now_epoch().saturating_add(5)),
-        };
-        // Notify retains an enqueue permit even if submission races with drain.
-        if let Some(deadline) = deadline {
-            let seconds = deadline
-                .saturating_sub(crate::coordination::now_epoch())
-                .max(0) as u64;
-            tokio::select! {
-                _ = state.remote_outbox_wake.notified() => {},
-                _ = tokio::time::sleep(Duration::from_secs(seconds)) => {},
-            }
-        } else {
-            state.remote_outbox_wake.notified().await;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     include!("serve_claude_completion_tests.rs");
@@ -14534,19 +14506,19 @@ mod tests {
             .parse::<libc::pid_t>()
             .unwrap();
         let cleanup_deadline = Instant::now() + Duration::from_millis(500);
-        let result = loop {
+        let (result, error) = loop {
             // SAFETY: signal 0 only probes whether the dedicated process group remains.
             let result = unsafe { libc::kill(-process_group, 0) };
-            if result == -1 || Instant::now() >= cleanup_deadline {
-                break result;
+            let error = io::Error::last_os_error().raw_os_error();
+            // macOS can report EPERM while the group's zombies are being reaped.
+            // Only ESRCH proves disappearance within the existing cleanup budget.
+            if (result == -1 && error == Some(libc::ESRCH)) || Instant::now() >= cleanup_deadline {
+                break (result, error);
             }
             std::thread::sleep(Duration::from_millis(10));
         };
         assert_eq!(result, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        );
+        assert_eq!(error, Some(libc::ESRCH));
     }
 
     #[test]
