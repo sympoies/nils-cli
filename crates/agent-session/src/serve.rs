@@ -12314,6 +12314,7 @@ async fn remote_receive_handler(
 #[cfg(test)]
 mod tests {
     include!("serve_claude_completion_tests.rs");
+    include!("serve_codex_idle_notification_tests.rs");
     #[path = "interrupt_tests.rs"]
     mod interrupt_tests;
     use axum::body::Body;
@@ -12328,7 +12329,6 @@ mod tests {
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::{Message as ClientMessage, client::IntoClientRequest};
     use tower::ServiceExt;
-
     const MACHINE: &str = "test-machine";
     const TOKEN: &str = "s3cr3t-token";
 
