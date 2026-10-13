@@ -365,11 +365,11 @@ clear producer-owned attention or influence authority selection.
 For Codex, a raw or unmanaged runtime selects `hook`; its generic
 `PermissionRequest` remains a conservative approval latch. An audited managed
 app-server runtime selects `protocol` and injects
-`AGENT_SESSION_ATTENTION_AUTHORITY=protocol`. The legacy guarded command
+`AGENT_SESSION_ATTENTION_AUTHORITY=protocol`. The guarded direct command
 suppresses its generic hook before invoking the helper, including when that
 helper predates authority-aware ingest.
 
-Protocol authority is unavailable until either the guarded legacy command or
+Protocol authority is unavailable until either the guarded direct command or
 one owned matcherless `agent-hook dispatch --product codex` permission group
 is verified, with no second direct reporter. Dispatcher ownership also requires
 converged `agent-hook doctor` evidence. Normalized dispatcher permission events

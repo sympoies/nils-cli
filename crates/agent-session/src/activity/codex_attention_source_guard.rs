@@ -1,5 +1,5 @@
 //! Codex permission ingress shares one immutable runtime authority across
-//! legacy raw hooks and normalized dispatcher events. Exact app-server events
+//! raw hooks and normalized dispatcher events. Exact app-server events
 //! retain their separate private protocol admission.
 use super::*;
 
