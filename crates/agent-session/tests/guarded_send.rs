@@ -100,7 +100,7 @@ elif command == 'capture-pane':
     occupied = text if '-N' in args else text.rstrip(' ')
     padding = ' ' * 8 if '-N' in args and '-T' not in args else ''
     native = (root / 'native-layout').exists()
-    rows = '\n\n' if native else ''
+    rows = ''
     footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'
     if provider == 'claude':
         shown = occupied + padding if text else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')

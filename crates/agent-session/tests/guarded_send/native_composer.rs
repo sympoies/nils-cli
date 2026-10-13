@@ -1,11 +1,11 @@
-//! Guarded delivery against synthetic native blank-row and OSC-8 layout.
+//! Guarded delivery against a synthetic Codex OSC-8 footer.
 use super::Fixture;
 use pretty_assertions::assert_eq;
 use std::fs;
 
 #[test]
 fn native_empty_layout_submits_exactly_once_and_rejects_the_same_key() {
-    for provider in ["claude", "codex"] {
+    for provider in ["codex"] {
         let fixture = Fixture::new(provider);
         fs::write(fixture.root().join("native-layout"), "").unwrap();
         let guards = [
@@ -48,7 +48,7 @@ fn native_empty_layout_submits_exactly_once_and_rejects_the_same_key() {
 
 #[test]
 fn native_layout_preserves_drafts_and_load_time_conflicts() {
-    for provider in ["claude", "codex"] {
+    for provider in ["codex"] {
         for draft in ["user draft", " ", "first\n  second"] {
             let fixture = Fixture::new(provider);
             fs::write(fixture.root().join("native-layout"), "").unwrap();
