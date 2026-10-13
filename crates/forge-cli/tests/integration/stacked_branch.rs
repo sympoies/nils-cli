@@ -25,6 +25,17 @@ fn merge_with_source(
     auto_delete: bool,
     source: Option<&str>,
 ) -> (super::support::CmdOutput, String) {
+    merge_with_metadata(gitlab, extra, response, auto_delete, source, None)
+}
+
+fn merge_with_metadata(
+    gitlab: bool,
+    extra: &[&str],
+    response: Option<&str>,
+    auto_delete: bool,
+    source: Option<&str>,
+    unknown_source: Option<bool>,
+) -> (super::support::CmdOutput, String) {
     let stub = StubEnv::new();
     let temp = if gitlab {
         make_gitlab_repo()
@@ -38,7 +49,29 @@ fn merge_with_source(
         github_merge_stub(&stub, "", "", false)
     };
     if let Some(source) = source {
-        script = script.replace("\"headRefName\":\"feat/reviews\"", &format!("\"headRefName\":\"feat/reviews\",\"headRepository\":{{\"nameWithOwner\":\"{source}\"}}"));
+        script = script.replace(
+            "\"headRepository\":{\"nameWithOwner\":\"acme/widgets\"}",
+            &format!("\"headRepository\":{{\"nameWithOwner\":\"{source}\"}}"),
+        );
+    }
+    if let Some(null) = unknown_source {
+        let (known, replacement) = if gitlab {
+            (
+                "\"source_project_id\": 1,",
+                if null {
+                    "\"source_project_id\": null,"
+                } else {
+                    ""
+                },
+            )
+        } else {
+            (
+                "\"headRepository\":{\"nameWithOwner\":\"acme/widgets\"},",
+                if null { "\"headRepository\":null," } else { "" },
+            )
+        };
+        assert!(script.contains(known), "explicit source fixture missing");
+        script = script.replace(known, replacement);
     }
     let row = if gitlab {
         r#"[{"iid":8,"web_url":"https://gitlab.example.com/group/project/-/merge_requests/8","state":"opened","target_branch":"feat/sample"}]"#
@@ -96,6 +129,40 @@ fn merge_with_source(
     let output = run_forge_cli_in(&stub, &args, Some(&temp.path().join("repo")));
     let merge_args = fs::read_to_string(log).unwrap_or_default();
     (output, merge_args)
+}
+
+fn assert_unknown_source_refuses_merge(gitlab: bool, null: bool) {
+    let (out, args) = merge_with_metadata(
+        gitlab,
+        &[],
+        Some(if gitlab { "[]" } else { "[[]]" }),
+        false,
+        None,
+        Some(null),
+    );
+    assert_eq!(out.code, 69, "{} {}", out.stderr, out.stdout);
+    assert_eq!(
+        parse_envelope(&out.stdout)["error"]["code"],
+        "branch_dependencies_unavailable"
+    );
+    assert!(args.is_empty(), "merge/cleanup mutation occurred: {args}");
+}
+
+#[test]
+fn github_missing_source_identity_refuses_merge() {
+    assert_unknown_source_refuses_merge(false, false);
+}
+#[test]
+fn github_null_source_identity_refuses_merge() {
+    assert_unknown_source_refuses_merge(false, true);
+}
+#[test]
+fn gitlab_missing_source_identity_refuses_merge() {
+    assert_unknown_source_refuses_merge(true, false);
+}
+#[test]
+fn gitlab_null_source_identity_refuses_merge() {
+    assert_unknown_source_refuses_merge(true, true);
 }
 
 #[test]

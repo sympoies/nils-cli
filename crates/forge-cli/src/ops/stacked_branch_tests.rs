@@ -52,6 +52,34 @@ fn row(gitlab: bool, number: u64) -> Value {
 }
 
 #[test]
+fn missing_source_identity_refuses_cleanup_before_provider_reads() {
+    for provider in [Provider::GitHub, Provider::GitLab] {
+        for overridden in [false, true] {
+            let runner = Runner::new(vec![if provider == Provider::GitHub {
+                "[[]]".into()
+            } else {
+                "[]".into()
+            }]);
+            assert_eq!(
+                check(
+                    &runner,
+                    &ctx(provider),
+                    "example/project",
+                    None,
+                    "feat/parent",
+                    7,
+                    overridden
+                )
+                .unwrap_err()
+                .kind(),
+                "branch_dependencies_unavailable"
+            );
+            assert!(runner.calls.borrow().is_empty());
+        }
+    }
+}
+
+#[test]
 fn gitlab_reads_next_page_and_uses_source_project_identity() {
     let first = Value::Array((10..110).map(|number| row(true, number)).collect());
     let runner = Runner::new(vec![
@@ -86,7 +114,7 @@ fn gitlab_later_page_failure_refuses_cleanup() {
             &runner,
             &ctx(Provider::GitLab),
             "example/project",
-            None,
+            Some("example/project"),
             "feat/parent",
             7,
             false
@@ -128,7 +156,7 @@ fn dependency_backend_failure_remains_fail_closed_with_override() {
                 &runner,
                 &ctx(provider),
                 "example/project",
-                None,
+                Some("example/project"),
                 "feat/parent",
                 7,
                 true
@@ -151,7 +179,7 @@ fn github_unknown_automatic_deletion_setting_refuses_merge() {
             &runner,
             &ctx(Provider::GitHub),
             "example/project",
-            None,
+            Some("example/project"),
             "feat/parent",
             7,
             false
@@ -205,7 +233,7 @@ fn github_enterprise_reads_use_the_selected_host() {
         &runner,
         &context,
         "example/project",
-        None,
+        Some("example/project"),
         "feat/parent",
         7,
         false,

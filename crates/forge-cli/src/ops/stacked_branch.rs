@@ -39,7 +39,7 @@ pub(crate) fn check<R: BackendRunner>(
     merging: u64,
     overridden: bool,
 ) -> Result<Option<BranchCleanup>, ForgeError> {
-    let source = source_repo.unwrap_or(target_repo);
+    let source = source_repo.ok_or_else(unavailable)?;
     let same_repository = source.eq_ignore_ascii_case(target_repo);
     let merging = same_repository.then_some(merging);
     let mut dependents = Vec::new();

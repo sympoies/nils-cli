@@ -249,7 +249,7 @@ case "$1 $2" in
   "pr view")
     case "$*" in
       *"--json mergeCommit "*) printf '%s\n' '{{"mergeCommit":{{"oid":"merge456"}}}}' ;;
-      *) printf '%s\n' '{{"number":7,"url":"https://github.com/acme/widgets/pull/7","state":"OPEN","isDraft":false,"baseRefName":"main","headRefName":"feat/reviews","headRefOid":"head123","title":"feat: reviews","body":""}}' ;;
+      *) printf '%s\n' '{{"number":7,"url":"https://github.com/acme/widgets/pull/7","state":"OPEN","isDraft":false,"baseRefName":"main","headRefName":"feat/reviews","headRepository":{{"nameWithOwner":"acme/widgets"}},"headRefOid":"head123","title":"feat: reviews","body":""}}' ;;
     esac
     ;;
   "repo view")
