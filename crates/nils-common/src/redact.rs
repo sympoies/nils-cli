@@ -3,7 +3,7 @@
 //! `redact_text` matches two regex families:
 //! - assignment-style secrets (`token=...`, `password: "..."`, etc.) where the
 //!   key is preserved and only the value is replaced;
-//! - bare token shapes (`sk-...`, `ghp_...`, `github_pat_...`, `xox?-...`,
+//! - bare token shapes (`sk-...`, `ghs_...`, `ghp_...`, `github_pat_...`, `xox?-...`,
 //!   `bearer ...`) where the entire match is replaced.
 //!
 //! The returned [`RedactedString`] carries both the rewritten value and the
@@ -64,6 +64,8 @@ pub fn assignment_secret_regex() -> &'static Regex {
     })
 }
 
+// GitHub bodies include JWT punctuation and may end in non-word characters.
+// Keep their full span; retain existing word boundaries for other token families.
 /// Regex that matches bare token shapes (OpenAI, GitHub, Slack, generic
 /// `bearer ...`).
 pub fn token_secret_regex() -> &'static Regex {
@@ -72,12 +74,16 @@ pub fn token_secret_regex() -> &'static Regex {
         Regex::new(
             r#"(?ix)
             \b(
-                sk-(?:proj-)?[A-Za-z0-9_-]{8,}
-                | ghp_[A-Za-z0-9_]{8,}
-                | github_pat_[A-Za-z0-9_]{8,}
-                | xox[baprs]-[A-Za-z0-9-]{8,}
-                | bearer\s+[A-Za-z0-9._~+/=-]{8,}
-            )\b
+                gh[opur]_[A-Za-z0-9_.-]{8,}
+                | ghs_[A-Za-z0-9_.-]{36,}
+                | bearer\s+(?:gh[opur]_[A-Za-z0-9_.-]{8,}|ghs_[A-Za-z0-9_.-]{36,})
+                | (?:
+                    sk-(?:proj-)?[A-Za-z0-9_-]{8,}
+                    | github_pat_[A-Za-z0-9_]{8,}
+                    | xox[baprs]-[A-Za-z0-9-]{8,}
+                    | bearer\s+[A-Za-z0-9._~+/=-]{8,}
+                )\b
+            )
             "#,
         )
         .expect("valid token secret regex")

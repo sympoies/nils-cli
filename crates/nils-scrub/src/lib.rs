@@ -68,7 +68,7 @@ fn patterns() -> &'static [Pattern] {
         vec![
             Pattern {
                 id: "github-token",
-                regex: Regex::new(r"gh[opusr]_[A-Za-z0-9_]{36,}").unwrap(),
+                regex: Regex::new(r"gh[opusr]_[A-Za-z0-9_.-]{36,}").unwrap(),
                 capture: 0,
             },
             Pattern {
