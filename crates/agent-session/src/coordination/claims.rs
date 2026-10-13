@@ -1039,6 +1039,8 @@ pub(crate) fn drain_completion_events(context: &CliContext) -> Result<usize, Cli
     let drained = drain_completion_events_in_registry(&mut locked.registry, now)?;
     if cleaned || drained > 0 {
         locked.save()?;
+    } else {
+        super::heartbeat_state::refresh_completion(context, &locked.registry)?;
     }
     Ok(drained)
 }
