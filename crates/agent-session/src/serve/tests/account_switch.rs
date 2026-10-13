@@ -1,4 +1,5 @@
 use super::*;
+use pretty_assertions::{assert_eq, assert_ne};
 
 #[test]
 fn claude_switch_preserves_unverified_replacement_cleanup_failure() {
@@ -84,12 +85,9 @@ fn resume_after_bounded_helper_exit(stale_heartbeat: bool) {
     test_support::seed_live_broker(&context, &record.id, &old, identity);
     if stale_heartbeat {
         let mut locked = crate::coordination::lock_registry(&context).unwrap();
-        locked
-            .registry
-            .brokers
-            .get_mut(&record.id)
-            .unwrap()
-            .heartbeat_epoch = 0;
+        let mut registry = serde_json::to_value(&locked.registry).unwrap();
+        registry["brokers"][record.id.as_str()]["heartbeat_epoch"] = json!(0);
+        locked.registry = serde_json::from_value(registry).unwrap();
         locked.save().unwrap();
         drop(locked);
         fs::remove_file(crate::coordination::heartbeat_path(
