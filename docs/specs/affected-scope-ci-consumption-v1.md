@@ -33,7 +33,9 @@ schema, and exact trees. Candidate launcher bytes never select a plan. Offline
 planning uses caller-provided tools/cache without fetching or compilation.
 
 Nonempty `READY/VALIDATE/SCOPED` runs strict Clippy for the selected packages,
-builds their binaries for sibling fixtures, and runs their nextest tests. Linux
+builds their binaries with all features for sibling fixtures, audits selected
+completion-required binaries against committed assets with the existing
+freshness audit and no additional build, and runs their nextest tests. Linux
 runs selected doctests. macOS runs selected instrumented tests for LCOV,
 explicitly excluding unselected workspace packages from the report. The
 configured 85% floor and test identity isolation remain. Cheap workspace audits
@@ -54,7 +56,10 @@ plan digest, effective scope,
 packages, fallback, runner, doctest choice, coverage floor, command, exit code,
 and PASS/FAIL. PASS and job output `validation_scope` are written only after the
 actual executor succeeds. Planner HOLD and passing full validation are separate
-facts. Full-validation markers are emitted only for actual FULL validation or
+facts. Executors do not receive `GITHUB_OUTPUT`; the consumer replaces the
+step's output with its authoritative scalar scope after success, or empties it
+after failure. Executor-written multiline framing cannot change that scope.
+Full-validation markers are emitted only for actual FULL validation or
 nightly/on-demand full routes, so scoped checks cannot prove full base CI to
 the release gate. Coverage still requires macOS LCOV and containment success.
 
@@ -68,6 +73,10 @@ equivalence and source races, external-driver/attribute holds, escalation/HOLD,
 missing base policy, malformed inputs, dirty source, failed checks, empty scope,
 admission reentry, and full-marker provenance. It does not claim live compiler,
 macOS, coverage, or hosted acceptance.
+
+`python3 scripts/ci/tests/merge-plan-ci-repairs.test.py` retains stale/regenerated
+selected completion controls, unavailable metadata failure, and fake executor
+output-framing regressions using the same offline Git/Cargo fixture.
 
 Rollout compares required-check duration, ready-to-merged time, and merges per
 day against preceding full runs, retaining exact inputs, scope, fallback, and

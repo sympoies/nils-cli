@@ -187,12 +187,19 @@ def run(repo, event_name, event, candidate, output, bash='bash'):
                'command': command, 'status': 'RUNNING'}
     (output / 'validation.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
     print(f'CI validation scope={scope} packages={",".join(packages)} fallback={fallback or "none"}', flush=True)
-    result = subprocess.run(command, cwd=repo)
+    github_output = os.environ.get('GITHUB_OUTPUT')
+    executor_env = dict(os.environ)
+    executor_env.pop('GITHUB_OUTPUT', None)
+    result = subprocess.run(command, cwd=repo, env=executor_env)
     receipt.update(status='PASS' if result.returncode == 0 else 'FAIL', exit_code=result.returncode)
     (output / 'validation.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
-    if result.returncode == 0 and os.environ.get('GITHUB_OUTPUT'):
-        with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
-            stream.write(f'validation_scope={scope}\n')
+    if github_output and (result.returncode == 0 or Path(github_output).exists()):
+        # This consumer owns the step's sole output. Replace executor-written
+        # framing rather than appending a delimiter that could turn SCOPED
+        # into a forged multiline FULL value; failed checks emit no scope.
+        with open(github_output, 'w') as stream:
+            if result.returncode == 0:
+                stream.write(f'validation_scope={scope}\n')
     return result.returncode
 
 

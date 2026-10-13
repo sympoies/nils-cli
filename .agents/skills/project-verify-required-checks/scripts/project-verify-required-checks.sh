@@ -196,6 +196,7 @@ fi
 
 run python3 scripts/ci/tests/gate-resources.test.py
 run python3 scripts/ci/tests/merge-plan-ci.test.py
+run python3 scripts/ci/tests/merge-plan-ci-repairs.test.py
 run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/node-scope.test.sh
 run bash scripts/ci/tests/install-local-release-binaries.test.sh

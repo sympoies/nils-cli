@@ -35,7 +35,39 @@ run bash scripts/ci/file-size-audit.sh --strict
 run bash scripts/ci/tempdir-leak-audit.sh
 run cargo fmt --all -- --check
 run cargo clippy "${package_args[@]}" --all-targets --all-features -- -D warnings
-run cargo build "${package_args[@]}" --bins
+run cargo build "${package_args[@]}" --bins --all-features
+
+# Source-only CLI changes can invalidate generated assets without triggering
+# FULL. Cover selected required binaries using the existing freshness audit;
+# never let its default workspace build expand this selected execution.
+completion_bins="$(cargo metadata --offline --locked --no-deps --format-version 1 | python3 -c '
+import json, sys
+from pathlib import Path
+metadata = json.load(sys.stdin)
+selected = set(sys.argv[1:])
+members = set(metadata["workspace_members"])
+packages = [p for p in metadata["packages"] if p["id"] in members]
+if not selected <= {p["name"] for p in packages}:
+    raise SystemExit("selected completion package missing from workspace")
+bins = {t["name"] for p in packages if p["name"] in selected
+        for t in p["targets"] if "bin" in t["kind"]}
+if bins:
+    rows = [line.split("|") for line in Path("docs/specs/completion-coverage-matrix-v1.md").read_text().splitlines()]
+    required = {row[1].strip().strip("`") for row in rows
+                if len(row) > 2 and row[2].strip() == "`required`"}
+    if not required:
+        raise SystemExit("completion matrix has no required binaries")
+    print("\n".join(sorted(bins & required)))
+' "$@")"
+completion_args=()
+while IFS= read -r binary; do
+  if [[ -n "$binary" ]]; then
+    completion_args+=(--bin "$binary")
+  fi
+done <<< "$completion_bins"
+if (( ${#completion_args[@]} > 0 )); then
+  run bash scripts/ci/completion-freshness-audit.sh --strict --skip-build "${completion_args[@]}"
+fi
 
 case "${NILS_CLI_TEST_RUNNER:-nextest}" in
   nextest)
