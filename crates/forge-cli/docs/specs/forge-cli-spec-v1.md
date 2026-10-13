@@ -1496,7 +1496,10 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
     convergence override: the latest typed state is bound to the exact merge
     head, has no active hard stop, and has no open blocking findings. Enabling
     review convergence requires an explicit genesis observation when no ledger
-    exists. The chain tip must remain unchanged through the final pre-merge
+    exists. Explicit `--review-convergence=false` permits an absent observation
+    even when a designated-review handoff exists; it does not waive an existing
+    observation or its designated-publication checks. The complete trusted
+    chain is still validated. The chain tip must remain unchanged through the final pre-merge
     recheck; there is no force/rationale bypass for existing state;
   - no non-outdated unresolved review threads (outdated unresolved threads
     are mechanically dispositioned `stale` and recorded, not blocking) OR
