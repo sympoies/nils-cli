@@ -11,6 +11,8 @@
 //! aggregate multiple machines. Literal keystroke text is never echoed.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+#[path = "serve/codex_quiet.rs"]
+mod codex_quiet;
 use std::convert::Infallible;
 use std::ffi::CString;
 use std::fmt;
@@ -7286,6 +7288,7 @@ async fn submit_structured_prompt_locked(
                 Some(json!({ "id": current.id })),
             ));
         }
+        codex_quiet::precheck(&lock_context, &current, notification_fence.is_some())?;
         crate::codex_account::authorize_input_locked(&lock_context, &mut current)?;
         auto_resume::cancel_for_manual_input_locked(
             &lock_context,
@@ -7294,10 +7297,7 @@ async fn submit_structured_prompt_locked(
         )?;
         crate::codex_account::ensure_input_allowed(&current)?;
         if let Some(fence) = notification_fence {
-            let eligible = actual_launch_id == fence.candidate.target_incarnation
-                && codex_app_server::runtime_is_supported(&current)
-                && activity::state_for_view(&lock_context, &current)
-                    .is_some_and(|state| state.phase == activity::TurnPhase::Waiting);
+            let eligible = codex_quiet::fenced_eligible(&lock_context, &current, &fence);
             let mut quiescence = crate::coordination::lock_session_quiescence(
                 &lock_context,
                 &fence.candidate.target_session_id,
@@ -8285,7 +8285,7 @@ async fn dispatch_coordination_notification(
     let turn = activity::state_for_view(&state.context, &record);
     let waiting = turn
         .as_ref()
-        .is_some_and(|turn| turn.phase == activity::TurnPhase::Waiting);
+        .is_some_and(activity::codex_notification_maybe_idle);
     if codex_app_server::runtime_is_supported(&record)
         && let Some(active_turn_id) = turn.as_ref().and_then(|turn| {
             (matches!(

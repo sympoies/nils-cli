@@ -230,6 +230,38 @@ as hook identifiers. A matching notification emits authoritative
 normalized event is built. Unknown notification types no-op; invalid, oversized,
 stale, or mismatched payloads fail open to Codex and cannot complete the turn.
 
+## Codex completion recovery and quiet projection
+
+If a start hook is missed, accepted progress can name a newer turn while the
+stored current-turn ID remains older. A bound authoritative completion can
+recover that ID only from the latest retained provider progress, in the same
+runtime and conversation. Attention, known older turns and newer work prevent
+recovery; a bare completion or Stop cannot supply the missing binding.
+
+Existing stuck snapshots recover on their first view read, including after
+daemon startup, when a retained completion still matches the latest progress.
+Without such proof, a Codex working view becomes inferred `unknown` after
+300 seconds without provider progress. The signal is
+`current_turn.last_progress_at`; snapshots lacking it use the observed turn
+start. Reads preserve stored provider history and use a stable quiet deadline.
+
+List, board and stream expose the raw progress timestamp and this additive
+diagnostic for a quiet projection:
+
+```json
+{"reason":"codex_progress_quiet","quiet_threshold_seconds":300,"quiet_since":"2026-10-13T12:00:00Z","quiet_signal":"current_turn.last_progress_at"}
+```
+
+Quiet is a possibly-idle scheduling hint, not completion or input authority.
+Native notification candidates must recheck the exact bound conversation's
+idle status, without reading turns, before input admission. Busy or unavailable
+providers stay queued; terminal recipients with unknown phase keep their existing refusal.
+Guarded terminal wake integration remains owned by #2432.
+
+Controller admission and active-lease renewal omit the quiet presentation
+heuristic, so long tools are not denied or expired because of missing progress.
+Runtime health and actual completion checks remain enforced.
+
 ## Turn state
 
 Example:
