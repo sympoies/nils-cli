@@ -405,3 +405,7 @@ async fn known_claude_mailbox_dispatch_keeps_missing_source_receipt_honest() {
 async fn known_claude_mailbox_dispatch_wakes_once_through_symlinked_projects_root() {
     known_claude_mailbox_fixture(false, true).await;
 }
+
+mod draft_guard {
+    include!("mailbox_draft.rs");
+}
