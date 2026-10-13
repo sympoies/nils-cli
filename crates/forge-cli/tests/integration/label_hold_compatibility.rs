@@ -9,12 +9,12 @@ use tempfile::TempDir;
 
 use super::support::{StubEnv, parse_envelope, run_forge_cli_in};
 
-const LEGACY_HOLD: &str = "state::do-not-merge";
+const COMPATIBILITY_HOLD: &str = "state::do-not-merge";
 const TARGETS: [LabelTarget; 3] = [LabelTarget::Issue, LabelTarget::Pr, LabelTarget::Mr];
 
 fn catalog() -> Value {
     let labels = [
-        LEGACY_HOLD,
+        COMPATIBILITY_HOLD,
         "state::ready",
         "state::review",
         "state::do-not-merge-later",
@@ -58,12 +58,15 @@ fn validate(
 }
 
 #[test]
-fn legacy_hold_and_one_state_are_valid_in_both_orders_for_every_target() {
+fn compatibility_hold_and_one_state_are_valid_in_both_orders_for_every_target() {
     for target in TARGETS {
         for group in ["state", "control"] {
             let mut catalog = catalog();
             catalog["labels"][0]["group"] = json!(group);
-            for labels in [[LEGACY_HOLD, "state::ready"], ["state::ready", LEGACY_HOLD]] {
+            for labels in [
+                [COMPATIBILITY_HOLD, "state::ready"],
+                ["state::ready", COMPATIBILITY_HOLD],
+            ] {
                 validate(&catalog, &labels, target).unwrap_or_else(|error| {
                     panic!("{target:?} {labels:?} (declared group {group}) rejected: {error}")
                 });
@@ -75,21 +78,21 @@ fn legacy_hold_and_one_state_are_valid_in_both_orders_for_every_target() {
 #[test]
 fn hold_alone_and_workflow_state_alone_are_valid() {
     for target in TARGETS {
-        for label in [LEGACY_HOLD, "state::ready"] {
+        for label in [COMPATIBILITY_HOLD, "state::ready"] {
             validate(&catalog(), &[label], target).unwrap();
         }
     }
 }
 
 #[test]
-fn two_ordinary_states_conflict_with_or_without_legacy_hold() {
+fn two_ordinary_states_conflict_with_or_without_compatibility_hold() {
     for target in TARGETS {
         for labels in [
             vec!["state::ready", "state::review"],
-            vec![LEGACY_HOLD, "state::ready", "state::review"],
-            vec!["state::ready", LEGACY_HOLD, "state::review"],
-            vec!["state::ready", "state::review", LEGACY_HOLD],
-            vec![LEGACY_HOLD, "state::ready", "state::ready"],
+            vec![COMPATIBILITY_HOLD, "state::ready", "state::review"],
+            vec!["state::ready", COMPATIBILITY_HOLD, "state::review"],
+            vec!["state::ready", "state::review", COMPATIBILITY_HOLD],
+            vec![COMPATIBILITY_HOLD, "state::ready", "state::ready"],
         ] {
             assert_eq!(
                 validate(&catalog(), &labels, target).unwrap_err().kind(),
@@ -105,7 +108,7 @@ fn lookalike_holds_and_other_exclusive_groups_are_not_exempt() {
         for labels in [
             vec!["state::ready", "state::do-not-merge-later"],
             vec!["type::bug", "type::feature"],
-            vec![LEGACY_HOLD, "type::bug", "type::feature"],
+            vec![COMPATIBILITY_HOLD, "type::bug", "type::feature"],
         ] {
             assert_eq!(
                 validate(&catalog(), &labels, target).unwrap_err().kind(),
@@ -116,12 +119,12 @@ fn lookalike_holds_and_other_exclusive_groups_are_not_exempt() {
 }
 
 #[test]
-fn legacy_hold_still_requires_catalog_membership_and_applicability() {
+fn compatibility_hold_still_requires_catalog_membership_and_applicability() {
     let mut missing = catalog();
     missing["labels"].as_array_mut().unwrap().remove(0);
     for target in TARGETS {
         assert_eq!(
-            validate(&missing, &[LEGACY_HOLD, "state::ready"], target)
+            validate(&missing, &[COMPATIBILITY_HOLD, "state::ready"], target)
                 .unwrap_err()
                 .kind(),
             "label_unknown"
@@ -131,7 +134,7 @@ fn legacy_hold_still_requires_catalog_membership_and_applicability() {
     pr_only["labels"][0]["applies_to"] = json!(["pr"]);
     for target in [LabelTarget::Issue, LabelTarget::Mr] {
         assert_eq!(
-            validate(&pr_only, &["state::ready", LEGACY_HOLD], target)
+            validate(&pr_only, &["state::ready", COMPATIBILITY_HOLD], target)
                 .unwrap_err()
                 .kind(),
             "label_not_applicable"
@@ -150,7 +153,12 @@ fn independent_hold_labels_coexist_with_one_workflow_state() {
         .unwrap();
         validate(
             &catalog(),
-            &[LEGACY_HOLD, "do-not-merge", "control::hold", "state::ready"],
+            &[
+                COMPATIBILITY_HOLD,
+                "do-not-merge",
+                "control::hold",
+                "state::ready",
+            ],
             target,
         )
         .unwrap();
@@ -159,7 +167,7 @@ fn independent_hold_labels_coexist_with_one_workflow_state() {
 
 #[test]
 fn held_pr_with_workflow_state_still_refuses_merge() {
-    for hold in [LEGACY_HOLD, "do-not-merge", "control::hold"] {
+    for hold in [COMPATIBILITY_HOLD, "do-not-merge", "control::hold"] {
         let repo = TempDir::new().unwrap();
         assert!(
             Command::new("git")
