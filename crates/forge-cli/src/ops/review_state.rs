@@ -19,6 +19,10 @@ use std::fmt::Write as _;
 
 use crate::error::ForgeError;
 
+#[cfg(test)]
+#[path = "review_state/observation_regressions.rs"]
+mod observation_regressions;
+
 pub const REVIEW_STATE_SCHEMA: &str = "forge-cli.review-loop.v1";
 const STATE_MARKER_OPEN: &str = "<!-- forge-cli:review-state:v1 ";
 const STATE_MARKER_CLOSE: &str = " -->";
