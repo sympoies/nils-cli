@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -82,7 +84,12 @@ pub(super) fn scope(
         args.exclude_archived,
     ))
     .expect("completion scope is JSON serializable");
-    format!("{:x}", Sha256::digest(bytes))
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(encoded, "{byte:02x}").expect("writing a digest to a string");
+    }
+    encoded
 }
 
 fn invalid() -> ForgeError {
