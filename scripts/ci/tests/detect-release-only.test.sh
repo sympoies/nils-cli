@@ -166,6 +166,69 @@ head_sha="$(git -C "$canonical" rev-parse HEAD)"
 
 assert_verdict "canonical release commit" true "$canonical" \
   --base "$base_sha" --head "$head_sha" --branch chore/release-1-2-4
+
+merge_group="$tmp_root/merge-group"
+write_base_fixture "$merge_group"
+merge_base_sha="$(git -C "$merge_group" rev-parse HEAD)"
+git -C "$merge_group" checkout -q -b chore/release-1-2-4
+write_release_commit "$merge_group"
+git -C "$merge_group" commit -q --amend \
+  -m "chore(release): bump cli versions to 1.2.4 (#2423)"
+merge_group_head="$(git -C "$merge_group" rev-parse HEAD)"
+assert_verdict "bump-only merge group" true "$merge_group" \
+  --base "$merge_base_sha" --head "$merge_group_head" --merge-group
+
+mixed_merge_group="$tmp_root/mixed-merge-group"
+cp -R "$merge_group" "$mixed_merge_group"
+printf 'unrelated\n' >"$mixed_merge_group/extra.txt"
+git -C "$mixed_merge_group" add extra.txt
+git -C "$mixed_merge_group" commit -q --amend --no-edit
+assert_verdict "mixed squash merge group" false "$mixed_merge_group" \
+  --base "$merge_base_sha" --head HEAD --merge-group
+
+multi_commit_merge_group="$tmp_root/multi-commit-merge-group"
+cp -R "$merge_group" "$multi_commit_merge_group"
+git -C "$multi_commit_merge_group" commit -q --allow-empty -m "chore: another queued change"
+assert_verdict "multi-commit merge group" false "$multi_commit_merge_group" \
+  --base "$merge_base_sha" --head HEAD --merge-group
+
+echo "== protected checker revalidates merge-group mode =="
+checker_repo="$merge_group"
+mkdir -p "$checker_repo/scripts/ci" "$checker_repo/scripts"
+cp "$repo_root/scripts/ci/release-only-checks.sh" \
+  "$checker_repo/scripts/ci/release-only-checks.sh"
+for helper in workspace-version-lockstep.sh publish-order-audit.sh; do
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$checker_repo/scripts/ci/$helper"
+done
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
+  >"$checker_repo/scripts/generate-third-party-artifacts.sh"
+fake_bin="$tmp_root/fake-bin"
+mkdir -p "$fake_bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fake_bin/cargo"
+chmod +x "$fake_bin/cargo"
+protected_dir="$tmp_root/protected-policy"
+mkdir -p "$protected_dir"
+protected_detector="$protected_dir/detect-release-only.sh"
+detector_args="$tmp_root/detector-args"
+cat >"$protected_detector" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$DETECTOR_ARGS"
+exec /bin/bash "$REAL_DETECTOR" "$@"
+EOF
+chmod +x "$protected_detector"
+(
+  cd "$checker_repo"
+  RELEASE_ONLY_DETECTOR="$protected_detector" \
+    DETECTOR_ARGS="$detector_args" REAL_DETECTOR="$script" \
+    PATH="$fake_bin:$PATH" \
+    /bin/bash scripts/ci/release-only-checks.sh \
+      --base "$merge_base_sha" --head "$merge_group_head" --merge-group
+)
+if ! rg -q --fixed-strings -- "--merge-group" "$detector_args"; then
+  echo "FAIL: protected checker forwards merge-group mode to the detector" >&2
+  exit 1
+fi
+echo "ok: protected checker forwards merge-group mode to the detector"
 assert_verdict "branch must match the target version" false "$canonical" \
   --base "$base_sha" --head "$head_sha" --branch chore/release-1-2-5
 assert_verdict "invalid base fails closed" false "$canonical" \

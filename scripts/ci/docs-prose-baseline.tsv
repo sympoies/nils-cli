@@ -20,7 +20,6 @@ crates/devlog/README.md	1	13
 crates/forge-cli/README.md	4	16
 crates/forge-cli/docs/specs/forge-cli-spec-v1.md	33	39
 crates/git-cli/README.md	1	15
-crates/macos-agent/README.md	1	28
 crates/nils-common/docs/specs/forge-identity-policy-v1.md	4	25
 docs/runbooks/workspace-maintenance-reference.md	1	28
 docs/specs/test-temp-directory-policy.md	1	15

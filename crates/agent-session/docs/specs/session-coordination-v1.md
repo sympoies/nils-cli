@@ -410,7 +410,76 @@ grant new authority.
 Broker projections use `agent-session.coordination-broker.v1` and expose only
 state (`starting`, `ready`, `degraded`, `lost`, `stopped`), generation,
 capability availability, heartbeat freshness, claim summary, and operation
-summary. They never expose a PID as authority, a credential path, or a token.
+summary, plus the additive receipt diagnostics below. They never expose a PID
+as authority, a credential path, or a token.
+
+`agent-session broker status --session ID --format json` places the projection
+at `data` in `cli.agent-session.broker-status.v1`. Existing fields and schema
+versions remain compatible. `data.session_incarnation` comes from the current
+session record; a broker from a different incarnation is unavailable.
+`--authenticated --capability-file FILE` retains the exact recipient capability
+and fresh-heartbeat checks. Both modes read one locked registry snapshot and
+never save normalization, renew a lease, acknowledge mail, claim a generation,
+probe the prompt controller, submit a prompt, or wake a recipient.
+
+`data.notification` is `null` when that incarnation has no receipt. Otherwise
+it contains only this fixed set of metadata fields:
+
+| Field | Meaning and source |
+| --- | --- |
+| `state` | Normalized receipt state: `queued`, `attempting`, `attempt_unknown`, `prompt_submitted`, or `undeliverable`. Submission is not consumption. Invalid stored states normalize to `undeliverable`. |
+| `generation`, `attempted_generation`, `notified_generation` | Nonnegative receipt counters; an older attempt remains distinct from a newer queued generation. |
+| `queued_at_epoch` | Current generation queue time, recovered when needed from canonical local unread admission metadata. Remote sender clocks are not used. |
+| `attempted_queued_at_epoch` | Queue time retained for the attempted prompt, independent of newer mail or transcript compaction. |
+| `attempted_at_epoch`, `updated_at_epoch`, `next_attempt_at_epoch` | Attempt, receipt update, and scheduled retry times from the normalized snapshot. Existing normalization may recover a missing update time or requeue a newer generation at observation time. |
+| `last_reason` | Existing stable reason allowlist; unrecognized text becomes `notification-state-invalid`. An absent reason is `null`. |
+| `live_unread_count` | Nonexpired canonical unread messages for the exact recipient incarnation. Remote senders count; read, acknowledged, expired, and other-incarnation messages do not. |
+| `resolved` | `live_unread_count == 0` or `generation <= notified_generation`. Drained mail can leave a queued but inert receipt; resolution alone proves neither submission nor acknowledgement. |
+| `controller_available` | `null`: status performs no controller probe, so availability is unknown. |
+| `source` | `registry: "canonical-local"`; `normalization_applied` reports changes to this incarnation's in-memory receipt snapshot. `queued_at` is `stored-receipt`, `canonical-unread-admission`, or `unavailable`. |
+| `observed_at_epoch` | Time the locked registry snapshot was observed. |
+
+All epoch values are absolute Unix times in whole seconds. Receipt timestamps
+with the historical zero sentinel, negative values, or values outside the supported
+timestamp range project as `null`. Recovery follows the existing notification
+normalization contract, including local forwarding/admission time; it changes
+only the projected snapshot. Attempts keep their retained queue timestamp.
+No raw stored reason, sender identity, message body, transcript, capability, or
+private path appears in this bounded diagnostic object. Receipt inspection
+makes reminder state observable; live wake and intermittent inbox acceptance
+remain separate delivery evidence.
+
+### Managed first-heartbeat readiness
+
+Provisioning commits a broker reservation in `ready` state before releasing the
+held launch. This reservation is not active presence or execution authority:
+the exact incarnation, capability, generation, runtime identity, and fresh
+identity-bound heartbeat remain required. The first beat and readiness check
+read the private `broker-state.json` index, which contains broker selectors and
+a completion-pending bit, without parsing retained mailbox data or acquiring
+the registry flock.
+
+The first-beat deadline remains two seconds, polled every
+20 ms; uncertain initial storage is retried within that budget rather than
+adding a two-second sleep. Existing pre-index state has a read-only atomic
+registry snapshot fallback until a mutating registry owner installs the index.
+
+The registry remains the writer and transaction owner. It publishes reductions
+in heartbeat authority before registry commit and additions afterwards. Failed
+publication therefore denies liveness rather than retaining revoked authority.
+
+Completion work runs after heartbeat publication; an empty completion queue
+skips the registry when its projection matches the committed registry file.
+The index records that file's device, inode, size and modification time. A
+registry-only atomic replacement by an older writer invalidates the projection,
+so the next beat performs a locked queue observation and refreshes the file stamp
+and pending bit
+even when the queue is empty. An existing unstamped index similarly needs one
+observation. These metadata probes never parse the registry or confer heartbeat
+authority.
+
+Read-only public snapshots open one validated
+atomic registry inode without taking or creating the writer lock.
 
 ## Scope grammar and canonicalization
 
@@ -636,6 +705,7 @@ Limits are normative:
 - expiry: 24 hours default, 7 days maximum;
 - per session: 256 messages and 4 MiB stored bytes;
 - per registry: 68 MiB stored bytes;
+- retained terminal mail: 1024 records and 4 MiB body bytes per registry;
 - send rate: 30 messages per sender-recipient pair per minute, burst 10;
 - inbox page: 50 default, 100 maximum;
 - wait: 60 seconds maximum;
@@ -648,6 +718,13 @@ Wait is cancellable, bounded, and returns on state/revision change
 without busy looping. HTTP cancellation releases its bounded wait worker rather
 than leaving a detached 60-second task. Cleanup never evicts live unread mail
 to admit new data; quota exhaustion returns a typed error.
+
+Full registry maintenance prunes expired replay receipts and compacts the oldest acknowledged,
+expired, or deleted mail until both terminal-history limits hold. This may
+shorten terminal audit history below its normal retention window. Live unread
+and read mail are preserved. Unexpired idempotency receipts retain their
+original replay window and are never evicted by history compaction. Registry
+writes use compact JSON; existing pretty-printed registries remain readable.
 
 Self-recursive/cyclic reply chains, invalid UTF-8, controls forbidden by the
 JSON contract, stale target incarnation, permission drift, corrupt state,
@@ -1263,9 +1340,10 @@ capabilities and bodies never appear in delivery status or diagnostic logs.
 Peer discovery returns raw `agent-session.remote-peers.v1`, with `peers` containing
 `machine`, `session_id`, `session_incarnation`, and `messaging_supported`.
 The optional `messaging_unavailable_reason` string may be absent or null.
-Recognized unsupported reasons are `daemon-unsupported`, `coordination-disabled`,
-and `coordination-unavailable`; missing, null, or unrecognized reasons use the
-generic unsupported observation without copying upstream text.
+Recognized reasons are `daemon-unsupported`, `coordination-disabled`, and
+`coordination-unavailable`; missing, null, or unrecognized reasons use the generic
+unsupported observation without copying upstream text. `coordination-unavailable`
+is transient rather than a definitive lack of messaging support.
 `GET /sessions` advertises `data.coordination.remote_messaging_supported`;
 per-session `coordination_mode` and `coordination.coordination_available` determine
 current recipient readiness.
@@ -1277,9 +1355,14 @@ An absent exact address in a valid snapshot returns
 using `message peers`. Absence may also reflect an omitted unavailable-host
 snapshot and does not prove deletion or lack of capability. Failed or invalid
 peer discovery retains `remote-messaging-unavailable`.
+
 A discovered exact peer whose `messaging_supported` is not true returns
-`remote-messaging-unsupported`. Neither refusal enqueues an envelope. Idempotent
-replay precedes discovery and keeps the original recipient incarnation.
+`remote-messaging-unsupported` for definitive or unknown unsupported reasons. An
+explicit `coordination-unavailable` row receives one fresh discovery attempt bound
+to the initially selected recipient incarnation. A persistent transient failure
+returns `remote-messaging-unavailable`; no replacement incarnation is selected.
+Neither refusal enqueues an envelope. Idempotent replay precedes discovery and
+keeps the original recipient incarnation.
 
 Source outbox submission returns a raw delivery projection (wrapped in the usual
 CLI envelope for CLI callers): `message_id`, `state`, `sender`, `recipient`,
@@ -1287,14 +1370,15 @@ CLI envelope for CLI callers): `message_id`, `state`, `sender`, `recipient`,
 `rejected`, or `delivery-unknown`. Network errors retry five seconds after the
 request finishes until expiry. Due entries are selected by their retry deadline,
 so a repeatedly timed-out entry cannot starve later messages. A retryable
-transport failure (`remote-messaging-unavailable`, `coordination-unavailable`)
+transport failure (`remote-messaging-unavailable`, `coordination-unavailable`,
+including an unsupported refusal explicitly classified as coordination unavailable)
 also defers every other already-attempted queued envelope for the same
 destination address (machine, session and incarnation) to the same retry
 deadline. An unavailable session or offline machine then costs one probe per
 destination session per retry interval and cannot delay due envelopes for other
 destinations. A fresh envelope still gets its own first attempt. The worker wakes
-on enqueue or the next pending deadline and sleeps indefinitely when no entries
-remain queued. No registry, journal or session lock spans network I/O.
+on enqueue or the next pending deadline and sleeps indefinitely when no queued
+envelopes or pending failure notices require work. No registry, journal or session lock spans network I/O.
 A source restart preserves the original envelope and
 recipient incarnation. Retries with the same idempotency key and content return
 the original identity without rediscovery; changed content is rejected. Only
@@ -1313,6 +1397,16 @@ including the case where the receiver saved the message but its response was los
 An admission rejection on the first attempt is `rejected`; after any prior
 unconfirmed attempt it is conservatively `delivery-unknown`, retaining the last
 reason. In particular, replacement after a lost response cannot prove nondelivery.
+
+Terminal session-origin failures are reconciled into one local sender-mailbox
+notice from the daemon's `agent-session-delivery` service origin. Its bounded
+body contains the original message ID, a fixed reason code, delivery inspection
+and retry guidance; it contains no original body, credential, or upstream error
+text. The original sender incarnation remains the recipient: replacement never
+retargets the notice. Existing mailbox admission and notifications apply. A
+stable notice ID and retained ingress receipt prevent duplication after restart
+or acknowledgement; unavailable notice persistence is retried without changing
+the original terminal delivery state or replaying its remote envelope.
 
 Destination receipts are retained until 24 hours after envelope expiry (maximum seven days),
 up to 4096 receipts; capacity rejects instead of evicting live deduplication IDs.

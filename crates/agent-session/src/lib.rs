@@ -38,7 +38,10 @@ pub mod provider_prompt;
 mod retitle;
 mod retitle_v3;
 mod runtime_environment;
+mod send;
+mod send_guard;
 mod send_submit;
+use send::{SendResult, load_and_paste_buffer_with_timeout, send_to_session};
 mod serve;
 mod serve_config;
 mod session_account;
@@ -1821,18 +1824,6 @@ struct LogsResult {
     id: String,
     source: String,
     text: String,
-}
-
-#[derive(Debug, Serialize)]
-struct SendResult {
-    id: String,
-    tmux_session: String,
-    sent_text: bool,
-    keys: Vec<String>,
-    /// Present when the send typed text and pressed exactly `enter`: what the
-    /// pane showed after the submit. A stuck prompt is an error instead.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    submission: Option<send_submit::SubmitReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -4786,147 +4777,6 @@ fn carries_literal_text(text: Option<&str>) -> bool {
     text.is_some_and(|text| !text_is_bare_newline(text))
 }
 
-fn send_to_session(context: &CliContext, args: cli::SendArgs) -> Result<SendResult, CliError> {
-    let text = read_send_text(&args.text, args.text_stdin)?;
-    if text.is_none() && args.keys.is_empty() {
-        return Err(CliError::usage(
-            "empty-send",
-            "send requires --text, --text-stdin, or at least one --key",
-            None,
-        ));
-    }
-    let observed = load_session_record(context, &args.id)?;
-    let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
-    let record_lock = acquire_session_record_lock(context, &observed.id)?;
-    let mut manual_input = ManualInputSection::new(record_lock);
-    let mut record = load_session_record(context, &observed.id)?;
-    ensure_same_session_identity(&observed, &record)?;
-    if live_status(&tmux_bin, &record.tmux_session) != "running" {
-        return Err(CliError::runtime(
-            "session-not-running",
-            format!("session is not running: {}", record.id),
-            Some(json!({ "id": record.id })),
-        ));
-    }
-    // Only input that types characters is gated. Special keys — including the
-    // `enter` that confirms a highlighted choice — stay admitted, because
-    // answering the dialog is the reason a blocked session remains addressable.
-    // The check sits inside the record lock and the lock is held through the
-    // pane write below, so the phase it refuses on is the phase the write would
-    // have landed in.
-    if carries_literal_text(text.as_deref()) && !args.allow_blocked {
-        activity::refuse_if_blocked(
-            context,
-            &record,
-            "answer the dialog with a special key, or resend with allow_blocked to type into it",
-        )?;
-    }
-    let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
-    if submits {
-        codex_app_server::ensure_manual_input_capability(context, &record)?;
-        codex_account::authorize_terminal_input_locked(context, &mut record)?;
-    }
-    auto_resume::cancel_for_manual_input_locked(
-        context,
-        &record.id,
-        &Timestamp::now().to_string(),
-    )?;
-    // Typed text followed by exactly one Enter is a prompt submission. Its
-    // Enter is pressed by the confirmation loop, which reads the composer back
-    // and retries a swallowed Enter, so the caller learns whether the prompt
-    // left the composer instead of assuming it did.
-    let submits_prompt = carries_literal_text(text.as_deref()) && args.keys == [SpecialKey::Enter];
-    let keys_after_paste: &[SpecialKey] = if submits_prompt { &[] } else { &args.keys };
-    let hold_started = Instant::now();
-    send_input_unlocked(
-        context,
-        &record,
-        text.as_deref(),
-        keys_after_paste,
-        &tmux_bin,
-        Some(&mut manual_input),
-        PasteMode::Bracketed,
-    )?;
-    let submission = if submits_prompt {
-        thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);
-        Some(confirm_prompt_submission(
-            context,
-            &record,
-            text.as_deref().unwrap_or_default(),
-            &tmux_bin,
-            &mut manual_input,
-            hold_started,
-        )?)
-    } else {
-        None
-    };
-    record.updated_at = Zoned::now().timestamp().to_string();
-    write_session_record(context, &record)?;
-    if let Some(report) = submission
-        && report.outcome == send_submit::SubmitOutcome::Stuck
-    {
-        return Err(CliError::runtime(
-            "send-submit-stuck",
-            format!(
-                "the text is still in the session's input box after {} enter presses: {}",
-                report.enter_presses, record.id
-            ),
-            Some(json!({
-                "id": record.id,
-                "outcome": report.outcome,
-                "enter_presses": report.enter_presses,
-            })),
-        ));
-    }
-    Ok(SendResult {
-        id: record.id.clone(),
-        tmux_session: record.tmux_session.clone(),
-        sent_text: text.is_some(),
-        keys: args
-            .keys
-            .iter()
-            .map(|key| key.as_str().to_string())
-            .collect(),
-        submission,
-    })
-}
-
-/// Press the submitting Enter for pasted `text` and confirm from the pane that
-/// it left the composer. Only Claude Code and Codex composers are recognized;
-/// any other provider gets the single Enter and an `unverified` outcome.
-fn confirm_prompt_submission(
-    context: &CliContext,
-    record: &SessionRecord,
-    text: &str,
-    tmux_bin: &Path,
-    manual_input: &mut ManualInputSection,
-    hold_started: Instant,
-) -> Result<send_submit::SubmitReport, CliError> {
-    let target = format!("{}:0.0", record.tmux_session);
-    let mut press_enter = || {
-        manual_input.arm(context, record)?;
-        send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
-    };
-    let Some(probe) = send_submit::probe(text) else {
-        press_enter()?;
-        return Ok(send_submit::SubmitReport {
-            outcome: send_submit::SubmitOutcome::Unverified,
-            enter_presses: 1,
-        });
-    };
-    send_submit::submit_and_confirm(
-        &record.agent,
-        &probe,
-        hold_started,
-        |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
-        || {
-            activity::state_for_view(context, record)
-                .is_none_or(|turn| turn.phase != activity::TurnPhase::NeedsInput)
-        },
-        press_enter,
-    )
-}
-
 /// The visible pane text, or `None` when tmux cannot answer.
 fn capture_visible_pane(tmux_bin: &Path, target: &str) -> Option<String> {
     capture_visible_pane_with_timeout(tmux_bin, target, PANE_OBSERVATION_COMMAND_TIMEOUT)
@@ -5257,87 +5107,6 @@ fn send_tmux_key_with_timeout(
         .arg(target)
         .arg(key.tmux_key());
     run_status_with_timeout(command, "tmux send-keys", timeout)
-}
-
-fn load_and_paste_buffer_with_timeout(
-    tmux_bin: &Path,
-    buffer_name: &str,
-    target: &str,
-    file: &Path,
-    timeout: Duration,
-    paste_mode: PasteMode,
-) -> Result<(), CliError> {
-    let mut load = ProcessCommand::new(tmux_bin);
-    load.arg("load-buffer").arg("-b").arg(buffer_name).arg(file);
-    run_status_with_timeout(load, "tmux load-buffer", timeout)?;
-
-    let paste = |raw_bytes: bool| {
-        let mut paste = ProcessCommand::new(tmux_bin);
-        paste.arg("paste-buffer");
-        if paste_mode == PasteMode::Bracketed {
-            paste.arg("-p");
-        }
-        // tmux 3.7 passes paste buffers through vis(3) unless `-S` is given,
-        // so forwarded terminal input (a mouse report, Alt-key, or Esc) would
-        // reach the pane as literal `^[` text.
-        if raw_bytes {
-            paste.arg("-S");
-        }
-        paste
-            .arg("-b")
-            .arg(buffer_name)
-            .arg("-d")
-            .arg("-t")
-            .arg(target);
-        paste
-    };
-    let label = "tmux paste-buffer";
-    let result = if paste_mode == PasteMode::Raw {
-        match run_output_with_timeout(paste(true), timeout) {
-            // tmux before 3.7 has no `-S` and does not sanitize pastes.
-            Ok(output)
-                if !output.status.success()
-                    && String::from_utf8_lossy(&output.stderr).contains("unknown flag -S") =>
-            {
-                run_status_with_timeout(paste(false), label, timeout)
-            }
-            output => exit_status_result(output.map(|output| output.status), label),
-        }
-    } else {
-        run_status_with_timeout(paste(false), label, timeout)
-    };
-    if let Err(err) = result {
-        delete_tmux_buffer(tmux_bin, buffer_name);
-        return Err(err);
-    }
-    Ok(())
-}
-
-fn read_send_text(text: &Option<String>, text_stdin: bool) -> Result<Option<String>, CliError> {
-    // Empty text (an empty `--text ""` or an empty stdin pipe) collapses to
-    // `None` so the caller's empty-send guard treats it as "no text" rather than
-    // pasting an empty buffer and reporting `sent_text: true` for a no-op. A
-    // whitespace-only value is preserved: a space can be a meaningful keystroke.
-    match (text, text_stdin) {
-        (Some(_), true) => Err(CliError::usage(
-            "multiple-text-sources",
-            "use only one of --text or --text-stdin",
-            None,
-        )),
-        (Some(value), false) => Ok(Some(value.clone()).filter(|value| !value.is_empty())),
-        (None, true) => {
-            let mut input = String::new();
-            io::stdin().read_to_string(&mut input).map_err(|err| {
-                CliError::runtime(
-                    "stdin-read-failed",
-                    format!("failed to read stdin: {err}"),
-                    None,
-                )
-            })?;
-            Ok(Some(input).filter(|value| !value.is_empty()))
-        }
-        (None, false) => Ok(None),
-    }
 }
 
 fn glance_session(context: &CliContext, args: cli::GlanceArgs) -> Result<GlanceResult, CliError> {

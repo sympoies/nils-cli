@@ -9,7 +9,8 @@
 
 ## Runbooks
 
-- None yet. Add documents under `docs/runbooks/` and register them here.
+- [`runbooks/backend-upgrade-v1.md`](runbooks/backend-upgrade-v1.md)
+  — stable permission identity, upgrade acceptance, rollback, and bounded cleanup.
 
 ## Reports
 

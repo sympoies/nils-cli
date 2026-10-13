@@ -24,7 +24,13 @@ fn exec_fixture_mode(
     fs::write(&payload, upstream.to_string()).expect("payload");
     fs::write(
         &fake,
-        "#!/bin/sh\ncat \"$FIXTURE_PAYLOAD\"\nexit \"$FIXTURE_EXIT\"\n",
+        concat!(
+            "#!/bin/sh\n",
+            "if [ \"$1 $2\" = 'permissions status' ]; then\n",
+            "  printf '%s\\n' '{\"success\":true,\"data\":{\"source\":\"local\",\"permissions\":[{\"name\":\"Screen Recording\",\"isRequired\":true,\"isGranted\":false}]}}'\n",
+            "  exit 0\nfi\n",
+            "cat \"$FIXTURE_PAYLOAD\"\nexit \"$FIXTURE_EXIT\"\n",
+        ),
     )
     .expect("fixture");
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).expect("chmod");
@@ -130,6 +136,60 @@ fn uncertain_coordinate_delivery_is_never_a_refusal_or_replay_candidate() {
     assert_eq!(step["status"], "unknown");
     assert_eq!(step["replay_class"], "never");
     assert_eq!(step["retries"], 0);
+}
+
+#[test]
+fn coordinate_permission_recheck_preserves_refusal_and_uncertainty() {
+    for dispatched in [Some(false), Some(true), None] {
+        let outcome = if dispatched == Some(false) {
+            json!({"effect":"refused", "refusal_reason":"permission_denied", "mutation_dispatched":false})
+        } else if dispatched == Some(true) {
+            json!({"effect":"unverifiable", "state":"indeterminate", "mutation_dispatched":true})
+        } else {
+            json!({})
+        };
+        let upstream = json!({"success":false, "outcome":outcome,
+            "error":{"code":"CAPTURE_FAILED", "message":"Synthetic capture failure"}});
+        let (code, result, step) = exec_fixture(
+            &["click", "--at", "20,30", "--foreground", "--json"],
+            &upstream,
+            1,
+        );
+        assert_eq!(
+            code, 70,
+            "coordinate failure keeps its reviewed exit contract"
+        );
+        assert_eq!(result["upstream"]["json"], upstream);
+        assert!(
+            result["upstream"]["diagnostic"]
+                .as_str()
+                .expect("permission diagnostic")
+                .contains("Screen Recording")
+        );
+        assert_eq!(
+            result["coordinate_click"]["dispatch"],
+            match dispatched {
+                Some(false) => "not_dispatched",
+                Some(true) => "dispatched",
+                None => "unknown",
+            }
+        );
+        if dispatched == Some(false) {
+            assert_eq!(step["status"], "failed");
+            assert_eq!(step["failure_class"], "upstream_refused");
+        } else {
+            assert_eq!(step["status"], "unknown");
+            assert_eq!(step["failure_class"], "unknown_mutation");
+            assert_eq!(step["replay_class"], "never");
+            assert!(
+                result["coordinate_click"]["guidance"]
+                    .as_str()
+                    .expect("guidance")
+                    .contains("Do not replay")
+            );
+        }
+        assert_eq!(step["retries"], 0);
+    }
 }
 
 #[test]

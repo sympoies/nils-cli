@@ -12,6 +12,10 @@ use super::{
 };
 use crate::{CliContext, CliError};
 
+#[path = "remote_delivery_notice.rs"]
+mod delivery_notice;
+pub(crate) use delivery_notice::State as NoticeState;
+
 const JOURNAL_VERSION: &str = "agent-session.federation-journal.v2";
 const EXTENDED_JOURNAL_VERSION: &str = "agent-session.federation-journal.v3";
 const AUDIT_JOURNAL_VERSION: &str = "agent-session.federation-journal.v4";
@@ -581,6 +585,17 @@ fn relay_error(value: &Value) -> CliError {
         .and_then(Value::as_str)
         .unwrap_or("remote-messaging-unavailable");
     let code = relay_reason_code(code).unwrap_or("remote-messaging-unavailable");
+    // Preserve only this fixed retry classification, never remote diagnostics.
+    let code = if code == "remote-messaging-unsupported"
+        && value
+            .pointer("/error/details/messaging_unavailable_reason")
+            .and_then(Value::as_str)
+            == Some("coordination-unavailable")
+    {
+        "coordination-unavailable"
+    } else {
+        code
+    };
     let details = (code == "quota-exceeded")
         .then(|| value.pointer("/error/details").and_then(Value::as_object))
         .flatten()
@@ -845,15 +860,23 @@ where
         let discovered = peers_from(config, &origin).inspect_err(|_| {
             observe_discovery_refusal(context, "peer-discovery-failed");
         })?;
-        let mut matching = discovered["peers"]
+        let matching = |peer: &&Value| {
+            peer["machine"] == args.to_machine && peer["session_id"] == args.to_session
+        };
+        let mut peer = discovered["peers"]
             .as_array()
             .expect("validated peers")
             .iter()
-            .filter(|p| p["machine"] == args.to_machine && p["session_id"] == args.to_session);
-        let peer = matching
-            .clone()
-            .find(|p| p["messaging_supported"] == true)
-            .or_else(|| matching.next())
+            .filter(matching)
+            .find(|peer| peer["messaging_supported"] == true)
+            .or_else(|| {
+                discovered["peers"]
+                    .as_array()
+                    .expect("validated peers")
+                    .iter()
+                    .find(matching)
+            })
+            .cloned()
             .ok_or_else(|| {
                 observe_discovery_refusal(context, "recipient-not-discovered");
                 CliError::data(
@@ -862,6 +885,32 @@ where
                     None,
                 )
             })?;
+        if peer["messaging_supported"] != true
+            && peer["messaging_unavailable_reason"] == "coordination-unavailable"
+        {
+            observe_discovery_refusal(context, "recipient-coordination-unavailable");
+            let expected = peer["session_incarnation"]
+                .as_str()
+                .ok_or_else(unavailable)?;
+            let refreshed = peers_from(config, &origin)?;
+            let mut exact = refreshed["peers"]
+                .as_array()
+                .expect("validated peers")
+                .iter()
+                .filter(matching)
+                .filter(|candidate| candidate["session_incarnation"] == expected);
+            peer = exact
+                .clone()
+                .find(|candidate| candidate["messaging_supported"] == true)
+                .or_else(|| exact.next())
+                .cloned()
+                .ok_or_else(unavailable)?;
+            if peer["messaging_supported"] != true
+                && peer["messaging_unavailable_reason"] == "coordination-unavailable"
+            {
+                return Err(unavailable());
+            }
+        }
         if peer["messaging_supported"] != true {
             let reason = match peer["messaging_unavailable_reason"].as_str() {
                 Some("daemon-unsupported") => "recipient-daemon-unsupported",
@@ -1141,7 +1190,16 @@ pub(crate) fn delivery(
         .ok_or_else(|| CliError::data("message-not-found", "delivery does not exist", None))?;
     Ok(projection(&item))
 }
+#[cfg(test)]
 pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>, CliError> {
+    drain_with_notice_state(context, config, &mut NoticeState::default())
+}
+
+pub(crate) fn drain_with_notice_state(
+    context: &CliContext,
+    config: &Config,
+    notices: &mut NoticeState,
+) -> Result<Option<i64>, CliError> {
     let items = {
         let mut locked = lock_journal(context)?;
         let now = now_epoch();
@@ -1259,21 +1317,29 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
         }
         locked.save()?;
     }
-    let locked = lock_journal(context)?;
-    let now = now_epoch();
-    Ok(locked
-        .registry
-        .remote_outbox
-        .iter()
-        .filter(|item| item.state == "queued" || item.retains_failed_service_body(now))
-        .map(|item| {
-            if item.state == "queued" {
-                item.next_attempt_epoch.min(item.envelope.expires_at_epoch)
-            } else {
-                item.envelope.expires_at_epoch
-            }
-        })
-        .min())
+    let deadline = {
+        let locked = lock_journal(context)?;
+        let now = now_epoch();
+        locked
+            .registry
+            .remote_outbox
+            .iter()
+            .filter(|item| item.state == "queued" || item.retains_failed_service_body(now))
+            .map(|item| {
+                if item.state == "queued" {
+                    item.next_attempt_epoch.min(item.envelope.expires_at_epoch)
+                } else {
+                    item.envelope.expires_at_epoch
+                }
+            })
+            .min()
+    };
+    // Reconcile local notices only after dropping the journal guard. Their
+    // persistence cannot change the terminal delivery state or trigger a relay retry.
+    let notice_deadline = notices
+        .reconcile(context, config)
+        .unwrap_or_else(|_| Some(now_epoch().saturating_add(RETRY_SECS)));
+    Ok(deadline.into_iter().chain(notice_deadline).min())
 }
 /// Destination admission. Quota refusals name this host as the destination.
 pub(crate) fn receive<F: Into<Origin>>(
@@ -1848,6 +1914,10 @@ fn receive_replay(
 mod inbox_regressions;
 
 #[cfg(test)]
+#[path = "remote_delivery_failure_regressions.rs"]
+mod delivery_failure_regressions;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::{assert_eq, assert_ne};
@@ -2075,7 +2145,7 @@ mod tests {
                 false,
                 Some("coordination-unavailable"),
                 true,
-                "remote-messaging-unsupported",
+                "remote-messaging-unavailable",
                 "recipient-coordination-unavailable",
             ),
             (
@@ -2226,7 +2296,7 @@ mod tests {
             reply_depth: 0,
         }
     }
-    fn config() -> Config {
+    pub(super) fn config() -> Config {
         Config {
             machine: "destination".into(),
             url: "http://127.0.0.1:1".into(),
@@ -2902,7 +2972,7 @@ mod tests {
         super::super::lock_registry_observational(&context)
             .expect("existing reader still available");
     }
-    fn own_outbox(key: &str, state: &str) -> Outbox {
+    pub(super) fn own_outbox(key: &str, state: &str) -> Outbox {
         let mut message = envelope();
         message.from = Address {
             machine: "destination".into(),
@@ -3318,5 +3388,284 @@ mod tests {
             1,
             "body-free dedup identity retained"
         );
+    }
+
+    // Two bounded loopback snapshots; no provider or external host is contacted.
+    fn two_snapshot_discovery(
+        snapshots: [Value; 2],
+    ) -> (Config, std::thread::JoinHandle<Result<(), &'static str>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut configuration = config();
+        configuration.url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            for snapshot in snapshots {
+                let mut stream = loop {
+                    if std::time::Instant::now() >= deadline {
+                        return Err("snapshot accept deadline");
+                    }
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(5))
+                        }
+                        Err(_) => return Err("snapshot accept failed"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(100)))
+                    .map_err(|_| "snapshot read setup")?;
+                stream
+                    .set_write_timeout(Some(Duration::from_millis(100)))
+                    .map_err(|_| "snapshot write setup")?;
+                let mut request = Vec::new();
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    if std::time::Instant::now() >= deadline {
+                        return Err("snapshot read deadline");
+                    }
+                    let mut bytes = [0; 1024];
+                    match stream.read(&mut bytes) {
+                        Ok(0) => return Err("snapshot request ended"),
+                        Ok(count) => request.extend_from_slice(&bytes[..count]),
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            continue;
+                        }
+                        Err(_) => return Err("snapshot request read"),
+                    }
+                    if request.len() > 8192 {
+                        return Err("snapshot request bound");
+                    }
+                }
+                if !request.starts_with(b"GET /api/coordination/peers/v1?") {
+                    return Err("snapshot request route");
+                }
+                let body = snapshot.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .map_err(|_| "snapshot response write")?;
+            }
+            Ok(())
+        });
+        (configuration, server)
+    }
+
+    #[test]
+    fn refreshed_discovery_prefers_supported_row_in_same_incarnation() {
+        let (_temp, context) = fixture();
+        let row = |supported| {
+            json!({
+                "machine":"remote-machine", "session_id":"remote-recipient",
+                "session_incarnation":"selected-incarnation", "messaging_supported":supported,
+                "messaging_unavailable_reason": if supported { None } else { Some("coordination-unavailable") }
+            })
+        };
+        let (configuration, server) = two_snapshot_discovery([
+            json!({"schema_version":"agent-session.remote-peers.v1","peers":[row(false)]}),
+            json!({"schema_version":"agent-session.remote-peers.v1","peers":[
+                row(false),
+                {"machine":"remote-machine","session_id":"remote-recipient",
+                 "session_incarnation":"replacement-incarnation","messaging_supported":true},
+                row(true)
+            ]}),
+        ]);
+        let queued = submit(
+            &context,
+            &configuration,
+            "recipient",
+            TOKEN,
+            Submit {
+                to_machine: "remote-machine".into(),
+                to_session: "remote-recipient".into(),
+                body: "bounded discovery fixture".into(),
+                idempotency_key: "refreshed-duplicate".into(),
+                reply_to: None,
+                expires_in: None,
+                reply_revision: None,
+                expected_recipient_incarnation: None,
+                category: None,
+                forward: None,
+            },
+        )
+        .expect("supported duplicate of selected incarnation");
+        server
+            .join()
+            .expect("bounded snapshot thread")
+            .expect("both snapshots served");
+        assert_eq!(queued["state"], "queued");
+        assert_eq!(
+            queued["recipient"]["session_incarnation"],
+            "selected-incarnation"
+        );
+        let journal = lock_journal(&context).unwrap();
+        assert_eq!(journal.registry.remote_outbox.len(), 1);
+        assert_eq!(
+            journal.registry.remote_outbox[0]
+                .envelope
+                .to
+                .session_incarnation,
+            "selected-incarnation"
+        );
+    }
+
+    #[test]
+    fn quota_blocked_notice_does_not_starve_another_sender() {
+        let (_temp, context) = fixture();
+        let second = "second-sender";
+        let second_incarnation = "second-sender-incarnation";
+        let directory = context
+            .state_dir
+            .join("sessions")
+            .join(second)
+            .join("coordination");
+        fs::create_dir_all(&directory).unwrap();
+        fs::set_permissions(
+            directory.parent().unwrap(),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut record: Value = serde_json::from_slice(
+            &fs::read(context.state_dir.join("sessions/recipient/session.json")).unwrap(),
+        )
+        .unwrap();
+        record["id"] = json!(second);
+        record["runtime"]["launch_id"] = json!(second_incarnation);
+        write_atomic(
+            &directory.parent().unwrap().join("session.json"),
+            &serde_json::to_vec(&record).unwrap(),
+            SECRET_FILE_MODE,
+        )
+        .unwrap();
+        write_atomic(
+            &super::super::capability_path(&context, second, second_incarnation),
+            TOKEN.as_bytes(),
+            SECRET_FILE_MODE,
+        )
+        .unwrap();
+        write_atomic(
+            &directory.join("heartbeat"),
+            format!("{second_incarnation}:{}\n", now_epoch()).as_bytes(),
+            SECRET_FILE_MODE,
+        )
+        .unwrap();
+        receive(&context, &config().machine, envelope()).unwrap();
+        {
+            let mut registry = lock_registry(&context).unwrap();
+            let mut broker = registry.registry.brokers["recipient"].clone();
+            broker.session_id = second.into();
+            broker.incarnation = second_incarnation.into();
+            registry.registry.brokers.insert(second.into(), broker);
+            let seed = registry.registry.messages[0].clone();
+            for _ in 1..256 {
+                registry
+                    .registry
+                    .messages
+                    .push(super::super::mailbox::StoredMessage {
+                        message_id: uuid::Uuid::new_v4().to_string(),
+                        ..seed.clone()
+                    });
+            }
+            registry.save().unwrap();
+        }
+        let mut blocked = own_outbox("blocked-notice", "rejected");
+        blocked.reason = Some("remote-messaging-unsupported".into());
+        blocked.attempts = 1;
+        blocked.state_changed_at_epoch = Some(now_epoch());
+        let first_id = blocked.envelope.message_id.clone();
+        let mut other = own_outbox("other-notice", "rejected");
+        other.envelope.from = Origin::Session(Address {
+            machine: config().machine,
+            session_id: second.into(),
+            session_incarnation: second_incarnation.into(),
+        });
+        other.reason = Some("remote-messaging-unsupported".into());
+        other.attempts = 1;
+        other.state_changed_at_epoch = Some(now_epoch());
+        let other_id = other.envelope.message_id.clone();
+        let journal_path = {
+            let mut journal = lock_journal(&context).unwrap();
+            journal.registry.remote_outbox.extend([blocked, other]);
+            journal.save().unwrap();
+            journal.path.clone()
+        };
+        let source_bytes = fs::read(&journal_path).unwrap();
+        let before = now_epoch();
+        let retry = drain(&context, &config())
+            .unwrap()
+            .expect("blocked sender retry");
+        assert!((before + RETRY_SECS..=now_epoch() + RETRY_SECS).contains(&retry));
+        {
+            let registry = lock_registry(&context).unwrap();
+            let notices: Vec<_> = registry
+                .registry
+                .messages
+                .iter()
+                .filter(|message| message.recipient_session_id == second)
+                .collect();
+            assert_eq!(notices.len(), 1);
+            assert!(notices[0].body.contains(&other_id));
+            assert!(super::super::service::sender_origin(notices[0]).is_some());
+            assert_eq!(
+                registry
+                    .registry
+                    .messages
+                    .iter()
+                    .filter(|message| message.recipient_session_id == "recipient")
+                    .count(),
+                256
+            );
+        }
+        assert_eq!(fs::read(&journal_path).unwrap(), source_bytes);
+        let before = now_epoch();
+        let retry = drain(&context, &config())
+            .unwrap()
+            .expect("first notice stays retryable");
+        assert!((before + RETRY_SECS..=now_epoch() + RETRY_SECS).contains(&retry));
+        {
+            let mut registry = lock_registry(&context).unwrap();
+            for message in registry
+                .registry
+                .messages
+                .iter_mut()
+                .filter(|message| message.recipient_session_id == "recipient")
+            {
+                message.state = "acknowledged".into();
+                message.terminal_at_epoch = Some(now_epoch());
+            }
+            registry.save().unwrap();
+        }
+        drain(&context, &config()).unwrap();
+        let registry = lock_registry(&context).unwrap();
+        assert_eq!(
+            registry
+                .registry
+                .messages
+                .iter()
+                .filter(|message| message.recipient_session_id == "recipient"
+                    && message.body.contains(&first_id))
+                .count(),
+            1
+        );
+        assert_eq!(
+            registry
+                .registry
+                .messages
+                .iter()
+                .filter(|message| message.recipient_session_id == second)
+                .count(),
+            1
+        );
+        assert_eq!(fs::read(&journal_path).unwrap(), source_bytes);
     }
 }

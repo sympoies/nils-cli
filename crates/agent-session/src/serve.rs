@@ -85,6 +85,8 @@ mod claude_completion;
 mod create_body;
 #[path = "serve_prompt_scan.rs"]
 mod prompt_scan;
+#[path = "serve_remote_outbox.rs"]
+mod remote_outbox;
 use create_body::CreateBody;
 #[path = "serve_shell.rs"]
 mod shell;
@@ -1172,7 +1174,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
             return exit::RUNTIME;
         }
         let app = router(state.clone());
-        let federation_task = tokio::spawn(remote_outbox_loop(state.clone()));
+        let federation_task = tokio::spawn(remote_outbox::run(state.clone()));
         let codex_control_task = tokio::spawn(codex_control_loop(state.clone()));
         let auto_resume_task = tokio::spawn(auto_resume_loop(state.clone()));
         let auth_incident_task = tokio::spawn(auth_incident_loop(state.clone()));
@@ -7575,15 +7577,13 @@ async fn send_handler(
         }
     }
     let context = state.context.clone();
-    let args = cli::SendArgs {
+    let args = crate::send::unguarded_args(
         id,
-        text: body.text,
-        text_stdin: false,
+        body.text,
         keys,
-        allow_blocked: body.allow_blocked,
-        tmux_bin: Some(state.tmux_bin.clone()),
-        format: nils_common::cli_contract::OutputFormat::Json,
-    };
+        body.allow_blocked,
+        state.tmux_bin.clone(),
+    );
     match tokio::task::spawn_blocking(move || crate::send_to_session(&context, args)).await {
         Ok(Ok(sent)) => envelope_ok(json!({ "machine": state.machine, "sent": sent })),
         Ok(Err(err)) => envelope_err(err),
@@ -12311,36 +12311,6 @@ async fn remote_receive_handler(
         Err(_) => join_err(),
     }
 }
-async fn remote_outbox_loop(state: Arc<ServeState>) {
-    let Some(config) = state.federation.clone() else {
-        return;
-    };
-    loop {
-        let context = state.context.clone();
-        let config = config.clone();
-        let deadline = match tokio::task::spawn_blocking(move || {
-            crate::coordination::remote::drain(&context, &config)
-        })
-        .await
-        {
-            Ok(Ok(value)) => value,
-            _ => Some(crate::coordination::now_epoch().saturating_add(5)),
-        };
-        // Notify retains an enqueue permit even if submission races with drain.
-        if let Some(deadline) = deadline {
-            let seconds = deadline
-                .saturating_sub(crate::coordination::now_epoch())
-                .max(0) as u64;
-            tokio::select! {
-                _ = state.remote_outbox_wake.notified() => {},
-                _ = tokio::time::sleep(Duration::from_secs(seconds)) => {},
-            }
-        } else {
-            state.remote_outbox_wake.notified().await;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     include!("serve_claude_completion_tests.rs");
@@ -37480,7 +37450,7 @@ exit 0
 printf '%s\n' "$*" >> {}
 case "$1" in
   has-session)
-    if [ -f {} ] && grep -q '"state": "attempting"' {}; then exit 1; fi
+    if [ -f {} ] && grep -q '"state"[[:space:]]*:[[:space:]]*"attempting"' {}; then exit 1; fi
     exit 0
     ;;
   display-message) printf '0\n'; exit 0 ;;
@@ -38006,7 +37976,7 @@ printf '%s\n' "$*" >> {}
 case "$1" in
   has-session) exit 0 ;;
   display-message)
-    if grep -q '"state": "attempting"' {}; then
+    if grep -q '"state"[[:space:]]*:[[:space:]]*"attempting"' {}; then
       printf '1\n'
     else
       printf '0\n'

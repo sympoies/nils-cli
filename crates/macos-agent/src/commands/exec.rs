@@ -69,7 +69,14 @@ pub fn run_local(
                 expected: args.expected.clone(),
                 argv: args.argv.clone(),
                 status: StepStatus::Failed,
-                failure_class: Some("backend_drift".into()),
+                failure_class: Some(
+                    if error.class() == ErrorClass::Permission {
+                        "permission"
+                    } else {
+                        "backend_drift"
+                    }
+                    .into(),
+                ),
                 duration_ms: 0,
                 retries: 0,
                 precondition_refs: Vec::new(),
@@ -195,6 +202,17 @@ pub fn run_local(
         status = StepStatus::Unknown;
         failure_class = Some("unknown_mutation".into());
     }
+    let permission_diagnostic = (!output.timed_out
+        && output.signal.is_none()
+        && matches!(status, StepStatus::Failed | StepStatus::Unknown)
+        && capture_or_bridge_failure(parsed.as_ref(), &stderr_text))
+    .then(|| runtime.permission_diagnostic(binary.path()))
+    .flatten();
+    // The permission recheck adds a cause; it must not replace the coordinate
+    // refusal/uncertainty contract or make uncertain delivery replayable.
+    if permission_diagnostic.is_some() && status != StepStatus::Unknown && !coordinate_invocation {
+        failure_class = Some("permission".into());
+    }
     let debug_artifact = if args.evidence_mode == crate::cli::EvidenceMode::Debug {
         Some(write_debug_artifact(
             &args.out_dir,
@@ -253,9 +271,16 @@ pub fn run_local(
             text
         }
     });
-    let diagnostic = (!stderr_text.trim().is_empty())
-        .then(|| sanitize_output(stderr_text.trim(), args.evidence_mode));
-    let exit_code = if output.timed_out
+    let diagnostic = permission_diagnostic.clone().or_else(|| {
+        (!stderr_text.trim().is_empty())
+            .then(|| sanitize_output(stderr_text.trim(), args.evidence_mode))
+    });
+    let exit_code = if permission_diagnostic.is_some()
+        && status != StepStatus::Unknown
+        && !coordinate_invocation
+    {
+        ErrorClass::Permission.exit_code()
+    } else if output.timed_out
         || output.exit_code != 0
         || malformed_json
         || status != StepStatus::Passed
@@ -354,6 +379,22 @@ pub(super) fn coordinate_click_diagnostic(
             "Do not replay this coordinate click. Delivery or its effect is uncertain; obtain a fresh bounded observation and verify the postcondition before any further action. Inspect the original upstream outcome and receipt; focus preparation is not proof of input delivery."
         },
     }
+}
+
+fn capture_or_bridge_failure(parsed: Option<&serde_json::Value>, stderr: &str) -> bool {
+    parsed
+        .and_then(|value| value.pointer("/error/code"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|code| {
+            matches!(
+                code,
+                "CAPTURE_FAILED"
+                    | "BRIDGE_UNAVAILABLE"
+                    | "GUI_SESSION_LOCKED"
+                    | "PERMISSION_DENIED"
+            )
+        })
+        || stderr.to_ascii_lowercase().contains("gui session locked")
 }
 
 /// The parts of the Peekaboo v4 result envelope the adapter classifies on.

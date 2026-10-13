@@ -22,6 +22,7 @@ if (fs.existsSync(modulePath)) {
     canonicalReleaseBranch,
     classifyLatestChecks,
     findTrustedMainCi,
+    findTrustedMergeGroupCi,
     findTrustedPullRequestCi,
     runReleaseGate,
     waitForTrustedMainCi,
@@ -254,6 +255,90 @@ if (fs.existsSync(modulePath)) {
     );
   });
 
+  test("a successful full merge-group receipt can authorize release-only CI for its base", async () => {
+    const mergeGroupRun = {
+      id: 302,
+      event: "merge_group",
+      status: "completed",
+      conclusion: "success",
+      head_sha: baseSha,
+      head_branch: "gh-readonly-queue/main/pr-1252",
+      html_url: `https://github.com/${fullName}/actions/runs/302`,
+      repository: { full_name: fullName },
+    };
+    const { github } = fixture({
+      workflowRuns: [mergeGroupRun],
+      jobsByRun: { 302: successfulJobs({ withFullMarkers: true }) },
+    });
+
+    assert.deepEqual(
+      await waitForTrustedMainCi({ github, context, core: { info: () => {} }, sha: baseSha }),
+      { runId: 302, runUrl: mergeGroupRun.html_url },
+    );
+  });
+
+  test("an exact-SHA successful merge-group receipt with required jobs is trusted", async () => {
+    const mergeGroupRun = {
+      id: 300,
+      event: "merge_group",
+      status: "completed",
+      conclusion: "success",
+      head_sha: releaseSha,
+      head_branch: "gh-readonly-queue/main/pr-1253",
+      html_url: `https://github.com/${fullName}/actions/runs/300`,
+      repository: { full_name: fullName },
+    };
+    const { state, github } = fixture({
+      workflowRuns: [mergeGroupRun],
+      jobsByRun: { 300: successfulJobs() },
+    });
+
+    assert.deepEqual(
+      await findTrustedMergeGroupCi({ github, context, sha: releaseSha }),
+      { runId: 300, runUrl: mergeGroupRun.html_url },
+    );
+    assert.equal(state.workflowRuns[0].head_sha, releaseSha);
+  });
+
+  test("merge-group receipt rejects a mismatched SHA, failed job, or missing coverage", async (t) => {
+    const mergeGroupRun = {
+      id: 300,
+      event: "merge_group",
+      status: "completed",
+      conclusion: "success",
+      head_sha: releaseSha,
+      head_branch: "gh-readonly-queue/main/pr-1253",
+      html_url: `https://github.com/${fullName}/actions/runs/300`,
+      repository: { full_name: fullName },
+    };
+    const mutations = {
+      "mismatched SHA": (state) => { state.workflowRuns[0].head_sha = pullHeadSha; },
+      "failed required job": (state) => { state.jobsByRun[300][0].conclusion = "failure"; },
+      "missing coverage": (state) => {
+        state.jobsByRun[300] = state.jobsByRun[300].filter(({ name }) => name !== "coverage");
+      },
+    };
+
+    for (const [name, mutate] of Object.entries(mutations)) {
+      await t.test(name, async () => {
+        const { state, github } = fixture({
+          workflowRuns: [{ ...mergeGroupRun }],
+          jobsByRun: { 300: successfulJobs() },
+        });
+        mutate(state);
+        assert.equal(await findTrustedMergeGroupCi({ github, context, sha: releaseSha }), null);
+      });
+    }
+  });
+
+  test("push receipts remain available as a release-gate alternative", async () => {
+    const { github } = fixture();
+    assert.deepEqual(await findTrustedMainCi({ github, context, sha: baseSha }), {
+      runId: 200,
+      runUrl: `https://github.com/${fullName}/actions/runs/200`,
+    });
+  });
+
   function quietCore() {
     const messages = [];
     return {
@@ -483,6 +568,57 @@ if (fs.existsSync(modulePath)) {
 
     assert.equal(await runReleaseGate({ github, context: { ...context, sha: releaseSha }, core }), true);
     assert.match(messages.join("\n"), /reuses trusted CI run 100/);
+  });
+
+  test("release gate accepts exact-SHA successful merge-group CI", async () => {
+    const mergeGroupRun = {
+      id: 300,
+      event: "merge_group",
+      status: "completed",
+      conclusion: "success",
+      head_sha: releaseSha,
+      head_branch: "gh-readonly-queue/main/pr-1253",
+      html_url: `https://github.com/${fullName}/actions/runs/300`,
+      repository: { full_name: fullName },
+    };
+    const { state, github } = fixture({
+      pulls: [],
+      workflowRuns: [mergeGroupRun],
+      jobsByRun: { 300: successfulJobs() },
+      checkRuns: [],
+    });
+    const core = { info: () => {}, warning: () => {}, setFailed: assert.fail };
+
+    assert.equal(
+      await runReleaseGate({ github, context: { ...context, sha: releaseSha }, core, attempts: 1 }),
+      true,
+    );
+    assert.equal(state.workflowRuns[0].head_sha, releaseSha);
+  });
+
+  test("release gate continues to accept exact-SHA successful main push CI", async () => {
+    const pushRun = {
+      id: 301,
+      event: "push",
+      status: "completed",
+      conclusion: "success",
+      head_sha: releaseSha,
+      head_branch: "main",
+      html_url: `https://github.com/${fullName}/actions/runs/301`,
+      repository: { full_name: fullName },
+    };
+    const { github } = fixture({
+      pulls: [],
+      workflowRuns: [pushRun],
+      jobsByRun: { 301: successfulJobs({ withFullMarkers: true }) },
+      checkRuns: [],
+    });
+    const core = { info: () => {}, warning: () => {}, setFailed: assert.fail };
+
+    assert.equal(
+      await runReleaseGate({ github, context: { ...context, sha: releaseSha }, core, attempts: 1 }),
+      true,
+    );
   });
 
   test("release gate falls back to exact-SHA checks when provenance lookup errors", async () => {

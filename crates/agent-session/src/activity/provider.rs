@@ -89,7 +89,7 @@ pub(super) fn normalize_provider_hook(
             Some("other"),
             Confidence::Observed,
         ),
-        (AgentKind::Claude, "PostToolUse", _) => {
+        (AgentKind::Claude, "PostToolUse" | "PostToolUseFailure" | "PermissionDenied", _) => {
             (TurnEventKind::Progress, None, Confidence::Observed)
         }
         (AgentKind::Claude, "Stop", _) => (TurnEventKind::StopObserved, None, Confidence::Observed),
@@ -123,7 +123,11 @@ pub(super) fn normalize_provider_hook(
     let provider_session_id = provider_session
         .map(|value| projected_provider_identifier(runtime_id, agent, "session", value))
         .transpose()?;
-    let provider_turn = optional_hook_string(raw, "turn_id")?;
+    let provider_turn = optional_hook_string(raw, "turn_id")?.or(if agent == AgentKind::Claude {
+        optional_hook_string(raw, "prompt_id")?
+    } else {
+        None
+    });
     let provider_turn_id = provider_turn
         .map(|value| projected_provider_identifier(runtime_id, agent, "turn", value))
         .transpose()?;
