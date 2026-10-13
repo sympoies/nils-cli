@@ -59,14 +59,25 @@ verification supports an unambiguous, single visible input line. Dialogs,
 unknown layouts, wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
 
-Guard captures use `tmux capture-pane -p -e`. The native Codex placeholder and
+Guard captures use `tmux capture-pane -p -e -N -T` to retain occupied spaces
+and exclude unused terminal cells.
+
+The native Codex placeholder and
 Claude `Try "…"` hint count as empty only when every hint character carries
 dim styling (SGR 2). An unstyled or partially styled hint fails closed, as do
 unsupported styling sequences. Grey color alone is not treated as proof.
 A provider layout that exposes no distinguishable dim hint cannot support
 guarded empty-composer sends. Placeholder content alone is never inferred empty.
+For Codex only, well-formed OSC-8 hyperlink metadata terminated by BEL or ST
+is accepted without changing visible caption text or SGR state. Each metadata
+payload is bounded to 4096 UTF-8 bytes. Other OSC commands, malformed escapes
+and screen-mutating controls remain unobservable. Extra composer rows are not
+collapsed into empty input. Claude retains its existing parser and refuses
+OSC-8 captures or indistinguishable empty/whitespace composer states.
+
 The guarded post-paste check uses full visible text, preserving whitespace,
-rather than the unguarded submission classifier's prefix matching.
+rather than the unguarded submission classifier's prefix matching. Occupied
+padding or a hidden draft cannot be discarded to make this check pass.
 
 A claim records metadata under a hashed filename in the stable session state;
 it does not store the raw key or prompt. It has no expiry and is independent

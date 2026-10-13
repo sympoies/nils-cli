@@ -4,7 +4,7 @@ use super::{
 };
 
 pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
-    let (plain, dim) = styled_text(pane)?;
+    let (plain, dim) = styled_text(pane, agent == "codex")?;
     let lines: Vec<&str> = plain.lines().collect();
     let (region, footer) = match agent {
         "claude" => claude_composer(&lines),
@@ -62,15 +62,20 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     Some(input.to_string())
 }
 
-fn styled_text(pane: &str) -> Option<(String, Vec<bool>)> {
+fn styled_text(pane: &str, allow_hyperlinks: bool) -> Option<(String, Vec<bool>)> {
     let mut plain = String::new();
     let mut styles = Vec::new();
     let mut dim = false;
     let mut chars = pane.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\u{1b}' {
-            if chars.next()? != '[' {
-                return None;
+            match chars.next()? {
+                '[' => {}
+                ']' if allow_hyperlinks => {
+                    hyperlink::consume(&mut chars)?;
+                    continue;
+                }
+                _ => return None,
             }
             let mut parameters = String::new();
             loop {
@@ -135,6 +140,8 @@ fn styled_text(pane: &str) -> Option<(String, Vec<bool>)> {
     }
     Some((plain, styles))
 }
+
+mod hyperlink;
 
 #[cfg(test)]
 mod tests;
