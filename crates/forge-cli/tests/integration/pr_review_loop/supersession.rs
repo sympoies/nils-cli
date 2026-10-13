@@ -8,7 +8,7 @@ use pretty_assertions::{assert_eq, assert_ne};
 const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-fn stopped_fixture() -> (Vec<ReviewStateRecord>, Vec<ReviewFindingObservation>) {
+pub(super) fn stopped_fixture() -> (Vec<ReviewStateRecord>, Vec<ReviewFindingObservation>) {
     let findings = vec![ReviewFindingObservation {
         fingerprint: "correctness:limit:example".into(),
         root_cause_fingerprint: None,
@@ -143,7 +143,9 @@ fn dry_run_records_a_new_stop_for_signed_fast_forward_after_a_extension() {
     }
 }
 
-fn chain(records: &[ReviewStateRecord]) -> forge_cli::ops::review_state::ReviewStateChain {
+pub(super) fn chain(
+    records: &[ReviewStateRecord],
+) -> forge_cli::ops::review_state::ReviewStateChain {
     forge_cli::ops::review_state::parse_chain(
         records
             .iter()

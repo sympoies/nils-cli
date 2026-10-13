@@ -20,6 +20,9 @@ mod correction;
 #[path = "pr_review_loop/supersession.rs"]
 mod supersession;
 
+#[path = "pr_review_loop/admitted_supersession.rs"]
+mod admitted_supersession;
+
 /// A `gh` stub that answers `pr view` with a fixed head and records every
 /// invocation, so a test can prove no mutation was attempted.
 fn gh_stub_with_head(stub: &StubEnv, head: &str) -> String {
