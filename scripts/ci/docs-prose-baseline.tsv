@@ -12,7 +12,7 @@ crates/agent-session/docs/specs/session-board-v1.md	3	14
 crates/agent-session/docs/specs/session-coordination-v1.md	19	36
 crates/agent-session/docs/specs/session-retitle-v2.md	3	16
 crates/agent-session/docs/specs/session-retitle-v3.md	3	19
-crates/agent-session/docs/turn-state-contract.md	8	37
+crates/agent-session/docs/turn-state-contract.md	8	30
 crates/agent-workflow-primitives/README.md	1	13
 crates/claude-cli/README.md	2	15
 crates/codex-cli/docs/specs/execution-capsule-v1.md	2	15

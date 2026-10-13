@@ -1,7 +1,7 @@
 use super::*;
 use nils_test_support::cmd::{CmdOptions, run_resolved};
 use nils_test_support::{EnvGuard, GlobalStateLock};
-use pretty_assertions::{assert_eq, assert_ne};
+use pretty_assertions::assert_eq;
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 
@@ -41,9 +41,9 @@ impl Fixture {
         fs::write(
             &config,
             format!(
-                "schema_version = \"agent-hook.config.v1\"\n[policy]\npath = {}\ndigest = \"sha256:{:x}\"\n",
+                "schema_version = \"agent-hook.config.v1\"\n[policy]\npath = {}\ndigest = \"sha256:{}\"\n",
                 serde_json::to_string(&policy).unwrap(),
-                Sha256::digest(POLICY.as_bytes())
+                hex_digest(Sha256::digest(POLICY.as_bytes()))
             ),
         )
         .unwrap();
@@ -75,7 +75,7 @@ impl Fixture {
             &CmdOptions::new().without_ambient_managed_session_env(),
         );
         assert_eq!(doctor.code, 0, "{}", doctor.stdout_text());
-        assert_eq!(doctor.stdout_json()["data"]["status"], "converged");
+        assert_eq!(doctor.stdout_json()["data"][0]["status"], "converged");
         Self {
             temp,
             home,
@@ -185,7 +185,17 @@ fn dispatch_does_not_bypass_mismatched_runtime_attention_authority() {
     let fixture = Fixture::new(&lock);
     let (context, record) = fixture.session("protocol");
     let output = fixture.permission(&context, &record, "hook");
-    assert_ne!(output.code, 0, "{}", output.stdout_text());
+    // Advisory activity failure reports a warning rather than denying work;
+    // the owning helper must still poison the mismatched runtime's state.
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(output.stdout_json()["data"]["action"], "warn");
+    assert!(
+        output.stdout_json()["data"]["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason["code"] == "session-activity-failed")
+    );
     let state = state_for_view(&context, &record).unwrap();
     assert_eq!(state.phase, TurnPhase::Unknown);
     assert_eq!(

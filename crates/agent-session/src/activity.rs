@@ -25,6 +25,13 @@ use crate::{
 
 #[path = "activity/claude_completion.rs"]
 mod claude_completion;
+#[path = "activity/codex_attention_source_guard.rs"]
+mod codex_attention_source_guard;
+pub(crate) use codex_attention_source_guard::codex_protocol_attention_source_guard_configured;
+#[cfg(test)]
+use codex_attention_source_guard::{
+    codex_json_permission_source_guard, codex_toml_permission_source_guard,
+};
 #[path = "activity/completion_admission.rs"]
 mod completion_admission;
 #[path = "activity/completion_receipts.rs"]
@@ -2490,13 +2497,7 @@ pub(crate) fn ingest_event(
     id: &str,
     event: TurnEvent,
 ) -> Result<ActivityResult, CliError> {
-    ingest_event_with_lock(
-        context,
-        id,
-        event,
-        ActivityLockMode::Blocking,
-        EventAdmission::Generic,
-    )
+    codex_attention_source_guard::ingest_normalized(context, id, event, ActivityLockMode::Blocking)
 }
 
 fn ingest_event_nonblocking(
@@ -2518,12 +2519,11 @@ pub(crate) fn ingest_event_retry(
     id: &str,
     event: TurnEvent,
 ) -> Result<ActivityResult, CliError> {
-    ingest_event_with_lock(
+    codex_attention_source_guard::ingest_normalized(
         context,
         id,
         event,
         ActivityLockMode::Timed(CODEX_COMPLETION_RETRY_TIMEOUT),
-        EventAdmission::Generic,
     )
 }
 
@@ -4758,132 +4758,6 @@ fn json_provider_configured(agent: AgentKind, path: &Path) -> Result<bool, CliEr
         && retired_provider_specs(agent)
             .iter()
             .all(|spec| !json_has_spec(&value, agent, *spec)))
-}
-
-pub(crate) fn codex_protocol_attention_source_guard_configured() -> bool {
-    let Ok(json_path) = provider_config_path(AgentKind::Codex) else {
-        return false;
-    };
-    let Ok(config_path) = codex_notification_config_path() else {
-        return false;
-    };
-    let Ok(status) = codex_hook_status(&json_path, &config_path) else {
-        return false;
-    };
-    if status.conflict || status.ownership_conflict {
-        return false;
-    }
-    match status.representation {
-        CodexHookRepresentation::Json => codex_json_permission_source_guard(&json_path),
-        CodexHookRepresentation::InlineToml => codex_toml_permission_source_guard(&config_path),
-    }
-}
-
-fn codex_json_permission_source_guard(path: &Path) -> bool {
-    let Ok(bytes) = fs::read(path) else {
-        return false;
-    };
-    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-        return false;
-    };
-    let expected = owned_command(AgentKind::Codex, Some("PermissionRequest"));
-    let Some(groups) = value
-        .get("hooks")
-        .and_then(|hooks| hooks.get("PermissionRequest"))
-        .and_then(Value::as_array)
-    else {
-        return false;
-    };
-    let mut guarded = 0_usize;
-    for group in groups {
-        let matcher_is_absent = group.get("matcher").is_none();
-        let Some(handlers) = group.get("hooks").and_then(Value::as_array) else {
-            return false;
-        };
-        for handler in handlers {
-            if handler.get("type").and_then(Value::as_str) != Some("command") {
-                continue;
-            }
-            let Some(command) = handler.get("command").and_then(Value::as_str) else {
-                return false;
-            };
-            if !codex_permission_reporter_command(command) {
-                continue;
-            }
-            if matcher_is_absent
-                && command == expected
-                && json_codex_handler_is_owned("PermissionRequest", handler)
-            {
-                guarded += 1;
-            } else {
-                // A second direct reporter can bypass the runtime authority
-                // guard even when the owned handler is also installed.
-                return false;
-            }
-        }
-    }
-    guarded == 1
-}
-
-fn codex_toml_permission_source_guard(path: &Path) -> bool {
-    let Ok(raw) = fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(document) = parse_codex_notification_config(path, &raw) else {
-        return false;
-    };
-    let expected = owned_command(AgentKind::Codex, Some("PermissionRequest"));
-    let Some(groups) = document
-        .get("hooks")
-        .and_then(TomlItem::as_table)
-        .and_then(|hooks| hooks.get("PermissionRequest"))
-        .and_then(TomlItem::as_array_of_tables)
-    else {
-        return false;
-    };
-    let mut guarded = 0_usize;
-    for group in groups.iter() {
-        let Some(handlers) = group.get("hooks").and_then(TomlItem::as_array_of_tables) else {
-            return false;
-        };
-        for handler in handlers.iter() {
-            if handler.get("type").and_then(TomlItem::as_str) != Some("command") {
-                continue;
-            }
-            let Some(command) = handler.get("command").and_then(TomlItem::as_str) else {
-                return false;
-            };
-            if !codex_permission_reporter_command(command) {
-                continue;
-            }
-            if toml_hook_matcher_is_exact(
-                group,
-                ProviderSpec {
-                    event: "PermissionRequest",
-                    matcher: None,
-                },
-            ) && command == expected
-                && toml_handler_command_is_owned("PermissionRequest", handler)
-            {
-                guarded += 1;
-            } else {
-                return false;
-            }
-        }
-    }
-    guarded == 1
-}
-
-fn codex_permission_reporter_command(command: &str) -> bool {
-    let words = command
-        .split(|character: char| {
-            !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-        })
-        .filter(|word| !word.is_empty())
-        .collect::<Vec<_>>();
-    words
-        .windows(3)
-        .any(|words| words == ["agent-session", "activity", "hook"])
 }
 
 fn read_optional_provider_config(path: &Path) -> Result<Option<Vec<u8>>, CliError> {

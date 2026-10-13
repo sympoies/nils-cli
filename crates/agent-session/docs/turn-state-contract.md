@@ -364,13 +364,26 @@ clear producer-owned attention or influence authority selection.
 
 For Codex, a raw or unmanaged runtime selects `hook`; its generic
 `PermissionRequest` remains a conservative approval latch. An audited managed
-app-server runtime selects `protocol`, injects
-`AGENT_SESSION_ATTENTION_AUTHORITY=protocol`, and suppresses that generic hook
-before the helper is invoked, including when the installed helper predates
-authority-aware ingest. Protocol authority is unavailable until that guarded
-installed command is verified and no second direct unguarded reporter is
-present; app-server transport may still run with hook authority. Its private
-proxy admits only the audited blocking
+app-server runtime selects `protocol` and injects
+`AGENT_SESSION_ATTENTION_AUTHORITY=protocol`. The legacy guarded command
+suppresses its generic hook before invoking the helper, including when that
+helper predates authority-aware ingest.
+
+Protocol authority is unavailable until either the guarded legacy command or
+one owned matcherless `agent-hook dispatch --product codex` permission group
+is verified, with no second direct reporter. Dispatcher ownership also requires
+converged `agent-hook doctor` evidence. Normalized dispatcher permission events
+use the same immutable authority disposition as raw hooks: protocol is a
+content-free no-op, hook authority retains conservative approval, and a mismatch
+marks the runtime unhealthy.
+
+Advisory dispatch can still exit successfully with
+a warning; that does not undo the unhealthy state. The dispatcher and activity
+helper must use the validated release pair. App-server transport may still run
+with hook authority. This source-guard prerequisite does not audit a new
+provider version.
+
+Its private proxy admits only the audited blocking
 request method allowlist and `serverRequest/resolved`. Request ids retain their
 JSON `string` versus `int64` type only in the bounded in-memory pending table;
 each admitted request occurrence receives a fresh opaque correlation token.
