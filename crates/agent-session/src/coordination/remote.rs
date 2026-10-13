@@ -596,7 +596,7 @@ fn relay_error(value: &Value) -> CliError {
     } else {
         code
     };
-    let details = (code == "quota-exceeded")
+    let mut details = (code == "quota-exceeded")
         .then(|| value.pointer("/error/details").and_then(Value::as_object))
         .flatten()
         .map(|details| {
@@ -611,7 +611,17 @@ fn relay_error(value: &Value) -> CliError {
         })
         .filter(|kept| !kept.is_empty())
         .map(Value::Object);
-    CliError::data(code, "remote mailbox request was rejected", details)
+    let mut message = "remote mailbox request was rejected".to_string();
+    if let Some(details) = details.as_mut()
+        && details["quota"]
+            .as_str()
+            .is_some_and(super::mailbox::recipient_quota)
+    {
+        details["recovery"] = super::mailbox::quota_recovery();
+        message.push_str("; ");
+        message.push_str(super::mailbox::QUOTA_RECOVERY_HINT);
+    }
+    CliError::data(code, message, details)
 }
 pub(crate) fn peers(
     context: &CliContext,
@@ -3231,7 +3241,7 @@ mod tests {
         assert_eq!(
             error.details(),
             Some(
-                &json!({"quota":"recipient-messages","count":256,"limit":256,"host":"destination","side":"destination"})
+                &json!({"quota":"recipient-messages","count":256,"limit":256,"host":"destination","side":"destination", "recovery": super::super::mailbox::quota_recovery()})
             )
         );
     }
@@ -3263,6 +3273,32 @@ mod tests {
             local_daemon_error(&json!({"error":{"code":"Bad Code"}})).code(),
             "remote-messaging-unavailable"
         );
+    }
+
+    #[test]
+    fn quota_warning_remote_refusal_derives_safe_recipient_recovery() {
+        let refusal = json!({"error": {"code": "quota-exceeded", "message": "private-remote-text",
+            "details": {"quota": "recipient-messages", "count": 256, "limit": 256,
+                "host": "destination", "side": "destination", "body": "private-body",
+                "recovery": {"commands": "untrusted-command"}}}});
+        let error = relay_error(&refusal);
+        assert!(
+            error.message().contains("message show"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("message ack"),
+            "{}",
+            error.message()
+        );
+        assert_eq!(
+            error.details().unwrap()["recovery"]["action"],
+            "read_and_ack"
+        );
+        let visible = format!("{} {:?}", error.message(), error.details());
+        assert!(!visible.contains("private-"));
+        assert!(!visible.contains("untrusted-command"));
     }
     #[test]
     fn service_failed_deliveries_retain_bodies_without_expanding_existing_bounds() {

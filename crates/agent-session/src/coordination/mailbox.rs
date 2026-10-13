@@ -445,11 +445,13 @@ pub(crate) fn inbox(context: &CliContext, mut args: MessageInboxArgs) -> Result<
         None
     };
     let rows: Vec<_> = page.into_iter().map(metadata).collect();
+    let warning = quota_warning(&locked.registry, &record.id, now);
     locked.save()?;
     Ok(json!({
         "schema_version": "agent-session.message-inbox.v1",
         "messages": rows,
         "next_cursor": next_cursor,
+        "mailbox_quota_warning": warning,
     }))
 }
 
@@ -1430,6 +1432,46 @@ fn counts_toward_quota(message: &StoredMessage, now: i64) -> bool {
     ) && message.expires_at_epoch > now
 }
 
+pub(super) const QUOTA_RECOVERY_HINT: &str = "The recipient must read pending messages with agent-session message show, then acknowledge handled messages with agent-session message ack using the returned revision and an idempotency key; senders/operators cannot acknowledge on the recipient's behalf";
+
+pub(super) fn recipient_quota(quota: &str) -> bool {
+    matches!(quota, "recipient-messages" | "recipient-bytes")
+}
+
+pub(super) fn quota_recovery() -> Value {
+    json!({
+        "actor": "recipient",
+        "action": "read_and_ack",
+        "inbox_unread": "agent-session message inbox --session <recipient-session-id> --state unread --limit 100 --format json",
+        "inbox_read": "agent-session message inbox --session <recipient-session-id> --state read --limit 100 --format json",
+        "show": "agent-session message show --session <recipient-session-id> --message <message-id> --format json",
+        "ack": "agent-session message ack --session <recipient-session-id> --message <message-id> --if-revision <returned-revision> --idempotency-key <unique-key> --format json",
+        "guidance": QUOTA_RECOVERY_HINT,
+    })
+}
+
+/// Observational warning; share admission's existing predicate, never prune mail.
+pub(super) fn quota_warning(registry: &Registry, recipient: &str, now: i64) -> Option<Value> {
+    let mut count = 0;
+    let mut bytes = 0;
+    for message in &registry.messages {
+        if message.recipient_session_id == recipient && counts_toward_quota(message, now) {
+            count += 1;
+            bytes += message.body_bytes;
+        }
+    }
+    if count < (MAX_SESSION_MESSAGES * 4).div_ceil(5) && bytes < (MAX_SESSION_BYTES * 4).div_ceil(5)
+    {
+        return None;
+    }
+    Some(json!({
+        "status": if count >= MAX_SESSION_MESSAGES || bytes >= MAX_SESSION_BYTES { "at-limit" } else { "near-limit" },
+        "message_count": count, "message_limit": MAX_SESSION_MESSAGES,
+        "byte_count": bytes, "byte_limit": MAX_SESSION_BYTES,
+        "recovery": quota_recovery(),
+    }))
+}
+
 fn registry_message_bytes(registry: &Registry) -> usize {
     registry
         .messages
@@ -1662,6 +1704,114 @@ mod tests {
                 .push(quota_message(index, "recipient", "acknowledged", 16 * 1024));
         }
         admit(&mut registry, 16 * 1024).expect("acknowledged mail must not block delivery");
+    }
+
+    #[test]
+    fn quota_warning_operator_projection_names_near_and_full_recovery() {
+        use pretty_assertions::assert_eq;
+        let temporary = tempfile::TempDir::new().expect("state");
+        let context = CliContext {
+            state_dir: temporary.path().into(),
+            host: None,
+        };
+        for (count, status) in [(205, "near-limit"), (256, "at-limit")] {
+            let mut registry = Registry::default();
+            for index in 0..count {
+                let mut message = quota_message(index, "recipient", "read", 1);
+                message.expires_at_epoch = now_epoch() + 3600;
+                registry.messages.push(message);
+            }
+            let before = serde_json::to_value(&registry.messages).expect("messages");
+            let summary =
+                super::super::public_summary_from_registry(&context, &registry, "recipient");
+            let value = serde_json::to_value(summary).expect("summary");
+            let warning = &value["mailbox_quota_warning"];
+            assert_eq!(warning["status"], status);
+            assert_eq!(warning["message_count"], count);
+            assert_eq!(warning["recovery"]["action"], "read_and_ack");
+            assert!(!warning.to_string().contains("sender-"));
+            assert_eq!(serde_json::to_value(&registry.messages).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn quota_warning_sender_error_names_recipient_read_and_ack() {
+        use pretty_assertions::assert_eq;
+        for quota in ["recipient-messages", "recipient-bytes"] {
+            let mut registry = Registry::default();
+            let count = if quota == "recipient-messages" {
+                MAX_SESSION_MESSAGES
+            } else {
+                1
+            };
+            for index in 0..count {
+                let bytes = if quota == "recipient-bytes" {
+                    MAX_SESSION_BYTES
+                } else {
+                    1
+                };
+                registry
+                    .messages
+                    .push(quota_message(index, "recipient", "unread", bytes));
+            }
+            let before = serde_json::to_value(&registry.messages).unwrap();
+            let error = admit(&mut registry, 1).expect_err("full recipient");
+            assert_eq!(error.code(), "quota-exceeded");
+            assert!(
+                error.message().contains("message show"),
+                "{}",
+                error.message()
+            );
+            assert!(
+                error.message().contains("message ack"),
+                "{}",
+                error.message()
+            );
+            assert_eq!(
+                error.details().unwrap()["recovery"]["action"],
+                "read_and_ack"
+            );
+            assert_eq!(serde_json::to_value(&registry.messages).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn quota_warning_thresholds_include_bytes_without_counting_retained_evidence() {
+        use pretty_assertions::assert_eq;
+        let mut registry = Registry::default();
+        for index in 0..300 {
+            registry
+                .messages
+                .push(quota_message(index, "recipient", "acknowledged", 16 * 1024));
+        }
+        registry.messages.push(quota_message(
+            301,
+            "recipient",
+            "deleted",
+            MAX_SESSION_BYTES,
+        ));
+        let mut expired = quota_message(302, "recipient", "unread", MAX_SESSION_BYTES);
+        expired.expires_at_epoch = NOW;
+        registry.messages.push(expired);
+        let before = serde_json::to_value(&registry.messages).unwrap();
+        assert!(quota_warning(&registry, "recipient", NOW).is_none());
+        assert_eq!(serde_json::to_value(&registry.messages).unwrap(), before);
+        let threshold = (MAX_SESSION_BYTES * 4).div_ceil(5);
+        registry
+            .messages
+            .push(quota_message(303, "recipient", "read", threshold - 1));
+        assert!(quota_warning(&registry, "recipient", NOW).is_none());
+        registry.messages.last_mut().unwrap().body_bytes = threshold;
+        assert_eq!(
+            quota_warning(&registry, "recipient", NOW).unwrap()["status"],
+            "near-limit"
+        );
+        registry.messages.last_mut().unwrap().body_bytes = MAX_SESSION_BYTES;
+        assert_eq!(
+            quota_warning(&registry, "recipient", NOW).unwrap()["status"],
+            "at-limit"
+        );
+        assert!(quota_warning(&registry, "other-recipient", NOW).is_none());
     }
 
     #[test]
