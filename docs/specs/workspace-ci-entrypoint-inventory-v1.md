@@ -48,7 +48,7 @@ out of scope for this governance inventory; flag it as a follow-up.
 
 | Job | Step | Canonical owner | Decision | Notes |
 | --- | --- | --- | --- | --- |
-| `verify_ci` | `Require green CI on tagged commit` | `.github/scripts/release-ci-gate.cjs` (`runReleaseGate`) | keep | Accepts canonical merged-release-PR evidence first, then a unique successful merge-group receipt for the exact tag SHA with `test`, `test_macos`, and `coverage` jobs successful, then legacy full main-push receipts. Missing or ambiguous evidence falls back to polling exact-SHA required checks. |
+| `verify_ci` | `Require green CI on tagged commit` | `.github/scripts/release-ci-gate.cjs` (`runReleaseGate`) | keep | Accepts canonical merged-release-PR evidence first, then a unique successful merge-group receipt for the exact tag SHA with `test`, `test_macos`, and `coverage` jobs successful, then earlier full main-push receipts. Missing or ambiguous evidence falls back to polling exact-SHA required checks. |
 | `build` | ripgrep bootstrap | inline OS bootstrap shell | keep | Platform package manager differences remain workflow-local. |
 | `build` | `Regenerate third-party artifacts` | `scripts/generate-third-party-artifacts.sh` | keep | Canonical artifact generation gate. |
 | `build` | `Package` | `scripts/workspace-bins.sh` + inline packaging shell | keep | Packaging owns workspace binary discovery through script entrypoint. |
