@@ -224,7 +224,7 @@ pub(crate) fn load_and_paste_buffer_with_timeout(
     )
 }
 
-fn load_and_paste_guarded(
+pub(crate) fn load_and_paste_guarded(
     tmux_bin: &Path,
     buffer_name: &str,
     target: &str,

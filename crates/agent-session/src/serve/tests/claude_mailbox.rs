@@ -9,6 +9,7 @@ async fn claude_notification_requires_detached_stop_and_observes_exact_new_promp
     seed_session_with_runtime(tmp.path(), "beta", "claude", "hs-claude-beta");
     let command_log = tmp.path().join("tmux-commands.log");
     let captured_prompt = tmp.path().join("captured-prompt");
+    let pasted = tmp.path().join("pasted");
     let attached_state = tmp.path().join("attached-state");
     fs::write(&attached_state, b"1\n").expect("attached state");
     let tmux = tmp.path().join("tmux");
@@ -29,12 +30,24 @@ for value in "$@"; do last="$value"; done
 cp "$last" {}
 exit 0
 ;;
-  paste-buffer|send-keys|delete-buffer) exit 0 ;;
+  paste-buffer) printf '1' > {}; exit 0 ;;
+  send-keys) : > {}; exit 0 ;;
+  delete-buffer) exit 0 ;;
+  capture-pane)
+value=""
+if [ -s {} ]; then value=$(cat {}); fi
+printf '────────────────────\n❯ %s\n────────────────────\n  status\n' "$value"
+exit 0
+;;
   *) exit 1 ;;
 esac
 "#,
             shell_words::quote(&command_log.to_string_lossy()),
             shell_words::quote(&attached_state.to_string_lossy()),
+            shell_words::quote(&captured_prompt.to_string_lossy()),
+            shell_words::quote(&pasted.to_string_lossy()),
+            shell_words::quote(&pasted.to_string_lossy()),
+            shell_words::quote(&pasted.to_string_lossy()),
             shell_words::quote(&captured_prompt.to_string_lossy())
         ),
     )

@@ -766,6 +766,8 @@ pub(super) fn safe_reason(reason: &str) -> String {
         | "prompt-accepted"
         | "recipient-working"
         | "recipient-attached"
+        | "recipient-composer-not-empty"
+        | "recipient-composer-unobservable"
         | "recipient-coordination-not-quiescent"
         | "provider-not-ready"
         | "controller-unavailable"
