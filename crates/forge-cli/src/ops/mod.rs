@@ -60,3 +60,5 @@ pub mod release;
 pub mod repo_list;
 pub mod security;
 pub mod workflow;
+
+pub(crate) mod stacked_branch;

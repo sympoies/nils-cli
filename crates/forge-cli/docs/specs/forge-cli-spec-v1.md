@@ -1533,7 +1533,25 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   provider. `pr deliver --no-merge` remains exempt because it has no merge
   convergence phase.
 - Post-merge: deletes the remote branch (default `true`, disable via
-  `--keep-branch`). GitHub passes `--match-head-commit <head_sha>`;
+  `--keep-branch`). Before requesting deletion, read all open PRs/MRs targeting
+  the source branch in its repository/project. If any dependents remain, merge
+  while preserving the branch and report their numbers/URLs in `branch_cleanup`.
+  Retarget dependents before subsequent cleanup; the CLI does not retarget them
+  automatically.
+
+  `--delete-branch-even-if-stacked` explicitly permits deletion
+  and records a warning that dependents may close; it conflicts with
+  `--keep-branch`.
+
+  Failed or malformed dependency reads defer the merge with
+  `branch_dependencies_unavailable`. GitHub automatic branch deletion with
+  dependents defers the merge with `stacked_branch_auto_delete`, since omitting
+  the cleanup flag cannot preserve the branch in that configuration, including
+  `--keep-branch` and `[merge].delete_branch=false` on GitHub. The same
+  dependency guard runs through `pr deliver`; its override defaults to false.
+  Dry-run remains a backend plan preview; dependency checks run during live merge.
+
+  GitHub passes `--match-head-commit <head_sha>`;
   GitLab performs the merge mutation through
   `glab api --method PUT projects/<project>/merge_requests/<iid>/merge`
   after all gates pass, including `sha=<head_sha>` when the MR view
@@ -1542,7 +1560,7 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   the merge, idempotent recovery succeeds only when the merged head still
   equals that same OID.
 - Output schema: `cli.forge-cli.pr.merge.v1`,
-  `data = { number, url, merge_sha, method, deleted_branch,
+  `data = { number, url, merge_sha, method, deleted_branch, branch_cleanup?,
   unchecked_tasks_override_reason?, unresolved_threads_override_reason?,
   no_checks_override_reason?,
   stale_thread_dispositions?, review_convergence?, review_loop? }`.
@@ -2093,6 +2111,8 @@ Violations map to `DATA 65` with one of these `data.error.kind` values:
 | `checks_failed`                            | 8 (`RUNTIME 1`)       |
 | `checks_not_registered`                    | 8                     |
 | `merge_method_unsupported`                 | 9                     |
+| `branch_dependencies_unavailable`          | 20 (`UNAVAILABLE 69`) |
+| `stacked_branch_auto_delete`               | 20 (`DATA 65`)        |
 | `keep_branch_conflict`                     | 10                    |
 | `local_path_present`                       | 11                    |
 | `agent_attribution_present`                | 17                    |
