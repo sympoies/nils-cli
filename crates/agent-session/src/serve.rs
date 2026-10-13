@@ -30121,49 +30121,8 @@ esac
         assert_ne!(retried["startup"]["state"], "failed");
     }
 
-    #[test]
-    fn claude_switch_preserves_unverified_replacement_cleanup_failure() {
-        use crate::coordination::broker::test_support;
-        let lock = GlobalStateLock::new();
-        let tmp = tempfile::TempDir::new().unwrap();
-        let cwd = tmp.path().join("repo");
-        fs::create_dir_all(&cwd).unwrap();
-        let _broker = claude_broker_fixture(&lock, tmp.path());
-        let context = CliContext {
-            state_dir: tmp.path().to_path_buf(),
-            host: None,
-        };
-        seed_bound_claude_session(tmp.path(), "uncertain-switch", &cwd, "alpha");
-        let mut record = load_session_record(&context, "uncertain-switch").unwrap();
-        crate::claude_account::queue_next(&mut record, "beta").unwrap();
-        crate::write_session_record(&context, &record).unwrap();
-        let old = record.runtime.as_ref().unwrap().launch_id.clone();
-        // An explicit unknown broker identity refuses provisioning, while the
-        // fake tmux kill does not stop the new pane's real process boundary.
-        test_support::seed_live_broker(&context, &record.id, &old, json!({}));
-        let heartbeat = crate::coordination::heartbeat_path(&context.state_dir, &record.id);
-        fs::remove_file(heartbeat).unwrap();
-        let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
-        let error = crate::session_account::resume_after_switch_stop(&context, &record.id, &tmux)
-            .unwrap_err();
-        assert_eq!(error.code(), "session-termination-failed");
-        assert_ne!(
-            error.details().unwrap().get("session_state"),
-            Some(&json!("stopped"))
-        );
-        let retained = load_session_record(&context, &record.id).unwrap();
-        let view =
-            serde_json::to_value(crate::session_view(&context, &retained, None, Some(&tmux)))
-                .unwrap();
-        assert_eq!(view["claude_account"]["next"]["state"], "failed");
-        assert_eq!(
-            view["claude_account"]["next"]["failure_reason"],
-            "session-termination-failed"
-        );
-        assert_eq!(view["startup"]["state"], "failed");
-        assert_eq!(view["startup"]["retry_safe"], false);
-        assert!(retained.extra["startup"].get("cleanup").is_some());
-    }
+    #[path = "account_switch.rs"]
+    mod account_switch;
 
     #[test]
     fn legacy_broker_resume_uses_prior_persisted_identity() {

@@ -17669,50 +17669,8 @@ exit 0
         );
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_process_session_pin_rejects_an_uncaptured_member() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let descendant_pid_path = tmp.path().join("uncaptured-descendant.pid");
-        let pane = ReapedTestProcessGroup::spawn_tree(&descendant_pid_path);
-        let descendant_pid: libc::pid_t = fs::read_to_string(descendant_pid_path)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        let leader = super::read_linux_process_identity(pane.pid() as libc::pid_t)
-            .unwrap()
-            .expect("live session leader");
-        let identity = TmuxRuntimeIdentity {
-            macos_boot_id: None,
-            launch_id: Some("launch-uncaptured-member".to_string()),
-            session_id: "$91".to_string(),
-            pane_id: "%91".to_string(),
-            pane_pid: pane.pid() as libc::pid_t,
-            pane_start_time: None,
-            process_group_id: Some(pane.process_group_id),
-            process_session_id: Some(leader.session_id),
-            process_session_members: vec![TmuxProcessIdentity {
-                pid: leader.pid,
-                start_time: leader.start_time,
-            }],
-            control_group_members: Vec::new(),
-            control_group: None,
-            cgroup_mount: None,
-            pid_namespace: None,
-        };
-
-        assert_eq!(
-            super::verify_captured_linux_process_session(
-                leader.session_id,
-                &identity.process_session_members,
-            )
-            .unwrap_err(),
-            super::SessionTerminationFailure::VerificationFailed
-        );
-        assert_eq!(unsafe { libc::kill(leader.pid, 0) }, 0);
-        assert_eq!(unsafe { libc::kill(descendant_pid, 0) }, 0);
-    }
+    #[path = "account_switch.rs"]
+    mod account_switch;
 
     fn deletion_identity_script(
         context: &CliContext,
