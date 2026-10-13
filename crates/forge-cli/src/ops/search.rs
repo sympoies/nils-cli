@@ -17,6 +17,8 @@
 use std::ffi::OsString;
 
 mod completions;
+#[cfg(test)]
+mod review_regressions;
 
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::Serialize;

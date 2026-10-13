@@ -1,0 +1,56 @@
+# Selected GitHub GraphQL types used by completion documents. Enum identities
+# and nullability deliberately remain distinct across the two concrete types.
+# Source: https://github.com/octokit/graphql-schema/blob/master/schema.graphql
+schema { query: Query }
+scalar DateTime
+scalar URI
+interface Node { id: ID! }
+interface Actor { login: String! }
+type User implements Actor { login: String! }
+enum SearchType { ISSUE }
+enum IssueState { OPEN CLOSED }
+enum PullRequestState { OPEN CLOSED MERGED }
+enum IssueStateReason { COMPLETED NOT_PLANNED REOPENED }
+type Query {
+  search(query: String!, type: SearchType!, first: Int, after: String): SearchResultItemConnection!
+  node(id: ID!): Node
+}
+union SearchResultItem = Issue | PullRequest
+type SearchResultItemConnection { issueCount: Int! nodes: [SearchResultItem] pageInfo: PageInfo! }
+type PageInfo { hasNextPage: Boolean! endCursor: String }
+type Repository { nameWithOwner: String! isFork: Boolean! isArchived: Boolean! }
+type Label { name: String! }
+type LabelConnection { totalCount: Int! nodes: [Label] pageInfo: PageInfo! }
+type IssueConnection { totalCount: Int! nodes: [Issue] pageInfo: PageInfo! }
+type Issue implements Node {
+  id: ID!
+  number: Int!
+  url: URI!
+  title: String!
+  state: IssueState!
+  stateReason: IssueStateReason
+  createdAt: DateTime!
+  closedAt: DateTime
+  updatedAt: DateTime!
+  repository: Repository!
+  author: Actor
+  labels(first: Int, after: String): LabelConnection
+}
+type PullRequest implements Node {
+  id: ID!
+  number: Int!
+  url: URI!
+  title: String!
+  state: PullRequestState!
+  createdAt: DateTime!
+  closedAt: DateTime
+  mergedAt: DateTime
+  updatedAt: DateTime!
+  additions: Int!
+  deletions: Int!
+  changedFiles: Int!
+  repository: Repository!
+  author: Actor
+  labels(first: Int, after: String): LabelConnection
+  closingIssuesReferences(first: Int, after: String): IssueConnection
+}

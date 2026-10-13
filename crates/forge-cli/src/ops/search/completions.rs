@@ -5,6 +5,8 @@ mod cursor;
 mod facts;
 mod graphql;
 #[cfg(test)]
+mod review_regressions;
+#[cfg(test)]
 mod tests;
 
 use std::collections::HashSet;
