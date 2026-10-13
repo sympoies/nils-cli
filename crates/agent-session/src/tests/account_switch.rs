@@ -113,7 +113,7 @@ fn bounded_helper_teardown(last_pane_exit: bool) {
         .unwrap();
     assert_eq!(unsafe { libc::getpgid(helper_pid) }, pane.process_group_id);
     let tmux = tmp.path().join("tmux");
-    let killed = shell_words::quote(&tmp.path().join("killed").to_string_lossy());
+    let killed = shell_words::quote(&tmp.path().join("killed").to_string_lossy()).into_owned();
     fs::write(
         &tmux,
         format!(
