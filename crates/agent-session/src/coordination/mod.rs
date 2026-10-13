@@ -387,6 +387,14 @@ impl SessionQuiescenceGuard {
             &self.incarnation,
             attempted_at.as_second(),
         ) {
+            if notification::resolve_drained_generation(
+                &mut self._locked.registry,
+                &self.session_id,
+                &self.incarnation,
+                attempted_at.as_second(),
+            ) {
+                self._locked.save()?;
+            }
             return Ok(false);
         }
         let Some(_) = notification::transition_attempt_at(

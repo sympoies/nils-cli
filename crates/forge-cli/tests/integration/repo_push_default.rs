@@ -4,6 +4,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use nils_common::default_branch_receipt::{
@@ -206,10 +207,9 @@ case "$1" in
     ;;
   push)
     if [ '{push_sleep}' = true ]; then
-      sleep 30 &
-      child_pid=$!
-      printf '%s\n' "$child_pid" > "$GIT_CHILD_PID_FILE"
-      wait "$child_pid"
+      # The descendant publishes its own readiness and holds no capture pipes.
+      sh -c 'printf "%s\n" "$$" > "$GIT_CHILD_PID_FILE"; exec sleep 30' >/dev/null 2>&1 &
+      wait "$!"
     fi
     if [ '{push_exit}' -ne 0 ]; then
       printf '%s\n' 'rejected: non-fast-forward' >&2
@@ -549,8 +549,82 @@ fn run_with_repo_options_and_identity(
             String::from_utf8_lossy(&initialized.stderr)
         );
     }
-    let out = run_forge_cli_in(&stub, &args, Some(stub.tempdir.path()));
+    let out = if scenario.push_sleep {
+        run_stalled_push(&stub, &args)
+    } else {
+        run_forge_cli_in(&stub, &args, Some(stub.tempdir.path()))
+    };
     (stub, out)
+}
+
+/// Keep startup outside the bounded-completion assertion. A missing readiness
+/// signal still fails, but never counts an earlier Git timeout as a stalled push.
+fn run_stalled_push(stub: &StubEnv, args: &[&str]) -> super::support::CmdOutput {
+    std::thread::scope(|scope| {
+        let (tx, rx) = mpsc::channel();
+        scope.spawn(move || {
+            tx.send(run_forge_cli_in(stub, args, Some(stub.tempdir.path())))
+                .expect("send CLI result");
+        });
+        let startup = Instant::now();
+        let pid_file = stub.tempdir.path().join("git-child.pid");
+        let child_pid = loop {
+            if let Ok(pid) = fs::read_to_string(&pid_file)
+                && let Ok(pid) = pid.trim().parse::<u32>()
+            {
+                break pid;
+            }
+            if let Ok(out) = rx.try_recv() {
+                panic!("CLI exited before push descendant readiness: {out:?}");
+            }
+            assert!(
+                startup.elapsed() < Duration::from_secs(30),
+                "push descendant never signaled readiness"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let descendant = PushDescendant(child_pid);
+        assert!(
+            descendant.running(),
+            "push descendant was not running at readiness"
+        );
+        let out = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("stalled push must complete within 10 seconds of readiness");
+        let cleanup = Instant::now();
+        while descendant.running() && cleanup.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !descendant.running(),
+            "timed-out Git descendant {child_pid} survived process-group cleanup"
+        );
+        out
+    })
+}
+
+struct PushDescendant(u32);
+
+impl PushDescendant {
+    fn running(&self) -> bool {
+        let status = Command::new("ps")
+            .args(["-o", "stat=", "-p", &self.0.to_string()])
+            .output()
+            .expect("probe descendant status");
+        let state = String::from_utf8_lossy(&status.stdout);
+        // An orphan may briefly be a zombie before the system reaps it.
+        status.status.success() && !state.trim().is_empty() && !state.trim().starts_with('Z')
+    }
+}
+
+impl Drop for PushDescendant {
+    fn drop(&mut self) {
+        if self.running() {
+            let _ = Command::new("kill")
+                .args(["-KILL", &self.0.to_string()])
+                .status();
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1202,18 +1276,14 @@ fn push_default_rejects_non_regular_reason_input() {
 
 #[test]
 fn push_default_bounds_stalled_git_push_and_kills_its_process_group() {
-    let started = Instant::now();
     let (stub, out) = run(GitScenario {
         push_sleep: true,
-        timeout_ms: Some("75"),
+        // Each preflight Git invocation needs startup headroom too. The mock's
+        // readiness signal, not this deadline, identifies the stalled push.
+        timeout_ms: Some("5000"),
         ..GitScenario::default()
     });
     assert_eq!(out.code, 69, "stdout={} stderr={}", out.stdout, out.stderr);
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "bounded Git call took {:?}",
-        started.elapsed()
-    );
     let envelope = parse_envelope(&out.stdout);
     assert_eq!(envelope["error"]["code"], "git_timeout");
     let log = fs::read_to_string(stub.tempdir.path().join("git.log")).expect("git log");
@@ -1225,19 +1295,6 @@ fn push_default_bounds_stalled_git_push_and_kills_its_process_group() {
         "timed-out push must not retry"
     );
     assert!(!stub.tempdir.path().join("pushed").exists());
-    let child_pid = fs::read_to_string(stub.tempdir.path().join("git-child.pid"))
-        .expect("child pid")
-        .trim()
-        .to_string();
-    std::thread::sleep(Duration::from_millis(25));
-    let alive = Command::new("kill")
-        .args(["-0", &child_pid])
-        .output()
-        .expect("probe child");
-    assert!(
-        !alive.status.success(),
-        "timed-out Git descendant {child_pid} survived process-group cleanup"
-    );
 }
 
 #[test]
