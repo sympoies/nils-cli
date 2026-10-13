@@ -14,6 +14,7 @@ use crate::{CliContext, CliError};
 
 #[path = "remote_delivery_notice.rs"]
 mod delivery_notice;
+pub(crate) use delivery_notice::State as NoticeState;
 
 const JOURNAL_VERSION: &str = "agent-session.federation-journal.v2";
 const EXTENDED_JOURNAL_VERSION: &str = "agent-session.federation-journal.v3";
@@ -1189,7 +1190,16 @@ pub(crate) fn delivery(
         .ok_or_else(|| CliError::data("message-not-found", "delivery does not exist", None))?;
     Ok(projection(&item))
 }
+#[cfg(test)]
 pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>, CliError> {
+    drain_with_notice_state(context, config, &mut NoticeState::default())
+}
+
+pub(crate) fn drain_with_notice_state(
+    context: &CliContext,
+    config: &Config,
+    notices: &mut NoticeState,
+) -> Result<Option<i64>, CliError> {
     let items = {
         let mut locked = lock_journal(context)?;
         let now = now_epoch();
@@ -1326,7 +1336,8 @@ pub(crate) fn drain(context: &CliContext, config: &Config) -> Result<Option<i64>
     };
     // Reconcile local notices only after dropping the journal guard. Their
     // persistence cannot change the terminal delivery state or trigger a relay retry.
-    let notice_deadline = delivery_notice::reconcile(context, config)
+    let notice_deadline = notices
+        .reconcile(context, config)
         .unwrap_or_else(|_| Some(now_epoch().saturating_add(RETRY_SECS)));
     Ok(deadline.into_iter().chain(notice_deadline).min())
 }

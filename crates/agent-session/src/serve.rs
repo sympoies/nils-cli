@@ -12315,15 +12315,25 @@ async fn remote_outbox_loop(state: Arc<ServeState>) {
     let Some(config) = state.federation.clone() else {
         return;
     };
+    let mut notices = crate::coordination::remote::NoticeState::default();
     loop {
         let context = state.context.clone();
         let config = config.clone();
+        let mut notice_state = std::mem::take(&mut notices);
         let deadline = match tokio::task::spawn_blocking(move || {
-            crate::coordination::remote::drain(&context, &config)
+            let result = crate::coordination::remote::drain_with_notice_state(
+                &context,
+                &config,
+                &mut notice_state,
+            );
+            (notice_state, result)
         })
         .await
         {
-            Ok(Ok(value)) => value,
+            Ok((notice_state, result)) => {
+                notices = notice_state;
+                result.unwrap_or_else(|_| Some(crate::coordination::now_epoch().saturating_add(5)))
+            }
             _ => Some(crate::coordination::now_epoch().saturating_add(5)),
         };
         // Notify retains an enqueue permit even if submission races with drain.
