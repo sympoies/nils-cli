@@ -610,7 +610,8 @@ fn search_keywords(query: &str) -> Result<Vec<String>, ForgeError> {
     let mut keyword = String::new();
     let mut quoted = false;
     let mut escaped = false;
-    for character in query.chars() {
+    let mut qualified = false;
+    for (index, character) in query.char_indices() {
         if escaped {
             keyword.push(character);
             escaped = false;
@@ -623,6 +624,17 @@ fn search_keywords(query: &str) -> Result<Vec<String>, ForgeError> {
                 keywords.push(std::mem::take(&mut keyword));
             }
         } else {
+            if character == ':' && !quoted {
+                let key = keyword.strip_prefix('-').unwrap_or(&keyword);
+                qualified |= !key.is_empty()
+                    && key
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphabetic() || byte == b'-' || byte == b'_')
+                    && query[index + 1..]
+                        .chars()
+                        .next()
+                        .is_some_and(|next| !next.is_whitespace());
+            }
             keyword.push(character);
         }
     }
@@ -645,7 +657,13 @@ fn search_keywords(query: &str) -> Result<Vec<String>, ForgeError> {
             None,
         ));
     }
-    Ok(keywords)
+    // Unqualified QUERY was historically one gh keyword (a phrase). Split
+    // only structured queries; retain its exact text for ordinary searches.
+    Ok(if qualified {
+        keywords
+    } else {
+        vec![query.to_string()]
+    })
 }
 
 fn match_csv(fields: &[SearchMatchField]) -> String {
@@ -989,8 +1007,7 @@ mod tests {
             [
                 "search",
                 "issues",
-                "flaky",
-                "retry",
+                "flaky retry",
                 "--repo",
                 "acme/widget",
                 "--match",

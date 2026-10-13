@@ -80,7 +80,7 @@ fn connection(nodes: Vec<Value>, count: usize, next: Option<&str>) -> Value {
 fn issue(number: u64, completed: &str) -> Value {
     json!({"__typename":"Issue", "id":format!("I_{number}"), "number":number,
         "url":format!("https://github.com/acme/widget/issues/{number}"), "title":"A neutral issue",
-        "state":"CLOSED", "stateReason":"COMPLETED", "createdAt":"2029-12-01T00:00:00Z",
+        "issueState":"CLOSED", "stateReason":"COMPLETED", "createdAt":"2029-12-01T00:00:00Z",
         "closedAt":completed, "updatedAt":"2031-02-01T00:00:00Z",
         "repository":{"nameWithOwner":"acme/widget","isFork":false,"isArchived":false},
         "author":{"__typename":"User","login":"contributor"},
@@ -92,7 +92,8 @@ fn pr(number: u64) -> Value {
     value["__typename"] = json!("PullRequest");
     value["id"] = json!(format!("P_{number}"));
     value["url"] = json!(format!("https://github.com/acme/widget/pull/{number}"));
-    value["state"] = json!("MERGED");
+    value.as_object_mut().unwrap().remove("issueState");
+    value["prState"] = json!("MERGED");
     value["mergedAt"] = json!("2030-01-01T10:00:00Z");
     value["additions"] = json!(17);
     value["deletions"] = json!(3);

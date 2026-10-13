@@ -93,7 +93,13 @@ pub(super) fn item(
         .and_then(Value::as_str)
         .ok_or("provider_item_identity_invalid")?
         .to_string();
-    let state = required_string(value, "state")?;
+    let state = required_string(
+        value,
+        match kind {
+            CompletionKind::Issue => "issueState",
+            CompletionKind::Pr => "prState",
+        },
+    )?;
     let mut missing = Vec::new();
     let created_at = timestamp(value, "createdAt", false, &mut missing);
     let closed_at = timestamp(value, "closedAt", true, &mut missing);

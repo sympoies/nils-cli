@@ -8,7 +8,7 @@ use crate::provider::{Provider, ProviderContext};
 const FACTS: &str = r#"
 __typename
 ... on Issue {
-  id number url title state stateReason createdAt closedAt updatedAt
+  id number url title issueState: state stateReason createdAt closedAt updatedAt
   repository { nameWithOwner isFork isArchived }
   author { __typename login }
   labels(first: $first, after: $labelsAfter) {
@@ -16,7 +16,7 @@ __typename
   }
 }
 ... on PullRequest {
-  id number url title state createdAt closedAt mergedAt updatedAt additions deletions changedFiles
+  id number url title prState: state createdAt closedAt mergedAt updatedAt additions deletions changedFiles
   repository { nameWithOwner isFork isArchived }
   author { __typename login }
   labels(first: $first, after: $labelsAfter) {
