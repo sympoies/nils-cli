@@ -347,6 +347,21 @@ mod tests {
             .len()
     }
 
+    fn open_fixture_admission_window(context: &CliContext) {
+        // These fixtures measure healthy cursor throughput, independently of
+        // the shared 10/second and 30/minute admission windows. Age only local
+        // admission timestamps; keep identities, unread quota, expiry and
+        // persisted receipts intact. No production clock or policy is changed.
+        let previous_window = now_epoch().saturating_sub(61);
+        let mut registry = super::super::super::lock_registry(context).unwrap();
+        for message in &mut registry.registry.messages {
+            message.created_at = super::super::super::timestamp(previous_window);
+            message.created_at_epoch = previous_window;
+            message.created_at_epoch_millis = previous_window.saturating_mul(1_000);
+        }
+        registry.save().unwrap();
+    }
+
     #[test]
     fn successful_notice_backlog_drains_in_bounded_batches() {
         let (_temp, context) = fixture();
@@ -356,6 +371,7 @@ mod tests {
         }
         let mut delivered = 0;
         for _ in 0..8 {
+            open_fixture_admission_window(&context);
             reconcile(&context, &config()).unwrap();
             let current = notice_count(&context);
             assert!(current - delivered <= 8, "one wake must bound deliveries");
@@ -404,6 +420,7 @@ mod tests {
         }
         let mut state = State::default();
         for wake in 1..=4 {
+            open_fixture_admission_window(&context);
             state.reconcile(&context, &config()).unwrap();
             assert_eq!(notice_count(&context), wake * BATCH_SIZE);
             assert_eq!(state.scanned, 32, "draining must retain its source cursor");
@@ -422,9 +439,11 @@ mod tests {
             retain_failure(&context, &format!("pruning-{index}"), now, now + 60);
         }
         let mut state = State::default();
+        open_fixture_admission_window(&context);
         state.reconcile(&context, &config()).unwrap();
         assert_eq!(notice_count(&context), BATCH_SIZE);
         retain_failure(&context, "appended", now, now + 60);
+        open_fixture_admission_window(&context);
         state.reconcile(&context, &config()).unwrap();
         assert_eq!(notice_count(&context), 16);
         assert_eq!(
@@ -438,6 +457,7 @@ mod tests {
         }
         // Rebuilding after pruning filters persisted receipts instead of
         // duplicating the notices that were delivered before the boundary moved.
+        open_fixture_admission_window(&context);
         assert_eq!(state.reconcile(&context, &config()).unwrap(), None);
         assert_eq!(notice_count(&context), 17);
         assert_eq!(state.receive_attempts, 17);
