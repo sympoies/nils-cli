@@ -17,6 +17,9 @@ use super::support::{StubEnv, parse_envelope, run_forge_cli};
 #[path = "pr_review_loop/correction.rs"]
 mod correction;
 
+#[path = "pr_review_loop/admitted_correction.rs"]
+mod admitted_correction;
+
 /// A `gh` stub that answers `pr view` with a fixed head and records every
 /// invocation, so a test can prove no mutation was attempted.
 fn gh_stub_with_head(stub: &StubEnv, head: &str) -> String {
