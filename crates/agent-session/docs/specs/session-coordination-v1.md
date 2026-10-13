@@ -428,13 +428,14 @@ it contains only this fixed set of metadata fields:
 | Field | Meaning and source |
 | --- | --- |
 | `state` | Normalized receipt state: `queued`, `attempting`, `attempt_unknown`, `prompt_submitted`, or `undeliverable`. Submission is not consumption. Invalid stored states normalize to `undeliverable`. |
+| `delivery_state` | `resolved` when no live unread mail remains, `submitted` when the generation has been notified and mail remains, otherwise `queued`. This diagnostic status does not replace the raw submission state. |
 | `generation`, `attempted_generation`, `notified_generation` | Nonnegative receipt counters; an older attempt remains distinct from a newer queued generation. |
 | `queued_at_epoch` | Current generation queue time, recovered when needed from canonical local unread admission metadata. Remote sender clocks are not used. |
 | `attempted_queued_at_epoch` | Queue time retained for the attempted prompt, independent of newer mail or transcript compaction. |
 | `attempted_at_epoch`, `updated_at_epoch`, `next_attempt_at_epoch` | Attempt, receipt update, and scheduled retry times from the normalized snapshot. Existing normalization may recover a missing update time or requeue a newer generation at observation time. |
 | `last_reason` | Existing stable reason allowlist; unrecognized text becomes `notification-state-invalid`. An absent reason is `null`. |
 | `live_unread_count` | Nonexpired canonical unread messages for the exact recipient incarnation. Remote senders count; read, acknowledged, expired, and other-incarnation messages do not. |
-| `resolved` | `live_unread_count == 0` or `generation <= notified_generation`. Drained mail can leave a queued but inert receipt; resolution alone proves neither submission nor acknowledgement. |
+| `resolved` | `live_unread_count == 0` or `generation <= notified_generation`. Delivery discovery and both delivery boundaries retire drained generations with reason `mailbox-drained`, preserving submission counters and timestamps, without changing mailbox records. Active `attempting` receipts retain their fence until an outcome is recorded. Resolution alone proves neither submission nor acknowledgement. |
 | `controller_available` | `null`: status performs no controller probe, so availability is unknown. |
 | `source` | `registry: "canonical-local"`; `normalization_applied` reports changes to this incarnation's in-memory receipt snapshot. `queued_at` is `stored-receipt`, `canonical-unread-admission`, or `unavailable`. |
 | `observed_at_epoch` | Time the locked registry snapshot was observed. |

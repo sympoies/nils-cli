@@ -53,3 +53,59 @@ pub(super) fn refresh(registry: &mut Registry, now: i64) {
         }
     }
 }
+
+/// Retire drained generations through their existing reason field. Keep
+/// submission counters, state and attempt timestamps as evidence; resolution
+/// does not imply that a prompt was submitted. An active side-effect owner retains its
+/// submission fence until it records an outcome.
+fn resolve(receipt: &mut NotificationReceipt, now: i64) -> bool {
+    if receipt.state == "attempting" || receipt.generation == 0 {
+        return false;
+    }
+    if receipt.last_reason.as_deref() == Some("mailbox-drained") {
+        return false;
+    }
+    receipt.last_reason = Some("mailbox-drained".into());
+    receipt.updated_at_epoch = now;
+    receipt.next_attempt_at_epoch = 0;
+    true
+}
+
+pub(crate) fn resolve_drained_generation(
+    registry: &mut Registry,
+    session: &str,
+    incarnation: &str,
+    now: i64,
+) -> bool {
+    if super::has_live_unread(registry, session, incarnation, now) {
+        return false;
+    }
+    registry
+        .notifications
+        .get_mut(&super::receipt_key(session, incarnation))
+        .is_some_and(|receipt| resolve(receipt, now))
+}
+
+pub(super) fn resolve_drained_generations(registry: &mut Registry, now: i64) -> bool {
+    let live: std::collections::BTreeSet<_> = registry
+        .messages
+        .iter()
+        .filter(|message| message.state == "unread" && message.expires_at_epoch > now)
+        .map(|message| {
+            (
+                message.recipient_session_id.as_str(),
+                message.recipient_incarnation.as_str(),
+            )
+        })
+        .collect();
+    let mut changed = false;
+    for receipt in registry.notifications.values_mut() {
+        if !live.contains(&(
+            receipt.target_session_id.as_str(),
+            receipt.target_incarnation.as_str(),
+        )) {
+            changed |= resolve(receipt, now);
+        }
+    }
+    changed
+}
