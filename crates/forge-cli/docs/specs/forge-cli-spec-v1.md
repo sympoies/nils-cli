@@ -1053,8 +1053,45 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   single-shot.
 - Observation-array rows may include `status` or `disposition` with `open`,
   `fixed`, `accepted`, `preference`, or `follow-up`. Terminal dispositions are
-  durable and non-blocking. Omitting an open finding or changing its blocking
-  bit on the same head is not a disposition and fails closed.
+  durable and non-blocking. Every new-head observation must include each
+  previously open identity; omissions fail as `review_observation_incomplete`
+  with all missing identities and leave the ledger unchanged. Changing an open
+  finding's blocking bit on the same head still fails closed.
+- To repair a historical omission error, pass an explicit correction envelope
+  through the existing `observe --findings-file` path and an exact
+  `--expected-state` tip. `--auto-state` cannot admit a correction.
+
+  ```json
+  {
+    "schema_version": "forge-cli.review-loop-correction.v1",
+    "correction": {
+      "corrected_record": "sha256:<erroneous-record-digest>",
+      "reason": "omitted-findings"
+    },
+    "findings": [
+      {"lifecycle_fingerprint": "correctness:component:invariant", "status": "open"}
+    ]
+  }
+  ```
+
+  Include the complete current inventory using its canonical identities,
+  including unchanged terminal findings.
+  The named ordinary observation must be at the current head. The chain must
+  prove each restoration was an open finding whose status alone became fixed:
+  a genuinely observed fixed disposition cannot be restored through this path.
+  Unrelated dispositions, blocking bits, roots, and thread metadata cannot change.
+
+  A `review-loop-correction` record appends the restored state and a receipt with
+  `corrected_record`, `reason`, and sorted `restored_findings`. Existing record
+  bytes and digests stay intact. Lifecycle/repair/reopen counters, budgets, and
+  extensions are retained. Lost no-progress debt is restored from the proven
+  prior inventory, including a durable stop if its budget is exhausted.
+  A matching unextended false-reopen stop
+  may be cleared only for the identical attempted inventory; unrelated or already
+  extended stops require their normal path.
+  A retry against the fresh corrected tip appends nothing. Chain parsing replays
+  the proof and rejects modified budgets or unrelated findings. Use a CLI version
+  that understands this new record kind to read a corrected chain.
 - The default budget is five repair rounds, two consecutive no-progress rounds,
   and zero automatic reopens for a previously fixed lifecycle fingerprint.
   Same-head/same-findings retries append nothing. Only a new reviewed head

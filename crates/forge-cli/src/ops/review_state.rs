@@ -19,6 +19,8 @@ use std::fmt::Write as _;
 
 use crate::error::ForgeError;
 
+pub mod correction;
+
 #[cfg(test)]
 #[path = "review_state/observation_regressions.rs"]
 mod observation_regressions;
@@ -181,6 +183,19 @@ pub struct ReviewLoopHardStop {
 pub struct ReviewLoopTransition {
     pub state: ReviewLoopState,
     pub changed: bool,
+    pub correction: Option<correction::CorrectionReceipt>,
+}
+
+impl ReviewLoopTransition {
+    pub fn into_payload(self) -> ReviewStatePayload {
+        match self.correction {
+            Some(correction) => ReviewStatePayload::ReviewLoopCorrection {
+                state: self.state,
+                correction,
+            },
+            None => ReviewStatePayload::ReviewLoop { state: self.state },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -191,6 +206,10 @@ pub enum ReviewStatePayload {
     },
     ReviewLoop {
         state: ReviewLoopState,
+    },
+    ReviewLoopCorrection {
+        state: ReviewLoopState,
+        correction: correction::CorrectionReceipt,
     },
     ReviewHandoff {
         handoff: super::pr_review_handoff::ReviewHandoff,
@@ -206,6 +225,7 @@ impl ReviewStatePayload {
         match self {
             Self::ReviewRunReceipt { .. } => "review-run-receipt",
             Self::ReviewLoop { .. } => "review-loop",
+            Self::ReviewLoopCorrection { .. } => "review-loop-correction",
             Self::ReviewHandoff { .. } => "review-handoff",
             Self::ReviewSyncCarryOver { .. } => "review-sync-carry-over",
         }
@@ -339,6 +359,16 @@ pub fn state_comment_visible_metadata(record: &ReviewStateRecord) -> String {
         ReviewStatePayload::ReviewRunReceipt { receipt } => format!(
             "Review receipt recorded at head {}. Follow the review findings before merge.",
             short_sha(&receipt.expected_head)
+        ),
+        ReviewStatePayload::ReviewLoopCorrection { state, correction } => format!(
+            "Review correction recorded at head {}: {} omitted findings restored; prior history and budgets retained.{}",
+            short_sha(&state.head_sha),
+            correction.restored_findings.len(),
+            if state.hard_stop.is_some() {
+                " Review remains paused by its budget stop."
+            } else {
+                ""
+            }
         ),
         ReviewStatePayload::ReviewLoop { state } => {
             if let Some(stop) = state.hard_stop.as_ref() {
@@ -630,7 +660,9 @@ pub fn parse_chain<'a>(
         {
             return Err(state_conflict("review-state carry-over is invalid", None));
         }
-        if let ReviewStatePayload::ReviewLoop { state } = &record.payload {
+        if let ReviewStatePayload::ReviewLoop { state }
+        | ReviewStatePayload::ReviewLoopCorrection { state, .. } = &record.payload
+        {
             validate_review_loop_state(state)?;
             let stopped_head_matches = state
                 .hard_stop
@@ -766,6 +798,7 @@ pub fn parse_chain<'a>(
             }
             _ => (),
         }
+        correction::validate_record(&ordered, record)?;
         ordered.push((*record).clone());
         let candidates = children
             .get(&Some(digest.clone()))
@@ -875,7 +908,8 @@ pub fn latest_review_loop_state(chain: &ReviewStateChain) -> Option<&ReviewLoopS
         .iter()
         .rev()
         .find_map(|record| match &record.payload {
-            ReviewStatePayload::ReviewLoop { state } => Some(state),
+            ReviewStatePayload::ReviewLoop { state }
+            | ReviewStatePayload::ReviewLoopCorrection { state, .. } => Some(state),
             ReviewStatePayload::ReviewRunReceipt { .. }
             | ReviewStatePayload::ReviewHandoff { .. }
             | ReviewStatePayload::ReviewSyncCarryOver { .. } => None,
@@ -925,6 +959,7 @@ pub fn observe_review_loop(
                 hard_stop: None,
             },
             changed: true,
+            correction: None,
         });
     };
 
@@ -952,10 +987,32 @@ pub fn observe_review_loop(
     };
     let previous = resumed_previous.as_ref().unwrap_or(previous);
     let head_changed = previous.head_sha != expected_head;
+    if head_changed {
+        let missing: Vec<_> = previous
+            .findings
+            .iter()
+            .filter(|(key, finding)| {
+                finding.status == ReviewFindingStatus::Open && !current.contains_key(*key)
+            })
+            .map(|(key, _)| key.as_str())
+            .collect();
+        if !missing.is_empty() {
+            return Err(ForgeError::validation(
+                error_schema(),
+                "review_observation_incomplete",
+                "observation omits open findings; include their current dispositions",
+                Some(format!(
+                    "missing={}; recovery=include every open finding with its current status",
+                    missing.join(",")
+                )),
+            ));
+        }
+    }
     if !head_changed && observation_matches_state(previous, &current) {
         return Ok(ReviewLoopTransition {
             state: previous.clone(),
             changed: false,
+            correction: None,
         });
     }
     if !head_changed {
@@ -1021,7 +1078,6 @@ pub fn observe_review_loop(
         ));
     }
 
-    let observed_fingerprints = current.keys().cloned().collect::<BTreeSet<_>>();
     let mut findings = previous.findings.clone();
     for (fingerprint, observation) in current {
         match findings.get_mut(&fingerprint) {
@@ -1082,14 +1138,6 @@ pub fn observe_review_loop(
             }
         }
     }
-    for (fingerprint, finding) in &mut findings {
-        if head_changed
-            && !observed_fingerprints.contains(fingerprint)
-            && finding.status == ReviewFindingStatus::Open
-        {
-            finding.status = ReviewFindingStatus::Fixed;
-        }
-    }
 
     let state = ReviewLoopState {
         head_sha: expected_head.to_string(),
@@ -1103,6 +1151,7 @@ pub fn observe_review_loop(
     Ok(ReviewLoopTransition {
         changed: state != *previous,
         state,
+        correction: None,
     })
 }
 
@@ -2490,8 +2539,15 @@ mod tests {
             &[observation("correctness:review-loop:typed-state")],
         )
         .expect("genesis");
-        let fixed = observe_review_loop(Some(&initial.state), "head-b", &[])
-            .expect("finding fixed on repaired head");
+        let fixed = observe_review_loop(
+            Some(&initial.state),
+            "head-b",
+            &[ReviewFindingObservation {
+                status: ReviewFindingStatus::Fixed,
+                ..observation("correctness:review-loop:typed-state")
+            }],
+        )
+        .expect("finding fixed on repaired head");
 
         let error = observe_review_loop(
             Some(&fixed.state),
@@ -3025,30 +3081,15 @@ mod tests {
     }
 
     #[test]
-    fn advancing_the_head_marks_unobserved_open_findings_fixed() {
-        let previous = genesis_with(&[observed(FP, ReviewFindingStatus::Open)]);
-
-        let transition =
-            observe_review_loop(Some(&previous), "head-2", &[]).expect("repaired head");
-
-        assert!(transition.changed);
-        assert_eq!(transition.state.round, 1);
-        assert_eq!(
-            transition.state.findings[FP].status,
-            ReviewFindingStatus::Fixed
-        );
-        // The sweep only flips the status; the finding's last observed head and
-        // seen count stay pinned to the round that actually saw it.
-        assert_eq!(transition.state.findings[FP].last_seen_head, "head");
-        assert_eq!(transition.state.findings[FP].seen_count, 1);
-    }
-
-    #[test]
     fn a_reopened_finding_stops_the_loop_when_no_reopen_budget_remains() {
         let first = genesis_with(&[observed(FP, ReviewFindingStatus::Open)]);
-        let fixed = observe_review_loop(Some(&first), "head-2", &[])
-            .expect("repair")
-            .state;
+        let fixed = observe_review_loop(
+            Some(&first),
+            "head-2",
+            &[observed(FP, ReviewFindingStatus::Fixed)],
+        )
+        .expect("repair")
+        .state;
 
         // The default budget allows zero automatic reopens.
         let error = observe_review_loop(

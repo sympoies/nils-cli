@@ -713,7 +713,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 (observe)
 _arguments "${_arguments_options[@]}" : \
 '--expected-head=[Exact provider head SHA whose review observation is being appended]:SHA:_default' \
-'--findings-file=[Delivery-mode review-specialists merge envelope or observation array. Both shapes require a \`lifecycle_fingerprint\`; only the array accepts \`disposition\`. See this command'\''s help footer for the full schemas]:PATH:_default' \
+'--findings-file=[Merge envelope, observation array, or chain-bound correction envelope. Rows require lifecycle identity; see the help footer for exact schemas]:PATH:_default' \
 '--expected-state=[Exact current provider-visible state-chain tip; omit only for genesis]:DIGEST:_default' \
 '(--body-file)--body=[Human-readable delivery outcome to post in the same comment as this ledger record. Mutually exclusive with \`--body-file\`]:BODY:_default' \
 '--body-file=[Read the delivery outcome body from PATH (\`-\` reads stdin)]:PATH:_default' \
@@ -756,7 +756,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (validate)
 _arguments "${_arguments_options[@]}" : \
-'--findings-file=[Delivery-mode review-specialists merge envelope or observation array]:PATH:_default' \
+'--findings-file=[Merge envelope, observation array, or chain-bound correction envelope]:PATH:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
