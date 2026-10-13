@@ -17,6 +17,8 @@ use super::support::{StubEnv, parse_envelope, run_forge_cli};
 #[path = "pr_review_loop/correction.rs"]
 mod correction;
 
+#[path = "pr_review_loop/admitted_correction.rs"]
+mod admitted_correction;
 #[path = "pr_review_loop/supersession.rs"]
 mod supersession;
 

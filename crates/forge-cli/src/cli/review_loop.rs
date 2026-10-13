@@ -24,6 +24,9 @@ use super::*;
       (corrected_record digest, reason omitted-findings) and complete `findings`.\n  \
       Use explicit --expected-state; only chain-proven omissions can be restored.\n  \
       Old history and budgets remain unchanged. New heads require all open findings.\n  \
+      An alias-bearing false-reopen stop requires correction.attempted_findings\n  \
+      containing the original attempted rows; its digest must match exactly.\n  \
+      After reassignment, observe ordinary inventory before retrying a correction.\n  \
       4. A `forge-cli.review-loop-supersession.v1` object with `supersession`\n  \
       (superseded_record digest, reason signed-fast-forward) and current `findings`.\n  \
       Use explicit --expected-state. A verified signed fast-forward records a new\n  \

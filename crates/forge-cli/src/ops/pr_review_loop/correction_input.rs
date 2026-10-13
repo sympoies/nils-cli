@@ -45,10 +45,21 @@ impl ObservationInput {
             || value.get("schema_version").and_then(|v| v.as_str())
                 == Some(review_state::correction::INPUT_SCHEMA)
         {
-            let envelope: CorrectionEnvelope =
-                serde_json::from_value(value.clone()).map_err(|_| {
-                    review_state::correction::invalid("invalid correction envelope fields")
+            // Parse optional proof rows through the same ordinary row parser,
+            // retaining aliases while normalizing input key names for the receipt.
+            let mut value = value.clone();
+            if let Some(proof) = value
+                .get_mut("correction")
+                .and_then(|c| c.get_mut("attempted_findings"))
+                && !proof.is_null()
+            {
+                *proof = serde_json::to_value(observations_from_value(proof)?).map_err(|_| {
+                    review_state::correction::invalid("cannot encode attempted findings proof")
                 })?;
+            }
+            let envelope: CorrectionEnvelope = serde_json::from_value(value).map_err(|_| {
+                review_state::correction::invalid("invalid correction envelope fields")
+            })?;
             if envelope.schema_version != review_state::correction::INPUT_SCHEMA {
                 return Err(review_state::correction::invalid(
                     "unsupported correction input schema",

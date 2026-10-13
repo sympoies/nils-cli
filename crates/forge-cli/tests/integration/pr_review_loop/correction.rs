@@ -146,6 +146,7 @@ fn live_correction_appends_history_once_and_keeps_zero_reopen_budget() {
                 corrected_record: target.record_digest.clone(),
                 reason: CorrectionReason::OmittedFindings,
                 restored_findings: restored,
+                attempted_findings: None,
             },
         },
     )
