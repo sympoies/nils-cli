@@ -2,6 +2,8 @@
 use super::*;
 
 pub const INPUT_SCHEMA: &str = "forge-cli.review-loop-supersession.v1";
+/// Keep the full-SHA proof bounded; the whole marker/body limits still apply.
+pub const MAX_VERIFIED_COMMITS: usize = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -104,6 +106,7 @@ pub fn apply(
         return Err(invalid("supersession requires distinct full commit IDs"));
     }
     if verified_commits.is_empty()
+        || verified_commits.len() > MAX_VERIFIED_COMMITS
         || verified_commits.last().map(String::as_str) != Some(head)
         || verified_commits
             .iter()
@@ -132,6 +135,13 @@ pub fn apply(
         && supersession == &receipt
         && latest.expected_head == head
     {
+        if super::super::pr_review_handoff::latest(chain).is_some_and(|handoff| {
+            latest.assignment_generation != Some(handoff.assignment_generation)
+        }) {
+            return Err(invalid(
+                "an earlier-assignment supersession retry cannot establish a new interval; use the current stop's approval and extension path before ordinary observation",
+            ));
+        }
         return Ok(ReviewLoopTransition {
             state: state.clone(),
             changed: false,

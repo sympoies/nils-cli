@@ -56,7 +56,7 @@ fn verified_fast_forward<R: BackendRunner>(
 ) -> Result<Vec<String>, ForgeError> {
     let mut commits = Vec::new();
     let mut expected_total = None;
-    for page in 1..=10 {
+    for page in 1..=supersession::MAX_VERIFIED_COMMITS.div_ceil(100) {
         let mut argv = vec![OsString::from("api")];
         ctx.push_github_api_hostname(&mut argv);
         argv.push(
@@ -69,9 +69,9 @@ fn verified_fast_forward<R: BackendRunner>(
             })?;
         let total = value["total_commits"]
             .as_u64()
-            .filter(|n| *n > 0 && *n <= 1000)
+            .filter(|n| *n > 0 && *n <= supersession::MAX_VERIFIED_COMMITS as u64)
             .ok_or_else(|| {
-                supersession::invalid("signed fast-forward must contain between 1 and 1000 commits")
+                supersession::invalid("signed fast-forward must contain between 1 and 100 commits")
             })?;
         if value["status"] != "ahead"
             || value["behind_by"] != 0

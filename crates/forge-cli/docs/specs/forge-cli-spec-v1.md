@@ -1126,10 +1126,12 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
 
   Include every open finding. The provider must prove A is an ancestor of B
   and every newly reachable commit has a valid verified signature. Comparison
-  pages are read completely, with a bound of 1000 commits; divergence, unsigned
+  proof is read completely, with a bound of 100 commits; divergence, unsigned
   commits, truncated proof, stale tips, and unknown fields fail as
   `review_supersession_invalid`. Offline `validate` checks only the input shape;
   `observe --dry-run` also checks provider proof, writer ownership, head and tip.
+  The independent 64 KiB marker and complete-comment limits remain binding;
+  large retained inventories may reach those limits below the commit cap.
 
   A `review-loop-supersession` record retains the stopped A attempt and all prior
   records. Its receipt names the superseded record, A, verified commit IDs, and
@@ -1142,8 +1144,11 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   Inspect that new tip,
   obtain a newer maintainer approval carrying B's exact proposal marker, run
   `extend` at B, then resume the identical B inventory through ordinary `observe`.
-  A's approval cannot be reused. A retry at the fresh tip appends nothing. No
-  force push or manual ledger edit is needed. Older readers must upgrade before
+  A's approval cannot be reused. An identical retry at the fresh tip appends
+  nothing within its original reviewer assignment. After reassignment, the old
+  receipt cannot bootstrap the new interval and is refused before provider writes.
+  Use the current stop's approval/extension path before an ordinary observation.
+  No force push or manual ledger edit is needed. Older readers must upgrade before
   reading the new record kind; designated reviewer rebinding remains required
   when the assigned head changes.
 - An observation can only be appended at the current provider head, so history

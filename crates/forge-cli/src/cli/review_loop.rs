@@ -28,6 +28,8 @@ use super::*;
       (superseded_record digest, reason signed-fast-forward) and current `findings`.\n  \
       Use explicit --expected-state. A verified signed fast-forward records a new\n  \
       stop requiring fresh maintainer approval at the new head; history stays intact.\n  \
+      Proof is capped at 100 commits; complete record/comment size limits still apply.\n  \
+      Earlier-assignment retries fail before writes; use approval/extension to resume.\n  \
       Check these shapes offline, with no pull request and no provider call, \
       using `pr review-loop validate --findings-file <path>`.\n\n\
       COMBINED DELIVERY OUTCOME\n  \

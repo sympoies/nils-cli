@@ -297,3 +297,58 @@ fn supported_hundred_commit_boundary_is_encodable_and_replays() {
     assert_eq!(state.extensions.len(), 1);
     assert_eq!(state.budget.max_auto_reopens_per_fingerprint, 0);
 }
+
+#[test]
+fn live_hundred_commit_boundary_verifies_the_complete_proof_and_retries_once() {
+    super::supersession::live_supersession_with_commits(&commits(100));
+}
+
+#[test]
+fn provider_over_limit_is_refused_on_the_first_page_before_any_write() {
+    let (records, rows) = super::supersession::stopped_fixture();
+    let stub = StubEnv::new();
+    let file = write_findings(
+        &stub,
+        "over-limit.json",
+        &input(&request(&records), &rows).to_string(),
+    );
+    let script = super::supersession::compare_stub(&stub, &records)
+        .replace("\"ahead_by\":1", "\"ahead_by\":101")
+        .replace("\"total_commits\":1", "\"total_commits\":101");
+    let stub = stub.gh_stub(&script);
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "--dry-run",
+            "pr",
+            "review-loop",
+            "observe",
+            "7",
+            "--expected-head",
+            B,
+            "--expected-state",
+            &records[2].record_digest,
+            "--findings-file",
+            &file,
+        ],
+    );
+    assert_eq!(out.code, 0, "{}", out.stdout);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["data"]["preflight_ok"], false);
+    assert!(
+        out.stdout.contains("between 1 and 100 commits"),
+        "{}",
+        out.stdout
+    );
+    let log = gh_args_log(&stub);
+    assert_eq!(log.matches("compare/").count(), 1, "{log}");
+    for marker in PROVIDER_WRITE_MARKERS {
+        assert!(!log.contains(marker), "unexpected mutation: {log}");
+    }
+}

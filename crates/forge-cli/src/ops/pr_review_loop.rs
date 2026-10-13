@@ -261,6 +261,7 @@ fn shape_prose(shape: &str) -> &str {
     match shape {
         SHAPE_MERGE_ENVELOPE => "review-specialists merge envelope",
         "correction-envelope" => "chain-bound correction envelope",
+        "supersession-envelope" => "chain-bound supersession envelope",
         _ => "bare observation array",
     }
 }

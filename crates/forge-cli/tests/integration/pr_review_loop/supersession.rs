@@ -69,7 +69,7 @@ pub(super) fn stopped_fixture() -> (Vec<ReviewStateRecord>, Vec<ReviewFindingObs
     (vec![genesis, stop_record, extension], findings)
 }
 
-fn compare_stub(stub: &StubEnv, records: &[ReviewStateRecord]) -> String {
+pub(super) fn compare_stub(stub: &StubEnv, records: &[ReviewStateRecord]) -> String {
     gh_stub_with_ledger(stub, B, &records.iter().map(|r| r.marker().unwrap()).collect::<Vec<_>>()).replace(
         "esac\necho \"stub: unscripted gh args: $*\" >&2",
         &format!(r#"  "api repos/acme/widgets/compare/{A}...{B}?per_page=100&page=1")
@@ -371,10 +371,27 @@ fn provider_proof_rejects_divergence_unsigned_and_truncated_results_without_writ
 
 #[test]
 fn live_supersession_appends_once_readback_keeps_original_stop_and_retry_is_noop() {
+    live_supersession_with_commits(&[B.into()]);
+}
+
+pub(super) fn live_supersession_with_commits(commits: &[String]) {
     use forge_cli::ops::review_state::supersession::INPUT_SCHEMA;
     let stub = StubEnv::new();
     let (records, findings) = stopped_fixture();
-    let expected = recover(&records, &findings);
+    let history = chain(&records);
+    let expected = forge_cli::ops::review_state::supersession::apply(
+        &history,
+        B,
+        history.tip_digest.as_deref(),
+        &forge_cli::ops::review_state::supersession::SupersessionRequest {
+            superseded_record: records[2].record_digest.clone(),
+            reason:
+                forge_cli::ops::review_state::supersession::SupersessionReason::SignedFastForward,
+        },
+        &findings,
+        commits,
+    )
+    .unwrap();
     let state = expected.state.clone();
     let appended = ReviewStateRecord::new(
         "acme/widgets",
@@ -393,7 +410,14 @@ fn live_supersession_appends_once_readback_keeps_original_stop_and_retry_is_noop
     rows.push(appended.clone());
     let after = page(&rows);
     let posts = stub.tempdir.path().join("posted");
+    let comparison = serde_json::json!({"status":"ahead","ahead_by":commits.len(),"behind_by":0,"total_commits":commits.len(),"base_commit":{"sha":A},"merge_base_commit":{"sha":A},"commits":commits.iter().map(|sha|serde_json::json!({"sha":sha,"commit":{"verification":{"verified":true,"reason":"valid"}}})).collect::<Vec<_>>()}).to_string();
     let script = compare_stub(&stub, &records);
+    let begin = script
+        .find("    cat <<'JSON'\n{\"status\":\"ahead\"")
+        .unwrap()
+        + "    cat <<'JSON'\n".len();
+    let finish = script[begin..].find("\nJSON\n").unwrap() + begin;
+    let script = format!("{}{}{}", &script[..begin], comparison, &script[finish..]);
     let start = script.find("  \"api graphql\")").unwrap();
     let end = script[start..].find("    ;;\n").unwrap() + start + "    ;;\n".len();
     let replacement = format!(
@@ -467,19 +491,19 @@ echo "stub: unscripted gh args: $*" >&2"#,
 }
 
 #[test]
-fn signed_fast_forward_proof_reads_every_page_and_checks_intermediate_signatures() {
+fn signed_fast_forward_proof_reads_complete_boundary_and_checks_intermediate_signatures() {
     for unsigned_intermediate in [false, true] {
         let stub = StubEnv::new();
         let (records, findings) = stopped_fixture();
         let commit = |sha: String, verified: bool| serde_json::json!({"sha":sha,"commit":{"verification":{"verified":verified,"reason":if verified {"valid"} else {"unsigned"}}}});
-        let rows: Vec<_> = (1..=100)
+        let mut rows: Vec<_> = (1..100)
             .map(|i| commit(format!("{i:040x}"), !unsigned_intermediate || i != 50))
             .collect();
+        rows.push(commit(B.into(), true));
         let page = |commits: Vec<serde_json::Value>| {
-            serde_json::json!({"status":"ahead","ahead_by":101,"behind_by":0,"total_commits":101,"base_commit":{"sha":A},"merge_base_commit":{"sha":A},"commits":commits}).to_string()
+            serde_json::json!({"status":"ahead","ahead_by":100,"behind_by":0,"total_commits":100,"base_commit":{"sha":A},"merge_base_commit":{"sha":A},"commits":commits}).to_string()
         };
         let first = page(rows);
-        let second = page(vec![commit(B.into(), true)]);
         let script = gh_stub_with_ledger(
             &stub,
             B,
@@ -495,12 +519,6 @@ fn signed_fast_forward_proof_reads_every_page_and_checks_intermediate_signatures
     cat <<'FIRST'
 {first}
 FIRST
-    exit 0
-    ;;
-  "api repos/acme/widgets/compare/{A}...{B}?per_page=100&page=2")
-    cat <<'SECOND'
-{second}
-SECOND
     exit 0
     ;;
 esac
@@ -538,9 +556,7 @@ echo "stub: unscripted gh args: $*" >&2"#
             "{envelope}"
         );
         let log = gh_args_log(&stub);
-        if !unsigned_intermediate {
-            assert!(log.contains("page=2"), "{log}");
-        }
+        assert_eq!(log.matches("compare/").count(), 1, "{log}");
         for marker in PROVIDER_WRITE_MARKERS {
             assert!(!log.contains(marker), "unexpected mutation: {log}");
         }

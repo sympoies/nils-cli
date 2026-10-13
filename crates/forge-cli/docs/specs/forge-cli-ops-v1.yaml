@@ -203,7 +203,9 @@ review_state_contract:
     input: "existing observe findings-file wrapper; supersession {superseded_record, reason: signed-fast-forward}; current findings including every open identity; explicit current expected-state required"
     record_kind: review-loop-supersession
     receipt_required: [request, from_head, verified_commits, findings]
-    admission: "latest stopped state; provider comparison proves ancestry and valid verified signatures for every new commit, reading all pages up to 1000 commits; preserve successful state head, findings, counters, budget limits, extensions, and old record bytes"
+    verified_commit_limit: 100
+    retry: "identical retry appends nothing only within the original reviewer assignment; reject earlier-assignment receipt reuse before provider writes and use the current stop approval/extension path before an ordinary observation"
+    admission: "latest stopped state; provider comparison proves ancestry and valid verified signatures for every new commit, reading the complete proof up to 100 commits; the independent 64 KiB marker and complete-comment limits can further restrict large inventories; preserve successful state head, findings, counters, budget limits, extensions, and old record bytes"
     recovery: "append a fresh stop at current head with a new head/tip/inventory-bound proposal; require a newer maintainer approval and extend before ordinary identical-inventory resume; never reuse the superseded attempt approval"
     readback: "replay transition against prior chain and reject budget/counter drift; identical retry against fresh tip appends nothing; older readers require upgrade"
   review_run_receipt:
@@ -1017,6 +1019,7 @@ operations:
       - { name: --findings-file, type: path, required: true }
     validations:
       - review_findings_invalid
+      - review_supersession_invalid
       - review_fingerprint_required
       - review_fingerprint_collision
     backends:
@@ -1024,7 +1027,7 @@ operations:
       gitlab: none
       local: none
     output:
-      data: object<{shape:enum<merge-envelope|observation-array>,row_count,identity_count,dispositions:[{disposition:enum<open|fixed|accepted|preference|follow-up>,count}],blocking_count,duplicate_identities?}>
+      data: object<{shape:enum<merge-envelope|observation-array|supersession-envelope>,row_count,identity_count,dispositions:[{disposition:enum<open|fixed|accepted|preference|follow-up>,count}],blocking_count,duplicate_identities?}>
     notes: >-
       Provider-independent and network-free: the op takes no id, resolves no
       provider context, and runs no backend, so `--provider`, `--repo`,
