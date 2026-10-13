@@ -36,6 +36,7 @@ jobs:
       docs_only: ${{ steps.detect.outputs.docs_only }}
       head_sha: ${{ steps.detect.outputs.head_sha }}
       release_branch: ${{ steps.detect.outputs.release_branch }}
+      release_mode: ${{ steps.detect.outputs.release_mode }}
       release_candidate: ${{ steps.detect.outputs.release_candidate }}
       release_only: ${{ steps.finalize.outputs.release_only }}
     steps:
@@ -76,6 +77,10 @@ jobs:
             *) docs_only=false ;;
           esac
           release_candidate=false
+          release_mode=branch
+          if [ "${EVENT_NAME}" = "merge_group" ]; then
+            release_mode=merge-group
+          fi
           policy_dir="${RUNNER_TEMP}/release-policy"
           mkdir -p "${policy_dir}"
           release_detector="${policy_dir}/detect-release-only.sh"
@@ -106,8 +111,9 @@ jobs:
           echo "docs_only=${docs_only}" >> "$GITHUB_OUTPUT"
           echo "head_sha=${head}" >> "$GITHUB_OUTPUT"
           echo "release_branch=${HEAD_REF}" >> "$GITHUB_OUTPUT"
+          echo "release_mode=${release_mode}" >> "$GITHUB_OUTPUT"
           echo "release_candidate=${release_candidate}" >> "$GITHUB_OUTPUT"
-          echo "docs_only=${docs_only} release_candidate=${release_candidate} (base=${base}, head=${head})"
+          echo "docs_only=${docs_only} release_candidate=${release_candidate} release_mode=${release_mode} (base=${base}, head=${head})"
 
       - name: Prove full CI on exact base main commit
         id: base_ci
@@ -262,10 +268,15 @@ jobs:
               >"${policy_dir}/detect-release-only.sh"
             git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/release-only-checks.sh" \
               >"${policy_dir}/release-only-checks.sh"
+            mode_args=(--branch "${{ needs.changes.outputs.release_branch }}")
+            if [ "${{ needs.changes.outputs.release_mode }}" = "merge-group" ]; then
+              mode_args=(--merge-group)
+            fi
+            RELEASE_ONLY_DETECTOR="${policy_dir}/detect-release-only.sh" \
             bash "${policy_dir}/release-only-checks.sh" \
               --base "${{ needs.changes.outputs.base_sha }}" \
               --head "${{ needs.changes.outputs.head_sha }}" \
-              --branch "${{ needs.changes.outputs.release_branch }}"
+              "${mode_args[@]}"
           else
             bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
           fi
@@ -450,10 +461,15 @@ jobs:
               >"${policy_dir}/detect-release-only.sh"
             git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/release-only-checks.sh" \
               >"${policy_dir}/release-only-checks.sh"
+            mode_args=(--branch "${{ needs.changes.outputs.release_branch }}")
+            if [ "${{ needs.changes.outputs.release_mode }}" = "merge-group" ]; then
+              mode_args=(--merge-group)
+            fi
+            RELEASE_ONLY_DETECTOR="${policy_dir}/detect-release-only.sh" \
             bash "${policy_dir}/release-only-checks.sh" \
               --base "${{ needs.changes.outputs.base_sha }}" \
               --head "${{ needs.changes.outputs.head_sha }}" \
-              --branch "${{ needs.changes.outputs.release_branch }}"
+              "${mode_args[@]}"
           else
             /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh
           fi
@@ -511,12 +527,11 @@ jobs:
   # job keeps the required `coverage` check by proving that run produced its
   # LCOV report and by publishing the summary. It needs no macOS runner.
   coverage:
-    if: github.event_name != 'push'
     needs: [changes, test_macos, test_containment]
     # A job skipped because a needed job failed concludes `skipped`, which a
     # required check accepts. Run anyway and fail below instead, because
     # test_containment is not itself a required check.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read

@@ -136,8 +136,14 @@ nextest_ci_profile="$(mktemp "${TMPDIR:-/tmp}/nextest-ci-profile.XXXXXX")"
 trap 'rm -f "$coverage_job" "$linux_test_job" "$macos_job" "$containment_job" "$nextest_ci_profile"' EXIT
 awk '/^  coverage:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
   .github/workflows/ci.yml >"$coverage_job"
-assert_contains "$coverage_job" "if: \${{ !cancelled() }}" \
-  "coverage runs after a failed upstream lane so it reports failure instead of a passing skip"
+coverage_if_count="$(awk '/^    if:/ { count++ } END { print count + 0 }' "$coverage_job")"
+if [[ "$coverage_if_count" != "1" ]]; then
+  echo "FAIL: coverage job has exactly one job-level if condition (found $coverage_if_count)" >&2
+  exit 1
+fi
+echo "ok: coverage job has exactly one job-level if condition"
+assert_contains "$coverage_job" "if: \${{ !cancelled() && github.event_name != 'push' }}" \
+  "coverage excludes push while still running after failed upstream lanes"
 assert_contains "$coverage_job" "TEST_CONTAINMENT_RESULT: \${{ needs.test_containment.result }}" \
   "coverage reads the parallel containment canaries' result"
 assert_contains "$coverage_job" "[ \"\${TEST_CONTAINMENT_RESULT}\" != \"success\" ]; then" \
@@ -190,6 +196,8 @@ assert_contains .github/workflows/ci.yml "NILS_CLI_COVERAGE_FAIL_UNDER_LINES: \"
   "CI pins the 85% coverage floor on the instrumented macOS run"
 assert_contains .github/workflows/ci.yml "release_only:" \
   "CI publishes the release-only decision"
+assert_contains .github/workflows/ci.yml "release_mode:" \
+  "CI preserves the pull-request versus merge-group release mode"
 assert_contains .github/workflows/ci.yml "scripts/ci/detect-release-only.sh" \
   "CI uses the semantic release classifier"
 assert_contains .github/workflows/ci.yml "git show \"\${base}:scripts/ci/detect-release-only.sh\"" \
@@ -202,6 +210,20 @@ assert_contains .github/workflows/ci.yml "waitForTrustedMainCi" \
   "release-only CI waits for an in-flight exact-base push or merge-group receipt"
 assert_contains .github/workflows/ci.yml "--merge-group" \
   "merge-group release bumps use the protected semantic release classifier"
+assert_contains scripts/ci/release-only-checks.sh "--merge-group" \
+  "the protected reduced checker supports merge-group revalidation"
+assert_contains scripts/ci/release-only-checks.sh "RELEASE_ONLY_DETECTOR" \
+  "the reduced checker can use the detector copied from the exact base"
+assert_contains .github/workflows/ci.yml 'RELEASE_ONLY_DETECTOR="${policy_dir}/detect-release-only.sh"' \
+  "both reduced checkers use the detector copied from the exact base"
+assert_contains .github/workflows/ci.yml 'mode_args=(--merge-group)' \
+  "merge-group mode is passed to protected reduced checkers"
+if [[ "$(awk 'index($0, "${mode_args[@]}") { count++ } END { print count + 0 }' \
+    .github/workflows/ci.yml)" != "2" ]]; then
+  echo "FAIL: Linux and macOS reduced checkers both receive the release mode" >&2
+  exit 1
+fi
+echo "ok: Linux and macOS reduced checkers both receive the release mode"
 assert_contains .github/scripts/release-ci-gate.cjs "findTrustedMergeGroupCi" \
   "release gate accepts exact-SHA merge-group receipts"
 assert_contains .github/workflows/ci.yml "Full validation marker" \

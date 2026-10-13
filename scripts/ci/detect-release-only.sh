@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$base_seen" -ne 1 || ( "$branch_seen" -ne 1 && "$merge_group" -ne 1 ) ]]; then
+if [[ "$base_seen" -ne 1 || "$branch_seen" -eq "$merge_group" ]]; then
   usage >&2
   exit 2
 fi
@@ -144,13 +144,9 @@ def classify() -> bool:
     head_ref = git("rev-parse", "--verify", f"{head_input}^{{commit}}").strip()
     parents = git("rev-list", "--parents", "-n", "1", head_ref).split()
     if merge_group:
-        if len(parents) != 3 or parents[1] != base_ref:
+        if len(parents) != 2 or parents[1] != base_ref:
             return False
-        candidate_ref = parents[2]
-        if git("rev-parse", f"{candidate_ref}^{{tree}}").strip() != git(
-            "rev-parse", f"{head_ref}^{{tree}}"
-        ).strip():
-            return False
+        candidate_ref = head_ref
     else:
         if len(parents) != 2 or parents[1] != base_ref:
             return False
@@ -169,9 +165,12 @@ def classify() -> bool:
         return False
     if branch and branch != f"chore/release-{version.replace('.', '-')}":
         return False
-    if git("show", "-s", "--format=%s", candidate_ref).rstrip("\n") != (
-        f"chore(release): bump cli versions to {version}"
-    ):
+    expected_subject = f"chore(release): bump cli versions to {version}"
+    subject = git("show", "-s", "--format=%s", candidate_ref).rstrip("\n")
+    if merge_group:
+        if not re.fullmatch(re.escape(expected_subject) + r" \(#[0-9]+\)", subject):
+            return False
+    elif subject != expected_subject:
         return False
 
     base_paths = tree_paths(base_ref)
