@@ -166,6 +166,16 @@ head_sha="$(git -C "$canonical" rev-parse HEAD)"
 
 assert_verdict "canonical release commit" true "$canonical" \
   --base "$base_sha" --head "$head_sha" --branch chore/release-1-2-4
+
+merge_group="$tmp_root/merge-group"
+write_base_fixture "$merge_group"
+merge_base_sha="$(git -C "$merge_group" rev-parse HEAD)"
+git -C "$merge_group" checkout -q -b chore/release-1-2-4
+write_release_commit "$merge_group"
+git -C "$merge_group" checkout -q -b merge-group "$merge_base_sha"
+git -C "$merge_group" merge --no-ff --no-edit chore/release-1-2-4 >/dev/null
+assert_verdict "bump-only merge group" true "$merge_group" \
+  --base "$merge_base_sha" --head HEAD --merge-group
 assert_verdict "branch must match the target version" false "$canonical" \
   --base "$base_sha" --head "$head_sha" --branch chore/release-1-2-5
 assert_verdict "invalid base fails closed" false "$canonical" \

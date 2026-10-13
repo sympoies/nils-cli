@@ -81,6 +81,16 @@ assert_contains .github/workflows/ci.yml "(github.event_name == 'push' && 'main-
   "main push runs share one group while merge-group runs never share one"
 assert_contains .github/workflows/ci.yml "  merge_group:" \
   "CI runs on merge groups, so the required checks report for a required merge queue"
+assert_contains .github/workflows/ci.yml '    - cron: "23 5 * * *"' \
+  "CI runs the full workflow nightly"
+assert_contains .github/workflows/ci.yml "  workflow_dispatch:" \
+  "CI supports a manual full run"
+assert_contains .github/workflows/ci.yml "if: github.event_name != 'push'" \
+  "main pushes skip the full CI lanes"
+assert_contains .github/workflows/ci.yml "  main_push:" \
+  "main pushes retain a lightweight status workflow"
+assert_contains .github/workflows/ci.yml "  nightly_failure_alert:" \
+  "nightly full CI publishes a failure alert"
 assert_contains .github/workflows/ci.yml "base=\"\${MERGE_GROUP_BASE_SHA}\"" \
   "CI change detection resolves a merge group's base instead of falling back to an empty push base"
 assert_contains .github/workflows/ci.yml "save-if: \${{ github.ref == 'refs/heads/main' }}" \
@@ -187,9 +197,13 @@ assert_contains .github/workflows/ci.yml "git show \"\${base}:scripts/ci/detect-
 assert_contains .github/workflows/ci.yml "\${{ needs.changes.outputs.base_sha }}:scripts/ci/release-only-checks.sh" \
   "reduced checks load the exact base checker"
 assert_contains .github/workflows/ci.yml "findTrustedMainCi" \
-  "release-only CI requires exact-base full CI proof"
+  "release-only CI retains exact-base push receipt support"
 assert_contains .github/workflows/ci.yml "waitForTrustedMainCi" \
-  "release-only CI waits for an in-flight exact-base full CI run"
+  "release-only CI waits for an in-flight exact-base push or merge-group receipt"
+assert_contains .github/workflows/ci.yml "--merge-group" \
+  "merge-group release bumps use the protected semantic release classifier"
+assert_contains .github/scripts/release-ci-gate.cjs "findTrustedMergeGroupCi" \
+  "release gate accepts exact-SHA merge-group receipts"
 assert_contains .github/workflows/ci.yml "Full validation marker" \
   "full CI is distinguishable from reduced lanes"
 assert_contains .github/workflows/ci.yml "scripts/ci/release-only-checks.sh" \

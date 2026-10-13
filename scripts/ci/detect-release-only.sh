@@ -3,11 +3,11 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: detect-release-only.sh --base <git-ref> [--head <git-ref>] --branch <name>
+Usage: detect-release-only.sh --base <git-ref> [--head <git-ref>] (--branch <name> | --merge-group)
 
 Prints `true` only for a single canonical nils-cli release bump commit whose
-branch matches the target version. Every unverifiable or non-canonical change
-prints `false` so callers can fall back to full CI.
+branch matches the target version, or a merge-group commit containing that
+same canonical bump. Every unverifiable or non-canonical change prints `false`.
 USAGE
 }
 
@@ -16,6 +16,7 @@ head_ref="HEAD"
 branch=""
 base_seen=0
 branch_seen=0
+merge_group=0
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
     --base)
@@ -35,6 +36,10 @@ while [[ $# -gt 0 ]]; do
       branch_seen=1
       shift 2
       ;;
+    --merge-group)
+      merge_group=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -47,7 +52,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$base_seen" -ne 1 || "$branch_seen" -ne 1 ]]; then
+if [[ "$base_seen" -ne 1 || ( "$branch_seen" -ne 1 && "$merge_group" -ne 1 ) ]]; then
   usage >&2
   exit 2
 fi
@@ -67,7 +72,7 @@ verdict_file="$(mktemp "${TMPDIR:-/tmp}/detect-release-only.XXXXXX" 2>/dev/null)
 }
 trap 'rm -f "$verdict_file"' EXIT
 verdict=false
-if python3 - "$repo_root" "$base_ref" "$head_ref" "$branch" >"$verdict_file" 2>/dev/null <<'PY'
+if python3 - "$repo_root" "$base_ref" "$head_ref" "$branch" "$merge_group" >"$verdict_file" 2>/dev/null <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -77,7 +82,7 @@ import sys
 from pathlib import Path
 
 repo = Path(sys.argv[1])
-base_input, head_input, branch = sys.argv[2:]
+base_input, head_input, branch, merge_group_arg = sys.argv[2:]
 
 
 def git(*args: str) -> str:
@@ -132,25 +137,39 @@ def package_name(text: str) -> str | None:
 
 
 def classify() -> bool:
-    if not base_input or not head_input or not branch:
+    merge_group = merge_group_arg == "1"
+    if not base_input or not head_input or (not branch and not merge_group):
         return False
     base_ref = git("rev-parse", "--verify", f"{base_input}^{{commit}}").strip()
     head_ref = git("rev-parse", "--verify", f"{head_input}^{{commit}}").strip()
     parents = git("rev-list", "--parents", "-n", "1", head_ref).split()
-    if len(parents) != 2 or parents[1] != base_ref:
+    if merge_group:
+        if len(parents) != 3 or parents[1] != base_ref:
+            return False
+        candidate_ref = parents[2]
+        if git("rev-parse", f"{candidate_ref}^{{tree}}").strip() != git(
+            "rev-parse", f"{head_ref}^{{tree}}"
+        ).strip():
+            return False
+    else:
+        if len(parents) != 2 or parents[1] != base_ref:
+            return False
+        candidate_ref = head_ref
+    candidate_parents = git("rev-list", "--parents", "-n", "1", candidate_ref).split()
+    if len(candidate_parents) != 2 or candidate_parents[1] != base_ref:
         return False
-    if git("rev-list", "--count", f"{base_ref}..{head_ref}").strip() != "1":
+    if git("rev-list", "--count", f"{base_ref}..{candidate_ref}").strip() != "1":
         return False
 
     base_root = git_show(base_ref, "Cargo.toml")
-    head_root = git_show(head_ref, "Cargo.toml")
+    head_root = git_show(candidate_ref, "Cargo.toml")
     old_version = workspace_version(base_root)
     version = workspace_version(head_root)
     if stable_version(version) <= stable_version(old_version):
         return False
-    if branch != f"chore/release-{version.replace('.', '-')}":
+    if branch and branch != f"chore/release-{version.replace('.', '-')}":
         return False
-    if git("show", "-s", "--format=%s", head_ref).rstrip("\n") != (
+    if git("show", "-s", "--format=%s", candidate_ref).rstrip("\n") != (
         f"chore(release): bump cli versions to {version}"
     ):
         return False
@@ -163,7 +182,7 @@ def classify() -> bool:
     )
     head_manifest_paths = ["Cargo.toml"] + sorted(
         path
-        for path in tree_paths(head_ref)
+        for path in tree_paths(candidate_ref)
         if re.fullmatch(r"crates/[^/]+/Cargo[.]toml", path)
     )
     if manifest_paths != head_manifest_paths:
@@ -176,13 +195,13 @@ def classify() -> bool:
         "THIRD_PARTY_NOTICES.md",
     }
     for path in managed_paths:
-        if tree_mode(base_ref, path) != tree_mode(head_ref, path):
+        if tree_mode(base_ref, path) != tree_mode(candidate_ref, path):
             return False
 
-    changed = git("diff", "--name-only", base_ref, head_ref).splitlines()
+    changed = git("diff", "--name-only", base_ref, candidate_ref).splitlines()
     if not changed or any(path not in managed_paths for path in changed):
         return False
-    raw_changes = git("diff", "--raw", "--no-renames", base_ref, head_ref).splitlines()
+    raw_changes = git("diff", "--raw", "--no-renames", base_ref, candidate_ref).splitlines()
     if len(raw_changes) != len(changed):
         return False
     for row in raw_changes:
@@ -232,11 +251,11 @@ def classify() -> bool:
         expected = "\n".join(output) + ("\n" if text.endswith("\n") else "")
         if expected != text:
             expected_changed.add(path)
-        if git_show(head_ref, path) != expected:
+        if git_show(candidate_ref, path) != expected:
             return False
 
     base_lock = git_show(base_ref, "Cargo.lock")
-    head_lock = git_show(head_ref, "Cargo.lock")
+    head_lock = git_show(candidate_ref, "Cargo.lock")
     lines = base_lock.splitlines(keepends=True)
     starts = [index for index, line in enumerate(lines) if line.strip() == "[[package]]"]
     starts.append(len(lines))
@@ -304,7 +323,7 @@ def classify() -> bool:
         expected = base_text.replace(base_lock_hash, head_lock_hash)
         if expected != base_text:
             expected_changed.add(path)
-        if git_show(head_ref, path) != expected:
+        if git_show(candidate_ref, path) != expected:
             return False
 
     base_readme = git_show(base_ref, "README.md")
@@ -317,7 +336,7 @@ def classify() -> bool:
     expected_readme = "\n".join(output) + ("\n" if base_readme.endswith("\n") else "")
     if expected_readme != base_readme:
         expected_changed.add("README.md")
-    if git_show(head_ref, "README.md") != expected_readme:
+    if git_show(candidate_ref, "README.md") != expected_readme:
         return False
 
     return set(changed) == expected_changed
