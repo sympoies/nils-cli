@@ -236,6 +236,7 @@ async fn known_claude_mailbox_fixture(missing_transcript: bool, linked_projects_
     let observed_path = tmp.path().join("observed-prompt.jsonl");
     let command_log = tmp.path().join("tmux-commands.log");
     let captured_prompt = tmp.path().join("captured-prompt");
+    let pasted = tmp.path().join("pasted");
     let attached_state = tmp.path().join("attached-state");
     fs::write(&attached_state, b"0\n").expect("attached state");
     let tmux = tmp.path().join("tmux");
@@ -258,9 +259,17 @@ exit 0
 ;;
   send-keys)
     cat {} >> {}
+    : > {}
     exit 0
     ;;
-  paste-buffer|delete-buffer) exit 0 ;;
+  paste-buffer) printf '1' > {}; exit 0 ;;
+  delete-buffer) exit 0 ;;
+  capture-pane)
+value=""
+if [ -s {} ]; then value=$(cat {}); fi
+printf '────────────────────\n❯ %s\n────────────────────\n  status\n' "$value"
+exit 0
+;;
   *) exit 1 ;;
 esac
 "#,
@@ -268,7 +277,11 @@ esac
             shell_words::quote(&attached_state.to_string_lossy()),
             shell_words::quote(&captured_prompt.to_string_lossy()),
             shell_words::quote(&observed_path.to_string_lossy()),
-            shell_words::quote(&transcript.to_string_lossy())
+            shell_words::quote(&transcript.to_string_lossy()),
+            shell_words::quote(&pasted.to_string_lossy()),
+            shell_words::quote(&pasted.to_string_lossy()),
+            shell_words::quote(&pasted.to_string_lossy()),
+            shell_words::quote(&captured_prompt.to_string_lossy())
         ),
     )
     .expect("tmux script");
