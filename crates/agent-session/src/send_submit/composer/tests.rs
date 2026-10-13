@@ -56,7 +56,7 @@ fn osc8_hyperlinks_in_a_footer_preserve_exact_input_and_hint_style() {
 }
 
 #[test]
-fn blank_row_compatibility_never_erases_a_space_or_multiline_draft() {
+fn whitespace_and_multiline_drafts_remain_protected() {
     for input in [" ", "user draft "] {
         assert_eq!(
             exact_composer_input("claude", &claude(input, "", "status")).as_deref(),
@@ -177,4 +177,18 @@ fn qualified_codex_capture_with_synthetic_footer_hyperlink_is_observable() {
             );
         }
     }
+}
+
+#[test]
+fn hyperlink_metadata_has_a_bounded_payload() {
+    let boundary = format!("\u{1b}]8;;{}\u{7}status\u{1b}]8;;\u{7}", "x".repeat(4093));
+    assert_eq!(
+        exact_composer_input("codex", &codex("", "", &boundary)).as_deref(),
+        Some("")
+    );
+    let oversized = format!("\u{1b}]8;;{}\u{7}", "x".repeat(4094));
+    assert_eq!(
+        exact_composer_input("codex", &codex("", "", &oversized)),
+        None
+    );
 }
