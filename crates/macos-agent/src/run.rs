@@ -15,6 +15,7 @@ pub fn command_label(cli: &Cli) -> &'static str {
             BackendCommand::Status(_) => "backend.status",
             BackendCommand::Verify(_) => "backend.verify",
             BackendCommand::Rollback(_) => "backend.rollback",
+            BackendCommand::Prune(_) => "backend.prune",
         },
         CommandGroup::Doctor(_) => "doctor",
         CommandGroup::Capabilities(_) => "capabilities",
@@ -58,6 +59,25 @@ pub fn run(cli: Cli) -> Result<u8, CliError> {
     let command = command_label(&cli);
     match cli.command {
         CommandGroup::Backend { command } => match command {
+            BackendCommand::Prune(args) => {
+                if let Some(host) = args.host.as_deref() {
+                    return crate::transport::run_remote_control(
+                        host,
+                        crate::transport::RemoteCommand::Backend {
+                            action: crate::transport::BackendAction::Prune,
+                            dry_run: args.dry_run,
+                            strict: args.strict,
+                        },
+                        cli.format,
+                        "backend.prune",
+                    );
+                }
+                emit(
+                    cli.format,
+                    "backend.prune",
+                    backend::prune(args.dry_run, args.strict)?,
+                )
+            }
             BackendCommand::Install(args) => {
                 if let Some(host) = args.host.as_deref() {
                     return crate::transport::run_remote_control(

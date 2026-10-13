@@ -19,9 +19,14 @@ codex/claude approval prompts and terminal editing remain usable from a phone.
 - Text without `--key enter`, or with other keys, only types; `--key` alone
   presses keys as before.
 - `send` bumps `updated_at`, so `list` orders by real control-plane activity.
-- `send` is not idempotent: keystrokes are delivered before the command
+- Unguarded `send` is not idempotent: keystrokes are delivered before the command
   returns, so a retry after a mid-delivery failure can re-send. Callers that
   auto-retry should account for this.
+
+For opt-in continuation guards and persisted at-most-once keys, use the
+[Send v1 contract](../specs/send-v1.md). Guarded submissions verify exact input
+and press Enter at most once; the retry behavior below applies to unguarded
+sends.
 
 `--text`/`--text-stdin` followed by exactly `--key enter` is a prompt
 submission. `send` reads the pane back and reports

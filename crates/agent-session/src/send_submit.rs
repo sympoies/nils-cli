@@ -14,6 +14,9 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+mod composer;
+pub(crate) use composer::exact_composer_input;
+
 /// Leading non-whitespace characters used to find the text again. Short enough
 /// to stay ahead of any provider rewriting further into a long text, long enough
 /// not to match a placeholder by accident.
@@ -751,5 +754,56 @@ mod tests {
     fn a_queued_prompt_is_reported_as_queued() {
         let (result, _, _) = scripted(&[CLAUDE_PENDING, CLAUDE_QUEUED], true);
         assert_eq!(result.unwrap().outcome, SubmitOutcome::Queued);
+    }
+}
+
+#[cfg(test)]
+mod exact_composer_tests {
+    use super::exact_composer_input;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn guarded_composer_preserves_exact_visible_text() {
+        let claude = "────────────────────\n❯  café  X \n────────────────────\n  status";
+        assert_eq!(
+            exact_composer_input("claude", claude).as_deref(),
+            Some(" café  X ")
+        );
+        assert_eq!(
+            exact_composer_input("codex", "› continue X\n\n  status").as_deref(),
+            Some("continue X")
+        );
+        assert_eq!(
+            exact_composer_input("codex", "› \n\n  status").as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn guarded_composer_recognizes_only_fully_dim_native_hints() {
+        let codex = "› \u{1b}[2mAsk Codex to do anything\u{1b}[22m\n\n  status";
+        assert_eq!(exact_composer_input("codex", codex).as_deref(), Some(""));
+        let claude = "────────────────────\n❯\u{a0}\u{1b}[2mTry \"edit <filepath> to...\"\u{1b}[22m\n────────────────────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)";
+        assert_eq!(exact_composer_input("claude", claude).as_deref(), Some(""));
+        for pane in [
+            "› \u{1b}[2mAsk Codex\u{1b}[22m to do anything\n\n  status",
+            "› \u{1b}[38;2;100;100;100mAsk Codex to do anything\u{1b}[0m\n\n  status",
+            "› \u{1b}[2m\u{1b}[0mAsk Codex to do anything\n\n  status",
+        ] {
+            assert_eq!(exact_composer_input("codex", pane), None);
+        }
+    }
+
+    #[test]
+    fn guarded_composer_refuses_ambiguous_regions() {
+        for pane in [
+            "› Ask Codex to do anything\n\n  status",
+            "› [Pasted text #1]\n\n  status",
+            "› first\n  second\n\n  status",
+            "› choice\n\n  enter to confirm",
+        ] {
+            assert_eq!(exact_composer_input("codex", pane), None);
+        }
+        assert_eq!(exact_composer_input("dsh", "› "), None);
     }
 }

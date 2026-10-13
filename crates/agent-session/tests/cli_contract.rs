@@ -291,3 +291,50 @@ fn launch_env_allowlist_is_configurable_and_refuses_credentials() {
         assert!(!tmp.path().join("state/sessions").exists());
     }
 }
+
+#[test]
+fn guarded_send_clap_contract_accepts_independent_opt_ins() {
+    use agent_session::cli::{Cli, Command as SessionCommand};
+    use clap::{CommandFactory, Parser};
+    Cli::command().debug_assert();
+    let parsed = Cli::try_parse_from([
+        "agent-session",
+        "send",
+        "fixture",
+        "--text-stdin",
+        "--key",
+        "enter",
+        "--expect-runtime",
+        "runtime",
+        "--expect-provider-session",
+        "provider",
+        "--require-idle",
+        "--require-empty-composer",
+        "--idempotency-key",
+        "key",
+        "--format",
+        "json",
+    ])
+    .expect("guarded send");
+    let SessionCommand::Send(args) = parsed.command else {
+        panic!("send command");
+    };
+    assert_eq!(args.guards.expect_runtime.as_deref(), Some("runtime"));
+    assert_eq!(
+        args.guards.expect_provider_session.as_deref(),
+        Some("provider")
+    );
+    assert_eq!(args.guards.idempotency_key.as_deref(), Some("key"));
+    assert!(args.guards.require_idle && args.guards.require_empty_composer);
+    let unguarded = Cli::try_parse_from(["agent-session", "send", "fixture", "--key", "enter"])
+        .expect("unguarded send");
+    let SessionCommand::Send(args) = unguarded.command else {
+        panic!("send command");
+    };
+    assert!(!args.guards.require_idle && !args.guards.require_empty_composer);
+    assert!(
+        args.guards.expect_runtime.is_none()
+            && args.guards.expect_provider_session.is_none()
+            && args.guards.idempotency_key.is_none()
+    );
+}

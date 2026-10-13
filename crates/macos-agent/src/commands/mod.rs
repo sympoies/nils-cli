@@ -69,6 +69,29 @@ impl RuntimeBinding {
         result.extend_from_slice(&argv[separator..]);
         result
     }
+
+    pub(crate) fn permission_diagnostic(&self, binary: &Path) -> Option<String> {
+        let argv = self.argv(&["permissions".into(), "status".into(), "--json".into()]);
+        let (env, removed) = hardened_env(None);
+        let output =
+            process::run(binary, &argv, &env, &removed, None, Duration::from_secs(5)).ok()?;
+        if output.timed_out || output.signal.is_some() || output.stdout_truncated {
+            return None;
+        }
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+        let local = matches!(
+            value
+                .pointer("/data/source")
+                .and_then(serde_json::Value::as_str),
+            Some("local" | "process")
+        );
+        let authority = if !local && self.socket.as_ref() == Some(&stable_app_socket()) {
+            "Peekaboo GUI app"
+        } else {
+            "Peekaboo CLI"
+        };
+        backend::missing_permission_message(&value, authority)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +115,21 @@ fn auto_runtime_choice(probe: BridgeProbe) -> AutoRuntimeChoice {
 }
 
 pub fn prepare_runtime(
+    runtime: RuntimeMode,
+    binary: &VerifiedBackend,
+) -> Result<RuntimeBinding, CliError> {
+    prepare_runtime_binding(runtime, binary).map_err(|error| {
+        if let Some(message) = RuntimeBinding::for_mode(runtime, binary.runtime_identity())
+            .permission_diagnostic(binary.path())
+        {
+            error.with_hint(message)
+        } else {
+            error
+        }
+    })
+}
+
+fn prepare_runtime_binding(
     runtime: RuntimeMode,
     binary: &VerifiedBackend,
 ) -> Result<RuntimeBinding, CliError> {
@@ -173,16 +211,13 @@ pub fn prepare_runtime(
 
 fn launch_stable_app(paths: &BackendPaths) -> Result<(), CliError> {
     record_test_runtime_action("launch-stable-app")?;
-    let args = vec![
-        "-g".into(),
-        "-n".into(),
-        paths.stable_app().to_string_lossy().into_owned(),
-    ];
+    let args = backend::app::launch_args(paths.stable_app());
+    let (env, removed) = hardened_env(None);
     let output = process::run(
-        Path::new("open"),
+        Path::new("/usr/bin/open"),
         &args,
-        &[],
-        &[],
+        &env,
+        &removed,
         None,
         Duration::from_secs(15),
     )
