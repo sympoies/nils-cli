@@ -38,6 +38,8 @@ pub mod provider_prompt;
 mod retitle;
 mod retitle_v3;
 mod runtime_environment;
+mod runtime_teardown;
+use runtime_teardown::tmux_kill_identity_with_timeout;
 mod send;
 mod send_guard;
 mod send_submit;
@@ -5668,6 +5670,7 @@ fn resume_session_locked(
         ));
     }
     record.extra.remove(DELETE_TMUX_PRIOR_IDENTITIES_KEY);
+    runtime_teardown::retire_confirmed_broker(context, &record, tmux_bin, termination_state)?;
     record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
     let previous_record = record.clone();
     // Capture absence before new-session can reuse the old internal tmux ID.
@@ -8957,7 +8960,12 @@ fn terminate_verified_process_runtime_transaction(
         VerifiedRuntimeTerminationMode::LiveTmux {
             tmux_bin,
             kill_timeout,
-        } => tmux_kill_identity_with_timeout(tmux_bin, identity, kill_timeout)?,
+        } => runtime_teardown::tmux_kill_captured_runtime_with_timeout(
+            tmux_bin,
+            identity,
+            &pinned_runtime,
+            kill_timeout,
+        )?,
         VerifiedRuntimeTerminationMode::AlreadyStopped { tmux_bin } => {
             verify_tmux_target_stopped(tmux_bin, identity, verify_timeout)?;
             TmuxIdentityKillOutcome::KillConfirmed
@@ -8979,8 +8987,11 @@ fn terminate_verified_process_runtime_transaction(
     write_session_record(context, record)
         .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
     let verification_started = Instant::now();
-    let terminated =
-        terminate_captured_process_runtime(identity, &mut pinned_runtime, verify_timeout);
+    let terminated = runtime_teardown::terminate_captured_process_runtime(
+        identity,
+        &mut pinned_runtime,
+        verify_timeout,
+    );
     release_process_runtime(Some(pinned_runtime));
     terminated?;
     // See above: the verification probes rather than judging on the clock.
@@ -10686,54 +10697,14 @@ fn verify_stopped_process_runtime(
     }
 }
 
-fn terminate_captured_process_runtime(
-    identity: &TmuxRuntimeIdentity,
-    pinned_runtime: &mut PinnedProcessRuntime,
-    verify_timeout: Duration,
-) -> Result<(), SessionTerminationFailure> {
-    #[cfg(target_os = "linux")]
-    {
-        let process_session_id = identity
-            .process_session_id
-            .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-        if process_session_id <= 1 || process_session_id == unsafe { libc::getsid(0) } {
-            return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
-        }
-        let thaw_after_kill = pinned_runtime
-            .control_group
-            .as_mut()
-            .is_some_and(|control_group| {
-                let thaw_after_kill = control_group.thaw_on_drop;
-                control_group.thaw_on_drop = false;
-                thaw_after_kill
-            });
-        kill_pinned_control_group(pinned_runtime)?;
-        signal_pinned_process_runtime(pinned_runtime, libc::SIGKILL)?;
-        if thaw_after_kill {
-            let control_group = pinned_runtime
-                .control_group
-                .as_ref()
-                .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-            if !thaw_pinned_control_group(control_group) {
-                return Err(SessionTerminationFailure::VerificationFailed);
-            }
-            signal_pinned_process_runtime(pinned_runtime, libc::SIGKILL)?;
-        }
-        verify_stopped_pinned_process_runtime(pinned_runtime, verify_timeout)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = pinned_runtime;
-        verify_stopped_process_runtime(identity, verify_timeout)
-    }
-}
-
 #[derive(Debug)]
 struct PinnedProcessRuntime {
     #[cfg(target_os = "linux")]
     processes: Vec<PinnedLinuxProcess>,
     #[cfg(target_os = "linux")]
     control_group: Option<PinnedLinuxControlGroup>,
+    #[cfg(target_os = "macos")]
+    macos_pane: TmuxProcessIdentity,
 }
 
 fn release_process_runtime(pinned_runtime: Option<PinnedProcessRuntime>) {
@@ -10822,7 +10793,11 @@ fn prepare_process_runtime(
             control_group: Some(control_group),
         })
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        runtime_teardown::prepare_macos_process_runtime(identity)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = identity;
         Ok(PinnedProcessRuntime {})
@@ -12176,45 +12151,6 @@ fn tmux_send_ctrl_c_if_identity_matches(
     match stdout.trim() {
         "" => Ok(TmuxGracefulInputOutcome::Delivered),
         TMUX_RUNTIME_IDENTITY_CHANGED_OUTPUT => Ok(TmuxGracefulInputOutcome::IdentityChanged),
-        _ => Err(SessionTerminationFailure::VerificationFailed),
-    }
-}
-
-fn tmux_kill_identity_with_timeout(
-    tmux_bin: &Path,
-    identity: &TmuxRuntimeIdentity,
-    timeout: Duration,
-) -> Result<TmuxIdentityKillOutcome, SessionTerminationFailure> {
-    let condition = format!(
-        "#{{&&:#{{==:#{{session_id}},{}}},#{{&&:#{{==:#{{pane_id}},{}}},#{{==:#{{pane_pid}},{}}}}}}}",
-        identity.session_id, identity.pane_id, identity.pane_pid
-    );
-    let mut command = ProcessCommand::new(tmux_bin);
-    command
-        .arg("if-shell")
-        .arg("-F")
-        .arg("-t")
-        .arg(&identity.pane_id)
-        .arg(condition)
-        .arg(format!("kill-session -t {}", identity.session_id))
-        .arg(format!(
-            "display-message -p {TMUX_RUNTIME_IDENTITY_CHANGED_OUTPUT}"
-        ));
-    let output = run_output_with_timeout(command, timeout).map_err(|err| {
-        if err.kind() == io::ErrorKind::TimedOut {
-            SessionTerminationFailure::KillTimeout
-        } else {
-            SessionTerminationFailure::KillError
-        }
-    })?;
-    if !output.status.success() {
-        return Err(SessionTerminationFailure::KillFailed);
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| SessionTerminationFailure::VerificationFailed)?;
-    match stdout.trim() {
-        "" => Ok(TmuxIdentityKillOutcome::KillConfirmed),
-        TMUX_RUNTIME_IDENTITY_CHANGED_OUTPUT => Ok(TmuxIdentityKillOutcome::IdentityChanged),
         _ => Err(SessionTerminationFailure::VerificationFailed),
     }
 }

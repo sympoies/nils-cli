@@ -72,6 +72,17 @@ fn macos_bounded_provider_helper_fixture() {
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_account_switch_teardown_stops_the_bounded_provider_helper() {
+    bounded_helper_teardown(false);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_account_switch_teardown_accepts_verified_last_pane_exit() {
+    bounded_helper_teardown(true);
+}
+
+#[cfg(target_os = "macos")]
+fn bounded_helper_teardown(last_pane_exit: bool) {
     let tmp = tempfile::TempDir::new().unwrap();
     let context = test_context(tmp.path());
     let id = create_test_record_id(&context, AgentKind::Claude, None, Some("helper-switch"));
@@ -106,9 +117,11 @@ fn macos_account_switch_teardown_stops_the_bounded_provider_helper() {
     fs::write(
         &tmux,
         format!(
-            "#!/bin/sh\n{identity}if [ \"$1\" = has-session ]; then\n  if [ -f {killed} ]; then printf '%s\\n' \"can't find session: fixture\" >&2; exit 1; fi\n  exit 0\nfi\nif [ \"$1\" = if-shell ]; then\n  kill -KILL {pane_pid}\n  : > {killed}\n  exit 0\nfi\nexit 42\n",
+            "#!/bin/sh\n{identity}if [ \"$1\" = has-session ]; then\n  if [ -f {killed} ]; then printf '%s\\n' \"can't find session: fixture\" >&2; exit 1; fi\n  exit 0\nfi\nif [ \"$1\" = if-shell ]; then\n  case \"$6\" in\n    *'/bin/kill -KILL -- -{group}'*) /bin/kill -KILL -- -{group} ;;\n    *) kill -KILL {pane_pid} ;;\n  esac\n  : > {killed}\n  exit {kill_status}\nfi\nexit 42\n",
             identity = deletion_identity_script(&context, &record, pane.pid()),
             pane_pid = pane.pid(),
+            group = pane.process_group_id,
+            kill_status = if last_pane_exit { 1 } else { 0 },
         ),
     )
     .unwrap();
