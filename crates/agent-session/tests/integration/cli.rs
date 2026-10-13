@@ -285,7 +285,7 @@ if [ "$1" = "if-shell" ]; then
   kill_target=""
   for arg in "$@"; do
     case "$arg" in
-      'kill-session -t '*) kill_target="${arg#kill-session -t }" ;;
+      *'kill-session -t '*) kill_target="${arg##*kill-session -t }" ;;
     esac
   done
   [ -n "$kill_target" ] || exit 42

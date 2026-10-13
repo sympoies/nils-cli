@@ -31361,7 +31361,7 @@ esac
                     &tmux_session,
                     "%88",
                     pane.pid() as libc::pid_t,
-                    None,
+                    Some(pane.process_group_id),
                     None,
                 ),
             );

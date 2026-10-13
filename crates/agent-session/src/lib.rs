@@ -9648,7 +9648,7 @@ pub(crate) mod tmux_probe_fixture {
         launch_id: Option<&str>,
     ) -> Probe {
         Probe::Running(Box::new(TmuxRuntimeIdentity {
-            macos_boot_id: None,
+            macos_boot_id: super::capture_macos_boot_id(),
             launch_id: launch_id.map(str::to_owned),
             session_id: session_id.to_owned(),
             pane_id: pane_id.to_owned(),
