@@ -20,6 +20,7 @@ use crate::rate_limit::default_runner;
 use crate::validations::{RuleVerdict, no_escaped_control_markdown, no_local_path};
 
 mod correction_input;
+mod supersession_input;
 use correction_input::ObservationInput;
 
 const SCHEMA_INSPECT: &str = "pr.review-loop.inspect";
@@ -325,6 +326,11 @@ fn detect_findings_shape(value: &serde_json::Value) -> &'static str {
     {
         return "correction-envelope";
     }
+    if value.get("schema_version").and_then(|v| v.as_str())
+        == Some(review_state::supersession::INPUT_SCHEMA)
+    {
+        return "supersession-envelope";
+    }
     let inner = value.get("data").unwrap_or(value);
     if inner.get("findings").is_some() {
         SHAPE_MERGE_ENVELOPE
@@ -448,7 +454,8 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         resolved_expected_state(&args, state_view.chain.tip_digest.as_deref()),
     )?;
     let previous = review_state::latest_review_loop_state(&state_view.chain);
-    let mut transition = match input.transition(&state_view.chain, &args) {
+    let mut transition = match input.transition(runner, &ctx, &repository, &state_view.chain, &args)
+    {
         Ok(transition) => transition,
         Err(error) if review_state::stop_budget_field(error.kind()).is_some() => {
             if let Some(stop) = previous
@@ -1437,7 +1444,13 @@ fn evaluate_observe<R: BackendRunner>(
                         Some(observations) => {
                             let previous =
                                 review_state::latest_review_loop_state(&state_view.chain);
-                            let transition = observations.transition(&state_view.chain, args);
+                            let transition = observations.transition(
+                                runner,
+                                ctx,
+                                &repository,
+                                &state_view.chain,
+                                args,
+                            );
                             // `state_comment_body` is reported only when a write
                             // is actually planned. A current chain writes
                             // nothing, so there is no body to size-check and an

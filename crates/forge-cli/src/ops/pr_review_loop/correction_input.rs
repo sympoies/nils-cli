@@ -4,6 +4,7 @@ use serde::Deserialize;
 pub(super) struct ObservationInput {
     pub observations: Vec<review_state::ReviewFindingObservation>,
     correction: Option<review_state::correction::CorrectionRequest>,
+    supersession: Option<review_state::supersession::SupersessionRequest>,
 }
 
 #[derive(Deserialize)]
@@ -20,6 +21,26 @@ impl ObservationInput {
     }
 
     pub fn parse(value: &serde_json::Value) -> Result<Self, ForgeError> {
+        if value.get("supersession").is_some()
+            || value.get("schema_version").and_then(|v| v.as_str())
+                == Some(review_state::supersession::INPUT_SCHEMA)
+        {
+            let envelope: super::supersession_input::SupersessionEnvelope =
+                serde_json::from_value(value.clone()).map_err(|_| {
+                    review_state::supersession::invalid("invalid supersession envelope fields")
+                })?;
+            if envelope.schema_version != review_state::supersession::INPUT_SCHEMA {
+                return Err(review_state::supersession::invalid(
+                    "unsupported supersession input schema",
+                ));
+            }
+            envelope.supersession.validate()?;
+            return Ok(Self {
+                observations: observations_from_value(&envelope.findings)?,
+                correction: None,
+                supersession: Some(envelope.supersession),
+            });
+        }
         if value.get("correction").is_some()
             || value.get("schema_version").and_then(|v| v.as_str())
                 == Some(review_state::correction::INPUT_SCHEMA)
@@ -37,20 +58,41 @@ impl ObservationInput {
             Ok(Self {
                 observations: observations_from_value(&envelope.findings)?,
                 correction: Some(envelope.correction),
+                supersession: None,
             })
         } else {
             Ok(Self {
                 observations: observations_from_value(value)?,
                 correction: None,
+                supersession: None,
             })
         }
     }
 
-    pub fn transition(
+    pub fn transition<R: BackendRunner>(
         &self,
+        runner: &R,
+        ctx: &ProviderContext,
+        repository: &str,
         chain: &review_state::ReviewStateChain,
         args: &PrReviewLoopObserveArgs,
     ) -> Result<review_state::ReviewLoopTransition, ForgeError> {
+        if let Some(request) = &self.supersession {
+            if args.body.is_some() || args.body_file.is_some() {
+                return Err(review_state::supersession::invalid(
+                    "supersession is a stop receipt and cannot carry a delivery outcome",
+                ));
+            }
+            return super::supersession_input::transition(
+                runner,
+                ctx,
+                repository,
+                chain,
+                args,
+                request,
+                &self.observations,
+            );
+        }
         match &self.correction {
             Some(request) => review_state::correction::apply(
                 chain,
