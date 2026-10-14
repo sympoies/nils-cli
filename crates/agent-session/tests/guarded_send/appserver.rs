@@ -1,4 +1,5 @@
 //! The modeled proxy lease is held through the real CLI guarded-send path.
+use super::native::Server;
 use super::*;
 use pretty_assertions::assert_eq;
 
@@ -17,48 +18,19 @@ const GUARDS: &[&str] = &[
 fn appserver_idle_empty_composer_submits_once_and_retry_refuses() {
     let fixture = Fixture::new("codex");
     let _capability = fixture.bind_codex();
+    let server = Server::start(&fixture, "idle");
     fixture.arm_recovery();
     let output = fixture.send(GUARDS);
     assert_eq!(output.code, 0, "{}", output.stdout_text());
     let value = output.stdout_json();
     assert_eq!(value["data"]["submission"]["outcome"], "submitted");
-    assert_eq!(value["data"]["submission"]["enter_presses"], 1);
+    assert_eq!(value["data"]["submission"]["enter_presses"], 0);
     assert_eq!(value["data"]["guards"]["atomic"], false);
     fixture.input_control_state();
-    let calls = fixture.calls();
-    assert_eq!(
-        calls
-            .iter()
-            .filter(|call| call[0] == "paste-buffer")
-            .count(),
-        1
-    );
-    assert_eq!(
-        calls.iter().filter(|call| call[0] == "send-keys").count(),
-        1
-    );
-    assert!(calls.iter().any(|call| {
-        call[0] == "capture-pane" && call.last().unwrap() == "modeled-guarded:0.0"
-    }));
-    let submissions = fs::read_to_string(fixture.root().join("submissions")).unwrap();
-    let prompts: Vec<String> = submissions
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(prompts, ["continue-fixture"]);
+    fixture.no_delivery();
+    assert_eq!(server.mutations().len(), 1);
     fixture.refused(&fixture.send(GUARDS), "send-idempotency-key-used");
-    assert_eq!(
-        fs::read_to_string(fixture.root().join("submissions")).unwrap(),
-        submissions
-    );
-    assert_eq!(
-        fixture
-            .calls()
-            .iter()
-            .filter(|call| call[0] == "paste-buffer")
-            .count(),
-        1
-    );
+    assert_eq!(server.mutations().len(), 1);
 }
 
 #[test]
@@ -66,10 +38,12 @@ fn appserver_drafts_refuse_without_paste_or_control_mutation() {
     for draft in ["user draft", " "] {
         let fixture = Fixture::new("codex");
         let _capability = fixture.bind_codex();
+        let server = Server::start(&fixture, "idle");
         let recovery = fixture.arm_recovery();
         fs::write(fixture.root().join("composer"), draft).unwrap();
         fixture.refused(&fixture.send(GUARDS), "send-composer-not-empty");
         fixture.unchanged_control_state(&recovery);
+        assert!(server.mutations().is_empty());
         assert_eq!(
             fs::read_to_string(fixture.root().join("composer")).unwrap(),
             draft
@@ -78,49 +52,45 @@ fn appserver_drafts_refuse_without_paste_or_control_mutation() {
 }
 
 #[test]
-fn appserver_turn_started_during_buffer_load_refuses_before_paste() {
+fn appserver_turn_started_during_native_admission_refuses_before_input() {
     let fixture = Fixture::new("codex");
     let _capability = fixture.bind_codex();
+    let server = Server::start(&fixture, "late-busy");
     let recovery = fixture.arm_recovery();
-    fs::write(fixture.root().join("start-on-load"), "").unwrap();
     fixture.refused(&fixture.send(GUARDS), "send-session-not-idle");
-    assert!(fixture.calls().iter().any(|call| call[0] == "load-buffer"));
     fixture.unchanged_control_state(&recovery);
+    assert!(server.mutations().is_empty());
 }
 
 #[test]
-fn appserver_post_paste_draft_refuses_enter_and_retains_key() {
+fn appserver_draft_after_key_claim_refuses_native_dispatch_and_retains_key() {
     let fixture = Fixture::new("codex");
     let _capability = fixture.bind_codex();
-    fs::write(fixture.root().join("inject-draft"), "").unwrap();
-    let value = fixture.refused(&fixture.send(GUARDS), "send-composer-mismatch");
-    assert_eq!(value["error"]["details"]["stage"], "submit");
-    assert_eq!(value["error"]["details"]["pasted"], true);
-    assert!(!fixture.root().join("submissions").exists());
+    let server = Server::start(&fixture, "idle");
+    let recovery = fixture.arm_recovery();
+    fs::write(fixture.root().join("draft-fourth-capture"), "").unwrap();
+    let value = fixture.refused(&fixture.send(GUARDS), "send-composer-not-empty");
+    assert_eq!(value["error"]["details"]["stage"], "admission");
+    assert_eq!(value["error"]["details"]["pasted"], false);
     assert_eq!(
         fs::read_to_string(fixture.root().join("composer")).unwrap(),
-        "continue-fixture user addition"
+        "user addition"
     );
+    fixture.unchanged_control_state(&recovery);
     fixture.refused(&fixture.send(GUARDS), "send-idempotency-key-used");
-    assert_eq!(
-        fixture
-            .calls()
-            .iter()
-            .filter(|call| call[0] == "paste-buffer")
-            .count(),
-        1
-    );
-    assert!(fixture.calls().iter().all(|call| call[0] != "send-keys"));
+    assert!(server.mutations().is_empty());
 }
 
 #[test]
 fn appserver_runtime_identity_change_remains_refused_before_input() {
     let fixture = Fixture::new("codex");
     let _capability = fixture.bind_codex();
+    let server = Server::start(&fixture, "idle");
     let recovery = fixture.arm_recovery();
     fs::write(fixture.root().join("flip-second-runtime-read"), "").unwrap();
     fixture.refused(&fixture.send(GUARDS), "send-identity-mismatch");
     fixture.unchanged_control_state(&recovery);
+    assert!(server.mutations().is_empty());
 }
 
 #[test]
