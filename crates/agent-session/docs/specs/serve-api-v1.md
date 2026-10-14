@@ -596,6 +596,7 @@ recorded in `sympoies/nils-cli#1409`.
   acknowledgement wait, or the pane lists the prompt among its queued messages behind a running turn; the queued case adds
   `queued: true` and the prompt runs as the next turn, so the client MUST NOT resend it. A new turn omits `queued`.
   When neither is observed the route answers 500 `structured-prompt-outcome-unknown`.
+
   For an already resumed Codex runtime whose terminal path reports local
   JSON-RPC `-32001` busy, the error alone does not prove rejection before
   provider acceptance: the same response can be emitted while an earlier
@@ -607,15 +608,39 @@ recorded in `sympoies/nils-cli#1409`.
   `manual_marker_thread_mismatch`, `manual_marker_replaced`,
   `manual_marker_invalid`, `manual_ack_failed`, `runtime_identity_missing`,
   `manual_cancellation_busy`, `runtime_changed`, and
-  `account_authority_unavailable`. Older proxies may omit `data.reason`, and
+  `account_authority_unavailable`.
+
+  Older proxies may omit `data.reason`, and
   clients MUST tolerate an absent or unknown reason while retaining the stable
-  code/message fallback. Authority failures add a bounded `data.cause` with
-  `operation`, `stage`, stable `code`, binding `state` and `revision`, and
-  `receipt_written`; `data.retryable` and `data.next_action` are typed fields.
-  A private lifecycle receipt is persisted before cleanup, keyed to the exact
-  session runtime and containing no account name, credential, provider output,
-  or local path. Cancellation retries only explicit record-lock `Busy`
-  outcomes, at most three attempts; other causes are returned without replay.
+  code/message fallback. Current proxies also add `error.data.retryable`
+  (boolean), `error.data.next_action` (string), and
+  `error.data.recovery` (an object with `outcome: "not_forwarded"`). These fields
+  contain the following fixed values:
+
+  | `data.reason` | `data.retryable` | `data.next_action` |
+  | --- | --- | --- |
+  | `turn_gate_busy` | `true` | `retry-request-after-state-change` |
+  | `manual_cancellation_busy` with a persisted cause receipt | `true` | `retry-request` |
+  | `account_authority_unavailable` with cause code `session-record-lock-timeout` and a persisted receipt | `true` | `retry-request` |
+  | Other authority failures, missing receipts, `turn_already_pending`, and all other current reasons | `false` | `inspect-session-state` |
+
+  `not_forwarded` describes only the frame rejected by this proxy response. It
+  does not establish that an earlier request, including an earlier request with
+  the same JSON-RPC ID, was never forwarded or accepted by the provider.
+  `retryable: true` classifies this rejection as transient state contention;
+  it does not authorize automatic replay. All next actions require the
+  refresh/inspection and exact-incarnation recovery rules below. Clients MUST
+  tolerate absent or unknown recovery fields from older proxies and preserve
+  the stable code/message fallback and no-blind-replay behavior.
+
+  Authority failures add a bounded `data.cause` with `operation`, `stage`, stable
+  `code`, binding `binding_state` and `binding_revision`, and `receipt_written`. A private
+  lifecycle receipt is persisted before cleanup, keyed to the exact session
+  runtime and containing no account name, credential, provider output, or local
+  path. Immediate cancellation retries only explicit record-lock `Busy`
+  outcomes, at most three attempts. The timed cancellation path uses one
+  six-second contention budget; other causes are returned without replay.
+
   A durably bound exact-runtime account
   remains valid in a detached tmux scope without inheriting the daemon's broker
   command; the broker is still mandatory for binding and account mutation. A

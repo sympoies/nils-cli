@@ -600,8 +600,12 @@ pub(crate) enum ManualInputCancelOutcome {
 }
 
 pub(crate) fn retry_manual_input_cancellation(
+    wait_for_transient_lock: bool,
     mut attempt: impl FnMut() -> Result<ManualInputCancelOutcome, CliError>,
 ) -> Result<ManualInputCancelOutcome, CliError> {
+    if wait_for_transient_lock {
+        return attempt();
+    }
     const MAX_ATTEMPTS: u8 = 3;
     for attempt_index in 0..MAX_ATTEMPTS {
         let outcome = attempt()?;
@@ -637,14 +641,29 @@ pub(crate) fn cancel_for_manual_input_for_runtime_with_timeout(
     now: &str,
     record_turn_fence: bool,
 ) -> Result<ManualInputCancelOutcome, CliError> {
-    cancel_for_manual_input_for_runtime(
-        context,
-        id,
-        expected_launch_id,
-        now,
-        record_turn_fence,
-        Some(PROTOCOL_STATE_LOCK_TIMEOUT),
-    )
+    let result = crate::contention::retry(crate::contention::LIFECYCLE_WAIT, |remaining| {
+        match cancel_for_manual_input_for_runtime(
+            context,
+            id,
+            expected_launch_id,
+            now,
+            record_turn_fence,
+            Some(remaining.min(PROTOCOL_STATE_LOCK_TIMEOUT)),
+        )? {
+            ManualInputCancelOutcome::Busy => Err(CliError::runtime(
+                "session-record-lock-timeout",
+                "session state is busy",
+                None,
+            )),
+            outcome => Ok(outcome),
+        }
+    });
+    match result {
+        Err(error) if error.code() == "session-record-lock-timeout" => {
+            Ok(ManualInputCancelOutcome::Busy)
+        }
+        result => result,
+    }
 }
 
 fn cancel_for_manual_input_for_runtime(
@@ -1791,7 +1810,7 @@ mod tests {
     #[test]
     fn manual_input_cancellation_retries_only_explicit_busy_outcomes() {
         let mut calls = 0;
-        let result = retry_manual_input_cancellation(|| {
+        let result = retry_manual_input_cancellation(false, || {
             calls += 1;
             Ok(if calls == 1 {
                 ManualInputCancelOutcome::Busy
@@ -1804,13 +1823,22 @@ mod tests {
         assert_eq!(calls, 2);
 
         let mut persistent_calls = 0;
-        let result = retry_manual_input_cancellation(|| {
+        let result = retry_manual_input_cancellation(false, || {
             persistent_calls += 1;
             Ok(ManualInputCancelOutcome::Busy)
         })
         .unwrap();
         assert_eq!(result, ManualInputCancelOutcome::Busy);
         assert_eq!(persistent_calls, 3);
+
+        let mut timed_calls = 0;
+        let result = retry_manual_input_cancellation(true, || {
+            timed_calls += 1;
+            Ok(ManualInputCancelOutcome::Busy)
+        })
+        .unwrap();
+        assert_eq!(result, ManualInputCancelOutcome::Busy);
+        assert_eq!(timed_calls, 1);
     }
 
     #[test]

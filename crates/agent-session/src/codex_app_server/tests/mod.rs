@@ -54,92 +54,6 @@ fn external_auth_refresh_response_preserves_json_rpc_id() {
 }
 
 #[test]
-fn tui_busy_response_preserves_stable_contract_for_every_rejection() {
-    for (rejection, reason) in [
-        (
-            TuiMutationRejection::TurnAlreadyPending,
-            "turn_already_pending",
-        ),
-        (
-            TuiMutationRejection::AccountMutationForbidden,
-            "account_mutation_forbidden",
-        ),
-        (TuiMutationRejection::AccountNotReady, "account_not_ready"),
-        (
-            TuiMutationRejection::TurnRequestInvalid,
-            "turn_request_invalid",
-        ),
-        (
-            TuiMutationRejection::TurnGateOpenFailed,
-            "turn_gate_open_failed",
-        ),
-        (TuiMutationRejection::TurnGateBusy, "turn_gate_busy"),
-        (
-            TuiMutationRejection::ManualMarkerThreadMismatch,
-            "manual_marker_thread_mismatch",
-        ),
-        (
-            TuiMutationRejection::ManualMarkerReplaced,
-            "manual_marker_replaced",
-        ),
-        (
-            TuiMutationRejection::ManualMarkerInvalid,
-            "manual_marker_invalid",
-        ),
-        (TuiMutationRejection::ManualAckFailed, "manual_ack_failed"),
-        (
-            TuiMutationRejection::RuntimeIdentityMissing,
-            "runtime_identity_missing",
-        ),
-        (
-            TuiMutationRejection::ManualCancellationBusy {
-                operation: "thread_start_cancellation",
-                stage: "session_record_lock",
-                code: "session-record-lock-busy",
-                retryable: true,
-                binding_state: "pending",
-                binding_revision: 8,
-                receipt_written: true,
-            },
-            "manual_cancellation_busy",
-        ),
-        (TuiMutationRejection::RuntimeChanged, "runtime_changed"),
-        (
-            TuiMutationRejection::AccountAuthorityUnavailable {
-                operation: "thread_start_cancellation",
-                stage: "session_authority_cancellation",
-                code: "authority_operation_failed",
-                retryable: false,
-                binding_state: "pending",
-                binding_revision: 8,
-                receipt_written: true,
-            },
-            "account_authority_unavailable",
-        ),
-    ] {
-        let Message::Text(text) = tui_busy_response(&json!(7), rejection) else {
-            panic!("busy response must be text");
-        };
-        let response: Value = serde_json::from_str(text.as_str()).unwrap();
-        assert_eq!(response["id"], 7);
-        assert_eq!(response["error"]["code"], -32001);
-        assert_eq!(
-            response["error"]["message"],
-            "agent-session state is busy; retry the request"
-        );
-        assert_eq!(response["error"]["data"]["reason"], reason);
-        if reason == "manual_cancellation_busy" {
-            assert_eq!(response["error"]["data"]["retryable"], true);
-            assert_eq!(
-                response["error"]["data"]["cause"]["code"],
-                "session-record-lock-busy"
-            );
-            assert_eq!(response["error"]["data"]["cause"]["receipt_written"], true);
-        }
-    }
-}
-
-#[test]
 fn steering_request_fences_the_exact_active_turn() {
     assert_eq!(
         steering_request(9, "thread-fixture", "turn-fixture", "mailbox checkpoint"),
@@ -8627,3 +8541,5 @@ async fn unix_control_projects_live_failure_and_acknowledges_exact_turn_without_
         assert!(!activity.contains(secret));
     }
 }
+
+mod contention;

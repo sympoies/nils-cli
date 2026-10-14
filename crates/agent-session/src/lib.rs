@@ -16,6 +16,7 @@ pub mod codex_account;
 pub mod codex_app_server;
 mod codex_runtime_dir;
 pub mod completion;
+mod contention;
 mod context_usage;
 mod conversation;
 #[doc(hidden)]
@@ -5813,7 +5814,7 @@ fn resume_session_locked(
         Err(err) => Some(err),
     };
     if let Some(launch_err) = launch_error {
-        let coordination_revoke = coordination::revoke(context, &record);
+        let coordination_revoke = contention::revoke_failed_resume(context, &record, &launch_err);
         let record_restore = write_session_record(context, &previous_record);
         let activity_restore = activity::restore_snapshot(context, &record.id, &previous_activity);
         let artifact_restore = startup_artifacts.restore();
@@ -5828,14 +5829,14 @@ fn resume_session_locked(
                 Some(json!({
                     "id": record.id,
                     "launch_error": launch_err.code(),
-                    "new_coordination_revoked": coordination_revoke.is_ok(),
+                    "new_coordination_revoked": coordination_revoke.is_ok_and(|revoked| revoked),
                     "record_restored": record_restore.is_ok(),
                     "activity_restored": activity_restore.is_ok(),
                     "startup_artifacts_restored": artifact_restore.is_ok()
                 })),
             ));
         }
-        return Err(launch_err);
+        return Err(contention::resume_error(launch_err));
     }
     if let (Ok(previous_incarnation), Ok(current_incarnation)) = (
         coordination::incarnation(&previous_record),
@@ -8407,7 +8408,8 @@ where
     F: FnOnce(&SessionRecord) -> Result<T, CliError>,
 {
     ensure_session_deletion_supported(&record)?;
-    ensure_session_lifecycle_mutation_allowed(context, &record)?;
+    ensure_session_lifecycle_mutation_allowed(context, &record)
+        .map_err(|error| contention::close_error(error, close_reason))?;
 
     let registry_fence = SessionRegistryFence::from_record(&record);
     gracefully_shutdown_profiled_tmux_session(context, &mut record, tmux_bin, verify_timeout)
@@ -8460,11 +8462,13 @@ fn finish_session_delete(
     close_reason: board::CloseReason,
 ) -> Result<DeleteResult, CliError> {
     ensure_session_deletion_supported(&record)?;
-    ensure_session_lifecycle_mutation_allowed(context, &record)?;
+    ensure_session_lifecycle_mutation_allowed(context, &record)
+        .map_err(|error| contention::close_error(error, close_reason))?;
     // Built while the record's state is readable; appended to the closed
     // ledger only after the removal commits, and never failing it.
     let closed = board::closed_record(context, &record, close_reason);
-    coordination::revoke(context, &record)?;
+    coordination::revoke(context, &record)
+        .map_err(|error| contention::close_error(error, close_reason))?;
     codex_app_server::cleanup_runtime_files(context, &record)?;
     let cleanup_pending = commit_session_directory_delete(context, &record.id, &session_dir)?;
     board::record_close(context, closed);
@@ -8851,17 +8855,8 @@ fn with_retained_startup(mut error: CliError, record: &SessionRecord) -> CliErro
 }
 
 /// Attach bounded cleanup state to a primary failure, preserving code and message.
-fn with_failed_launch_cleanup(mut error: CliError, cleanup: FailedLaunchCleanup) -> CliError {
-    if cleanup == FailedLaunchCleanup::Completed {
-        return error;
-    }
-    let mut details = match error.0.details.take() {
-        Some(Value::Object(details)) => details,
-        _ => serde_json::Map::new(),
-    };
-    details.insert("cleanup".to_string(), cleanup.projection());
-    error.0.details = Some(Value::Object(details));
-    error
+fn with_failed_launch_cleanup(error: CliError, cleanup: FailedLaunchCleanup) -> CliError {
+    contention::failed_launch_cleanup(error, cleanup)
 }
 
 fn recover_failed_tmux_launch(

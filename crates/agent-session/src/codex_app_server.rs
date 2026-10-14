@@ -4710,7 +4710,7 @@ async fn cancel_before_tui_mutation_detailed(
         "turn_start_cancellation"
     };
     let cancellation = tokio::task::spawn_blocking(move || {
-        crate::auto_resume::retry_manual_input_cancellation(|| {
+        crate::auto_resume::retry_manual_input_cancellation(wait_for_transient_lock, || {
             let now = Timestamp::now().to_string();
             if wait_for_transient_lock {
                 crate::auto_resume::cancel_for_manual_input_for_runtime_with_timeout(

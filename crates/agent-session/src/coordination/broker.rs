@@ -397,7 +397,7 @@ pub(crate) fn provision_with_previous(
     );
     let path = capability_path(context, &record.id, &incarnation);
     let now = now_epoch();
-    let mut locked = lock_registry(context)?;
+    let mut locked = super::lock_registry_for_lifecycle(context)?;
     // Close the race where provisioning passes the optimistic filesystem check
     // immediately before Main persists a session authority fence, then waits
     // for the coordination lock while Main seals the old broker.
@@ -679,9 +679,27 @@ pub(crate) fn ensure_ready(context: &CliContext, record: &SessionRecord) -> Resu
 }
 
 pub(crate) fn revoke(context: &CliContext, record: &SessionRecord) -> Result<(), CliError> {
+    revoke_locked(
+        context,
+        record,
+        super::lock_registry_for_lifecycle(context)?,
+    )
+}
+
+pub(super) fn revoke_after_runtime_exit(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<(), CliError> {
+    revoke_locked(context, record, lock_registry(context)?)
+}
+
+fn revoke_locked(
+    context: &CliContext,
+    record: &SessionRecord,
+    mut locked: super::LockedRegistry,
+) -> Result<(), CliError> {
     let now = now_epoch();
     let current_incarnation = incarnation(record).ok();
-    let mut locked = lock_registry(context)?;
     if let Some(broker) = locked.registry.brokers.get_mut(&record.id)
         && current_incarnation
             .as_deref()
@@ -869,7 +887,9 @@ pub(crate) fn stop(context: &CliContext, args: BrokerStopArgs) -> Result<Value, 
         let (record, _) =
             authenticate_from_file(context, &args.session, args.capability_file.as_deref())?;
         pause_broker_stop_for_test()?;
-        revoke(context, &record)?;
+        // The held launcher waits synchronously for this exit hook. Retain its
+        // short wait so two compatibility attempts fit graceful termination.
+        revoke_after_runtime_exit(context, &record)?;
         Ok(json!({
             "schema_version": BROKER_VERSION,
             "session_id": record.id,

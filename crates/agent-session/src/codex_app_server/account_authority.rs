@@ -250,7 +250,7 @@ impl TuiMutationRejection {
 }
 
 pub(super) fn tui_busy_response(id: &Value, rejection: TuiMutationRejection) -> Message {
-    let data = match rejection {
+    let mut data = match rejection {
         TuiMutationRejection::AccountAuthorityUnavailable {
             operation,
             stage,
@@ -295,6 +295,17 @@ pub(super) fn tui_busy_response(id: &Value, rejection: TuiMutationRejection) -> 
         }),
         _ => json!({ "reason": rejection.code() }),
     };
+    let retryable = matches!(rejection, TuiMutationRejection::TurnGateBusy)
+        || data["retryable"].as_bool().unwrap_or(false);
+    data["retryable"] = json!(retryable);
+    if data.get("next_action").is_none() {
+        data["next_action"] = json!(if retryable {
+            "retry-request-after-state-change"
+        } else {
+            "inspect-session-state"
+        });
+    }
+    data["recovery"] = json!({ "outcome": "not_forwarded" });
     Message::Text(
         json!({
             "id": id,
