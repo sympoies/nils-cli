@@ -97,7 +97,6 @@ pub(super) fn load_from_repo(repo: &Path) -> Result<Vec<ValidationContract>, Str
             {
                 continue;
             }
-            let mut entry = entry;
             entry.commands = normalize_commands(entry.commands)?;
             if primary_contexts.contains(&entry.context) {
                 continue;
