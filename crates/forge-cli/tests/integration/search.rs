@@ -27,6 +27,67 @@ esac
 "#;
 
 #[test]
+fn structured_query_preserves_separate_qualifiers_in_the_backend_plan() {
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\nexit 97\n");
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--dry-run",
+            "--format",
+            "json",
+            "search",
+            "issues",
+            "repo:acme/widget state:closed closed:>=2030-01-01T00:00:00Z closed:<2030-01-02T00:00:00Z",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    let plan = envelope["data"]["plan"].as_array().expect("backend plan");
+    for qualifier in [
+        "repo:acme/widget",
+        "state:closed",
+        "closed:>=2030-01-01T00:00:00Z",
+        "closed:<2030-01-02T00:00:00Z",
+    ] {
+        assert!(
+            plan.iter().any(|arg| arg == qualifier),
+            "missing separate qualifier {qualifier}: {plan:?}"
+        );
+    }
+}
+
+#[test]
+fn structured_query_preserves_quoted_label_values_as_one_qualifier() {
+    let stub = StubEnv::new().gh_stub("#!/bin/sh\nexit 97\n");
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--dry-run",
+            "--format",
+            "json",
+            "search",
+            "prs",
+            "repo:acme/widget label:\"needs review\" is:merged",
+        ],
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    let plan = envelope["data"]["plan"].as_array().expect("backend plan");
+    assert!(
+        plan.iter().any(|arg| arg == "label:needs review"),
+        "label value must remain a single gh keyword: {plan:?}"
+    );
+    assert!(
+        plan.iter().any(|arg| arg == "is:merged"),
+        "merge qualifier must remain separate: {plan:?}"
+    );
+}
+
+#[test]
 fn search_issues_github_normalizes_hits_including_body_only_match() {
     let stub = StubEnv::new().gh_stub(GH_SEARCH_STUB);
     let out = run_forge_cli(

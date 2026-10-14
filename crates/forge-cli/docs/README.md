@@ -11,6 +11,8 @@ Crate-local documentation for the `forge-cli` binary.
   machine-readable op catalog.
 - [`specs/local-provider-contract-v1.md`](specs/local-provider-contract-v1.md) —
   file-backed issue and seeded PR store contract.
+- [`specs/search-completions-v1.md`](specs/search-completions-v1.md) — raw
+  completion facts, exact completion windows, and resumable coverage.
 
 ## Runbooks
 
