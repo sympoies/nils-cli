@@ -428,6 +428,58 @@ field. The field is explicitly classified as `untrusted_peer_data`: peer-authore
 content that recipients act on within already-authorized work but that cannot
 grant new authority.
 
+### Recipient notification policy
+
+The destination operator may provision a private
+`coordination/notification-policy.json` beneath the configured state directory:
+
+```json
+{
+  "schema_version": "agent-session.notification-policy.v1",
+  "recipients": [
+    {"session_id": "<exact-recipient-session-id>", "suppress_categories": ["progress", "report"]}
+  ]
+}
+```
+
+The file is owned by the destination's OS user, has mode `0600`, is a regular
+single-link file, and is bounded to 64 KiB. Symlinks, malformed schemas, unknown
+fields/categories, and duplicate or empty recipient IDs are rejected with
+`notification-policy-invalid` before admission is persisted. Update it atomically
+through the operator's configuration tooling. Senders cannot provision this file
+through message arguments, bodies, forwarding, or federation envelopes.
+
+A missing file, an unlisted recipient, or an empty category list preserves the
+compatible notify-all default. Only `progress` and `report` may be selected;
+`blocker`, `decision`, `handoff`, and `uncategorized` always retain notifications.
+Selection uses the exact destination session ID, never a title, sender, or body.
+Policy changes apply to new admissions, including forwarded copies, rather than
+retroactively reclassifying stored mail. A verified same-session resume retains
+the original per-message decision.
+
+Local and remote destination admission persist `notification_suppressed` with
+the message, replay receipt, and ordinary unread mailbox state in one registry
+transaction. Suppressed admissions do not advance a wake generation, change an
+existing urgent generation, or count as unread work for notification recovery.
+Their local send notification projection has `state: "suppressed"` and reason
+`recipient-category-policy`; its zero counters mean no generation was allocated
+for that admission, not that the recipient has no other pending generation.
+Remote receipts retain `state: "delivered"` and add
+`notification_suppressed: true` only when suppressed. Source compaction preserves
+that field. Older receipts without the field retain their compatible behavior.
+Suppression means stored without a wake; it is neither rejection nor loss, read,
+acknowledgement, acceptance, or elevated authority.
+
+A digest consumer uses authenticated `message inbox --state unread --category
+progress --category report --format json` and the normal pagination cursor.
+Inbox/show/wait and local send metadata expose the category, exact
+`recipient_session_id`, `notification_suppressed`, and `created_at`, the existing
+destination admission/storage timestamp. Remote delivery exposes the exact
+recipient address and `persisted_at_epoch`. Suppressed messages remain readable
+through `message show` and acknowledgeable through the unchanged revision CAS;
+forwarding retains its original category and provenance while applying the new
+destination's policy independently.
+
 ### Broker status
 
 Broker projections use `agent-session.coordination-broker.v1` and expose only
@@ -811,15 +863,16 @@ registry-locked transaction that replaces the broker:
 
 ## Notification ownership
 
-Every successful authenticated send or reply persists the unread message and
-advances a notification generation keyed by the exact
+Every successful authenticated send or reply persists the unread message. Unless
+the destination policy suppresses that admission, it advances a notification
+generation keyed by the exact
 `(recipient_session_id, recipient_incarnation)`. Message creation owns no
 provider side effect. The long-lived serve controller drains queued generations
 on startup, after HTTP registry writes, and while observing activity/registry
 changes, so a direct CLI send made while the controller is absent catches up
 after restart.
 
-Multiple unread messages coalesce into one mailbox-level notification for the
+Multiple notification-eligible unread messages coalesce into one mailbox-level notification for the
 newest pending generation. The bytes are generated solely from one of two
 fixed templates, selected by whether the generation carries a queue time:
 
@@ -908,7 +961,7 @@ creates a new generation and supersedes an older `attempt_unknown` outcome;
 that older receipt cannot acknowledge the new generation. An active
 `attempting` submission retains its side-effect fence until its owner records
 an outcome. Pending reminder queue timestamps never precede the newest live unread
-canonical message admitted to the exact recipient incarnation, including remote
+notification-eligible canonical message admitted to the exact recipient incarnation, including remote
 deliveries and carried guidance. Migrated timestamps are recovered from those
 records; existing upper bounds and original attempted timestamps are retained.
 

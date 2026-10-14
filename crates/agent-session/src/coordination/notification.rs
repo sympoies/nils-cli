@@ -110,6 +110,7 @@ pub(crate) fn has_live_unread(
     registry.messages.iter().any(|message| {
         message.recipient_session_id == target_session_id
             && message.recipient_incarnation == target_incarnation
+            && !message.notification_suppressed
             && message.state == "unread"
             && message.expires_at_epoch > now
     })
@@ -869,6 +870,7 @@ mod tests {
             forwarded_from_incarnation: None,
             forwarded_at_epoch: None,
             category: None,
+            notification_suppressed: false,
             forwarding: None,
             resume_carry: None,
             body_bytes: 0,

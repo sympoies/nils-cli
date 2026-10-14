@@ -779,6 +779,11 @@ pub enum MessageCommand {
     /// Inspect durable remote delivery; delivered means saved, not read or accepted.
     Delivery(MessageDeliveryArgs),
     /// Send one bounded private message and schedule an eventual fixed notification.
+    ///
+    /// Default: notify all categories. The destination operator owns the private
+    /// coordination/notification-policy.json in its configured state directory;
+    /// selected progress/report mail stays readable without a wake. Senders
+    /// cannot set policy. Inbox/show expose notification_suppressed and created_at.
     Send(MessageSendArgs),
     /// Forward one received message without reading or acknowledging its source.
     Forward(MessageForwardArgs),
@@ -791,6 +796,9 @@ pub enum MessageCommand {
     /// Acknowledge one private message using revision compare-and-swap.
     Ack(MessageAckArgs),
     /// Reply to one private message and schedule an eventual fixed notification.
+    ///
+    /// The destination operator may suppress progress/report notifications;
+    /// the reply remains readable and acknowledgeable in the mailbox.
     Reply(MessageReplyArgs),
     /// Wait a bounded duration for one message revision change.
     Wait(MessageWaitArgs),

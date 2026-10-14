@@ -170,14 +170,27 @@ checks.push('bidirectional-reply-show-status');
   assert.equal(filtered.messages.length,1);assert.equal(filtered.messages[0].message_id,categorySource.message_id);
   assert.equal(filtered.messages[0].revision,1);assert(!JSON.stringify(filtered).includes('category forwarding body'));
   await stop(beta);await start(beta); // Source creation survives destination restart.
+  privateWrite(join(gamma.root,'coordination','notification-policy.json'),{
+    schema_version:'agent-session.notification-policy.v1',
+    recipients:[{session_id:gamma.session,suppress_categories:['progress','report']}]
+  });
+  const gammaNotificationsBefore=JSON.parse(readFileSync(join(gamma.root,'coordination','registry.json'),'utf8')).notifications;
   const forwardArgs=['forward','--session',beta.session,'--message',categorySource.message_id,'--if-revision','1','--to-machine',gamma.machine,'--to',gamma.session,'--category','progress','--idempotency-key','category-forward-0001'];
   dropOnce=true;
   const categoryForward=await cli(beta,forwardArgs);assert.equal(categoryForward.state,'queued');
   assert.equal(categoryForward.category,'progress');assert.equal(categoryForward.forwarding.original_sender.machine,'alpha');
   const beforeAck=await cli(beta,['inbox','--session',beta.session,'--category','progress']);
   assert.equal(beforeAck.messages[0].state,'unread');assert.equal(beforeAck.messages[0].revision,1);
-  await delivered(beta,categoryForward.message_id);
+  const quietDelivery=await delivered(beta,categoryForward.message_id);
+  assert.equal(quietDelivery.receipt.notification_suppressed,true);
+  assert.deepEqual(JSON.parse(readFileSync(join(gamma.root,'coordination','registry.json'),'utf8')).notifications,gammaNotificationsBefore,'suppressed HTTP ingress creates no generation');
+  const digest=await cli(gamma,['inbox','--session',gamma.session,'--category','progress']);
+  assert.equal(digest.messages[0].notification_suppressed,true);
+  assert.equal(digest.messages[0].recipient_session_id,gamma.session);
+  assert.equal(Date.parse(digest.messages[0].created_at)/1000,quietDelivery.receipt.persisted_at_epoch);
+
   const forwarded=await cli(gamma,['show','--session',gamma.session,'--message',categoryForward.message_id]);
+  assert.equal(forwarded.notification_suppressed,true);
   assert.equal(forwarded.body.text,'category forwarding body');assert.equal(forwarded.category,'progress');
   assert.equal(forwarded.sender.machine,'beta');assert.equal(forwarded.forwarding.attestation,'forwarder');
   assert.equal(forwarded.forwarding.original_message_id,categorySource.message_id);
@@ -195,6 +208,9 @@ checks.push('bidirectional-reply-show-status');
   await cli(beta,['ack','--session',beta.session,'--message',categorySource.message_id,'--if-revision','1','--idempotency-key','category-source-ack']);
   // Replay and source-side audit survive compaction, source acknowledgement and restart.
   await stop(beta);await start(beta);
+  const retainedQuietDelivery=await status(beta,categoryForward.message_id);
+  assert.equal(retainedQuietDelivery.receipt.notification_suppressed,true,'source restart and compaction retain suppression');
+  checks.push('destination-policy-http-forward-digest-ack-receipt');
   const categoryReplay=await cli(beta,forwardArgs);assert.equal(categoryReplay.message_id,categoryForward.message_id);
   assert.deepEqual(categoryReplay.forwarding,categoryForward.forwarding);
   assert.equal(JSON.parse(readFileSync(join(gamma.root,'coordination','registry.json'),'utf8')).messages.filter(m=>m.message_id===categoryForward.message_id).length,1);

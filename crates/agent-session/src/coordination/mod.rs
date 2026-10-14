@@ -8,6 +8,7 @@ mod forwarding;
 mod heartbeat_state;
 pub mod mailbox;
 mod notification;
+mod notification_policy;
 pub use notification::NotificationProjection;
 pub mod readiness;
 pub use readiness::checkpoint_path_for_state;
