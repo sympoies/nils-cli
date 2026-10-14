@@ -53,8 +53,9 @@ One root is one observation; collectors own root coverage and offline reporting.
 
 ## Projection schema
 
-All fields below are present. Unknown or inapplicable scalar values are JSON
-`null`; unknown observation states are the string `unknown`.
+Fields below are present unless explicitly marked optional. Unknown or
+inapplicable scalar values are JSON `null`; unknown observation states are the
+string `unknown`.
 
 | Top-level field | Type / meaning |
 | --- | --- |
@@ -82,10 +83,21 @@ All fields below are present. Unknown or inapplicable scalar values are JSON
 | `attempts`, `next_retry_at` | Source attempt count and queued retry time, or `null` |
 | `last_attempt_at`, `state_changed_at` | Source attempt start / most recent delivery state transition time, or `null` |
 | `reason_code` | Allowlisted federation reason or `unknown`, `null` when absent |
+| `refusal_details` | Optional content-free quota metadata object described below; omitted when unavailable |
 | `recipient_status` | `{runtime, broker, current_incarnation, heartbeat_at, heartbeat_fresh}` |
 | `notification` | Exact-incarnation receipt described below, or `null` |
 | `resume_carry` | Inbox mail moved by same-session resume: `{original_recipient_incarnation, from_incarnation, carry_count, carried_at, carried_at_epoch}` (UTC RFC3339 / Unix seconds); `null` otherwise and for outbox records |
 | `anomalies` | Array of stable anomaly codes; empty for healthy records |
+
+`refusal_details` is available only for source quota refusals. Its
+optional fields are `quota` (quota name), `count` (the value admission would
+reach), `limit`, `side` (evaluating side), and `host` (configured evaluating host).
+`count` and `limit` are nonnegative JSON integers representable as `u64`; the
+three text fields are strings bounded to 128 UTF-8 bytes each. Missing or invalid
+fields are omitted, and the entire object is omitted if no supported field is
+available. Inbox records and historical refusals without stored details omit it;
+the audit never reconstructs missing details from current quota usage. Unknown
+diagnostic fields, message bodies and upstream error text are never included.
 
 `recipient_status.runtime` is `running`, `stopped`, `missing`, or `unknown`.
 It uses existing exact runtime identity evidence; an absent local session
@@ -147,11 +159,12 @@ scans; they must not treat a partial/failed scan as a clean host.
 
 ## Retention and compatibility
 
-Readers accept existing registry v1/v2 and federation journal v1/v2/v3 plus the
-new timestamp-bearing `agent-session.federation-journal.v4`. Missing stores are
-empty; corrupt/unreadable/unsupported stores produce `partial` with a fixed
+Readers accept existing registry v1/v2 and federation journal v1/v2/v3/v4 plus
+`agent-session.federation-journal.v5`, which retains quota refusal details.
+Missing stores are empty; corrupt/unreadable/unsupported stores produce `partial` with a fixed
 source code, leaving the other source observable. Store reads retain existing
-private-file checks and byte bounds. Retention limits and delivery behavior are
+private-file checks. Federation journal reads are bounded to 38,535,168 bytes,
+matching the delivery writer. Retention limits and delivery behavior are
 unchanged: the audit only reports records still retained by their owners.
 
 New source writers persist submission time through terminal compaction and
@@ -162,9 +175,15 @@ time. The existing retry-accounting `attempts` count is preserved, including
 its expiry-finalization increment; it is not proof of network contact.
 Historical terminal entries lacking submission/attempt/transition timestamps
 project `null`; expiry never serves as a substitute send time. A journal with
-these new fields writes v4 so older strict readers fail closed rather than
-silently discarding metadata. Rollback requires a version that understands v4;
-there is no automatic downgrade or timestamp inference.
+these timestamp fields writes at least v4 so older strict readers fail closed
+rather than silently discarding metadata.
+
+Stored refusal details select v5 and survive terminal compaction. Once a journal is v5, later writes keep v5 even if
+no refusal details remain. Rollback after a v5 write requires a reader/writer
+that understands v5 and the 38,535,168-byte bound; older versions fail closed.
+There is no automatic downgrade, timestamp inference or reconstruction of
+missing historical refusal details. See [Session coordination
+v1](session-coordination-v1.md) for the journal admission reserve.
 
 ## Validation
 
