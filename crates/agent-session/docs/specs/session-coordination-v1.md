@@ -1219,6 +1219,8 @@ List and glance may add only:
 - `claim_id`;
 - `claim_expires_at`;
 - `unread_message_count`;
+- `mailbox_quota_warning` (only near/at recipient quota; content-free counts,
+  limits, status and fixed recipient recovery instructions);
 - `coordination_conflict_severity`;
 - `coordination_available`.
 
@@ -1452,6 +1454,31 @@ refusals add `destination_machine`, `pending`, `pending_to_destination`,
 refusals with that daemon's own code, message and details; only refusals that
 came back through the relay are described as "remote mailbox request was
 rejected", keeping just these quota fields from the relayed details.
+
+Recipient quota warnings are derived without changing message retention or
+admission. `message inbox` adds nullable `mailbox_quota_warning`, independent
+of the page/state filter; public list/glance metadata exposes the same warning
+when present. At 80 percent of either the 256-message or 4 MiB recipient limit,
+`status` is `near-limit`; at either limit it is `at-limit`. The warning includes
+`message_count`, `message_limit`, `byte_count`, `byte_limit`, and `recovery`.
+Counts use the existing admission predicate across the recipient's messages:
+acknowledged, expired and deleted messages remain excluded. Warning projection
+does not delete or acknowledge evidence.
+
+For `recipient-messages` and `recipient-bytes`, `quota-exceeded` additionally
+names the read/ACK recovery in its message and includes the same fixed
+`recovery` object (`actor: recipient`, `action: read_and_ack`, `inbox_unread`,
+`inbox_read`, `show`, `ack`, `guidance`). Relay receivers derive this instruction
+locally from the allowlisted quota name; they never copy remote recovery text
+or body data. Other quota axes retain their existing diagnostics.
+
+The authenticated recipient lists unread/read mail with `message inbox`, uses
+`message show` to read it, and ACKs handled messages with `message ack` using
+the returned revision and a unique idempotency key. Show can advance revision;
+ACK must use the latest one. Reading alone does not release quota. Operators
+and senders ask the recipient to do this; they cannot ACK another recipient's
+mail. Keep unread and archived evidence. The guidance does not promise that
+ACKing current-incarnation mail resolves every historical-incarnation quota.
 
 Destination inbox, notification and deduplication receipt share one existing
 registry commit. Authoritative sender identity is the existing
