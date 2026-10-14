@@ -100,7 +100,7 @@ def inputs(repo, event_name, event, candidate):
 
 
 def plan_scope(plan, expected):
-    if plan.get('schema_version') != 'nils-cli.merge-plan.v1' or plan.get('inputs') != expected:
+    if plan.get('schema_version') not in ('nils-cli.merge-plan.v1', 'nils-cli.merge-plan.v2') or plan.get('inputs') != expected:
         raise ValueError('plan version or inputs mismatch')
     digests = plan.get('digests', {})
     unsigned = dict(plan, digests={k: v for k, v in digests.items() if k != 'plan'})

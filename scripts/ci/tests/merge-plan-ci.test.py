@@ -112,7 +112,8 @@ class ConsumerExecutionTests(unittest.TestCase):
         self.git('config', 'user.email', 'fixture@example.invalid')
         paths = ('scripts/ci/nils-cli-merge-plan.py', 'scripts/ci/lib/merge_plan.py',
                  'scripts/ci/merge-plan-policy.v1.json', 'scripts/ci/merge-plan-extra-inputs.v1.json',
-                 'scripts/ci/merge-plan.schema.v1.json', 'scripts/ci/nils-cli-scoped-checks.sh',
+                 'scripts/ci/merge-plan.schema.v1.json', 'scripts/ci/merge-plan.schema.v2.json',
+                 'scripts/ci/nils-cli-scoped-checks.sh',
                  'scripts/ci/test-env.sh')
         for path in paths:
             dest = self.repo / path

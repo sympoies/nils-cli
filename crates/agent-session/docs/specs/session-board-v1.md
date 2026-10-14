@@ -163,7 +163,7 @@ the extension. A session with lineage and work looks like this:
 | Identity | `session_incarnation` | string or null | `SessionView.session_incarnation`; null when the record has no current runtime launch. |
 | Identity | `messaging_supported` | bool | New derivation, same meaning as `messaging_supported` in `agent-session.remote-peers.v1`: this session can currently receive a remote message. See [Messaging support](#messaging-support). |
 | Place | `repo_name` | string or null | `SessionView.repo_name`, which is the final path component of the session `cwd`. It is not an `owner/name` origin. |
-| Place | `cwd` | string or null | New derivation from `SessionView.cwd`: the daemon user's home prefix is replaced by `~` (for example `~/Project/x`). A `cwd` outside that home is `null`, never an absolute path. |
+| Place | `cwd` | string or null | New derivation from `SessionView.cwd`: normalized absolute home and cwd paths are canonicalized before replacing the home prefix with `~` (for example `~/Project/x`). Symlink-equivalent paths retain the same relative identity. A cwd outside canonical home, an unresolved home or cwd (including a deleted checkout), or a home resolving to `/` is `null`, never an absolute path. There is no lexical fallback when canonicalization fails. |
 | Place | `provider` | string | `SessionView.agent` (for example `codex`, `claude`, `dsh`). |
 | Place | `agent_profile` | string or null | `SessionView.agent_profile`. |
 | Context usage | `context_usage` | optional object | Five allowlisted raw facts from the shared session view; omitted when unavailable. See [session-context-usage-v1](session-context-usage-v1.md). |
