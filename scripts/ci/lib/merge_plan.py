@@ -1,25 +1,27 @@
-"""Trusted-base merge-plan v1 selector. This module never runs validation gates."""
+"""Trusted-base affected merge selector. This module never runs validation gates."""
 import fnmatch
 import hashlib
 import json
 import os
 import posixpath
+import re
 import shutil
 import unicodedata
 from pathlib import Path, PurePosixPath
 import subprocess
 import tempfile
 
-VERSION = 'nils-cli.merge-plan.v1'
+VERSION = 'nils-cli.merge-plan.v2'
 POLICY_PATH = 'scripts/ci/merge-plan-policy.v1.json'
 REGISTRY_PATH = 'scripts/ci/merge-plan-extra-inputs.v1.json'
-SCHEMA_PATH = 'scripts/ci/merge-plan.schema.v1.json'
+SCHEMA_PATH = 'scripts/ci/merge-plan.schema.v2.json'
 
 
 class PlanError(Exception):
-    def __init__(self, code, stage):
+    def __init__(self, code, stage, recovery=None):
         self.code = code
         self.stage = stage
+        self.recovery = recovery or {}
 
 
 def canonical(value):
@@ -319,12 +321,39 @@ def metadata_configuration(base_root, candidate_root, changes):
             raise PlanError('METADATA_FAILED', 'candidate_configuration')
 
 
+def metadata_stderr_tail(raw):
+    """Only producer-owned Cargo explanations may enter a public artifact."""
+    text = raw.decode('utf-8', errors='replace') if isinstance(raw, bytes) else (raw or '')
+    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+    explanations = (
+        (r'no matching package named', 'no matching package found in offline registry cache'),
+        (r'(?:HTTP request|download).*offline|offline.*(?:fetch|download)', 'dependency download blocked by offline mode'),
+        (r'lock ?file.*needs.*updat|lock file.*needs.*updat', 'lockfile update required'),
+        (r'toolchain.*(?:not installed|not found|unavailable)', 'requested Rust toolchain unavailable'),
+        (r'(?:failed to|could not).*execute.*rustc', 'Rust compiler probe could not execute'),
+        (r'failed to parse (?:manifest|lock)|invalid TOML', 'manifest or lockfile could not be parsed'),
+        (r'failed to load source for a dependency|failed to get .*as a dependency', 'dependency source unavailable'),
+    )
+    lines = []
+    for line in text.splitlines(keepends=True):
+        explanation = next((message for pattern, message in explanations if re.search(pattern, line, re.I)), None)
+        prefix = 'error:' if line.lstrip().startswith('error:') else 'diagnostic:'
+        rendered = 'error: ' + explanation if explanation else prefix + ' <redacted diagnostic line>'
+        lines.append(rendered + ('\n' if line.endswith(('\n', '\r')) else ''))
+    # No source-derived prose survives, including unquoted paths with spaces.
+    return ''.join(lines).encode('utf-8')[-2048:].decode('utf-8', errors='ignore')
+
+
 def metadata(snapshot_root, stage, trusted_root):
+    def failure(kind, **details):
+        return PlanError('METADATA_FAILED', stage, dict(kind=kind, **details))
+
     try:
         cargo = shutil.which('cargo')
         rustc = shutil.which('rustc')
-        if cargo is None or rustc is None:
-            raise ValueError()
+        for tool, executable in (('cargo', cargo), ('rustc', rustc)):
+            if executable is None:
+                raise failure('missing_tool', tool=tool)
         # Both manifests use B's cwd/config/toolchain. M's .cargo and programs
         # cannot choose compiler tooling; ambient executables are caller-trusted.
         environment = dict(os.environ, RUSTUP_AUTO_INSTALL='0',
@@ -337,18 +366,31 @@ def metadata(snapshot_root, stage, trusted_root):
                                  '--all-features', '--format-version', '1'],
                                 cwd=trusted_root, check=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, env=environment)
+    except OSError as error:
+        details = {'errno': error.errno} if isinstance(error.errno, int) else {}
+        raise failure('spawn_error', **details) from None
+    except subprocess.CalledProcessError as error:
+        raise failure('cargo_exit', exit_code=error.returncode,
+                      stderr_tail=metadata_stderr_tail(error.stderr)) from None
+    try:
         value = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        raise failure('json_invalid') from None
+    try:
         if Path(value['workspace_root']).resolve() != snapshot_root.resolve():
             raise ValueError()
+    except (OSError, KeyError, TypeError, ValueError):
+        raise failure('workspace_root_mismatch') from None
+    try:
         packages, reverse, builds = graph(value)
-        # The normalized graph, rather than random materialization paths, is the
-        # metadata evidence. All resolved edges and custom build inputs are bound.
-        normalized = {'packages': packages, 'reverse_dependencies':
-                      {pid: sorted(consumers) for pid, consumers in reverse.items()},
-                      'build_scripts': sorted(builds)}
-        return value, digest(canonical(normalized))
-    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError, PlanError):
-        raise PlanError('METADATA_FAILED', stage) from None
+    except PlanError:
+        raise failure('graph_error') from None
+    # The normalized graph, rather than random materialization paths, is the
+    # metadata evidence. All resolved edges and custom build inputs are bound.
+    normalized = {'packages': packages, 'reverse_dependencies':
+                  {pid: sorted(consumers) for pid, consumers in reverse.items()},
+                  'build_scripts': sorted(builds)}
+    return value, digest(canonical(normalized))
 
 
 def generate(repo, inputs, selector_digest):
@@ -388,5 +430,5 @@ def generate(repo, inputs, selector_digest):
     except PlanError as error:
         plan.update(scope=None, selected_packages=[], reasons=[])
         plan['error'] = {'code': error.code, 'stage': error.stage, 'retryable': True,
-                         'next_action': 'repair_plan_inputs', 'recovery': {}}
+                         'next_action': 'repair_plan_inputs', 'recovery': error.recovery}
     return plan
