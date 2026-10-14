@@ -599,6 +599,20 @@ pub(crate) enum ManualInputCancelOutcome {
     RuntimeChanged,
 }
 
+pub(crate) fn retry_manual_input_cancellation(
+    mut attempt: impl FnMut() -> Result<ManualInputCancelOutcome, CliError>,
+) -> Result<ManualInputCancelOutcome, CliError> {
+    const MAX_ATTEMPTS: u8 = 3;
+    for attempt_index in 0..MAX_ATTEMPTS {
+        let outcome = attempt()?;
+        if outcome != ManualInputCancelOutcome::Busy || attempt_index + 1 == MAX_ATTEMPTS {
+            return Ok(outcome);
+        }
+        std::thread::sleep(Duration::from_millis(25 * 2u64.pow(attempt_index.into())));
+    }
+    unreachable!("bounded attempt range always returns")
+}
+
 pub(crate) fn try_cancel_for_manual_input_for_runtime(
     context: &CliContext,
     id: &str,
@@ -1772,6 +1786,31 @@ mod tests {
         crate::write_session_record(&context, &record).unwrap();
         activity::activate_runtime(&context, &record).unwrap();
         (context, record)
+    }
+
+    #[test]
+    fn manual_input_cancellation_retries_only_explicit_busy_outcomes() {
+        let mut calls = 0;
+        let result = retry_manual_input_cancellation(|| {
+            calls += 1;
+            Ok(if calls == 1 {
+                ManualInputCancelOutcome::Busy
+            } else {
+                ManualInputCancelOutcome::Ready
+            })
+        })
+        .unwrap();
+        assert_eq!(result, ManualInputCancelOutcome::Ready);
+        assert_eq!(calls, 2);
+
+        let mut persistent_calls = 0;
+        let result = retry_manual_input_cancellation(|| {
+            persistent_calls += 1;
+            Ok(ManualInputCancelOutcome::Busy)
+        })
+        .unwrap();
+        assert_eq!(result, ManualInputCancelOutcome::Busy);
+        assert_eq!(persistent_calls, 3);
     }
 
     #[test]

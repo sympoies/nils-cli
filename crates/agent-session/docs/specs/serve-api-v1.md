@@ -609,7 +609,14 @@ recorded in `sympoies/nils-cli#1409`.
   `manual_cancellation_busy`, `runtime_changed`, and
   `account_authority_unavailable`. Older proxies may omit `data.reason`, and
   clients MUST tolerate an absent or unknown reason while retaining the stable
-  code/message fallback. A durably bound exact-runtime account
+  code/message fallback. Authority failures add a bounded `data.cause` with
+  `operation`, `stage`, stable `code`, binding `state` and `revision`, and
+  `receipt_written`; `data.retryable` and `data.next_action` are typed fields.
+  A private lifecycle receipt is persisted before cleanup, keyed to the exact
+  session runtime and containing no account name, credential, provider output,
+  or local path. Cancellation retries only explicit record-lock `Busy`
+  outcomes, at most three attempts; other causes are returned without replay.
+  A durably bound exact-runtime account
   remains valid in a detached tmux scope without inheriting the daemon's broker
   command; the broker is still mandatory for binding and account mutation. A
   client MUST first refresh `GET /sessions` and

@@ -11,8 +11,8 @@ crates/agent-hook/tests/dsh_policy.rs	test	5130
 crates/agent-hook/tests/setup.rs	test	3033
 crates/agent-out/src/lib.rs	impl	2430
 crates/agent-session/src/activity.rs	impl	5442
-crates/agent-session/src/codex_app_server.rs	impl	5478
-crates/agent-session/src/codex_app_server/tests/mod.rs	test	8669
+crates/agent-session/src/codex_app_server.rs	impl	5475
+crates/agent-session/src/codex_app_server/tests/mod.rs	test	8629
 crates/agent-session/src/lib.rs	impl	13590
 crates/agent-session/src/lib.rs	test	6345
 crates/agent-session/src/provider_history.rs	impl	3079
