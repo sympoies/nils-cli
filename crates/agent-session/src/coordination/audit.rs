@@ -90,6 +90,8 @@ struct Outbox {
     #[serde(default)]
     state_changed_at_epoch: Option<i64>,
     reason: Option<String>,
+    #[serde(default)]
+    refusal_details: Option<remote::QuotaRefusal>,
     receipt: Option<DeliveryReceipt>,
 }
 #[derive(Deserialize)]
@@ -105,6 +107,8 @@ struct Retained {
     state: String,
     attempts: u64,
     reason: Option<String>,
+    #[serde(default)]
+    refusal_details: Option<remote::QuotaRefusal>,
     persisted_at_epoch: Option<i64>,
     #[serde(default)]
     created_at_epoch: Option<i64>,
@@ -155,6 +159,8 @@ struct Record {
     last_attempt_at: Option<String>,
     state_changed_at: Option<String>,
     reason_code: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refusal_details: Option<remote::QuotaRefusal>,
     recipient_status: RecipientStatus,
     notification: Option<Value>,
     resume_carry: Option<super::mailbox::ResumeCarry>,
@@ -367,7 +373,7 @@ fn snapshot_at(
         &context
             .state_dir
             .join("coordination/federation-journal.json"),
-        32 * 1024 * 1024,
+        remote::MAX_JOURNAL_BYTES,
     )
     .and_then(|j| {
         let Some(j) = j else {
@@ -379,6 +385,7 @@ fn snapshot_at(
                 | "agent-session.federation-journal.v2"
                 | "agent-session.federation-journal.v3"
                 | "agent-session.federation-journal.v4"
+                | "agent-session.federation-journal.v5"
         ) && (j.schema_version != "agent-session.federation-journal.v1" || j.retained.is_empty())
         {
             Ok(j)
@@ -466,6 +473,7 @@ fn snapshot_at(
                 last_attempt_at: None,
                 state_changed_at: None,
                 reason_code: None,
+                refusal_details: None,
                 recipient_status: status,
                 notification,
                 resume_carry: m.resume_carry.clone(),
@@ -507,6 +515,7 @@ fn snapshot_at(
                     state: o.state,
                     attempts: o.attempts,
                     reason: o.reason,
+                    refusal_details: o.refusal_details,
                     persisted_at_epoch: persisted,
                     created_at_epoch: Some(o.envelope.created_at_epoch),
                     last_attempt_at_epoch: o.last_attempt_at_epoch,
@@ -563,6 +572,7 @@ fn snapshot_at(
                 last_attempt_at: time(o.last_attempt_at_epoch),
                 state_changed_at: time(o.state_changed_at_epoch),
                 reason_code: reason(o.reason.as_deref()),
+                refusal_details: o.refusal_details,
                 recipient_status: RecipientStatus::default(),
                 notification: None,
                 resume_carry: None,

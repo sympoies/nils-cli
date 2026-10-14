@@ -1390,8 +1390,19 @@ keeps the original recipient incarnation.
 
 Source outbox submission returns a raw delivery projection (wrapped in the usual
 CLI envelope for CLI callers): `message_id`, `state`, `sender`, `recipient`,
-`attempts`, `reason`, and optional `receipt`. States are `queued`, `delivered`,
-`rejected`, or `delivery-unknown`. Network errors retry five seconds after the
+`attempts`, `reason`, and optional `receipt` and `refusal_details`.
+
+The optional `refusal_details` object retains only quota refusal metadata: `quota`, `count`,
+`limit`, `side` and `host`. Each field is optional; `count` and `limit` are
+nonnegative JSON integers representable as `u64`, and each text field is bounded
+to 128 UTF-8 bytes. Missing or invalid fields are omitted; if no supported field
+is available, the object is omitted. Historical refusals without stored details
+remain absent and are never reconstructed from current quotas. The object
+survives terminal compaction and is also exposed by [Mail audit
+v1](mail-audit-v1.md), including quota refusals conservatively classified as
+`delivery-unknown`. Message bodies and upstream error text are excluded.
+
+States are `queued`, `delivered`, `rejected`, or `delivery-unknown`. Network errors retry five seconds after the
 request finishes until expiry. Due entries are selected by their retry deadline,
 so a repeatedly timed-out entry cannot starve later messages. A retryable
 transport failure (`remote-messaging-unavailable`, `coordination-unavailable`,
@@ -1413,8 +1424,12 @@ into a body-free retained record (message ID, sender, recipient, idempotency
 key, request digest, state, attempts, reason, expiry, and the receipt's
 `persisted_at_epoch`, from which the accepted receipt is rebuilt). Replay,
 reply replay and delivery status read queued and retained entries alike.
-Queued plus retained identities are bounded to 16384, and a submit that would
-leave less than 256 KiB of the journal byte budget is refused. Each bound
+Queued plus retained identities are bounded to 16384. Journal admission reserves
+5,242,880 bytes: the existing 262,144-byte bookkeeping reserve plus 4,980,736
+bytes for bounded refusal diagnostics across all 2048 queued envelopes. The hard
+journal cap grows by that same 4,980,736 bytes to 38,535,168 bytes, leaving the
+enqueue byte budget unchanged at 33,292,288 bytes. A submit whose encoded
+journal would exceed that enqueue budget is refused. Each bound
 refuses at capacity and never evicts a live identity; identities are retained
 until 24 hours after expiry. Expiry without a confirmed receipt remains unknown,
 including the case where the receiver saved the message but its response was lost.
@@ -1443,11 +1458,17 @@ and maximum-depth (16) checks.
 
 Federation never changes the local coordination registry schema or session runtime.
 Source envelopes live in the private `coordination/federation-journal.json`,
-schema `agent-session.federation-journal.v2` (`remote_outbox` plus `retained`)
-or the timestamp-bearing v4 described in [Mail audit v1](mail-audit-v1.md),
-bounded to 32 MiB, 2048 queued envelopes and 16384 identities. A v1 journal is read
-and rewritten to a supported successor on the next write; releases that do not
-know the stored successor fail closed.
+with supported schemas `agent-session.federation-journal.v1` through v5. The v2
+schema adds `retained` alongside `remote_outbox`, v3 retains category/forwarding
+metadata, v4 retains audit timestamps, and v5 retains quota refusal details as
+described in [Mail audit v1](mail-audit-v1.md). Reads and writes are bounded to
+38,535,168 bytes, 2048 queued envelopes and 16384 identities, with the admission
+reserve described above. A v1 journal is read and rewritten to a supported
+successor on the next write. Stored refusal details select v5; once v5 is stored,
+subsequent writes keep v5 even if those details are no longer present. Rollback
+requires a reader/writer that understands the stored version and byte bound;
+releases that do not know v5 fail closed without discarding its metadata. There
+is no automatic downgrade or reconstruction of missing historical details.
 A dedicated private `coordination/federation-journal.lock` serializes journal
 reads/writes with the same bounded, owner-checked file locking rules as the registry.
 Authorization uses session then registry then journal lock order. Journal-only

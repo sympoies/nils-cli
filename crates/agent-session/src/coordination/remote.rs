@@ -18,12 +18,21 @@ pub(crate) use delivery_notice::State as NoticeState;
 
 const JOURNAL_VERSION: &str = "agent-session.federation-journal.v2";
 const EXTENDED_JOURNAL_VERSION: &str = "agent-session.federation-journal.v3";
+const REFUSAL_JOURNAL_VERSION: &str = "agent-session.federation-journal.v5";
 const AUDIT_JOURNAL_VERSION: &str = "agent-session.federation-journal.v4";
 const LEGACY_JOURNAL_VERSION: &str = "agent-session.federation-journal.v1";
 const JOURNAL_FILE: &str = "federation-journal.json";
-const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
-/// Submit leaves this much room so drain's retry bookkeeping always fits.
-const JOURNAL_HEADROOM_BYTES: u64 = 256 * 1024;
+const MAX_QUOTA_TEXT_BYTES: usize = 128;
+// Three bounded strings may each expand sixfold through JSON escaping. The
+// remaining allowance covers two u64 values, field names, and object framing.
+const REFUSAL_HEADROOM_BYTES: u64 =
+    MAX_PENDING as u64 * (3 * MAX_QUOTA_TEXT_BYTES * 6 + 128) as u64;
+// Grow both bounds equally: previously admitted service envelopes must still
+// fit after refusal metadata is added while their recoverable bodies remain.
+// The enqueue byte budget stays unchanged.
+pub(super) const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024 + REFUSAL_HEADROOM_BYTES;
+/// Submit leaves room for drain's bookkeeping and bounded refusal diagnostics.
+const JOURNAL_HEADROOM_BYTES: u64 = 256 * 1024 + REFUSAL_HEADROOM_BYTES;
 const RECEIVE_PRINCIPAL: &str = "remote:receive";
 const RECEIVE_INCARNATION: &str = "v1";
 const RECEIVE_OPERATION: &str = "remote-message-receive";
@@ -187,6 +196,55 @@ impl<F: Into<Origin>> Envelope<F> {
         }
     }
 }
+/// Content-free refusal metadata. Unknown diagnostic fields (including bodies)
+/// are never retained. Optional fields keep older/partial relay refusals readable.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub(crate) struct QuotaRefusal {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quota: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    side: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host: Option<String>,
+}
+impl QuotaRefusal {
+    fn from_details(details: Option<&Value>) -> Option<Self> {
+        let details = details?.as_object()?;
+        let text = |key| {
+            details
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|text| text.len() <= MAX_QUOTA_TEXT_BYTES)
+                .map(str::to_string)
+        };
+        let kept = Self {
+            quota: text("quota"),
+            count: details.get("count").and_then(Value::as_u64),
+            limit: details.get("limit").and_then(Value::as_u64),
+            side: text("side"),
+            host: text("host"),
+        };
+        (kept.quota.is_some()
+            || kept.count.is_some()
+            || kept.limit.is_some()
+            || kept.side.is_some()
+            || kept.host.is_some())
+        .then_some(kept)
+    }
+    fn from_error(error: &CliError) -> Option<Self> {
+        if error.code() == "quota-exceeded" {
+            Self::from_details(error.details())
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Outbox {
     pub envelope: Envelope<Origin>,
@@ -201,6 +259,8 @@ pub(crate) struct Outbox {
     pub state_changed_at_epoch: Option<i64>,
     pub receipt: Option<Value>,
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_details: Option<QuotaRefusal>,
 }
 impl Outbox {
     fn retains_failed_service_body(&self, now: i64) -> bool {
@@ -222,6 +282,7 @@ impl Outbox {
             state: self.state.clone(),
             attempts: self.attempts,
             reason: self.reason.clone(),
+            refusal_details: self.refusal_details.clone(),
             category: self.envelope.category,
             forwarding: self.envelope.forwarding.clone(),
             persisted_at_epoch: self
@@ -253,6 +314,8 @@ struct Retained {
     state: String,
     attempts: u64,
     reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refusal_details: Option<QuotaRefusal>,
     persisted_at_epoch: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     category: Option<crate::cli::MessageCategory>,
@@ -359,7 +422,10 @@ fn read_journal(context: &CliContext) -> Result<Journal, CliError> {
         Ok(bytes) => {
             let journal: Journal = serde_json::from_slice(&bytes).map_err(|_| journal_error())?;
             let supported = match journal.schema_version.as_str() {
-                JOURNAL_VERSION | EXTENDED_JOURNAL_VERSION | AUDIT_JOURNAL_VERSION => true,
+                JOURNAL_VERSION
+                | EXTENDED_JOURNAL_VERSION
+                | AUDIT_JOURNAL_VERSION
+                | REFUSAL_JOURNAL_VERSION => true,
                 LEGACY_JOURNAL_VERSION => journal.retained.is_empty(),
                 _ => false,
             };
@@ -398,6 +464,17 @@ impl LockedJournal {
     }
     fn encode(&mut self) -> Result<Vec<u8>, CliError> {
         self.registry.compact(now_epoch());
+        let refusal = self.registry.schema_version == REFUSAL_JOURNAL_VERSION
+            || self
+                .registry
+                .remote_outbox
+                .iter()
+                .any(|entry| entry.refusal_details.is_some())
+            || self
+                .registry
+                .retained
+                .iter()
+                .any(|entry| entry.refusal_details.is_some());
         let audit = self.registry.schema_version == AUDIT_JOURNAL_VERSION
             || self.registry.remote_outbox.iter().any(|entry| {
                 entry.last_attempt_at_epoch.is_some() || entry.state_changed_at_epoch.is_some()
@@ -416,7 +493,9 @@ impl LockedJournal {
                 .retained
                 .iter()
                 .any(|entry| entry.category.is_some() || entry.forwarding.is_some());
-        self.registry.schema_version = if audit {
+        self.registry.schema_version = if refusal {
+            REFUSAL_JOURNAL_VERSION
+        } else if audit {
             AUDIT_JOURNAL_VERSION
         } else if extended {
             EXTENDED_JOURNAL_VERSION
@@ -597,20 +676,9 @@ fn relay_error(value: &Value) -> CliError {
         code
     };
     let mut details = (code == "quota-exceeded")
-        .then(|| value.pointer("/error/details").and_then(Value::as_object))
+        .then(|| QuotaRefusal::from_details(value.pointer("/error/details")))
         .flatten()
-        .map(|details| {
-            ["quota", "count", "limit", "host", "side"]
-                .into_iter()
-                .filter_map(|key| {
-                    let field = details.get(key)?;
-                    (field.is_u64() || field.as_str().is_some_and(|text| text.len() <= 128))
-                        .then(|| (key.to_string(), field.clone()))
-                })
-                .collect::<serde_json::Map<_, _>>()
-        })
-        .filter(|kept| !kept.is_empty())
-        .map(Value::Object);
+        .map(|details| json!(details));
     let mut message = "remote mailbox request was rejected".to_string();
     if let Some(details) = details.as_mut()
         && details["quota"]
@@ -1129,6 +1197,7 @@ where
         state_changed_at_epoch: Some(now),
         receipt: None,
         reason: None,
+        refusal_details: None,
     };
     let outcome = projection(&item.identity());
     locked.registry.remote_outbox.push(item);
@@ -1153,6 +1222,9 @@ where
 }
 fn projection(item: &Retained) -> Value {
     let mut value = json!({"schema_version":DELIVERY_VERSION,"message_id":item.message_id,"state":item.state,"sender":item.sender.projection(),"recipient":item.recipient,"attempts":item.attempts,"reason":item.reason,"receipt":item.receipt()});
+    if let Some(details) = &item.refusal_details {
+        value["refusal_details"] = json!(details);
+    }
     value["category"] = json!(item.category.unwrap_or_default());
     if let Some(forwarding) = &item.forwarding {
         value["forwarding"] = json!(forwarding);
@@ -1286,12 +1358,15 @@ pub(crate) fn drain_with_notice_state(
                 current.state = "delivered".into();
                 current.receipt = Some(receipt);
                 current.reason = None;
+                current.refusal_details = None;
             }
             Ok(_) => {
                 current.reason = Some("remote-receipt-invalid".into());
+                current.refusal_details = None;
             }
             Err(error) => {
                 current.reason = Some(error.code().into());
+                current.refusal_details = QuotaRefusal::from_error(&error);
                 if error.code() == "delivery-unknown" {
                     current.state = "delivery-unknown".into();
                 } else if !matches!(
@@ -2399,6 +2474,7 @@ mod tests {
                 state_changed_at_epoch: None,
                 receipt: None,
                 reason: Some("remote-messaging-unavailable".into()),
+                refusal_details: None,
             });
             locked.save().unwrap();
             drop(locked);
@@ -2411,6 +2487,96 @@ mod tests {
                 locked.registry.retained[0].reason.as_deref(),
                 Some("session-incarnation-conflict")
             );
+        }
+    }
+    #[test]
+    fn quota_refusal_survives_compaction_in_delivery_and_audit() {
+        use std::io::{Read, Write};
+        for (attempts, expected) in [(0, "rejected"), (1, "delivery-unknown")] {
+            let (_temp, context) = fixture();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut config = config();
+            config.url = format!("http://{}", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = Vec::new();
+                loop {
+                    let mut bytes = [0; 1024];
+                    let count = stream.read(&mut bytes).unwrap();
+                    assert!(count > 0, "request must finish before EOF");
+                    request.extend_from_slice(&bytes[..count]);
+                    assert!(request.len() <= 8192, "bounded fixture request");
+                    if let Some(end) = request.windows(4).position(|v| v == b"\r\n\r\n") {
+                        let header = std::str::from_utf8(&request[..end]).unwrap();
+                        let length: usize = header
+                            .lines()
+                            .find_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse().unwrap())
+                            })
+                            .unwrap();
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                let body = r#"{"error":{"code":"quota-exceeded","details":{"quota":"recipient-messages","count":256,"limit":256,"side":"destination","host":"source","body":"refusal-body-canary"}}}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 409 Conflict\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            });
+            let mut locked = lock_journal(&context).unwrap();
+            let mut item = own_outbox("quota-refusal", "queued");
+            item.attempts = attempts;
+            let id = item.envelope.message_id.clone();
+            locked.registry.remote_outbox.push(item);
+            locked.save().unwrap();
+            drop(locked);
+            drain(&context, &config).unwrap();
+            server.join().unwrap();
+            let locked = lock_journal(&context).unwrap();
+            assert!(locked.registry.remote_outbox.is_empty());
+            assert_eq!(locked.registry.schema_version, REFUSAL_JOURNAL_VERSION);
+            assert_eq!(locked.registry.retained[0].state, expected);
+            assert_eq!(
+                locked.registry.retained[0].reason.as_deref(),
+                Some("quota-exceeded")
+            );
+            drop(locked);
+            let details = json!({"quota":"recipient-messages","count":256,"limit":256,
+                "side":"destination","host":"source"});
+            let status = delivery(&context, "recipient", TOKEN, &id).unwrap();
+            assert_eq!(status["refusal_details"], details);
+            let audit = super::super::audit::snapshot(
+                &context,
+                "destination",
+                super::super::audit::Query::default(),
+            )
+            .unwrap();
+            let row = audit["records"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["message_id"] == id)
+                .unwrap();
+            assert_eq!(row["refusal_details"], details);
+            for value in [&status, &audit] {
+                assert!(!value.to_string().contains("refusal-body-canary"));
+                assert!(!value.to_string().contains("bounded fixture body"));
+            }
+            let journal =
+                fs::read_to_string(context.state_dir.join("coordination").join(JOURNAL_FILE))
+                    .unwrap();
+            assert!(!journal.contains("refusal-body-canary"));
+            assert!(!journal.contains("bounded fixture body"));
         }
     }
     #[test]
@@ -2662,6 +2828,7 @@ mod tests {
             state_changed_at_epoch: None,
             receipt: None,
             reason: None,
+            refusal_details: None,
         });
         journal.save().unwrap();
         drop(journal);
@@ -2837,6 +3004,7 @@ mod tests {
             state_changed_at_epoch: None,
             receipt: None,
             reason: None,
+            refusal_details: None,
         });
         locked.save().expect("save queued");
         drop(locked);
@@ -2897,6 +3065,7 @@ mod tests {
             state_changed_at_epoch: None,
             receipt: None,
             reason: None,
+            refusal_details: None,
         });
         locked.save().expect("save");
         drop(locked);
@@ -3003,6 +3172,7 @@ mod tests {
             last_attempt_at_epoch: None,
             state_changed_at_epoch: None,
             reason: None,
+            refusal_details: None,
         }
     }
     fn write_v1_journal(context: &CliContext, outbox: &[Outbox]) {
@@ -3149,6 +3319,88 @@ mod tests {
         assert!(fs::metadata(path).unwrap().len() < MAX_JOURNAL_BYTES / 2);
     }
     #[test]
+    fn quota_refusals_fit_service_journal_at_admission_budget() {
+        let (_temp, context) = fixture();
+        let mut locked = lock_journal(&context).unwrap();
+        locked.registry.remote_outbox = (0..MAX_PENDING)
+            .map(|index| {
+                let mut item = own_outbox(&format!("capacity-{index}"), "queued");
+                item.envelope.schema_version = super::super::service::WIRE_VERSION.into();
+                item.envelope.from = Origin::Service(super::super::service::Origin {
+                    machine: "source".into(),
+                    service_id: "reporter".into(),
+                    service_generation: "generation-1".into(),
+                });
+                item.envelope.to.machine =
+                    format!("destination-{}", index / MAX_PENDING_PER_DESTINATION);
+                item.envelope.body.clear();
+                item
+            })
+            .collect();
+        let budget = (MAX_JOURNAL_BYTES - JOURNAL_HEADROOM_BYTES) as usize;
+        assert_eq!(budget, 32 * 1024 * 1024 - 256 * 1024);
+        let overhead = locked.encode().unwrap().len();
+        let body_bytes = (budget - overhead) / MAX_PENDING;
+        assert!(body_bytes <= super::super::mailbox::BODY_MAX_BYTES);
+        let body = "x".repeat(body_bytes);
+        let digest = digest_bytes(body.as_bytes());
+        for item in &mut locked.registry.remote_outbox {
+            item.envelope.body = body.clone();
+            item.envelope.body_sha256 = digest.clone();
+        }
+        let admitted_bytes = locked.encode().unwrap().len();
+        assert!(admitted_bytes <= budget && admitted_bytes > budget - MAX_PENDING);
+        locked.save().unwrap();
+        let error = super::super::quota_origin(
+            super::super::quota_exceeded("mailbox quota exceeded", "recipient-messages", 256, 256),
+            &"h".repeat(64),
+            "destination",
+        );
+        for item in &mut locked.registry.remote_outbox {
+            item.state = "rejected".into();
+            item.attempts = 1;
+            item.last_attempt_at_epoch = Some(now_epoch());
+            item.state_changed_at_epoch = Some(now_epoch());
+            item.reason = Some(error.code().into());
+            item.refusal_details = QuotaRefusal::from_error(&error);
+        }
+        locked
+            .save()
+            .expect("every admitted service refusal must fit durably");
+        drop(locked);
+        let locked = lock_journal(&context).unwrap();
+        assert_eq!(locked.registry.remote_outbox.len(), MAX_PENDING);
+        assert!(
+            locked
+                .registry
+                .remote_outbox
+                .iter()
+                .all(|item| item.state == "rejected"
+                    && item.refusal_details.is_some()
+                    && item.envelope.body.len() == body_bytes)
+        );
+        drop(locked);
+        assert!(
+            fs::metadata(context.state_dir.join("coordination").join(JOURNAL_FILE))
+                .unwrap()
+                .len()
+                > 32 * 1024 * 1024
+        );
+        let audit = super::super::audit::snapshot(
+            &context,
+            "source",
+            super::super::audit::Query::default(),
+        )
+        .unwrap();
+        assert_eq!(audit["partial"], false);
+        assert_eq!(
+            audit["records"][0]["refusal_details"]["quota"],
+            "recipient-messages"
+        );
+        assert!(!audit.to_string().contains(&"x".repeat(128)));
+    }
+
+    #[test]
     fn journal_byte_budget_refuses_with_quota_before_write() {
         let (_temp, context) = fixture();
         let args = reply_args(&context, "new-key-0001");
@@ -3214,6 +3466,81 @@ mod tests {
             "another session on the same machine stays due"
         );
     }
+    #[test]
+    fn remote_recipient_accepts_new_mail_after_acknowledging_full_mailbox() {
+        let (_temp, context) = fixture();
+        receive(&context, "destination", envelope()).unwrap();
+        let mut locked = lock_registry(&context).unwrap();
+        let stored = locked.registry.messages[0].clone();
+        for _ in 1..256 {
+            locked
+                .registry
+                .messages
+                .push(super::super::mailbox::StoredMessage {
+                    message_id: uuid::Uuid::new_v4().to_string(),
+                    created_at_epoch: stored.created_at_epoch - 3600,
+                    created_at_epoch_millis: 0,
+                    ..stored.clone()
+                });
+        }
+        locked.save().unwrap();
+        drop(locked);
+        assert_eq!(
+            receive(&context, "destination", envelope())
+                .unwrap_err()
+                .code(),
+            "quota-exceeded"
+        );
+        let ids: Vec<_> = lock_registry(&context)
+            .unwrap()
+            .registry
+            .messages
+            .iter()
+            .map(|m| (m.message_id.clone(), m.revision))
+            .collect();
+        for (id, revision) in ids {
+            super::super::mailbox::ack(
+                &context,
+                crate::cli::MessageAckArgs {
+                    session: "recipient".into(),
+                    capability_file: Some(super::super::capability_path(
+                        &context,
+                        "recipient",
+                        "recipient-incarnation",
+                    )),
+                    format: nils_common::cli_contract::OutputFormat::Json,
+                    message: id.clone(),
+                    if_revision: revision,
+                    idempotency_key: format!("ack-{id}"),
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            receive(&context, "destination", envelope()).unwrap()["state"],
+            "delivered"
+        );
+        let locked = lock_registry(&context).unwrap();
+        assert_eq!(
+            locked
+                .registry
+                .messages
+                .iter()
+                .filter(|m| m.state == "acknowledged")
+                .count(),
+            256
+        );
+        assert_eq!(
+            locked
+                .registry
+                .messages
+                .iter()
+                .filter(|m| m.state == "unread")
+                .count(),
+            1
+        );
+    }
+
     #[test]
     fn destination_mailbox_quota_names_recipient_quota_and_destination_host() {
         let (_temp, context) = fixture();
@@ -3314,6 +3641,7 @@ mod tests {
                 state_changed_at_epoch: None,
                 receipt: None,
                 reason: None,
+                refusal_details: None,
             };
             let mut service = managed.clone();
             service.envelope.schema_version = super::super::service::WIRE_VERSION.into();
@@ -3397,6 +3725,7 @@ mod tests {
                 state_changed_at_epoch: None,
                 receipt: None,
                 reason: Some("session-incarnation-conflict".into()),
+                refusal_details: None,
             });
             locked.save().unwrap();
         }
