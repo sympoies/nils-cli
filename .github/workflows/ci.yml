@@ -59,9 +59,23 @@ jobs:
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          if [ -n "${PR_BASE_SHA}" ]; then
-            base="${PR_BASE_SHA}"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            # Use the same immutable candidate snapshot as the code planner.
+            # Captured event base metadata may lag its actual first parent.
+            read -r -a parents <<< "$(git --no-replace-objects show -s --format=%P "${EVENT_SHA}")"
+            if [[ ! "${PR_BASE_SHA}" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || \
+               [[ ! "${EVENT_SHA}" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || \
+               [ "${PR_BASE_SHA}" = "${EVENT_SHA}" ] || \
+               [ "${#parents[@]}" != "2" ] || [ "${parents[1]:-}" != "${PR_HEAD_SHA}" ] || \
+               [ "$(git --no-replace-objects rev-parse HEAD)" != "${EVENT_SHA}" ]; then
+              echo 'error: PR candidate snapshot mismatch; validation held' >&2
+              exit 1
+            fi
+            git --no-replace-objects diff --quiet
+            git --no-replace-objects diff --cached --quiet
+            base="${parents[0]}"
             head="${PR_HEAD_SHA}"
+            echo "PR snapshot base=${base} event_base=${PR_BASE_SHA} head=${head} candidate=${EVENT_SHA}"
           elif [ -n "${MERGE_GROUP_BASE_SHA}" ]; then
             base="${MERGE_GROUP_BASE_SHA}"
             head="${MERGE_GROUP_HEAD_SHA}"
@@ -260,6 +274,7 @@ jobs:
           test -S "/run/user/${uid}/systemd/private"
 
       - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, docs-prose-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
+        id: validation
         env:
           NILS_CLI_GATE_MIN_AVAILABLE_GIB: "2"
           NILS_CLI_GATE_MEMORY_MAX_GIB: "12"
@@ -287,12 +302,21 @@ jobs:
               --base "${{ needs.changes.outputs.base_sha }}" \
               --head "${{ needs.changes.outputs.head_sha }}" \
               "${mode_args[@]}"
+          elif [ "${GITHUB_EVENT_NAME}" = "pull_request" ] || [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
+            bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb --ci-merge-plan
           else
             bash scripts/ci/nils-cli-checks-entrypoint.sh --xvfb
           fi
 
+      - name: Upload affected plan and validation receipt
+        if: always() && hashFiles('target/ci-merge-plan/validation.json') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: merge-validation-linux
+          path: target/ci-merge-plan
+
       - name: Full validation marker
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (steps.validation.outputs.validation_scope == 'FULL' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         run: true
 
       - name: Publish JUnit report
@@ -381,6 +405,8 @@ jobs:
   test_macos:
     if: github.event_name != 'push'
     needs: changes
+    outputs:
+      validation_scope: ${{ steps.validation.outputs.validation_scope }}
     runs-on: macos-14
     # Backstop like the `test` job's, under the same two waits. The slowest of
     # 186 successful full-lane runs on 2026-09-28..30 took 25 minutes, and a
@@ -456,6 +482,7 @@ jobs:
       # job then reports from this run's LCOV instead of repeating the whole
       # suite on a second macOS runner.
       - name: Nils CLI checks (includes third-party-artifacts-audit, completion audits, docs-hygiene-audit, docs-prose-audit, tempdir-leak-audit, test-stale-audit, file-size-audit)
+        id: validation
         env:
           NILS_CLI_RUNNER_MAX: "2"
           NILS_CLI_TEST_RUNNER: llvm-cov
@@ -490,16 +517,25 @@ jobs:
               --base "${{ needs.changes.outputs.base_sha }}" \
               --head "${{ needs.changes.outputs.head_sha }}" \
               "${mode_args[@]}"
+          elif [ "${GITHUB_EVENT_NAME}" = "pull_request" ] || [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
+            /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh --ci-merge-plan
           else
             /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh
           fi
 
+      - name: Upload affected plan and validation receipt
+        if: always() && hashFiles('target/ci-merge-plan/validation.json') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: merge-validation-macos
+          path: target/ci-merge-plan
+
       - name: Full validation marker
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (steps.validation.outputs.validation_scope == 'FULL' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         run: true
 
       - name: Generate HTML coverage report
-        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/lcov.info') != ''
+        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && steps.validation.outputs.validation_scope != 'SCOPED' && hashFiles('target/coverage/lcov.info') != ''
         run: cargo llvm-cov report --html --output-dir target/coverage
 
       - name: Upload coverage LCOV
@@ -588,7 +624,7 @@ jobs:
         run: test -s target/coverage/lcov.info
 
       - name: Full validation marker
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (needs.test_macos.outputs.validation_scope == 'FULL' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         run: true
 
       - name: Coverage summary
