@@ -39,8 +39,8 @@ enum TransitionalProduct {
 impl TransitionalProduct {
     fn includes_dsh(&self) -> bool {
         match self {
-            Self::One(product) => product == "dsh",
-            Self::Many(products) => products.iter().any(|product| product == "dsh"),
+            Self::One(product) => product.trim() == "dsh",
+            Self::Many(products) => products.iter().any(|product| product.trim() == "dsh"),
         }
     }
 }
@@ -92,7 +92,8 @@ pub(super) fn load_from_repo(repo: &Path) -> Result<Vec<ValidationContract>, Str
                 .product
                 .as_ref()
                 .is_some_and(|product| !product.includes_dsh())
-                || (!entry.products.is_empty() && !entry.products.iter().any(|p| p == "dsh"))
+                || (!entry.products.is_empty()
+                    && !entry.products.iter().any(|product| product.trim() == "dsh"))
             {
                 continue;
             }
@@ -209,6 +210,21 @@ mod tests {
         let contracts = load_from_repo(temp.path()).expect("contracts");
         assert_eq!(contracts.len(), 1);
         assert_eq!(contracts[0].commands, ["cargo test"]);
+    }
+
+    #[test]
+    fn compatibility_products_trim_scalar_and_array_values() {
+        let temp = TempDir::new().expect("temp dir");
+        fs::write(
+            temp.path().join("AGENT_DOCS.toml"),
+            "[[validation]]\ncontext = \"scalar\"\nproduct = \" dsh \"\ncommands = [\"scalar check\"]\n\n[[validation]]\ncontext = \"array\"\nproduct = [\"hermes\", \" dsh \"]\ncommands = [\"array check\"]\n",
+        )
+        .expect("transitional contracts");
+
+        let contracts = load_from_repo(temp.path()).expect("contracts");
+        assert_eq!(contracts.len(), 2);
+        assert_eq!(contracts[0].commands, ["array check"]);
+        assert_eq!(contracts[1].commands, ["scalar check"]);
     }
 
     #[test]
