@@ -23,6 +23,7 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - node scripts/ci/tests/peekaboo-release-check.test.cjs
   - bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh
   - bash scripts/ci/tests/release-workflow-contract.test.sh
+  - python3 scripts/ci/tests/merge-plan-metadata.test.py
   - bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
   - bash scripts/ci/tests/publish-order-audit.test.sh
   - bash scripts/ci/tests/docs-hygiene-audit.test.sh
@@ -207,6 +208,7 @@ run node_scoped node scripts/ci/tests/release-ci-gate.test.cjs
 run node_scoped node scripts/ci/tests/peekaboo-release-check.test.cjs
 run bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh
 run bash scripts/ci/tests/release-workflow-contract.test.sh
+run python3 scripts/ci/tests/merge-plan-metadata.test.py
 run bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
 run bash scripts/ci/tests/publish-order-audit.test.sh
 run bash scripts/ci/tests/docs-hygiene-audit.test.sh
