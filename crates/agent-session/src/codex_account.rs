@@ -672,6 +672,25 @@ pub(crate) fn proxy_next_account_is_pending(record: &SessionRecord) -> bool {
     )
 }
 
+/// Bounded view of the durable applied binding for proxy diagnostics. This
+/// deliberately ignores broker availability: detached proxies validate their
+/// binding from session state and do not inherit the daemon's broker.
+pub(crate) fn proxy_binding_diagnostic(record: &SessionRecord) -> (&'static str, u64) {
+    match decode_binding(record) {
+        DecodedBinding::Absent => ("unbound", 0),
+        DecodedBinding::Valid(binding) => {
+            let state = match binding.state.as_str() {
+                "pending" => "pending",
+                "bound" => "bound",
+                "failed" => "failed",
+                _ => return ("unknown", 0),
+            };
+            (state, binding.revision)
+        }
+        DecodedBinding::Invalid => ("unknown", 0),
+    }
+}
+
 /// Validate the account currently bound to the live runtime without treating a
 /// queued next-account intent as a reason to reject terminal input. The
 /// app-server proxy remains the structured boundary that fences `turn/start`;

@@ -28,6 +28,7 @@ pub enum ForgeError {
         kind: &'static str,
         message: String,
         detail: Option<String>,
+        details: Option<Box<serde_json::Value>>,
     },
     /// Backend exited with a non-zero status while attempting a remote
     /// operation.
@@ -94,6 +95,7 @@ impl ForgeError {
             kind: "backend_missing",
             message: message.into(),
             detail,
+            details: None,
         }
     }
 
@@ -108,6 +110,7 @@ impl ForgeError {
             kind: "backend_unauthenticated",
             message: message.into(),
             detail,
+            details: None,
         }
     }
 
@@ -126,6 +129,22 @@ impl ForgeError {
             kind,
             message: message.into(),
             detail,
+            details: None,
+        }
+    }
+
+    pub fn unavailable_with_details(
+        schema_version: impl Into<String>,
+        kind: &'static str,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        Self::BackendUnavailable {
+            schema_version: schema_version.into(),
+            kind,
+            message: message.into(),
+            detail: None,
+            details: Some(Box::new(details)),
         }
     }
 
@@ -265,6 +284,13 @@ impl ForgeError {
         }
     }
 
+    fn structured_details(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::BackendUnavailable { details, .. } => details.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Build the JSON envelope wire string the error would produce. Pulled out
     /// of [`emit`] so unit tests can lock the parity-gated shape without
     /// capturing stdout.
@@ -297,6 +323,8 @@ impl ForgeError {
                 "next_action": "fix_hold_labels_config",
                 "recovery": { "config_key": "merge.hold_labels" }
             }))
+        } else if let Some(details) = self.structured_details() {
+            envelope_error.with_details(details.clone())
         } else {
             match self.detail() {
                 Some(detail) => {
@@ -414,6 +442,24 @@ mod tests {
             err.render_json(),
             "{\"schema_version\":\"cli.forge-cli.error.v1\",\"ok\":false,\"error\":{\"code\":\"backend_missing\",\"message\":\"gh not installed\"}}"
         );
+    }
+
+    #[test]
+    fn json_envelope_preserves_typed_actor_probe_cause() {
+        let err = ForgeError::unavailable_with_details(
+            "cli.forge-cli.error.v1",
+            "identity_actor_unavailable",
+            "GitHub actor lookup failed",
+            serde_json::json!({
+                "retryable": true,
+                "next_action": "retry_request",
+                "cause": { "operation": "github_actor_lookup", "http_status": 503 }
+            }),
+        );
+        let envelope: serde_json::Value = serde_json::from_str(&err.render_json()).unwrap();
+        assert_eq!(envelope["error"]["code"], "identity_actor_unavailable");
+        assert_eq!(envelope["error"]["details"]["retryable"], true);
+        assert_eq!(envelope["error"]["details"]["cause"]["http_status"], 503);
     }
 
     #[test]

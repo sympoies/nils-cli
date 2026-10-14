@@ -200,6 +200,56 @@ pub(crate) fn record(
     }
 }
 
+/// Persist the bounded identity failure before a failed startup can remove its
+/// session directory. This receipt contains only exact runtime fencing and
+/// account-binding metadata; credentials, account names and provider output are
+/// never copied.
+pub(crate) struct StartupCauseReceipt {
+    pub operation: &'static str,
+    pub stage: &'static str,
+    pub code: &'static str,
+    pub binding_state: String,
+    pub binding_revision: u64,
+    pub retryable: bool,
+}
+
+pub(crate) fn record_startup_cause_receipt(
+    context: &CliContext,
+    record: &SessionRecord,
+    receipt: StartupCauseReceipt,
+) -> Result<(), CliError> {
+    let binding_state = match receipt.binding_state.as_str() {
+        "unbound" | "pending" | "bound" | "failed" | "unsupported" => {
+            receipt.binding_state.as_str()
+        }
+        _ => "unknown",
+    };
+    let runtime = record.runtime.as_ref();
+    append(
+        context,
+        &record.id,
+        &json!({
+            "schema_version": "agent-session.startup-cause-receipt.v1",
+            "timestamp": jiff::Timestamp::now().to_string(),
+            "operation": "startup-cause",
+            "session_id": record.id,
+            "session_incarnation": runtime.map(|runtime| &runtime.launch_id),
+            "session_generation": runtime.map(|runtime| runtime.generation),
+            "result": {
+                "ok": false,
+                "cause": {
+                    "operation": receipt.operation,
+                    "stage": receipt.stage,
+                    "code": receipt.code,
+                    "retryable": receipt.retryable && matches!(receipt.code, "session-record-lock-timeout" | "session-record-lock-busy"),
+                    "binding_state": binding_state,
+                    "binding_revision": receipt.binding_revision,
+                }
+            }
+        }),
+    )
+}
+
 fn unavailable() -> CliError {
     CliError::runtime(
         "lifecycle-journal-unavailable",
@@ -648,6 +698,57 @@ mod tests {
             assert_eq!(rows["records"][0]["result"]["proof_step"], step);
             assert!(!rows.to_string().contains("CANARY"));
         }
+    }
+
+    #[test]
+    fn startup_cause_receipt_survives_session_cleanup_and_contains_only_bounded_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let context = context(dir.path());
+        let target: SessionRecord = serde_json::from_value(json!({
+            "schema_version": crate::SESSION_DOCUMENT_VERSION, "id":"startup-cause", "agent":"codex",
+            "mode":"interactive", "title":null, "cwd":dir.path(), "tmux_session":"fixture",
+            "prompt_file":null, "log_file":null, "created_at":"2026-01-01T00:00:00Z", "updated_at":"2026-01-01T00:00:00Z",
+            "runtime":{"kind":"tmux","tmux_session":"fixture","generation":4,"started_at":"2026-01-01T00:00:00Z","launch_id":"runtime-fixture"}
+        })).unwrap();
+        record_startup_cause_receipt(
+            &context,
+            &target,
+            StartupCauseReceipt {
+                operation: "thread_start_cancellation",
+                stage: "session_authority_cancellation",
+                code: "session-record-unavailable",
+                binding_state: "pending".to_owned(),
+                binding_revision: 8,
+                retryable: false,
+            },
+        )
+        .unwrap();
+        let session_dir = context.state_dir.join("sessions").join(&target.id);
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(session_dir.join("fixture"), b"session data").unwrap();
+        fs::remove_dir_all(&session_dir).unwrap();
+        let receipt = read(&context, &target.id, 1).unwrap()["records"][0].clone();
+        assert_eq!(
+            receipt["schema_version"],
+            "agent-session.startup-cause-receipt.v1"
+        );
+        assert_eq!(
+            receipt["result"]["cause"]["operation"],
+            "thread_start_cancellation"
+        );
+        assert_eq!(
+            receipt["result"]["cause"]["stage"],
+            "session_authority_cancellation"
+        );
+        assert_eq!(
+            receipt["result"]["cause"]["code"],
+            "session-record-unavailable"
+        );
+        assert_eq!(receipt["result"]["cause"]["binding_state"], "pending");
+        assert_eq!(receipt["result"]["cause"]["binding_revision"], 8);
+        let text = receipt.to_string();
+        assert!(!text.contains("FIXTURE_SECRET"));
+        assert!(!text.contains(dir.path().to_str().unwrap()));
     }
 
     #[test]

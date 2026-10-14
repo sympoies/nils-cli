@@ -1,4 +1,6 @@
 use super::*;
+
+mod typed_causes;
 use nils_test_support::{EnvGuard, GlobalStateLock};
 use pretty_assertions::{assert_eq, assert_ne};
 use std::collections::BTreeMap;
@@ -90,12 +92,28 @@ fn tui_busy_response_preserves_stable_contract_for_every_rejection() {
             "runtime_identity_missing",
         ),
         (
-            TuiMutationRejection::ManualCancellationBusy,
+            TuiMutationRejection::ManualCancellationBusy {
+                operation: "thread_start_cancellation",
+                stage: "session_record_lock",
+                code: "session-record-lock-busy",
+                retryable: true,
+                binding_state: "pending",
+                binding_revision: 8,
+                receipt_written: true,
+            },
             "manual_cancellation_busy",
         ),
         (TuiMutationRejection::RuntimeChanged, "runtime_changed"),
         (
-            TuiMutationRejection::AccountAuthorityUnavailable,
+            TuiMutationRejection::AccountAuthorityUnavailable {
+                operation: "thread_start_cancellation",
+                stage: "session_authority_cancellation",
+                code: "authority_operation_failed",
+                retryable: false,
+                binding_state: "pending",
+                binding_revision: 8,
+                receipt_written: true,
+            },
             "account_authority_unavailable",
         ),
     ] {
@@ -110,6 +128,14 @@ fn tui_busy_response_preserves_stable_contract_for_every_rejection() {
             "agent-session state is busy; retry the request"
         );
         assert_eq!(response["error"]["data"]["reason"], reason);
+        if reason == "manual_cancellation_busy" {
+            assert_eq!(response["error"]["data"]["retryable"], true);
+            assert_eq!(
+                response["error"]["data"]["cause"]["code"],
+                "session-record-lock-busy"
+            );
+            assert_eq!(response["error"]["data"]["cause"]["receipt_written"], true);
+        }
     }
 }
 
@@ -6710,72 +6736,6 @@ async fn managed_account_proxy_thread_start_does_not_persist_turn_fence() {
         "acct2",
     )
     .unwrap();
-}
-
-#[tokio::test]
-async fn busy_manual_cancellation_rejects_only_the_turn_and_keeps_proxy_alive() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let upstream = tmp.path().join("busy.sock");
-    let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
-    let context = CliContext {
-        state_dir: tmp.path().join("state"),
-        host: None,
-    };
-    let record = record_with_runtime("busy-input", &upstream);
-    fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
-    crate::write_session_record(&context, &record).unwrap();
-    bind_thread(&record, "thread-a").unwrap();
-    let proxy_args = crate::cli::CodexAppServerProxyArgs {
-        id: record.id.clone(),
-        upstream: upstream.clone(),
-        listen: upstream.with_extension("proxy"),
-    };
-    let proxy_context = context.clone();
-    let proxy = tokio::spawn(async move { run_proxy_session(proxy_context, proxy_args).await });
-    let server = tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-        let request = receive_json(&mut socket).await;
-        assert_eq!(request["id"], 2);
-        respond(&mut socket, &request, json!({ "ok": true })).await;
-        socket.close(None).await.unwrap();
-    });
-    let proxy_stream = connect_socket(&upstream.with_extension("proxy"))
-        .await
-        .unwrap();
-    let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", proxy_stream)
-        .await
-        .unwrap();
-    let lock = crate::acquire_session_record_lock(&context, &record.id).unwrap();
-    tui.send(Message::Text(
-        json!({
-            "id": 1,
-            "method": "turn/start",
-            "params": { "threadId": "thread-a", "input": [] }
-        })
-        .to_string()
-        .into(),
-    ))
-    .await
-    .unwrap();
-    let rejected = receive_json(&mut tui).await;
-    assert_eq!(rejected["id"], 1);
-    assert_eq!(rejected["error"]["code"], -32001);
-    assert_eq!(
-        rejected["error"]["data"]["reason"],
-        "manual_cancellation_busy"
-    );
-    drop(lock);
-    tui.send(Message::Text(
-        json!({ "id": 2, "method": "thread/read", "params": {} })
-            .to_string()
-            .into(),
-    ))
-    .await
-    .unwrap();
-    assert_eq!(receive_json(&mut tui).await["id"], 2);
-    server.await.unwrap();
-    proxy.await.unwrap().unwrap();
 }
 
 #[tokio::test]
