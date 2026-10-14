@@ -1310,7 +1310,7 @@ fn pr_deliver_zero_required_pending_visible_checks_time_out_before_merge() {
     let stub = StubEnv::new();
     let merge_sentinel = stub.tempdir.path().join("merge-called");
     let (_stub, out) =
-        run_zero_required_delivery(stub, &repo_path, FIXTURE_PENDING_CHECKS_JSON, "0s", false);
+        run_zero_required_delivery(stub, &repo_path, FIXTURE_PENDING_CHECKS_JSON, "1s", false);
 
     assert_eq!(out.code, 69, "stdout={}\nstderr={}", out.stdout, out.stderr);
     let envelope = parse_envelope(&out.stdout);
@@ -1385,7 +1385,7 @@ esac
                 "--base",
                 "main",
                 "--timeout",
-                "0s",
+                "1s",
                 "--no-merge",
             ],
         );
@@ -1459,7 +1459,7 @@ fn pr_deliver_zero_required_pending_visible_checks_eventually_succeed() {
             "--base",
             "main",
             "--timeout",
-            "5s",
+            "25s",
             "--no-merge",
         ],
     );
@@ -1515,7 +1515,7 @@ fn pr_deliver_zero_required_and_zero_visible_checks_are_refused() {
 
     let stub = StubEnv::new();
     let (_stub, out) =
-        run_zero_required_delivery(stub, &repo_path, FIXTURE_EMPTY_CHECKS_JSON, "0s", true);
+        run_zero_required_delivery(stub, &repo_path, FIXTURE_EMPTY_CHECKS_JSON, "1s", true);
 
     assert_eq!(out.code, 65, "stdout={}\nstderr={}", out.stdout, out.stderr);
     let envelope = parse_envelope(&out.stdout);

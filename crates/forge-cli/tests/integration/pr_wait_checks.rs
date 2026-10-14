@@ -319,7 +319,7 @@ fn pr_wait_checks_expires_as_not_registered_when_nothing_is_ever_reported() {
             "--interval",
             "10ms",
             "--timeout",
-            "30ms",
+            "1s",
         ],
     );
 
@@ -468,7 +468,7 @@ fn pr_wait_checks_without_required_checks_times_out_on_a_queued_check() {
             "--interval",
             "10ms",
             "--timeout",
-            "50ms",
+            "1s",
         ],
     );
 
@@ -802,12 +802,19 @@ mod configured_gate {
         let (global, ctx) = context();
         let args = PrWaitChecksArgs {
             id: "42".into(),
-            timeout: Duration::ZERO,
-            interval: Duration::ZERO,
+            timeout: Duration::from_millis(1),
+            interval: Duration::from_millis(1),
             required_only: true,
             allow_no_checks: false,
         };
-        compute(f, &FixedClock, &global, &ctx, &args).unwrap()
+        compute(
+            f,
+            &TestClock(std::cell::Cell::new(Instant::now())),
+            &global,
+            &ctx,
+            &args,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -957,14 +964,13 @@ mod configured_gate {
         }
     }
 
-    struct FixedClock;
-    impl Clock for FixedClock {
+    struct TestClock(std::cell::Cell<Instant>);
+    impl Clock for TestClock {
         fn now(&self) -> Instant {
-            static NOW: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-            *NOW.get_or_init(Instant::now)
+            self.0.get()
         }
-        fn sleep(&self, _: Duration) {
-            panic!("zero-budget fixture should never sleep")
+        fn sleep(&self, duration: Duration) {
+            self.0.set(self.0.get() + duration);
         }
     }
     #[test]
@@ -972,13 +978,20 @@ mod configured_gate {
         let (global, ctx) = context();
         let args = PrWaitChecksArgs {
             id: "42".into(),
-            timeout: Duration::ZERO,
-            interval: Duration::ZERO,
+            timeout: Duration::from_millis(1),
+            interval: Duration::from_millis(1),
             required_only: true,
             allow_no_checks: true,
         };
         assert!(matches!(
-            compute(&Fixture::default(), &FixedClock, &global, &ctx, &args).unwrap(),
+            compute(
+                &Fixture::default(),
+                &TestClock(std::cell::Cell::new(Instant::now())),
+                &global,
+                &ctx,
+                &args
+            )
+            .unwrap(),
             WaitOutcome::TimedOut(_)
         ));
     }

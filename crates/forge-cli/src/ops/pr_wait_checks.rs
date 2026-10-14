@@ -33,6 +33,9 @@
 //! through the [`Clock`] trait so tests can drive deterministic snapshot
 //! sequences.
 
+mod poll;
+
+use poll::poll_until_terminal_or_timeout;
 use std::time::{Duration, Instant};
 
 use nils_common::cli_contract::{Envelope, EnvelopeError, OutputFormat, schema_version_for};
@@ -95,6 +98,7 @@ pub fn run(
     args: PrWaitChecksArgs,
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
+    let start = Instant::now();
     let runner = default_runner();
     let clock = SystemClock;
     let mut args = args;
@@ -113,6 +117,9 @@ pub fn run(
         let cfg = ForgeConfig::load_layered(&workdir, find_git_toplevel(&workdir).as_deref());
         args.allow_no_checks = cfg.declared_no_checks_reason().is_some();
     }
+    if !global.dry_run {
+        args.timeout = args.timeout.saturating_sub(start.elapsed());
+    }
     run_with(&runner, &clock, global, &args, format, git_remote_url)
 }
 
@@ -124,6 +131,7 @@ pub fn run_with<R: BackendRunner, C: Clock, F: Fn(&str) -> Option<String>>(
     format: OutputFormat,
     remote_url_lookup: F,
 ) -> Result<i32, ForgeError> {
+    let start = clock.now();
     let ctx = detect(
         global.provider_hint(),
         &global.remote,
@@ -138,7 +146,18 @@ pub fn run_with<R: BackendRunner, C: Clock, F: Fn(&str) -> Option<String>>(
         return Ok(emit_dry_run(&ctx, args, &snapshot_args, format));
     }
 
-    match poll_until_terminal_or_timeout(runner, clock, global, &ctx, args, &snapshot_args)? {
+    let mut bounded_args = args.clone();
+    bounded_args.timeout = args
+        .timeout
+        .saturating_sub(clock.now().saturating_duration_since(start));
+    match poll_until_terminal_or_timeout(
+        runner,
+        clock,
+        global,
+        &ctx,
+        &bounded_args,
+        &snapshot_args,
+    )? {
         WaitOutcome::Success(snapshot) => Ok(emit_success(
             schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
             snapshot,
@@ -220,79 +239,6 @@ pub fn compute<R: BackendRunner, C: Clock>(
     poll_until_terminal_or_timeout(runner, clock, global, ctx, args, &snapshot_args)
 }
 
-fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
-    runner: &R,
-    clock: &C,
-    global: &GlobalFlags,
-    ctx: &ProviderContext,
-    args: &PrWaitChecksArgs,
-    snapshot_args: &PrChecksArgs,
-) -> Result<WaitOutcome, ForgeError> {
-    let timeout = args.timeout;
-    let interval = args.interval;
-    let presence = CheckPresence::from_allow_no_checks(args.allow_no_checks);
-    let start = clock.now();
-    let deadline = start + timeout;
-
-    // "Never registered" is a property of the whole run, not of the last read.
-    // `pr_checks` normalizes a transient "no checks reported" into an empty
-    // successful snapshot, so classifying from the final poll alone would turn a
-    // run that had been watching real pending checks into `checks_not_registered`
-    // — flipping a retryable UNAVAILABLE 69 into a fatal DATA 65 on exactly the
-    // slow-registration case this exists for.
-    let mut ever_saw_a_check = false;
-    // Probe for Actions workflows at most once per run.
-    let mut workflows_probed = false;
-
-    loop {
-        let snapshot = pr_checks::snapshot_for_gate(runner, global, ctx, snapshot_args)?;
-        let snapshot = gate_visible_checks_when_none_required(ctx, snapshot_args, snapshot);
-        let snapshot = with_duration(snapshot, ms_between(start, clock.now()));
-        ever_saw_a_check =
-            ever_saw_a_check || !crate::ops::required_check_gate::nothing_was_checked(&snapshot);
-        if is_terminal(&snapshot, presence) {
-            if snapshot.state == "success" {
-                return Ok(WaitOutcome::Success(snapshot));
-            }
-            return Ok(WaitOutcome::Failed(snapshot));
-        }
-        let now = clock.now();
-        if !ever_saw_a_check
-            && !workflows_probed
-            && presence == CheckPresence::Required
-            && ctx.provider == Provider::GitHub
-            && now.saturating_duration_since(start) >= NO_CI_GRACE_PERIOD
-        {
-            workflows_probed = true;
-            if github_repo_has_no_workflows(runner, ctx) {
-                let snapshot = with_duration(snapshot, ms_between(start, now));
-                return Ok(WaitOutcome::NotRegistered(
-                    snapshot,
-                    NotRegisteredCause::NoWorkflows,
-                ));
-            }
-        }
-        if now >= deadline {
-            let expired = with_duration(snapshot, ms_between(start, now));
-            // Report *why* the budget expired. Nothing ever registered is a
-            // different problem, with a different fix, from checks that ran long.
-            if !ever_saw_a_check {
-                return Ok(WaitOutcome::NotRegistered(
-                    expired,
-                    NotRegisteredCause::BudgetExpired,
-                ));
-            }
-            return Ok(WaitOutcome::TimedOut(expired));
-        }
-        let remaining = deadline.saturating_duration_since(now);
-        let sleep_for = std::cmp::min(interval, remaining);
-        if sleep_for.is_zero() {
-            continue;
-        }
-        clock.sleep(sleep_for);
-    }
-}
-
 /// GitHub can run CI on a head while reporting no branch-protection-required
 /// checks. "Every required check passed" is then vacuous over the empty set, so
 /// a required-only wait gates on the visible checks instead: a queued or
@@ -310,6 +256,7 @@ fn gate_visible_checks_when_none_required(
         return snapshot;
     }
     let mut visible = pr_checks::aggregate(ctx, snapshot.checks, false, snapshot.duration_ms);
+    visible.gate_scope = "visible_fallback";
     visible.warnings = snapshot.warnings;
     visible
 }
@@ -482,6 +429,7 @@ fn timed_out_placeholder(ctx: &ProviderContext) -> PrChecksPayload {
     PrChecksPayload {
         provider: ctx.provider.as_str(),
         state: "pending",
+        gate_scope: "required",
         required_count: 0,
         success_count: 0,
         failed: Vec::new(),
@@ -1088,6 +1036,7 @@ mod tests {
         let snapshot = PrChecksPayload {
             provider: "github",
             state: "failure",
+            gate_scope: "required",
             required_count: 1,
             success_count: 0,
             failed: vec![pr_checks::FailedCheck {

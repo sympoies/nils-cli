@@ -12,6 +12,7 @@
 //! aggregate `data.state` derives from the gating subset.
 
 mod github_gate;
+mod scope;
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -120,18 +121,17 @@ pub struct PendingCheck {
 
 /// Envelope payload for `cli.forge-cli.pr.checks.v1` (one-shot snapshot;
 /// `pr wait-checks` reuses the same struct with `duration_ms` set).
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrChecksPayload {
     pub provider: &'static str,
     pub state: &'static str,
+    pub gate_scope: &'static str,
     pub required_count: u32,
     pub success_count: u32,
     pub failed: Vec<FailedCheck>,
     pub pending: Vec<PendingCheck>,
     pub checks: Vec<CheckItem>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
 
@@ -302,18 +302,20 @@ fn snapshot_github<R: BackendRunner>(
         }
         Err(err) => return Err(err),
     };
+    let required_call = build_github_required_call(ctx, &args.id);
+    let required_output = match run_github_checks_call(runner, &required_call) {
+        Ok(output) => output,
+        Err(err) if is_status_rollup_permission_error(&err) => {
+            return snapshot_github_rest_fallback(runner, ctx, args);
+        }
+        Err(err) => return Err(err),
+    };
+    let snapshot = parse_github_snapshot_with_required_output(ctx, &output, &required_output)?;
     if args.required_only {
-        let required_call = build_github_required_call(ctx, &args.id);
-        let required_output = match run_github_checks_call(runner, &required_call) {
-            Ok(output) => output,
-            Err(err) if is_status_rollup_permission_error(&err) => {
-                return snapshot_github_rest_fallback(runner, ctx, args);
-            }
-            Err(err) => return Err(err),
-        };
-        return parse_github_snapshot_with_required_output(ctx, &output, &required_output);
+        Ok(snapshot)
+    } else {
+        Ok(aggregate(ctx, snapshot.checks, false, None))
     }
-    parse_github_snapshot(ctx, &output, false)
 }
 
 fn snapshot_github_rest_fallback<R: BackendRunner>(
@@ -527,6 +529,7 @@ fn is_status_rollup_permission_error(err: &ForgeError) -> bool {
             || lower.contains("permission"))
 }
 
+#[cfg(test)]
 fn parse_github_snapshot(
     ctx: &ProviderContext,
     output: &BackendSuccess,
@@ -953,6 +956,13 @@ pub fn aggregate(
     required_only: bool,
     duration_ms: Option<u64>,
 ) -> PrChecksPayload {
+    let gate_scope = if !required_only {
+        "visible"
+    } else if ctx.provider == Provider::GitHub && !checks.iter().any(|c| c.required) {
+        "visible_fallback"
+    } else {
+        "required"
+    };
     let gating: Vec<&CheckItem> = if required_only {
         checks.iter().filter(|c| c.required).collect()
     } else {
@@ -1022,6 +1032,7 @@ pub fn aggregate(
     PrChecksPayload {
         provider: ctx.provider.as_str(),
         state: state.as_str(),
+        gate_scope,
         required_count,
         success_count,
         failed,
