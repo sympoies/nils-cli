@@ -45,7 +45,7 @@ JSON
     ;;
   "api graphql")
     cat <<'JSON'
-{"data":{"repository":{"pullRequest":{"headRefOid":"head-new","reviews":{"nodes":[{"id":"PRR_current","databaseId":101,"url":"https://github.com/acme/widgets/pull/42#pullrequestreview-101","author":{"login":"example-review-bot[bot]"},"state":"COMMENTED","commit":{"oid":"head-new"},"submittedAt":"2026-07-14T04:00:00Z","body":"Current-head summary"},{"id":"PRR_stale","databaseId":99,"url":"https://github.com/acme/widgets/pull/42#pullrequestreview-99","author":{"login":"example-review-bot[bot]"},"state":"CHANGES_REQUESTED","commit":{"oid":"head-old"},"submittedAt":"2026-07-14T03:00:00Z","body":"Old-head summary"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+{"data":{"repository":{"pullRequest":{"headRefOid":"head-new","reviews":{"nodes":[{"id":"PRR_current","databaseId":101,"url":"https://github.com/acme/widgets/pull/42#pullrequestreview-101","author":{"login":"reviewer","__typename":"User","id":"U_reviewer"},"state":"COMMENTED","commit":{"oid":"head-new"},"submittedAt":"2026-07-14T04:00:00Z","body":"Current-head summary"},{"id":"PRR_stale","databaseId":99,"url":"https://github.com/acme/widgets/pull/42#pullrequestreview-99","author":{"login":"example-review-bot[bot]"},"state":"CHANGES_REQUESTED","commit":{"oid":"head-old"},"submittedAt":"2026-07-14T03:00:00Z","body":"Old-head summary"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
     ;;
   *)
@@ -82,6 +82,10 @@ esac
     );
     assert_eq!(env["data"]["stale_reviews"][0]["id"], "PRR_stale");
     assert_eq!(env["data"]["stale_reviews"][0]["commit_sha"], "head-old");
+    assert_eq!(env["data"]["current_head_reviews"][0]["author"], "reviewer");
+    let review = &env["data"]["current_head_reviews"][0];
+    assert!(review.get("author_type").is_none());
+    assert!(review.get("author_node_id").is_none());
 }
 
 #[test]

@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 
 #[path = "notification_recovery.rs"]
 mod recovery;
+pub(crate) use recovery::resolve_drained_generation;
 
 use super::{Registry, now_epoch};
 use crate::{CliContext, CliError};
@@ -336,6 +337,7 @@ pub(crate) fn pending_candidates(registry: &mut Registry, now: i64) -> Vec<Notif
         .values()
         .filter(|receipt| {
             receipt.state == "queued"
+                && receipt.last_reason.as_deref() != Some("mailbox-drained")
                 && receipt.generation > receipt.notified_generation
                 && receipt.next_attempt_at_epoch <= now
         })
@@ -351,12 +353,14 @@ pub(crate) fn pending_candidates(registry: &mut Registry, now: i64) -> Vec<Notif
 }
 
 /// Pending generations whose recipient still has live unread mail. A
-/// generation the recipient already drained stays queued but inert: only a
-/// later send, which advances the generation, makes it deliverable again.
+/// generation the recipient already drained is resolved through the existing
+/// reason; a later send advances the generation and makes it deliverable again.
 pub(crate) fn deliverable_candidates(
     registry: &mut Registry,
     now: i64,
 ) -> Vec<NotificationCandidate> {
+    normalize_registry(registry, now);
+    recovery::resolve_drained_generations(registry, now);
     let mut candidates = pending_candidates(registry, now);
     candidates.retain(|candidate| {
         has_live_unread(
@@ -379,6 +383,7 @@ pub(crate) fn unresolved_candidates(
         .values()
         .filter(|receipt| {
             matches!(receipt.state.as_str(), "attempting" | "attempt_unknown")
+                && receipt.last_reason.as_deref() != Some("mailbox-drained")
                 && receipt.attempted_generation > receipt.notified_generation
         })
         .map(|receipt| NotificationCandidate {
@@ -397,7 +402,8 @@ pub(crate) fn pending(context: &CliContext) -> Result<Vec<NotificationCandidate>
     // Discovery polls every second from serve; it needs only notification
     // normalization, not claim and lease maintenance (sympoies/nils-cli#1860).
     let mut locked = super::lock_registry_observational(context)?;
-    let changed = normalize_registry(&mut locked.registry, now);
+    let changed = normalize_registry(&mut locked.registry, now)
+        | recovery::resolve_drained_generations(&mut locked.registry, now);
     let candidates = deliverable_candidates(&mut locked.registry, now);
     if changed {
         locked.save()?;
@@ -410,7 +416,8 @@ pub(crate) fn unresolved(context: &CliContext) -> Result<Vec<NotificationCandida
     // Discovery polls every second from serve; it needs only notification
     // normalization, not claim and lease maintenance (sympoies/nils-cli#1860).
     let mut locked = super::lock_registry_observational(context)?;
-    let changed = normalize_registry(&mut locked.registry, now);
+    let changed = normalize_registry(&mut locked.registry, now)
+        | recovery::resolve_drained_generations(&mut locked.registry, now);
     let candidates = unresolved_candidates(&mut locked.registry, now);
     if changed {
         locked.save()?;
@@ -778,6 +785,7 @@ pub(super) fn safe_reason(reason: &str) -> String {
         | "provider-observation-unavailable"
         | "migrated-attempt-outcome-unknown"
         | "notification-state-invalid"
+        | "mailbox-drained"
         | REASON_HOOK_DELIVERED => reason.to_string(),
         _ => REASON_INVALID_STATE.to_string(),
     }
@@ -921,8 +929,8 @@ mod tests {
         assert!(deliverable_candidates(&mut registry, 101).is_empty());
         assert_eq!(
             pending_candidates(&mut registry, 101).len(),
-            1,
-            "the generation stays queued so its receipt remains inspectable"
+            0,
+            "the resolved receipt remains inspectable without pending delivery"
         );
 
         // Expired unread mail, and unread mail for another incarnation, do not

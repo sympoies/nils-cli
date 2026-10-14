@@ -82,11 +82,10 @@ impl Admission<'_> {
             || self.verify_composer
             || pasted_text.is_some())
             && (!matches!(self.record.agent.as_str(), "claude" | "codex")
-                || self
-                    .record
-                    .runtime
-                    .as_ref()
-                    .is_none_or(|runtime| runtime.kind != "tmux"))
+                || self.record.runtime.as_ref().is_none_or(|runtime| {
+                    runtime.kind != "tmux"
+                        && !crate::codex_app_server::runtime_is_supported(self.record)
+                }))
         {
             return Err(self.refusal(
                 "send-guard-unsupported",
