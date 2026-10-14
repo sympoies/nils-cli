@@ -84,6 +84,12 @@ validations_catalog:
     rule: "method in {squash, merge, rebase} and backend supports it"
     error_kind: merge_method_unsupported
     exit: DATA
+  branch_dependencies:
+    rule: "Complete source-repository open-dependent read before branch cleanup; preserve stacked bases unless explicitly overridden; same-repository GitHub automatic deletion with dependents defers even with --keep-branch"
+    error_kind: stacked_branch_auto_delete
+    exit: DATA
+    unavailable_error_kind: branch_dependencies_unavailable
+    unavailable_exit: UNAVAILABLE
   keep_branch_conflict:
     rule: "--keep-branch and --delete-branch are mutually exclusive"
     error_kind: keep_branch_conflict
@@ -121,7 +127,7 @@ validations_catalog:
     error_kind: unchecked_task_items
     exit: DATA
   label_catalog:
-    rule: "when --strict-labels is set, every selected label exists in --label-catalog, applies to the target, and exclusive groups do not conflict"
+    rule: "when --strict-labels is set, every selected label exists in --label-catalog or is an allowed extension, applies to the target, and exclusive groups do not conflict; compatibility state::do-not-merge is independent of ordinary workflow state, so it can coexist with one ordinary state without lifting its merge hold"
     error_kind: label_unknown | label_not_applicable | label_group_conflict | label_catalog_missing
     exit: DATA
   query_repo_scope:
@@ -1046,6 +1052,7 @@ operations:
       - { name: --expected-base,            type: string,                        default: null }
       - { name: --method,                   type: enum<squash|merge|rebase>,     default: squash }
       - { name: --keep-branch,              type: bool,                          default: false }
+      - { name: --delete-branch-even-if-stacked, type: bool, default: false }
       - { name: --allow-non-default-base,   type: bool,                          default: false }
       - { name: --allow-unresolved-threads, type: bool,                          default: false } # requires --allow-unresolved-threads-reason
       - { name: --allow-unresolved-threads-reason, type: string,                 default: null }
@@ -1070,6 +1077,7 @@ operations:
       - required_checks_green   # TTL-zero re-check
       - merge_method_supported
       - keep_branch_conflict
+      - branch_dependencies # complete open-PR/MR read before source-branch cleanup; branch_dependencies_unavailable defers merge; stacked_branch_auto_delete refuses unsafe GitHub automatic deletion
       - review_convergence # only when explicit/repo/global require resolves true; requires a non-empty initial provider head; GitHub-only in v1; dry-run and live validate provider parity; final complete snapshot is re-read immediately before provider merge
       - review_loop # when review convergence is enabled and a ledger exists: exact-head/no-open-findings gate plus unchanged-tip recheck immediately before merge
       - review_threads_resolved
@@ -1087,7 +1095,8 @@ operations:
         url: string
         merge_sha: string
         method: enum<squash|merge|rebase>
-        deleted_branch: bool # false when landed through a merge queue
+        deleted_branch: bool # false when landed through a merge queue or cleanup is skipped for open dependents
+        branch_cleanup?: '{ branch: string, dependents: list<{number: integer, url: string}>, overridden: bool, message: string }'
         merge_queue?: bool # true when the base required a merge queue and the PR landed through it
         merge_freeze_override?: '{ issues: list<integer>, reason: string }' # present only when --allow-merge-freeze bypassed active freezes
         unchecked_tasks_override_reason?: string # present only when --allow-unchecked-tasks bypass was used
@@ -1673,7 +1682,7 @@ operations:
     validations:
       - query_repo_scope
     backends:
-      github: { program: gh, argv: [search, issues, "{query}", "{optional_repo_flag_and_raw_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest,updatedAt,labels"], env: { GH_HOST: "{resolved_authority}" } }
+      github: { program: gh, argv: [search, issues, "{query_keywords...}", "{optional_repo_flag_and_raw_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest,updatedAt,labels"], env: { GH_HOST: "{resolved_authority}" } }
       gitlab: provider_unsupported   # search is GitHub-only in v1
       local:  provider_unsupported
     output:
@@ -1699,11 +1708,47 @@ operations:
     validations:
       - query_repo_scope
     backends:
-      github: { program: gh, argv: [search, prs, "{query}", "{optional_repo_flag_and_raw_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest,updatedAt,labels"], env: { GH_HOST: "{resolved_authority}" } }
+      github: { program: gh, argv: [search, prs, "{query_keywords...}", "{optional_repo_flag_and_raw_slug}", --match, "{match_csv}", --limit, "{limit}", --json, "number,title,url,state,repository,isPullRequest,updatedAt,labels"], env: { GH_HOST: "{resolved_authority}" } }
       gitlab: provider_unsupported
       local:  provider_unsupported
     output:
       data: { provider: enum<github>, host, repo, query, match_fields, limit, item_count, limited, items: list<SearchItem> }
+
+  - id: search.completions
+    schema_version: cli.forge-cli.search.completions.v1
+    summary: Read raw closed-issue or merged-PR completion facts with resumable coverage.
+    inputs:
+      - { name: <query>, type: string, required: true }
+      - { name: --kind, type: "enum<issue|pr>", default: issue }
+      - { name: --since, type: RFC3339, required: true }
+      - { name: --until, type: RFC3339, required: true }
+      - { name: --page-size, type: integer, default: 100, range: "1..100" }
+      - { name: --max-pages, type: integer, default: 10, range: "1..10" }
+      - { name: --max-connection-pages, type: integer, default: 10, range: "1..100" }
+      - { name: --cursor, type: string }
+      - { name: --exclude-forks, type: bool, default: false }
+      - { name: --exclude-archived, type: bool, default: false }
+    validations:
+      - query_repo_scope
+      - "completion_window_invalid: valid RFC3339 since < until"
+      - "completion_cursor_invalid: continuation binds authority, query, kind, window and filters"
+    backends:
+      github: { program: gh, argv: [api, graphql, "{optional_hostname}", -f, "query={completion_query}", -F, "first={page_size}", "{query_or_node_and_cursor_fields}"], env: { GH_HOST: "{resolved_authority}" } }
+      gitlab: provider_unsupported
+      local: provider_unsupported
+    output:
+      data:
+        provider: enum<github>
+        host: string
+        repo: string
+        kind: enum<issue|pr>
+        query: string
+        effective_query: string
+        window: "{since, until}"
+        item_count: integer
+        items: "list<CompletionItem>; canonical identity, raw state/reason, timestamps, nullable author/type, repository fork/archive facts, PR statistics, raw labels and canonical cross-repo closing references"
+        pagination: "status, complete, traversal_complete, covered_from_start, resumed, start_cursor, next_cursor, pages_read, scanned, total_count, search_ceiling, pending_connections, reasons, failures"
+    notes: "Read-only; no scoring or label interpretation. Exact half-open completion window uses closedAt for issues and mergedAt for PRs, never updatedAt. Each nested connection exports complete and remaining_complete separately. Partial reads preserve facts and exit zero; inspect coverage. Search ceiling never becomes complete. See search-completions-v1.md."
 
   - id: search.refs-to
     schema_version: cli.forge-cli.search.refs-to.v1

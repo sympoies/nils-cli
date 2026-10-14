@@ -466,6 +466,7 @@ fn cli_delete(fixture: &Fixture, id: &str) -> CmdOutput {
 #[test]
 fn a_cli_delete_with_the_board_disabled_is_served_as_one_closed_record() {
     let fixture = fixture();
+    std::fs::create_dir_all(fixture.home.join("Project/closed-repo")).expect("closed checkout");
     let id = "20300101-000000-d";
     write_never_launched_record(
         &fixture.state_dir,
@@ -703,6 +704,7 @@ const DAY: i64 = 24 * HOUR;
 /// age), plus one closed record from a real CLI delete.
 fn board_fixture() -> Fixture {
     let fixture = fixture();
+    std::fs::create_dir_all(fixture.home.join("Project/closed-repo")).expect("closed checkout");
     write_record(
         &fixture.state_dir,
         "20300101-000000-b",

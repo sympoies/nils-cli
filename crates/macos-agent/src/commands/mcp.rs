@@ -420,6 +420,9 @@ fn handle_client_frame(
             method: method.into(),
             tool: tool.clone(),
             started: Instant::now(),
+            roi_requested: request.pointer("/params/arguments/roi").is_some(),
+            coordinate_click: tool.as_deref() == Some("click")
+                && request.pointer("/params/arguments/coords").is_some(),
         };
         if !pending.can_insert(&key, &request) {
             record_mcp_step(
@@ -531,6 +534,13 @@ fn handle_upstream_frame(
     if pending_request.method == "tools/list" {
         filter_tools(&mut response, args.tool_profile);
     }
+    if pending_request
+        .tool
+        .as_deref()
+        .is_some_and(super::observation::is_observation)
+    {
+        super::observation::qualify_mcp_result(&mut response, pending_request.roi_requested)?;
+    }
     let shutdown = {
         let request = pending_request;
         let failed = response.get("error").is_some()
@@ -538,16 +548,24 @@ fn handle_upstream_frame(
                 .pointer("/result/isError")
                 .and_then(serde_json::Value::as_bool)
                 == Some(true);
+        let (status, failure_class) = if request.coordinate_click {
+            qualify_coordinate_response(&mut response, failed)
+        } else {
+            (
+                if failed {
+                    StepStatus::Failed
+                } else {
+                    StepStatus::Passed
+                },
+                failed.then_some("upstream_mcp"),
+            )
+        };
         record_mcp_step(
             journal,
             &request.method,
             request.tool.as_deref(),
-            if failed {
-                StepStatus::Failed
-            } else {
-                StepStatus::Passed
-            },
-            failed.then_some("upstream_mcp"),
+            status,
+            failure_class,
             request.started.elapsed(),
         )?;
         request.method == "shutdown" && !failed
@@ -593,6 +611,85 @@ fn record_mcp_step(
     Ok(())
 }
 
+/// Peekaboo MCP action outcomes are flat canonical fields in result._meta.
+fn qualify_coordinate_response(
+    response: &mut serde_json::Value,
+    failed: bool,
+) -> (StepStatus, Option<&'static str>) {
+    let metadata = response
+        .pointer("/result/_meta")
+        .cloned()
+        .unwrap_or_default();
+    let message = response
+        .pointer("/result/content")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|content| {
+            content
+                .iter()
+                .find_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+        })
+        .or_else(|| {
+            response
+                .pointer("/error/message")
+                .and_then(serde_json::Value::as_str)
+        });
+    let value = serde_json::json!({"success":!failed, "outcome":metadata,
+        "error":{"code":metadata.get("error_code"), "message":message}});
+    let outcome = super::exec::upstream_outcome(&value).unwrap_or_default();
+    let uncertain = (failed || outcome.indeterminate || outcome.refused)
+        && outcome.mutation_dispatched != Some(false);
+    let status = if uncertain {
+        StepStatus::Unknown
+    } else if failed || outcome.refused {
+        StepStatus::Failed
+    } else {
+        StepStatus::Passed
+    };
+    let class = if uncertain {
+        Some("unknown_mutation")
+    } else if outcome.refused {
+        Some("upstream_refused")
+    } else {
+        failed.then_some("upstream_mcp")
+    };
+    if status != StepStatus::Passed {
+        let diagnostic = super::exec::coordinate_click_diagnostic(
+            Some(&value),
+            None,
+            crate::cli::EvidenceMode::Minimal,
+            false,
+        );
+        if let Some(result) = response
+            .get_mut("result")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            let metadata = result
+                .entry("_meta")
+                .or_insert_with(|| serde_json::json!({}));
+            if !metadata.is_object() {
+                *metadata = serde_json::json!({});
+            }
+            metadata["macos-agent/coordinate_click"] = serde_json::json!(diagnostic);
+        } else if let Some(error) = response
+            .get_mut("error")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            // JSON-RPC permits arbitrary error data. Preserve non-object data
+            // verbatim and use an error-object extension for the diagnostic.
+            if error.get("data").is_some_and(|data| !data.is_object()) {
+                error.insert(
+                    "macos-agent/coordinate_click".into(),
+                    serde_json::json!(diagnostic),
+                );
+            } else {
+                let data = error.entry("data").or_insert_with(|| serde_json::json!({}));
+                data["macos-agent/coordinate_click"] = serde_json::json!(diagnostic);
+            }
+        }
+    }
+    (status, class)
+}
+
 fn request_id(request: &serde_json::Value) -> Option<serde_json::Value> {
     request.get("id").filter(|id| !id.is_null()).cloned()
 }
@@ -621,6 +718,8 @@ struct PendingRequest {
     method: String,
     tool: Option<String>,
     started: Instant,
+    roi_requested: bool,
+    coordinate_click: bool,
 }
 
 impl PendingRequest {

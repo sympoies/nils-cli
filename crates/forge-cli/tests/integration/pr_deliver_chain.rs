@@ -76,7 +76,7 @@ const FULL_PR_VIEW_JSON: &str = r#"{
   "state": "OPEN",
   "isDraft": false,
   "title": "feat: sample feature",
-  "headRefName": "feat/sample",
+  "headRefName": "feat/sample", "headRepository": {"nameWithOwner": "sympoies/nils-cli"},
   "baseRefName": "main",
   "mergeable": "MERGEABLE",
   "mergedAt": null,
@@ -92,7 +92,7 @@ const UNCHECKED_TASKS_PR_VIEW_JSON: &str = r###"{
   "state": "OPEN",
   "isDraft": false,
   "title": "feat: sample feature",
-  "headRefName": "feat/sample",
+  "headRefName": "feat/sample", "headRepository": {"nameWithOwner": "sympoies/nils-cli"},
   "baseRefName": "main",
   "mergeable": "MERGEABLE",
   "mergedAt": null,
@@ -109,7 +109,7 @@ const MERGED_PR_VIEW_JSON: &str = r#"{
   "state": "MERGED",
   "isDraft": false,
   "title": "feat: sample feature",
-  "headRefName": "feat/sample",
+  "headRefName": "feat/sample", "headRepository": {"nameWithOwner": "sympoies/nils-cli"},
   "baseRefName": "main",
   "mergeable": "MERGEABLE",
   "mergedAt": "2026-05-23T12:00:00Z",
@@ -125,7 +125,7 @@ const MERGED_PR_VIEW_WITH_CLOSING_JSON: &str = r#"{
   "state": "MERGED",
   "isDraft": false,
   "title": "feat: sample feature",
-  "headRefName": "feat/sample",
+  "headRefName": "feat/sample", "headRepository": {"nameWithOwner": "sympoies/nils-cli"},
   "baseRefName": "main",
   "mergeable": "MERGEABLE",
   "mergedAt": "2026-05-23T12:00:00Z",
@@ -156,7 +156,7 @@ const ADOPTABLE_PR_VIEW_JSON: &str = r###"{
   "state": "OPEN",
   "isDraft": true,
   "title": "feat: sample feature",
-  "headRefName": "feat/sample",
+  "headRefName": "feat/sample", "headRepository": {"nameWithOwner": "sympoies/nils-cli"},
   "baseRefName": "main",
   "mergeable": "MERGEABLE",
   "mergedAt": null,
@@ -173,7 +173,7 @@ const ADOPTABLE_WRONG_BASE_PR_VIEW_JSON: &str = r###"{
   "state": "OPEN",
   "isDraft": true,
   "title": "feat: sample feature",
-  "headRefName": "feat/sample",
+  "headRefName": "feat/sample", "headRepository": {"nameWithOwner": "sympoies/nils-cli"},
   "baseRefName": "test",
   "mergeable": "MERGEABLE",
   "mergedAt": null,
@@ -189,7 +189,7 @@ const ADOPTED_READY_PR_VIEW_JSON: &str = r###"{
   "state": "OPEN",
   "isDraft": false,
   "title": "feat: sample feature",
-  "headRefName": "feat/sample",
+  "headRefName": "feat/sample", "headRepository": {"nameWithOwner": "sympoies/nils-cli"},
   "baseRefName": "main",
   "mergeable": "MERGEABLE",
   "mergedAt": null,
@@ -206,7 +206,7 @@ const ADOPT_VIEW_MISSING_SECTIONS_JSON: &str = r###"{
   "state": "OPEN",
   "isDraft": true,
   "title": "feat: sample feature",
-  "headRefName": "feat/sample",
+  "headRefName": "feat/sample", "headRepository": {"nameWithOwner": "sympoies/nils-cli"},
   "baseRefName": "main",
   "mergeable": "MERGEABLE",
   "mergedAt": null,
@@ -332,9 +332,7 @@ fn git_output(repo: &Path, args: &[&str]) -> String {
 fn view_with_head_oid(template: &str, head: &str) -> String {
     template.replace(
         "\"headRefName\": \"feat/sample\",",
-        &format!(
-            "\"headRefName\": \"feat/sample\",\n  \"headRefOid\": \"{head}\",\n  \"headRepository\": {{ \"nameWithOwner\": \"sympoies/nils-cli\" }},"
-        ),
+        &format!("\"headRefName\": \"feat/sample\",\n  \"headRefOid\": \"{head}\","),
     )
 }
 

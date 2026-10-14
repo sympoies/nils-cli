@@ -387,6 +387,14 @@ impl SessionQuiescenceGuard {
             &self.incarnation,
             attempted_at.as_second(),
         ) {
+            if notification::resolve_drained_generation(
+                &mut self._locked.registry,
+                &self.session_id,
+                &self.incarnation,
+                attempted_at.as_second(),
+            ) {
+                self._locked.save()?;
+            }
             return Ok(false);
         }
         let Some(_) = notification::transition_attempt_at(
@@ -1266,8 +1274,8 @@ fn lock_registry_within(
                     runtime.status == crate::CoordinationRuntimeStatus::Running
                         && runtime.identity_digest == lease.runtime_identity_digest
                 });
-            let activity_matches =
-                crate::activity::state_for_view(context, &record).is_some_and(|activity| {
+            let activity_matches = crate::activity::controller_state_for_record(context, &record)
+                .is_some_and(|activity| {
                     activity.phase == crate::activity::TurnPhase::Working
                         && claims::activity_identity_digest(&activity)
                             == lease.activity_identity_digest
@@ -1815,16 +1823,21 @@ pub(crate) fn quota_exceeded(message: &str, quota: &str, count: usize, limit: us
         .or_else(|| crate::non_empty_env("AGENT_SESSION_HOST"))
         .or_else(crate::short_hostname)
         .unwrap_or_else(|| "unknown".to_string());
+    let message = if mailbox::recipient_quota(quota) {
+        format!("{message}; {}", mailbox::QUOTA_RECOVERY_HINT)
+    } else {
+        message.to_string()
+    };
+    let mut details = serde_json::json!({
+        "quota": quota, "count": count, "limit": limit, "host": host, "side": "local",
+    });
+    if mailbox::recipient_quota(quota) {
+        details["recovery"] = mailbox::quota_recovery();
+    }
     CliError::data(
         "quota-exceeded",
         format!("{message} ({quota} {count}/{limit})"),
-        Some(serde_json::json!({
-            "quota": quota,
-            "count": count,
-            "limit": limit,
-            "host": host,
-            "side": "local",
-        })),
+        Some(details),
     )
 }
 
@@ -1887,6 +1900,7 @@ pub(crate) fn public_summary_from_registry(
                 message.recipient_session_id == session_id && message.state == "unread"
             })
             .count(),
+        mailbox_quota_warning: mailbox::quota_warning(registry, session_id, now_epoch()),
         coordination_conflict_severity: claims::conflict_severity_for_session(
             context, registry, session_id,
         ),
@@ -1917,6 +1931,8 @@ pub(crate) struct CoordinationSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_expires_at: Option<String>,
     pub unread_message_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mailbox_quota_warning: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coordination_conflict_severity: Option<String>,
     pub coordination_available: bool,

@@ -18,7 +18,7 @@ LIB = ROOT / 'scripts/ci/lib/merge_plan.py'
 LAUNCHER = ROOT / 'scripts/ci/nils-cli-merge-plan.py'
 POLICY = ROOT / 'scripts/ci/merge-plan-policy.v1.json'
 REGISTRY = ROOT / 'scripts/ci/merge-plan-extra-inputs.v1.json'
-SCHEMA = ROOT / 'scripts/ci/merge-plan.schema.v1.json'
+SCHEMA = ROOT / 'scripts/ci/merge-plan.schema.v2.json'
 
 
 def graph(root, edges=()):

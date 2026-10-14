@@ -18,6 +18,8 @@ Description:
 
 Options:
   --xvfb             Run checks under `xvfb-run -a`
+  --ci-merge-plan    Consume the trusted-base affected plan for the exact
+                     pull_request or merge_group event and checkout.
   --local-fast       Run fast local changed-scope validation instead of the
                      full CI/parity script. Pass --base <ref>,
                      --plan-only, or --changed-file <path> through to
@@ -59,6 +61,7 @@ with_coverage=0
 docs_only=0
 plan_only=0
 local_fast=0
+ci_merge_plan=0
 local_fast_arg_seen=0
 declare -a verify_args=()
 declare -a local_fast_args=()
@@ -70,6 +73,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-coverage)
       with_coverage=1
+      shift
+      ;;
+    --ci-merge-plan)
+      ci_merge_plan=1
       shift
       ;;
     --local-fast)
@@ -114,6 +121,10 @@ done
 
 if [[ "$local_fast" -eq 0 && "$local_fast_arg_seen" -eq 1 ]]; then
   echo "error: --base, --changed-file, and --plan-only require --local-fast" >&2
+  exit 2
+fi
+if [[ "$ci_merge_plan" -eq 1 && ( "$local_fast" -eq 1 || "$docs_only" -eq 1 || "$with_coverage" -eq 1 || "${#verify_args[@]}" -ne 0 ) ]]; then
+  echo "error: --ci-merge-plan cannot be combined with another validation mode" >&2
   exit 2
 fi
 
@@ -184,6 +195,15 @@ fi
 # here; docs-only checks and usage failures do not launch compile/test work.
 if [[ "${NILS_CLI_GATE_ACTIVE:-0}" != "1" && "$docs_only" -eq 0 ]]; then
   exec python3 "$repo_root/scripts/ci/gate-resources.py" -- "$bash_bin" "$repo_root/scripts/ci/nils-cli-checks-entrypoint.sh" "${original_args[@]}"
+fi
+
+if [[ "$ci_merge_plan" -eq 1 ]]; then
+  ci_plan_cmd=(python3 scripts/ci/nils-cli-merge-plan-checks.py --bash "$bash_bin")
+  if [[ "$use_xvfb" -eq 1 ]]; then
+    ci_plan_cmd=(xvfb-run -a "${ci_plan_cmd[@]}")
+  fi
+  run "${ci_plan_cmd[@]}"
+  exit 0
 fi
 
 run "${cmd[@]}"
