@@ -422,6 +422,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -520,6 +529,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -724,6 +734,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "darling"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed17f5901b6630b993ca003def43f2f8ef4014fc13b047b57aad617ff32bc2ec"
+dependencies = [
+ "darling_core",
+ "darling_macro",
+]
+
+[[package]]
+name = "darling_core"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6837e2cf7485aaae18f86181d2f0e9a7ed297a025e220aeabf63fdebd3a2ddff"
+dependencies = [
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "strsim",
+ "syn 3.0.3",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ac7135c3ef02b2f7833bbeb1be5ba7f966dcde8a87c6b87f65a778d71a02785"
+dependencies = [
+ "darling_core",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -772,6 +816,9 @@ name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "diff"
@@ -1228,6 +1275,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphql-tools"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9513662272317e955f5d72b13b4015ba31c84d68225f4b5d0a2ad6ffceec1258"
+dependencies = [
+ "combine",
+ "itoa",
+ "lazy_static",
+ "ryu",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror",
+]
+
+[[package]]
 name = "harfrust"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1238,6 +1301,12 @@ dependencies = [
  "read-fonts",
  "smallvec",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
@@ -1512,6 +1581,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ident_case"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
+
+[[package]]
 name = "idna"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1563,6 +1638,17 @@ name = "imagesize"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
+
+[[package]]
+name = "indexmap"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
+dependencies = [
+ "autocfg",
+ "hashbrown 0.12.3",
+ "serde",
+]
 
 [[package]]
 name = "indexmap"
@@ -1657,7 +1743,7 @@ dependencies = [
  "bytes",
  "foldhash 0.1.5",
  "hifijson",
- "indexmap",
+ "indexmap 2.14.2",
  "jaq-core",
  "jaq-std",
  "num-bigint",
@@ -2106,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-docs"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "clap",
@@ -2127,7 +2213,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-hook"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2152,7 +2238,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-memory"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2167,7 +2253,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-out"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "chrono",
  "clap",
@@ -2184,11 +2270,11 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-runtime"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "clap",
- "indexmap",
+ "indexmap 2.14.2",
  "minijinja",
  "nils-build-info",
  "nils-common",
@@ -2205,7 +2291,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-scope-lock"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2221,7 +2307,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-session"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "axum",
  "clap",
@@ -2251,7 +2337,7 @@ dependencies = [
 
 [[package]]
 name = "nils-agent-workflow-primitives"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2276,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-gql"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2291,7 +2377,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-grpc"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2307,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-rest"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2323,7 +2409,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-test"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2339,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-testing-core"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2363,7 +2449,7 @@ dependencies = [
 
 [[package]]
 name = "nils-api-websocket"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2379,11 +2465,11 @@ dependencies = [
 
 [[package]]
 name = "nils-build-info"
-version = "1.33.9"
+version = "1.33.13"
 
 [[package]]
 name = "nils-claude-cli"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2406,7 +2492,7 @@ dependencies = [
 
 [[package]]
 name = "nils-cli-template"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "nils-build-info",
@@ -2422,7 +2508,7 @@ dependencies = [
 
 [[package]]
 name = "nils-codex-cli"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2449,7 +2535,7 @@ dependencies = [
 
 [[package]]
 name = "nils-common"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2469,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "nils-devlog"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2484,7 +2570,7 @@ dependencies = [
 
 [[package]]
 name = "nils-docker-tools"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2498,11 +2584,11 @@ dependencies = [
 
 [[package]]
 name = "nils-evidence"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
- "indexmap",
+ "indexmap 2.14.2",
  "nils-build-info",
  "nils-common",
  "nils-scrub",
@@ -2519,11 +2605,12 @@ dependencies = [
 
 [[package]]
 name = "nils-forge-cli"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "chrono",
  "clap",
  "clap_complete",
+ "graphql-tools",
  "jiff",
  "libc",
  "nils-agent-workflow-primitives",
@@ -2545,7 +2632,7 @@ dependencies = [
 
 [[package]]
 name = "nils-fzf-cli"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "clap",
@@ -2563,7 +2650,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-cli"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "clap",
@@ -2585,7 +2672,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-lock"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2601,7 +2688,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-scope"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "clap",
@@ -2615,7 +2702,7 @@ dependencies = [
 
 [[package]]
 name = "nils-git-summary"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2632,7 +2719,7 @@ dependencies = [
 
 [[package]]
 name = "nils-github-app-cli"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2648,7 +2735,7 @@ dependencies = [
 
 [[package]]
 name = "nils-image-processing"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2670,7 +2757,7 @@ dependencies = [
 
 [[package]]
 name = "nils-macos-agent"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2690,7 +2777,7 @@ dependencies = [
 
 [[package]]
 name = "nils-markdown"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "clap",
@@ -2708,7 +2795,7 @@ dependencies = [
 
 [[package]]
 name = "nils-memo"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2728,7 +2815,7 @@ dependencies = [
 
 [[package]]
 name = "nils-provider-resume"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "jiff",
  "nils-common",
@@ -2738,7 +2825,7 @@ dependencies = [
 
 [[package]]
 name = "nils-screen-record"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "block2",
  "chrono",
@@ -2766,7 +2853,7 @@ dependencies = [
 
 [[package]]
 name = "nils-scrub"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "regex",
  "serde",
@@ -2775,7 +2862,7 @@ dependencies = [
 
 [[package]]
 name = "nils-secrets"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2792,7 +2879,7 @@ dependencies = [
 
 [[package]]
 name = "nils-semantic-commit"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "anyhow",
  "clap",
@@ -2809,7 +2896,7 @@ dependencies = [
 
 [[package]]
 name = "nils-term"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "indicatif",
  "pretty_assertions",
@@ -2817,7 +2904,7 @@ dependencies = [
 
 [[package]]
 name = "nils-test-support"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "pretty_assertions",
  "serde",
@@ -2827,7 +2914,7 @@ dependencies = [
 
 [[package]]
 name = "nils-web-evidence"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2843,7 +2930,7 @@ dependencies = [
 
 [[package]]
 name = "nils-zsh-kit"
-version = "1.33.9"
+version = "1.33.13"
 dependencies = [
  "chrono",
  "clap",
@@ -3990,6 +4077,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "schemars"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cd191f9397d57d581cddd31014772520aa448f65ef991055d7f61582c65165f"
+dependencies = [
+ "dyn-clone",
+ "ref-cast",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
+dependencies = [
+ "dyn-clone",
+ "ref-cast",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4066,7 +4177,7 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
- "indexmap",
+ "indexmap 2.14.2",
  "itoa",
  "memchr",
  "serde",
@@ -4118,12 +4229,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_with"
+version = "3.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df9adc193c780ef8f159aee8b61e2d5801aaa555e6eb0947fe45530ec506296f"
+dependencies = [
+ "base64 0.23.1",
+ "bs58",
+ "chrono",
+ "hex",
+ "indexmap 1.9.3",
+ "indexmap 2.14.2",
+ "jiff",
+ "schemars 0.9.0",
+ "schemars 1.2.3",
+ "serde_core",
+ "serde_json",
+ "serde_with_macros",
+ "time",
+]
+
+[[package]]
+name = "serde_with_macros"
+version = "3.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e17bbc68e28663bbbb90df47e058aa7eda4fb445b89fe70457bb94fbccf6e49"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "serde_yaml_ng"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
 dependencies = [
- "indexmap",
+ "indexmap 2.14.2",
  "itoa",
  "ryu",
  "serde",
@@ -4574,7 +4718,7 @@ version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53c96ecdfa941c8fc4fcaed14f99ada8ebed502eef533015095a07e3301d4c3c"
 dependencies = [
- "indexmap",
+ "indexmap 2.14.2",
  "serde_core",
  "serde_spanned",
  "toml_datetime",
@@ -4598,7 +4742,7 @@ version = "0.25.15+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
 dependencies = [
- "indexmap",
+ "indexmap 2.14.2",
  "toml_datetime",
  "toml_parser",
  "toml_writer",

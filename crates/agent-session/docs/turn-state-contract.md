@@ -230,6 +230,38 @@ as hook identifiers. A matching notification emits authoritative
 normalized event is built. Unknown notification types no-op; invalid, oversized,
 stale, or mismatched payloads fail open to Codex and cannot complete the turn.
 
+## Codex completion recovery and quiet projection
+
+If a start hook is missed, accepted progress can name a newer turn while the
+stored current-turn ID remains older. A bound authoritative completion can
+recover that ID only from the latest retained provider progress, in the same
+runtime and conversation. Attention, known older turns and newer work prevent
+recovery; a bare completion or Stop cannot supply the missing binding.
+
+Existing stuck snapshots recover on their first view read, including after
+daemon startup, when a retained completion still matches the latest progress.
+Without such proof, a Codex working view becomes inferred `unknown` after
+300 seconds without provider progress. The signal is
+`current_turn.last_progress_at`; snapshots lacking it use the observed turn
+start. Reads preserve stored provider history and use a stable quiet deadline.
+
+List, board and stream expose the raw progress timestamp and this additive
+diagnostic for a quiet projection:
+
+```json
+{"reason":"codex_progress_quiet","quiet_threshold_seconds":300,"quiet_since":"2026-10-13T12:00:00Z","quiet_signal":"current_turn.last_progress_at"}
+```
+
+Quiet is a possibly-idle scheduling hint, not completion or input authority.
+Native notification candidates must recheck the exact bound conversation's
+idle status, without reading turns, before input admission. Busy or unavailable
+providers stay queued; terminal recipients with unknown phase keep their existing refusal.
+Guarded terminal wake integration remains owned by #2432.
+
+Controller admission and active-lease renewal omit the quiet presentation
+heuristic, so long tools are not denied or expired because of missing progress.
+Runtime health and actual completion checks remain enforced.
+
 ## Turn state
 
 Example:
@@ -302,8 +334,12 @@ therefore deserialize conservatively.
 Optional `diagnostic.reason` values are producer-owned allowlisted codes:
 `completion_evidence_pending`, `attention_authority_mismatch`,
 `provider_projection_unavailable`, `runtime_activity_unhealthy`,
-`activity_state_unavailable`, and `interrupted_suspected`. Free-form provider or
-runtime errors never cross the session-view or stream boundary.
+`activity_state_unavailable`, `interrupted_suspected`, and
+`codex_progress_quiet`. The quiet reason may include only the bounded
+`quiet_threshold_seconds`, `quiet_since`, and `quiet_signal` fields described
+above; it never proves completion, clears attention, or authorizes input.
+Free-form provider or runtime errors never cross the session-view or stream
+boundary.
 
 Optional `shadow_observation` is ordinarily diagnostics-only. It contains
 `observer_version`, a bounded `rule_id`, daemon `observed_at`, one of
@@ -364,13 +400,26 @@ clear producer-owned attention or influence authority selection.
 
 For Codex, a raw or unmanaged runtime selects `hook`; its generic
 `PermissionRequest` remains a conservative approval latch. An audited managed
-app-server runtime selects `protocol`, injects
-`AGENT_SESSION_ATTENTION_AUTHORITY=protocol`, and suppresses that generic hook
-before the helper is invoked, including when the installed helper predates
-authority-aware ingest. Protocol authority is unavailable until that guarded
-installed command is verified and no second direct unguarded reporter is
-present; app-server transport may still run with hook authority. Its private
-proxy admits only the audited blocking
+app-server runtime selects `protocol` and injects
+`AGENT_SESSION_ATTENTION_AUTHORITY=protocol`. The guarded direct command
+suppresses its generic hook before invoking the helper, including when that
+helper predates authority-aware ingest.
+
+Protocol authority is unavailable until either the guarded direct command or
+one owned matcherless `agent-hook dispatch --product codex` permission group
+is verified, with no second direct reporter. Dispatcher ownership also requires
+converged `agent-hook doctor` evidence. Normalized dispatcher permission events
+use the same immutable authority disposition as raw hooks: protocol is a
+content-free no-op, hook authority retains conservative approval, and a mismatch
+marks the runtime unhealthy.
+
+Advisory dispatch can still exit successfully with
+a warning; that does not undo the unhealthy state. The dispatcher and activity
+helper must use the validated release pair. App-server transport may still run
+with hook authority. This source-guard prerequisite does not audit a new
+provider version.
+
+Its private proxy admits only the audited blocking
 request method allowlist and `serverRequest/resolved`. Request ids retain their
 JSON `string` versus `int64` type only in the bounded in-memory pending table;
 each admitted request occurrence receives a fresh opaque correlation token.

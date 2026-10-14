@@ -5,7 +5,7 @@ use crate::{
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
-
+mod codex_dispatch_attention;
 fn event(kind: TurnEventKind, event_id: &str) -> TurnEvent {
     TurnEvent {
         schema_version: TURN_EVENT_VERSION.to_string(),
@@ -1179,6 +1179,7 @@ fn test_session(tmp: &tempfile::TempDir) -> (CliContext, crate::CreatedRecord) {
 
 mod claude_completion;
 mod claude_permission;
+mod codex_phase;
 mod completion_review;
 mod provider_hooks;
 mod replay_journal;

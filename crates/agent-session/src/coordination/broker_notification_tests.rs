@@ -309,3 +309,6 @@ fn inspection_refuses_a_broker_from_a_prior_record_incarnation() {
     assert_eq!(error.code(), "coordination-broker-lost");
     assert_eq!(fs::read(registry_path(&context)).unwrap(), before);
 }
+
+#[path = "broker_notification_resolution_tests.rs"]
+mod resolution_tests;

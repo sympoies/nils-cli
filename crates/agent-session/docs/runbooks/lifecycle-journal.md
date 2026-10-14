@@ -26,6 +26,14 @@ summary because provider errors may contain private input. Static audited
 refusal messages are preserved. It never records prompts, terminal output,
 provider arguments, account names, or capability contents.
 
+Startup authority receipts use the same `agent-session.lifecycle.v1` record
+envelope. Their operation is `startup-cause`; `result` carries the common
+`code`, fixed `message`, and `proof_step` fields plus a bounded `cause` object
+with operation, stage, retryability, and account-binding state/revision. The
+receipt uses caller kind `controller` and a null `exit`, because it records a
+failed TUI request before the launcher has an exit status. The additive cause
+fields preserve details without changing the common record shape.
+
 Start/run, provider-history import, resume, delete/archive, account switch,
 broker adopt/reconcile and broker stop attempts are recorded. Authenticated
 serve create/import/resume/account/delete requests record the final HTTP outcome,

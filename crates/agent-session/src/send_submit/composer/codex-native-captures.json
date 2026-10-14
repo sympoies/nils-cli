@@ -1,0 +1,113 @@
+{
+  "provenance": "De-identified resident native captures; composer bytes and SGR preserved. Oracle labels come only from controlled synthetic input, never from runtime admission.",
+  "provider_version": "0.162.1",
+  "tmux_version": "3.6",
+  "capture_flags": [
+    "-p",
+    "-e",
+    "-N",
+    "-T"
+  ],
+  "fixtures": [
+    {
+      "case": "empty-start",
+      "expected_empty": true,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n \n \n\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\n\u001b[0m \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "empty-idle",
+      "expected_empty": true,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\n\u001b[0m \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "empty-home",
+      "expected_empty": true,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\n\u001b[0m \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "one-space-control",
+      "expected_empty": false,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m                         \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "one-space-control-home",
+      "expected_empty": false,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m                         \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "multi-space-control",
+      "expected_empty": false,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m                         \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "multi-space-control-home",
+      "expected_empty": false,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m                         \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "normal-text",
+      "expected_empty": false,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m alpha beta              \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "wrapped-text",
+      "expected_empty": false,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha\n  alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha\n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "multiline-text",
+      "expected_empty": false,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m alpha\n  beta\n  gamma\n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "wrapped-whitespace",
+      "expected_empty": false,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\n\u001b[0m \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "wrapped-whitespace-home",
+      "expected_empty": false,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\n\u001b[0m \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "native-blank-rows",
+      "expected_empty": true,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\n\u001b[0m \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "case": "empty-late-idle",
+      "expected_empty": true,
+      "capture": "  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\n\u001b[0m \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n"
+    },
+    {
+      "case": "multiline-whitespace",
+      "expected_empty": false,
+      "capture": "  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\n\u001b[0m \n \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n"
+    },
+    {
+      "case": "multiline-whitespace-home",
+      "expected_empty": false,
+      "capture": "  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\n\u001b[0m \n \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n"
+    },
+    {
+      "case": "newline-only",
+      "expected_empty": false,
+      "capture": "  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\n\u001b[0m \n \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n"
+    },
+    {
+      "case": "newline-only-home",
+      "expected_empty": false,
+      "capture": "  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\n\u001b[0m \n \n \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n"
+    },
+    {
+      "case": "newline-only-reset",
+      "expected_empty": true,
+      "capture": "  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n  xxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\u001b[0m \n \n\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\n\u001b[0m \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n"
+    },
+    {
+      "case": "busy-0",
+      "expected_empty": true,
+      "capture": "\n  \u001b[38;2;99;168;248mxx \u001b[1m\u001b[39mxxxxxx xxxxx\u001b[0;2m xxxxxxxxxx\n\u001b[0m     \u001b[2mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n  xxxxxxxxxxxx \u001b[0;1m\u001b[38;5;5mxxxx xxxx\n\n\u001b[0m  \u001b[1mxxxx\u001b[0m xxxxx \u001b[38;2;166;227;161mxx\u001b[39m xx xxxxxx xxxx xxxxxxxxxxxxx\n\n\n\u001b[1;2mx \u001b[0mxxxxx xxxx xxxxxxx xxx xx xxx xxx xxxxxx xxxx xxxxxx xx xxxxxxx xxxxxxxxx\n\n\n\u001b[2mx \u001b[0mxx\n\n\u001b[2m  xxxxxx xxx xx x xxxx xx\n\n\n\u001b[1mx \u001b[0mxxxxxxx xxxxx xxxxxx xxxxx xxx xxxxxxxx x xxxxxxx xxxx xxx xxx xxxxx xxxx xx xxxx x xxxxxxxx\n  xxxxxxxxxxx xxxxxxxx\n\n \n\u001b[1m\u001b[38;2;231;231;231m•\u001b[0m \u001b[2mWorking\u001b[0m \u001b[2m(0s • \u001b[0;1mesc\u001b[0;2m to interrupt)\n\u001b[0m \n \n\u001b[1m›\u001b[0m \u001b[2mAsk Codex to do anything\n\u001b[0m \n  \u001b[38;2;246;226;183mxxxxxxxxxx xxxxxx\u001b[39m x \u001b[38;2;242;181;144mxxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;233;144;169mxxxxxx xxx xxxx\u001b[39m x \u001b[38;2;148;153;174mxxxxxxxxxxxxx\u001b[39m  x \u001b[38;2;196;167;103mx xxxxxxxx\u001b[39m x \u001b[1mxx\u001b[0m xx xxxx\n\n\n\n\n\n\n"
+    }
+  ]
+}

@@ -672,6 +672,63 @@ pub(crate) fn proxy_next_account_is_pending(record: &SessionRecord) -> bool {
     )
 }
 
+/// Bounded view of the durable applied binding for proxy diagnostics. This
+/// deliberately ignores broker availability: detached proxies validate their
+/// binding from session state and do not inherit the daemon's broker.
+pub(crate) fn proxy_binding_diagnostic(record: &SessionRecord) -> (&'static str, u64) {
+    match decode_binding(record) {
+        DecodedBinding::Absent => ("unbound", 0),
+        DecodedBinding::Valid(binding) => {
+            let state = match binding.state.as_str() {
+                "pending" => "pending",
+                "bound" => "bound",
+                "failed" => "failed",
+                _ => return ("unknown", 0),
+            };
+            (state, binding.revision)
+        }
+        DecodedBinding::Invalid => ("unknown", 0),
+    }
+}
+
+/// Fresh-start-only predicate for the initial account binding while its
+/// control connection applies it to the newly launched runtime. Other pending
+/// bindings remain fail-closed and are not waited out by the proxy.
+pub(crate) fn proxy_initial_binding_is_pending(record: &SessionRecord) -> bool {
+    record.agent == "codex"
+        && record.runtime.is_some()
+        && matches!(
+            decode_binding(record),
+            DecodedBinding::Valid(binding)
+                if binding.revision == 1
+                    && binding.state == "pending"
+                    && binding.applied_runtime_id.is_none()
+                    && binding.failure_reason.is_none()
+        )
+}
+
+/// Confirm that the exact initial binding observed while a fresh `thread/start`
+/// was waiting has completed for the same runtime. Later bindings do not
+/// inherit the create-bootstrap authorization.
+pub(crate) fn proxy_initial_binding_is_bound(
+    record: &SessionRecord,
+    expected_runtime_id: &str,
+) -> bool {
+    record.agent == "codex"
+        && record
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.launch_id == expected_runtime_id)
+        && matches!(
+            decode_binding(record),
+            DecodedBinding::Valid(binding)
+                if binding.revision == 1
+                    && binding.state == "bound"
+                    && binding.applied_runtime_id.as_deref() == Some(expected_runtime_id)
+                    && binding.failure_reason.is_none()
+        )
+}
+
 /// Validate the account currently bound to the live runtime without treating a
 /// queued next-account intent as a reason to reject terminal input. The
 /// app-server proxy remains the structured boundary that fences `turn/start`;

@@ -66,7 +66,9 @@ git ls-files -- '*.md' \
   ':!:docs/devlog/**' \
   ':!:THIRD_PARTY_LICENSES.md' \
   ':!:THIRD_PARTY_NOTICES.md' | while IFS= read -r path; do
-    [[ -f "$path" ]] && printf '%s\n' "$path"
+    if [[ -f "$path" ]]; then
+      printf '%s\n' "$path"
+    fi
   done | LC_ALL=C sort >"$tracked"
 python3 "$helper" <"$tracked" | LC_ALL=C sort >"$measured"
 

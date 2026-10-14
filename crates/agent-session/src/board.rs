@@ -208,7 +208,8 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 /// `cwd` relative to the daemon user's home as `~` or `~/...`; `None` for a
-/// path outside home, a non-normalized path, or an unusable home.
+/// path outside canonical home, a non-normalized path, or a home/cwd that
+/// cannot be resolved. Symlink-equivalent paths retain the same relative identity.
 pub(crate) fn home_relative_cwd(cwd: &str, home: Option<&Path>) -> Option<String> {
     let home = home?;
     // A home of `/` would make every absolute path "home-relative".
@@ -223,7 +224,10 @@ pub(crate) fn home_relative_cwd(cwd: &str, home: Option<&Path>) -> Option<String
     if !normalized(cwd) || !normalized(home) {
         return None;
     }
-    let relative = cwd.strip_prefix(home).ok()?;
+    let home = home.canonicalize().ok()?;
+    home.parent()?;
+    let cwd = cwd.canonicalize().ok()?;
+    let relative = cwd.strip_prefix(&home).ok()?;
     let relative = relative.to_str()?;
     Some(if relative.is_empty() {
         "~".to_string()
@@ -467,13 +471,20 @@ fn project_turn_state(turn_state: &Map<String, Value>) -> Value {
     let source = object(turn_state, "source")
         .map(|source| json!({ "confidence": pick(&source, "confidence") }))
         .unwrap_or(Value::Null);
-    json!({
+    let mut projected = json!({
         "phase": pick(turn_state, "phase"),
         "phase_changed_at": pick(turn_state, "phase_changed_at"),
         "current_turn": current_turn,
         "last_turn": last_turn,
         "source": source,
-    })
+    });
+    if let Some(diagnostic) = object(turn_state, "diagnostic")
+        .as_ref()
+        .and_then(crate::activity::diagnostic_for_board)
+    {
+        projected["diagnostic"] = diagnostic;
+    }
+    projected
 }
 
 /// `(session_id, close_reason)` for every retained closed entry, in order.
@@ -494,6 +505,10 @@ pub(crate) fn closed_reasons_for_test(context: &CliContext) -> Vec<(String, Stri
         })
         .collect()
 }
+
+#[cfg(all(test, unix))]
+#[path = "board/home_cwd_tests.rs"]
+mod home_cwd_tests;
 
 #[cfg(test)]
 mod tests {
@@ -597,6 +612,16 @@ mod tests {
         view
     }
 
+    fn full_view_with_existing_cwd() -> (tempfile::TempDir, PathBuf, Value) {
+        let temp = tempfile::TempDir::new().expect("temporary home");
+        let home = temp.path().join("home");
+        let cwd = home.join("Project/nils-cli");
+        std::fs::create_dir_all(&cwd).expect("checkout");
+        let mut view = full_view();
+        view["cwd"] = json!(cwd.to_str().expect("fixture cwd"));
+        (temp, home, view)
+    }
+
     fn keys(value: &Value) -> Vec<&str> {
         let mut keys: Vec<&str> = value
             .as_object()
@@ -610,8 +635,8 @@ mod tests {
 
     #[test]
     fn projects_exactly_the_allowlisted_fields() {
-        let record = project_record(&full_view(), "host-a", Some(Path::new("/home/user")), true)
-            .expect("projected");
+        let (_temp, home, view) = full_view_with_existing_cwd();
+        let record = project_record(&view, "host-a", Some(&home), true).expect("projected");
         assert_eq!(keys(&record), RECORD_KEYS.to_vec());
         assert_eq!(
             record,
@@ -788,11 +813,10 @@ mod tests {
 
     #[test]
     fn the_spec_record_example_round_trips() {
-        let mut view = full_view();
+        let (_temp, home, mut view) = full_view_with_existing_cwd();
         view["turn_state"]["current_turn"]["attention"] = Value::Null;
         view.as_object_mut().expect("view").remove("agent_profile");
-        let record =
-            project_record(&view, "host-a", Some(Path::new("/home/user")), true).expect("record");
+        let record = project_record(&view, "host-a", Some(&home), true).expect("record");
         assert_eq!(record, spec_example("## Record"));
     }
 
@@ -894,24 +918,34 @@ mod tests {
 
     #[test]
     fn cwd_is_home_relative_or_null() {
-        let home = Some(Path::new("/home/user"));
+        let temp = tempfile::TempDir::new().expect("temporary home");
+        let home = temp.path().join("home");
+        let checkout = home.join("Project/x");
+        let near_prefix = temp.path().join("home-other/x");
+        let outside = temp.path().join("outside");
+        for path in [&checkout, &near_prefix, &outside] {
+            std::fs::create_dir_all(path).expect("fixture directory");
+        }
         for (cwd, expected) in [
-            ("/home/user/Project/x", Some("~/Project/x")),
-            ("/home/user", Some("~")),
-            ("/home/user/", Some("~")),
-            ("/home/username/x", None),
-            ("/srv/repo", None),
-            ("/home/user/../other", None),
-            ("relative/path", None),
+            (checkout.to_str().unwrap().to_owned(), Some("~/Project/x")),
+            (home.to_str().unwrap().to_owned(), Some("~")),
+            (format!("{}/", home.display()), Some("~")),
+            (near_prefix.to_str().unwrap().to_owned(), None),
+            (outside.to_str().unwrap().to_owned(), None),
+            (home.join("../outside").to_str().unwrap().to_owned(), None),
+            ("relative/path".to_owned(), None),
         ] {
             assert_eq!(
-                home_relative_cwd(cwd, home).as_deref(),
+                home_relative_cwd(&cwd, Some(&home)).as_deref(),
                 expected,
                 "cwd={cwd}"
             );
         }
-        assert_eq!(home_relative_cwd("/home/user/x", None), None);
-        assert_eq!(home_relative_cwd("/x", Some(Path::new("/"))), None);
+        assert_eq!(home_relative_cwd(checkout.to_str().unwrap(), None), None);
+        assert_eq!(
+            home_relative_cwd(checkout.to_str().unwrap(), Some(Path::new("/"))),
+            None
+        );
     }
 
     fn stored_session(context: &CliContext, id: &str) -> crate::SessionRecord {

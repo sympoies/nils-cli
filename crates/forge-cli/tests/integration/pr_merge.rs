@@ -19,7 +19,7 @@ use super::support::{StubEnv, parse_envelope, run_forge_cli_in};
 
 const FORBIDDEN_STUB: &str = "#!/bin/sh\necho 'should not run during dry-run' >&2\nexit 99\n";
 
-fn make_gitlab_repo() -> TempDir {
+pub(super) fn make_gitlab_repo() -> TempDir {
     let tempdir = TempDir::new().expect("tempdir");
     let repo = tempdir.path().join("repo");
     fs::create_dir_all(&repo).expect("repo dir");
@@ -56,7 +56,7 @@ fn make_gitlab_repo() -> TempDir {
     tempdir
 }
 
-fn make_github_repo(config: Option<&str>) -> TempDir {
+pub(super) fn make_github_repo(config: Option<&str>) -> TempDir {
     let tempdir = TempDir::new().expect("tempdir");
     let repo = tempdir.path().join("repo");
     fs::create_dir_all(&repo).expect("repo dir");
@@ -94,7 +94,7 @@ fn make_github_repo(config: Option<&str>) -> TempDir {
     tempdir
 }
 
-fn github_merge_stub(
+pub(super) fn github_merge_stub(
     stub: &StubEnv,
     review_nodes: &str,
     thread_nodes: &str,
@@ -109,7 +109,7 @@ fn github_merge_stub(
     )
 }
 
-fn review_loop_marker(with_open_finding: bool) -> String {
+pub(super) fn review_loop_marker(with_open_finding: bool) -> String {
     let mut findings = BTreeMap::new();
     if with_open_finding {
         findings.insert(
@@ -200,7 +200,7 @@ fn github_merge_stub_with_checks(
 /// The merge stub with a caller-provided merge-policy response and extra
 /// `api graphql` case arms (for the merge-queue enqueue and poll requests).
 #[allow(clippy::too_many_arguments)]
-fn github_merge_stub_full(
+pub(super) fn github_merge_stub_full(
     stub: &StubEnv,
     review_nodes: &str,
     thread_nodes: &str,
@@ -249,7 +249,7 @@ case "$1 $2" in
   "pr view")
     case "$*" in
       *"--json mergeCommit "*) printf '%s\n' '{{"mergeCommit":{{"oid":"merge456"}}}}' ;;
-      *) printf '%s\n' '{{"number":7,"url":"https://github.com/acme/widgets/pull/7","state":"OPEN","isDraft":false,"baseRefName":"main","headRefName":"feat/reviews","headRefOid":"head123","title":"feat: reviews","body":""}}' ;;
+      *) printf '%s\n' '{{"number":7,"url":"https://github.com/acme/widgets/pull/7","state":"OPEN","isDraft":false,"baseRefName":"main","headRefName":"feat/reviews","headRepository":{{"nameWithOwner":"acme/widgets"}},"headRefOid":"head123","title":"feat: reviews","body":""}}' ;;
     esac
     ;;
   "repo view")
@@ -282,7 +282,7 @@ esac
     )
 }
 
-fn gitlab_merge_api_stub(stub: &StubEnv) -> String {
+pub(super) fn gitlab_merge_api_stub(stub: &StubEnv) -> String {
     gitlab_merge_api_stub_full(stub, "[]", "null")
 }
 
@@ -294,128 +294,7 @@ fn gitlab_merge_api_stub_with_discussions(stub: &StubEnv, discussions: &str) -> 
 
 /// Base stub: caller provides the MR discussions response (rule 13) and the
 /// MR `description` as a raw JSON value (rule 14 — task-list gate).
-fn gitlab_merge_api_stub_full(stub: &StubEnv, discussions: &str, description: &str) -> String {
-    let sentinel = stub.tempdir.path().join("merged");
-    let args_log = stub.tempdir.path().join("merge-args");
-    format!(
-        r#"#!/bin/sh
-set -e
-case "$1 $2" in
-  "repo view")
-    cat <<'EOF'
-{{
-  "namespace": {{ "full_path": "group" }},
-  "path": "project",
-  "web_url": "https://gitlab.example.com/group/project",
-  "default_branch": "main",
-  "merge_method": "merge",
-  "squash_option": "default_on"
-}}
-EOF
-    ;;
-  "mr view")
-    if [ -e {sentinel} ]; then
-      cat <<'EOF'
-{{
-  "iid": 7,
-  "web_url": "https://gitlab.example.com/group/project/-/merge_requests/7",
-  "description": {description},
-  "state": "merged",
-  "draft": false,
-  "title": "feat: sample",
-  "source_branch": "feat/sample",
-  "target_branch": "main",
-  "merge_status": "can_be_merged",
-  "sha": "abc123",
-  "merge_commit_sha": "def456",
-  "labels": [],
-  "head_pipeline": {{ "id": 99, "status": "success", "web_url": "https://gitlab.example.com/group/project/-/pipelines/99" }}
-}}
-EOF
-    else
-      cat <<'EOF'
-{{
-  "iid": 7,
-  "web_url": "https://gitlab.example.com/group/project/-/merge_requests/7",
-  "description": {description},
-  "state": "opened",
-  "draft": false,
-  "title": "feat: sample",
-  "source_branch": "feat/sample",
-  "target_branch": "main",
-  "merge_status": "can_be_merged",
-  "sha": "abc123",
-  "merge_commit_sha": null,
-  "labels": [],
-  "head_pipeline": {{ "id": 99, "status": "success", "web_url": "https://gitlab.example.com/group/project/-/pipelines/99" }}
-}}
-EOF
-    fi
-    ;;
-  "api graphql") printf '%s\n' '{{"data":{{"project":{{"repository":{{"blobs":{{"nodes":[],"pageInfo":{{"hasNextPage":false}}}}}}}}}}}}' ;;
-  "api --hostname")
-    case "$*" in
-      *"projects/group%2Fproject/pipelines/99/jobs?per_page=100"*)
-        cat <<'EOF'
-[
-  {{
-    "name": "build",
-    "stage": "test",
-    "status": "success",
-    "allow_failure": false,
-    "web_url": "https://gitlab.example.com/group/project/-/jobs/1"
-  }}
-]
-EOF
-        ;;
-      *"projects/group%2Fproject/merge_requests/7") printf '%s\n' '{{"labels":[]}}' ;;
-      *)
-        echo "stub: unexpected api args: $*" >&2
-        exit 99
-        ;;
-    esac
-    ;;
-  "api --paginate")
-    case "$*" in
-      *"projects/group%2Fproject/merge_requests/7/discussions?per_page=100"*)
-        # Merge lock-down rule 13 — review-thread sweep.
-        cat <<'EOF'
-{discussions}
-EOF
-        ;;
-      *)
-        echo "stub: unexpected paginate api args: $*" >&2
-        exit 99
-        ;;
-    esac
-    ;;
-  "api --method")
-    printf '%s\n' "$*" > {args_log}
-    case "$*" in
-      *"PUT"*"--hostname gitlab.example.com"*"projects/group%2Fproject/merge_requests/7/merge"*"squash=true"*"should_remove_source_branch=true"*"sha=abc123"*)
-        touch {sentinel}
-        cat <<'EOF'
-{{ "state": "merged", "merge_commit_sha": "def456" }}
-EOF
-        ;;
-      *)
-        echo "stub: unexpected merge api args: $*" >&2
-        exit 99
-        ;;
-    esac
-    ;;
-  *)
-    echo "stub: unexpected glab args: $*" >&2
-    exit 99
-    ;;
-esac
-"#,
-        sentinel = sentinel.display(),
-        args_log = args_log.display(),
-        discussions = discussions,
-        description = description,
-    )
-}
+use super::gitlab_merge_fixture::gitlab_merge_api_stub_full;
 
 #[test]
 fn pr_merge_dry_run_renders_squash_plan_with_delete_branch() {
@@ -704,7 +583,6 @@ fn pr_merge_keep_branch_conflicts_with_config_delete_branch_true() {
 fn pr_merge_gitlab_uses_api_merge_after_required_checks_pass() {
     let tempdir = make_gitlab_repo();
     let repo_path = tempdir.path().join("repo");
-
     let stub = StubEnv::new();
     let args_log = stub.tempdir.path().join("merge-args");
     let body = gitlab_merge_api_stub(&stub);
@@ -3021,3 +2899,4 @@ fi"#,
     assert!(!merged.exists());
     assert!(!enqueued.exists());
 }
+include!("pr_merge_native_observation.rs");

@@ -7,11 +7,13 @@ mod integration {
     mod auth_status;
     mod cli;
     mod completion_sync;
+    mod completions;
     mod conformance;
     mod exit_codes;
     mod exit_codes_full;
     mod fixture_lint;
     mod forgejo_http;
+    mod gitlab_merge_fixture;
     mod inbox;
     mod issue_atoms;
     mod issue_tracker;
@@ -21,6 +23,7 @@ mod integration {
     mod ledger_blank_comment_probe;
     mod local_ops;
     mod local_path_guard;
+    mod merge_review_opt_out;
     mod operation_effect;
     mod parity;
     mod pr_checks_github;
@@ -49,6 +52,7 @@ mod integration {
     mod repo_view;
     mod required_check_gate;
     mod search;
+    mod stacked_branch;
     mod support;
     mod tracker_grammar;
     mod validations;
