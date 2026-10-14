@@ -3,7 +3,7 @@ use super::*;
 #[derive(Args, Debug, Clone)]
 #[command(after_help = "APPEND ORDER\n  \
       An observation can only be appended at the CURRENT provider head, so \
-      history cannot be backfilled, and a `fixed` disposition requires a \
+      history cannot be backfilled, and first marking a finding `fixed` requires a \
       repaired head. Observe the reviewed head BEFORE pushing the repair:\n    \
       observe --expected-head <reviewed head>   (disposition: open)\n    \
       repair, push\n    \
@@ -33,6 +33,13 @@ use super::*;
       stop requiring fresh maintainer approval at the new head; history stays intact.\n  \
       Proof is capped at 100 commits; complete record/comment size limits still apply.\n  \
       Earlier-assignment retries fail before writes; use approval/extension to resume.\n  \
+      OBSERVATION INVENTORY\n  \
+      Delta input may omit terminal findings: their recorded dispositions are \
+      retained. Include every previously open finding, even on the same head.\n  \
+      Full-set input may repeat an already fixed finding on the same head; \
+      its lifecycle counters remain unchanged and thread references are merged.\n  \
+      Example: after F1 is fixed at H, submit F2 open alone or F1 fixed plus \
+      F2 open at H. First marking an open finding fixed still needs a new head.\n  \
       Check these shapes offline, with no pull request and no provider call, \
       using `pr review-loop validate --findings-file <path>`.\n\n\
       COMBINED DELIVERY OUTCOME\n  \

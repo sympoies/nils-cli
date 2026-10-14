@@ -1058,10 +1058,15 @@ pub fn observe_review_loop(
                     Some(format!("fingerprint={fingerprint}; head={expected_head}")),
                 ));
             };
-            if observation.status == ReviewFindingStatus::Fixed
-                || (finding.blocking
-                    && observation.status == ReviewFindingStatus::Open
-                    && !observation.blocking)
+            if observation.status == ReviewFindingStatus::Fixed {
+                return Err(state_conflict(
+                    "a fixed disposition requires a repaired head; already fixed findings may be omitted or repeated on the same head",
+                    Some(format!("fingerprint={fingerprint}; head={expected_head}")),
+                ));
+            }
+            if finding.blocking
+                && observation.status == ReviewFindingStatus::Open
+                && !observation.blocking
             {
                 return Err(state_conflict(
                     "same-head observation cannot implicitly clear an open blocking finding",
@@ -1137,9 +1142,15 @@ pub fn observe_review_loop(
                     }
                     finding.reopen_count = reopen_count;
                 }
+                finding.threads.extend(observation.threads);
+                finding.threads.sort();
+                finding.threads.dedup();
                 if observation.status == ReviewFindingStatus::Fixed && !head_changed {
+                    if finding.status == ReviewFindingStatus::Fixed {
+                        continue;
+                    }
                     return Err(state_conflict(
-                        "a fixed disposition requires a repaired head",
+                        "a fixed disposition requires a repaired head; already fixed findings may be omitted or repeated on the same head",
                         Some(format!("fingerprint={fingerprint}; head={expected_head}")),
                     ));
                 }
@@ -1148,9 +1159,6 @@ pub fn observe_review_loop(
                     observation.status == ReviewFindingStatus::Open && observation.blocking;
                 finding.last_seen_head = expected_head.to_string();
                 finding.seen_count = finding.seen_count.saturating_add(1);
-                finding.threads.extend(observation.threads);
-                finding.threads.sort();
-                finding.threads.dedup();
             }
             None => {
                 findings.insert(
