@@ -5,7 +5,8 @@ This additive contract supplements [forge-cli v1](forge-cli-spec-v1.md) for
 
 ## Scope fields
 
-Both commands expose these fields alongside the existing check rows:
+Both JSON payloads expose these fields alongside the existing check rows.
+Default text output prints the same fields after its existing summary line:
 
 | Field | Meaning |
 | --- | --- |

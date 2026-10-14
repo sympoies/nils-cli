@@ -320,3 +320,39 @@ fn expired_budget_does_not_start_a_backend_or_admit_an_opt_out() {
     );
     assert!(!stub.tempdir.path().join("gh.called").exists());
 }
+
+#[test]
+fn text_checks_and_wait_expose_the_effective_scope() {
+    for command in ["checks", "wait-checks"] {
+        let stub = backend(":");
+        let out = run_forge_cli(
+            &stub,
+            &[
+                "--provider",
+                "github",
+                "--repo",
+                "example/project",
+                "pr",
+                command,
+                "1",
+            ],
+        );
+        assert_eq!(out.code, 0, "{}", out.stderr);
+        assert!(
+            out.stdout.contains("gate_scope=visible_fallback"),
+            "{}",
+            out.stdout
+        );
+        assert!(
+            out.stdout.contains("configured_required_count=0"),
+            "{}",
+            out.stdout
+        );
+        assert!(out.stdout.contains("gate_count=1"), "{}", out.stdout);
+        assert!(
+            out.stdout.contains("visible_state=success"),
+            "{}",
+            out.stdout
+        );
+    }
+}

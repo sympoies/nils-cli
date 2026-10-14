@@ -451,6 +451,8 @@ fn render_text(payload: &PrChecksPayload) {
         pcount = payload.pending.len(),
         elapsed = payload.duration_ms.unwrap_or(0),
     );
+
+    payload.render_scope_text();
 }
 
 #[cfg(test)]

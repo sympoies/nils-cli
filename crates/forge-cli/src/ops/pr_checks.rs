@@ -1077,6 +1077,8 @@ fn render_text(payload: &PrChecksPayload) {
         fcount = payload.failed.len(),
         pcount = payload.pending.len(),
     );
+
+    payload.render_scope_text();
     for f in &payload.failed {
         println!(
             "  fail: {name}{url}",
