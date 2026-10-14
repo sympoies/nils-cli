@@ -38,7 +38,7 @@ use crate::error::ForgeError;
 use crate::ops::gitlab_api;
 use crate::ops::merge_policy;
 use crate::ops::pr_hold;
-use crate::ops::pr_review_loop::{self, ReviewLoopMergeGate};
+use crate::ops::pr_review_loop::ReviewLoopMergeGate;
 use crate::ops::pr_review_threads;
 use crate::ops::pr_tasks;
 use crate::ops::pr_view;
@@ -163,7 +163,15 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                     None,
                 )
             })?;
-            pr_review_loop::ensure_merge_ready(runner, &ctx, &view.url, args.id, head, true)?;
+            super::pr_merge_review::ensure_merge_ready(
+                runner,
+                &ctx,
+                &view.url,
+                args.id,
+                head,
+                true,
+                args.review_convergence,
+            )?;
         }
         let call = build_dry_run_merge_call(&ctx, args.id, method, delete_branch);
         let payload = DryRunPayload::new(ctx.provider, &call).with_review_convergence(&policy);
@@ -521,13 +529,14 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
                 None,
             )
         })?;
-        pr_review_loop::ensure_merge_ready(
+        super::pr_merge_review::ensure_merge_ready(
             runner,
             ctx,
             &pr.url,
             args.id,
             head,
             settings.review_policy.require,
+            args.review_convergence,
         )?
     } else {
         None
@@ -585,7 +594,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
     // read. Provider-side branch protection remains the atomic enforcement
     // layer for activity racing this final read and the merge mutation.
     if let Some(previous) = review_snapshot.as_ref() {
-        let final_snapshot = review_convergence::recheck_before_merge(
+        let final_snapshot = review_convergence::recheck_before_merge_with_thread_override(
             runner,
             ctx,
             args.id,
@@ -593,31 +602,14 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
             convergence_head,
             settings.review_policy,
             previous,
+            args.allow_unresolved_threads,
         )?;
         review_snapshot = Some(final_snapshot);
     }
 
-    if let Some(previous) = review_loop.as_ref() {
-        review_loop = Some(pr_review_loop::recheck_merge_ready(
-            runner,
-            ctx,
-            &pr.url,
-            args.id,
-            pr.head_sha.as_deref().ok_or_else(|| {
-                ForgeError::validation(
-                    schema_err(),
-                    "review_state_conflict",
-                    "the provider head disappeared before review-loop recheck",
-                    None,
-                )
-            })?,
-            previous,
-        )?);
-    }
-
     // Rule 18 recheck — a freeze started or a queue enabled while the gates
     // above ran must still decide this merge, so the policy is read once more
-    // immediately before the merge or enqueue mutation.
+    // before the merge or enqueue mutation.
     let (policy, merge_freeze_override, method) =
         apply_merge_policy(runner, ctx, &repo, &pr, args, settings.method)?;
     enforce_method_supported(method, &repo)?;
@@ -650,6 +642,26 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         && branch_cleanup
             .as_ref()
             .is_none_or(|cleanup| cleanup.overridden);
+
+    // Make the review-chain CAS the last provider read after policy, holds,
+    // and stacked-branch inspection, shared by merge and queue enqueue.
+    if let Some(previous) = review_loop.as_ref() {
+        review_loop = Some(super::pr_merge_review::recheck_merge_ready(
+            runner,
+            ctx,
+            &pr.url,
+            args.id,
+            pr.head_sha.as_deref().ok_or_else(|| {
+                ForgeError::validation(
+                    schema_err(),
+                    "review_state_conflict",
+                    "the provider head disappeared before review-loop recheck",
+                    None,
+                )
+            })?,
+            previous,
+        )?);
+    }
 
     // All gates clear — invoke the backend, or hand the verified head to the
     // required merge queue and wait for it to land.
@@ -734,7 +746,8 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         no_checks_override_reason: no_checks.reason,
         stale_thread_dispositions,
         review_convergence: review_snapshot,
-        review_loop,
+        review_loop: review_loop
+            .and_then(super::pr_merge_review::MergeReviewGate::into_observation),
     })
 }
 

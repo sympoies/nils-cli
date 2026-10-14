@@ -109,7 +109,7 @@ pub(super) fn github_merge_stub(
     )
 }
 
-fn review_loop_marker(with_open_finding: bool) -> String {
+pub(super) fn review_loop_marker(with_open_finding: bool) -> String {
     let mut findings = BTreeMap::new();
     if with_open_finding {
         findings.insert(
@@ -200,7 +200,7 @@ fn github_merge_stub_with_checks(
 /// The merge stub with a caller-provided merge-policy response and extra
 /// `api graphql` case arms (for the merge-queue enqueue and poll requests).
 #[allow(clippy::too_many_arguments)]
-fn github_merge_stub_full(
+pub(super) fn github_merge_stub_full(
     stub: &StubEnv,
     review_nodes: &str,
     thread_nodes: &str,
@@ -583,7 +583,6 @@ fn pr_merge_keep_branch_conflicts_with_config_delete_branch_true() {
 fn pr_merge_gitlab_uses_api_merge_after_required_checks_pass() {
     let tempdir = make_gitlab_repo();
     let repo_path = tempdir.path().join("repo");
-
     let stub = StubEnv::new();
     let args_log = stub.tempdir.path().join("merge-args");
     let body = gitlab_merge_api_stub(&stub);
@@ -2900,3 +2899,4 @@ fi"#,
     assert!(!merged.exists());
     assert!(!enqueued.exists());
 }
+include!("pr_merge_native_observation.rs");
