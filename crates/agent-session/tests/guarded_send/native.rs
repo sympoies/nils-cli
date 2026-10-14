@@ -34,6 +34,7 @@ impl Server {
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
         fs::write(fixture.root().join("cx.attached"), binding).unwrap();
+        let claim_dir = fixture.root().join("state/sessions/guarded");
         let requests = Arc::new(Mutex::new(Vec::new()));
         let observed = requests.clone();
         let (stop, mut stopped) = tokio::sync::oneshot::channel();
@@ -50,6 +51,7 @@ impl Server {
                         accepted = listener.accept() => accepted.unwrap().0,
                     };
                     let observed = observed.clone();
+                    let claim_dir = claim_dir.clone();
                     tokio::spawn(async move {
                         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
                         while let Some(Ok(Message::Text(text))) = socket.next().await {
@@ -65,7 +67,9 @@ impl Server {
                                     let calls = observed.lock().unwrap();
                                     let submitted = calls.iter().find(|r| r["method"] == "turn/start");
                                     let read_count = calls.iter().filter(|r| r["method"] == "thread/read").count();
-                                    let busy = mode == "busy" || (mode == "late-busy" && read_count >= 3);
+                                    let claimed = fs::read_dir(&claim_dir).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("send-key-"));
+                                    let busy = mode == "busy" || (mode == "late-busy" && read_count >= 3)
+                                        || (mode == "busy-after-claim" && claimed);
                                     let submitted = if mode == "history-lag" && calls.iter().filter(|r| r["method"] == "thread/read" && r["params"]["includeTurns"] == true).count() == 1 { None } else { submitted };
                                     let turns = submitted.map_or(json!([]), |r| json!([{
                                         "id":"turn-one", "status":"inProgress", "items":[{
@@ -94,6 +98,17 @@ impl Server {
             stop: Some(stop),
             thread: Some(thread),
         }
+    }
+
+    fn history_reads(&self) -> usize {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|request| {
+                request["method"] == "thread/read" && request["params"]["includeTurns"] == true
+            })
+            .count()
     }
 
     pub(super) fn mutations(&self) -> Vec<Value> {
@@ -312,6 +327,23 @@ fn native_waits_for_input_visibility_without_resubmission() {
         output.stdout_json()["data"]["native"]["confirmation"],
         "input_observed"
     );
+    assert!(
+        server.history_reads() >= 2,
+        "success must follow a later input-bearing read"
+    );
     assert_eq!(server.mutations().len(), 1);
     fixture.no_delivery();
+}
+
+#[test]
+fn native_turn_start_after_claim_refuses_dispatch_and_retains_key() {
+    let fixture = Fixture::new("codex");
+    let _lease = fixture.bind_codex();
+    let server = Server::start(&fixture, "busy-after-claim");
+    let recovery = fixture.arm_recovery();
+    fixture.refused(&fixture.send(GUARDS), "send-session-not-idle");
+    fixture.unchanged_control_state(&recovery);
+    assert!(server.mutations().is_empty());
+    fixture.refused(&fixture.send(GUARDS), "send-idempotency-key-used");
+    assert!(server.mutations().is_empty());
 }
