@@ -35,6 +35,17 @@ pub fn with_deadline<T>(deadline: Option<Instant>, run: impl FnOnce() -> T) -> T
     run()
 }
 
+pub fn sleep_within_deadline(delay: Duration) -> bool {
+    let deadline = DEADLINE
+        .with(|d| d.get())
+        .unwrap_or_else(|| now() + STANDALONE_TIMEOUT);
+    if now() + delay >= deadline {
+        return false;
+    }
+    std::thread::sleep(delay);
+    now() < deadline
+}
+
 pub fn run(command: &mut Command) -> Result<Output> {
     let deadline = DEADLINE
         .with(|d| d.get())

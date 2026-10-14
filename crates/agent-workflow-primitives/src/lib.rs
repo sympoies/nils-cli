@@ -12,3 +12,4 @@ pub mod test_first_evidence;
 
 mod common;
 mod completion;
+mod path_classes;
