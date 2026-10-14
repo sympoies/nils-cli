@@ -1,4 +1,5 @@
 //! Terminal send delivery; opt-in guards preserve unguarded delivery.
+mod native;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
@@ -32,6 +33,8 @@ pub(crate) struct SendResult {
     pub(crate) submission: Option<send_submit::SubmitReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) guards: Option<send_guard::GuardReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) native: Option<native::Receipt>,
 }
 
 pub(crate) fn send_to_session(
@@ -166,6 +169,7 @@ pub(crate) fn send_to_session(
             .collect(),
         submission,
         guards: None,
+        native: None,
     })
 }
 
@@ -224,7 +228,7 @@ pub(crate) fn load_and_paste_buffer_with_timeout(
     )
 }
 
-fn load_and_paste_guarded(
+pub(crate) fn load_and_paste_guarded(
     tmux_bin: &Path,
     buffer_name: &str,
     target: &str,
@@ -350,6 +354,21 @@ fn guarded(
     };
     admission.check_key()?;
     admission.check(None, "admission")?;
+    if codex_app_server::runtime_is_supported(&record)
+        && args.guards.require_idle
+        && args.guards.require_empty_composer
+        && carries_literal_text(text.as_deref())
+        && args.keys == [SpecialKey::Enter]
+    {
+        return native::deliver(
+            context,
+            args,
+            text.expect("literal native input"),
+            record,
+            tmux_bin,
+            hold_started,
+        );
+    }
     let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
     let mut input_prepared = false;
     let target = format!("{}:0.0", record.tmux_session);
@@ -450,6 +469,7 @@ fn guarded(
             .collect(),
         submission,
         guards: Some(send_guard::GuardReport { atomic: false }),
+        native: None,
     })
 }
 

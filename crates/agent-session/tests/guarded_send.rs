@@ -95,6 +95,7 @@ elif command == 'capture-pane':
         else: print('› \x1b[2mAsk Codex to do anything\x1b[22m\n')
         print('x' * (2 * 1024 * 1024))
         sys.exit(0)
+    if (root / 'draft-fourth-capture').exists() and count >= 4: (root / 'composer').write_text('user addition')
     text = (root / 'composer').read_text()
     # Native capture trims occupied spaces without -N; -T excludes unused cells.
     occupied = text if '-N' in args else text.rstrip(' ')
