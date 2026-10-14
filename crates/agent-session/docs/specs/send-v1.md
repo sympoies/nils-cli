@@ -136,6 +136,62 @@ uncertain outcomes before choosing a new key. Deleting the session state also
 ends its deduplication history. Persistent storage must honor file and
 directory synchronization for restart durability.
 
+## Opt-in native diagnostic trace
+
+`AGENT_SESSION_GUARDED_TRACE_FILE` enables a private timing trace for a supported
+app-server send with both idle/composer guards and exactly one logical Enter.
+Without the variable, no trace file is created. It is diagnostic only: admission,
+locks, the four-second budget, dispatch, deduplication, output and exit codes
+retain their existing behavior. It never retries input or supplies a fallback.
+
+The value must name a new absolute file under a canonical, existing directory
+owned by the caller with no group/other permissions (for example, mode `0700`).
+Symlink ancestors, a symlink target, existing files and unsafe parents are
+refused for tracing. Creation uses mode `0600` and does not overwrite evidence.
+Invalid paths or diagnostic write failures leave the send outcome unchanged;
+a missing, empty or truncated trace is incomplete evidence.
+
+Events are buffered in memory and written once after the send releases its
+record/account locks. The JSONL schema is `agent-session.guarded-trace.v1`, with
+at most 256 records; the last is `trace_truncated` if that bound is reached.
+Every record has a fixed `stage` and monotonic `elapsed_us`, relative to trace
+activation before record-lock acquisition. Record-lock wait/acquisition and
+send-budget start delimit the admission timeline. File setup precedes this
+clock. The record-lock wait is this send's wait, not a provider hook's wait.
+
+RPC records use a trace-local numeric `request` shared by the request/response
+pair, a fixed `method`, optional `include_turns`, request-time `remaining_us`,
+and a fixed response `outcome`. Methods are `connect`, `initialize`,
+`loaded_threads`, `thread_read`, `turn_start` and `compact_start`. Outcomes
+include `ok`, `timeout`, `unavailable`, `rejected`, `deadline_expired` and
+`cancelled` (an unfinished nested request dropped by its enclosing operation).
+Response time means the correlated RPC response was received, not delivery
+confirmation. A `turn_acknowledged` record classifies validity of the returned
+turn identity. Input observations report `observed`, `not_observed` or `invalid`
+and optional thread/turn/text equality booleans. Missing fields remain unknown;
+no raw identity, input, composer, history, credentials, path or provider error
+text is persisted. Observation results do not relax exact-input matching.
+
+A diagnostic run uses the same guarded command and one fresh operation key:
+
+```bash
+# Configure these values for the scheduled disposable session.
+# TRACE_DIR must be an existing canonical absolute directory owned by the caller.
+chmod 700 "$TRACE_DIR"
+AGENT_SESSION_GUARDED_TRACE_FILE="$TRACE_DIR/native-send.jsonl" \
+  agent-session send "$SESSION_ID" --text-stdin --key enter \
+  --expect-runtime "$RUNTIME_ID" --require-idle --require-empty-composer \
+  --idempotency-key "$OPERATION_KEY" --format json < "$INPUT_FILE"
+```
+
+Retain the trace privately with the JSON send receipt and version binding.
+Publish only reviewed classification/timing/equality metadata. An unconfirmed
+receipt still retains its key; neither a missing trace nor later provider
+completion permits another send. Hook dispatch and hook lock-wait timings are
+not collected here; retain them as unavailable rather than inferring them from
+RPC timing or a later completion. The separate read-only `agent-session diagnose`
+bundle provides control-plane classifications, not an RPC or hook-wait trace.
+
 ## Output and exit codes
 
 Unguarded sends keep their existing output, submission retry behavior, and
