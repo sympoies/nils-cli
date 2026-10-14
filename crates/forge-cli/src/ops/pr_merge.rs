@@ -11,6 +11,7 @@
 //! | 8 — required_checks_green (TTL=0)   | fresh `pr.checks --required-only` not all green             | `checks_pending`/`failed` | DATA / RT  |
 //! | 8 — checks_registered (TTL=0)       | no required checks *and* no visible rows, no `--allow-no-checks` / `[checks] none` | `checks_not_registered` | DATA 65 |
 //! | 9 — merge_method_supported          | resolved method not in `repo.view.merge_methods_allowed`    | `merge_method_unsupported`| DATA 65    |
+//! | 20 — branch_dependencies           | source branch has open dependents or cannot be read        | branch-specific kind      | DATA / UNAV |
 //! | 10 — keep_branch_conflict           | `--keep-branch` set while `[merge].delete_branch=true`      | `keep_branch_conflict`    | DATA 65    |
 //! | 12 — review_convergence             | enabled native-review policy has not converged              | review-specific kind       | DATA / UNAV |
 //! | 13 — review_threads_resolved        | unresolved review threads, `--allow-unresolved-threads=0`   | `unresolved_review_threads`| DATA 65   |
@@ -37,7 +38,7 @@ use crate::error::ForgeError;
 use crate::ops::gitlab_api;
 use crate::ops::merge_policy;
 use crate::ops::pr_hold;
-use crate::ops::pr_review_loop::{self, ReviewLoopMergeGate};
+use crate::ops::pr_review_loop::ReviewLoopMergeGate;
 use crate::ops::pr_review_threads;
 use crate::ops::pr_tasks;
 use crate::ops::pr_view;
@@ -61,6 +62,8 @@ pub struct PrMergePayload {
     pub merge_sha: String,
     pub method: &'static str,
     pub deleted_branch: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch_cleanup: Option<super::stacked_branch::BranchCleanup>,
     /// True when the base branch required a merge queue and the PR landed
     /// through it instead of the direct merge API.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -160,7 +163,15 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
                     None,
                 )
             })?;
-            pr_review_loop::ensure_merge_ready(runner, &ctx, &view.url, args.id, head, true)?;
+            super::pr_merge_review::ensure_merge_ready(
+                runner,
+                &ctx,
+                &view.url,
+                args.id,
+                head,
+                true,
+                args.review_convergence,
+            )?;
         }
         let call = build_dry_run_merge_call(&ctx, args.id, method, delete_branch);
         let payload = DryRunPayload::new(ctx.provider, &call).with_review_convergence(&policy);
@@ -518,13 +529,14 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
                 None,
             )
         })?;
-        pr_review_loop::ensure_merge_ready(
+        super::pr_merge_review::ensure_merge_ready(
             runner,
             ctx,
             &pr.url,
             args.id,
             head,
             settings.review_policy.require,
+            args.review_convergence,
         )?
     } else {
         None
@@ -594,8 +606,46 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         review_snapshot = Some(final_snapshot);
     }
 
+    // Rule 18 recheck — a freeze started or a queue enabled while the gates
+    // above ran must still decide this merge, so the policy is read once more
+    // before the merge or enqueue mutation.
+    let (policy, merge_freeze_override, method) =
+        apply_merge_policy(runner, ctx, &repo, &pr, args, settings.method)?;
+    enforce_method_supported(method, &repo)?;
+    let queue = policy.as_ref().and_then(|policy| policy.queue.as_ref());
+
+    // Fresh, complete label read after the other gates, shared by direct merge
+    // and queue enqueue. A new head never clears a provider hold.
+    pr_hold::ensure_clear(runner, ctx, args.id, &pr.base, settings.hold_labels)?;
+
+    let target_repository = format!("{}/{}", repo.owner, repo.name);
+    let github_auto_delete = ctx.provider == Provider::GitHub
+        && pr
+            .head_repository
+            .as_deref()
+            .is_none_or(|source| source.eq_ignore_ascii_case(&target_repository));
+    let branch_cleanup = if settings.delete_branch || github_auto_delete {
+        super::stacked_branch::check(
+            runner,
+            ctx,
+            &target_repository,
+            pr.head_repository.as_deref(),
+            &pr.head,
+            args.id,
+            args.delete_branch_even_if_stacked,
+        )?
+    } else {
+        None
+    };
+    let delete_branch = settings.delete_branch
+        && branch_cleanup
+            .as_ref()
+            .is_none_or(|cleanup| cleanup.overridden);
+
+    // Make the review-chain CAS the last provider read after policy, holds,
+    // and stacked-branch inspection, shared by merge and queue enqueue.
     if let Some(previous) = review_loop.as_ref() {
-        review_loop = Some(pr_review_loop::recheck_merge_ready(
+        review_loop = Some(super::pr_merge_review::recheck_merge_ready(
             runner,
             ctx,
             &pr.url,
@@ -611,18 +661,6 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
             previous,
         )?);
     }
-
-    // Rule 18 recheck — a freeze started or a queue enabled while the gates
-    // above ran must still decide this merge, so the policy is read once more
-    // immediately before the merge or enqueue mutation.
-    let (policy, merge_freeze_override, method) =
-        apply_merge_policy(runner, ctx, &repo, &pr, args, settings.method)?;
-    enforce_method_supported(method, &repo)?;
-    let queue = policy.as_ref().and_then(|policy| policy.queue.as_ref());
-
-    // Fresh, complete label read after the other gates, shared by direct merge
-    // and queue enqueue. A new head never clears a provider hold.
-    pr_hold::ensure_clear(runner, ctx, args.id, &pr.base, settings.hold_labels)?;
 
     // All gates clear — invoke the backend, or hand the verified head to the
     // required merge queue and wait for it to land.
@@ -669,7 +707,7 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
             None => fetch_merge_sha(runner, ctx, args.id)?,
         }
     } else {
-        let merge_call = build_live_merge_call(ctx, args.id, &pr, method, settings.delete_branch)?;
+        let merge_call = build_live_merge_call(ctx, args.id, &pr, method, delete_branch)?;
         invoke_merge_with_idempotency_check(
             runner,
             ctx,
@@ -688,7 +726,8 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         merge_sha,
         method: method.as_str(),
         // The queue applies the repository's own head-branch deletion setting.
-        deleted_branch: queue.is_none() && settings.delete_branch,
+        deleted_branch: queue.is_none() && delete_branch,
+        branch_cleanup,
         merge_queue: queue.is_some(),
         merge_freeze_override,
         base: pr.base,
@@ -706,7 +745,8 @@ fn run_lockdown_chain<R: BackendRunner, C: Clock>(
         no_checks_override_reason: no_checks.reason,
         stale_thread_dispositions,
         review_convergence: review_snapshot,
-        review_loop,
+        review_loop: review_loop
+            .and_then(super::pr_merge_review::MergeReviewGate::into_observation),
     })
 }
 
@@ -882,6 +922,7 @@ fn fetch_pr_view<R: BackendRunner>(
         head: payload.head,
         state: payload.state.to_string(),
         head_sha,
+        head_repository: payload.head_repository,
         body,
     })
 }
@@ -1109,6 +1150,9 @@ fn schema_err() -> String {
 }
 
 fn render_text(payload: &PrMergePayload) {
+    if let Some(cleanup) = &payload.branch_cleanup {
+        println!("{}", cleanup.message);
+    }
     println!(
         "merged #{number} via {method} → {sha}{deleted}\n  {url}",
         number = payload.number,
@@ -1134,6 +1178,7 @@ struct PrView {
     head: String,
     state: String,
     head_sha: Option<String>,
+    head_repository: Option<String>,
     /// PR/MR description used by the rule-14 task-list gate; empty when the
     /// provider has no body model.
     body: String,
@@ -1193,6 +1238,7 @@ mod tests {
             expected_base: None,
             method: None,
             keep_branch: false,
+            delete_branch_even_if_stacked: false,
             allow_non_default_base: false,
             allow_unresolved_threads: false,
             allow_unresolved_threads_reason: None,
@@ -1243,6 +1289,7 @@ mod tests {
             head: "feat/subject".into(),
             state: "open".into(),
             head_sha: Some("abc123".into()),
+            head_repository: None,
             body: String::new(),
         };
         let call =

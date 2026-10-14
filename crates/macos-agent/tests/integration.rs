@@ -16,3 +16,6 @@ mod mcp;
 mod peekaboo_contract;
 #[path = "integration/transport.rs"]
 mod transport;
+
+#[path = "integration/visibility.rs"]
+mod visibility;

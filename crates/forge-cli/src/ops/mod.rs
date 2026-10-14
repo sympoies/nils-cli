@@ -31,6 +31,7 @@ pub mod pr_edit;
 pub(crate) mod pr_hold;
 pub mod pr_list;
 pub mod pr_merge;
+mod pr_merge_review;
 pub mod pr_pending_review;
 pub mod pr_ready;
 pub mod pr_review;
@@ -60,3 +61,5 @@ pub mod release;
 pub mod repo_list;
 pub mod security;
 pub mod workflow;
+
+pub(crate) mod stacked_branch;
