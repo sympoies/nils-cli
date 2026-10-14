@@ -59,6 +59,42 @@ override_class = "locked"
 capability = { id = "runtime-kit.handler.v1", handler_id = "pre-edit-intent-gate" }
 "#;
 
+#[test]
+fn retired_locked_dsh_pre_edit_binding_fails_closed_with_migration_diagnostic() {
+    let policy = r#"schema_version = "agent-hook.policy.v1"
+bundle_id = "transitional-dsh"
+version = "1"
+[[rules]]
+id = "transitional-pre-edit"
+products = ["dsh"]
+events = ["PreToolUse"]
+matcher = "write"
+priority = 10
+mode = "enforce"
+failure_posture = "closed"
+override_class = "locked"
+capability = { id = "dsh.policy.v1", group = "pre-edit-intent-gate" }
+"#;
+    let fixture = Fixture::new(policy);
+    let input = serde_json::json!({"schema_version":"agent-hook.dsh-ingress.v2","event":"tools/pre-execute","call_id":"call-1","cwd":fixture.root,"subject":{"session_id":"session-1","turn":1,"step":1,"agent_docs_state_home":fixture.state_home.join("dsh-runtime-kit")},"tool":{"name":"write","arguments":{"file_path":fixture.root.join("README.md"),"content":"updated"}}});
+    let output = fixture.run(
+        &["dispatch", "--product", "dsh", "--format", "json"],
+        Some(&input.to_string()),
+    );
+    let envelope = output.stdout_json();
+    assert_eq!(
+        envelope["data"]["action"],
+        "block",
+        "{}",
+        output.stdout_text()
+    );
+    assert!(
+        envelope
+            .to_string()
+            .contains("retired pre-edit intent gate")
+    );
+}
+
 fn install_fallback_handler(fixture: &Fixture) {
     for hooks in [
         fixture.home.join(".codex/hooks"),

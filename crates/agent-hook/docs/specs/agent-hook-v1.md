@@ -1061,6 +1061,11 @@ The v1 allowlist is:
 `skill-usage-reminder`, `stop-finish-line-gate`, `stop-pre-pr-reminder`,
 `user-prompt-agent-docs`, and `user-prompt-agent-memory`.
 
+The transitional DSH `pre-edit-intent-gate` binding remains recognized for policy
+compatibility, but requests fail closed with a migration diagnostic. The
+separate verified read-only fallback remains available. Policies must migrate
+that DSH binding to the current runtime-kit validation contract before edits.
+
 Handler resolution selects the compiled `.py` or `.sh` suffix, rejects
 symlinks/non-regular files and owner/permission drift, passes the original
 bounded provider JSON on standard input, and preserves the handler's provider

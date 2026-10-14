@@ -77,6 +77,39 @@ fn validation_file_contract_blocks_edit_until_declared_command_runs() {
     assert_eq!(allowed["data"]["action"], "allow");
 }
 
+#[test]
+fn padded_validation_command_matches_after_contract_normalization() {
+    let fixture = fixture();
+    fs::write(
+        fixture.root.join("VALIDATION.toml"),
+        "[[validation]]\ncontext = \"project-dev\"\ncommands = [\" true \"]\n",
+    )
+    .expect("validation contract");
+    let _runner = open_runner(&fixture, "normalized-command-session", "turn-1");
+    begin_edit(&fixture, "normalized-command-session", "turn-1", "edit-1");
+    assert_eq!(
+        stop(&fixture, "normalized-command-session").1["data"]["action"],
+        "block"
+    );
+    assert_eq!(
+        run_validation(
+            &fixture,
+            "normalized-command-session",
+            "turn-1",
+            "validation-1",
+            "project-dev",
+            "true",
+            30_000
+        )
+        .0,
+        0
+    );
+    assert_eq!(
+        stop(&fixture, "normalized-command-session").1["data"]["action"],
+        "allow"
+    );
+}
+
 fn common(fixture: &Fixture, session_id: &str, turn_id: &str) -> Value {
     json!({
         "product": "dsh",

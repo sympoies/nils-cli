@@ -456,7 +456,7 @@ fn evaluate_group(
                 unsafe_default_native_mutation(request, raw, effect)?
             }
         }
-        DshCapabilityGroup::PreEditIntentGate => return Ok(Outcome::allow(group)),
+        DshCapabilityGroup::PreEditIntentGate => return Ok(Outcome::block(group)),
         DshCapabilityGroup::AgentScopeLockGuard => {
             return scope_lock(request, run_child);
         }

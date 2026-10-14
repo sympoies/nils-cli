@@ -26,7 +26,7 @@ crates/agent-session/tests/integration/coordination.rs	test	5408
 crates/agent-workflow-primitives/src/heuristic_inbox.rs	impl	4085
 crates/agent-workflow-primitives/src/repo_retro.rs	impl	2487
 crates/agent-workflow-primitives/src/review_specialists.rs	impl	2736
-crates/agent-workflow-primitives/src/test_first_evidence.rs	impl	2157
+crates/agent-workflow-primitives/src/test_first_evidence.rs	impl	2155
 crates/agent-workflow-primitives/tests/integration/cli.rs	test	3672
 crates/codex-cli/src/agent/capsule.rs	impl	2626
 crates/codex-cli/tests/integration/execution_capsule.rs	test	3083

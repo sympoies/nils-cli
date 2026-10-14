@@ -182,15 +182,15 @@ fn check_pre_edit(args: &CheckArgs, record: &EvidenceRecord) -> Result<CheckResu
         ));
     }
     let project = absolute_path(project)?;
-    let contract =
+    let Some(contract) =
         crate::path_classes::PathClassContract::load_project(&project).map_err(|err| {
             CliError::data(
                 "path-class-catalog-invalid",
-                err,
-                Some(json!({ "project_path": display_path(&project) })),
+                format!("{err}: {}", display_path(&project)),
+                None,
             )
-        })?;
-    let Some(contract) = contract else {
+        })?
+    else {
         return Ok(CheckResult {
             phase: args.phase.as_str().to_string(),
             path_class: "not-configured".to_string(),
@@ -920,12 +920,10 @@ fn v1_record_error(record_file: Option<String>) -> CliError {
     )
 }
 
-/// Verify a test-first-evidence record directory for external callers such as
-/// the `forge-cli` PR test-first gate. Returns the structured [`VerifyResult`]
-/// (inspect `complete` / `missing`), or an error message when the record
-/// directory is missing or unreadable. A record is `complete` when it carries
-/// a failing test (non-zero exit) or an explicit waiver, plus a passing final
-/// validation.
+/// Verify test-first evidence for external callers such as `forge-cli`'s PR
+/// gate. Returns a [`VerifyResult`] or an error for missing/unreadable records.
+/// A record is complete when it has a failing test or waiver, plus passing
+/// final validation.
 pub fn verify_dir(out_dir: &Path) -> Result<VerifyResult, String> {
     let result = read_record_result(out_dir).map_err(|err| err.message)?;
     let missing = missing_evidence_fields(&result.record);
