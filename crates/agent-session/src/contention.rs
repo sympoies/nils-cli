@@ -46,6 +46,7 @@ fn recovery(mut error: CliError, action: &str, outcome: &str) -> CliError {
             "retry-create" => "Retry session creation; failed-start cleanup is complete.",
             "retry-delete" => "Retry deletion for the same session.",
             "retry-archive" => "Retry archiving the same session.",
+            "retry-resume" => "Retry resuming the same session; prior durable state was restored.",
             _ => "Wait for contention to clear, then retry the same request.",
         };
         return error.with_hint(hint);
@@ -63,6 +64,37 @@ pub(crate) fn close_error(error: CliError, reason: crate::board::CloseReason) ->
         crate::board::CloseReason::Archived => "retry-archive",
     };
     recovery(error, action, "record_retained")
+}
+
+fn provisioning_not_admitted(error: &CliError) -> bool {
+    error.code() == "coordination-lock-timeout"
+        && error.details().and_then(|details| details.get("retryable")) == Some(&json!(true))
+        && error.details().and_then(|details| details.get("recovery"))
+            == Some(&json!({ "kind": "lifecycle-contention", "outcome": "not_admitted" }))
+}
+
+/// Resume reaches this rollback only after launch was absent or runtime cleanup
+/// was confirmed. A provisioning timeout never installed the new broker.
+/// `false` means no revocation was needed; it does not claim a broker was revoked.
+pub(crate) fn revoke_failed_resume(
+    context: &crate::CliContext,
+    record: &crate::SessionRecord,
+    launch_error: &CliError,
+) -> Result<bool, CliError> {
+    if provisioning_not_admitted(launch_error) {
+        Ok(false)
+    } else {
+        crate::coordination::revoke(context, record).map(|()| true)
+    }
+}
+
+/// Called only after all prior durable state has been restored successfully.
+pub(crate) fn resume_error(error: CliError) -> CliError {
+    if provisioning_not_admitted(&error) {
+        recovery(error, "retry-resume", "prior_restored")
+    } else {
+        error
+    }
 }
 
 pub(crate) fn incomplete_create_cleanup(details: &mut Map<String, Value>) {
@@ -149,5 +181,34 @@ mod tests {
             error.details().unwrap()["recovery"]["outcome"],
             "cleanup_incomplete"
         );
+    }
+
+    #[test]
+    fn uncertain_resume_admission_cannot_authorize_retry() {
+        for (code, details) in [
+            ("coordination-lock-timeout", json!({})),
+            (
+                "coordination-lock-timeout",
+                json!({ "retryable": false, "recovery": {
+                    "kind": "lifecycle-contention", "outcome": "not_admitted"
+                }}),
+            ),
+            (
+                "coordination-lock-timeout",
+                json!({ "retryable": true, "recovery": {
+                    "kind": "lifecycle-contention", "outcome": "cleanup_incomplete"
+                }}),
+            ),
+            (
+                "session-record-lock-timeout",
+                json!({ "retryable": true, "recovery": {
+                    "kind": "lifecycle-contention", "outcome": "not_admitted"
+                }}),
+            ),
+        ] {
+            let error = resume_error(CliError::runtime(code, "busy", Some(details.clone())));
+            assert_eq!(error.code(), code);
+            assert_eq!(error.details().unwrap(), &details);
+        }
     }
 }

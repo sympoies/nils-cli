@@ -596,6 +596,7 @@ recorded in `sympoies/nils-cli#1409`.
   acknowledgement wait, or the pane lists the prompt among its queued messages behind a running turn; the queued case adds
   `queued: true` and the prompt runs as the next turn, so the client MUST NOT resend it. A new turn omits `queued`.
   When neither is observed the route answers 500 `structured-prompt-outcome-unknown`.
+
   For an already resumed Codex runtime whose terminal path reports local
   JSON-RPC `-32001` busy, the error alone does not prove rejection before
   provider acceptance: the same response can be emitted while an earlier
@@ -607,9 +608,31 @@ recorded in `sympoies/nils-cli#1409`.
   `manual_marker_thread_mismatch`, `manual_marker_replaced`,
   `manual_marker_invalid`, `manual_ack_failed`, `runtime_identity_missing`,
   `manual_cancellation_busy`, `runtime_changed`, and
-  `account_authority_unavailable`. Older proxies may omit `data.reason`, and
+  `account_authority_unavailable`.
+
+  Older proxies may omit `data.reason`, and
   clients MUST tolerate an absent or unknown reason while retaining the stable
-  code/message fallback. A durably bound exact-runtime account
+  code/message fallback. Current proxies also add `error.data.retryable`
+  (boolean), `error.data.next_action` (string), and
+  `error.data.recovery` (an object with `outcome: "not_forwarded"`). These fields
+  contain only the following fixed values:
+
+  | `data.reason` | `data.retryable` | `data.next_action` |
+  | --- | --- | --- |
+  | `manual_cancellation_busy`, `turn_gate_busy` | `true` | `retry-request-after-state-change` |
+  | `turn_already_pending` | `false` | `inspect-session-state` |
+  | All other current reasons listed above | `false` | `inspect-session-state` |
+
+  `not_forwarded` describes only the frame rejected by this proxy response. It
+  does not establish that an earlier request, including an earlier request with
+  the same JSON-RPC ID, was never forwarded or accepted by the provider.
+  `retryable: true` classifies this rejection as transient state contention;
+  it does not authorize automatic replay. Both next actions require the
+  refresh/inspection and exact-incarnation recovery rules below. Clients MUST
+  tolerate absent or unknown recovery fields from older proxies and preserve
+  the stable code/message fallback and no-blind-replay behavior.
+
+  A durably bound exact-runtime account
   remains valid in a detached tmux scope without inheriting the daemon's broker
   command; the broker is still mandatory for binding and account mutation. A
   client MUST first refresh `GET /sessions` and

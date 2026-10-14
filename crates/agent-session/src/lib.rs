@@ -5811,7 +5811,7 @@ fn resume_session_locked(
         Err(err) => Some(err),
     };
     if let Some(launch_err) = launch_error {
-        let coordination_revoke = coordination::revoke(context, &record);
+        let coordination_revoke = contention::revoke_failed_resume(context, &record, &launch_err);
         let record_restore = write_session_record(context, &previous_record);
         let activity_restore = activity::restore_snapshot(context, &record.id, &previous_activity);
         let artifact_restore = startup_artifacts.restore();
@@ -5826,14 +5826,14 @@ fn resume_session_locked(
                 Some(json!({
                     "id": record.id,
                     "launch_error": launch_err.code(),
-                    "new_coordination_revoked": coordination_revoke.is_ok(),
+                    "new_coordination_revoked": coordination_revoke.is_ok_and(|revoked| revoked),
                     "record_restored": record_restore.is_ok(),
                     "activity_restored": activity_restore.is_ok(),
                     "startup_artifacts_restored": artifact_restore.is_ok()
                 })),
             ));
         }
-        return Err(launch_err);
+        return Err(contention::resume_error(launch_err));
     }
     if let (Ok(previous_incarnation), Ok(current_incarnation)) = (
         coordination::incarnation(&previous_record),

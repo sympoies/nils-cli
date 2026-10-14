@@ -85,6 +85,12 @@ Exhausted lifecycle contention preserves `coordination-lock-timeout` and adds
 A failed create reports `retry-create` and `not_created` only after verified
 runtime cleanup. Incomplete cleanup forbids blind create retry.
 
+A resume provisioning timeout reports `retry-resume` and `prior_restored` only
+when the new broker was proven not admitted, runtime cleanup was confirmed, and
+the prior record, activity and startup artifacts were fully restored. That
+never-admitted incarnation needs no revocation. Uncertain admission, cleanup or
+restoration retains the rollback refusal; callers must inspect the same session.
+
 Delete/archive retains the original addressable record on exhaustion and reports
 `retry-delete`/`retry-archive` and `record_retained`; an exact retry completes the
 persisted termination transition. It never retries the provider launch or

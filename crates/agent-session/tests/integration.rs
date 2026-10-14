@@ -20,6 +20,8 @@ mod mailbox_quota_warning;
 mod metadata;
 #[path = "integration/readiness.rs"]
 mod readiness;
+#[path = "integration/resume_contention.rs"]
+mod resume_contention;
 #[path = "integration/resume_mail.rs"]
 mod resume_mail;
 #[path = "integration/retitle_v3.rs"]

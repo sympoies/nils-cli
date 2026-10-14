@@ -75,7 +75,7 @@ fn lifecycle_provision_survives_concurrent_registry_readers() {
     let started = Instant::now();
     let result = broker::provision(&context, &record);
     held.join().unwrap();
-    assert!(result.is_ok(), "{result:?}");
+    assert!(result.is_ok(), "session provisioning failed");
     assert!(started.elapsed() < Duration::from_secs(6));
     let registry = lock_registry_observational(&context).unwrap();
     assert_eq!(
@@ -107,7 +107,7 @@ fn lifecycle_delete_and_close_survive_concurrent_registry_readers() {
             crate::delete_session(&context, &record.id, fixture_tmux(&context))
         };
         held.join().unwrap();
-        assert!(result.is_ok(), "close={close}: {result:?}");
+        assert!(result.is_ok(), "session cleanup failed");
         assert!(started.elapsed() < Duration::from_secs(6));
         assert!(!crate::session_dir(&context, &record.id).exists());
     }
