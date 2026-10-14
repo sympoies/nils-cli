@@ -6,10 +6,6 @@
 //! the same bound thread and turn. Auto-resume distinguishes
 //! `usageLimitExceeded` from bounded `serverOverloaded` capacity recovery.
 
-#[path = "codex_app_server/proxy_contention.rs"]
-mod proxy_contention;
-use proxy_contention::tui_busy_response;
-
 pub(crate) mod guarded;
 mod idle_probe;
 
@@ -36,6 +32,12 @@ use sha2::{Digest, Sha256};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
+
+mod account_authority;
+use account_authority::{
+    TuiMutationRejection, account_authority_rejection, manual_cancellation_busy, tui_busy_response,
+    wait_for_initial_thread_start_binding,
+};
 
 use crate::{
     AgentKind, CliContext, CliError, ProviderResume, SessionRecord, auto_resume::UsageSnapshot,
@@ -1300,49 +1302,6 @@ fn acquire_manual_input_gate(
         gate_file,
         _owner_file: Some(owner_file),
     })
-}
-
-/// Serialize a provider `turn/start` with account mutation. The proxy takes
-/// this gate before forwarding and retains it through the matching JSON-RPC
-/// response, closing the accepted-but-not-yet-observed turn window. A manual
-/// sender marker, when present, is revalidated under the same lock.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TuiMutationRejection {
-    TurnAlreadyPending,
-    AccountMutationForbidden,
-    AccountNotReady,
-    TurnRequestInvalid,
-    TurnGateOpenFailed,
-    TurnGateBusy,
-    ManualMarkerThreadMismatch,
-    ManualMarkerReplaced,
-    ManualMarkerInvalid,
-    ManualAckFailed,
-    RuntimeIdentityMissing,
-    ManualCancellationBusy,
-    RuntimeChanged,
-    AccountAuthorityUnavailable,
-}
-
-impl TuiMutationRejection {
-    fn code(self) -> &'static str {
-        match self {
-            Self::TurnAlreadyPending => "turn_already_pending",
-            Self::AccountMutationForbidden => "account_mutation_forbidden",
-            Self::AccountNotReady => "account_not_ready",
-            Self::TurnRequestInvalid => "turn_request_invalid",
-            Self::TurnGateOpenFailed => "turn_gate_open_failed",
-            Self::TurnGateBusy => "turn_gate_busy",
-            Self::ManualMarkerThreadMismatch => "manual_marker_thread_mismatch",
-            Self::ManualMarkerReplaced => "manual_marker_replaced",
-            Self::ManualMarkerInvalid => "manual_marker_invalid",
-            Self::ManualAckFailed => "manual_ack_failed",
-            Self::RuntimeIdentityMissing => "runtime_identity_missing",
-            Self::ManualCancellationBusy => "manual_cancellation_busy",
-            Self::RuntimeChanged => "runtime_changed",
-            Self::AccountAuthorityUnavailable => "account_authority_unavailable",
-        }
-    }
 }
 
 fn acquire_turn_start_gate(
@@ -4692,6 +4651,7 @@ async fn cancel_before_tui_mutation_detailed(
             _account_authority: None,
         });
     }
+    wait_for_initial_thread_start_binding(context, record, method, bootstrap).await?;
     if method == Some("turn/start") && !ensure_turn_start_account_ready(context, record).await {
         bootstrap.close();
         return Err(TuiMutationRejection::AccountNotReady);
@@ -4744,29 +4704,66 @@ async fn cancel_before_tui_mutation_detailed(
         .is_some_and(|gate| gate._owner_file.is_some());
     let wait_for_transient_lock = bootstrap_gate.is_none() && !sender_owns_record_authority;
     let record_turn_fence = method == Some("turn/start");
+    let operation = if method == Some("thread/start") {
+        "thread_start_cancellation"
+    } else {
+        "turn_start_cancellation"
+    };
     let cancellation = tokio::task::spawn_blocking(move || {
-        let now = Timestamp::now().to_string();
-        if wait_for_transient_lock {
-            crate::auto_resume::cancel_for_manual_input_for_runtime_with_timeout(
-                &cancellation_context,
-                &id,
-                &launch_id,
-                &now,
-                record_turn_fence,
-            )
-        } else {
-            crate::auto_resume::try_cancel_for_manual_input_for_runtime(
-                &cancellation_context,
-                &id,
-                &launch_id,
-                &now,
-                record_turn_fence,
-            )
-        }
+        crate::auto_resume::retry_manual_input_cancellation(wait_for_transient_lock, || {
+            let now = Timestamp::now().to_string();
+            if wait_for_transient_lock {
+                crate::auto_resume::cancel_for_manual_input_for_runtime_with_timeout(
+                    &cancellation_context,
+                    &id,
+                    &launch_id,
+                    &now,
+                    record_turn_fence,
+                )
+            } else {
+                crate::auto_resume::try_cancel_for_manual_input_for_runtime(
+                    &cancellation_context,
+                    &id,
+                    &launch_id,
+                    &now,
+                    record_turn_fence,
+                )
+            }
+        })
     })
-    .await
-    .map_err(|_| TuiMutationRejection::AccountAuthorityUnavailable)?
-    .map_err(|_| TuiMutationRejection::AccountAuthorityUnavailable)?;
+    .await;
+    let cancellation = match cancellation {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(error)) => {
+            let code = match error.code() {
+                "session-record-lock-timeout" => "session-record-lock-timeout",
+                "session-state-ancestor-unavailable" => "session-state-ancestor-unavailable",
+                "session-record-invalid" => "session-record-invalid",
+                "session-incarnation-conflict" => "session-incarnation-conflict",
+                _ => "authority_operation_failed",
+            };
+            return Err(account_authority_rejection(
+                context,
+                record,
+                operation,
+                "session_authority_cancellation",
+                code,
+                code == "session-record-lock-timeout",
+            )
+            .await);
+        }
+        Err(_) => {
+            return Err(account_authority_rejection(
+                context,
+                record,
+                operation,
+                "cancellation_task_join",
+                "authority_task_failed",
+                false,
+            )
+            .await);
+        }
+    };
     // Either gate proves that the outer sender still owns the matching
     // record/lifecycle authority. Reacquiring the record lock while holding
     // the gate would invert marker teardown's lock order.
@@ -4803,7 +4800,7 @@ async fn cancel_before_tui_mutation_detailed(
             })
         }
         crate::auto_resume::ManualInputCancelOutcome::Busy => {
-            Err(TuiMutationRejection::ManualCancellationBusy)
+            Err(manual_cancellation_busy(context, record, operation).await)
         }
         crate::auto_resume::ManualInputCancelOutcome::RuntimeChanged => {
             bootstrap.close();
@@ -4815,9 +4812,20 @@ async fn cancel_before_tui_mutation_detailed(
             Ok(authorization) => authorization,
             Err(rejection) => return Err(*rejection),
         };
-        let authority = lock_turn_start_account_authority(context, record)
-            .await
-            .ok_or(TuiMutationRejection::AccountAuthorityUnavailable)?;
+        let authority = match lock_turn_start_account_authority(context, record).await {
+            Some(authority) => authority,
+            None => {
+                return Err(account_authority_rejection(
+                    context,
+                    record,
+                    "turn_start_account_authority",
+                    "account_authority_lock",
+                    "session-authority-unavailable",
+                    false,
+                )
+                .await);
+            }
+        };
         authorization._account_authority = Some(authority);
     }
     authorization

@@ -97,7 +97,15 @@ async fn thread_start_contention_is_retried_before_forwarding_exactly_once() {
 fn permanent_tui_refusals_are_not_classified_as_retryable_contention() {
     for rejection in [
         TuiMutationRejection::AccountMutationForbidden,
-        TuiMutationRejection::AccountAuthorityUnavailable,
+        TuiMutationRejection::AccountAuthorityUnavailable {
+            operation: "turn_start_account_authority",
+            stage: "account_authority_lock",
+            code: "session-authority-unavailable",
+            retryable: false,
+            binding_state: "bound",
+            binding_revision: 1,
+            receipt_written: true,
+        },
         TuiMutationRejection::RuntimeChanged,
     ] {
         let Message::Text(text) = tui_busy_response(&json!(1), rejection) else {
@@ -151,12 +159,28 @@ fn tui_busy_response_preserves_stable_contract_for_every_rejection() {
             "runtime_identity_missing",
         ),
         (
-            TuiMutationRejection::ManualCancellationBusy,
+            TuiMutationRejection::ManualCancellationBusy {
+                operation: "thread_start_cancellation",
+                stage: "session_record_lock",
+                code: "session-record-lock-busy",
+                retryable: true,
+                binding_state: "pending",
+                binding_revision: 8,
+                receipt_written: true,
+            },
             "manual_cancellation_busy",
         ),
         (TuiMutationRejection::RuntimeChanged, "runtime_changed"),
         (
-            TuiMutationRejection::AccountAuthorityUnavailable,
+            TuiMutationRejection::AccountAuthorityUnavailable {
+                operation: "thread_start_cancellation",
+                stage: "session_authority_cancellation",
+                code: "authority_operation_failed",
+                retryable: false,
+                binding_state: "pending",
+                binding_revision: 8,
+                receipt_written: true,
+            },
             "account_authority_unavailable",
         ),
     ] {
@@ -171,5 +195,13 @@ fn tui_busy_response_preserves_stable_contract_for_every_rejection() {
             "agent-session state is busy; retry the request"
         );
         assert_eq!(response["error"]["data"]["reason"], reason);
+        if reason == "manual_cancellation_busy" {
+            assert_eq!(response["error"]["data"]["retryable"], true);
+            assert_eq!(
+                response["error"]["data"]["cause"]["code"],
+                "session-record-lock-busy"
+            );
+            assert_eq!(response["error"]["data"]["cause"]["receipt_written"], true);
+        }
     }
 }

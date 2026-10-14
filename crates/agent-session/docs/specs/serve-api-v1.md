@@ -615,22 +615,31 @@ recorded in `sympoies/nils-cli#1409`.
   code/message fallback. Current proxies also add `error.data.retryable`
   (boolean), `error.data.next_action` (string), and
   `error.data.recovery` (an object with `outcome: "not_forwarded"`). These fields
-  contain only the following fixed values:
+  contain the following fixed values:
 
   | `data.reason` | `data.retryable` | `data.next_action` |
   | --- | --- | --- |
-  | `manual_cancellation_busy`, `turn_gate_busy` | `true` | `retry-request-after-state-change` |
-  | `turn_already_pending` | `false` | `inspect-session-state` |
-  | All other current reasons listed above | `false` | `inspect-session-state` |
+  | `turn_gate_busy` | `true` | `retry-request-after-state-change` |
+  | `manual_cancellation_busy` with a persisted cause receipt | `true` | `retry-request` |
+  | `account_authority_unavailable` with cause code `session-record-lock-timeout` and a persisted receipt | `true` | `retry-request` |
+  | Other authority failures, missing receipts, `turn_already_pending`, and all other current reasons | `false` | `inspect-session-state` |
 
   `not_forwarded` describes only the frame rejected by this proxy response. It
   does not establish that an earlier request, including an earlier request with
   the same JSON-RPC ID, was never forwarded or accepted by the provider.
   `retryable: true` classifies this rejection as transient state contention;
-  it does not authorize automatic replay. Both next actions require the
+  it does not authorize automatic replay. All next actions require the
   refresh/inspection and exact-incarnation recovery rules below. Clients MUST
   tolerate absent or unknown recovery fields from older proxies and preserve
   the stable code/message fallback and no-blind-replay behavior.
+
+  Authority failures add a bounded `data.cause` with `operation`, `stage`, stable
+  `code`, binding `binding_state` and `binding_revision`, and `receipt_written`. A private
+  lifecycle receipt is persisted before cleanup, keyed to the exact session
+  runtime and containing no account name, credential, provider output, or local
+  path. Immediate cancellation retries only explicit record-lock `Busy`
+  outcomes, at most three attempts. The timed cancellation path uses one
+  six-second contention budget; other causes are returned without replay.
 
   A durably bound exact-runtime account
   remains valid in a detached tmux scope without inheriting the daemon's broker

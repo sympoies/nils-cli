@@ -1,4 +1,6 @@
 //! Native RPC regressions retain independent modeled composer evidence.
+#[path = "trace.rs"]
+mod trace;
 use super::*;
 use futures_util::{SinkExt, StreamExt};
 use pretty_assertions::assert_eq;
@@ -59,11 +61,18 @@ impl Server {
                             observed.lock().unwrap().push(request.clone());
                             let Some(id) = request.get("id") else { continue };
                             let method = request["method"].as_str().unwrap();
+                            if mode == "initialize-timeout" && method == "initialize" { tokio::time::sleep(std::time::Duration::from_secs(5)).await; }
+                            if mode == "rpc-error" && method == "turn/start" {
+                                let error = json!({"id":id,"error":{"code":-1,"message":"private-error-marker","data":{"token":"private-token-marker"}}});
+                                if socket.send(Message::Text(error.to_string().into())).await.is_err() { break; }
+                                continue;
+                            }
                             let result = match method {
                                 "initialize" => json!({}),
                                 "thread/loaded/list" => json!({"data":["provider-one"],"nextCursor":null}),
                                 "thread/resume" => json!({"thread":{"id":"provider-one"}}),
                                 "thread/read" => {
+                                    if mode == "history-timeout" && request["params"]["includeTurns"] == true { tokio::time::sleep(std::time::Duration::from_secs(5)).await; }
                                     let calls = observed.lock().unwrap();
                                     let submitted = calls.iter().find(|r| r["method"] == "turn/start");
                                     let read_count = calls.iter().filter(|r| r["method"] == "thread/read").count();
@@ -71,18 +80,23 @@ impl Server {
                                     let busy = mode == "busy" || (mode == "late-busy" && read_count >= 3)
                                         || (mode == "busy-after-claim" && claimed);
                                     let submitted = if mode == "history-lag" && calls.iter().filter(|r| r["method"] == "thread/read" && r["params"]["includeTurns"] == true).count() == 1 { None } else { submitted };
-                                    let turns = submitted.map_or(json!([]), |r| json!([{
+                                    let mut turns = submitted.map_or(json!([]), |r| json!([{
                                         "id":"turn-one", "status":"inProgress", "items":[{
                                             "type":"userMessage", "id":"input-one", "content":[{
                                                 "type":"text", "text":if mode == "wrong-input" {json!("other input")} else {r["params"]["input"][0]["text"].clone()}
                                             }]
                                         }]
                                     }]));
+                                    if mode == "large-history" && request["params"]["includeTurns"] == true {
+                                        let mut prefix = vec![json!({"id":"unrelated-turn","items":[]}); 16384];
+                                        prefix.extend(turns.as_array().unwrap().iter().cloned());
+                                        turns = json!(prefix);
+                                    }
                                     json!({"thread":{"id":if mode == "wrong-thread" {"other-thread"} else {"provider-one"}, "status":{"type":if busy {"active"} else {"idle"}}, "turns":turns}})
                                 }
                                 "turn/start" => {
                                     if mode == "disconnect" { break; }
-                                    json!({"turn":{"id":"turn-one","status":"inProgress","items":[]}})
+                                    json!({"turn":{"id":if mode == "invalid-ack" {""} else {"turn-one"},"status":"inProgress","items":[]}})
                                 }
                                 "thread/compact/start" => json!({}),
                                 _ => panic!("unexpected native method: {method}"),
