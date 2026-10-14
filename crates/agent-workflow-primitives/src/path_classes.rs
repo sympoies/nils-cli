@@ -25,12 +25,24 @@ pub struct PathClassification {
 }
 
 impl PathClassContract {
+    /// Loads `[path_classes]` from the repository-root `VALIDATION.toml`.
+    ///
+    /// When that file is absent or declares no `path_classes` table, the
+    /// transitional root `AGENT_DOCS.toml` is read instead.
     pub fn load_project(repo: &Path) -> Result<Option<Self>, String> {
-        let path = repo.join("AGENT_DOCS.toml");
+        for file in ["VALIDATION.toml", "AGENT_DOCS.toml"] {
+            if let Some(contract) = Self::load_file(&repo.join(file))? {
+                return Ok(Some(contract));
+            }
+        }
+        Ok(None)
+    }
+
+    fn load_file(path: &Path) -> Result<Option<Self>, String> {
         if !path.try_exists().map_err(|err| err.to_string())? {
             return Ok(None);
         }
-        let source = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        let source = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
         let root = toml::from_str::<Value>(&source).map_err(|err| err.to_string())?;
         let Some(value) = root.get("path_classes") else {
             return Ok(None);
@@ -216,4 +228,69 @@ pub fn changed_path_digest(paths: impl IntoIterator<Item = String>) -> String {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VALIDATION_CLASSES: &str = r#"[[validation]]
+context = "project-dev"
+commands = ["true"]
+
+[path_classes]
+production = ["lib/**"]
+test = ["spec/**"]
+"#;
+
+    const AGENT_DOCS_CLASSES: &str = r#"[path_classes]
+production = ["src/**"]
+test = ["tests/**"]
+"#;
+
+    fn class_of(repo: &Path, path: &str) -> String {
+        PathClassContract::load_project(repo)
+            .unwrap()
+            .expect("path-class contract")
+            .classify(Path::new(path))
+            .unwrap()
+            .path_class
+    }
+
+    #[test]
+    fn load_project_reads_validation_toml_path_classes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("VALIDATION.toml"), VALIDATION_CLASSES).unwrap();
+        assert_eq!(class_of(tmp.path(), "lib/value.rs"), "production");
+        assert_eq!(class_of(tmp.path(), "spec/value.rs"), "test");
+    }
+
+    #[test]
+    fn load_project_prefers_validation_toml_over_agent_docs() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("VALIDATION.toml"), VALIDATION_CLASSES).unwrap();
+        std::fs::write(tmp.path().join("AGENT_DOCS.toml"), AGENT_DOCS_CLASSES).unwrap();
+        assert_eq!(class_of(tmp.path(), "lib/value.rs"), "production");
+        assert_eq!(class_of(tmp.path(), "src/value.rs"), "unknown");
+    }
+
+    #[test]
+    fn load_project_falls_back_to_agent_docs_toml() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("AGENT_DOCS.toml"), AGENT_DOCS_CLASSES).unwrap();
+        assert_eq!(class_of(tmp.path(), "src/value.rs"), "production");
+
+        std::fs::write(
+            tmp.path().join("VALIDATION.toml"),
+            "[[validation]]\ncontext = \"project-dev\"\ncommands = [\"true\"]\n",
+        )
+        .unwrap();
+        assert_eq!(class_of(tmp.path(), "src/value.rs"), "production");
+    }
+
+    #[test]
+    fn load_project_without_contract_is_not_configured() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        assert_eq!(PathClassContract::load_project(tmp.path()).unwrap(), None);
+    }
 }

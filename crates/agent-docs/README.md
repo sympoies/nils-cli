@@ -113,7 +113,9 @@ description = "Run the full check stack before delivery."
 
 # Optional repository-owned path classification shared by pre-edit and
 # docs-impact gates. Overlap is reported as ambiguous; unmatched paths use
-# the explicit fail-closed `unknown` class.
+# the explicit fail-closed `unknown` class. Transitional: those gates read
+# this table from the root VALIDATION.toml first and fall back here only when
+# VALIDATION.toml is absent or declares no `path_classes` table.
 [path_classes]
 production = ["src/**"]
 test = ["tests/**"]
