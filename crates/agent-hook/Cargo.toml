@@ -21,7 +21,6 @@ clap_complete = { workspace = true }
 git2 = { workspace = true }
 jiff = { workspace = true }
 libc = { workspace = true }
-nils-agent-docs = { version = "1.33.13", path = "../agent-docs" }
 nils-build-info = { version = "1.33.13", path = "../nils-build-info" }
 nils-common = { version = "1.33.13", path = "../nils-common", package = "nils-common" }
 regex = "1"

@@ -216,13 +216,12 @@ fn durable_snapshot(repo: &Path, base: Option<&str>) -> Result<DurableSnapshot, 
         changed.extend(git_lines(repo, argv)?);
     }
     let paths: Vec<String> = changed.into_iter().collect();
-    let changed_path_digest = agent_docs::path_classes::changed_path_digest(paths.clone());
+    let changed_path_digest = crate::path_classes::changed_path_digest(paths.clone());
     let mut hasher = Sha256::new();
     hasher.update(base_revision.as_bytes());
     hasher.update(head_revision.as_bytes());
-    let catalog = agent_docs::config::load_catalog(repo, repo)
-        .map_err(|err| CliError::data("path-class-catalog-invalid", err.to_string(), None))?;
-    let contract = agent_docs::path_classes::project_contract(&catalog);
+    let contract = crate::path_classes::PathClassContract::load_project(repo)
+        .map_err(|err| CliError::data("path-class-catalog-invalid", err, None))?;
     let mut path_classes = Vec::new();
     let mut docs_changed = false;
     let mut non_docs_changed = false;
@@ -240,7 +239,7 @@ fn durable_snapshot(repo: &Path, base: Option<&str>) -> Result<DurableSnapshot, 
                 ));
             }
         }
-        let path_class = match contract {
+        let path_class = match contract.as_ref() {
             Some(contract) => {
                 contract
                     .classify(Path::new(path))

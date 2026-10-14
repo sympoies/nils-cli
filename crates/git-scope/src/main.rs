@@ -22,7 +22,7 @@ mod tree;
     about = "Inspect Git-tracked file scopes and selected content.",
     long_about = "Inspect tracked, staged, unstaged, untracked, and commit-scoped paths with optional file-content printing.",
     disable_help_subcommand = true,
-    after_help = "EXAMPLES:\n  git-scope tracked crates/agent-docs\n  git-scope staged -p\n  git-scope commit HEAD~1\n  git-scope completion zsh\n\nENVIRONMENT:\n  GIT_SCOPE_PROGRESS  Opt in or out of progress output.\n  NO_COLOR            Disable ANSI colors.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
+    after_help = "EXAMPLES:\n  git-scope tracked crates/agent-hook\n  git-scope staged -p\n  git-scope commit HEAD~1\n  git-scope completion zsh\n\nENVIRONMENT:\n  GIT_SCOPE_PROGRESS  Opt in or out of progress output.\n  NO_COLOR            Disable ANSI colors.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
 )]
 struct Cli {
     /// Disable ANSI colors (also via NO_COLOR)
