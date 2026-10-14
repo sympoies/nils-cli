@@ -58,7 +58,8 @@ impl CorrectionRequest {
 fn state(record: &ReviewStateRecord) -> Option<&ReviewLoopState> {
     match &record.payload {
         ReviewStatePayload::ReviewLoop { state }
-        | ReviewStatePayload::ReviewLoopCorrection { state, .. } => Some(state),
+        | ReviewStatePayload::ReviewLoopCorrection { state, .. }
+        | ReviewStatePayload::ReviewLoopSupersession { state, .. } => Some(state),
         _ => None,
     }
 }
@@ -272,6 +273,7 @@ pub fn apply(
             state: state.clone(),
             changed: false,
             correction: Some(correction.clone()),
+            supersession: None,
         });
     }
     let (target, _) = context(&chain.records, head, request)?;
@@ -309,6 +311,7 @@ pub fn apply(
         state: corrected,
         changed: true,
         correction: Some(correction),
+        supersession: None,
     })
 }
 

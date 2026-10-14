@@ -27,6 +27,12 @@ use super::*;
       An alias-bearing false-reopen stop requires correction.attempted_findings\n  \
       containing the original attempted rows; its digest must match exactly.\n  \
       After reassignment, observe ordinary inventory before retrying a correction.\n  \
+      4. A `forge-cli.review-loop-supersession.v1` object with `supersession`\n  \
+      (superseded_record digest, reason signed-fast-forward) and current `findings`.\n  \
+      Use explicit --expected-state. A verified signed fast-forward records a new\n  \
+      stop requiring fresh maintainer approval at the new head; history stays intact.\n  \
+      Proof is capped at 100 commits; complete record/comment size limits still apply.\n  \
+      Earlier-assignment retries fail before writes; use approval/extension to resume.\n  \
       Check these shapes offline, with no pull request and no provider call, \
       using `pr review-loop validate --findings-file <path>`.\n\n\
       COMBINED DELIVERY OUTCOME\n  \
@@ -83,7 +89,7 @@ pub struct PrReviewLoopObserveArgs {
     /// Exact provider head SHA whose review observation is being appended.
     #[arg(long = "expected-head", value_name = "SHA", value_parser = clap::builder::NonEmptyStringValueParser::new())]
     pub expected_head: String,
-    /// Merge envelope, observation array, or chain-bound correction envelope.
+    /// Merge envelope, observation array, correction, or stop supersession envelope.
     /// Rows require lifecycle identity; see the help footer for exact schemas.
     #[arg(long = "findings-file", value_name = "PATH")]
     pub findings_file: String,

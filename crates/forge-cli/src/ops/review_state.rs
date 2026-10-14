@@ -20,6 +20,7 @@ use std::fmt::Write as _;
 use crate::error::ForgeError;
 
 pub mod correction;
+pub mod supersession;
 
 #[cfg(test)]
 #[path = "review_state/observation_regressions.rs"]
@@ -184,10 +185,17 @@ pub struct ReviewLoopTransition {
     pub state: ReviewLoopState,
     pub changed: bool,
     pub correction: Option<correction::CorrectionReceipt>,
+    pub supersession: Option<supersession::SupersessionReceipt>,
 }
 
 impl ReviewLoopTransition {
     pub fn into_payload(self) -> ReviewStatePayload {
+        if let Some(supersession) = self.supersession {
+            return ReviewStatePayload::ReviewLoopSupersession {
+                state: self.state,
+                supersession,
+            };
+        }
         match self.correction {
             Some(correction) => ReviewStatePayload::ReviewLoopCorrection {
                 state: self.state,
@@ -211,6 +219,10 @@ pub enum ReviewStatePayload {
         state: ReviewLoopState,
         correction: correction::CorrectionReceipt,
     },
+    ReviewLoopSupersession {
+        state: ReviewLoopState,
+        supersession: supersession::SupersessionReceipt,
+    },
     ReviewHandoff {
         handoff: super::pr_review_handoff::ReviewHandoff,
     },
@@ -226,6 +238,7 @@ impl ReviewStatePayload {
             Self::ReviewRunReceipt { .. } => "review-run-receipt",
             Self::ReviewLoop { .. } => "review-loop",
             Self::ReviewLoopCorrection { .. } => "review-loop-correction",
+            Self::ReviewLoopSupersession { .. } => "review-loop-supersession",
             Self::ReviewHandoff { .. } => "review-handoff",
             Self::ReviewSyncCarryOver { .. } => "review-sync-carry-over",
         }
@@ -359,6 +372,20 @@ pub fn state_comment_visible_metadata(record: &ReviewStateRecord) -> String {
         ReviewStatePayload::ReviewRunReceipt { receipt } => format!(
             "Review receipt recorded at head {}. Follow the review findings before merge.",
             short_sha(&receipt.expected_head)
+        ),
+        ReviewStatePayload::ReviewLoopSupersession {
+            state,
+            supersession,
+        } => format!(
+            "Review stop superseded from head {} to head {}. A new maintainer approval is required before resume.",
+            short_sha(&supersession.from_head),
+            short_sha(
+                &state
+                    .hard_stop
+                    .as_ref()
+                    .expect("validated supersession stop")
+                    .attempted_head_sha
+            )
         ),
         ReviewStatePayload::ReviewLoopCorrection { state, correction } => format!(
             "Review correction recorded at head {}: {} omitted findings restored; prior history and budgets retained.{}",
@@ -661,7 +688,8 @@ pub fn parse_chain<'a>(
             return Err(state_conflict("review-state carry-over is invalid", None));
         }
         if let ReviewStatePayload::ReviewLoop { state }
-        | ReviewStatePayload::ReviewLoopCorrection { state, .. } = &record.payload
+        | ReviewStatePayload::ReviewLoopCorrection { state, .. }
+        | ReviewStatePayload::ReviewLoopSupersession { state, .. } = &record.payload
         {
             validate_review_loop_state(state)?;
             let stopped_head_matches = state
@@ -799,6 +827,7 @@ pub fn parse_chain<'a>(
             _ => (),
         }
         correction::validate_record(&ordered, record)?;
+        supersession::validate_record(&ordered, record)?;
         ordered.push((*record).clone());
         let candidates = children
             .get(&Some(digest.clone()))
@@ -909,7 +938,8 @@ pub fn latest_review_loop_state(chain: &ReviewStateChain) -> Option<&ReviewLoopS
         .rev()
         .find_map(|record| match &record.payload {
             ReviewStatePayload::ReviewLoop { state }
-            | ReviewStatePayload::ReviewLoopCorrection { state, .. } => Some(state),
+            | ReviewStatePayload::ReviewLoopCorrection { state, .. }
+            | ReviewStatePayload::ReviewLoopSupersession { state, .. } => Some(state),
             ReviewStatePayload::ReviewRunReceipt { .. }
             | ReviewStatePayload::ReviewHandoff { .. }
             | ReviewStatePayload::ReviewSyncCarryOver { .. } => None,
@@ -960,6 +990,7 @@ pub fn observe_review_loop(
             },
             changed: true,
             correction: None,
+            supersession: None,
         });
     };
 
@@ -1013,6 +1044,7 @@ pub fn observe_review_loop(
             state: previous.clone(),
             changed: false,
             correction: None,
+            supersession: None,
         });
     }
     if !head_changed {
@@ -1152,6 +1184,7 @@ pub fn observe_review_loop(
         changed: state != *previous,
         state,
         correction: None,
+        supersession: None,
     })
 }
 

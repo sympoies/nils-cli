@@ -1127,6 +1127,50 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   the exact approval marker. The stop code must map to its canonical budget
   field and the proposal must match the active receipt. Each proposal is
   consumable once; retry and delivery paths cannot silently increase a budget.
+- When a stopped attempt at A is superseded by a signed fast-forward to B,
+  inspect the current tip and pass this explicit findings-file wrapper to
+  `observe` with `--expected-head B --expected-state <current-tip>`:
+
+  ```json
+  {
+    "schema_version": "forge-cli.review-loop-supersession.v1",
+    "supersession": {
+      "superseded_record": "sha256:<latest-stopped-state-record-digest>",
+      "reason": "signed-fast-forward"
+    },
+    "findings": [
+      {"lifecycle_fingerprint": "correctness:component:invariant", "status": "open"}
+    ]
+  }
+  ```
+
+  Include every open finding. The provider must prove A is an ancestor of B
+  and every newly reachable commit has a valid verified signature. Comparison
+  proof is read completely, with a bound of 100 commits; divergence, unsigned
+  commits, truncated proof, stale tips, and unknown fields fail as
+  `review_supersession_invalid`. Offline `validate` checks only the input shape;
+  `observe --dry-run` also checks provider proof, writer ownership, head and tip.
+  The independent 64 KiB marker and complete-comment limits remain binding;
+  large retained inventories may reach those limits below the commit cap.
+
+  A `review-loop-supersession` record retains the stopped A attempt and all prior
+  records. Its receipt names the superseded record, A, verified commit IDs, and
+  canonical findings. Readback replays the transition and rejects counter or
+  budget mutation. The successful observation head stays unchanged until resume;
+  the enclosing record and fresh stop bind B. Counters, findings, budgets, and
+  consumed extensions remain intact. Even if A's extension was already consumed,
+  B gets a fresh proposal with `extension_applied: false`.
+
+  Inspect that new tip,
+  obtain a newer maintainer approval carrying B's exact proposal marker, run
+  `extend` at B, then resume the identical B inventory through ordinary `observe`.
+  A's approval cannot be reused. An identical retry at the fresh tip appends
+  nothing within its original reviewer assignment. After reassignment, the old
+  receipt cannot bootstrap the new interval and is refused before provider writes.
+  Use the current stop's approval/extension path before an ordinary observation.
+  No force push or manual ledger edit is needed. Older readers must upgrade before
+  reading the new record kind; designated reviewer rebinding remains required
+  when the assigned head changes.
 - An observation can only be appended at the current provider head, so history
   cannot be backfilled, and a `fixed` disposition requires a repaired head.
   Together those force the observation to precede the repair push: observe the
