@@ -12,6 +12,15 @@ const CONTROL: &str = "AGENT_SESSION_GUARDED_TRACE_FILE";
 const PROMPT: &str = "private-fixture-input-unique-marker";
 
 fn send(fixture: &Fixture, path: Option<&Path>) -> CmdOutput {
+    send_input(fixture, path, Some(PROMPT), None)
+}
+
+fn send_input(
+    fixture: &Fixture,
+    path: Option<&Path>,
+    text: Option<&str>,
+    stdin: Option<&str>,
+) -> CmdOutput {
     let state = fixture.root().join("state");
     let tmux = fixture.root().join("tmux");
     let mut args = vec![
@@ -23,15 +32,22 @@ fn send(fixture: &Fixture, path: Option<&Path>) -> CmdOutput {
         tmux.to_str().unwrap(),
         "--format",
         "json",
-        "--text",
-        PROMPT,
         "--key",
         "enter",
     ];
+    if let Some(text) = text {
+        args.extend_from_slice(&["--text", text]);
+    }
+    if stdin.is_some() {
+        args.push("--text-stdin");
+    }
     args.extend_from_slice(GUARDS);
     let mut options = CmdOptions::new()
         .with_cwd(fixture.root())
         .with_env_remove_prefix("AGENT_SESSION_");
+    if let Some(stdin) = stdin {
+        options = options.with_stdin_str(stdin);
+    }
     if let Some(path) = path {
         options = options.with_env(CONTROL, path.to_str().unwrap());
     }
@@ -302,4 +318,66 @@ fn native_trace_large_history_preserves_enabled_and_disabled_receipts() {
         fixture.no_delivery();
     }
     assert_eq!(receipts[0], receipts[1]);
+}
+
+fn assert_terminal_trace_absent(text: Option<&str>, stdin: Option<&str>, enters: usize) {
+    let mut receipts = Vec::new();
+    for enabled in [false, true] {
+        let fixture = Fixture::new("codex");
+        let _lease = fixture.bind_codex();
+        let server = Server::start(&fixture, "idle");
+        let path = trace_path(&fixture);
+        let output = send_input(&fixture, enabled.then_some(path.as_path()), text, stdin);
+        assert_eq!(output.code, 0, "{}", output.stdout_text());
+        let receipt = output.stdout_json();
+        assert!(receipt["data"].get("native").is_none());
+        assert!(receipt["data"].get("submission").is_none());
+        assert_eq!(receipt["data"]["guards"]["atomic"], false);
+        assert_eq!(receipt["data"]["keys"], json!(["enter"]));
+        assert_eq!(
+            receipt["data"]["sent_text"],
+            text.is_some() || stdin.is_some()
+        );
+        receipts.push(receipt);
+        assert!(server.mutations().is_empty());
+        let calls = fixture.calls();
+        assert!(calls.iter().all(|call| call[0] != "paste-buffer"));
+        assert_eq!(
+            calls.iter().filter(|call| call[0] == "send-keys").count(),
+            enters
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("submissions")).unwrap(),
+            "\"\"\n".repeat(enters)
+        );
+        assert!(
+            !path.exists(),
+            "terminal delivery must not create a native trace"
+        );
+    }
+    assert_eq!(receipts[0], receipts[1]);
+}
+
+#[test]
+fn native_trace_key_only_terminal_delivery_creates_no_artifact() {
+    assert_terminal_trace_absent(None, None, 1);
+}
+
+#[test]
+fn native_trace_bare_newline_terminal_delivery_creates_no_artifact() {
+    // A bare newline and the explicit Enter each retain their terminal key.
+    assert_terminal_trace_absent(Some("\n"), None, 2);
+    assert_terminal_trace_absent(None, Some("\n"), 2);
+}
+
+#[test]
+fn native_trace_stdin_literal_input_uses_native_route() {
+    let fixture = Fixture::new("codex");
+    let _lease = fixture.bind_codex();
+    let server = Server::start(&fixture, "idle");
+    let path = trace_path(&fixture);
+    assert_receipt(&send_input(&fixture, Some(&path), None, Some(PROMPT)));
+    events(&path);
+    assert_eq!(server.mutations().len(), 1);
+    fixture.no_delivery();
 }

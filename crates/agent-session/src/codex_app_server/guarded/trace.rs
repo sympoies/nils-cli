@@ -128,10 +128,15 @@ pub(crate) struct Scope {
 }
 
 impl Scope {
-    pub(crate) fn for_send(record: &SessionRecord, args: &cli::SendArgs) -> Self {
+    pub(crate) fn for_send(
+        record: &SessionRecord,
+        args: &cli::SendArgs,
+        text: Option<&str>,
+    ) -> Self {
         let state = if codex_app_server::runtime_is_supported(record)
             && args.guards.require_idle
             && args.guards.require_empty_composer
+            && crate::carries_literal_text(text)
             && args.keys == [SpecialKey::Enter]
         {
             std::env::var_os(CONTROL)
