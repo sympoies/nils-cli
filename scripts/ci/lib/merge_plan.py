@@ -361,9 +361,18 @@ def metadata(snapshot_root, stage, trusted_root):
                            RUSTC_WRAPPER='', RUSTC_WORKSPACE_WRAPPER='',
                            CARGO_BUILD_RUSTC=str(Path(rustc).absolute()),
                            CARGO_BUILD_RUSTC_WRAPPER='', CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER='')
-        result = subprocess.run([str(Path(cargo).absolute()), 'metadata', '--manifest-path',
-                                 str(snapshot_root / 'Cargo.toml'), '--offline', '--locked',
-                                 '--all-features', '--format-version', '1'],
+        command = [str(Path(cargo).absolute()), 'metadata', '--manifest-path',
+                   str(snapshot_root / 'Cargo.toml'), '--locked',
+                   '--all-features', '--format-version', '1']
+        if os.environ.get('NILS_CLI_MERGE_PLAN_PREPARE_METADATA') == '1':
+            # Restored build caches need not contain every locked dependency
+            # used by either all-platform graph. Prepare each exact snapshot
+            # without executing build scripts, using the same trusted tooling.
+            subprocess.run(command, cwd=trusted_root, check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=environment)
+        # Selection always consumes a fresh locked, offline graph; preparation
+        # output is never substituted for the metadata bound into the plan.
+        result = subprocess.run(command[:4] + ['--offline'] + command[4:],
                                 cwd=trusted_root, check=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, env=environment)
     except OSError as error:
