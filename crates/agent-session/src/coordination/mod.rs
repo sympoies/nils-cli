@@ -644,14 +644,17 @@ fn lock_private_store_within(
             break;
         }
         let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::EWOULDBLOCK) || started.elapsed() >= timeout {
+        if error.kind() != io::ErrorKind::WouldBlock && error.kind() != io::ErrorKind::Interrupted {
+            return Err(store_unavailable());
+        }
+        if started.elapsed() >= timeout {
             return Err(CliError::runtime(
                 "coordination-lock-timeout",
                 "coordination registry lock could not be acquired",
                 None,
             ));
         }
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(10).min(timeout.saturating_sub(started.elapsed())));
     }
     Ok(lock)
 }
@@ -692,7 +695,7 @@ pub(crate) fn ensure_notification_submission_not_in_progress_for_session(
     session_id: &str,
     incarnation: &str,
 ) -> Result<(), CliError> {
-    let locked = lock_registry(context)?;
+    let locked = lock_registry_for_lifecycle(context)?;
     ensure_notification_submission_not_in_progress(&locked.registry, session_id, incarnation)
 }
 
@@ -1093,6 +1096,18 @@ enum RegistryMaintenance {
 
 pub(crate) fn lock_registry(context: &CliContext) -> Result<LockedRegistry, CliError> {
     lock_registry_with_maintenance(context, RegistryMaintenance::Full)
+}
+
+pub(crate) fn lock_registry_for_lifecycle(
+    context: &CliContext,
+) -> Result<LockedRegistry, CliError> {
+    crate::contention::retry(crate::contention::LIFECYCLE_WAIT, |remaining| {
+        lock_registry_within(
+            context,
+            RegistryMaintenance::Full,
+            remaining.min(LOCK_TIMEOUT),
+        )
+    })
 }
 
 pub(crate) fn lock_registry_observational(
@@ -2956,3 +2971,6 @@ mod receipt_byte_budget_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod contention_tests;

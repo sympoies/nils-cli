@@ -71,7 +71,24 @@ unrepairable permission drift fails before mutation.
 
 One bounded registry lock serializes claim evaluation, claim acquisition,
 operation leases, mailbox transitions, notification receipts, expiry, and
-cleanup. Default lock timeout is 2 seconds. No command waits indefinitely.
+cleanup. Default lock timeout is 2 seconds. Lifecycle provisioning, revocation,
+and notification admission checks retry transient lock contention within a
+six-second monotonic budget, with capped backoff between attempts. TUI manual
+input cancellation uses the same budget for transient session-record locks;
+identity, account authorization and invalid state failures are not retried.
+The launcher-owned broker exit hook retains its two-second lock wait so its
+compatibility fallback fits the graceful termination deadline. No command
+waits indefinitely.
+
+Exhausted lifecycle contention preserves `coordination-lock-timeout` and adds
+`error.details.retryable`, `next_action`, and bounded `recovery` metadata.
+A failed create reports `retry-create` and `not_created` only after verified
+runtime cleanup. Incomplete cleanup forbids blind create retry.
+
+Delete/archive retains the original addressable record on exhaustion and reports
+`retry-delete`/`retry-archive` and `record_retained`; an exact retry completes the
+persisted termination transition. It never retries the provider launch or
+discards authority fences.
 Writes use atomic replace and fsync ordering suitable for crash recovery.
 
 The private store may contain bodies and capability digests. Public projections

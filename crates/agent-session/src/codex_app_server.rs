@@ -6,6 +6,10 @@
 //! the same bound thread and turn. Auto-resume distinguishes
 //! `usageLimitExceeded` from bounded `serverOverloaded` capacity recovery.
 
+#[path = "codex_app_server/proxy_contention.rs"]
+mod proxy_contention;
+use proxy_contention::tui_busy_response;
+
 pub(crate) mod guarded;
 mod idle_probe;
 
@@ -4835,21 +4839,6 @@ fn proxy_websocket_config() -> WebSocketConfig {
     WebSocketConfig::default()
         .max_message_size(Some(MAX_PROXY_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_PROXY_FRAME_BYTES))
-}
-
-fn tui_busy_response(id: &Value, rejection: TuiMutationRejection) -> Message {
-    Message::Text(
-        json!({
-            "id": id,
-            "error": {
-                "code": -32001,
-                "message": "agent-session state is busy; retry the request",
-                "data": { "reason": rejection.code() }
-            }
-        })
-        .to_string()
-        .into(),
-    )
 }
 
 async fn send_proxy_upstream<S>(

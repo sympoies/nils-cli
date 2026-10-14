@@ -623,14 +623,29 @@ pub(crate) fn cancel_for_manual_input_for_runtime_with_timeout(
     now: &str,
     record_turn_fence: bool,
 ) -> Result<ManualInputCancelOutcome, CliError> {
-    cancel_for_manual_input_for_runtime(
-        context,
-        id,
-        expected_launch_id,
-        now,
-        record_turn_fence,
-        Some(PROTOCOL_STATE_LOCK_TIMEOUT),
-    )
+    let result = crate::contention::retry(crate::contention::LIFECYCLE_WAIT, |remaining| {
+        match cancel_for_manual_input_for_runtime(
+            context,
+            id,
+            expected_launch_id,
+            now,
+            record_turn_fence,
+            Some(remaining.min(PROTOCOL_STATE_LOCK_TIMEOUT)),
+        )? {
+            ManualInputCancelOutcome::Busy => Err(CliError::runtime(
+                "session-record-lock-timeout",
+                "session state is busy",
+                None,
+            )),
+            outcome => Ok(outcome),
+        }
+    });
+    match result {
+        Err(error) if error.code() == "session-record-lock-timeout" => {
+            Ok(ManualInputCancelOutcome::Busy)
+        }
+        result => result,
+    }
 }
 
 fn cancel_for_manual_input_for_runtime(
