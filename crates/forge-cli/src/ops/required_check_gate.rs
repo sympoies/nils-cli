@@ -188,6 +188,7 @@ mod tests {
         PrChecksPayload {
             provider: "github",
             state: "success",
+            gate_scope: "required",
             required_count: 2,
             success_count: 2,
             failed: vec![],
@@ -225,6 +226,7 @@ mod tests {
         PrChecksPayload {
             provider: "github",
             state: "success",
+            gate_scope: "visible_fallback",
             required_count: 0,
             success_count: 0,
             failed: vec![],

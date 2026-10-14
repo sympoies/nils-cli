@@ -488,6 +488,7 @@ pub(crate) fn output_with_limits(
     );
     let stderr_reader = spawn_output_reader(stderr, OutputStream::Stderr, capture_limit, limit_tx);
     let started = Instant::now();
+    let mut exited = None;
     loop {
         if let Ok(stream) = limit_rx.try_recv() {
             kill_child_group(&mut child);
@@ -500,7 +501,15 @@ pub(crate) fn output_with_limits(
                 output: collected.output,
             });
         }
-        if let Some(status) = child.try_wait().map_err(ProcessOutputError::Io)? {
+        if exited.is_none() {
+            exited = child.try_wait().map_err(ProcessOutputError::Io)?;
+        }
+        // An exited leader can leave descendants holding the capture pipes.
+        // Keep the timeout active until both readers have finished.
+        if let Some(status) = exited
+            && stdout_reader.is_finished()
+            && stderr_reader.is_finished()
+        {
             let collected = collect_child_output(status, stdout_reader, stderr_reader)
                 .map_err(ProcessOutputError::Io)?;
             if let Some(stream) = collected.limit_exceeded {
@@ -529,7 +538,9 @@ pub(crate) fn output_with_limits(
                 output: collected.output,
             });
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(
+            Duration::from_millis(10).min(timeout.saturating_sub(started.elapsed())),
+        );
     }
 }
 

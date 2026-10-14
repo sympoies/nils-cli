@@ -176,6 +176,7 @@ fn detect_with_scope(
     scope: RepositoryScope,
 ) -> Result<ProviderContext, ForgeError> {
     let url = remote_url_lookup(remote);
+    crate::ops::pr_wait_checks::discovery::check()?;
     let remote_host = url.as_deref().and_then(parse_host);
     let remote_repo = url.as_deref().and_then(parse_slug);
 
@@ -546,10 +547,10 @@ pub fn parse_slug(url: &str) -> Option<String> {
 /// Default `git remote get-url` lookup used in production. Returns `None`
 /// when git is unavailable or the remote does not exist.
 pub fn git_remote_url(remote: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["remote", "get-url", remote])
-        .output()
-        .ok()?;
+    let output = crate::ops::pr_wait_checks::discovery::output(
+        Command::new("git").args(["remote", "get-url", remote]),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }

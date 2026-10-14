@@ -4,6 +4,7 @@ Crate-local documentation for the `forge-cli` binary.
 
 ## Specs
 
+- [`specs/checks-scope-and-deadline-v1.md`](specs/checks-scope-and-deadline-v1.md) — additive check scope fields and the whole-operation wait budget.
 - [Shared forge identity policy](../../nils-common/docs/specs/forge-identity-policy-v1.md) — identity explain/doctor, enforcement, and rollout interface.
 - [`specs/forge-cli-spec-v1.md`](specs/forge-cli-spec-v1.md) — v1 contract,
   parity matrix, lock-down rules, exit-code map.

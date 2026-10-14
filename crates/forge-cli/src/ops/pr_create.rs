@@ -414,11 +414,12 @@ pub(crate) fn validate_qualified_provider_subject(
 /// Resolve the git toplevel for layered-config discovery. Returns `None`
 /// outside a work tree (the layered loader then walks to the filesystem root).
 pub(crate) fn find_git_toplevel(start: &Path) -> Option<PathBuf> {
-    let output = std::process::Command::new("git")
-        .current_dir(start)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .ok()?;
+    let output = crate::ops::pr_wait_checks::discovery::output(
+        std::process::Command::new("git")
+            .current_dir(start)
+            .args(["rev-parse", "--show-toplevel"]),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }
