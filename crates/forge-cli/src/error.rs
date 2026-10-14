@@ -11,6 +11,8 @@ use thiserror::Error;
 
 use crate::cli::BINARY;
 
+const STRUCTURED_DETAILS_PREFIX: &str = "\u{1e}forge-cli-json-details-v1:";
+
 /// Top-level forge-cli error type. Every leaf knows its `error.kind` and
 /// exit-code class.
 #[derive(Debug, Error)]
@@ -28,6 +30,7 @@ pub enum ForgeError {
         kind: &'static str,
         message: String,
         detail: Option<String>,
+        details: Option<Box<serde_json::Value>>,
     },
     /// Backend exited with a non-zero status while attempting a remote
     /// operation.
@@ -94,6 +97,7 @@ impl ForgeError {
             kind: "backend_missing",
             message: message.into(),
             detail,
+            details: None,
         }
     }
 
@@ -108,6 +112,7 @@ impl ForgeError {
             kind: "backend_unauthenticated",
             message: message.into(),
             detail,
+            details: None,
         }
     }
 
@@ -126,6 +131,22 @@ impl ForgeError {
             kind,
             message: message.into(),
             detail,
+            details: None,
+        }
+    }
+
+    pub fn unavailable_with_details(
+        schema_version: impl Into<String>,
+        kind: &'static str,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        Self::BackendUnavailable {
+            schema_version: schema_version.into(),
+            kind,
+            message: message.into(),
+            detail: None,
+            details: Some(Box::new(details)),
         }
     }
 
@@ -201,6 +222,20 @@ impl ForgeError {
         }
     }
 
+    pub fn validation_with_details(
+        schema_version: impl Into<String>,
+        kind: &'static str,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        Self::Validation {
+            schema_version: schema_version.into(),
+            kind,
+            message: message.into(),
+            detail: Some(format!("{STRUCTURED_DETAILS_PREFIX}{details}")),
+        }
+    }
+
     /// Map the error to its exit-code constant.
     pub fn exit_code(&self) -> i32 {
         match self {
@@ -260,8 +295,21 @@ impl ForgeError {
             | Self::BackendError { detail, .. }
             | Self::ProviderUnsupported { detail, .. }
             | Self::SoftwareError { detail, .. }
-            | Self::Validation { detail, .. }
             | Self::RuntimeFailure { detail, .. } => detail.as_deref(),
+            Self::Validation { detail, .. } => detail
+                .as_deref()
+                .filter(|detail| !detail.starts_with(STRUCTURED_DETAILS_PREFIX)),
+        }
+    }
+
+    fn structured_details(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::BackendUnavailable { details, .. } => details.as_deref().cloned(),
+            Self::Validation { detail, .. } => detail
+                .as_deref()?
+                .strip_prefix(STRUCTURED_DETAILS_PREFIX)
+                .and_then(|details| serde_json::from_str(details).ok()),
+            _ => None,
         }
     }
 
@@ -297,6 +345,8 @@ impl ForgeError {
                 "next_action": "fix_hold_labels_config",
                 "recovery": { "config_key": "merge.hold_labels" }
             }))
+        } else if let Some(details) = self.structured_details() {
+            envelope_error.with_details(details)
         } else {
             match self.detail() {
                 Some(detail) => {
@@ -413,6 +463,29 @@ mod tests {
         assert_eq!(
             err.render_json(),
             "{\"schema_version\":\"cli.forge-cli.error.v1\",\"ok\":false,\"error\":{\"code\":\"backend_missing\",\"message\":\"gh not installed\"}}"
+        );
+    }
+
+    #[test]
+    fn json_envelope_preserves_typed_actor_probe_cause() {
+        let err = ForgeError::validation_with_details(
+            "cli.forge-cli.error.v1",
+            "identity_actor_unavailable",
+            "GitHub actor lookup failed",
+            serde_json::json!({
+                "retryable": true,
+                "next_action": "retry_request",
+                "cause": { "operation": "github_actor_lookup", "http_status": 503 }
+            }),
+        );
+        let envelope: serde_json::Value = serde_json::from_str(&err.render_json()).unwrap();
+        assert_eq!(err.exit_code(), exit::DATA);
+        assert_eq!(envelope["error"]["code"], "identity_actor_unavailable");
+        assert_eq!(envelope["error"]["details"]["retryable"], true);
+        assert_eq!(envelope["error"]["details"]["cause"]["http_status"], 503);
+        assert_eq!(
+            err.render_text(),
+            "error: identity_actor_unavailable: GitHub actor lookup failed"
         );
     }
 

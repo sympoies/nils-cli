@@ -293,6 +293,14 @@ Typed refusal codes include `identity_policy_invalid`, `identity_policy_version`
 `identity_signing_key_missing`, `identity_commit_mismatch`, and transport/override
 refusals. `forge-cli` maps policy refusals to DATA (65);
 `identity_probe_timeout` and `identity_probe_output_limit` map to UNAVAILABLE (69).
+An `identity_actor_unavailable` JSON error retains bounded
+`details.retryable`, `details.next_action`, and `details.recovery` fields, plus a
+`details.cause` containing the lookup operation, stage, classification, attempt,
+and (when available) HTTP status, numeric `Retry-After` of at most 30 seconds,
+and a validated GitHub request ID. Tokens, response bodies, stderr and command
+arguments are never included. Actor probes retry only HTTP 429 and 5xx failures,
+at most three attempts within the existing shared probe deadline; 401/403,
+actor mismatch, invalid JSON and unknown process failures are not retried.
 Git runner callers retain their
 existing error envelopes/exit mapping and receive stable codes in diagnostics.
 TOML source diagnostics and credential-probe output are suppressed. Protected

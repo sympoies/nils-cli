@@ -236,6 +236,34 @@ impl Admission<'_> {
                 stage,
             ));
         }
+        if crate::codex_app_server::runtime_is_supported(self.record) {
+            // Native idle may replace stale hook progress, never outstanding
+            // attention. --allow-blocked cannot override the requested guard.
+            if activity::state_for_view(self.context, self.record).is_some_and(|state| {
+                state.phase == activity::TurnPhase::NeedsInput
+                    || state
+                        .current_turn
+                        .as_ref()
+                        .is_some_and(|turn| turn.attention.is_some())
+            }) {
+                return Err(self.refusal(
+                    "send-session-not-idle",
+                    "session has pending attention",
+                    "idle",
+                    stage,
+                ));
+            }
+            return crate::codex_app_server::guarded::idle(self.record, self.deadline).map_err(
+                |code| {
+                    self.refusal(
+                        code,
+                        "native thread idle or identity could not be verified",
+                        "idle",
+                        stage,
+                    )
+                },
+            );
+        }
         let state = activity::state_for_view(self.context, self.record)
             .filter(|state| {
                 state.phase != activity::TurnPhase::Unknown

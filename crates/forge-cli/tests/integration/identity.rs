@@ -77,7 +77,7 @@ case "$1:$2" in
  api:user) printf '{"login":"%s"}' "${FIXTURE_ACTOR:-account-a}"; exit 0;;
  api:apps/fixture-app) printf '{"id":42}'; exit 0;;
  api:graphql) printf '{"data":{"viewer":{"login":"fixture-app[bot]"}}}'; exit 0;;
- api:installation/repositories*) printf '%s' "${FIXTURE_COVERAGE:-[]}"; exit 0;;
+ api:installation/repositories*) case "$*" in *--include*) ;; *) exit 9;; esac; printf 'HTTP/2 200 OK\r\n\r\n%s' "${FIXTURE_COVERAGE:-[]}"; exit 0;;
 esac
 if test -n "$GITHUB_TOKEN" || test -n "$GH_DEBUG"; then echo inherited-secret >&2; exit 9; fi
 printf 'actor call\n' >> "$FIXTURE_CALL_LOG"
@@ -1178,6 +1178,40 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
             assert!(!f.audit().contains(CANARY));
         }
     }
+
+    #[test]
+    fn actor_probe_failure_keeps_data_exit_and_bounded_json_cause() {
+        let f = Fixture::new(POLICY);
+        let script = fs::read_to_string(&f.gh).unwrap().replace(
+            "api:user) printf '{\"login\":\"%s\"}' \"${FIXTURE_ACTOR:-account-a}\"; exit 0;;",
+            "api:user) printf 'HTTP/2 403 Forbidden\\nX-GitHub-Request-Id: 8296:fixture\\n\\n{\\\"message\\\":\\\"FIXTURE_PRIVATE_RESPONSE_BODY\\\"}'; exit 1;;",
+        );
+        fs::write(&f.gh, script).unwrap();
+        let out = f.command().args(["issue", "view", "1"]).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(65),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(envelope["error"]["code"], "identity_actor_unavailable");
+        assert_eq!(envelope["error"]["details"]["retryable"], false);
+        assert_eq!(envelope["error"]["details"]["cause"]["http_status"], 403);
+        assert_eq!(
+            envelope["error"]["details"]["cause"]["request_id"],
+            "8296:fixture"
+        );
+        for output in [
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            f.audit(),
+        ] {
+            assert!(!output.contains("FIXTURE_PRIVATE_RESPONSE_BODY"));
+        }
+    }
+
     #[test]
     fn identity_api_stdout_stderr_and_audit_never_contain_token_canary() {
         let f = Fixture::new(POLICY);
@@ -1235,7 +1269,7 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
             if covered {
                 c.env(
                     "FIXTURE_COVERAGE",
-                    r#"[{"repositories":[{"full_name":"sandbox/widget"}]}]"#,
+                    r#"{"repositories":[{"full_name":"sandbox/widget"}]}"#,
                 );
             }
             let out = c.args(["issue", "view", "1"]).output().unwrap();

@@ -9,7 +9,7 @@ import subprocess
 import types
 
 SELECTOR = 'scripts/ci/lib/merge_plan.py'
-VERSION = 'nils-cli.merge-plan.v1'
+VERSION = 'nils-cli.merge-plan.v2'
 
 
 def main():

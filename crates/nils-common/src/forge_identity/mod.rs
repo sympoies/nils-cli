@@ -17,6 +17,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::Duration;
 
 pub const PRINCIPAL_ENV: &str = "FORGE_IDENTITY_PRINCIPAL";
 pub const SESSION_ENV: &str = "FORGE_IDENTITY_SESSION";
@@ -25,16 +26,27 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Error {
     pub code: &'static str,
     detail: Option<String>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub details: Option<serde_json::Value>,
 }
 impl Error {
     pub const fn new(code: &'static str) -> Self {
-        Self { code, detail: None }
+        Self {
+            code,
+            detail: None,
+            details: None,
+        }
     }
     fn with_detail(code: &'static str, detail: String) -> Self {
         Self {
             code,
             detail: Some(detail),
+            details: None,
         }
+    }
+    fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = Some(details);
+        self
     }
 }
 impl fmt::Display for Error {
@@ -225,7 +237,6 @@ impl LoadedPolicy {
                         "api",
                         "installation/repositories?per_page=100",
                         "--paginate",
-                        "--slurp",
                     ],
                 )?;
                 let found = pages.as_array().is_some_and(|pages| {
@@ -431,21 +442,34 @@ impl Authorization {
             .env("GH_HOST", &self.selection.target.host);
     }
     fn probe(&self, gh: &std::ffi::OsStr, args: &[&str]) -> Result<serde_json::Value> {
-        let mut cmd = Command::new(gh);
-        self.apply_api(&mut cmd);
-        cmd.args(args)
-            .args(["--hostname", &self.selection.target.host]);
-        let output = probe::run(&mut cmd).map_err(|e| {
-            if e.code == "identity_probe_unavailable" {
-                Error::new("identity_actor_unavailable")
+        actor_probe_with_retry(|| {
+            let mut cmd = Command::new(gh);
+            self.apply_api(&mut cmd);
+            cmd.args(args)
+                .args(["--hostname", &self.selection.target.host]);
+            cmd.arg("--include");
+            let output = probe::run(&mut cmd).map_err(|probe_error| {
+                let classification = match probe_error.code {
+                    "identity_probe_timeout" => "probe_timeout",
+                    "identity_probe_output_limit" => "probe_output_limit",
+                    _ => "probe_unavailable",
+                };
+                let mut error =
+                    actor_probe_error("process_probe", classification, None, None, false);
+                if matches!(
+                    probe_error.code,
+                    "identity_probe_timeout" | "identity_probe_output_limit"
+                ) {
+                    error.code = probe_error.code;
+                }
+                error
+            })?;
+            if args.contains(&"--paginate") {
+                parse_paginated_actor_probe_response(&output)
             } else {
-                e
+                parse_actor_probe_response(&output)
             }
-        })?;
-        if !output.status.success() {
-            return Err(Error::new("identity_actor_unavailable"));
-        }
-        serde_json::from_slice(&output.stdout).map_err(|_| Error::new("identity_actor_unavailable"))
+        })
     }
     pub fn redact(&self, bytes: &mut Vec<u8>) {
         *bytes = String::from_utf8_lossy(bytes)
@@ -456,6 +480,231 @@ impl Authorization {
         self.redact(&mut output.stdout);
         self.redact(&mut output.stderr);
     }
+}
+
+const ACTOR_PROBE_MAX_ATTEMPTS: u8 = 3;
+
+fn actor_probe_error(
+    stage: &'static str,
+    classification: &'static str,
+    http_status: Option<u16>,
+    retry_after_seconds: Option<u64>,
+    retryable: bool,
+) -> Error {
+    let mut cause = serde_json::json!({
+        "operation": "github_actor_lookup",
+        "stage": stage,
+        "classification": classification,
+    });
+    if let Some(status) = http_status {
+        cause["http_status"] = serde_json::json!(status);
+    }
+    if let Some(seconds) = retry_after_seconds {
+        cause["retry_after_seconds"] = serde_json::json!(seconds);
+    }
+    Error::new("identity_actor_unavailable").with_details(serde_json::json!({
+        "retryable": retryable,
+        "next_action": if retryable { "retry_request" } else { "check_identity_configuration" },
+        "recovery": { "kind": "github_actor_probe", "automatic": retryable },
+        "cause": cause,
+    }))
+}
+
+fn parse_actor_probe_response(output: &Output) -> Result<serde_json::Value> {
+    let (status, retry_after, request_id, body) = parse_included_http_response(&output.stdout);
+    if let Some(status) = status {
+        if !(200..300).contains(&status) || !output.status.success() {
+            let transient = status == 429 || (500..600).contains(&status);
+            let mut error = actor_probe_error(
+                "http_response",
+                match status {
+                    401 => "http_401",
+                    403 => "http_403",
+                    429 => "http_429",
+                    500..=599 => "http_5xx",
+                    _ => "http_error",
+                },
+                Some(status),
+                retry_after,
+                transient,
+            );
+            if let Some(request_id) = request_id
+                && let Some(details) = error.details.as_mut()
+            {
+                details["cause"]["request_id"] = serde_json::json!(request_id);
+            }
+            return Err(error);
+        }
+        return serde_json::from_slice(body).map_err(|_| {
+            actor_probe_error("response_decode", "invalid_json", Some(status), None, false)
+        });
+    }
+    if !output.status.success() {
+        return Err(actor_probe_error(
+            "process_exit",
+            "nonzero_exit",
+            None,
+            None,
+            false,
+        ));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|_| actor_probe_error("response_decode", "invalid_json", None, None, false))
+}
+
+fn parse_paginated_actor_probe_response(output: &Output) -> Result<serde_json::Value> {
+    let mut remaining = output.stdout.as_slice();
+    let mut pages = Vec::new();
+    while !remaining.is_empty() {
+        while matches!(remaining.first(), Some(b'\r' | b'\n' | b' ' | b'\t')) {
+            remaining = &remaining[1..];
+        }
+        if remaining.is_empty() {
+            break;
+        }
+        let (status, retry_after, request_id, body) = parse_included_http_response(remaining);
+        let Some(status) = status else {
+            return Err(actor_probe_error(
+                "process_exit",
+                if output.status.success() {
+                    "invalid_response"
+                } else {
+                    "nonzero_exit"
+                },
+                None,
+                None,
+                false,
+            ));
+        };
+        if !(200..300).contains(&status) {
+            let transient = status == 429 || (500..600).contains(&status);
+            let mut error = actor_probe_error(
+                "http_response",
+                match status {
+                    401 => "http_401",
+                    403 => "http_403",
+                    429 => "http_429",
+                    500..=599 => "http_5xx",
+                    _ => "http_error",
+                },
+                Some(status),
+                retry_after,
+                transient,
+            );
+            if let Some(request_id) = request_id
+                && let Some(details) = error.details.as_mut()
+            {
+                details["cause"]["request_id"] = serde_json::json!(request_id);
+            }
+            return Err(error);
+        }
+        let header_len = remaining.len() - body.len();
+        let mut stream =
+            serde_json::Deserializer::from_slice(body).into_iter::<serde_json::Value>();
+        let page = stream.next().and_then(|page| page.ok()).ok_or_else(|| {
+            actor_probe_error("response_decode", "invalid_json", Some(status), None, false)
+        })?;
+        let consumed = stream.byte_offset();
+        if consumed == 0 || consumed > body.len() {
+            return Err(actor_probe_error(
+                "response_decode",
+                "invalid_json",
+                Some(status),
+                None,
+                false,
+            ));
+        }
+        pages.push(page);
+        remaining = &remaining[header_len + consumed..];
+    }
+    if !output.status.success() {
+        return Err(actor_probe_error(
+            "process_exit",
+            "nonzero_exit",
+            None,
+            None,
+            false,
+        ));
+    }
+    Ok(serde_json::Value::Array(pages))
+}
+
+fn parse_included_http_response(bytes: &[u8]) -> (Option<u16>, Option<u64>, Option<String>, &[u8]) {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return (None, None, None, bytes);
+    };
+    let split = text
+        .find("\r\n\r\n")
+        .map(|index| (index, 4))
+        .or_else(|| text.find("\n\n").map(|index| (index, 2)));
+    let Some((header_end, separator_len)) = split else {
+        return (None, None, None, bytes);
+    };
+    let headers = &text[..header_end];
+    let body = &text[header_end + separator_len..];
+    let mut lines = headers.lines();
+    let status = lines
+        .next()
+        .and_then(|line| line.split_ascii_whitespace().nth(1))
+        .and_then(|value| value.parse::<u16>().ok());
+    let mut retry_after = None;
+    let mut request_id = None;
+    for line in lines {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("retry-after") {
+            retry_after = value.trim().parse::<u64>().ok().filter(|v| *v <= 30);
+        } else if name.eq_ignore_ascii_case("x-github-request-id") {
+            let value = value.trim();
+            if (1..=64).contains(&value.len())
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b':'))
+            {
+                request_id = Some(value.to_owned());
+            }
+        }
+    }
+    (status, retry_after, request_id, body.as_bytes())
+}
+
+fn actor_probe_with_retry(
+    mut run: impl FnMut() -> Result<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    for attempt in 1..=ACTOR_PROBE_MAX_ATTEMPTS {
+        match run() {
+            Ok(value) => return Ok(value),
+            Err(mut error) => {
+                if let Some(details) = error.details.as_mut()
+                    && let Some(cause) = details.get_mut("cause")
+                {
+                    cause["attempt"] = serde_json::json!(attempt);
+                }
+                let retryable = error
+                    .details
+                    .as_ref()
+                    .and_then(|details| details.get("retryable"))
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                if !retryable || attempt == ACTOR_PROBE_MAX_ATTEMPTS {
+                    return Err(error);
+                }
+                let retry_after = error
+                    .details
+                    .as_ref()
+                    .and_then(|details| details.pointer("/cause/retry_after_seconds"))
+                    .and_then(serde_json::Value::as_u64);
+                let delay = Duration::from_millis(
+                    retry_after.map_or(100 * 2u64.pow(attempt.into()), |s| s * 1000),
+                );
+                if !probe::sleep_within_deadline(delay) {
+                    return Err(error);
+                }
+            }
+        }
+    }
+    unreachable!("bounded attempt range always returns")
 }
 
 /// Canonical source checkout for a linked worktree's managed-path rules.
@@ -500,4 +749,208 @@ pub fn managed_path_optional(cwd: Option<&Path>) -> Result<Option<PathBuf>> {
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod actor_probe_tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+
+    fn output(status: i32, body: &[u8]) -> Output {
+        Output {
+            status: std::process::ExitStatus::from_raw(status << 8),
+            stdout: body.to_vec(),
+            stderr: b"FIXTURE_PRIVATE_RESPONSE_BODY".to_vec(),
+        }
+    }
+
+    #[test]
+    fn actor_probe_failure_keeps_only_bounded_typed_http_cause() {
+        let error = parse_actor_probe_response(&output(
+            1,
+            b"HTTP/2 503 Service Unavailable\r\nRetry-After: 1\r\nX-GitHub-Request-Id: 8296:105D2D:3F1475:431BEF:6ACEF43B\r\n\r\n{\"message\":\"FIXTURE_PRIVATE_RESPONSE_BODY\"}",
+        ))
+        .unwrap_err();
+        assert_eq!(error.code, "identity_actor_unavailable");
+        let details = error.details.unwrap();
+        assert_eq!(details["retryable"], true);
+        assert_eq!(details["cause"]["stage"], "http_response");
+        assert_eq!(details["cause"]["classification"], "http_5xx");
+        assert_eq!(details["cause"]["http_status"], 503);
+        assert_eq!(details["cause"]["retry_after_seconds"], 1);
+        assert_eq!(
+            details["cause"]["request_id"],
+            "8296:105D2D:3F1475:431BEF:6ACEF43B"
+        );
+        assert!(serde_json::to_string(&details).unwrap().len() <= 512);
+        assert!(
+            !serde_json::to_string(&details)
+                .unwrap()
+                .contains("FIXTURE_PRIVATE_RESPONSE_BODY")
+        );
+    }
+
+    #[test]
+    fn actor_probe_authentication_and_invalid_json_are_not_retryable() {
+        let included = parse_actor_probe_response(&output(
+            0,
+            b"HTTP/2.0 200 OK\nX-GitHub-Request-Id: AbC-123\n\n{\"login\":\"account-a\"}",
+        ))
+        .unwrap();
+        assert_eq!(included["login"], "account-a");
+
+        let unauthorized = parse_actor_probe_response(&output(
+            1,
+            b"HTTP/2 401 Unauthorized\r\n\r\n{\"message\":\"fixture\"}",
+        ))
+        .unwrap_err();
+        assert_eq!(unauthorized.details.unwrap()["retryable"], false);
+
+        let malformed = parse_actor_probe_response(&output(0, b"not-json")).unwrap_err();
+        assert_eq!(
+            malformed.details.unwrap()["cause"]["classification"],
+            "invalid_json"
+        );
+    }
+
+    #[test]
+    fn paginated_actor_probe_parses_each_included_response_and_retries_transient_status() {
+        let success = output(
+            0,
+            b"HTTP/2 200 OK\r\n\r\n{\"repositories\":[{\"full_name\":\"org/repo\"}]}HTTP/2 200 OK\n\n{\"repositories\":[]}",
+        );
+        let pages = parse_paginated_actor_probe_response(&success).unwrap();
+        assert_eq!(pages.as_array().unwrap().len(), 2);
+        assert_eq!(pages[0]["repositories"][0]["full_name"], "org/repo");
+
+        let mut calls = 0;
+        let result = actor_probe_with_retry(|| {
+            calls += 1;
+            if calls == 1 {
+                parse_paginated_actor_probe_response(&output(
+                    1,
+                    b"HTTP/2 503 Service Unavailable\r\nRetry-After: 0\r\n\r\n{}",
+                ))
+            } else {
+                parse_paginated_actor_probe_response(&success)
+            }
+        })
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(result[0]["repositories"][0]["full_name"], "org/repo");
+
+        let mut persistent_calls = 0;
+        let persistent = actor_probe_with_retry(|| {
+            persistent_calls += 1;
+            parse_paginated_actor_probe_response(&output(
+                1,
+                b"HTTP/2 503 Service Unavailable\r\n\r\n{}",
+            ))
+        })
+        .unwrap_err();
+        assert_eq!(persistent_calls, 3);
+        let details = persistent.details.unwrap();
+        assert_eq!(details["retryable"], true);
+        assert_eq!(details["cause"]["http_status"], 503);
+        assert_eq!(details["cause"]["attempt"], 3);
+
+        let unauthorized =
+            parse_paginated_actor_probe_response(&output(1, b"HTTP/2 403 Forbidden\r\n\r\n{}"))
+                .unwrap_err();
+        assert_eq!(unauthorized.details.unwrap()["retryable"], false);
+    }
+
+    #[test]
+    fn paginated_authorization_probe_requires_headers_and_retries_503() {
+        let dir = tempfile::tempdir().unwrap();
+        let counter = dir.path().join("calls");
+        let script = dir.path().join("gh");
+        let body = r#"#!/bin/sh
+case "$*" in
+  *--paginate*)
+    case "$*" in *--include*) ;; *) exit 9 ;; esac
+    count=$(cat "__COUNTER__" 2>/dev/null || echo 0)
+    count=$((count + 1))
+    printf '%s' "$count" > "__COUNTER__"
+    if [ "$count" -eq 1 ]; then
+      printf '%b' 'HTTP/2 503 Service Unavailable\r\nRetry-After: 0\r\n\r\n{}'
+      exit 1
+    fi
+    printf '%b' 'HTTP/2 200 OK\r\n\r\n{"repositories":[{"full_name":"org/repo"}]}'
+    ;;
+  *) exit 8 ;;
+esac
+"#
+        .replace("__COUNTER__", &counter.display().to_string());
+        std::fs::write(&script, body).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let authorization = Authorization {
+            selection: Selection {
+                principal: "fixture".to_owned(),
+                target: Target::new("github.com", "org/repo").unwrap(),
+                operation: Operation::ApiRead,
+                profile_id: "fixture".to_owned(),
+                matched_rule: "fixture".to_owned(),
+                profile: Profile {
+                    expected_login: Some("account-a".to_owned()),
+                    expected_app_id: None,
+                    app_slug: None,
+                    credential: "fixture".to_owned(),
+                    commit_name: "Fixture".to_owned(),
+                    commit_email: "fixture@example.invalid".to_owned(),
+                    signing_fingerprint: "fixture".to_owned(),
+                    operations: vec![Operation::ApiRead],
+                },
+                session_binding: None,
+            },
+            actor: "account-a".to_owned(),
+            token: "fixture-token".to_owned(),
+            policy_digest: "fixture".to_owned(),
+        };
+        let pages = authorization
+            .probe(
+                script.as_os_str(),
+                &[
+                    "api",
+                    "installation/repositories?per_page=100",
+                    "--paginate",
+                ],
+            )
+            .unwrap();
+        assert_eq!(pages[0]["repositories"][0]["full_name"], "org/repo");
+        assert_eq!(std::fs::read_to_string(counter).unwrap(), "2");
+    }
+
+    #[test]
+    fn actor_probe_retries_one_proven_transient_failure_then_succeeds() {
+        let mut calls = 0;
+        let result = actor_probe_with_retry(|| {
+            calls += 1;
+            if calls == 1 {
+                Err(parse_actor_probe_response(&output(
+                    1,
+                    b"HTTP/2 503 Service Unavailable\r\n\r\n{}",
+                ))
+                .unwrap_err())
+            } else {
+                parse_actor_probe_response(&output(0, b"{\"login\":\"fixture\"}"))
+            }
+        })
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(result["login"], "fixture");
+
+        let mut persistent_calls = 0;
+        let error = actor_probe_with_retry(|| {
+            persistent_calls += 1;
+            parse_actor_probe_response(&output(1, b"HTTP/2 503 Service Unavailable\r\n\r\n{}"))
+        })
+        .unwrap_err();
+        assert_eq!(persistent_calls, 3);
+        let details = error.details.unwrap();
+        assert_eq!(details["retryable"], true);
+        assert_eq!(details["cause"]["attempt"], 3);
+    }
 }
