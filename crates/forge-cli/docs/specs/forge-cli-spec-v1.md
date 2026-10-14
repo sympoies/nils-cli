@@ -376,6 +376,11 @@ Label-local flags:
   explicitly requested. It never deletes or renames labels by default.
 - `pr create` and `pr deliver` accept `--label <name>` repeatedly. Catalog
   validation is opt-in via `--label-catalog <path> --strict-labels`.
+  The compatibility `state::do-not-merge` hold may coexist with one ordinary workflow
+  `state::` label. It must still be known (or an allowed extension) and applicable
+  to the target. Two ordinary states still conflict in an exclusive state group,
+  with or without the hold. This shared selection rule applies to typed issue,
+  PR, and MR label validation; it does not lift merge holds or change the catalog.
 
 ## Atomic op surface
 
@@ -1491,7 +1496,10 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
     convergence override: the latest typed state is bound to the exact merge
     head, has no active hard stop, and has no open blocking findings. Enabling
     review convergence requires an explicit genesis observation when no ledger
-    exists. The chain tip must remain unchanged through the final pre-merge
+    exists. Explicit `--review-convergence=false` permits an absent observation
+    even when a designated-review handoff exists; it does not waive an existing
+    observation or its designated-publication checks. The complete trusted
+    chain is still validated. The chain tip must remain unchanged through the final pre-merge
     recheck; there is no force/rationale bypass for existing state;
   - no non-outdated unresolved review threads (outdated unresolved threads
     are mechanically dispositioned `stale` and recorded, not blocking) OR
@@ -1528,7 +1536,25 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   provider. `pr deliver --no-merge` remains exempt because it has no merge
   convergence phase.
 - Post-merge: deletes the remote branch (default `true`, disable via
-  `--keep-branch`). GitHub passes `--match-head-commit <head_sha>`;
+  `--keep-branch`). Before requesting deletion, read all open PRs/MRs targeting
+  the source branch in its repository/project. If any dependents remain, merge
+  while preserving the branch and report their numbers/URLs in `branch_cleanup`.
+  Retarget dependents before subsequent cleanup; the CLI does not retarget them
+  automatically.
+
+  `--delete-branch-even-if-stacked` explicitly permits deletion
+  and records a warning that dependents may close; it conflicts with
+  `--keep-branch`.
+
+  Failed or malformed dependency reads defer the merge with
+  `branch_dependencies_unavailable`. GitHub automatic branch deletion with
+  dependents defers the merge with `stacked_branch_auto_delete`, since omitting
+  the cleanup flag cannot preserve the branch in that configuration, including
+  `--keep-branch` and `[merge].delete_branch=false` on GitHub. The same
+  dependency guard runs through `pr deliver`; its override defaults to false.
+  Dry-run remains a backend plan preview; dependency checks run during live merge.
+
+  GitHub passes `--match-head-commit <head_sha>`;
   GitLab performs the merge mutation through
   `glab api --method PUT projects/<project>/merge_requests/<iid>/merge`
   after all gates pass, including `sha=<head_sha>` when the MR view
@@ -1537,7 +1563,7 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   the merge, idempotent recovery succeeds only when the merged head still
   equals that same OID.
 - Output schema: `cli.forge-cli.pr.merge.v1`,
-  `data = { number, url, merge_sha, method, deleted_branch,
+  `data = { number, url, merge_sha, method, deleted_branch, branch_cleanup?,
   unchecked_tasks_override_reason?, unresolved_threads_override_reason?,
   no_checks_override_reason?,
   stale_thread_dispositions?, review_convergence?, review_loop? }`.
@@ -1973,10 +1999,11 @@ backend implementations cannot diverge.
 18. **Merge freeze and merge queue (GitHub).** Right after the repository
     read, `pr merge` issues one GraphQL policy read (`ForgeMergePolicy`): the
     open issues labelled `merge-freeze`, the base branch's `mergeQueue`, and the
-    PR node id, queue membership, and state. The read is repeated immediately
-    before the merge or enqueue mutation, after the review-convergence and
-    review-loop rechecks, and the freeze gate runs again with the same
-    overrides. A freeze started while the gates ran therefore still blocks.
+    PR node id, queue membership, and state. The read is repeated after
+    review-convergence rechecks and before the final hold, stacked-branch, and
+    review-loop tip checks preceding merge or enqueue, and the freeze gate runs
+    again with the same overrides. A freeze started while the gates ran therefore
+    still blocks.
     - A failed or partial read fails closed with `merge_policy_unavailable`
       (`UNAVAILABLE 69`). One case is not a failure: a host whose schema has no
       merge queue (an older GitHub Enterprise Server) reports that `mergeQueue`
@@ -2088,6 +2115,8 @@ Violations map to `DATA 65` with one of these `data.error.kind` values:
 | `checks_failed`                            | 8 (`RUNTIME 1`)       |
 | `checks_not_registered`                    | 8                     |
 | `merge_method_unsupported`                 | 9                     |
+| `branch_dependencies_unavailable`          | 20 (`UNAVAILABLE 69`) |
+| `stacked_branch_auto_delete`               | 20 (`DATA 65`)        |
 | `keep_branch_conflict`                     | 10                    |
 | `local_path_present`                       | 11                    |
 | `agent_attribution_present`                | 17                    |

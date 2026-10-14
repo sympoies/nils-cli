@@ -79,7 +79,7 @@ pub(super) fn retry_admitted(
     })
 }
 
-fn retained_entries(path: &Path) -> Option<Vec<JournalEntry>> {
+pub(super) fn retained_entries(path: &Path) -> Option<Vec<JournalEntry>> {
     let mut file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
