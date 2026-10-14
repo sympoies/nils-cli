@@ -139,3 +139,47 @@ fn same_head_fixed_reassertion_merges_threads_without_advancing_lifecycle() {
     assert!(transition.changed);
     assert_eq!(transition.state, expected);
 }
+
+#[test]
+fn merged_fixed_threads_do_not_change_an_identical_full_set_retry() {
+    let mut previous = fixed_inventory();
+    previous
+        .findings
+        .get_mut("correctness:inventory:f1")
+        .unwrap()
+        .threads = vec!["thread-1".into()];
+    let mut full_set = observations(ReviewFindingStatus::Fixed);
+    full_set[0].threads = vec!["thread-2".into()];
+    let mut new = observations(ReviewFindingStatus::Open).remove(0);
+    new.fingerprint = "correctness:inventory:new".into();
+    full_set.push(new);
+    let first = observe_review_loop(Some(&previous), "head-2", &full_set).unwrap();
+    assert!(first.changed);
+    assert_eq!(
+        first.state.findings["correctness:inventory:f1"].threads,
+        vec!["thread-1", "thread-2"]
+    );
+    assert_eq!(
+        first.state.findings["correctness:inventory:new"].seen_count,
+        1
+    );
+
+    let retry = observe_review_loop(Some(&first.state), "head-2", &full_set).unwrap();
+    assert!(!retry.changed, "retained thread union is not a change");
+    assert_eq!(retry.state, first.state);
+    assert_eq!(
+        retry.state.findings["correctness:inventory:new"].seen_count,
+        1
+    );
+
+    full_set[0].threads = vec!["thread-3".into()];
+    let updated = observe_review_loop(Some(&retry.state), "head-2", &full_set).unwrap();
+    assert!(updated.changed, "a genuinely new thread must be admitted");
+    assert_eq!(
+        updated.state.findings["correctness:inventory:f1"].threads,
+        vec!["thread-1", "thread-2", "thread-3"]
+    );
+    let retry = observe_review_loop(Some(&updated.state), "head-2", &full_set).unwrap();
+    assert!(!retry.changed);
+    assert_eq!(retry.state, updated.state);
+}

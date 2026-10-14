@@ -1422,7 +1422,11 @@ fn observation_matches_state(
                 finding.root_cause_fingerprint == observation.root_cause_fingerprint
                     && finding.status == observation.status
                     && finding.blocking == observation.blocking
-                    && finding.threads == observation.threads
+                    // Observations merge thread references into the retained set.
+                    && observation
+                        .threads
+                        .iter()
+                        .all(|thread| finding.threads.contains(thread))
             })
         })
 }
