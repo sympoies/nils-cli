@@ -62,6 +62,7 @@ pub enum ForgeError {
         kind: &'static str,
         message: String,
         detail: Option<String>,
+        details: Option<Box<serde_json::Value>>,
     },
     /// Op-specific `RUNTIME 1` failure with a rule-specific `error.kind`.
     /// Currently used by `pr wait-checks` for `checks_failed`; future ops
@@ -217,6 +218,22 @@ impl ForgeError {
             kind,
             message: message.into(),
             detail,
+            details: None,
+        }
+    }
+
+    pub fn validation_with_details(
+        schema_version: impl Into<String>,
+        kind: &'static str,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        Self::Validation {
+            schema_version: schema_version.into(),
+            kind,
+            message: message.into(),
+            detail: None,
+            details: Some(Box::new(details)),
         }
     }
 
@@ -286,7 +303,9 @@ impl ForgeError {
 
     fn structured_details(&self) -> Option<&serde_json::Value> {
         match self {
-            Self::BackendUnavailable { details, .. } => details.as_deref(),
+            Self::BackendUnavailable { details, .. } | Self::Validation { details, .. } => {
+                details.as_deref()
+            }
             _ => None,
         }
     }
@@ -446,7 +465,7 @@ mod tests {
 
     #[test]
     fn json_envelope_preserves_typed_actor_probe_cause() {
-        let err = ForgeError::unavailable_with_details(
+        let err = ForgeError::validation_with_details(
             "cli.forge-cli.error.v1",
             "identity_actor_unavailable",
             "GitHub actor lookup failed",
@@ -457,6 +476,7 @@ mod tests {
             }),
         );
         let envelope: serde_json::Value = serde_json::from_str(&err.render_json()).unwrap();
+        assert_eq!(err.exit_code(), exit::DATA);
         assert_eq!(envelope["error"]["code"], "identity_actor_unavailable");
         assert_eq!(envelope["error"]["details"]["retryable"], true);
         assert_eq!(envelope["error"]["details"]["cause"]["http_status"], 503);

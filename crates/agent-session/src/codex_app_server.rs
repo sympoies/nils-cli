@@ -33,6 +33,7 @@ use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 mod account_authority;
 use account_authority::{
     TuiMutationRejection, account_authority_rejection, manual_cancellation_busy, tui_busy_response,
+    wait_for_initial_thread_start_binding,
 };
 
 use crate::{
@@ -4696,6 +4697,7 @@ async fn cancel_before_tui_mutation_detailed(
             _account_authority: None,
         });
     }
+    wait_for_initial_thread_start_binding(context, record, method, bootstrap).await;
     if method == Some("turn/start") && !ensure_turn_start_account_ready(context, record).await {
         bootstrap.close();
         return Err(TuiMutationRejection::AccountNotReady);

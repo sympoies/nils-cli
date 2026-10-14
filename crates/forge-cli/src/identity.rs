@@ -26,9 +26,19 @@ impl Drop for Scope {
     }
 }
 fn error(e: identity::Error) -> ForgeError {
+    if e.code == "identity_actor_unavailable"
+        && let Some(details) = e.details.clone()
+    {
+        return ForgeError::validation_with_details(
+            schema_version_for(BINARY, "identity", 1),
+            e.code,
+            "GitHub actor lookup failed",
+            details,
+        );
+    }
     if matches!(
         e.code,
-        "identity_actor_unavailable" | "identity_probe_timeout" | "identity_probe_output_limit"
+        "identity_probe_timeout" | "identity_probe_output_limit"
     ) && let Some(details) = e.details.clone()
     {
         return ForgeError::unavailable_with_details(
@@ -407,12 +417,13 @@ mod tests {
             "cause": { "operation": "github_actor_lookup", "http_status": 503 }
         }));
         let error = error(identity_error);
-        match error {
-            ForgeError::BackendUnavailable { kind, details, .. } => {
-                assert_eq!(kind, "identity_actor_unavailable");
-                assert_eq!(details.unwrap()["cause"]["http_status"], 503);
+        match &error {
+            ForgeError::Validation { kind, details, .. } => {
+                assert_eq!(*kind, "identity_actor_unavailable");
+                assert_eq!(details.as_ref().unwrap()["cause"]["http_status"], 503);
             }
             other => panic!("unexpected forge error: {other:?}"),
         }
+        assert_eq!(error.exit_code(), nils_common::cli_contract::exit::DATA);
     }
 }

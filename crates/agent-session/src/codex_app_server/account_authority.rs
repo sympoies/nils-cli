@@ -1,4 +1,40 @@
-use super::{CliContext, Message, SessionRecord, Value, json};
+use std::time::{Duration, Instant};
+
+use super::{
+    CONTROL_SUBMIT_TOTAL_TIMEOUT, CliContext, FreshBootstrap, Message, SessionRecord, Value, json,
+};
+
+pub(super) async fn wait_for_initial_thread_start_binding(
+    context: &CliContext,
+    record: &SessionRecord,
+    method: Option<&str>,
+    bootstrap: &FreshBootstrap,
+) {
+    if method != Some("thread/start")
+        || !matches!(bootstrap, FreshBootstrap::ThreadStart)
+        || !crate::codex_account::proxy_initial_binding_is_pending(record)
+    {
+        return;
+    }
+    let deadline = Instant::now() + CONTROL_SUBMIT_TOTAL_TIMEOUT;
+    loop {
+        let load_context = context.clone();
+        let id = record.id.clone();
+        let Ok(Ok(current)) =
+            tokio::task::spawn_blocking(move || crate::load_session_record(&load_context, &id))
+                .await
+        else {
+            return;
+        };
+        if crate::ensure_same_session_identity(record, &current).is_err()
+            || !crate::codex_account::proxy_initial_binding_is_pending(&current)
+            || Instant::now() >= deadline
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
 
 /// Serialize a provider `turn/start` with account mutation. The proxy takes
 /// this gate before forwarding and retains it through the matching JSON-RPC

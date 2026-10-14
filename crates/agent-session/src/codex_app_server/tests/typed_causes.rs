@@ -1,6 +1,58 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[tokio::test]
+async fn fresh_thread_start_waits_for_initial_binding_application() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let upstream = tmp.path().join("initial-binding.sock");
+    let context = CliContext {
+        state_dir: tmp.path().join("state"),
+        host: None,
+    };
+    let mut record = record_with_runtime("initial-binding", &upstream);
+    let runtime_id = record.runtime.as_ref().unwrap().launch_id.clone();
+    record.extra.insert(
+        "codex_account_binding".to_owned(),
+        json!({
+            "schema_version": "agent-session.codex-account-binding.v1",
+            "selected_account": "fixture-account",
+            "selection_source": "explicit",
+            "revision": 1,
+            "state": "pending",
+            "applied_runtime_id": null,
+            "updated_at": "2030-01-01T00:00:00Z"
+        }),
+    );
+    fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+    crate::write_session_record(&context, &record).unwrap();
+    crate::activity::activate_runtime(&context, &record).unwrap();
+    write_create_bootstrap_marker(&record);
+    let mut bootstrap = FreshBootstrap::for_runtime(&context, &record);
+    assert_eq!(bootstrap, FreshBootstrap::ThreadStart);
+
+    let apply_context = context.clone();
+    let id = record.id.clone();
+    let apply = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _lock = crate::acquire_session_record_lock(&apply_context, &id).unwrap();
+        let mut current = crate::load_session_record(&apply_context, &id).unwrap();
+        current.extra.get_mut("codex_account_binding").unwrap()["state"] = json!("bound");
+        current.extra.get_mut("codex_account_binding").unwrap()["applied_runtime_id"] =
+            json!(runtime_id);
+        crate::write_session_record(&apply_context, &current).unwrap();
+    });
+
+    let result = cancel_before_tui_mutation_detailed(
+        &context,
+        &record,
+        &mut bootstrap,
+        &json!({ "id": 1, "method": "thread/start", "params": {} }),
+    )
+    .await;
+    apply.await.unwrap();
+    assert!(result.is_ok());
+}
+
 #[test]
 fn thread_start_authority_failure_projects_bounded_typed_cause() {
     let rejection = TuiMutationRejection::AccountAuthorityUnavailable {
@@ -131,10 +183,15 @@ async fn busy_manual_cancellation_rejects_only_the_turn_and_keeps_proxy_alive() 
     assert_eq!(rejected["error"]["data"]["cause"]["binding_revision"], 7);
     assert_eq!(rejected["error"]["data"]["cause"]["receipt_written"], true);
     let receipt = crate::lifecycle::read(&context, &record.id, 1).unwrap()["records"][0].clone();
+    assert_eq!(receipt["schema_version"], "agent-session.lifecycle.v1");
+    assert_eq!(receipt["caller"]["kind"], "controller");
+    assert_eq!(receipt["result"]["code"], "session-record-lock-busy");
     assert_eq!(
-        receipt["schema_version"],
-        "agent-session.startup-cause-receipt.v1"
+        receipt["result"]["message"],
+        "lifecycle operation failed; inspect the returned error code"
     );
+    assert_eq!(receipt["result"]["proof_step"], "operation-validation");
+    assert_eq!(receipt["exit"], Value::Null);
     assert_eq!(
         receipt["session_incarnation"],
         record.runtime.as_ref().unwrap().launch_id

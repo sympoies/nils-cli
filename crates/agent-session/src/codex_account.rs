@@ -691,6 +691,22 @@ pub(crate) fn proxy_binding_diagnostic(record: &SessionRecord) -> (&'static str,
     }
 }
 
+/// Fresh-start-only predicate for the initial account binding while its
+/// control connection applies it to the newly launched runtime. Other pending
+/// bindings remain fail-closed and are not waited out by the proxy.
+pub(crate) fn proxy_initial_binding_is_pending(record: &SessionRecord) -> bool {
+    record.agent == "codex"
+        && record.runtime.is_some()
+        && matches!(
+            decode_binding(record),
+            DecodedBinding::Valid(binding)
+                if binding.revision == 1
+                    && binding.state == "pending"
+                    && binding.applied_runtime_id.is_none()
+                    && binding.failure_reason.is_none()
+        )
+}
+
 /// Validate the account currently bound to the live runtime without treating a
 /// queued next-account intent as a reason to reject terminal input. The
 /// app-server proxy remains the structured boundary that fences `turn/start`;

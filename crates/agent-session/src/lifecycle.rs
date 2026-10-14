@@ -147,7 +147,11 @@ fn proof_step(error: &CliError) -> &'static str {
             _ => {}
         }
     }
-    match error.code() {
+    proof_step_for_code(error.code())
+}
+
+fn proof_step_for_code(code: &str) -> &'static str {
+    match code {
         "session-incarnation-conflict" => "incarnation-fence",
         "coordination-runtime-unverified" => "runtime-stopped-proof",
         "coordination-unauthorized" => "capability-present",
@@ -229,14 +233,23 @@ pub(crate) fn record_startup_cause_receipt(
         context,
         &record.id,
         &json!({
-            "schema_version": "agent-session.startup-cause-receipt.v1",
+            "schema_version": "agent-session.lifecycle.v1",
             "timestamp": jiff::Timestamp::now().to_string(),
             "operation": "startup-cause",
+            "caller": {
+                "kind": "controller",
+                "session_id": null,
+                "binary_version": env!("CARGO_PKG_VERSION"),
+                "binary_path": std::env::current_exe().ok().map(|path| path.to_string_lossy().into_owned()),
+            },
             "session_id": record.id,
             "session_incarnation": runtime.map(|runtime| &runtime.launch_id),
             "session_generation": runtime.map(|runtime| runtime.generation),
             "result": {
                 "ok": false,
+                "code": receipt.code,
+                "message": "lifecycle operation failed; inspect the returned error code",
+                "proof_step": proof_step_for_code(receipt.code),
                 "cause": {
                     "operation": receipt.operation,
                     "stage": receipt.stage,
@@ -245,7 +258,8 @@ pub(crate) fn record_startup_cause_receipt(
                     "binding_state": binding_state,
                     "binding_revision": receipt.binding_revision,
                 }
-            }
+            },
+            "exit": null,
         }),
     )
 }
@@ -728,10 +742,17 @@ mod tests {
         fs::write(session_dir.join("fixture"), b"session data").unwrap();
         fs::remove_dir_all(&session_dir).unwrap();
         let receipt = read(&context, &target.id, 1).unwrap()["records"][0].clone();
+        assert_eq!(receipt["schema_version"], "agent-session.lifecycle.v1");
+        assert_eq!(receipt["caller"]["kind"], "controller");
+        assert_eq!(receipt["caller"]["session_id"], Value::Null);
+        assert!(receipt["caller"]["binary_version"].is_string());
+        assert_eq!(receipt["exit"], Value::Null);
+        assert_eq!(receipt["result"]["code"], "session-record-unavailable");
         assert_eq!(
-            receipt["schema_version"],
-            "agent-session.startup-cause-receipt.v1"
+            receipt["result"]["message"],
+            "lifecycle operation failed; inspect the returned error code"
         );
+        assert_eq!(receipt["result"]["proof_step"], "operation-validation");
         assert_eq!(
             receipt["result"]["cause"]["operation"],
             "thread_start_cancellation"
