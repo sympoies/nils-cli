@@ -169,7 +169,7 @@ fn pr_wait_checks_timeout_exits_unavailable_with_kind_checks_timeout() {
             "--interval",
             "20ms",
             "--timeout",
-            "100ms",
+            "1s",
         ],
     );
     assert_eq!(
