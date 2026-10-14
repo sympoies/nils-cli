@@ -18,7 +18,8 @@ from rust_file_size import SourceFile, blank
 
 MOD = re.compile(r'(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?'
                  r'\bmod\s+(\w+)\s*([;{])')
-USE = re.compile(r'\buse\s+([^;]+);')
+USE = re.compile(r'(?P<attrs>(?:#\[[^\]]*\]\s*)*)'
+                 r'(?:pub(?:\([^)]*\))?\s+)?\buse\s+(?P<tree>[^;]+);')
 CALL = re.compile(r'\b(assert_eq|assert_ne)\s*!')
 INCLUDE = re.compile(r'\binclude\s*!\s*\(\s*[^)]*\)\s*;?')
 LITERAL = r'(r\#*".*?"\#*|"(?:[^"\\]|\\.)*")'
@@ -59,6 +60,7 @@ def use_paths(text, prefix=''):
 @dataclass
 class Module:
     imports: set = field(default_factory=set)
+    unconditional_imports: set = field(default_factory=set)
     glob: bool = False
     calls: list = field(default_factory=list)
     children: list = field(default_factory=list)
@@ -70,6 +72,14 @@ class Audit:
         self.files = {path.resolve(): path.read_text() for path in
                       sorted((self.root / 'crates').rglob('*.rs'))}
         self.modules = {}
+
+    def load_include(self, path):
+        """Load literal fragments only within the audited crate source tree."""
+        if not path.is_relative_to(self.root / 'crates'):
+            return False
+        if path not in self.files and path.is_file():
+            self.files[path] = path.read_text()
+        return path in self.files
 
     def file_module(self, path, stack):
         node = Module()
@@ -116,13 +126,18 @@ class Audit:
         for match in USE.finditer(own):
             if own_source.depth_at(match.start()) != 0:
                 continue
-            for imported in use_paths(re.sub(r'\s+', '', match[1])):
+            conditional = re.search(r'#\[\s*cfg\s*\(', match['attrs'])
+            for imported in use_paths(re.sub(r'\s+', '', match['tree'])):
                 imported = imported.removeprefix('::')
                 node.glob |= imported == 'super::*'
                 if imported.startswith('pretty_assertions::'):
                     macro = imported.removeprefix('pretty_assertions::')
                     if macro in MACROS:
                         node.imports.add(macro)
+                        # A platform-gated import cannot exempt every call in
+                        # this module: another cfg branch may only inherit it.
+                        if not conditional:
+                            node.unconditional_imports.add(macro)
         for match in CALL.finditer(own):
             if own[:match.start()].rstrip().endswith('::'):
                 continue
@@ -137,7 +152,7 @@ class Audit:
             if value is None:
                 continue
             included = (path.parent / value).resolve()
-            if included in self.files and included not in stack:
+            if included not in stack and self.load_include(included):
                 self.scan(node, included, 0, len(self.files[included]), module_dir,
                           included.parent, stack | {included})
 
@@ -147,14 +162,14 @@ class Audit:
         def visit(node, parent_imports):
             inherited = parent_imports if node.glob else set()
             for path, line, macro in node.calls:
-                if macro in inherited - node.imports:
+                if macro in inherited - node.unconditional_imports:
                     findings.add((path, line, macro))
             for child in node.children:
                 visit(child, node.imports | inherited)
 
         # Also start at disconnected test helpers: not every integration test has
         # a lib.rs/main.rs root. Findings reached from multiple roots deduplicate.
-        for path in self.files:
+        for path in tuple(self.files):
             visit(self.file_module(path, set()), set())
         return sorted(findings)
 

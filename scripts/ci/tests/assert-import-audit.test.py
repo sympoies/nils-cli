@@ -138,6 +138,56 @@ mod renamed {
 '''})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_disjoint_cfg_imports_do_not_exempt_calls(self):
+        result = self.audit({'tests/integration.rs': '''
+use pretty_assertions::{assert_eq, assert_ne};
+mod child {
+    use super::*;
+    #[cfg(target_os = "linux")]
+    use pretty_assertions::{assert_eq, assert_ne};
+    #[cfg(target_os = "macos")]
+    #[test] fn check() { assert_eq!(1, 1); assert_ne!(1, 2); }
+}
+'''})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count('explicitly import'), 2)
+
+    def test_non_rs_literal_include_and_cycle(self):
+        result = self.audit({
+            'tests/integration.rs': '''
+use pretty_assertions::assert_eq;
+mod child { include!("../fragments/assertions.inc"); }
+''',
+            'fragments/assertions.inc': '''
+use super::*;
+include!("assertions.inc");
+fn check() { assert_eq!(1, 1); }
+''',
+        })
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('crates/demo/fragments/assertions.inc:4:', result.stdout)
+        self.assertEqual(result.stdout.count('explicitly import'), 1)
+
+    def test_literal_include_outside_crates_is_not_followed(self):
+        result = self.audit({
+            'tests/integration.rs': '''
+use pretty_assertions::assert_eq;
+mod child { include!("../../../outside.inc"); }
+''',
+            '../../outside.inc': 'use super::*; fn check() { assert_eq!(1, 1); }',
+        })
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_raw_c_string_does_not_hide_child(self):
+        result = self.audit({'tests/integration.rs': '''
+use pretty_assertions::assert_eq;
+const TEXT: &std::ffi::CStr = cr#"x " }"#;
+mod child { use super::*; fn check() { assert_eq!(1, 1); } }
+'''})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('crates/demo/tests/integration.rs:4:', result.stdout)
+        self.assertEqual(result.stdout.count('explicitly import'), 1)
+
     def test_multiline_grouped_imports_and_platform_gates(self):
         result = self.audit({'src/lib.rs': '''
 #[cfg(all(test, target_os = "macos"))]

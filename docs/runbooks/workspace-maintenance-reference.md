@@ -151,6 +151,7 @@ This runs changed-scope validation against `origin/main` by default:
   modules before compilation, including literal `#[path]` and `include!` files;
   a child using `use super::*;` must explicitly import each `pretty_assertions`
   macro it calls when that macro is imported by its parent
+  (conditional imports do not count as unconditional exemptions)
 - the workspace lane runs its tests through `scripts/ci/tempdir-leak-probe.sh`,
   which fails on temp directories the suite leaves behind; see
   `docs/specs/test-temp-directory-policy.md`
