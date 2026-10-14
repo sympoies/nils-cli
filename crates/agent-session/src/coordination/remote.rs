@@ -20,6 +20,7 @@ const JOURNAL_VERSION: &str = "agent-session.federation-journal.v2";
 const EXTENDED_JOURNAL_VERSION: &str = "agent-session.federation-journal.v3";
 const REFUSAL_JOURNAL_VERSION: &str = "agent-session.federation-journal.v5";
 const AUDIT_JOURNAL_VERSION: &str = "agent-session.federation-journal.v4";
+const SUPPRESSION_JOURNAL_VERSION: &str = "agent-session.federation-journal.v6";
 const LEGACY_JOURNAL_VERSION: &str = "agent-session.federation-journal.v1";
 const JOURNAL_FILE: &str = "federation-journal.json";
 const MAX_QUOTA_TEXT_BYTES: usize = 128;
@@ -328,6 +329,9 @@ struct Retained {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     forwarding: Option<super::forwarding::Provenance>,
 }
+#[path = "remote_journal_version.rs"]
+mod journal_version;
+
 #[path = "remote_receipt.rs"]
 mod receipt;
 
@@ -425,7 +429,8 @@ fn read_journal(context: &CliContext) -> Result<Journal, CliError> {
                 JOURNAL_VERSION
                 | EXTENDED_JOURNAL_VERSION
                 | AUDIT_JOURNAL_VERSION
-                | REFUSAL_JOURNAL_VERSION => true,
+                | REFUSAL_JOURNAL_VERSION
+                | SUPPRESSION_JOURNAL_VERSION => true,
                 LEGACY_JOURNAL_VERSION => journal.retained.is_empty(),
                 _ => false,
             };
@@ -464,45 +469,7 @@ impl LockedJournal {
     }
     fn encode(&mut self) -> Result<Vec<u8>, CliError> {
         self.registry.compact(now_epoch());
-        let refusal = self.registry.schema_version == REFUSAL_JOURNAL_VERSION
-            || self
-                .registry
-                .remote_outbox
-                .iter()
-                .any(|entry| entry.refusal_details.is_some())
-            || self
-                .registry
-                .retained
-                .iter()
-                .any(|entry| entry.refusal_details.is_some());
-        let audit = self.registry.schema_version == AUDIT_JOURNAL_VERSION
-            || self.registry.remote_outbox.iter().any(|entry| {
-                entry.last_attempt_at_epoch.is_some() || entry.state_changed_at_epoch.is_some()
-            })
-            || self.registry.retained.iter().any(|entry| {
-                entry.created_at_epoch.is_some()
-                    || entry.last_attempt_at_epoch.is_some()
-                    || entry.state_changed_at_epoch.is_some()
-            });
-        let extended = self.registry.schema_version == EXTENDED_JOURNAL_VERSION
-            || self.registry.remote_outbox.iter().any(|entry| {
-                entry.envelope.category.is_some() || entry.envelope.forwarding.is_some()
-            })
-            || self
-                .registry
-                .retained
-                .iter()
-                .any(|entry| entry.category.is_some() || entry.forwarding.is_some());
-        self.registry.schema_version = if refusal {
-            REFUSAL_JOURNAL_VERSION
-        } else if audit {
-            AUDIT_JOURNAL_VERSION
-        } else if extended {
-            EXTENDED_JOURNAL_VERSION
-        } else {
-            JOURNAL_VERSION
-        }
-        .into();
+        self.registry.schema_version = journal_version::select(&self.registry).into();
         serde_json::to_vec(&self.registry).map_err(|_| journal_error())
     }
     fn write(&self, bytes: &[u8]) -> Result<(), CliError> {
@@ -653,6 +620,7 @@ pub(super) fn relay_reason_code(code: &str) -> Option<&'static str> {
         "message-forward-loop",
         "message-forward-depth-exceeded",
         "message-forward-invalid",
+        "notification-policy-invalid",
     ]
     .into_iter()
     .find(|known| *known == code)

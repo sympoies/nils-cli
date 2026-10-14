@@ -415,3 +415,147 @@ fn notification_policy_forwarding_recomputes_destination_policy_without_elevatin
         "only original recipient has a wake"
     );
 }
+
+#[test]
+fn notification_policy_journal_fences_suppression_and_keeps_the_fence() {
+    let (_temp, context) = tests::fixture();
+    let mut item = tests::own_outbox("quiet-fence", "delivered");
+    item.receipt.as_mut().unwrap()["notification_suppressed"] = json!(true);
+    let mut locked = lock_journal(&context).unwrap();
+    locked.registry.remote_outbox.push(item);
+    locked.save().unwrap();
+    assert_eq!(
+        locked.registry.schema_version,
+        "agent-session.federation-journal.v6"
+    );
+    drop(locked);
+    let mut locked = lock_journal(&context).unwrap();
+    assert_eq!(
+        locked.registry.retained[0].receipt().unwrap()["notification_suppressed"],
+        true
+    );
+    locked.registry.retained.clear();
+    locked.save().unwrap();
+    assert_eq!(
+        locked.registry.schema_version,
+        "agent-session.federation-journal.v6"
+    );
+}
+
+#[test]
+fn notification_policy_registry_fences_old_writers_and_keeps_the_fence() {
+    let (_temp, context) = tests::fixture();
+    configure(&context, "recipient");
+    ingress(&context, Some(MessageCategory::Progress));
+    let mut locked = lock_registry(&context).unwrap();
+    assert_eq!(
+        locked.registry.schema_version,
+        "agent-session.coordination-registry.v3"
+    );
+    assert!(locked.registry.messages[0].notification_suppressed);
+    locked.registry.messages.clear();
+    locked.save().unwrap();
+    drop(locked);
+    assert_eq!(
+        lock_registry(&context).unwrap().registry.schema_version,
+        "agent-session.coordination-registry.v3"
+    );
+    assert!(super::super::public_summary_registry_snapshot(&context).is_some());
+    assert!(
+        nils_common::coordination_projection::load(&context.state_dir)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn notification_policy_broker_inspection_resolves_wake_but_counts_quiet_mail() {
+    let (_temp, context) = tests::fixture();
+    configure(&context, "recipient");
+    ingress(&context, Some(MessageCategory::Progress));
+    ingress(&context, Some(MessageCategory::Handoff));
+    let mut locked = lock_registry(&context).unwrap();
+    locked.registry.messages[1].state = "read".into();
+    locked.save().unwrap();
+    drop(locked);
+    let status = super::super::broker::status(
+        &context,
+        crate::cli::BrokerStatusArgs {
+            session: "recipient".into(),
+            capability_file: None,
+            authenticated: false,
+            format: OutputFormat::Json,
+        },
+    )
+    .unwrap();
+    assert_eq!(status["notification"]["live_unread_count"], 1);
+    assert_eq!(status["notification"]["delivery_state"], "resolved");
+    assert_eq!(status["notification"]["resolved"], true);
+}
+
+#[test]
+fn notification_policy_remote_refusal_is_terminal_without_erasing_uncertainty() {
+    use std::io::{Read, Write};
+    for (attempts, expected) in [(0, "rejected"), (1, "delivery-unknown")] {
+        let (_temp, context) = tests::fixture();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut config = tests::config();
+        config.url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut bytes = [0; 1024];
+                let count = stream.read(&mut bytes).unwrap();
+                assert!(count > 0, "request must finish before EOF");
+                request.extend_from_slice(&bytes[..count]);
+                assert!(request.len() <= 8192, "bounded fixture request");
+                if let Some(end) = request.windows(4).position(|v| v == b"\r\n\r\n") {
+                    let header = std::str::from_utf8(&request[..end]).unwrap();
+                    let length: usize = header
+                        .lines()
+                        .find_map(|line| {
+                            let (key, value) = line.split_once(':')?;
+                            key.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse().unwrap())
+                        })
+                        .unwrap();
+                    if request.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let body = r#"{"error":{"code":"notification-policy-invalid","message":"private-policy-canary","details":{"path":"private-policy-canary"}}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 409 Conflict\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let mut item = tests::own_outbox("invalid-policy", "queued");
+        item.attempts = attempts;
+        let mut locked = lock_journal(&context).unwrap();
+        locked.registry.remote_outbox.push(item);
+        locked.save().unwrap();
+        drop(locked);
+        drain(&context, &config).unwrap();
+        server.join().unwrap();
+        let locked = lock_journal(&context).unwrap();
+        assert!(
+            locked.registry.remote_outbox.is_empty(),
+            "policy refusal must stop retries"
+        );
+        let retained = &locked.registry.retained[0];
+        assert_eq!(retained.state, expected);
+        assert_eq!(
+            retained.reason.as_deref(),
+            Some("notification-policy-invalid")
+        );
+        assert!(!projection(retained).to_string().contains("canary"));
+    }
+}

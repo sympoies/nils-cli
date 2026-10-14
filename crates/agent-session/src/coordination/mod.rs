@@ -45,6 +45,7 @@ use crate::{
 };
 
 const REGISTRY_VERSION: &str = "agent-session.coordination-registry.v1";
+const SUPPRESSION_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v3";
 const LEGACY_REGISTRY_VERSION: &str = "agent-session.coordination-registry.v2";
 const REGISTRY_FILE: &str = "registry.json";
 const REGISTRY_LOCK: &str = "registry.lock";
@@ -166,9 +167,19 @@ impl LockedRegistry {
         }
         if !matches!(
             self.registry.schema_version.as_str(),
-            REGISTRY_VERSION | LEGACY_REGISTRY_VERSION
+            REGISTRY_VERSION | LEGACY_REGISTRY_VERSION | SUPPRESSION_REGISTRY_VERSION
         ) {
             return Err(store_corrupt());
+        }
+        // Older writers drop unknown StoredMessage fields. Once suppression is
+        // admitted, fence them before any later read/modify/write can erase it.
+        if self
+            .registry
+            .messages
+            .iter()
+            .any(|message| message.notification_suppressed)
+        {
+            self.registry.schema_version = SUPPRESSION_REGISTRY_VERSION.into();
         }
         let bytes = serde_json::to_vec(&self.registry).map_err(|_| store_corrupt())?;
         if bytes.len() as u64 > MAX_REGISTRY_BYTES {
@@ -1179,7 +1190,7 @@ fn lock_registry_within(
             if !registry.schema_version.is_empty()
                 && !matches!(
                     registry.schema_version.as_str(),
-                    REGISTRY_VERSION | LEGACY_REGISTRY_VERSION
+                    REGISTRY_VERSION | LEGACY_REGISTRY_VERSION | SUPPRESSION_REGISTRY_VERSION
                 )
             {
                 return Err(store_corrupt());
@@ -1884,7 +1895,7 @@ fn read_registry_snapshot(context: &CliContext) -> Result<Registry, CliError> {
     if !registry.schema_version.is_empty()
         && !matches!(
             registry.schema_version.as_str(),
-            REGISTRY_VERSION | LEGACY_REGISTRY_VERSION
+            REGISTRY_VERSION | LEGACY_REGISTRY_VERSION | SUPPRESSION_REGISTRY_VERSION
         )
     {
         return Err(store_corrupt());

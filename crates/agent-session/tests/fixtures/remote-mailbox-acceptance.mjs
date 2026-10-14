@@ -38,13 +38,13 @@ async function waitFor(fn, label, milliseconds=20000) {
   while(Date.now()<deadline){const value=await fn();if(value)return value;await delay(100);}
   throw new Error(`timed out: ${label}`);
 }
-async function start(host,federation=true) {
+async function start(host,federation=true,agentBinary=binary) {
   const env={...process.env};
   for(const key of ['AGENT_SESSION_TOKEN','AGENT_SESSION_RELAY_URL','AGENT_SESSION_RELAY_TOKEN','AGENT_SESSION_RELAY_INGRESS_TOKEN','AGENT_CONSOLE_COORDINATION_RELAYS'])delete env[key];
   if(federation)Object.assign(env,{AGENT_SESSION_RELAY_URL:edge.url,AGENT_SESSION_RELAY_TOKEN:host.relay,AGENT_SESSION_RELAY_INGRESS_TOKEN:host.ingress});
   const endpoint=join(host.root,'coordination','daemon-endpoint.json');
   rmSync(endpoint,{force:true});
-  host.child=spawn(binary,['--state-dir',host.root,'serve','--bind','127.0.0.1:0','--machine',host.machine,'--token-stdin','--tmux-bin','/bin/false'],{env,stdio:['pipe','ignore','pipe']});
+  host.child=spawn(agentBinary,['--state-dir',host.root,'serve','--bind','127.0.0.1:0','--machine',host.machine,'--token-stdin','--tmux-bin','/bin/false'],{env,stdio:['pipe','ignore','pipe']});
   children.add(host.child);host.child.stdin.end(host.operator);
   let stderr='';host.child.stderr.on('data',data=>{if(stderr.length<4096)stderr+=data.toString();});
   host.url=await waitFor(()=>{if(host.child.exitCode!==null)throw new Error(`daemon failed: ${stderr}`);if(existsSync(endpoint))return JSON.parse(readFileSync(endpoint,'utf8')).url;},'daemon endpoint');
@@ -121,6 +121,7 @@ try {
   assert.equal(registry.messages.length,1);assert.equal(registry.schema_version,'agent-session.coordination-registry.v2','federation must preserve old registry compatibility');
   checks.push('response-loss-source-restart-dedup');
 const previousIndex=process.argv.indexOf('--previous-agent-session-bin');
+const policyPreviousIndex=process.argv.indexOf('--previous-policy-agent-session-bin');
 if(previousIndex>=0){
   const oldBinary=process.argv[previousIndex+1];
   const runOld=args=>spawnSync(oldBinary,['--state-dir',beta.root,...args,'--capability-file',beta.capabilityFile,'--format','json'],{encoding:'utf8',timeout:10000});
@@ -189,6 +190,22 @@ checks.push('bidirectional-reply-show-status');
   assert.equal(digest.messages[0].recipient_session_id,gamma.session);
   assert.equal(Date.parse(digest.messages[0].created_at)/1000,quietDelivery.receipt.persisted_at_epoch);
 
+  const quietRegistryPath=join(gamma.root,'coordination','registry.json');
+  assert.equal(JSON.parse(readFileSync(quietRegistryPath,'utf8')).schema_version,'agent-session.coordination-registry.v3');
+  if(policyPreviousIndex>=0){
+    await stop(gamma);
+    const before=readFileSync(quietRegistryPath);
+    const oldShow=spawnSync(process.argv[policyPreviousIndex+1],['--state-dir',gamma.root,'message','show','--session',gamma.session,'--message',categoryForward.message_id,'--capability-file',gamma.capabilityFile,'--format','json'],{encoding:'utf8',timeout:10000});
+    assert.notEqual(oldShow.status,0,'old registry writer must refuse the suppression fence');
+    assert.equal(JSON.parse(oldShow.stdout).error?.code,'coordination-store-corrupt');
+    assert.deepEqual(readFileSync(quietRegistryPath),before,'refused old writer leaves suppression bytes intact');
+    await start(gamma);
+    const after=await cli(gamma,['inbox','--session',gamma.session,'--category','progress']);
+    assert.equal(after.messages[0].notification_suppressed,true,'new-old-new round trip retains admission decision');
+    assert.deepEqual(JSON.parse(readFileSync(quietRegistryPath,'utf8')).notifications,gammaNotificationsBefore,'new recovery still creates no wake');
+    checks.push('suppression-new-old-new-registry-fence');
+  }
+
   const forwarded=await cli(gamma,['show','--session',gamma.session,'--message',categoryForward.message_id]);
   assert.equal(forwarded.notification_suppressed,true);
   assert.equal(forwarded.body.text,'category forwarding body');assert.equal(forwarded.category,'progress');
@@ -210,6 +227,23 @@ checks.push('bidirectional-reply-show-status');
   await stop(beta);await start(beta);
   const retainedQuietDelivery=await status(beta,categoryForward.message_id);
   assert.equal(retainedQuietDelivery.receipt.notification_suppressed,true,'source restart and compaction retain suppression');
+  const quietJournalPath=join(beta.root,'coordination','federation-journal.json');
+  assert.equal(JSON.parse(readFileSync(quietJournalPath,'utf8')).schema_version,'agent-session.federation-journal.v6');
+  if(policyPreviousIndex>=0){
+    await stop(beta);
+    const before=readFileSync(quietJournalPath);
+    // Delivery inspection is daemon-owned: exercise the old journal reader,
+    // rather than merely checking an old facade with no reachable daemon.
+    await start(beta,true,process.argv[policyPreviousIndex+1]);
+    const oldDelivery=spawnSync(process.argv[policyPreviousIndex+1],['--state-dir',beta.root,'message','delivery','--session',beta.session,'--message',categoryForward.message_id,'--capability-file',beta.capabilityFile,'--format','json'],{encoding:'utf8',timeout:10000});
+    assert.notEqual(oldDelivery.status,0,'old journal reader must refuse the suppression receipt fence');
+    assert.equal(JSON.parse(oldDelivery.stdout).error?.code,'federation-journal-invalid');
+    await stop(beta);
+    assert.deepEqual(readFileSync(quietJournalPath),before,'refused old reader leaves retained receipt intact');
+    await start(beta);
+    assert.equal((await status(beta,categoryForward.message_id)).receipt.notification_suppressed,true);
+    checks.push('suppression-new-old-new-journal-fence');
+  }
   checks.push('destination-policy-http-forward-digest-ack-receipt');
   const categoryReplay=await cli(beta,forwardArgs);assert.equal(categoryReplay.message_id,categoryForward.message_id);
   assert.deepEqual(categoryReplay.forwarding,categoryForward.forwarding);
