@@ -51,8 +51,11 @@ pub(crate) fn send_to_session(
     }
     let observed = load_session_record(context, &args.id)?;
     let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
-    let record_lock = acquire_session_record_lock(context, &observed.id)?;
-    let guard_started = Instant::now();
+    let _trace = codex_app_server::guarded::trace::Scope::for_send(&observed, &args);
+    let record_lock = codex_app_server::guarded::trace::record_lock(|| {
+        acquire_session_record_lock(context, &observed.id)
+    })?;
+    let guard_started = codex_app_server::guarded::trace::budget_start();
     let mut manual_input = ManualInputSection::new(record_lock);
     let mut record = load_session_record(context, &observed.id)?;
     ensure_same_session_identity(&observed, &record)?;
