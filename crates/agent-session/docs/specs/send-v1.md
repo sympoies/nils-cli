@@ -19,17 +19,21 @@ Each option is independent:
   also verify the live terminal's session and runtime environment markers.
 - `--expect-provider-session` matches the persisted provider resume session ID
   for the session's provider. An absent binding cannot match.
-- `--require-idle` requires provider-reported `waiting` activity, no current turn,
-  and no provider event ingestion queued behind the record lock. Missing,
-  unknown, degraded, inferred, or console-only activity fails closed. Normal
-  Claude completion hooks use `observed` confidence; both observed and
-  authoritative provider-hook evidence are supported.
+- `--require-idle` requires no provider event ingestion queued behind the record
+  lock. Terminal runtimes require provider-reported `waiting` activity and no
+  current turn; missing, unknown, degraded, inferred, or console-only activity
+  fails closed. Normal Claude completion hooks use `observed` confidence;
+  observed and authoritative provider-hook evidence are supported. Supported
+  Codex app-server runtimes verify the exact attached, loaded thread is `idle`
+  through the native protocol. Outstanding activity attention still refuses,
+  including when `--allow-blocked` is present.
 - `--require-empty-composer` requires an observable empty composer. A draft
   is refused without paste or Enter. `--allow-blocked` cannot override guards.
 - `--idempotency-key` accepts 1–256 bytes and claims one delivery attempt for
   the stable managed session, across CLI retries and runtime replacements.
 
-Admission runs inside the session record lock. The guard checks run again
+Admission runs inside the session record lock. The terminal path below applies
+unless the native continuation profile described later is selected. The guard checks run again
 between loading the private tmux buffer and pasting it. The durable key is
 claimed and synced, including its parent directory, before any pane input.
 A final admission check follows persistence. No refused admission pastes or
@@ -55,10 +59,9 @@ paste or Enter. A native atomic provider operation is tracked separately in
 
 Idle and composer observations support Claude Code and Codex tmux runtimes,
 including supported Codex `codex_app_server` profiles with their managed tmux
-pane. App-server sessions use the same terminal identity markers, provider
-activity, exact composer capture and post-paste checks; this does not replace
-them with a provider RPC. Unknown or invalid app-server profiles and other
-providers or runtime kinds fail closed for these checks. Exact composer
+pane. App-server idle is native; composer capture remains a separate signal.
+Unknown or invalid app-server profiles and other providers or runtime kinds
+fail closed for these checks. Exact composer
 verification supports an unambiguous, single visible input line. Dialogs,
 unknown layouts, wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
@@ -71,6 +74,46 @@ A provider layout that exposes no distinguishable dim hint cannot support
 guarded empty-composer sends. Placeholder content alone is never inferred empty.
 The guarded post-paste check uses full visible text, preserving whitespace,
 rather than the unguarded submission classifier's prefix matching.
+
+## Native Codex continuation profile
+
+A supported app-server text submission with exactly `--key enter` and both
+`--require-idle` and `--require-empty-composer` uses native dispatch. Partial
+flag selections retain their existing terminal transport; this is route
+selection, never a fallback after failed native admission or delivery.
+
+The native path preserves terminal runtime markers, durable provider identity,
+pending-ingress and attention checks, and the independently observable empty
+TUI composer. An idle provider thread does **not** prove the attached TUI has
+no unsent draft. Unknown, whitespace-only or text drafts remain refused. No
+new layout or styling is assumed observable merely because the runtime is
+app-server bound.
+
+The session-record lock and existing nonblocking input/account mutation gate
+remain held through dispatch and confirmation. A pending next-account intent
+still fences the new input. The key is durably claimed before one native
+mutation; admission is repeated after claiming. There is no tmux buffer,
+paste, Enter, composer clearing, or delivery retry on this path, including
+when confirmation fails. Concurrent human typing can still race observation;
+`atomic: false` remains accurate.
+
+Ordinary prompts use `turn/start`. Success requires an acknowledged turn ID
+and observation of the exact input in that turn of the same thread, within
+the existing four-second send budget. History reads are bounded by the
+app-server WebSocket message cap; unavailable or oversized history cannot
+confirm delivery. No execution success or eventual delivery is implied.
+
+A payload whose trimmed content is exactly `/compact` uses
+`thread/compact/start`, including a trailing stdin newline. Its success means
+**compaction start was acknowledged**, not compaction completed. The caller
+must observe confirmed completion before issuing a continuation. Other leading
+slash commands refuse with `send-native-command-unsupported`; they are never
+silently converted into model prompts or delivered through a terminal fallback.
+
+Native success adds `native: { "transport": "codex_app_server",
+"confirmation": "input_observed" | "compact_started" }` and reports
+`submission.outcome: "submitted"`, `submission.enter_presses: 0`. `keys`
+retains the requested logical keys; no physical Enter was pressed.
 
 A claim records metadata under a hashed filename in the stable session state;
 it does not store the raw key or prompt. It has no expiry and is independent
@@ -85,8 +128,9 @@ directory synchronization for restart durability.
 ## Output and exit codes
 
 Unguarded sends keep their existing output, submission retry behavior, and
-exit codes. Guarded success adds only `guards: { "atomic": false }` to JSON;
-text output retains the existing rendering. No raw key or composer text is
+exit codes. Guarded success adds `guards: { "atomic": false }` to JSON;
+the native continuation profile also adds the optional `native` receipt above.
+Text output retains the existing rendering. No raw key or composer text is
 included in refusal output. Use `--format json` to consume `error.code` and
 `error.details` without parsing prose.
 
@@ -112,9 +156,19 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-idempotency-key-used` | This stable session already contains the delivery claim. |
 | `send-idempotency-persist-failed` | The claim could not be durably written; no input follows. |
 | `send-invalid-idempotency-key` | The key is outside the documented length bound. |
+| `send-native-command-unsupported` | The native continuation profile cannot execute this slash command; no input follows. |
+| `send-native-unconfirmed` | Native dispatch or subsequent exact-input confirmation is uncertain; the key is retained. |
 | `send-submit-stuck` | Text remains after the single guarded Enter; the claim is retained. |
 
 Observation refusals include the failed `guard` and `stage` (`admission` or
 `submit`), `atomic: false`, and whether paste preceded the check. Existing
 session/runtime and I/O failure reasons still apply. A nonzero exit after
 claiming must never be treated as permission to resend the same delivery.
+
+Native refusal details always report `pasted: false`. `dispatched` indicates
+that a native mutation was attempted; `acknowledged` records a valid provider
+acceptance response. Before dispatch, `submitted` is `false`; after an
+acknowledged turn it is `true` even if subsequent input confirmation fails;
+without an acknowledgement it is `null` (unknown). None of these outcomes
+permits reuse of the claimed key. Existing account and input-gate refusal
+codes also apply.
