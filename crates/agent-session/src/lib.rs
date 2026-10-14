@@ -196,7 +196,7 @@ const PANE_PASTE_READY_DEADLINE: Duration = Duration::from_secs(15);
 const CLAUDE_STRUCTURED_PROMPT_PANE_READY_DEADLINE: Duration = Duration::from_secs(4);
 pub const DELETE_TERMINATION_VERIFY_TIMEOUT: Duration = Duration::from_secs(1);
 const DELETE_TERMINATION_VERIFY_POLL_INTERVAL: Duration = Duration::from_millis(25);
-const DELETE_TERMINATION_PROBE_TIMEOUT: Duration = Duration::from_millis(100);
+const DELETE_TERMINATION_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 const DELETE_TERMINATION_IDENTITY_RETRY_LIMIT: usize = 3;
 const DELETE_GRACEFUL_SHUTDOWN_TIMEOUT_MULTIPLIER: u32 = 8;
 const DELETE_GRACEFUL_SHUTDOWN_MAX_TIMEOUT: Duration = Duration::from_secs(8);
@@ -15166,12 +15166,12 @@ exit 1
         let _isolation = nils_test_support::isolate_forge_identity();
         let stub = nils_test_support::StubBinDir::new();
         let tmux = stub.path().join("tmux");
-        // Model the tmux status as stopped through the probe seam rather than a
-        // script launch: a launch races the probe's 100 ms budget (#2131).
-        let _status = super::tmux_probe_fixture::install_status(
-            &tmux,
-            super::tmux_probe_fixture::Status::Stopped,
+        // Exercise a real probe delayed beyond the former 100 ms ceiling.
+        stub.write_exe(
+            "tmux",
+            "#!/bin/sh\nsleep 0.25\nprintf \"can't find session: %s\\n\" \"$3\" >&2\nexit 1\n",
         );
+
         let mut pane = TestProcessGroup::spawn();
         let identity: TmuxRuntimeIdentity = serde_json::from_value(serde_json::json!({
             "session_id": "$7", "pane_id": "%7", "pane_pid": pane.pid(),
