@@ -64,7 +64,13 @@ def inputs(repo, event_name, event, candidate):
         raise ValueError('invalid candidate')
     parents = git(repo, 'show', '-s', '--format=%P', candidate).split()
     if event_name == 'pull_request':
-        base = event['pull_request']['base']['sha']
+        event_base = event['pull_request']['base']['sha']
+        if not isinstance(event_base, str) or not OID.fullmatch(event_base) or event_base == candidate:
+            raise ValueError('invalid event base')
+        # Checkout fetches the immutable context SHA. PR event base metadata
+        # can lag that platform-generated merge; its first parent is the base
+        # actually tested. The reviewed event head must still be parent two.
+        base = parents[0] if len(parents) == 2 else None
         head = event['pull_request']['head']['sha']
     elif event_name == 'merge_group':
         base = event['merge_group']['base_sha']
@@ -179,6 +185,8 @@ def run(repo, event_name, event, candidate, output, bash='bash'):
         command += ['scripts/ci/nils-cli-checks-entrypoint.sh']
     receipt = {'schema_version': 'nils-cli.merge-validation.v1', 'inputs': expected,
                'checkout': {'commit': candidate, 'tree': expected['tree']},
+               'event_base': event['pull_request']['base']['sha'] if event_name == 'pull_request'
+                             else event['merge_group']['base_sha'],
                'plan_digest': plan['digests']['plan'] if plan is not None else None,
                'validation_scope': scope, 'packages': packages, 'fallback': fallback,
                'test_runner': os.environ.get('NILS_CLI_TEST_RUNNER', 'nextest'),
@@ -186,6 +194,8 @@ def run(repo, event_name, event, candidate, output, bash='bash'):
                'doctests': os.environ.get('NILS_CLI_SKIP_DOCTESTS', '0') != '1',
                'command': command, 'status': 'RUNNING'}
     (output / 'validation.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
+    print(f'CI snapshot base={expected["base"]} event_base={receipt["event_base"]} '
+          f'head={expected["head"]} candidate={candidate}', flush=True)
     print(f'CI validation scope={scope} packages={",".join(packages)} fallback={fallback or "none"}', flush=True)
     github_output = os.environ.get('GITHUB_OUTPUT')
     executor_env = dict(os.environ)
