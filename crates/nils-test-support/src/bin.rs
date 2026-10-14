@@ -476,7 +476,7 @@ mod tests {
             reported: "1.25.13".to_string(),
             origin: Origin::ProfileDir,
         }
-        .unusable("agent-docs", "nils-agent-docs")
+        .unusable("agent-hook", "nils-agent-hook")
         .expect("a stale sibling is unusable");
         assert!(!stale.skippable, "message={}", stale.message);
         assert!(
@@ -492,7 +492,7 @@ mod tests {
         assert!(
             stale
                 .message
-                .contains("cargo build -p nils-agent-docs --bins"),
+                .contains("cargo build -p nils-agent-hook --bins"),
             "message={}",
             stale.message
         );
@@ -500,9 +500,9 @@ mod tests {
 
     #[test]
     fn a_ready_sibling_has_no_unusable_reason() {
-        let ready = Sibling::Ready(std::path::PathBuf::from("agent-docs"));
+        let ready = Sibling::Ready(std::path::PathBuf::from("agent-hook"));
 
-        assert!(ready.unusable("agent-docs", "nils-agent-docs").is_none());
+        assert!(ready.unusable("agent-hook", "nils-agent-hook").is_none());
     }
 
     /// Pin the `--version` format against a real workspace artifact rather than
@@ -517,9 +517,9 @@ mod tests {
     #[test]
     fn a_real_workspace_artifact_is_never_unidentifiable() {
         let lock = GlobalStateLock::new();
-        let _guards = without_bin_exe_env(&lock, "agent-docs");
+        let _guards = without_bin_exe_env(&lock, "agent-hook");
 
-        match sibling("agent-docs") {
+        match sibling("agent-hook") {
             Sibling::Absent => {}
             Sibling::Ready(_) => {}
             Sibling::WrongRelease { reported, .. } => assert!(
@@ -527,7 +527,7 @@ mod tests {
                 "a real artifact should report a release-shaped version, got {reported}"
             ),
             Sibling::Unidentifiable { origin } => panic!(
-                "a built agent-docs must answer --version with a release in its second token; \
+                "a built agent-hook must answer --version with a release in its second token; \
                  origin={origin:?}"
             ),
         }

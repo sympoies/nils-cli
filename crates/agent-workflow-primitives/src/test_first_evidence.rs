@@ -182,14 +182,15 @@ fn check_pre_edit(args: &CheckArgs, record: &EvidenceRecord) -> Result<CheckResu
         ));
     }
     let project = absolute_path(project)?;
-    let catalog = agent_docs::config::load_catalog(&project, &project).map_err(|err| {
-        CliError::data(
-            "path-class-catalog-invalid",
-            err.to_string(),
-            Some(json!({ "project_path": display_path(&project) })),
-        )
-    })?;
-    let Some(contract) = agent_docs::path_classes::project_contract(&catalog) else {
+    let contract =
+        crate::path_classes::PathClassContract::load_project(&project).map_err(|err| {
+            CliError::data(
+                "path-class-catalog-invalid",
+                err,
+                Some(json!({ "project_path": display_path(&project) })),
+            )
+        })?;
+    let Some(contract) = contract else {
         return Ok(CheckResult {
             phase: args.phase.as_str().to_string(),
             path_class: "not-configured".to_string(),

@@ -22,8 +22,6 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use agent_docs::dsh::validation_contracts_from_roots;
-use agent_docs::env::ResolvedRoots;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -35,6 +33,7 @@ mod acceptance;
 mod owner;
 #[cfg(target_os = "linux")]
 mod resources;
+mod validation_contract;
 
 const STATE_SCHEMA: &str = "agent-hook.finish-line.state.v1";
 const MAX_RELEASE_TOMBSTONES: usize = 64;
@@ -2342,12 +2341,12 @@ fn validate_identifier(value: &str) -> Result<(), HookError> {
 }
 
 fn validate_intent(intent: &str) -> Result<(), HookError> {
-    agent_docs::model::Context::parse(intent).map_err(|_| {
-        HookError::data(
+    if !validation_contract::valid_intent(intent) {
+        return Err(HookError::data(
             "finish-line-intent-invalid",
             "finish-line intent is invalid",
-        )
-    })?;
+        ));
+    }
     Ok(())
 }
 
@@ -4522,11 +4521,10 @@ fn signal_name(signal: i32) -> Result<String, HookError> {
 }
 
 fn resolve_contracts(identity: &RequestIdentity) -> Result<ContractSnapshot, HookError> {
-    let roots = ResolvedRoots::for_paths(identity.repo_root.clone(), identity.repo_root.clone());
-    let mut contracts = validation_contracts_from_roots(&roots).map_err(|_| {
+    let mut contracts = validation_contract::load_from_repo(&identity.repo_root).map_err(|_| {
         HookError::data(
             "finish-line-contract-invalid",
-            "current agent-docs validation contracts are invalid",
+            "current repository validation contracts are invalid",
         )
     })?;
     contracts.sort_by(|left, right| left.context.as_str().cmp(right.context.as_str()));
@@ -4554,7 +4552,7 @@ fn resolve_contracts(identity: &RequestIdentity) -> Result<ContractSnapshot, Hoo
             }
             prior_markers.push(marker.to_string());
         }
-        let mut parts = vec![contract.context.as_str().as_bytes()];
+        let mut parts = vec![contract.context.as_bytes()];
         if let Some(marker) = contract.marker.as_deref() {
             parts.push(marker.as_bytes());
         }
@@ -4576,7 +4574,7 @@ fn resolve_contracts(identity: &RequestIdentity) -> Result<ContractSnapshot, Hoo
                 &[
                     identity.repo_digest.as_bytes(),
                     b"dsh",
-                    contract.context.as_str().as_bytes(),
+                    contract.context.as_bytes(),
                     contract_digest.as_bytes(),
                     command.as_bytes(),
                 ],
@@ -5000,7 +4998,7 @@ fn remediations(reasons: &[&str]) -> Vec<&'static str> {
             }
             "validation-failed" => "fix the failure and rerun the exact current validation command",
             "validation-stale" | "validation-contract-drift" => {
-                "rerun every exact command from the current agent-docs validation contracts"
+                "rerun every exact command from the current repository validation contracts"
             }
             "prior-validation-marker-unsafe" => {
                 "remove or repair the unsafe prior marker and record native validation evidence"

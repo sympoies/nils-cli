@@ -672,8 +672,10 @@ The request and response contracts are:
 - `run` adds `operation_id`, `intent`, the exact command string, the private
   `runner_capability`, an optional `execution`, and a timeout from 1 ms through
   60 minutes (30 minutes by default). The intent and command are compared
-  byte-for-byte with the current `agent-docs` validation contracts resolved for
-  DSH. Omitting `execution` performs the required non-executing capability and
+  byte-for-byte with the current repository validation contracts. The hook
+  reads root `VALIDATION.toml` and transitionally reads DSH-scoped
+  `[[validation]]` entries from `AGENT_DOCS.toml`. Omitting `execution`
+  performs the required non-executing capability and
   target probe: an exact current validation target returns `status = "ready"`
   with its target and contract digests, while a non-target returns
   `status = "ordinary-ready"`. Neither probe runs the command or creates
