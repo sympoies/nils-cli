@@ -280,6 +280,9 @@ jobs:
           NILS_CLI_GATE_MEMORY_MAX_GIB: "12"
           NILS_CLI_RUNNER_MAX: "2"
           NILS_CLI_TEST_RUNNER: nextest
+          # Prepare exact base/candidate all-feature metadata after restoring
+          # Cargo cache; the trusted selector still plans offline and locked.
+          NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"
           # A skip here would mean a lane that builds every binary lost coverage
           # silently; make it fatal instead. See `bin::sibling_or_skip`.
           NILS_TEST_REQUIRE_SIBLING_BINS: "1"
@@ -486,6 +489,9 @@ jobs:
         env:
           NILS_CLI_RUNNER_MAX: "2"
           NILS_CLI_TEST_RUNNER: llvm-cov
+          # Instrumented build caches do not guarantee all-platform metadata
+          # dependencies are present for both exact planner snapshots.
+          NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"
           # The stale-test and completion freshness/parity audits give the same
           # answer on every OS, and the Linux `test` job runs them. Here they
           # cost ~2-3 min, mostly a debug build of every binary.

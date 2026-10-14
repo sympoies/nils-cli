@@ -188,5 +188,14 @@ class MetadataPlanTests(unittest.TestCase):
                 self.assertEqual(plan['digests']['plan'], digest)
 
 
+def load_tests(loader, tests, pattern):
+    # Keep cache-input regressions in the canonical metadata CI suite.
+    spec = importlib.util.spec_from_file_location('cache_inputs', Path(__file__).with_name('merge-plan-cache.test.py'))
+    cache_inputs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cache_inputs)
+    tests.addTests(loader.loadTestsFromTestCase(cache_inputs.CacheInputTests))
+    return tests
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

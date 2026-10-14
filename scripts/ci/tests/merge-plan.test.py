@@ -222,6 +222,8 @@ class CommandTests(unittest.TestCase):
         self.env = dict(os.environ, GIT_AUTHOR_NAME='Fixture', GIT_AUTHOR_EMAIL='fixture@example.invalid',
                         GIT_COMMITTER_NAME='Fixture', GIT_COMMITTER_EMAIL='fixture@example.invalid',
                         GIT_AUTHOR_DATE='2000-01-01T00:00:00Z', GIT_COMMITTER_DATE='2000-01-01T00:00:00Z')
+        # This baseline fake Cargo models offline planning even under CI's opt-in.
+        self.env['NILS_CLI_MERGE_PLAN_PREPARE_METADATA'] = '0'
         self.git('init', '-q')
         for source in (LIB, LAUNCHER, POLICY, REGISTRY, SCHEMA):
             target = self.repo / source.relative_to(ROOT)
