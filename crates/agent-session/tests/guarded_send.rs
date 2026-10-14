@@ -1,4 +1,6 @@
 //! Admission regressions use a modeled tmux executable and synthetic records.
+#[path = "guarded_send/native_composer.rs"]
+mod native_composer;
 #[path = "guarded_send/repair.rs"]
 mod repair;
 use std::fs;
@@ -93,16 +95,20 @@ elif command == 'capture-pane':
         else: print('› \x1b[2mAsk Codex to do anything\x1b[22m\n')
         print('x' * (2 * 1024 * 1024))
         sys.exit(0)
+    if (root / 'draft-fourth-capture').exists() and count >= 4: (root / 'composer').write_text('user addition')
     text = (root / 'composer').read_text()
     # Native capture trims occupied spaces without -N; -T excludes unused cells.
     occupied = text if '-N' in args else text.rstrip(' ')
     padding = ' ' * 8 if '-N' in args and '-T' not in args else ''
+    native = (root / 'native-layout').exists()
+    rows = ''
+    footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'
     if provider == 'claude':
         shown = occupied + padding if text else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
-        print('────────────────────────────\n❯\u00a0' + shown + '\n────────────────────────────\n  status')
+        print('────────────────────────────\n❯\u00a0' + shown + '\n' + rows + '────────────────────────────\n  ' + footer)
     else:
         shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
-        print('› ' + shown + '\n\n  status')
+        print('› ' + shown + '\n' + rows + '\n  ' + footer)
 "#;
         let tmux = temp.path().join("tmux");
         fs::write(&tmux, script).unwrap();

@@ -3,8 +3,8 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `3aa47cf3b68533a57df86033e17f3095531750f30dfd89b3a80f57836926c934`
-- Third-party crates (`source != null`): 493
+- Cargo.lock SHA256: `dba0e84c06cc7ca4152e827b4aac207be00b1a2da606016905860e3ed90a6868`
+- Third-party crates (`source != null`): 505
 - Workspace crates (`source == null`, excluded below): 42
 
 ## Notes
@@ -17,12 +17,12 @@ This file documents third-party Rust crate licenses used by this workspace.
 
 | License Expression | Crate Count |
 | --- | ---: |
-| MIT OR Apache-2.0 | 238 |
-| MIT | 101 |
-| Apache-2.0 OR MIT | 40 |
+| MIT OR Apache-2.0 | 241 |
+| MIT | 107 |
+| Apache-2.0 OR MIT | 41 |
 | Zlib OR Apache-2.0 OR MIT | 20 |
 | Unicode-3.0 | 18 |
-| MIT/Apache-2.0 | 13 |
+| MIT/Apache-2.0 | 15 |
 | Unlicense OR MIT | 9 |
 | ISC | 6 |
 | Apache-2.0 | 5 |
@@ -95,6 +95,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | block2 | 0.6.2 | MIT | crates.io |
 | blocking | 1.6.2 | Apache-2.0 OR MIT | crates.io |
 | borrow-or-share | 0.2.4 | MIT-0 | crates.io |
+| bs58 | 0.5.1 | MIT/Apache-2.0 | crates.io |
 | bstr | 1.12.1 | MIT OR Apache-2.0 | crates.io |
 | bumpalo | 3.20.3 | MIT OR Apache-2.0 | crates.io |
 | bytecount | 0.6.9 | Apache-2.0/MIT | crates.io |
@@ -129,6 +130,9 @@ This file documents third-party Rust crate licenses used by this workspace.
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | crates.io |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 | crates.io |
 | ctrlc | 3.5.2 | MIT/Apache-2.0 | crates.io |
+| darling | 0.24.1 | MIT | crates.io |
+| darling_core | 0.24.1 | MIT | crates.io |
+| darling_macro | 0.24.1 | MIT | crates.io |
 | data-encoding | 2.11.0 | MIT | crates.io |
 | data-url | 0.3.2 | MIT OR Apache-2.0 | crates.io |
 | defmt | 1.1.0 | MIT OR Apache-2.0 | crates.io |
@@ -185,7 +189,9 @@ This file documents third-party Rust crate licenses used by this workspace.
 | getrandom | 0.4.3 | MIT OR Apache-2.0 | crates.io |
 | gif | 0.14.2 | MIT OR Apache-2.0 | crates.io |
 | git2 | 0.21.0 | MIT OR Apache-2.0 | crates.io |
+| graphql-tools | 0.4.2 | MIT | crates.io |
 | harfrust | 0.12.0 | MIT | crates.io |
+| hashbrown | 0.12.3 | MIT OR Apache-2.0 | crates.io |
 | hashbrown | 0.16.1 | MIT OR Apache-2.0 | crates.io |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | crates.io |
 | hashlink | 0.12.0 | MIT OR Apache-2.0 | crates.io |
@@ -211,11 +217,13 @@ This file documents third-party Rust crate licenses used by this workspace.
 | icu_properties | 2.2.0 | Unicode-3.0 | crates.io |
 | icu_properties_data | 2.2.0 | Unicode-3.0 | crates.io |
 | icu_provider | 2.2.0 | Unicode-3.0 | crates.io |
+| ident_case | 1.0.1 | MIT/Apache-2.0 | crates.io |
 | idna | 1.1.0 | MIT OR Apache-2.0 | crates.io |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT | crates.io |
 | image | 0.25.10 | MIT OR Apache-2.0 | crates.io |
 | image-webp | 0.2.4 | MIT OR Apache-2.0 | crates.io |
 | imagesize | 0.15.0 | MIT | crates.io |
+| indexmap | 1.9.3 | Apache-2.0 OR MIT | crates.io |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | crates.io |
 | indicatif | 0.18.6 | MIT | crates.io |
 | inotify | 0.11.4 | ISC | crates.io |
@@ -376,6 +384,8 @@ This file documents third-party Rust crate licenses used by this workspace.
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | crates.io |
 | same-file | 1.0.6 | Unlicense/MIT | crates.io |
 | schannel | 0.1.29 | MIT | crates.io |
+| schemars | 0.9.0 | MIT | crates.io |
+| schemars | 1.2.3 | MIT | crates.io |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 | crates.io |
 | security-framework | 3.7.0 | MIT OR Apache-2.0 | crates.io |
 | security-framework-sys | 2.17.0 | MIT OR Apache-2.0 | crates.io |
@@ -389,6 +399,8 @@ This file documents third-party Rust crate licenses used by this workspace.
 | serde_repr | 0.1.20 | MIT OR Apache-2.0 | crates.io |
 | serde_spanned | 1.1.1 | MIT OR Apache-2.0 | crates.io |
 | serde_urlencoded | 0.7.1 | MIT/Apache-2.0 | crates.io |
+| serde_with | 3.24.0 | MIT OR Apache-2.0 | crates.io |
+| serde_with_macros | 3.24.0 | MIT OR Apache-2.0 | crates.io |
 | serde_yaml_ng | 0.10.0 | MIT | crates.io |
 | sha1 | 0.10.6 | MIT OR Apache-2.0 | crates.io |
 | sha2 | 0.11.0 | MIT OR Apache-2.0 | crates.io |

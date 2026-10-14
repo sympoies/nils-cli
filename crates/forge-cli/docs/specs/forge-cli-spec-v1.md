@@ -2207,11 +2207,12 @@ filter by structured fields within one repo, `inbox` is the personal cross-repo
 work queue, and `search` is full-text and reverse-reference query.
 
 Unqualified queries and `refs-to` use `--repo owner/name` or the detected forge
-remote. When no explicit `--repo` is provided, `issues` and `prs` queries with
+remote. When no explicit `--repo` is provided, `issues`, `prs`, and `completions` queries with
 `org:`, `user:`, or `repo:` qualifiers keep their query scope and omit the
 implicit repository filter. Under managed identity they resolve the principal
 against its sole distinct profile; ambiguity fails before credential probes.
-An explicit `--repo` always keeps normal repository identity rules. Every item is the shared normalized
+An explicit `--repo` always keeps normal repository identity rules. Issues, PRs,
+and reverse-reference results use the shared normalized
 `SearchItem`: `kind` (`issue` | `pr`), `number`, `url`, `title`, `state`,
 `repo`, `updated_at`, `labels` (names), and `matched_field` (best-effort; `null` when the provider does not
 report which field matched, which the GitHub path never does).
@@ -2221,12 +2222,22 @@ report which field matched, which the GitHub path never does).
   `data.provider`, `data.host`, `data.repo`, `data.query`, `data.match_fields`,
   `data.limit`, `data.item_count`, `data.limited`, and normalized `data.items[]`.
   Query-scoped searches have `data.repo=""`; each item retains its repository.
-  They run `gh search <issues|prs> <query> [--repo <slug>] --match <fields>
+  They run `gh search <issues|prs> <keywords...> [--repo <slug>] --match <fields>
   --limit <n> --json …`. The `--repo` value is always the raw `owner/name`
   slug; the resolved authority is selected separately through the call-local
   `GH_HOST` binding. `--match` defaults to `title,body,comments` and is
   narrowable. A body-only hit the structured `issue list` cannot surface is
   returned; an empty result is a well-formed empty envelope.
+
+  Structured query qualifiers are separate backend keywords, preserving quoted values; empty
+  queries and unfinished quotes/escapes fail as `query_invalid`.
+- `search completions <query> --kind issue|pr --since <timestamp> --until <timestamp>`
+  emits `cli.forge-cli.search.completions.v1` through paginated GraphQL reads.
+  It exports canonical closed-issue/merged-PR facts with exact half-open
+  completion windows and explicit search/nested coverage. Partial reads retain
+  facts and exit zero; consumers inspect coverage before declaring completion.
+  See [Completion search v1](search-completions-v1.md) for the stable fields,
+  nullable facts, ceilings, continuation fragments, and neutral example.
 - `search refs-to <ref>` emits `cli.forge-cli.search.refs-to.v1` with
   `data.provider`, `data.host`, `data.repo`, `data.reference_number`,
   `data.limit`, `data.item_count`, `data.limited`, and normalized

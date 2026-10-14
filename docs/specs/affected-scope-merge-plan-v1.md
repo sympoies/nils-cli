@@ -1,10 +1,16 @@
 # Affected-scope merge plan v1
 
+This document retains the published v1 contract and its closed schema. The current
+selector publishes [v2 metadata diagnostics](affected-scope-merge-plan-v2.md);
+trusted v1 base selectors continue to produce v1 plans.
+
 ## Purpose and boundary
 
 The standalone planner produces an affected-package decision for exact commits.
 It does not execute checks, authorize merge, or replace a gate receipt. Current
-local-fast behavior, required CI checks, and gate ownership remain unchanged.
+local-fast behavior, required CI check names, and gate ownership remain unchanged.
+CI execution of a plan is specified in
+[affected-scope CI consumption](affected-scope-ci-consumption-v1.md).
 
 Run the trusted launcher from an installation or checkout controlled by the
 maintainer:
