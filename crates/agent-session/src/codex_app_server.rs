@@ -4697,7 +4697,7 @@ async fn cancel_before_tui_mutation_detailed(
             _account_authority: None,
         });
     }
-    wait_for_initial_thread_start_binding(context, record, method, bootstrap).await;
+    wait_for_initial_thread_start_binding(context, record, method, bootstrap).await?;
     if method == Some("turn/start") && !ensure_turn_start_account_ready(context, record).await {
         bootstrap.close();
         return Err(TuiMutationRejection::AccountNotReady);

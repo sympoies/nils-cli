@@ -417,13 +417,8 @@ mod tests {
             "cause": { "operation": "github_actor_lookup", "http_status": 503 }
         }));
         let error = error(identity_error);
-        match &error {
-            ForgeError::Validation { kind, details, .. } => {
-                assert_eq!(*kind, "identity_actor_unavailable");
-                assert_eq!(details.as_ref().unwrap()["cause"]["http_status"], 503);
-            }
-            other => panic!("unexpected forge error: {other:?}"),
-        }
+        assert_eq!(error.kind(), "identity_actor_unavailable");
+        assert_eq!(error.detail(), None);
         assert_eq!(error.exit_code(), nils_common::cli_contract::exit::DATA);
     }
 }

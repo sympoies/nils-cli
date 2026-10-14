@@ -707,6 +707,28 @@ pub(crate) fn proxy_initial_binding_is_pending(record: &SessionRecord) -> bool {
         )
 }
 
+/// Confirm that the exact initial binding observed while a fresh `thread/start`
+/// was waiting has completed for the same runtime. Later bindings do not
+/// inherit the create-bootstrap authorization.
+pub(crate) fn proxy_initial_binding_is_bound(
+    record: &SessionRecord,
+    expected_runtime_id: &str,
+) -> bool {
+    record.agent == "codex"
+        && record
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.launch_id == expected_runtime_id)
+        && matches!(
+            decode_binding(record),
+            DecodedBinding::Valid(binding)
+                if binding.revision == 1
+                    && binding.state == "bound"
+                    && binding.applied_runtime_id.as_deref() == Some(expected_runtime_id)
+                    && binding.failure_reason.is_none()
+        )
+}
+
 /// Validate the account currently bound to the live runtime without treating a
 /// queued next-account intent as a reason to reject terminal input. The
 /// app-server proxy remains the structured boundary that fences `turn/start`;

@@ -11,6 +11,8 @@ use thiserror::Error;
 
 use crate::cli::BINARY;
 
+const STRUCTURED_DETAILS_PREFIX: &str = "\u{1e}forge-cli-json-details-v1:";
+
 /// Top-level forge-cli error type. Every leaf knows its `error.kind` and
 /// exit-code class.
 #[derive(Debug, Error)]
@@ -62,7 +64,6 @@ pub enum ForgeError {
         kind: &'static str,
         message: String,
         detail: Option<String>,
-        details: Option<Box<serde_json::Value>>,
     },
     /// Op-specific `RUNTIME 1` failure with a rule-specific `error.kind`.
     /// Currently used by `pr wait-checks` for `checks_failed`; future ops
@@ -218,7 +219,6 @@ impl ForgeError {
             kind,
             message: message.into(),
             detail,
-            details: None,
         }
     }
 
@@ -232,8 +232,7 @@ impl ForgeError {
             schema_version: schema_version.into(),
             kind,
             message: message.into(),
-            detail: None,
-            details: Some(Box::new(details)),
+            detail: Some(format!("{STRUCTURED_DETAILS_PREFIX}{details}")),
         }
     }
 
@@ -296,16 +295,20 @@ impl ForgeError {
             | Self::BackendError { detail, .. }
             | Self::ProviderUnsupported { detail, .. }
             | Self::SoftwareError { detail, .. }
-            | Self::Validation { detail, .. }
             | Self::RuntimeFailure { detail, .. } => detail.as_deref(),
+            Self::Validation { detail, .. } => detail
+                .as_deref()
+                .filter(|detail| !detail.starts_with(STRUCTURED_DETAILS_PREFIX)),
         }
     }
 
-    fn structured_details(&self) -> Option<&serde_json::Value> {
+    fn structured_details(&self) -> Option<serde_json::Value> {
         match self {
-            Self::BackendUnavailable { details, .. } | Self::Validation { details, .. } => {
-                details.as_deref()
-            }
+            Self::BackendUnavailable { details, .. } => details.as_deref().cloned(),
+            Self::Validation { detail, .. } => detail
+                .as_deref()?
+                .strip_prefix(STRUCTURED_DETAILS_PREFIX)
+                .and_then(|details| serde_json::from_str(details).ok()),
             _ => None,
         }
     }
@@ -343,7 +346,7 @@ impl ForgeError {
                 "recovery": { "config_key": "merge.hold_labels" }
             }))
         } else if let Some(details) = self.structured_details() {
-            envelope_error.with_details(details.clone())
+            envelope_error.with_details(details)
         } else {
             match self.detail() {
                 Some(detail) => {
@@ -480,6 +483,10 @@ mod tests {
         assert_eq!(envelope["error"]["code"], "identity_actor_unavailable");
         assert_eq!(envelope["error"]["details"]["retryable"], true);
         assert_eq!(envelope["error"]["details"]["cause"]["http_status"], 503);
+        assert_eq!(
+            err.render_text(),
+            "error: identity_actor_unavailable: GitHub actor lookup failed"
+        );
     }
 
     #[test]

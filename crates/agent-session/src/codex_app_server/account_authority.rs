@@ -8,32 +8,100 @@ pub(super) async fn wait_for_initial_thread_start_binding(
     context: &CliContext,
     record: &SessionRecord,
     method: Option<&str>,
-    bootstrap: &FreshBootstrap,
-) {
+    bootstrap: &mut FreshBootstrap,
+) -> Result<(), TuiMutationRejection> {
     if method != Some("thread/start")
         || !matches!(bootstrap, FreshBootstrap::ThreadStart)
         || !crate::codex_account::proxy_initial_binding_is_pending(record)
     {
-        return;
+        return Ok(());
     }
     let deadline = Instant::now() + CONTROL_SUBMIT_TOTAL_TIMEOUT;
+    let expected_runtime_id = record
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.launch_id.as_str())
+        .ok_or(TuiMutationRejection::RuntimeIdentityMissing)?;
     loop {
+        if Instant::now() >= deadline {
+            return Err(initial_binding_rejection(
+                bootstrap,
+                context,
+                record,
+                "initial-binding-unresolved",
+            )
+            .await);
+        }
         let load_context = context.clone();
         let id = record.id.clone();
-        let Ok(Ok(current)) =
-            tokio::task::spawn_blocking(move || crate::load_session_record(&load_context, &id))
-                .await
-        else {
-            return;
-        };
-        if crate::ensure_same_session_identity(record, &current).is_err()
-            || !crate::codex_account::proxy_initial_binding_is_pending(&current)
-            || Instant::now() >= deadline
+        let current = match tokio::task::spawn_blocking(move || {
+            crate::load_session_record(&load_context, &id)
+        })
+        .await
         {
-            return;
+            Ok(Ok(current)) => current,
+            Ok(Err(_)) => {
+                return Err(initial_binding_rejection(
+                    bootstrap,
+                    context,
+                    record,
+                    "initial-binding-record-unavailable",
+                )
+                .await);
+            }
+            Err(_) => {
+                return Err(initial_binding_rejection(
+                    bootstrap,
+                    context,
+                    record,
+                    "initial-binding-task-failed",
+                )
+                .await);
+            }
+        };
+        if crate::ensure_same_session_identity(record, &current).is_err() {
+            return Err(initial_binding_rejection(
+                bootstrap,
+                context,
+                record,
+                "initial-binding-runtime-changed",
+            )
+            .await);
+        }
+        if crate::codex_account::proxy_initial_binding_is_bound(&current, expected_runtime_id) {
+            return Ok(());
+        }
+        if !crate::codex_account::proxy_initial_binding_is_pending(&current) {
+            let code = match crate::codex_account::proxy_binding_diagnostic(&current) {
+                ("failed", _) => "initial-binding-failed",
+                ("unknown", _) => "initial-binding-invalid",
+                ("pending", _) | ("bound", _) | ("unbound", _) | ("unsupported", _) => {
+                    "initial-binding-replaced"
+                }
+                _ => "initial-binding-invalid",
+            };
+            return Err(initial_binding_rejection(bootstrap, context, record, code).await);
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+async fn initial_binding_rejection(
+    bootstrap: &mut FreshBootstrap,
+    context: &CliContext,
+    record: &SessionRecord,
+    code: &'static str,
+) -> TuiMutationRejection {
+    bootstrap.close();
+    account_authority_rejection(
+        context,
+        record,
+        "thread_start_binding",
+        "initial_binding_wait",
+        code,
+        false,
+    )
+    .await
 }
 
 /// Serialize a provider `turn/start` with account mutation. The proxy takes

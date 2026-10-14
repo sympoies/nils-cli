@@ -53,6 +53,107 @@ async fn fresh_thread_start_waits_for_initial_binding_application() {
     assert!(result.is_ok());
 }
 
+#[tokio::test]
+async fn fresh_thread_start_refuses_unresolved_binding_while_create_owns_record_lock() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let upstream = tmp.path().join("locked-initial-binding.sock");
+    let listener = tokio::net::UnixListener::bind(&upstream).unwrap();
+    let context = CliContext {
+        state_dir: tmp.path().join("state"),
+        host: None,
+    };
+    let mut record = record_with_runtime("locked-initial-binding", &upstream);
+    record.extra.insert(
+        "codex_account_binding".to_owned(),
+        json!({
+            "schema_version": "agent-session.codex-account-binding.v1",
+            "selected_account": "fixture-account",
+            "selection_source": "explicit",
+            "revision": 1,
+            "state": "pending",
+            "applied_runtime_id": null,
+            "updated_at": "2030-01-01T00:00:00Z"
+        }),
+    );
+    fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+    crate::write_session_record(&context, &record).unwrap();
+    crate::activity::activate_runtime(&context, &record).unwrap();
+    write_create_bootstrap_marker(&record);
+    let _create_lock = crate::acquire_session_record_lock(&context, &record.id).unwrap();
+
+    let (upstream_tx, mut upstream_rx) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let request = receive_json(&mut socket).await;
+        let _ = upstream_tx.send(request.clone());
+        respond(&mut socket, &request, json!({ "threadId": "thread-a" })).await;
+        socket.close(None).await.unwrap();
+    });
+    let proxy_args = crate::cli::CodexAppServerProxyArgs {
+        id: record.id.clone(),
+        upstream: upstream.clone(),
+        listen: upstream.with_extension("proxy"),
+    };
+    let proxy_context = context.clone();
+    let proxy = tokio::spawn(async move { run_proxy_session(proxy_context, proxy_args).await });
+    let proxy_stream = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match tokio::net::UnixStream::connect(upstream.with_extension("proxy")).await {
+                Ok(stream) => break stream,
+                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+    })
+    .await
+    .expect("proxy listener should start");
+    let (mut tui, _) = tokio_tungstenite::client_async("ws://localhost", proxy_stream)
+        .await
+        .unwrap();
+    tui.send(Message::Text(
+        json!({ "id": 1, "method": "thread/start", "params": {} })
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(35), receive_json(&mut tui))
+        .await
+        .expect("thread/start must receive a bounded refusal");
+
+    assert_eq!(response["id"], 1);
+    assert_eq!(response["error"]["code"], -32001);
+    assert_eq!(
+        response["error"]["data"]["reason"],
+        "account_authority_unavailable"
+    );
+    assert_eq!(
+        response["error"]["data"]["cause"]["code"],
+        "initial-binding-unresolved"
+    );
+    assert_eq!(
+        response["error"]["data"]["cause"]["stage"],
+        "initial_binding_wait"
+    );
+    assert_eq!(
+        response["error"]["data"]["cause"]["binding_state"],
+        "pending"
+    );
+    assert_eq!(response["error"]["data"]["retryable"], false);
+    assert_eq!(response["error"]["data"]["cause"]["receipt_written"], true);
+    let receipt = crate::lifecycle::read(&context, &record.id, 1).unwrap()["records"][0].clone();
+    assert_eq!(receipt["result"]["code"], "initial-binding-unresolved");
+    assert_eq!(
+        receipt["result"]["cause"]["code"],
+        response["error"]["data"]["cause"]["code"]
+    );
+    assert_eq!(receipt["result"]["cause"]["retryable"], false);
+    assert!(upstream_rx.try_recv().is_err());
+
+    proxy.abort();
+    server.abort();
+}
+
 #[test]
 fn thread_start_authority_failure_projects_bounded_typed_cause() {
     let rejection = TuiMutationRejection::AccountAuthorityUnavailable {
