@@ -1301,7 +1301,7 @@ fn normalize_contract(
                         .ok_or_else(|| {
                             HookError::data(
                                 "finish-line-acceptance-contained-validator-unregistered",
-                                "contained Bash acceptance validators must match an exact current agent-docs target",
+                                "contained Bash acceptance validators must match an exact current repository validation target",
                             )
                         })?;
                     ValidatorExecution::ContainedBash {

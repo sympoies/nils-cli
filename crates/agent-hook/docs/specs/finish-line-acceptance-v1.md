@@ -101,7 +101,7 @@ session:
 - exact validator tool name and lowercase SHA-256 ToolDefinition digest;
 - validator execution kind `host-observed` or `contained-bash`;
 - for `contained-bash`, one valid intent and command that match an exact
-  current agent-docs DSH validation target; and
+  current repository validation target; and
 - at most 128 unique invalidating tool-definition bindings.
 
 Nils canonicalizes maps and sets, hashes tool-definition bindings, hashes Bash
