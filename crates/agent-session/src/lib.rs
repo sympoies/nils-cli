@@ -11490,7 +11490,7 @@ fn pin_linux_control_group_processes(
     if stabilize_membership {
         pids = stabilize_linux_control_group_pids(
             pids,
-            DELETE_TERMINATION_PROBE_TIMEOUT,
+            runtime_teardown::CGROUP_MEMBERSHIP_OBSERVATION_DURATION,
             DELETE_TERMINATION_VERIFY_POLL_INTERVAL,
             deadline,
             |snapshot_deadline| {
