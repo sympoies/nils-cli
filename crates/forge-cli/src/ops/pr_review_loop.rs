@@ -19,6 +19,9 @@ use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
 use crate::validations::{RuleVerdict, no_escaped_control_markdown, no_local_path};
 
+mod correction_input;
+use correction_input::ObservationInput;
+
 const SCHEMA_INSPECT: &str = "pr.review-loop.inspect";
 const SCHEMA_OBSERVE: &str = "pr.review-loop.observe";
 const SCHEMA_EXTEND: &str = "pr.review-loop.extend";
@@ -187,7 +190,7 @@ pub fn run_validate(
 /// rather than only an exit code.
 fn validate_payload(raw: &serde_json::Value) -> Result<PrReviewLoopValidatePayload, ForgeError> {
     let shape = detect_findings_shape(raw);
-    let observations = observations_from_value(raw)?;
+    let observations = ObservationInput::parse(raw)?.observations;
     // The same canonicalization an append performs: rejects a malformed
     // lifecycle fingerprint and an identity whose rows disagree, and clears
     // `blocking` on every terminal disposition.
@@ -256,6 +259,7 @@ fn collapsed_identities(observations: &[review_state::ReviewFindingObservation])
 fn shape_prose(shape: &str) -> &str {
     match shape {
         SHAPE_MERGE_ENVELOPE => "review-specialists merge envelope",
+        "correction-envelope" => "chain-bound correction envelope",
         _ => "bare observation array",
     }
 }
@@ -286,7 +290,7 @@ fn render_validate_text(payload: &PrReviewLoopValidatePayload) {
 
 /// Read the payload once and parse it as JSON, leaving the rows uninterpreted.
 ///
-/// Split from [`read_observations`] so a caller that needs both the raw value
+/// Separate from row parsing so a caller that needs both the raw value
 /// and the parsed rows opens the path exactly once — a FIFO or a `<(...)`
 /// process substitution returns EOF on a second open, which would surface as
 /// invalid JSON for a payload that was fine.
@@ -316,6 +320,11 @@ const SHAPE_MERGE_ENVELOPE: &str = "merge-envelope";
 const SHAPE_OBSERVATION_ARRAY: &str = "observation-array";
 
 fn detect_findings_shape(value: &serde_json::Value) -> &'static str {
+    if value.get("schema_version").and_then(|v| v.as_str())
+        == Some(review_state::correction::INPUT_SCHEMA)
+    {
+        return "correction-envelope";
+    }
     let inner = value.get("data").unwrap_or(value);
     if inner.get("findings").is_some() {
         SHAPE_MERGE_ENVELOPE
@@ -415,7 +424,8 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     } else {
         None
     };
-    let observations = read_observations(&args.findings_file)?;
+    let input = ObservationInput::read(&args.findings_file)?;
+    let observations = &input.observations;
     // Read and validate the outcome body before the first provider call, so an
     // unreadable path or a non-portable body cannot fail between the ledger read
     // and the append.
@@ -438,63 +448,62 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         resolved_expected_state(&args, state_view.chain.tip_digest.as_deref()),
     )?;
     let previous = review_state::latest_review_loop_state(&state_view.chain);
-    let mut transition =
-        match review_state::observe_review_loop(previous, &args.expected_head, &observations) {
-            Ok(transition) => transition,
-            Err(error) if review_state::stop_budget_field(error.kind()).is_some() => {
-                if let Some(stop) = previous
-                    .and_then(|state| state.hard_stop.as_ref())
-                    .filter(|stop| !stop.extension_applied)
-                {
-                    return Err(durable_hard_stop_error(
-                        &error,
-                        stop,
-                        state_view.chain.tip_digest.as_deref(),
-                    ));
-                }
-                let Some(previous) = previous else {
-                    return Err(error);
-                };
-                let stopped = review_state::record_review_loop_hard_stop(
-                    previous,
-                    &args.expected_head,
-                    &observations,
-                    state_view.chain.tip_digest.as_deref().ok_or_else(|| {
-                        ForgeError::validation(
-                            schema_err(),
-                            "review_state_conflict",
-                            "a hard stop requires an existing review-loop chain tip",
-                            None,
-                        )
-                    })?,
-                    &error,
-                )?;
-                let stop = stopped
-                    .hard_stop
-                    .clone()
-                    .expect("recorded hard stop exists");
-                // A hard stop is a failure receipt, never a delivery outcome, so
-                // the outcome body is deliberately not attached here.
-                let appended = pr_review::append_review_loop_state(
-                    runner,
-                    &ctx,
-                    pr_review::ReviewLoopAppend {
-                        repository: &repository,
-                        number: view.number,
-                        expected_head: &args.expected_head,
-                        expected_tip: state_view.chain.tip_digest.as_deref(),
-                        state: stopped,
-                        visible_outcome: None,
-                    },
-                )?;
+    let mut transition = match input.transition(&state_view.chain, &args) {
+        Ok(transition) => transition,
+        Err(error) if review_state::stop_budget_field(error.kind()).is_some() => {
+            if let Some(stop) = previous
+                .and_then(|state| state.hard_stop.as_ref())
+                .filter(|stop| !stop.extension_applied)
+            {
                 return Err(durable_hard_stop_error(
                     &error,
-                    &stop,
-                    appended.chain.tip_digest.as_deref(),
+                    stop,
+                    state_view.chain.tip_digest.as_deref(),
                 ));
             }
-            Err(error) => return Err(error),
-        };
+            let Some(previous) = previous else {
+                return Err(error);
+            };
+            let stopped = review_state::record_review_loop_hard_stop(
+                previous,
+                &args.expected_head,
+                observations,
+                state_view.chain.tip_digest.as_deref().ok_or_else(|| {
+                    ForgeError::validation(
+                        schema_err(),
+                        "review_state_conflict",
+                        "a hard stop requires an existing review-loop chain tip",
+                        None,
+                    )
+                })?,
+                &error,
+            )?;
+            let stop = stopped
+                .hard_stop
+                .clone()
+                .expect("recorded hard stop exists");
+            // A hard stop is a failure receipt, never a delivery outcome, so
+            // the outcome body is deliberately not attached here.
+            let appended = pr_review::append_review_loop_state(
+                runner,
+                &ctx,
+                pr_review::ReviewLoopAppend {
+                    repository: &repository,
+                    number: view.number,
+                    expected_head: &args.expected_head,
+                    expected_tip: state_view.chain.tip_digest.as_deref(),
+                    state: stopped,
+                    visible_outcome: None,
+                },
+            )?;
+            return Err(durable_hard_stop_error(
+                &error,
+                &stop,
+                appended.chain.tip_digest.as_deref(),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
 
     transition.changed |= super::pr_review_handoff::latest(&state_view.chain).is_some()
         && super::pr_review_handoff::owned_state(&state_view.chain).is_none();
@@ -522,15 +531,15 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             format,
         );
     }
-    let appended = pr_review::append_review_loop_state(
+    let appended = pr_review::append_review_state_payload(
         runner,
         &ctx,
-        pr_review::ReviewLoopAppend {
+        pr_review::ReviewStateAppend {
             repository: &repository,
             number: view.number,
             expected_head: &args.expected_head,
             expected_tip: state_view.chain.tip_digest.as_deref(),
-            state: transition.state,
+            payload: transition.into_payload(),
             visible_outcome: outcome_body.as_deref(),
         },
     )?;
@@ -1031,6 +1040,7 @@ fn tip_moved(observed: Option<&str>, provider: Option<&str>) -> ForgeError {
     )
 }
 
+#[cfg(test)]
 fn read_observations(
     path: &str,
 ) -> Result<Vec<review_state::ReviewFindingObservation>, ForgeError> {
@@ -1371,7 +1381,7 @@ fn evaluate_observe<R: BackendRunner>(
     let mut observed_tip = None;
 
     // Local first, so it survives an unreachable provider.
-    let observations = match read_observations(&args.findings_file) {
+    let observations = match ObservationInput::read(&args.findings_file) {
         Ok(observations) => {
             verdicts.push(RuleVerdict::from_result("findings_file", Ok(())));
             Some(observations)
@@ -1427,11 +1437,7 @@ fn evaluate_observe<R: BackendRunner>(
                         Some(observations) => {
                             let previous =
                                 review_state::latest_review_loop_state(&state_view.chain);
-                            let transition = review_state::observe_review_loop(
-                                previous,
-                                &args.expected_head,
-                                observations,
-                            );
+                            let transition = observations.transition(&state_view.chain, args);
                             // `state_comment_body` is reported only when a write
                             // is actually planned. A current chain writes
                             // nothing, so there is no body to size-check and an
@@ -1457,7 +1463,7 @@ fn evaluate_observe<R: BackendRunner>(
                                             view.number,
                                             &args.expected_head,
                                             &state_view.chain,
-                                            transition.state,
+                                            transition.into_payload(),
                                             outcome_body.as_deref(),
                                         ) {
                                             Ok(planned) => {
@@ -1501,7 +1507,7 @@ fn evaluate_observe<R: BackendRunner>(
                                                 &args.expected_head,
                                                 &state_view.chain,
                                                 previous,
-                                                observations,
+                                                &observations.observations,
                                                 &error,
                                             );
                                         }
@@ -1612,7 +1618,7 @@ fn plan_state_comment(
     number: u64,
     expected_head: &str,
     chain: &review_state::ReviewStateChain,
-    state: review_state::ReviewLoopState,
+    payload: review_state::ReviewStatePayload,
     outcome_body: Option<&str>,
 ) -> Result<PlannedStateComment, ForgeError> {
     let record = review_state::ReviewStateRecord::new(
@@ -1621,7 +1627,7 @@ fn plan_state_comment(
         expected_head,
         chain.records.len() as u64,
         chain.tip_digest.clone(),
-        review_state::ReviewStatePayload::ReviewLoop { state },
+        payload,
     )?
     .with_assignment_generation(
         super::pr_review_handoff::latest(chain).map(|h| h.assignment_generation),
@@ -1654,7 +1660,15 @@ fn plan_hard_stop_comment(
         error,
     )
     .ok()?;
-    plan_state_comment(repository, number, expected_head, chain, stopped, None).ok()
+    plan_state_comment(
+        repository,
+        number,
+        expected_head,
+        chain,
+        review_state::ReviewStatePayload::ReviewLoop { state: stopped },
+        None,
+    )
+    .ok()
 }
 
 fn emit_dry_run(

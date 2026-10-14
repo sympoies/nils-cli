@@ -33,13 +33,19 @@ use codex_attention_source_guard::{
     codex_json_permission_source_guard, codex_toml_permission_source_guard,
 };
 mod codex_completion;
+mod codex_quiet;
 #[path = "activity/completion_admission.rs"]
 mod completion_admission;
 #[path = "activity/completion_receipts.rs"]
 mod completion_receipts;
+mod stream_diagnostic;
+pub(crate) use codex_quiet::{
+    diagnostic_for_board, notification_maybe_idle as codex_notification_maybe_idle,
+};
 #[cfg(test)]
 use completion_receipts::append_journal;
 use completion_receipts::{JournalEntry, append_journal_entry};
+pub(crate) use stream_diagnostic::StreamActivityDiagnosticView;
 #[path = "activity/event_validation.rs"]
 mod event_validation;
 use event_validation::validate_event;
@@ -47,6 +53,7 @@ pub(crate) mod pending;
 mod provider;
 #[path = "activity/state_view.rs"]
 mod state_view;
+pub(crate) use state_view::controller_state_for_record;
 pub use state_view::state_for_view;
 pub(crate) mod shadow;
 mod stream_shadow_observation;
@@ -242,11 +249,6 @@ pub(crate) struct StreamTurnSource {
 pub(crate) struct StreamSemanticEventView {
     pub(crate) kind: String,
     pub(crate) observed_at: String,
-}
-
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub(crate) struct StreamActivityDiagnosticView {
-    pub(crate) reason: String,
 }
 
 pub(crate) use stream_shadow_observation::StreamShadowObservationView;
@@ -648,20 +650,7 @@ pub(crate) fn stream_projection(state: &TurnState) -> StreamTurnState {
         diagnostic: state
             .diagnostic
             .as_ref()
-            .filter(|diagnostic| {
-                matches!(
-                    diagnostic.reason.as_str(),
-                    "completion_evidence_pending"
-                        | "attention_authority_mismatch"
-                        | "provider_projection_unavailable"
-                        | "runtime_activity_unhealthy"
-                        | "activity_state_unavailable"
-                        | "interrupted_suspected"
-                )
-            })
-            .map(|diagnostic| StreamActivityDiagnosticView {
-                reason: diagnostic.reason.clone(),
-            }),
+            .and_then(stream_diagnostic::project),
         shadow_observation: state
             .shadow_observation
             .as_ref()
@@ -2810,8 +2799,10 @@ fn ingest_event_with_lock(
         });
     }
     claude_completion::settle_claude_completion(&mut document, &received_at);
-    let applied = completion_receipts::allows_reconciliation(&journal_path, &document, &event)
-        && reduce(&mut document, &event, &received_at);
+    let applied = completion_receipts::allows_reconciliation(&journal_path, &document, &event) && {
+        codex_completion::restore_progress_turn(&journal_path, &mut document, &event);
+        reduce(&mut document, &event, &received_at)
+    };
     if applied {
         document.last_event_at = Some(received_at.clone());
     }

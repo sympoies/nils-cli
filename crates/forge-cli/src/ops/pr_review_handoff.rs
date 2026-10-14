@@ -310,7 +310,8 @@ pub(crate) fn owned_state(
             )
         })
         .find_map(|r| match &r.payload {
-            review_state::ReviewStatePayload::ReviewLoop { state } => Some(state),
+            review_state::ReviewStatePayload::ReviewLoop { state }
+            | review_state::ReviewStatePayload::ReviewLoopCorrection { state, .. } => Some(state),
             _ => None,
         })
 }

@@ -1179,6 +1179,7 @@ fn test_session(tmp: &tempfile::TempDir) -> (CliContext, crate::CreatedRecord) {
 
 mod claude_completion;
 mod claude_permission;
+mod codex_phase;
 mod completion_review;
 mod provider_hooks;
 mod replay_journal;

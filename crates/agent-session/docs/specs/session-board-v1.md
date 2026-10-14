@@ -163,7 +163,7 @@ the extension. A session with lineage and work looks like this:
 | Identity | `session_incarnation` | string or null | `SessionView.session_incarnation`; null when the record has no current runtime launch. |
 | Identity | `messaging_supported` | bool | New derivation, same meaning as `messaging_supported` in `agent-session.remote-peers.v1`: this session can currently receive a remote message. See [Messaging support](#messaging-support). |
 | Place | `repo_name` | string or null | `SessionView.repo_name`, which is the final path component of the session `cwd`. It is not an `owner/name` origin. |
-| Place | `cwd` | string or null | New derivation from `SessionView.cwd`: the daemon user's home prefix is replaced by `~` (for example `~/Project/x`). A `cwd` outside that home is `null`, never an absolute path. |
+| Place | `cwd` | string or null | New derivation from `SessionView.cwd`: normalized absolute home and cwd paths are canonicalized before replacing the home prefix with `~` (for example `~/Project/x`). Symlink-equivalent paths retain the same relative identity. A cwd outside canonical home, an unresolved home or cwd (including a deleted checkout), or a home resolving to `/` is `null`, never an absolute path. There is no lexical fallback when canonicalization fails. |
 | Place | `provider` | string | `SessionView.agent` (for example `codex`, `claude`, `dsh`). |
 | Place | `agent_profile` | string or null | `SessionView.agent_profile`. |
 | Context usage | `context_usage` | optional object | Five allowlisted raw facts from the shared session view; omitted when unavailable. See [session-context-usage-v1](session-context-usage-v1.md). |
@@ -174,6 +174,7 @@ the extension. A session with lineage and work looks like this:
 | Progress | `turn_state` | object or null | `SessionView.turn_state` (the [turn-state contract](../turn-state-contract.md)), projected to the allowlisted fields below. `null` when the session has no turn state. |
 | Progress | `turn_state.phase` | string | `TurnState.phase`: `starting`, `working`, `waiting`, `needs_input`, or `unknown`. |
 | Progress | `turn_state.phase_changed_at` | string | `TurnState.phase_changed_at`. |
+| Progress | `turn_state.diagnostic` | optional object | Quiet-only bounded metadata: `reason: codex_progress_quiet`, `quiet_threshold_seconds: 300`, parseable timestamp `quiet_since`, and `quiet_signal` (`current_turn.last_progress_at` or `current_turn.started_at`). Omitted when unavailable or unrecognized. |
 | Progress | `turn_state.current_turn` | object or null | `TurnState.current_turn`, projected to `last_progress_at` and `attention`. |
 | Progress | `turn_state.current_turn.last_progress_at` | string or null | `CurrentTurn.last_progress_at`. |
 | Progress | `turn_state.current_turn.attention` | object or null | `CurrentTurn.attention`, projected to `kind` and `requested_at`. |
@@ -200,6 +201,11 @@ counts and capabilities. The bounded `role`,
 `lineage`, and `work` objects above replace none of these: they name
 sessions and public provider references only. Unknown upstream
 `turn_state` fields are dropped, not passed through.
+
+The quiet diagnostic is omitted unless all four fields meet these bounds.
+Other diagnostic reasons and unknown nested fields are dropped. It explains
+inferred uncertainty; it never proves completion, clears attention, or
+authorizes input. Native wake still requires separate bound idle proof.
 
 ### Lifecycle states
 

@@ -21,6 +21,15 @@ use crate::error::ForgeError;
 use crate::ops;
 use crate::provider::ProviderHint;
 
+mod review_loop;
+pub use review_loop::PrReviewLoopObserveArgs;
+
+mod search;
+pub use search::{
+    CompletionKind, CompletionQueryArgs, SearchCommand, SearchMatchField, SearchQueryArgs,
+    SearchRefsToArgs,
+};
+
 /// Stable binary name used in `schema_version` literals (`cli.forge-cli.*`).
 pub const BINARY: &str = "forge-cli";
 
@@ -238,12 +247,12 @@ pub enum Command {
     Label(LabelArgs),
     /// Personal cross-repo work inbox.
     Inbox(InboxArgs),
-    /// Full-text / reverse-reference search over issues and PRs.
+    /// Full-text, completion-fact, and reverse-reference search over issues and PRs.
     ///
     /// `search` complements the other discovery surfaces, which serve distinct
     /// roles: `issue list` / `pr list` filter by structured fields (state,
     /// labels, author) within one repo; `inbox` is the personal cross-repo work
-    /// queue; `search` runs free-text (`issues` / `prs`) and reverse-reference
+    /// queue; `search` runs free-text (`issues` / `prs`), completion facts, and reverse-reference
     /// (`refs-to`) queries the structured lists cannot express. GitHub-only in
     /// v1; GitLab and Local return a structured `provider_unsupported` error.
     Search(SearchArgs),
@@ -1010,136 +1019,9 @@ pub struct PrTasksArgs {
     pub id: u64,
 }
 
-/// `pr merge` arguments. Maps to
-/// `forge-cli-ops-v1.yaml::operations.pr.merge` inputs.
-#[derive(Args, Debug, Clone)]
-pub struct PrMergeArgs {
-    /// Numeric PR / MR id.
-    pub id: u64,
-    /// Compare-and-swap head verified by the caller before merge.
-    #[arg(
-        long = "expected-head",
-        value_name = "SHA",
-        value_parser = clap::builder::NonEmptyStringValueParser::new()
-    )]
-    pub expected_head_sha: Option<String>,
-    /// Exact target / base branch the provider PR/MR must still use.
-    #[arg(
-        long = "expected-base",
-        value_name = "BRANCH",
-        value_parser = clap::builder::NonEmptyStringValueParser::new()
-    )]
-    pub expected_base: Option<String>,
-    /// Merge method override. When omitted, falls back to
-    /// `.forge-cli.toml [merge].method` then the spec default `squash`.
-    #[arg(long, value_enum)]
-    pub method: Option<MergeMethodFlag>,
-    /// Skip the post-merge branch deletion (`--delete-branch` on gh,
-    /// `--remove-source-branch` on glab). Mutually exclusive with the
-    /// implicit-true default; flagging both is `keep_branch_conflict`.
-    #[arg(long = "keep-branch", action = ArgAction::SetTrue)]
-    pub keep_branch: bool,
-    /// Allow merges where the PR's base is not the repo's default branch.
-    /// Without this flag, mismatched bases trigger `default_branch_protected`.
-    #[arg(long = "allow-non-default-base", action = ArgAction::SetTrue)]
-    pub allow_non_default_base: bool,
-    /// Merge despite unresolved review threads. Without this flag, any
-    /// non-outdated unresolved thread (bot or human) triggers
-    /// `unresolved_review_threads`. Requires `--allow-unresolved-threads-reason`.
-    #[arg(
-        long = "allow-unresolved-threads",
-        action = ArgAction::SetTrue,
-        requires = "allow_unresolved_threads_reason"
-    )]
-    pub allow_unresolved_threads: bool,
-    /// Required when `--allow-unresolved-threads` is set. Non-empty free-form
-    /// text describing why the unresolved threads are safe to merge past; the
-    /// reason is recorded in the merge envelope payload.
-    #[arg(
-        long = "allow-unresolved-threads-reason",
-        value_name = "TEXT",
-        requires = "allow_unresolved_threads",
-        value_parser = clap::builder::NonEmptyStringValueParser::new()
-    )]
-    pub allow_unresolved_threads_reason: Option<String>,
-    /// Override `[review_convergence].require`. Passing the flag without a
-    /// value enables it; use `--review-convergence=false` to disable a repo or
-    /// user-global opt-in for this invocation.
-    #[arg(
-        long = "review-convergence",
-        action = ArgAction::Set,
-        num_args = 0..=1,
-        default_missing_value = "true"
-    )]
-    pub review_convergence: Option<bool>,
-    /// Merge a head for which no required checks are registered. Without this
-    /// flag an empty required-check snapshot triggers `checks_not_registered`,
-    /// because "all required checks passed" is vacuously true over an empty set
-    /// and so proves nothing about the head. Requires
-    /// `--allow-no-checks-reason`. `[checks] none = true` with a
-    /// `none_reason` in the base branch's `.forge-cli.toml` has the same
-    /// effect.
-    #[arg(
-        long = "allow-no-checks",
-        action = ArgAction::SetTrue,
-        requires = "allow_no_checks_reason"
-    )]
-    pub allow_no_checks: bool,
-    /// Required when `--allow-no-checks` is set. Non-empty free-form text
-    /// describing why merging an unchecked head is safe — normally that the
-    /// repository configures no checks at all; the reason is recorded in the
-    /// merge envelope payload.
-    #[arg(
-        long = "allow-no-checks-reason",
-        value_name = "TEXT",
-        requires = "allow_no_checks",
-        value_parser = clap::builder::NonEmptyStringValueParser::new()
-    )]
-    pub allow_no_checks_reason: Option<String>,
-    /// Merge despite unchecked task-list items in the PR/MR description.
-    /// Without this flag, any unchecked `- [ ]` item triggers
-    /// `unchecked_task_items`. Requires `--allow-unchecked-tasks-reason`.
-    #[arg(
-        long = "allow-unchecked-tasks",
-        action = ArgAction::SetTrue,
-        requires = "allow_unchecked_tasks_reason"
-    )]
-    pub allow_unchecked_tasks: bool,
-    /// Required when `--allow-unchecked-tasks` is set. Non-empty free-form
-    /// text describing why the unchecked items are safe to merge past; the
-    /// reason is recorded in the merge envelope payload.
-    #[arg(
-        long = "allow-unchecked-tasks-reason",
-        value_name = "TEXT",
-        requires = "allow_unchecked_tasks",
-        value_parser = clap::builder::NonEmptyStringValueParser::new()
-    )]
-    pub allow_unchecked_tasks_reason: Option<String>,
-    /// Merge despite an active merge freeze (an open `merge-freeze` issue) the
-    /// caller holds. Repeat to name every active freeze; one left unnamed
-    /// still triggers `merge_freeze_active`. Requires
-    /// `--allow-merge-freeze-reason`.
-    #[arg(
-        long = "allow-merge-freeze",
-        value_name = "ISSUE",
-        action = ArgAction::Append,
-        requires = "allow_merge_freeze_reason"
-    )]
-    pub allow_merge_freeze: Vec<u64>,
-    /// Required when `--allow-merge-freeze` is set; recorded in the merge
-    /// envelope payload.
-    #[arg(
-        long = "allow-merge-freeze-reason",
-        value_name = "TEXT",
-        requires = "allow_merge_freeze",
-        value_parser = clap::builder::NonEmptyStringValueParser::new()
-    )]
-    pub allow_merge_freeze_reason: Option<String>,
-    /// Upper bound, in seconds, on waiting for a required merge queue to merge
-    /// the enqueued PR (default 2700).
-    #[arg(long = "queue-timeout", value_name = "SECONDS")]
-    pub queue_timeout: Option<u64>,
-}
+#[path = "cli/merge.rs"]
+mod merge;
+pub use merge::PrMergeArgs;
 
 /// Native provider review summaries for one pull request.
 #[derive(Args, Debug, Clone)]
@@ -1292,111 +1174,9 @@ pub struct PrReviewLoopInspectArgs {
       is submitted as `open` — the state machine decides whether that is a \
       reopen, and `reopened` is NOT an accepted input.")]
 pub struct PrReviewLoopValidateArgs {
-    /// Delivery-mode review-specialists merge envelope or observation array.
+    /// Merge envelope, observation array, or chain-bound correction envelope.
     #[arg(long = "findings-file", value_name = "PATH")]
     pub findings_file: String,
-}
-
-#[derive(Args, Debug, Clone)]
-#[command(after_help = "APPEND ORDER\n  \
-      An observation can only be appended at the CURRENT provider head, so \
-      history cannot be backfilled, and a `fixed` disposition requires a \
-      repaired head. Observe the reviewed head BEFORE pushing the repair:\n    \
-      observe --expected-head <reviewed head>   (disposition: open)\n    \
-      repair, push\n    \
-      observe --expected-head <repaired head>   (disposition: fixed)\n    \
-      merge --expected-head <repaired head>\n\n\
-      --findings-file SHAPES\n  \
-      1. A `review-specialists merge --mode delivery` envelope. Each row needs \
-      `evidence`, `recommendation`, and a `lifecycle_fingerprint` of the form \
-      `<category>:<component>:<invariant>` whose category segment equals the \
-      row's `category`. The envelope schema REJECTS `disposition` as an unknown \
-      field.\n  \
-      2. A bare observation array. Each row needs `lifecycle_fingerprint` and \
-      accepts `disposition` (open | fixed | accepted | preference | follow-up), \
-      which is how dispositions are carried across rounds. A finding that \
-      reappears is submitted as `open`; the state machine decides whether that \
-      is a reopen, and `reopened` is NOT an accepted input.\n  \
-      Check either shape offline, with no pull request and no provider call, \
-      using `pr review-loop validate --findings-file <path>`.\n\n\
-      COMBINED DELIVERY OUTCOME\n  \
-      Every appended ledger comment leads with a record-specific plain-English \
-      checkpoint sentence above its machine marker, so it never renders as a \
-      blank comment.\n  \
-      --body / --body-file additionally posts a human-readable delivery outcome \
-      in that SAME comment, after the marker, replacing a separate final outcome \
-      comment. An outcome body may not contain an HTML comment, and is checked \
-      before the first provider call.\n  \
-      The outcome rides the append, so it inherits the append's idempotency. When \
-      the observation changes nothing the ledger is not appended, so the outcome \
-      is either ALREADY present from the earlier attempt (data.outcome_posted \
-      true, data.appended false) or would be dropped, which fails closed as \
-      `review_outcome_not_posted`. An identical retry therefore cannot duplicate \
-      the outcome, and cannot lose it either. data.outcome_posted is confirmed by \
-      a post-write read-back, never assumed from the flag. A durable hard-stop \
-      receipt is always appended without an outcome body.\n  \
-      --body-file - consumes stdin once, so do not pipe the same body into a \
-      --dry-run and then a live run.\n  \
-      APPLICABILITY: use the combined form only when the outcome is decided once \
-      and never revised. A ledger record is immutable and an append is \
-      conditional, so a workflow that must post its outcome after repairs and \
-      REFRESH it on retry has no append to carry the revision and should keep the \
-      outcome as its own comment — the visible checkpoint sentence above already stops \
-      ledger comments from rendering blank.\n\n\
-      With --dry-run this runs a faithful non-mutating preflight: it reads and \
-      validates the findings payload and any outcome body, resolves the pull \
-      request, performs the head and state-tip CAS comparisons, evaluates the \
-      transition, and renders the exact provider comment it would post, then \
-      reports every verdict in data.preflight[] without appending. The sweep \
-      does not short-circuit, so the payload verdict is still reported when the \
-      provider is unreachable — use it to check a findings file without writing \
-      durable provider-visible state.\n\n\
-      --auto-state AND --preflight\n  \
-      --preflight runs that same sweep in front of a LIVE append and stops with \
-      `review_preflight_failed`, naming every failing rule, instead of the first \
-      one. It replaces the separate --dry-run call a caller would otherwise make, \
-      and costs the same provider reads that call did.\n  \
-      --auto-state reads the current chain tip and compare-and-swaps against it, \
-      so a caller does not have to `inspect` and thread the digest through. It \
-      conflicts with --expected-state.\n  \
-      What --auto-state does NOT detect: a tip that moved BEFORE this command \
-      ran. A digest you carry from an earlier round is a claim about what you \
-      already saw, and only --expected-state can check it — which is what catches \
-      a resumed shell reusing genesis state. Use --auto-state for the genesis \
-      observation, where the tip is read fresh anyway, and keep --expected-state \
-      for a closing observation made against a tip an earlier append returned.\n  \
-      With both flags the tip is read twice, once for the sweep and once for the \
-      append. If it moved in between, the append fails with the distinct \
-      `review_state_tip_moved`, naming both digests — never a silent re-read.")]
-pub struct PrReviewLoopObserveArgs {
-    pub id: u64,
-    /// Exact provider head SHA whose review observation is being appended.
-    #[arg(long = "expected-head", value_name = "SHA", value_parser = clap::builder::NonEmptyStringValueParser::new())]
-    pub expected_head: String,
-    /// Delivery-mode review-specialists merge envelope or observation array.
-    /// Both shapes require a `lifecycle_fingerprint`; only the array accepts
-    /// `disposition`. See this command's help footer for the full schemas.
-    #[arg(long = "findings-file", value_name = "PATH")]
-    pub findings_file: String,
-    /// Exact current provider-visible state-chain tip; omit only for genesis.
-    #[arg(long = "expected-state", value_name = "DIGEST")]
-    pub expected_state: Option<String>,
-    /// Read the current chain tip and compare-and-swap against it, instead of
-    /// naming it with `--expected-state`. See this command's help footer for
-    /// what this does NOT detect.
-    #[arg(long = "auto-state", action = ArgAction::SetTrue, conflicts_with = "expected_state")]
-    pub auto_state: bool,
-    /// Run the full `--dry-run` verdict sweep before this live append and stop
-    /// with `review_preflight_failed` if any rule fails.
-    #[arg(long = "preflight", action = ArgAction::SetTrue)]
-    pub preflight: bool,
-    /// Human-readable delivery outcome to post in the same comment as this
-    /// ledger record. Mutually exclusive with `--body-file`.
-    #[arg(long, conflicts_with = "body_file")]
-    pub body: Option<String>,
-    /// Read the delivery outcome body from PATH (`-` reads stdin).
-    #[arg(long = "body-file", value_name = "PATH")]
-    pub body_file: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -2193,74 +1973,6 @@ pub struct ActivitySummaryArgs {
     /// Maximum repositories to include in the summary (default: 25).
     #[arg(long, default_value_t = 25)]
     pub limit: u32,
-}
-
-/// `search` subtree. Free-text / reverse-reference query over forge issues and
-/// PRs, scoped by explicit query qualifiers or a repository. GitHub-only in v1; GitLab / Local hit a
-/// structured `provider_unsupported` seam.
-#[derive(Subcommand, Debug)]
-pub enum SearchCommand {
-    /// Full-text search over issues (`gh search issues`).
-    Issues(SearchQueryArgs),
-    /// Full-text search over pull requests (`gh search prs`).
-    Prs(SearchQueryArgs),
-    /// List issues / PRs that reference a ref via cross-reference events.
-    #[command(name = "refs-to")]
-    RefsTo(SearchRefsToArgs),
-}
-
-/// Arguments for `search refs-to <ref>`.
-#[derive(Args, Debug, Clone)]
-pub struct SearchRefsToArgs {
-    /// Target issue / PR to find references to. Accepts a GitHub URL,
-    /// `owner/name#number`, or `#number` / `number` (repo from context).
-    #[arg(value_name = "REF")]
-    pub reference: String,
-    /// Cap the number of cross-reference events scanned (default: 30).
-    #[arg(long, default_value_t = 30)]
-    pub limit: u32,
-}
-
-/// Shared arguments for `search issues` / `search prs`.
-#[derive(Args, Debug, Clone)]
-pub struct SearchQueryArgs {
-    /// Free-text query passed to the provider's search primitive.
-    #[arg(value_name = "QUERY")]
-    pub query: String,
-    /// Restrict matching to these fields (comma-separated or repeatable).
-    /// Defaults to title, body, and comments.
-    #[arg(
-        long = "match",
-        value_enum,
-        value_delimiter = ',',
-        default_values_t = [SearchMatchField::Title, SearchMatchField::Body, SearchMatchField::Comments],
-        value_name = "FIELD"
-    )]
-    pub match_fields: Vec<SearchMatchField>,
-    /// Cap the number of returned results (default: 30).
-    #[arg(long, default_value_t = 30)]
-    pub limit: u32,
-}
-
-/// Field a `search` query may match on. Mirrors `gh search --match`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-#[clap(rename_all = "lower")]
-pub enum SearchMatchField {
-    Title,
-    Body,
-    Comments,
-}
-
-impl SearchMatchField {
-    /// Stable lower-case rendering used in the `gh search --match` value and
-    /// in the envelope's `match_fields`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SearchMatchField::Title => "title",
-            SearchMatchField::Body => "body",
-            SearchMatchField::Comments => "comments",
-        }
-    }
 }
 
 /// `inbox` subtree.
