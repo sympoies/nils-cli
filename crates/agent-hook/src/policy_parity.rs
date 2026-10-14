@@ -212,7 +212,7 @@ impl DshCapabilityGroup {
                 "A machine-local path is about to land in a portable surface. Replace it with `$HOME`, a repository-relative path, or a placeholder before writing.",
             ),
             Self::PreEditIntentGate => Some(
-                "The edit needs a current agent-docs intent. Run `agent-docs session prepare --intent <intent>` for the relevant intent, then retry the edit.",
+                "This DSH policy uses the retired pre-edit intent gate. Migrate the policy binding to the current runtime-kit validation contract before editing files.",
             ),
             _ => None,
         }

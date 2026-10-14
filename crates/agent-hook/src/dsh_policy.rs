@@ -13,11 +13,6 @@ use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agent_docs::dsh::{
-    PrerequisiteBinding, prerequisite_receipt_is_current, session_intent_is_current,
-};
-use agent_docs::env::{PathOverrides, resolve_roots};
-use agent_docs::model::{Context as DocsContext, FallbackMode, Phase};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -461,9 +456,7 @@ fn evaluate_group(
                 unsafe_default_native_mutation(request, raw, effect)?
             }
         }
-        DshCapabilityGroup::PreEditIntentGate => {
-            return pre_edit_intent(request, effect, run_child);
-        }
+        DshCapabilityGroup::PreEditIntentGate => return Ok(Outcome::block(group)),
         DshCapabilityGroup::AgentScopeLockGuard => {
             return scope_lock(request, run_child);
         }
@@ -486,7 +479,7 @@ fn evaluate_group(
             return forge_label_reminder(&invocations);
         }
         DshCapabilityGroup::SessionStartHealthcheck => {
-            return session_start_healthcheck(request, run_child);
+            return Ok(Outcome::allow(group));
         }
         DshCapabilityGroup::SkillUsageReminder => {
             return skill_usage_reminder(raw);
@@ -1578,74 +1571,6 @@ fn first_session_step(request: &NormalizedRequest) -> bool {
         .as_ref()
         .and_then(|subject| subject.session_start_source.as_ref())
         .is_some()
-}
-
-fn session_start_healthcheck(
-    request: &NormalizedRequest,
-    run_child: &mut dyn FnMut(Command) -> Result<Output, HookError>,
-) -> Result<Outcome, HookError> {
-    let group = DshCapabilityGroup::SessionStartHealthcheck;
-    if !first_session_step(request) {
-        return Ok(Outcome::allow(group));
-    }
-    let Some(root) = request.execution_path.as_ref() else {
-        return Ok(Outcome::allow(group));
-    };
-    if !root.join("AGENT_DOCS.toml").is_file() {
-        return Ok(Outcome::allow(group));
-    }
-    let Some(subject) = request.dsh_subject.as_ref() else {
-        return Ok(Outcome::allow(group));
-    };
-    let executable = match trusted_sibling("agent-docs") {
-        Ok(executable) => executable,
-        Err(_) => {
-            return Ok(Outcome::context(
-                group,
-                "Session health could not verify this repository's agent-docs catalog because the matching agent-docs companion is unavailable.",
-            ));
-        }
-    };
-    let mut command = Command::new(executable);
-    sanitize_companion_env(
-        &mut command,
-        &["HOME", "XDG_CONFIG_HOME", "AGENT_DOCS_HOME"],
-    );
-    command.args(["--project-path"]).arg(root);
-    if let Some(docs_home) = subject.agent_docs_home.as_ref() {
-        command.args(["--docs-home"]).arg(docs_home);
-    }
-    command
-        .args([
-            "audit", "--target", "project", "--strict", "--format", "json",
-        ])
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let healthy = run_child(command).is_ok_and(|output| {
-        if !output.status.success() {
-            return false;
-        }
-        serde_json::from_slice::<Value>(&output.stdout).is_ok_and(|value| {
-            value.get("schema_version").and_then(Value::as_str) == Some("agent-docs.audit.v2")
-                && value.get("target").and_then(Value::as_str) == Some("project")
-                && value.get("strict").and_then(Value::as_bool) == Some(true)
-                && value.get("project_path").and_then(Value::as_str) == root.to_str()
-                && value.get("problems").and_then(Value::as_u64) == Some(0)
-                && value.get("wiring").is_some_and(Value::is_array)
-                && value.get("documents").is_some_and(Value::is_array)
-                && value.get("suggested_actions").is_some_and(Value::is_array)
-        })
-    });
-    Ok(if healthy {
-        Outcome::allow(group)
-    } else {
-        Outcome::context(
-            group,
-            "Session health found an agent-docs catalog problem in this repository. Run `agent-docs audit --target project --strict` and repair the reported configuration before relying on project guidance.",
-        )
-    })
 }
 
 fn skill_usage_reminder(raw: &[u8]) -> Result<Outcome, HookError> {
@@ -5260,88 +5185,6 @@ fn current_branch_for_request(_words: &[String]) -> Option<&str> {
     // An omitted refspec is configuration-dependent. Without a separately
     // authenticated push.default projection it must stay fail closed.
     None
-}
-
-fn pre_edit_intent(
-    request: &NormalizedRequest,
-    effect: OperationEffectClass,
-    _run_child: &mut dyn FnMut(Command) -> Result<Output, HookError>,
-) -> Result<Outcome, HookError> {
-    let group = DshCapabilityGroup::PreEditIntentGate;
-    if effect == OperationEffectClass::ReadOnly {
-        return Ok(Outcome::allow(group));
-    }
-    let repositories = policy_repositories(request);
-    if repositories.is_empty() {
-        return Ok(Outcome::allow(group));
-    }
-    let Some(subject) = request.dsh_subject.as_ref() else {
-        return Ok(Outcome::block(group));
-    };
-    let intent = DocsContext::parse("project-dev").expect("static DSH intent");
-    let phase = Phase::parse("edit").expect("static DSH phase");
-    for repository in repositories {
-        let roots = match resolve_roots(&PathOverrides {
-            docs_home: subject.agent_docs_home.clone(),
-            project_path: Some(repository),
-        }) {
-            Ok(roots) => roots,
-            Err(_) => return Ok(Outcome::block(group)),
-        };
-        if session_intent_is_current(
-            &roots,
-            &subject.session_id,
-            &subject.agent_docs_state_home,
-            &intent,
-            Some(&phase),
-            FallbackMode::Auto,
-        ) {
-            continue;
-        }
-        let Some(prerequisite) = subject.prerequisite.as_ref() else {
-            return Ok(Outcome::block(group));
-        };
-        let (Some(call_id), Some(step), Some(tool_name)) = (
-            subject.call_id.as_deref(),
-            subject.step,
-            request.matcher.as_deref(),
-        ) else {
-            return Ok(Outcome::block(group));
-        };
-        if !prerequisite_receipt_is_current(
-            &roots,
-            &subject.session_id,
-            &subject.agent_docs_state_home,
-            &intent,
-            Some(&phase),
-            FallbackMode::Auto,
-            PrerequisiteBinding {
-                receipt: &prerequisite.receipt,
-                agent_id: &prerequisite.agent_id,
-                workspace_generation: &prerequisite.workspace_generation,
-                call_id,
-                turn: subject.turn,
-                step,
-                tool_name,
-                definition_id: &prerequisite.definition_id,
-            },
-        ) {
-            return Ok(Outcome::block(group));
-        }
-    }
-    Ok(Outcome::allow(group))
-}
-
-fn policy_repositories(request: &NormalizedRequest) -> Vec<PathBuf> {
-    let mut repositories = request
-        .binding_roots
-        .iter()
-        .filter(|root| root.join("AGENT_DOCS.toml").is_file())
-        .cloned()
-        .collect::<Vec<_>>();
-    repositories.sort();
-    repositories.dedup();
-    repositories
 }
 
 fn scope_lock(

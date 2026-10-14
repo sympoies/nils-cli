@@ -138,7 +138,7 @@ fn candidate_from_command(
     let tool = program_path
         .file_name()
         .and_then(OsStr::to_str)
-        .filter(|name| matches!(*name, "agent-docs" | "agent-run" | "forge-cli"))
+        .filter(|name| matches!(*name, "agent-run" | "forge-cli"))
         .ok_or_else(|| {
             rejected(
                 "read-only-command-unsupported",
@@ -545,15 +545,12 @@ mod tests {
     ) {
         let temp = tempfile::TempDir::new().expect("tempdir");
         let hook = temp.path().join("agent-hook");
-        let producer = temp.path().join("agent-docs");
+        let producer = temp.path().join("forge-cli");
         fs::write(&hook, b"hook").expect("hook file");
         fs::write(&producer, b"producer").expect("producer file");
         fs::set_permissions(&hook, fs::Permissions::from_mode(0o700)).expect("hook mode");
         fs::set_permissions(&producer, fs::Permissions::from_mode(0o700)).expect("producer mode");
-        let command = format!(
-            "builtin command {} preflight --intent project-dev",
-            producer.display()
-        );
+        let command = format!("builtin command {} issue view 670", producer.display());
         let candidate =
             candidate_from_command(&command, &hook, &[], temp.path()).expect("candidate");
         let now = jiff::Timestamp::now().as_second();
@@ -561,11 +558,11 @@ mod tests {
             schema_version: OPERATION_EFFECT_VERSION.to_string(),
             capability_class: CapabilityClass::ToolContract,
             producer: ProducerIdentity {
-                tool: "agent-docs".to_string(),
+                tool: "forge-cli".to_string(),
                 release: env!("CARGO_PKG_VERSION").to_string(),
                 executable_digest: executable_digest(&producer).expect("executable digest"),
             },
-            operation: "preflight".to_string(),
+            operation: "issue-view".to_string(),
             effect: Effect::ReadOnly,
             provider_effect: ProviderEffect::LocalRead,
             managed_state_reads: vec!["catalog".to_string()],
@@ -625,7 +622,7 @@ mod tests {
         let (temp, candidate, descriptor) = fixture();
         let now = descriptor.issued_at_epoch;
         let exact = serde_json::json!({
-            "schema_version": "cli.agent-docs.operation-effect.v1",
+            "schema_version": "cli.forge-cli.operation-effect.v1",
             "ok": true,
             "data": descriptor,
             "warnings": []
@@ -655,16 +652,15 @@ mod tests {
     #[test]
     fn parser_accepts_literal_quoting_and_rejects_shell_composition() {
         assert_eq!(
-            parse_simple_command("agent-docs preflight --intent 'project-dev'")
-                .expect("simple command"),
-            ["agent-docs", "preflight", "--intent", "project-dev"]
+            parse_simple_command("forge-cli issue view '670'").expect("simple command"),
+            ["forge-cli", "issue", "view", "670"]
         );
         for command in [
-            "agent-docs preflight; touch changed",
-            "agent-docs preflight && echo changed",
-            "agent-docs $(touch changed)",
-            "agent-docs preflight > result",
-            "agent-docs preflight\nforge-cli issue view 670",
+            "forge-cli issue view 670; touch changed",
+            "forge-cli issue view 670 && echo changed",
+            "forge-cli $(touch changed)",
+            "forge-cli issue view 670 > result",
+            "forge-cli issue view 670\nforge-cli issue view 671",
         ] {
             assert_eq!(
                 parse_simple_command(command).expect_err(command).code,
@@ -677,7 +673,6 @@ mod tests {
     fn rejects_bare_producer_tokens_that_shells_can_shadow() {
         let temp = tempfile::TempDir::new().expect("tempdir");
         for command in [
-            "agent-docs preflight --intent project-dev",
             "agent-run inspect --cwd . -- rg TODO",
             "forge-cli issue view 670",
         ] {
@@ -696,14 +691,14 @@ mod tests {
     fn requires_a_dispatch_stable_prefix_for_explicit_producer_paths() {
         let temp = tempfile::TempDir::new().expect("tempdir");
         let hook = temp.path().join("agent-hook");
-        let producer = temp.path().join("agent-docs");
+        let producer = temp.path().join("forge-cli");
         fs::write(&hook, b"hook").expect("hook file");
         fs::write(&producer, b"#!/bin/sh\nprintf external").expect("producer file");
         fs::set_permissions(&hook, fs::Permissions::from_mode(0o700)).expect("hook mode");
         fs::set_permissions(&producer, fs::Permissions::from_mode(0o700)).expect("producer mode");
 
-        let direct = format!("{} preflight", producer.display());
-        let stable = format!("builtin command {} preflight", producer.display());
+        let direct = format!("{} issue view 670", producer.display());
+        let stable = format!("builtin command {} issue view 670", producer.display());
         for shell in ["bash", "zsh"] {
             let function = format!("function {} {{ printf shadow; }}", producer.display());
             for (command, expected) in [(&direct, "shadow"), (&stable, "external")] {

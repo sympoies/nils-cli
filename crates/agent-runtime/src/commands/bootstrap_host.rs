@@ -835,7 +835,7 @@ impl BootstrapRunner {
             ),
             skipped_verification(
                 "docs-audit",
-                "agent-docs audit remains delegated to the runtime-kit setup integration",
+                "repository guidance audit remains delegated to the runtime-kit setup integration",
             ),
             skipped_verification(
                 "zsh-kit-smoke",

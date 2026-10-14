@@ -262,29 +262,6 @@ fn git(fixture: &Fixture, args: &[&str]) {
     );
 }
 
-fn session_json_records(state_home: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let root = state_home.join("agent-docs/sessions");
-    if !root.exists() {
-        return Vec::new();
-    }
-    let mut pending = vec![root];
-    let mut records = Vec::new();
-    while let Some(directory) = pending.pop() {
-        for entry in fs::read_dir(directory).expect("session state directory") {
-            let path = entry.expect("session state entry").path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path
-                .extension()
-                .is_some_and(|extension| extension == "json")
-            {
-                records.push(path);
-            }
-        }
-    }
-    records
-}
-
 /// Spawns the private agent-hook copy, retrying while Linux reports `ETXTBSY`.
 /// Tests in this binary copy and exec concurrently, so a sibling thread's
 /// spawn can briefly inherit the copy's write descriptor across its fork until
@@ -3179,274 +3156,6 @@ fn checkout_lease_applies_to_native_file_tools_without_requiring_a_command() {
 }
 
 #[test]
-fn dsh_file_mutations_use_exact_native_paths_while_name_collisions_do_not() {
-    let policy = r#"schema_version = "agent-hook.policy.v1"
-bundle_id = "dsh-runtime-kit-task-3-2-targets"
-version = "2026.08.18.1"
-
-[[rules]]
-id = "dsh.pre-edit"
-products = ["dsh"]
-events = ["PreToolUse"]
-matcher = "write|edit|str_replace_editor"
-priority = 10
-mode = "enforce"
-failure_posture = "closed"
-override_class = "locked"
-capability = { id = "dsh.policy.v1", group = "pre-edit-intent-gate" }
-"#;
-    let fixture = Fixture::new(policy);
-    fs::write(
-        fixture.root.join("AGENT_DOCS.toml"),
-        "[[document]]\ncontext = \"project-dev\"\nscope = \"project\"\npath = \"README.md\"\nrequired = false\n",
-    )
-    .expect("catalog");
-    fs::write(fixture.root.join("README.md"), "fixture\n").expect("readme");
-
-    for (tool, arguments) in [
-        (
-            "write",
-            json!({"file_path": fixture.root.join("src/new.rs"), "content": "x"}),
-        ),
-        (
-            "edit",
-            json!({"file_path": fixture.root.join("README.md"), "old_string": "a", "new_string": "b"}),
-        ),
-        (
-            "str_replace_editor",
-            json!({"command": "insert", "path": fixture.root.join("README.md"), "insert_line": 1, "new_str": "x"}),
-        ),
-    ] {
-        let output = fixture.run(
-            &["dispatch", "--product", "dsh", "--format", "json"],
-            Some(&request(&fixture, tool, arguments)),
-        );
-        assert_eq!(
-            output.code,
-            1,
-            "tool={tool} stderr={}",
-            output.stderr_text()
-        );
-        assert_eq!(
-            output.stdout_json()["data"]["action"],
-            "block",
-            "tool={tool}"
-        );
-    }
-
-    let collision = fixture.run(
-        &["dispatch", "--product", "dsh", "--format", "json"],
-        Some(&request(&fixture, "Write", json!({}))),
-    );
-    assert_eq!(collision.code, 0, "stderr={}", collision.stderr_text());
-}
-
-#[test]
-fn dsh_pre_edit_accepts_a_current_context_activation_without_public_product_expansion() {
-    let fixture = Fixture::new(&policy("pre-edit-intent-gate", "dsh"));
-    fs::write(
-        fixture.root.join("AGENT_DOCS.toml"),
-        r#"
-[[document]]
-context = "project-dev"
-scope = "project"
-path = "README.md"
-required = true
-phase = "edit"
-"#,
-    )
-    .expect("catalog");
-    fs::write(fixture.root.join("README.md"), "current DSH policy\n").expect("policy doc");
-    let state_home = fixture.state_home.join("dsh-runtime-kit");
-    let code = agent_docs::run_with_args([
-        "agent-docs",
-        "--docs-home",
-        fixture.home.to_str().expect("home UTF-8"),
-        "--project-path",
-        fixture.root.to_str().expect("project UTF-8"),
-        "session",
-        "context",
-        "--session-id",
-        "dsh-session-1",
-        "--product",
-        "dsh",
-        "--state-home",
-        state_home.to_str().expect("state UTF-8"),
-        "--intent",
-        "project-dev",
-        "--phase",
-        "edit",
-        "--request-id",
-        "context:pre-edit-test",
-        "--format",
-        "json",
-    ]);
-    assert_eq!(code, 0);
-
-    let mut input: Value = serde_json::from_str(&request(
-        &fixture,
-        "bash",
-        json!({"command": "printf owned > owned.txt"}),
-    ))
-    .expect("request JSON");
-    input["subject"]["agent_docs_home"] =
-        Value::String(fixture.home.to_string_lossy().into_owned());
-    let output = fixture.run(
-        &["dispatch", "--product", "dsh", "--format", "json"],
-        Some(&input.to_string()),
-    );
-    assert_eq!(output.code, 0, "envelope={}", output.stdout_text());
-    assert_eq!(output.stdout_json()["data"]["action"], "allow");
-}
-
-#[test]
-fn dsh_pre_edit_accepts_only_an_exact_current_pending_prerequisite_without_committing_it() {
-    let Some(agent_docs) = nils_test_support::bin::sibling_or_skip("agent-docs", "nils-agent-docs")
-    else {
-        return;
-    };
-    let fixture = Fixture::new(&policy("pre-edit-intent-gate", "dsh"));
-    fs::write(
-        fixture.root.join("AGENT_DOCS.toml"),
-        r#"
-[[document]]
-context = "project-dev"
-scope = "project"
-path = "README.md"
-required = true
-phase = "edit"
-"#,
-    )
-    .expect("catalog");
-    fs::write(fixture.root.join("README.md"), "pending DSH policy\n").expect("policy doc");
-    let state_home = fixture.state_home.join("dsh-runtime-kit");
-    let begin = Command::new(&agent_docs)
-        .args([
-            "--docs-home",
-            fixture.home.to_str().unwrap(),
-            "--project-path",
-            fixture.root.to_str().unwrap(),
-            "session",
-            "prerequisite",
-            "--session-id",
-            "dsh-session-1",
-            "--product",
-            "dsh",
-            "--state-home",
-            state_home.to_str().unwrap(),
-            "--intent",
-            "project-dev",
-            "--phase",
-            "edit",
-            "--request-id",
-            "pending-pre-edit-test",
-            "--agent-id",
-            "agent-1",
-            "--workspace-generation",
-            "workspace-generation-1",
-            "--call-id",
-            "dsh-task-3-2-call",
-            "--turn",
-            "1",
-            "--step",
-            "2",
-            "--tool-name",
-            "bash",
-            "--definition-id",
-            "definition-1",
-            "--format",
-            "json",
-        ])
-        .env_clear()
-        .env("HOME", &fixture.home)
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .expect("agent-docs prerequisite begin");
-    assert!(
-        begin.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&begin.stderr)
-    );
-    let begin_json: Value = serde_json::from_slice(&begin.stdout).expect("begin JSON");
-    let receipt = begin_json["data"]["decision"]["receipt"]
-        .as_str()
-        .expect("pending receipt");
-    assert!(session_json_records(&state_home).is_empty());
-
-    let mut input: Value = serde_json::from_str(&request(
-        &fixture,
-        "bash",
-        json!({"command": "printf owned > owned.txt"}),
-    ))
-    .expect("request JSON");
-    input["schema_version"] = json!("agent-hook.dsh-ingress.v5");
-    input["subject"]["agent_docs_home"] =
-        Value::String(fixture.home.to_string_lossy().into_owned());
-    input["subject"]["agent_id"] = json!("agent-1");
-    input["subject"]["workspace_generation"] = json!("workspace-generation-1");
-    input["tool"]["definition_id"] = json!("definition-1");
-    input["tool"]["prerequisite_receipt"] = json!(receipt);
-
-    let accepted = fixture.run(
-        &["dispatch", "--product", "dsh", "--format", "json"],
-        Some(&input.to_string()),
-    );
-    assert_eq!(accepted.code, 0, "envelope={}", accepted.stdout_text());
-    assert_eq!(accepted.stdout_json()["data"]["action"], "allow");
-    assert!(session_json_records(&state_home).is_empty());
-
-    for (scope, field, replacement) in [
-        ("subject", "agent_id", json!("agent-2")),
-        (
-            "subject",
-            "workspace_generation",
-            json!("workspace-generation-2"),
-        ),
-        ("subject", "turn", json!(2)),
-        ("subject", "step", json!(3)),
-        (
-            "subject",
-            "agent_docs_state_home",
-            json!(fixture.state_home.join("other-runtime")),
-        ),
-        ("tool", "definition_id", json!("definition-2")),
-        ("tool", "prerequisite_receipt", json!("{}")),
-    ] {
-        let mut substituted = input.clone();
-        substituted[scope][field] = replacement;
-        let denied = fixture.run(
-            &["dispatch", "--product", "dsh", "--format", "json"],
-            Some(&substituted.to_string()),
-        );
-        assert_eq!(denied.code, 1, "substitution={scope}.{field}");
-        assert_eq!(denied.stdout_json()["data"]["action"], "block");
-    }
-
-    let mut other_call = input.clone();
-    other_call["call_id"] = json!("other-call");
-    let denied = fixture.run(
-        &["dispatch", "--product", "dsh", "--format", "json"],
-        Some(&other_call.to_string()),
-    );
-    assert_eq!(denied.code, 1, "envelope={}", denied.stdout_text());
-    assert_eq!(denied.stdout_json()["data"]["action"], "block");
-
-    let mut cross_intent_receipt: Value =
-        serde_json::from_str(receipt).expect("prerequisite receipt JSON");
-    cross_intent_receipt["intent"] = json!("other-dev");
-    let mut cross_intent = input.clone();
-    cross_intent["tool"]["prerequisite_receipt"] =
-        json!(serde_json::to_string(&cross_intent_receipt).unwrap());
-    let denied = fixture.run(
-        &["dispatch", "--product", "dsh", "--format", "json"],
-        Some(&cross_intent.to_string()),
-    );
-    assert_eq!(denied.code, 1, "envelope={}", denied.stdout_text());
-    assert_eq!(denied.stdout_json()["data"]["action"], "block");
-    assert!(session_json_records(&state_home).is_empty());
-}
-
-#[test]
 fn task_3_3_groups_bind_only_to_their_native_dsh_lifecycle_events() {
     for (group, event, matcher) in [
         (
@@ -4130,57 +3839,25 @@ printf '%s\n' '{"schema_version":"cli.agent-memory.recall-startup.v1","ok":true,
 }
 
 #[test]
-fn session_health_treats_malformed_agent_docs_output_as_advisory_not_evidence() {
+fn session_start_healthcheck_does_not_require_the_retired_catalog_auditor() {
     let fixture = Fixture::new(&task_3_3_policy(
         "session-start-healthcheck",
         "UserPromptSubmit",
         None,
     ));
-    fs::write(
-        fixture.root.join("AGENT_DOCS.toml"),
-        "[[document]]\ncontext = \"project-dev\"\nscope = \"project\"\npath = \"README.md\"\nrequired = false\n",
-    )
-    .expect("agent-docs catalog");
-    fs::write(fixture.root.join("README.md"), "fixture\n").expect("readme");
-    let release = fixture.root.join("release");
-    fs::create_dir(&release).expect("release directory");
-    let agent_hook = release.join("agent-hook");
-    install_release_binary(&agent_hook);
-    let companion = release.join("agent-docs");
-    fs::write(
-        &companion,
-        format!(
-            "#!/bin/sh\n[ \"${{SHOULD_NOT_REACH_COMPANION-unset}}\" = \"unset\" ]\nprintf '%s\\n' '{{\"schema_version\":\"agent-docs.audit.v2\",\"target\":\"project\",\"strict\":true,\"project_path\":{},\"wiring\":[],\"documents\":[],\"problems\":0,\"suggested_actions\":[]}}'\n",
-            serde_json::to_string(fixture.root.to_str().expect("root UTF-8")).expect("root JSON")
-        ),
-    )
-    .expect("agent-docs companion");
-    fs::set_permissions(&companion, fs::Permissions::from_mode(0o700))
-        .expect("agent-docs companion mode");
-
-    let healthy = dispatch_with_release_binary(
-        &fixture,
-        &agent_hook,
-        &lifecycle_request(&fixture, "agent/pre-step", Some("hello"), Some("startup")),
+    fs::write(fixture.root.join("AGENT_DOCS.toml"), "not valid TOML = [\n")
+        .expect("repository config fixture");
+    let output = fixture.run(
+        &["dispatch", "--product", "dsh", "--format", "json"],
+        Some(&lifecycle_request(
+            &fixture,
+            "agent/pre-step",
+            Some("hello"),
+            Some("startup"),
+        )),
     );
-    assert_eq!(healthy["data"]["action"], "allow", "envelope={healthy}");
-
-    fs::write(
-        &companion,
-        "#!/bin/sh\nprintf '%s\\n' '{\"schema_version\":\"agent-docs.audit.v2\",\"target\":\"project\",\"strict\":true}'\n",
-    )
-    .expect("malformed agent-docs companion");
-    let envelope = dispatch_with_release_binary(
-        &fixture,
-        &agent_hook,
-        &lifecycle_request(&fixture, "agent/pre-step", Some("hello"), Some("startup")),
-    );
-    assert_eq!(envelope["data"]["action"], "context", "envelope={envelope}");
-    assert!(
-        envelope["data"]["context"]
-            .as_str()
-            .is_some_and(|context| context.contains("agent-docs catalog problem"))
-    );
+    assert_eq!(output.code, 0, "envelope={}", output.stdout_text());
+    assert_eq!(output.stdout_json()["data"]["action"], "allow");
 }
 
 // sympoies/nils-cli#2000: the read-only guard fixes of agent-runtime-kit

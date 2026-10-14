@@ -2,29 +2,9 @@ mod support;
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
 
 use pretty_assertions::assert_eq;
 use support::Fixture;
-
-/// The `agent-docs` binary these tests use as a trusted read-only producer.
-///
-/// It belongs to another package, so a package-scoped run has no reason to have
-/// built it and `None` means these assertions do not run. An artifact from an
-/// earlier release is worse than an absent one, because the producer identity
-/// check in `crates/agent-hook/src/read_only.rs` correctly rejects it as
-/// `read-only-producer-mismatch` and a build-scope problem then reads as a policy
-/// defect — so `bin::sibling_or_skip` fails on that rather than skipping.
-/// See `sympoies/nils-cli#1413`.
-fn agent_docs_producer_or_skip() -> Option<PathBuf> {
-    let producer = nils_test_support::bin::sibling_or_skip("agent-docs", "nils-agent-docs")?;
-
-    Some(
-        producer
-            .canonicalize()
-            .expect("canonical agent-docs binary"),
-    )
-}
 
 const POLICY: &str = r#"schema_version = "agent-hook.policy.v1"
 bundle_id = "runtime-kit"
@@ -79,18 +59,41 @@ override_class = "locked"
 capability = { id = "runtime-kit.handler.v1", handler_id = "pre-edit-intent-gate" }
 "#;
 
-const UNRELATED_HANDLER_RULE: &str = r#"
+#[test]
+fn retired_locked_dsh_pre_edit_binding_fails_closed_with_migration_diagnostic() {
+    let policy = r#"schema_version = "agent-hook.policy.v1"
+bundle_id = "transitional-dsh"
+version = "1"
 [[rules]]
-id = "runtime.checkout-lease"
-products = ["codex", "claude"]
+id = "transitional-pre-edit"
+products = ["dsh"]
 events = ["PreToolUse"]
-matcher = "Bash"
-priority = 30
+matcher = "write"
+priority = 10
 mode = "enforce"
 failure_posture = "closed"
 override_class = "locked"
-capability = { id = "runtime-kit.handler.v1", handler_id = "checkout-lease-guard" }
+capability = { id = "dsh.policy.v1", group = "pre-edit-intent-gate" }
 "#;
+    let fixture = Fixture::new(policy);
+    let input = serde_json::json!({"schema_version":"agent-hook.dsh-ingress.v2","event":"tools/pre-execute","call_id":"call-1","cwd":fixture.root,"subject":{"session_id":"session-1","turn":1,"step":1,"agent_docs_state_home":fixture.state_home.join("dsh-runtime-kit")},"tool":{"name":"write","arguments":{"file_path":fixture.root.join("README.md"),"content":"updated"}}});
+    let output = fixture.run(
+        &["dispatch", "--product", "dsh", "--format", "json"],
+        Some(&input.to_string()),
+    );
+    let envelope = output.stdout_json();
+    assert_eq!(
+        envelope["data"]["action"],
+        "block",
+        "{}",
+        output.stdout_text()
+    );
+    assert!(
+        envelope
+            .to_string()
+            .contains("retired pre-edit intent gate")
+    );
+}
 
 fn install_fallback_handler(fixture: &Fixture) {
     for hooks in [
@@ -193,50 +196,6 @@ fn codex_and_claude_record_the_same_shadow_decision_for_equivalent_input() {
     assert_eq!(decisions[0], decisions[1]);
 }
 
-#[test]
-fn enforce_accepts_a_valid_same_release_read_only_descriptor() {
-    let Some(producer) = agent_docs_producer_or_skip() else {
-        return;
-    };
-    let policy = POLICY.replace("mode = \"shadow\"", "mode = \"enforce\"");
-    let fixture = Fixture::new(&policy);
-    let command = format!(
-        "builtin command {} --docs-home {} --project-path {} preflight --intent project-dev --format json",
-        producer.display(),
-        fixture.root.display(),
-        fixture.root.display()
-    );
-    let payload = serde_json::json!({
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "cwd": fixture.root,
-        "tool_input": {"command": command}
-    })
-    .to_string();
-    let output = fixture.run(
-        &["dispatch", "--product", "codex", "--format", "json"],
-        Some(&payload),
-    );
-
-    assert_eq!(
-        output.code,
-        0,
-        "stdout={} stderr={}",
-        output.stdout_text(),
-        output.stderr_text()
-    );
-    assert_eq!(output.stdout_json()["data"]["action"], "allow");
-    assert_eq!(
-        output.stdout_json()["data"]["reasons"],
-        serde_json::json!([{
-            "rule_id": "runtime.read-only",
-            "code": "read-only-capability",
-            "disposition": "allow"
-        }])
-    );
-    assert!(output.stdout_json()["data"]["shadow"].is_null());
-}
-
 /// Assert one enforce-mode rejection and return nothing but the check.
 fn assert_enforce_blocks(fixture: &Fixture, command: &str, expected_code: &str) {
     let payload = serde_json::json!({
@@ -283,84 +242,6 @@ fn enforce_rejects_an_untrusted_producer_command() {
         "echo not-a-trusted-producer",
         "read-only-command-unsupported",
     );
-}
-
-#[test]
-fn enforce_rejects_a_same_release_mutation_descriptor() {
-    let Some(producer) = agent_docs_producer_or_skip() else {
-        return;
-    };
-    let policy = POLICY.replace("mode = \"shadow\"", "mode = \"enforce\"");
-    let fixture = Fixture::new(&policy);
-    let mutation = format!(
-        "builtin command {} --docs-home {} --project-path {} init --force",
-        producer.display(),
-        fixture.root.display(),
-        fixture.root.display()
-    );
-
-    assert_enforce_blocks(&fixture, &mutation, "read-only-effect-rejected");
-}
-
-#[test]
-fn enforce_valid_read_only_bypasses_only_the_declared_fallback_handler() {
-    let Some(producer) = agent_docs_producer_or_skip() else {
-        return;
-    };
-    let policy = format!("{FALLBACK_POLICY}{UNRELATED_HANDLER_RULE}");
-    for product in ["codex", "claude"] {
-        let fixture = Fixture::new(&policy);
-        install_fallback_handler(&fixture);
-        let command = format!(
-            "builtin command {} --docs-home {} --project-path {} preflight --intent project-dev --format json",
-            producer.display(),
-            fixture.root.display(),
-            fixture.root.display()
-        );
-        let payload = serde_json::json!({
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Bash",
-            "cwd": fixture.root,
-            "tool_input": {"command": command}
-        })
-        .to_string();
-        let output = fixture.run_with_env(
-            &["dispatch", "--product", product, "--format", "json"],
-            Some(&payload),
-            &[("FALLBACK_HANDLER_BLOCK", "1")],
-        );
-
-        assert_eq!(
-            output.code,
-            0,
-            "product={product}; stdout={}; stderr={}",
-            output.stdout_text(),
-            output.stderr_text()
-        );
-        assert_eq!(output.stdout_json()["data"]["action"], "allow");
-        assert_eq!(
-            output.stdout_json()["data"]["reasons"],
-            serde_json::json!([
-                {
-                    "rule_id": "runtime.read-only",
-                    "code": "read-only-capability",
-                    "disposition": "allow"
-                },
-                {
-                    "rule_id": format!("runtime.{product}.pre-edit"),
-                    "code": "read-only-capability-bypass",
-                    "disposition": "allow"
-                },
-                {
-                    "rule_id": "runtime.checkout-lease",
-                    "code": "checkout-lease-guard",
-                    "disposition": "allow"
-                }
-            ])
-        );
-        assert!(!fixture.home.join("pre-edit-invoked").exists());
-        assert!(fixture.home.join("checkout-lease-invoked").is_file());
-    }
 }
 
 #[test]
