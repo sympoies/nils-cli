@@ -1,4 +1,6 @@
 //! Review regressions: native capture fidelity and zero-input refusal state.
+#[path = "appserver.rs"]
+mod appserver;
 use std::fs;
 use std::os::fd::AsRawFd;
 
@@ -201,7 +203,7 @@ fn guarded_send_admitted_input_updates_control_state() {
     let fixture = Fixture::new("codex");
     let _capability = fixture.bind_codex();
     fixture.arm_recovery();
-    // App-server supports identity-only key input, not composer observations.
+    // Identity-only key input retains its existing account/recovery behavior.
     let output = fixture.send_text(
         None,
         &[

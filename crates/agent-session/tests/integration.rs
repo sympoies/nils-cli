@@ -14,6 +14,8 @@ mod coordination_server;
 mod diagnose;
 #[path = "integration/lineage.rs"]
 mod lineage;
+#[path = "integration/mailbox_quota_warning.rs"]
+mod mailbox_quota_warning;
 #[path = "integration/metadata.rs"]
 mod metadata;
 #[path = "integration/readiness.rs"]

@@ -53,8 +53,12 @@ provider turn can still race the interval between the final observation and
 paste or Enter. A native atomic provider operation is tracked separately in
 [#2374](https://github.com/sympoies/nils-cli/issues/2374).
 
-Idle and composer observations support Claude Code and Codex tmux runtimes.
-Other providers or runtime kinds fail closed for these checks. Exact composer
+Idle and composer observations support Claude Code and Codex tmux runtimes,
+including supported Codex `codex_app_server` profiles with their managed tmux
+pane. App-server sessions use the same terminal identity markers, provider
+activity, exact composer capture and post-paste checks; this does not replace
+them with a provider RPC. Unknown or invalid app-server profiles and other
+providers or runtime kinds fail closed for these checks. Exact composer
 verification supports an unambiguous, single visible input line. Dialogs,
 unknown layouts, wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
