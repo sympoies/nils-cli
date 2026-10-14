@@ -95,18 +95,19 @@ pub(super) fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
         };
         // Backends in tests may not implement timeouts; terminal results still
         // need the same deadline check before they can be admitted.
-        if clock.now() >= deadline {
+        let snapshot = gate_visible_checks_when_none_required(ctx, snapshot_args, snapshot);
+        let admitted_at = clock.now();
+        if admitted_at >= deadline {
             return Ok(expired(
                 last,
                 start,
-                clock.now(),
+                admitted_at,
                 observed_snapshot,
                 ever_saw_a_check,
             ));
         }
         observed_snapshot = true;
-        last = gate_visible_checks_when_none_required(ctx, snapshot_args, snapshot);
-        last = with_duration(last, ms_between(start, clock.now()));
+        last = with_duration(snapshot, ms_between(start, admitted_at));
         ever_saw_a_check |= !crate::ops::required_check_gate::nothing_was_checked(&last);
         if is_terminal(&last, presence) {
             return Ok(if last.state == "success" {

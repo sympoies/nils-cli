@@ -356,3 +356,85 @@ fn text_checks_and_wait_expose_the_effective_scope() {
         );
     }
 }
+
+#[test]
+fn a_successful_wait_never_reports_an_expired_duration() {
+    use forge_cli::backend::{BackendCall, BackendRunner, BackendSuccess};
+    use forge_cli::cli::{GlobalFlags, PrWaitChecksArgs};
+    use forge_cli::error::ForgeError;
+    use forge_cli::ops::pr_wait_checks::{Clock, WaitOutcome, compute};
+    use forge_cli::provider::{DetectionSource, Provider, ProviderContext};
+    use std::cell::Cell;
+
+    struct ReadyBackend;
+    impl BackendRunner for ReadyBackend {
+        fn run(&self, call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+            let stdout = if call.argv[0] == "mr" {
+                r#"{"iid":42,"sha":"head","target_branch":"main","head_pipeline":{"id":99,"status":"success"}}"#
+            } else {
+                r#"[{"name":"build","status":"success","allow_failure":false}]"#
+            };
+            Ok(BackendSuccess {
+                stdout: stdout.into(),
+                stderr: String::new(),
+            })
+        }
+    }
+    struct TickingClock {
+        start: Instant,
+        elapsed: Cell<Duration>,
+    }
+    impl Clock for TickingClock {
+        fn now(&self) -> Instant {
+            let elapsed = self.elapsed.get();
+            self.elapsed.set(elapsed + Duration::from_millis(10));
+            self.start + elapsed
+        }
+        fn sleep(&self, duration: Duration) {
+            self.elapsed.set(self.elapsed.get() + duration);
+        }
+    }
+    let global = GlobalFlags {
+        format: None,
+        remote: "origin".into(),
+        provider: None,
+        host: None,
+        repo: Some("example/project".into()),
+        store_root: None,
+        dry_run: false,
+    };
+    let ctx = ProviderContext {
+        provider: Provider::GitLab,
+        host: "gitlab.com".into(),
+        source: DetectionSource::Flag,
+        repo: global.repo.clone(),
+    };
+    let mut saw_success = false;
+    let mut saw_timeout = false;
+    for budget_ms in (10..=400).step_by(10) {
+        let clock = TickingClock {
+            start: Instant::now(),
+            elapsed: Cell::new(Duration::ZERO),
+        };
+        let args = PrWaitChecksArgs {
+            id: "42".into(),
+            timeout: Duration::from_millis(budget_ms),
+            interval: Duration::from_millis(1),
+            required_only: true,
+            allow_no_checks: false,
+        };
+        match compute(&ReadyBackend, &clock, &global, &ctx, &args).unwrap() {
+            WaitOutcome::Success(snapshot) => {
+                saw_success = true;
+                assert!(
+                    snapshot.duration_ms.unwrap() < budget_ms,
+                    "success duration {:?} expired budget {budget_ms}",
+                    snapshot.duration_ms
+                );
+            }
+            WaitOutcome::TimedOut(_) => saw_timeout = true,
+            _ => panic!("ready backend should succeed or exhaust its budget"),
+        }
+    }
+    assert!(saw_success && saw_timeout);
+}
