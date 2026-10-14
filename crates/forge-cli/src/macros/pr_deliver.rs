@@ -692,6 +692,7 @@ fn build_merge_args(
         expected_base: Some(expected_base),
         method: args.method,
         keep_branch: false,
+        delete_branch_even_if_stacked: false,
         allow_non_default_base: args.allow_non_default_base,
         allow_unresolved_threads: args.allow_unresolved_threads,
         allow_unresolved_threads_reason: args.allow_unresolved_threads_reason.clone(),

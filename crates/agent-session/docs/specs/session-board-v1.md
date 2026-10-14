@@ -174,6 +174,7 @@ the extension. A session with lineage and work looks like this:
 | Progress | `turn_state` | object or null | `SessionView.turn_state` (the [turn-state contract](../turn-state-contract.md)), projected to the allowlisted fields below. `null` when the session has no turn state. |
 | Progress | `turn_state.phase` | string | `TurnState.phase`: `starting`, `working`, `waiting`, `needs_input`, or `unknown`. |
 | Progress | `turn_state.phase_changed_at` | string | `TurnState.phase_changed_at`. |
+| Progress | `turn_state.diagnostic` | optional object | Quiet-only bounded metadata: `reason: codex_progress_quiet`, `quiet_threshold_seconds: 300`, parseable timestamp `quiet_since`, and `quiet_signal` (`current_turn.last_progress_at` or `current_turn.started_at`). Omitted when unavailable or unrecognized. |
 | Progress | `turn_state.current_turn` | object or null | `TurnState.current_turn`, projected to `last_progress_at` and `attention`. |
 | Progress | `turn_state.current_turn.last_progress_at` | string or null | `CurrentTurn.last_progress_at`. |
 | Progress | `turn_state.current_turn.attention` | object or null | `CurrentTurn.attention`, projected to `kind` and `requested_at`. |
@@ -200,6 +201,11 @@ counts and capabilities. The bounded `role`,
 `lineage`, and `work` objects above replace none of these: they name
 sessions and public provider references only. Unknown upstream
 `turn_state` fields are dropped, not passed through.
+
+The quiet diagnostic is omitted unless all four fields meet these bounds.
+Other diagnostic reasons and unknown nested fields are dropped. It explains
+inferred uncertainty; it never proves completion, clears attention, or
+authorizes input. Native wake still requires separate bound idle proof.
 
 ### Lifecycle states
 

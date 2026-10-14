@@ -19423,7 +19423,7 @@ fi
 if [ "$1" = if-shell ]; then
   case "$*" in
     *send-keys*)
-      count=$(grep -c send-keys {calls})
+      count=0; while IFS= read -r line; do case "$line" in *send-keys*) count=$((count + 1));; esac; done < {calls}
       if [ "$count" -ge 3 ]; then
         kill -TERM {pane_pid}
         : > {stopped}

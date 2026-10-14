@@ -1,7 +1,10 @@
 //! Opt-in native-review convergence for the final PR merge window.
 
 use std::time::{Duration, Instant};
-use std::{cmp::Ordering, collections::BTreeMap};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use jiff::{SignedDuration, Timestamp};
 use serde::Serialize;
@@ -12,6 +15,7 @@ use crate::config::{ReviewBotMode, ReviewConvergenceBot, ReviewConvergencePolicy
 use crate::error::ForgeError;
 use crate::ops::pr_review_threads::{
     PrReviewThreadSummary, PrReviewThreadsPayload, compute_for_pr as compute_threads_for_pr,
+    ensure_payload_resolved,
 };
 use crate::ops::pr_reviews::{NativeReviewSummary, PrReviewsPayload, compute_for_pr_with_timeout};
 use crate::ops::pr_wait_checks::Clock;
@@ -127,16 +131,47 @@ pub fn recheck_before_merge<R: BackendRunner>(
     policy: &ReviewConvergencePolicy,
     previous: &ReviewConvergenceSnapshot,
 ) -> Result<ReviewConvergenceSnapshot, ForgeError> {
+    recheck_before_merge_with_thread_override(
+        runner,
+        ctx,
+        number,
+        pr_url,
+        expected_head_sha,
+        policy,
+        previous,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn recheck_before_merge_with_thread_override<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+    pr_url: &str,
+    expected_head_sha: Option<&str>,
+    policy: &ReviewConvergencePolicy,
+    previous: &ReviewConvergenceSnapshot,
+    allow_unresolved_threads: bool,
+) -> Result<ReviewConvergenceSnapshot, ForgeError> {
     let reviews = compute_for_pr_with_timeout(runner, ctx, number, pr_url, Some(policy.timeout))
         .map_err(|err| map_provider_timeout(err, policy, expected_head_sha))?;
     ensure_expected_head(expected_head_sha, &reviews)?;
     ensure_expected_head(Some(&previous.head_sha), &reviews)?;
     let threads = compute_threads_for_pr(runner, ctx, pr_url, number)?;
     ensure_thread_head(&reviews, &threads)?;
+    // Native-user activity is diagnostic rather than bot quiet activity, but
+    // its unresolved threads still obey the independent final merge gate.
+    let thread_gate = if allow_unresolved_threads {
+        Ok(())
+    } else {
+        ensure_payload_resolved(&threads)
+    };
     let mut snapshot = build_snapshot(policy, reviews, threads, previous.waited_ms);
     if !snapshot.changes_requested_by.is_empty() {
         return Err(changes_requested_error(&snapshot));
     }
+    thread_gate?;
     if previous.semantic_digest != snapshot.semantic_digest {
         return Err(ForgeError::validation(
             schema_err(),
@@ -159,20 +194,45 @@ fn build_snapshot(
     threads: PrReviewThreadsPayload,
     waited_ms: u64,
 ) -> ReviewConvergenceSnapshot {
+    // Thread comments have login-only metadata. Submitted reviews identify
+    // native non-bot actors across both current and earlier heads, so those
+    // logins cannot re-enter the bot quiet window through an inline comment.
+    let non_bot_authors = reviews
+        .current_head_reviews
+        .iter()
+        .chain(&reviews.stale_reviews)
+        .filter(|review| {
+            review
+                .author_type
+                .as_deref()
+                .is_some_and(|kind| kind != "Bot")
+        })
+        .map(|review| review.author.trim().to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
     let observed_reviews = reviews
         .current_head_reviews
         .iter()
-        .filter(|review| is_observed_login(&review.author, &policy.bots))
+        .filter(|review| {
+            review.author_type.as_deref() == Some("User")
+                || review_is_observed_bot(review, &policy.bots)
+        })
         .cloned()
         .collect::<Vec<_>>();
     let stale_reviews = reviews
         .stale_reviews
         .into_iter()
-        .filter(|review| is_observed_login(&review.author, &policy.bots))
+        .filter(|review| {
+            review.author_type.as_deref() == Some("User")
+                || review_is_observed_bot(review, &policy.bots)
+        })
         .collect::<Vec<_>>();
     let changes_requested_by = effective_changes_requested_by(&reviews.current_head_reviews);
-    let semantic_activity =
-        combined_activity_fingerprint(&observed_reviews, &threads.threads, &policy.bots);
+    let semantic_activity = combined_activity_fingerprint(
+        &observed_reviews,
+        &threads.threads,
+        &policy.bots,
+        &non_bot_authors,
+    );
     let semantic_digest = review_state::sha256_digest(
         serde_json::to_string(&semantic_activity)
             .expect("semantic activity serializes")
@@ -180,6 +240,7 @@ fn build_snapshot(
     );
     let latest_review_activity = observed_reviews
         .iter()
+        .filter(|review| review_is_observed_bot(review, &policy.bots))
         .filter(|review| review_is_semantic(review))
         .map(|review| review.submitted_at.as_str())
         .filter(|submitted| !submitted.is_empty())
@@ -190,7 +251,7 @@ fn build_snapshot(
         .filter(|thread| !thread.resolved && !thread.outdated)
         .flat_map(|thread| thread.comments.iter())
         .filter(|comment| {
-            is_observed_login(&comment.author, &policy.bots)
+            thread_author_is_observed_bot(&comment.author, &policy.bots, &non_bot_authors)
                 && meaningful_thread_comment(&comment.body)
         })
         .map(|comment| comment.created_at.as_str())
@@ -255,7 +316,7 @@ fn effective_changes_requested_by(reviews: &[NativeReviewSummary]) -> Vec<String
 }
 
 fn review_identity(review: &NativeReviewSummary) -> String {
-    let login = normalized_login(&review.author);
+    let login = review.author.trim().to_ascii_lowercase();
     if login.is_empty() {
         format!("review:{}", review.id)
     } else {
@@ -284,6 +345,24 @@ fn is_observed_login(author: &str, bots: &[ReviewConvergenceBot]) -> bool {
         .any(|bot| bot.mode == ReviewBotMode::Observed && normalized_login(&bot.login) == author)
 }
 
+// Native users are diagnostic evidence even when their login is configured.
+// Retain login-based bot compatibility when provider actor metadata is absent.
+fn review_is_observed_bot(review: &NativeReviewSummary, bots: &[ReviewConvergenceBot]) -> bool {
+    matches!(review.author_type.as_deref(), Some("Bot") | None)
+        && is_observed_login(&review.author, bots)
+}
+
+// Provider logins are exact identities: a native user named `review-bot`
+// cannot suppress a distinct Bot named `review-bot[bot]`.
+fn thread_author_is_observed_bot(
+    author: &str,
+    bots: &[ReviewConvergenceBot],
+    non_bot_authors: &BTreeSet<String>,
+) -> bool {
+    !non_bot_authors.contains(&author.trim().to_ascii_lowercase())
+        && is_observed_login(author, bots)
+}
+
 fn normalized_login(login: &str) -> String {
     login
         .trim()
@@ -292,9 +371,13 @@ fn normalized_login(login: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn activity_fingerprint(reviews: &[NativeReviewSummary]) -> Vec<String> {
+fn activity_fingerprint(
+    reviews: &[NativeReviewSummary],
+    bots: &[ReviewConvergenceBot],
+) -> Vec<String> {
     let mut fingerprint = reviews
         .iter()
+        .filter(|review| review_is_observed_bot(review, bots))
         .filter_map(|review| {
             let summary = review_state::strip_owned_markers(&review.summary);
             let opinionated = matches!(
@@ -323,8 +406,9 @@ fn combined_activity_fingerprint(
     reviews: &[NativeReviewSummary],
     threads: &[PrReviewThreadSummary],
     bots: &[ReviewConvergenceBot],
+    non_bot_authors: &BTreeSet<String>,
 ) -> Vec<String> {
-    let mut fingerprint = activity_fingerprint(reviews);
+    let mut fingerprint = activity_fingerprint(reviews, bots);
     for thread in threads
         .iter()
         .filter(|thread| !thread.resolved && !thread.outdated)
@@ -333,7 +417,8 @@ fn combined_activity_fingerprint(
             .comments
             .iter()
             .filter(|comment| {
-                is_observed_login(&comment.author, bots) && meaningful_thread_comment(&comment.body)
+                thread_author_is_observed_bot(&comment.author, bots, non_bot_authors)
+                    && meaningful_thread_comment(&comment.body)
             })
             .map(|comment| {
                 format!(
@@ -673,8 +758,8 @@ mod tests {
             summary_truncated: false,
         };
         assert_eq!(
-            activity_fingerprint(&[review("b"), review("a")]),
-            activity_fingerprint(&[review("a"), review("b")])
+            activity_fingerprint(&[review("b"), review("a")], &policy(2, 20).bots),
+            activity_fingerprint(&[review("a"), review("b")], &policy(2, 20).bots)
         );
     }
 
@@ -694,7 +779,7 @@ mod tests {
             summary_truncated: false,
         };
 
-        assert!(activity_fingerprint(&[review]).is_empty());
+        assert!(activity_fingerprint(&[review], &policy(2, 20).bots).is_empty());
     }
 
     fn thread(resolved: bool, outdated: bool, body: &str) -> PrReviewThreadSummary {
@@ -727,15 +812,26 @@ mod tests {
     #[test]
     fn combined_activity_counts_live_inline_findings_but_not_cleanup_transitions() {
         let bots = policy(2, 20).bots;
+        let non_bot_authors = BTreeSet::new();
         let live = thread(false, false, "inline-only defect");
-        let live_activity = combined_activity_fingerprint(&[], std::slice::from_ref(&live), &bots);
+        let live_activity = combined_activity_fingerprint(
+            &[],
+            std::slice::from_ref(&live),
+            &bots,
+            &non_bot_authors,
+        );
         assert_eq!(live_activity.len(), 1);
 
-        let resolved_activity =
-            combined_activity_fingerprint(&[], &[thread(true, false, "inline-only defect")], &bots);
+        let resolved_activity = combined_activity_fingerprint(
+            &[],
+            &[thread(true, false, "inline-only defect")],
+            &bots,
+            &non_bot_authors,
+        );
         assert!(!has_new_activity(&live_activity, &resolved_activity));
 
-        let reopened_activity = combined_activity_fingerprint(&[], &[live], &bots);
+        let reopened_activity =
+            combined_activity_fingerprint(&[], &[live], &bots, &non_bot_authors);
         assert!(has_new_activity(&resolved_activity, &reopened_activity));
 
         let disposition = format!(
@@ -743,12 +839,22 @@ mod tests {
             review_state::thread_disposition_marker("PRRT_1")
         );
         assert!(
-            combined_activity_fingerprint(&[], &[thread(false, false, &disposition)], &bots)
-                .is_empty()
+            combined_activity_fingerprint(
+                &[],
+                &[thread(false, false, &disposition)],
+                &bots,
+                &non_bot_authors
+            )
+            .is_empty()
         );
         assert!(
-            combined_activity_fingerprint(&[], &[thread(false, true, "outdated finding")], &bots)
-                .is_empty()
+            combined_activity_fingerprint(
+                &[],
+                &[thread(false, true, "outdated finding")],
+                &bots,
+                &non_bot_authors
+            )
+            .is_empty()
         );
     }
 
@@ -1034,5 +1140,376 @@ mod tests {
         .expect_err("head changed");
         assert_eq!(err.kind(), "review_convergence_head_changed");
         assert_eq!(runner.calls.get(), 2);
+    }
+
+    mod observation_tests {
+        use super::*;
+        use pretty_assertions::assert_eq;
+
+        fn native_review(id: &str, state: &str, author: &str, kind: &str, head: &str) -> String {
+            let mut value: serde_json::Value =
+                serde_json::from_str(&review(id, state, "2026-10-11T00:00:00Z")).unwrap();
+            value["author"] = serde_json::json!({"login":author, "__typename":kind});
+            value["commit"]["oid"] = serde_json::Value::from(head);
+            value.to_string()
+        }
+
+        fn snapshot(rows: &str) -> ReviewConvergenceSnapshot {
+            let runner = QueueRunner::new([reviews_json("head", rows)]);
+            converge(
+                &runner,
+                &StepClock::new(),
+                &ctx(),
+                7,
+                "https://github.com/acme/widgets/pull/7",
+                Some("head"),
+                &policy(2, 20),
+            )
+            .unwrap()
+        }
+
+        #[test]
+        fn exact_head_native_user_approval_is_observed_without_creating_a_bot_wait() {
+            let row = native_review("approval", "APPROVED", "reviewer", "User", "head");
+            let result = snapshot(&row);
+            assert!(result.required);
+            assert_eq!(result.observed_reviews.len(), 1);
+            assert_eq!(result.observed_reviews[0].id, "approval");
+            assert_eq!(
+                result.observed_reviews[0].author_type.as_deref(),
+                Some("User")
+            );
+            assert_eq!(result.waited_ms, 0);
+            assert!(result.semantic_activity.is_empty());
+            assert!(result.missing_reviewers.is_empty());
+        }
+
+        #[test]
+        fn configured_login_does_not_turn_a_native_user_review_into_bot_activity() {
+            let row = native_review("approval", "APPROVED", "example-review-bot", "User", "head");
+            let result = snapshot(&row);
+            assert_eq!(result.observed_reviews.len(), 1);
+            assert_eq!(result.waited_ms, 0);
+            assert!(result.semantic_activity.is_empty());
+            assert!(result.latest_activity_at.is_none());
+        }
+
+        #[test]
+        fn native_user_review_from_an_old_head_is_retained_only_as_stale_evidence() {
+            let row = native_review("old-approval", "APPROVED", "reviewer", "User", "old-head");
+            let result = snapshot(&row);
+            assert!(result.observed_reviews.is_empty());
+            assert_eq!(result.stale_reviews.len(), 1);
+            assert_eq!(result.stale_reviews[0].commit_sha, "old-head");
+            assert_eq!(result.waited_ms, 0);
+            assert!(result.missing_reviewers.is_empty());
+        }
+
+        #[test]
+        fn pending_native_user_review_is_not_submitted_observation() {
+            let row = native_review("pending", "PENDING", "reviewer", "User", "head");
+            let result = snapshot(&row);
+            assert!(result.observed_reviews.is_empty());
+            assert!(result.stale_reviews.is_empty());
+            assert_eq!(result.waited_ms, 0);
+        }
+
+        #[test]
+        fn configured_non_bot_actor_does_not_gain_observation_or_bot_activity() {
+            let current = native_review(
+                "current",
+                "APPROVED",
+                "example-review-bot",
+                "Mannequin",
+                "head",
+            );
+            let stale = native_review(
+                "stale",
+                "APPROVED",
+                "example-review-bot",
+                "Mannequin",
+                "old-head",
+            );
+            let result = snapshot(&format!("{current},{stale}"));
+            assert!(result.observed_reviews.is_empty());
+            assert!(result.stale_reviews.is_empty());
+            assert!(result.semantic_activity.is_empty());
+            assert!(result.latest_activity_at.is_none());
+            assert_eq!(result.waited_ms, 0);
+        }
+
+        #[test]
+        fn native_user_inline_comments_do_not_reenter_bot_quiet_activity() {
+            for head in ["head", "old-head"] {
+                let row = native_review("user", "APPROVED", "EXAMPLE-REVIEW-BOT", "User", head);
+                let runner = QueueRunner::new([reviews_json("head", &row)]);
+                let reviews = compute_for_pr_with_timeout(
+                    &runner,
+                    &ctx(),
+                    7,
+                    "https://github.com/acme/widgets/pull/7",
+                    None,
+                )
+                .unwrap();
+                let mut threads = compute_threads_for_pr(
+                    &runner,
+                    &ctx(),
+                    "https://github.com/acme/widgets/pull/7",
+                    7,
+                )
+                .unwrap();
+                threads.total = 1;
+                threads.unresolved = 1;
+                let mut user_thread = thread(false, false, "native inline finding");
+                user_thread.author = "example-review-bot".into();
+                user_thread.comments[0].author = "example-review-bot".into();
+                threads.threads = vec![user_thread];
+                let result = build_snapshot(&policy(2, 20), reviews, threads, 0);
+                assert!(result.semantic_activity.is_empty(), "review head: {head}");
+                assert!(result.latest_activity_at.is_none(), "review head: {head}");
+                assert_eq!(result.unresolved_threads, 1);
+            }
+        }
+
+        #[test]
+        fn configured_observed_bot_still_consumes_the_existing_quiet_period() {
+            let row = native_review("bot", "COMMENTED", "example-review-bot[bot]", "Bot", "head");
+            let result = snapshot(&row);
+            assert_eq!(result.observed_reviews.len(), 1);
+            assert_eq!(result.waited_ms, 2000);
+            assert!(!result.semantic_activity.is_empty());
+        }
+
+        #[test]
+        fn unconfigured_bot_is_not_promoted_to_observed_authority() {
+            let row = native_review("other-bot", "APPROVED", "other-bot[bot]", "Bot", "head");
+            let result = snapshot(&row);
+            assert!(result.observed_reviews.is_empty());
+            assert!(result.semantic_activity.is_empty());
+            assert_eq!(result.waited_ms, 0);
+        }
+
+        #[test]
+        fn final_read_retains_native_user_evidence_without_extending_bot_quiet() {
+            let approval = native_review("approval", "APPROVED", "reviewer", "User", "head");
+            let comment = native_review("comment", "COMMENTED", "reviewer", "User", "head");
+            let runner = QueueRunner::new([
+                reviews_json("head", &approval),
+                reviews_json("head", &format!("{approval},{comment}")),
+            ]);
+            let configured = policy(2, 20);
+            let before = converge(
+                &runner,
+                &StepClock::new(),
+                &ctx(),
+                7,
+                "https://github.com/acme/widgets/pull/7",
+                Some("head"),
+                &configured,
+            )
+            .unwrap();
+            let after = recheck_before_merge(
+                &runner,
+                &ctx(),
+                7,
+                "https://github.com/acme/widgets/pull/7",
+                Some("head"),
+                &configured,
+                &before,
+            )
+            .unwrap();
+            assert_eq!(after.observed_reviews.len(), 2);
+            assert_eq!(after.semantic_digest, before.semantic_digest);
+            assert_eq!(after.waited_ms, 0);
+        }
+
+        #[test]
+        fn native_user_activity_does_not_reset_a_configured_bot_quiet_window() {
+            let bot = native_review("bot", "COMMENTED", "example-review-bot[bot]", "Bot", "head");
+            let mut user: serde_json::Value = serde_json::from_str(&native_review(
+                "approval", "APPROVED", "reviewer", "User", "head",
+            ))
+            .unwrap();
+            user["submittedAt"] = "2026-10-11T00:01:00Z".into();
+            let both = format!("{bot},{user}");
+            let runner =
+                QueueRunner::new([reviews_json("head", &bot), reviews_json("head", &both)]);
+            let result = converge(
+                &runner,
+                &StepClock::new(),
+                &ctx(),
+                7,
+                "https://github.com/acme/widgets/pull/7",
+                Some("head"),
+                &policy(2, 20),
+            )
+            .unwrap();
+            assert_eq!(result.observed_reviews.len(), 2);
+            assert_eq!(result.waited_ms, 2000);
+            assert_eq!(result.semantic_activity.len(), 1);
+            assert_eq!(
+                result.latest_activity_at.as_deref(),
+                Some("2026-10-11T00:00:00Z")
+            );
+        }
+
+        #[test]
+        fn final_read_native_user_changes_requested_remains_blocking() {
+            let approval = native_review("approval", "APPROVED", "reviewer", "User", "head");
+            let mut request: serde_json::Value = serde_json::from_str(&native_review(
+                "request",
+                "CHANGES_REQUESTED",
+                "reviewer",
+                "User",
+                "head",
+            ))
+            .unwrap();
+            request["submittedAt"] = "2026-10-11T00:01:00Z".into();
+            let runner = QueueRunner::new([
+                reviews_json("head", &approval),
+                reviews_json("head", &format!("{approval},{request}")),
+            ]);
+            let configured = policy(2, 20);
+            let before = converge(
+                &runner,
+                &StepClock::new(),
+                &ctx(),
+                7,
+                "https://github.com/acme/widgets/pull/7",
+                Some("head"),
+                &configured,
+            )
+            .unwrap();
+            let error = recheck_before_merge(
+                &runner,
+                &ctx(),
+                7,
+                "https://github.com/acme/widgets/pull/7",
+                Some("head"),
+                &configured,
+                &before,
+            )
+            .unwrap_err();
+            assert_eq!(error.kind(), "review_changes_requested");
+        }
+
+        #[test]
+        fn distinct_native_user_does_not_suppress_typed_bot_reviews() {
+            let bot = native_review("bot", "COMMENTED", "example-review-bot[bot]", "Bot", "head");
+            for head in ["head", "old-head"] {
+                let user = native_review("user", "APPROVED", "example-review-bot", "User", head);
+                let result = snapshot(&format!("{bot},{user}"));
+                assert_eq!(result.waited_ms, 2000, "review head: {head}");
+                assert_eq!(result.semantic_activity.len(), 1);
+                assert_eq!(
+                    result.latest_activity_at.as_deref(),
+                    Some("2026-10-11T00:00:00Z")
+                );
+            }
+        }
+
+        #[test]
+        fn distinct_native_user_does_not_suppress_bot_inline_activity() {
+            let bot = native_review("bot", "COMMENTED", "example-review-bot[bot]", "Bot", "head");
+            let user = native_review("user", "APPROVED", "example-review-bot", "User", "head");
+            let runner = QueueRunner::new([reviews_json("head", &format!("{bot},{user}"))]);
+            let reviews = compute_for_pr_with_timeout(
+                &runner,
+                &ctx(),
+                7,
+                "https://github.com/acme/widgets/pull/7",
+                None,
+            )
+            .unwrap();
+            let mut threads = compute_threads_for_pr(
+                &runner,
+                &ctx(),
+                "https://github.com/acme/widgets/pull/7",
+                7,
+            )
+            .unwrap();
+            let bot_thread = thread(false, false, "bot inline finding");
+            let mut user_thread = thread(false, false, "user inline finding");
+            user_thread.id = "PRRT_user".into();
+            user_thread.author = "example-review-bot".into();
+            user_thread.comments[0].author = "example-review-bot".into();
+            user_thread.comments[0].created_at = "2026-10-11T00:01:00Z".into();
+            threads.total = 2;
+            threads.unresolved = 2;
+            threads.threads = vec![bot_thread, user_thread];
+            let result = build_snapshot(&policy(2, 20), reviews, threads, 0);
+            assert_eq!(result.semantic_activity.len(), 2);
+            assert_eq!(
+                result.latest_activity_at.as_deref(),
+                Some("2026-10-11T00:00:00Z")
+            );
+            assert_eq!(result.unresolved_threads, 2);
+        }
+
+        #[test]
+        fn distinct_native_user_and_bot_cannot_clear_each_others_change_request() {
+            for (requester, requester_type, approver, approver_type) in [
+                (
+                    "example-review-bot[bot]",
+                    "Bot",
+                    "example-review-bot",
+                    "User",
+                ),
+                (
+                    "example-review-bot",
+                    "User",
+                    "example-review-bot[bot]",
+                    "Bot",
+                ),
+            ] {
+                let request = native_review(
+                    "request",
+                    "CHANGES_REQUESTED",
+                    requester,
+                    requester_type,
+                    "head",
+                );
+                let mut approval: serde_json::Value = serde_json::from_str(&native_review(
+                    "approval",
+                    "APPROVED",
+                    approver,
+                    approver_type,
+                    "head",
+                ))
+                .unwrap();
+                approval["submittedAt"] = "2026-10-11T00:01:00Z".into();
+                let runner =
+                    QueueRunner::new([reviews_json("head", &format!("{request},{approval}"))]);
+                let error = converge(
+                    &runner,
+                    &StepClock::new(),
+                    &ctx(),
+                    7,
+                    "https://github.com/acme/widgets/pull/7",
+                    Some("head"),
+                    &policy(2, 20),
+                )
+                .expect_err("a distinct actor cannot clear a native change request");
+                assert_eq!(error.kind(), "review_changes_requested");
+                assert!(error.detail().unwrap().contains(requester));
+            }
+        }
+
+        #[test]
+        fn native_user_changes_requested_remains_mechanically_blocking() {
+            let row = native_review("request", "CHANGES_REQUESTED", "reviewer", "User", "head");
+            let runner = QueueRunner::new([reviews_json("head", &row)]);
+            let error = converge(
+                &runner,
+                &StepClock::new(),
+                &ctx(),
+                7,
+                "https://github.com/acme/widgets/pull/7",
+                Some("head"),
+                &policy(2, 20),
+            )
+            .unwrap_err();
+            assert_eq!(error.kind(), "review_changes_requested");
+        }
     }
 }

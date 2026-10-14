@@ -387,6 +387,14 @@ impl SessionQuiescenceGuard {
             &self.incarnation,
             attempted_at.as_second(),
         ) {
+            if notification::resolve_drained_generation(
+                &mut self._locked.registry,
+                &self.session_id,
+                &self.incarnation,
+                attempted_at.as_second(),
+            ) {
+                self._locked.save()?;
+            }
             return Ok(false);
         }
         let Some(_) = notification::transition_attempt_at(
@@ -1266,8 +1274,8 @@ fn lock_registry_within(
                     runtime.status == crate::CoordinationRuntimeStatus::Running
                         && runtime.identity_digest == lease.runtime_identity_digest
                 });
-            let activity_matches =
-                crate::activity::state_for_view(context, &record).is_some_and(|activity| {
+            let activity_matches = crate::activity::controller_state_for_record(context, &record)
+                .is_some_and(|activity| {
                     activity.phase == crate::activity::TurnPhase::Working
                         && claims::activity_identity_digest(&activity)
                             == lease.activity_identity_digest
