@@ -317,7 +317,7 @@ fn pr_wait_checks_expires_as_not_registered_when_nothing_is_ever_reported() {
             "wait-checks",
             "1",
             "--interval",
-            "10ms",
+            "1s",
             "--timeout",
             "1s",
         ],

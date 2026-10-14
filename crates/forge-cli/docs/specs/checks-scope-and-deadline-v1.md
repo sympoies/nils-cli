@@ -32,18 +32,21 @@ rollup boundary; waiters use complete configuration and exact-head reads.
 
 ## Wait budget
 
-`pr wait-checks --timeout` shares one remaining budget across snapshot calls,
+`pr wait-checks --timeout` shares one monotonic deadline across identity and
+Git repository/configuration discovery, provider detection, and snapshot calls,
 identity preparation inside those calls, rate-limit probes, waits, retries,
 and the optional workflow probe. Backend subprocesses receive only the budget
 remaining when they start. Poll sleeps are capped by the same deadline.
 A terminal result arriving at or after expiry cannot return success.
 
 Expiry returns the last fully observed snapshot and elapsed `duration_ms`.
-When checks were observed or no snapshot completed, an interrupted backend
-read returns `checks_timeout` (exit 69). If no snapshot completed,
+An interrupted backend read returns `checks_timeout` (exit 69), even after
+previous empty snapshots; an incomplete read cannot prove absent registration. If no snapshot completed,
 the payload has `state=pending` and no rows; partial or late data cannot replace
 a previously observed snapshot. A completed series of empty snapshots retains
-`checks_not_registered` (exit 65) on expiry. Explicit no-checks opt-outs and
+`checks_not_registered` (exit 65) when its bounded poll sleep reaches expiry.
+Discovery timeout before any snapshot uses the ordinary error envelope with
+`checks_timeout` (exit 69); no provider snapshot is available yet. Explicit no-checks opt-outs and
 positive no-workflow detection retain their existing behavior within the budget.
 
 Process startup, scheduling, and subprocess cleanup can add a small tolerance

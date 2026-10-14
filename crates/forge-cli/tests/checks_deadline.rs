@@ -438,3 +438,98 @@ fn a_successful_wait_never_reports_an_expired_duration() {
     }
     assert!(saw_success && saw_timeout);
 }
+
+#[test]
+fn repository_discovery_shares_the_whole_wait_budget() {
+    for stage in ["checkout-comparison", "git-toplevel", "provider-detection"] {
+        let stub = backend(":");
+        let remote_delay = if stage == "git-toplevel" {
+            ":"
+        } else {
+            "sleep 3"
+        };
+        let toplevel_delay = if stage == "git-toplevel" {
+            "sleep 3"
+        } else {
+            ":"
+        };
+        stub.write_stub(
+            "git",
+            &format!(
+                r#"#!/bin/sh
+case "$1 $2" in
+  "remote get-url") {remote_delay}; echo 'https://github.com/example/project.git';;
+  "rev-parse --show-toplevel") {toplevel_delay}; pwd;;
+  *) exit 1;;
+esac
+"#
+            ),
+        );
+        let fixture_path = format!(
+            "{}:{}",
+            stub.tempdir.path().display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let stub = stub.env("PATH", fixture_path);
+        let mut args = vec!["--provider", "github", "--format", "json"];
+        if stage != "provider-detection" {
+            args.extend(["--repo", "example/project"]);
+        }
+        args.extend([
+            "pr",
+            "wait-checks",
+            "1",
+            "--timeout",
+            "1s",
+            "--interval",
+            "1s",
+        ]);
+        let started = Instant::now();
+        let out = run_forge_cli(&stub, &args);
+        assert_eq!(out.code, 69, "{stage}: {} {}", out.stdout, out.stderr);
+        assert_eq!(
+            parse_envelope(&out.stdout)["error"]["code"],
+            "checks_timeout",
+            "{stage}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{stage}: {:?}",
+            started.elapsed()
+        );
+    }
+}
+
+#[test]
+fn interrupted_nonempty_read_after_an_empty_poll_is_a_timeout() {
+    let stub = backend("if [ -f \"$0.second\" ]; then sleep 3; fi");
+    rewrite_backend(&stub, |body| {
+        body.replace(
+        "    echo '{\"total_count\":1,\"check_runs\":[{\"name\":\"build\",\"status\":\"completed\",\"conclusion\":\"success\"}]}'",
+        "    if [ ! -f \"$0.first\" ]; then\n      : > \"$0.first\"\n      echo '{\"total_count\":0,\"check_runs\":[]}'\n    else\n      : > \"$0.second\"\n      echo '{\"total_count\":1,\"check_runs\":[{\"name\":\"build\",\"status\":\"in_progress\",\"conclusion\":null}]}'\n    fi",
+    )
+    });
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "example/project",
+            "--format",
+            "json",
+            "pr",
+            "wait-checks",
+            "1",
+            "--timeout",
+            "1s",
+            "--interval",
+            "10ms",
+        ],
+    );
+    assert_eq!(out.code, 69, "{} {}", out.stdout, out.stderr);
+    let envelope = parse_envelope(&out.stdout);
+    assert_eq!(envelope["error"]["code"], "checks_timeout");
+    assert_eq!(envelope["data"]["checks"].as_array().unwrap().len(), 0);
+    assert_eq!(envelope["data"]["state"], "success");
+}

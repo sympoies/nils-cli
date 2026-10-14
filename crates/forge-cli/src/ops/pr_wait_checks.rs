@@ -33,6 +33,7 @@
 //! through the [`Clock`] trait so tests can drive deterministic snapshot
 //! sequences.
 
+pub(crate) mod discovery;
 mod poll;
 
 use poll::poll_until_terminal_or_timeout;
@@ -98,7 +99,7 @@ pub fn run(
     args: PrWaitChecksArgs,
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
-    let start = Instant::now();
+    let start = discovery::start().unwrap_or_else(Instant::now);
     let runner = default_runner();
     let clock = SystemClock;
     let mut args = args;
@@ -117,6 +118,7 @@ pub fn run(
         let cfg = ForgeConfig::load_layered(&workdir, find_git_toplevel(&workdir).as_deref());
         args.allow_no_checks = cfg.declared_no_checks_reason().is_some();
     }
+    discovery::check()?;
     if !global.dry_run {
         args.timeout = args.timeout.saturating_sub(start.elapsed());
     }

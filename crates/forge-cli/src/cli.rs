@@ -2307,12 +2307,12 @@ pub enum AuthCommand {
 }
 
 /// Public entry point: parses argv and dispatches to a handler.
-pub fn dispatch(args: Vec<OsString>) -> i32 {
-    let cli = match parse_or_exit(args) {
-        Ok(cli) => cli,
-        Err(code) => return code,
-    };
+pub use crate::ops::pr_wait_checks::discovery::dispatch;
 
+/// Execute parsed CLI values under the public dispatcher's setup scope.
+/// Parsing and deadline activation remain outside this function so identity
+/// and repository discovery consume the same wait budget.
+pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
     let global: GlobalFlags = (&cli).into();
     let format = global.output_format();
     let _identity_scope = match crate::identity::scope(&cli, &global) {

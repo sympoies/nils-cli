@@ -64,8 +64,8 @@ pub(super) fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
     args: &PrWaitChecksArgs,
     snapshot_args: &PrChecksArgs,
 ) -> Result<WaitOutcome, ForgeError> {
-    let start = clock.now();
-    let deadline = start + args.timeout;
+    let start = discovery::start().unwrap_or_else(|| clock.now());
+    let deadline = discovery::deadline().unwrap_or(start + args.timeout);
     let runner = DeadlineRunner {
         inner: runner,
         clock,
@@ -83,13 +83,12 @@ pub(super) fn poll_until_terminal_or_timeout<R: BackendRunner, C: Clock>(
         let snapshot = match result {
             Ok(snapshot) => snapshot,
             Err(error) if error.kind() == "backend_timeout" || clock.now() >= deadline => {
-                return Ok(expired(
+                // An interrupted read proves neither an empty current head nor
+                // absence of registration, even after earlier empty snapshots.
+                return Ok(WaitOutcome::TimedOut(with_duration(
                     last,
-                    start,
-                    clock.now(),
-                    observed_snapshot,
-                    ever_saw_a_check,
-                ));
+                    ms_between(start, clock.now()),
+                )));
             }
             Err(error) => return Err(error),
         };
