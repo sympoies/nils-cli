@@ -27,6 +27,8 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
   - bash scripts/ci/tests/publish-order-audit.test.sh
   - bash scripts/ci/tests/docs-hygiene-audit.test.sh
+  - python3 scripts/ci/assert-import-audit.py
+  - python3 scripts/ci/tests/assert-import-audit.test.py
   - bash scripts/ci/tests/file-size-audit.test.sh
   - bash scripts/ci/tests/docs-prose-audit.test.sh
   - bash scripts/ci/tests/prepare-private-release-workflow.test.sh
@@ -196,6 +198,8 @@ if [[ "$docs_only" -eq 1 ]]; then
 fi
 
 run python3 scripts/ci/tests/gate-resources.test.py
+run python3 scripts/ci/assert-import-audit.py
+run python3 scripts/ci/tests/assert-import-audit.test.py
 run python3 scripts/ci/tests/merge-plan-ci.test.py
 run python3 scripts/ci/tests/merge-plan-ci-repairs.test.py
 run python3 scripts/ci/tests/merge-plan-ci-snapshot.test.py

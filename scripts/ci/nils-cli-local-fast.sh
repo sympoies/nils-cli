@@ -539,6 +539,8 @@ done
 # `mem::forget`). Any Rust change can introduce one, so run it unconditionally.
 require_cmd rg
 run bash scripts/ci/tempdir-leak-audit.sh
+run python3 scripts/ci/assert-import-audit.py
+run python3 scripts/ci/tests/assert-import-audit.test.py
 run python3 scripts/ci/tests/gate-resources.test.py
 run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/node-scope.test.sh

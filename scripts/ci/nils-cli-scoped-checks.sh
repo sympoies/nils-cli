@@ -33,6 +33,8 @@ run bash scripts/ci/docs-hygiene-audit.sh --strict
 run bash scripts/ci/docs-prose-audit.sh --strict
 run bash scripts/ci/file-size-audit.sh --strict
 run bash scripts/ci/tempdir-leak-audit.sh
+run python3 scripts/ci/assert-import-audit.py
+run python3 scripts/ci/tests/assert-import-audit.test.py
 run cargo fmt --all -- --check
 run cargo clippy "${package_args[@]}" --all-targets --all-features -- -D warnings
 run cargo build "${package_args[@]}" --bins --all-features

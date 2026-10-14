@@ -147,6 +147,10 @@ This runs changed-scope validation against `origin/main` by default:
 - documentation-only changes use the docs-only lane
 - non-shared crate changes run package-scoped `fmt`, `clippy`, and tests
 - shared crates and workspace-level files escalate to the workspace Rust gate
+- the cargo-free assertion import audit checks inline and file-based child
+  modules before compilation, including literal `#[path]` and `include!` files;
+  a child using `use super::*;` must explicitly import each `pretty_assertions`
+  macro it calls when that macro is imported by its parent
 - the workspace lane runs its tests through `scripts/ci/tempdir-leak-probe.sh`,
   which fails on temp directories the suite leaves behind; see
   `docs/specs/test-temp-directory-policy.md`
@@ -478,12 +482,14 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/publish-order-audit.test.sh`
 - `bash scripts/ci/tests/docs-hygiene-audit.test.sh`
 - `bash scripts/ci/tests/workspace-test-stale-audit.test.sh`
+- `python3 scripts/ci/tests/assert-import-audit.test.py`
 - `bash scripts/ci/tests/file-size-audit.test.sh`
 - `bash scripts/ci/tests/docs-prose-audit.test.sh`
 - `bash scripts/ci/tests/prepare-private-release-workflow.test.sh`
 - `bash scripts/ci/skill-shell-suites.sh` (runs every
   `.agents/skills/*/tests/test_*.sh` smoke suite)
 - `bash scripts/ci/test-stale-audit.sh --strict`
+- `python3 scripts/ci/assert-import-audit.py`
 - `bash scripts/ci/file-size-audit.sh --strict` (see the file-size ratchet below)
 - `bash scripts/ci/docs-prose-audit.sh --strict`
 - `bash scripts/ci/workspace-version-lockstep.sh --strict`
