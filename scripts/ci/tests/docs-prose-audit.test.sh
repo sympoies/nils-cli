@@ -159,10 +159,25 @@ case_monotonic_total_cannot_increase() {
   echo ok
 }
 
+case_missing_last_tracked_file_passes() {
+  echo '== missing last tracked Markdown file still prints pass marker =='
+  local dir
+  dir="$(make_repo missing-last-tracked-file)"
+  printf '# Last tracked file\n' >"$dir/z-last.md"
+  git -C "$dir" add z-last.md
+  commit_all "$dir" add-last-file
+  rm "$dir/z-last.md"
+  run_audit "$dir" --strict
+  expect_status 'missing last tracked file' 0
+  expect_contains 'pass marker' 'PASS: docs-prose audit'
+  echo ok
+}
+
 case_new_long_paragraph_fails
 case_excluded_structures_pass
 case_long_list_item_fails
 case_growth_and_improvement_require_refresh
 case_monotonic_total_cannot_increase
+case_missing_last_tracked_file_passes
 
 echo 'PASS: docs-prose audit tests'
