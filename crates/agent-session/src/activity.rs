@@ -25,6 +25,7 @@ use crate::{
 
 #[path = "activity/claude_completion.rs"]
 mod claude_completion;
+mod claude_session_start;
 #[path = "activity/codex_attention_source_guard.rs"]
 mod codex_attention_source_guard;
 pub(crate) use codex_attention_source_guard::codex_protocol_attention_source_guard_configured;
@@ -3162,24 +3163,8 @@ pub(crate) fn ingest_provider_hook_input(
         return Ok(true);
     }
     if agent == AgentKind::Claude
-        && matches!(
-            raw_event_name,
-            Some("SessionStart" | "PostModelSwitch" | "ModelSettings")
-        )
-        && raw.get("agent_id").is_none()
-        && let Some(provider_session) = raw
-            .get("session_id")
-            .or_else(|| raw.get("session_key"))
-            .and_then(Value::as_str)
+        && claude_session_start::observe(context, id, runtime_id, raw_event_name, &raw)?
     {
-        let _ = crate::session_model::observe_claude_hook(
-            context,
-            id,
-            runtime_id,
-            provider_session,
-            &raw,
-            raw_event_name == Some("SessionStart"),
-        );
         return Ok(true);
     }
     let Some(event) = normalize_provider_hook(agent, event_override, runtime_id, &raw)? else {

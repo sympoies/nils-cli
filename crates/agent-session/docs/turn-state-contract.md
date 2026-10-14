@@ -496,6 +496,7 @@ notification-only waiting signal.
 | Input | Rule |
 | --- | --- |
 | new runtime | interrupt an open turn, preserve it as last turn, clear attention, enter authoritative `starting` |
+| primary Claude `SessionStart` with `source: "startup"` or `"resume"` | only from `starting` with no open turn, attention, or pending evidence, in the same runtime and bound provider conversation: enter authoritative provider-hook `waiting` |
 | `turn_started` | interrupt an older open turn, clear old attention, enter `working` |
 | `attention_requested` | keep current start time, add one opaque pending request, enter `needs_input`; a Claude request for another turn first interrupts the stale open turn |
 | correlated `attention_cleared` | remove only that request, advance monotonic `last_progress_at`, and remain `needs_input` while any remain |

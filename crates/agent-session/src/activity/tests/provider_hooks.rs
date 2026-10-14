@@ -1683,3 +1683,66 @@ fn frozen_codex_notification_fixture_projects_only_matching_completion_metadata(
         assert!(!serialized.contains(forbidden), "forbidden {forbidden}");
     }
 }
+
+fn claude_session_start(
+    context: &CliContext,
+    record: &SessionRecord,
+    source: &str,
+    session_id: &str,
+) {
+    let payload = serde_json::to_vec(&json!({
+        "hook_event_name": "SessionStart", "source": source, "session_id": session_id
+    }))
+    .unwrap();
+    ingest_provider_hook_input(
+        context,
+        AgentKind::Claude,
+        None,
+        ProviderHookInput {
+            id: &record.id,
+            runtime_id: &record.runtime.as_ref().unwrap().launch_id,
+            payload: &payload,
+            attention_authority: None,
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn claude_resume_session_start_projects_provider_idle() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+    let starting = activate_runtime(&context, &created.record).unwrap();
+    assert_eq!(starting.phase, TurnPhase::Starting);
+
+    claude_session_start(&context, &created.record, "resume", "session-1");
+
+    let turn = state_for_view(&context, &created.record).unwrap();
+    assert_eq!(turn.phase, TurnPhase::Waiting);
+    assert_eq!(turn.source.kind, SourceKind::ProviderHook);
+    assert_eq!(turn.source.confidence, Confidence::Authoritative);
+    assert!(turn.current_turn.is_none());
+    assert_eq!(turn.revision, starting.revision + 1);
+}
+
+#[test]
+fn claude_session_start_never_settles_other_conversation_or_open_turn() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+    activate_runtime(&context, &created.record).unwrap();
+
+    claude_session_start(&context, &created.record, "resume", "other-session");
+    claude_session_start(&context, &created.record, "compact", "session-1");
+    let turn = state_for_view(&context, &created.record).unwrap();
+    assert_eq!(turn.phase, TurnPhase::Starting);
+    assert_eq!(turn.source.kind, SourceKind::Runtime);
+
+    let mut started = event(TurnEventKind::TurnStarted, "claude-open-turn");
+    started.provider = "claude".into();
+    started.runtime_id = created.record.runtime.as_ref().unwrap().launch_id.clone();
+    ingest_event(&context, &created.record.id, started).unwrap();
+    claude_session_start(&context, &created.record, "startup", "session-1");
+    let turn = state_for_view(&context, &created.record).unwrap();
+    assert_eq!(turn.phase, TurnPhase::Working);
+    assert!(turn.current_turn.is_some());
+}
