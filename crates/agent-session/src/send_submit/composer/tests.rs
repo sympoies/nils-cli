@@ -192,3 +192,32 @@ fn hyperlink_metadata_has_a_bounded_payload() {
         None
     );
 }
+
+#[test]
+fn synthetic_dim_suggestions_are_empty_for_both_harnesses_but_typed_twins_are_drafts() {
+    for (provider, render) in [
+        ("claude", claude as fn(&str, &str, &str) -> String),
+        ("codex", codex),
+    ] {
+        let suggestion = "Continue reviewing the pending changes";
+        let dim = format!("\u{1b}[2m{suggestion}\u{1b}[22m");
+        assert_eq!(
+            exact_composer_input(provider, &render(&dim, "", "status")).as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            exact_composer_input(provider, &render(suggestion, "", "status")).as_deref(),
+            Some(suggestion)
+        );
+        let partial = "\u{1b}[2mContinue\u{1b}[22m reviewing the pending changes";
+        assert!(
+            exact_composer_input(provider, &render(partial, "", "status"))
+                .is_none_or(|input| !input.is_empty())
+        );
+        let whitespace = "\u{1b}[2m \u{1b}[22m";
+        assert_eq!(
+            exact_composer_input(provider, &render(whitespace, "", "status")).as_deref(),
+            Some(" ")
+        );
+    }
+}

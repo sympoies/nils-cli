@@ -291,18 +291,11 @@ fn native_attention_cannot_be_overridden_by_allow_blocked() {
 }
 
 #[test]
-fn native_route_requires_both_explicit_continuation_guards() {
+fn native_route_enforces_safety_for_partial_continuation_guards() {
     for guard in ["--expect-runtime", "--idempotency-key", "--require-idle"] {
         let fixture = Fixture::new("codex");
         let _lease = fixture.bind_codex();
-        let server = Server::start(
-            &fixture,
-            if guard == "--require-idle" {
-                "idle"
-            } else {
-                "busy"
-            },
-        );
+        let server = Server::start(&fixture, "idle");
         let extra: &[&str] = match guard {
             "--expect-runtime" => &[guard, "runtime-one"],
             "--idempotency-key" => &[guard, "partial-profile"],
@@ -310,16 +303,12 @@ fn native_route_requires_both_explicit_continuation_guards() {
         };
         let output = fixture.send(extra);
         assert_eq!(output.code, 0, "{}", output.stdout_text());
-        assert!(output.stdout_json()["data"].get("native").is_none());
-        assert!(server.mutations().is_empty());
         assert_eq!(
-            fixture
-                .calls()
-                .iter()
-                .filter(|c| c[0] == "paste-buffer")
-                .count(),
-            1
+            output.stdout_json()["data"]["native"]["transport"],
+            "codex_app_server"
         );
+        assert_eq!(server.mutations().len(), 1);
+        fixture.no_delivery();
     }
 }
 

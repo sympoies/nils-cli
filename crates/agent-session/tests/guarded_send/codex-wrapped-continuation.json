@@ -1,0 +1,5 @@
+{
+  "provenance": "Retained generic Codex 0.162.1 composer crop, captured with tmux -p -e -N -T. Non-composer rows omitted. Expected input is source-derived, not reconstructed from the lossy crop.",
+  "capture": " \n\u001b[1m›\u001b[0m 壓縮重點：Synthetic compaction qualification。摘要用繁體中文寫；壓縮後照\n  AGENTS.md 的語言規則回覆；Reply exactly NEXT2466-V17-ACK.\n \n",
+  "expected_input": "壓縮重點：Synthetic compaction qualification。摘要用繁體中文寫；壓縮後照 AGENTS.md 的語言規則回覆；Reply exactly NEXT2466-V17-ACK."
+}

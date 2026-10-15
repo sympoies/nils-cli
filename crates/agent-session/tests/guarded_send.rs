@@ -100,9 +100,18 @@ elif command == 'capture-pane':
     # Native capture trims occupied spaces without -N; -T excludes unused cells.
     occupied = text if '-N' in args else text.rstrip(' ')
     padding = ' ' * 8 if '-N' in args and '-T' not in args else ''
+    if text and (root / 'wrapped-capture').exists():
+        print((root / 'wrapped-capture').read_text())
+        sys.exit(0)
     native = (root / 'native-layout').exists()
     rows = ''
     footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'
+    suggestion = (root / 'suggestion').read_text() if (root / 'suggestion').exists() else None
+    if suggestion and not text:
+        shown = ('\x1b[2m' + suggestion + '\x1b[22m') if '-e' in args else suggestion
+        if provider == 'claude': print('────────────────────────────\n❯\u00a0' + shown + '\n────────────────────────────\n  ' + footer)
+        else: print('› ' + shown + '\n\n  ' + footer)
+        sys.exit(0)
     if provider == 'claude':
         shown = occupied + padding if text else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
         print('────────────────────────────\n❯\u00a0' + shown + '\n' + rows + '────────────────────────────\n  ' + footer)

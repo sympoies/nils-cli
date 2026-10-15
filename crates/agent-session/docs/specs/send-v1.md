@@ -69,12 +69,15 @@ unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
 Guard captures use `tmux capture-pane -p -e -N -T` to retain occupied spaces
 and exclude unused terminal cells.
 
-The native Codex placeholder and
-Claude `Try "…"` hint count as empty only when every hint character carries
-dim styling (SGR 2). An unstyled or partially styled hint fails closed, as do
-unsupported styling sequences. Grey color alone is not treated as proof.
-A provider layout that exposes no distinguishable dim hint cannot support
-guarded empty-composer sends. Placeholder content alone is never inferred empty.
+Native placeholders and dynamic suggestions in either supported harness count
+as empty only when every input character carries dim styling (SGR 2) and there
+is at least one non-whitespace character. Plain or partially dim suggestions
+remain drafts; fixed startup hints without full dim proof are unobservable.
+Whitespace drafts, queued-message hints and opaque paste summaries never count
+as empty. Unsupported styling sequences fail closed. Grey color alone is not
+treated as proof; a provider layout without distinguishable dim styling remains
+unsupported. Placeholder content alone is never inferred empty.
+
 For Codex only, well-formed OSC-8 hyperlink metadata terminated by BEL or ST
 is accepted without changing visible caption text or SGR state. Each metadata
 payload is bounded to 4096 UTF-8 bytes. Other OSC commands, malformed escapes
@@ -88,10 +91,13 @@ padding or a hidden draft cannot be discarded to make this check pass.
 
 ## Native Codex continuation profile
 
-A supported app-server text submission with exactly `--key enter` and both
-`--require-idle` and `--require-empty-composer` uses native dispatch. Partial
-flag selections retain their existing terminal transport; this is route
-selection, never a fallback after failed native admission or delivery.
+A guarded supported app-server text submission with exactly `--key enter`
+uses native dispatch, including identity-only or idempotency-only guards. This
+route always enforces idle and empty-composer observations, even when the
+caller did not explicitly request those two flags. It avoids leaving wrapped
+or opaque pasted input unsent when the TUI cannot expose exact bytes. Unguarded
+sends, key-only input and other key sequences retain terminal transport. There
+is no terminal fallback after failed native admission or delivery.
 
 The native path preserves terminal runtime markers, durable provider identity,
 pending-ingress and attention checks, and the independently observable empty

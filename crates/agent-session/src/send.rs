@@ -340,13 +340,22 @@ pub(crate) fn unguarded_args(
 
 fn guarded(
     context: &CliContext,
-    args: cli::SendArgs,
+    mut args: cli::SendArgs,
     text: Option<String>,
     mut record: SessionRecord,
     tmux_bin: &Path,
     manual_input: &mut ManualInputSection,
     hold_started: Instant,
 ) -> Result<SendResult, CliError> {
+    // Native submissions avoid the TUI's lossy wrapping and opaque paste
+    // summaries. Require both safety observations even for identity-only sends.
+    if codex_app_server::runtime_is_supported(&record)
+        && carries_literal_text(text.as_deref())
+        && args.keys == [SpecialKey::Enter]
+    {
+        args.guards.require_idle = true;
+        args.guards.require_empty_composer = true;
+    }
     let observed = record.clone();
     let admission = send_guard::Admission {
         context,
