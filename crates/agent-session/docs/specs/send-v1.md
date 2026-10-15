@@ -100,9 +100,16 @@ no unsent draft. Unknown, whitespace-only or text drafts remain refused. No
 new layout or styling is assumed observable merely because the runtime is
 app-server bound.
 
-The session-record lock and existing nonblocking input/account mutation gate
-remain held through dispatch and confirmation. A pending next-account intent
-still fences the new input. The key is durably claimed before one native
+The session-record lock covers admission and dispatch through the acknowledged
+turn ID. It is released before observing input history, so synchronous provider
+hooks can acquire it and allow the submitted input to become visible. All
+record writes finish before release; confirmation never rewrites an older
+record over provider updates. Before returning success, the sender reacquires
+the record lock within the same budget and revalidates runtime and provider
+identity. A replacement or unavailable identity leaves the receipt unconfirmed.
+
+The existing nonblocking input/account mutation gate remains held through confirmation. A pending next-account intent still
+fences the new input. The key is durably claimed before one native
 mutation; admission is repeated after claiming. There is no tmux buffer,
 paste, Enter, composer clearing, or delivery retry on this path, including
 when confirmation fails. Concurrent human typing can still race observation;

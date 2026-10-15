@@ -67,6 +67,7 @@ string `unknown`.
 | `sources` | `inbox`, `notifications`, `outbox`: each `available`, `invalid`, `unsupported`, or `unavailable` |
 | `records` | Ordered array of the record objects below |
 | `next_cursor` | Resume string, or `null` at end |
+| `receipt_usage` | Idempotency receipt usage: `{count, limit, principal_count, principals}`, where `principals` lists at most 16 principals by descending count as `{principal, count, limit, evicted, last_evicted_at}`; `evicted` is a cumulative count of finished receipts evicted at the cap and `last_evicted_at` (UTC RFC3339, `null` when none) is its recency signal. A principal's record persists while evictions recur less than one receipt TTL apart; once idle for a TTL it is removed lazily by a later eviction of any principal. `null` when the registry is unavailable |
 
 | Record field | Type / meaning |
 | --- | --- |

@@ -1060,6 +1060,13 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
         use nils_test_support::{EnvGuard, GlobalStateLock};
         use std::time::{Duration, Instant};
         let lock = GlobalStateLock::new();
+        // A loaded host can spend the whole budget spawning checkout discovery,
+        // which runs before authorization writes the audit record. Run outside
+        // any checkout so the budget is spent in the identity probes; a slow
+        // `git` keeps the fixture honest about that.
+        let slow_git = nils_test_support::StubBinDir::new();
+        slow_git.write_exe("git", "#!/bin/sh\nsleep 1\nexit 1\n");
+        let _path = nils_test_support::prepend_path(&lock, slow_git.path());
         for (principal, script, timeout) in [
             (
                 "contributor",
@@ -1079,6 +1086,7 @@ printf '{"iid":1,"web_url":"https://gitlab.example.invalid/example/project/-/iss
         ] {
             let f = Fixture::new(POLICY);
             fs::write(&f.gh, format!("#!/bin/sh\n{script}\n")).unwrap();
+            let _cwd = nils_test_support::CwdGuard::set(&lock, f.home.path()).unwrap();
             let _config = EnvGuard::set(&lock, "XDG_CONFIG_HOME", f.home.path().to_str().unwrap());
             let _state = EnvGuard::set(
                 &lock,
