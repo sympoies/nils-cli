@@ -778,8 +778,10 @@ cap, which surfaces as a failed registry write rather than a per-request
 `quota-exceeded`. The registry cap, not the receipt budget, is the outer bound
 on total retention.
 
-At either per-principal axis, admission first evicts that principal's oldest
-finished receipts (earliest expiry first) until the new receipt fits. A receipt
+At either per-principal axis, or at the whole-registry count, admission first
+plans to evict that principal's oldest finished receipts (earliest expiry
+first) until the new receipt fits, and applies the plan only when it is enough
+to admit the receipt. A receipt
 is finished when it has expired, or when its outcome names a `message_id` whose
 message is `acknowledged`, `expired`, `deleted`, or no longer retained. Receipts
 for `unread` or `read` messages, and receipts whose outcome names no message
@@ -788,8 +790,8 @@ with its latest time; counts older than the receipt TTL are dropped on the next
 eviction. A replay of an evicted key reads as a fresh request, so only finished
 work is ever exposed to that, and only once the principal is full.
 
-If no finished receipt can make room, either axis returns `quota-exceeded`
-before the transition and evicts nothing. Replacing an existing receipt charges
+If the principal's finished receipts cannot make room, the store returns
+`quota-exceeded` before the transition and evicts nothing. Replacing an existing receipt charges
 only the difference, so a replayed request is not billed twice.
 
 ## Mailbox limits and state machine

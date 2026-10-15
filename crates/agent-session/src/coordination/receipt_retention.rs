@@ -42,10 +42,11 @@ fn finished(receipt: &IdempotencyReceipt, messages: &HashMap<&str, &str>, now: i
         .is_none_or(|state| matches!(*state, "acknowledged" | "expired" | "deleted"))
 }
 
-/// Evict the oldest finished receipts of `principal` until admitting a receipt
-/// of `candidate_bytes` under `receipt_key` fits both per-principal caps.
-/// Stops early when only unfinished receipts remain; the caller's quota checks
-/// then refuse as before.
+/// Evict the oldest finished receipts of `principal` so a receipt of
+/// `candidate_bytes` under `receipt_key` fits the per-principal count and byte
+/// caps and the registry-wide count cap. The eviction plan is applied only when
+/// it is enough to admit the receipt; otherwise the registry is left untouched
+/// and the caller's quota checks refuse exactly as before.
 pub(super) fn make_room(
     registry: &mut Registry,
     principal: &str,
@@ -54,6 +55,7 @@ pub(super) fn make_room(
     now: i64,
 ) {
     let admits_new = !registry.receipts.contains_key(receipt_key);
+    let mut total = registry.receipts.len();
     let mut count = 0usize;
     let mut bytes = 0u64;
     for (key, receipt) in &registry.receipts {
@@ -62,11 +64,11 @@ pub(super) fn make_room(
             bytes = bytes.saturating_add(receipt_bytes(receipt).unwrap_or(0));
         }
     }
-    let over = |count: usize, bytes: u64| {
-        (admits_new && count >= MAX_RECEIPTS_PER_PRINCIPAL)
+    let over = |total: usize, count: usize, bytes: u64| {
+        (admits_new && (count >= MAX_RECEIPTS_PER_PRINCIPAL || total >= MAX_RECEIPTS_GLOBAL))
             || bytes.saturating_add(candidate_bytes) > MAX_RECEIPT_BYTES_PER_PRINCIPAL
     };
-    if !over(count, bytes) {
+    if !over(total, count, bytes) {
         return;
     }
     let messages: HashMap<&str, &str> = registry
@@ -74,7 +76,7 @@ pub(super) fn make_room(
         .iter()
         .map(|message| (message.message_id.as_str(), message.state.as_str()))
         .collect();
-    let mut evictable: Vec<(i64, String, u64)> = registry
+    let mut evictable: Vec<(i64, &String, u64)> = registry
         .receipts
         .iter()
         .filter(|(key, receipt)| {
@@ -85,35 +87,38 @@ pub(super) fn make_room(
         .map(|(key, receipt)| {
             (
                 receipt.expires_at_epoch,
-                key.clone(),
+                key,
                 receipt_bytes(receipt).unwrap_or(0),
             )
         })
         .collect();
-    drop(messages);
     evictable.sort();
-    let mut evicted = 0u64;
+    let mut plan = Vec::new();
     for (_, key, size) in evictable {
-        if !over(count, bytes) {
+        if !over(total, count, bytes) {
             break;
         }
-        registry.receipts.remove(&key);
+        plan.push(key.clone());
+        total -= 1;
         count -= 1;
         bytes = bytes.saturating_sub(size);
-        evicted += 1;
     }
-    if evicted > 0 {
-        let cutoff = now.saturating_sub(RECEIPT_TTL_SECS);
-        registry
-            .receipt_evictions
-            .retain(|_, record| record.last_evicted_at_epoch > cutoff);
-        let record = registry
-            .receipt_evictions
-            .entry(principal.to_string())
-            .or_default();
-        record.evicted = record.evicted.saturating_add(evicted);
-        record.last_evicted_at_epoch = now;
+    if plan.is_empty() || over(total, count, bytes) {
+        return;
     }
+    for key in &plan {
+        registry.receipts.remove(key);
+    }
+    let cutoff = now.saturating_sub(RECEIPT_TTL_SECS);
+    registry
+        .receipt_evictions
+        .retain(|_, record| record.last_evicted_at_epoch > cutoff);
+    let record = registry
+        .receipt_evictions
+        .entry(principal.to_string())
+        .or_default();
+    record.evicted = record.evicted.saturating_add(plan.len() as u64);
+    record.last_evicted_at_epoch = now;
 }
 
 /// Retained receipt principal; the audit never reads receipt contents and

@@ -213,3 +213,97 @@ fn usage_reports_principals_against_the_limit() {
         })
     );
 }
+
+fn sized(registry: &mut Registry, index: usize, message_id: &str, filler: usize) {
+    registry.receipts.insert(
+        key(PRINCIPAL, index),
+        IdempotencyReceipt {
+            principal: PRINCIPAL.into(),
+            incarnation: "v1".into(),
+            operation: "operation".into(),
+            digest: "digest".into(),
+            outcome: json!({"message_id": message_id, "payload": "x".repeat(filler)}),
+            expires_at_epoch: NOW + 1 + index as i64,
+        },
+    );
+}
+
+fn store_sized(registry: &mut Registry, filler: usize) -> Result<(), CliError> {
+    store_receipt(
+        registry,
+        "fresh-key-0001".into(),
+        PRINCIPAL.into(),
+        "v1".into(),
+        "operation".into(),
+        "digest".into(),
+        json!({"message_id": "fresh", "payload": "x".repeat(filler)}),
+        NOW,
+    )
+}
+
+#[test]
+fn insufficient_finished_receipts_refuse_without_evicting() {
+    // Two small finished receipts cannot free enough bytes next to three large
+    // in-flight ones, so the refusal must leave every receipt in place.
+    let mut registry = Registry::default();
+    sized(&mut registry, 0, "done-0", 16);
+    sized(&mut registry, 1, "done-1", 16);
+    for index in 2..5 {
+        let id = format!("live-{index}");
+        sized(&mut registry, index, &id, 1_300 * 1024);
+        registry.messages.push(message(&id, "unread"));
+    }
+    let before = serde_json::to_value(&registry.receipts).unwrap();
+
+    let error = store_sized(&mut registry, 512 * 1024).expect_err("budget still exceeded");
+
+    assert_eq!(error.code(), "quota-exceeded");
+    assert_eq!(serde_json::to_value(&registry.receipts).unwrap(), before);
+    assert!(registry.receipt_evictions.is_empty());
+}
+
+#[test]
+fn an_oversized_candidate_refuses_without_evicting() {
+    let mut registry = Registry::default();
+    sized(&mut registry, 0, "done-0", 16);
+    let before = serde_json::to_value(&registry.receipts).unwrap();
+
+    store_sized(&mut registry, MAX_RECEIPT_BYTES_PER_PRINCIPAL as usize)
+        .expect_err("a candidate over the whole budget never fits");
+
+    assert_eq!(serde_json::to_value(&registry.receipts).unwrap(), before);
+    assert!(registry.receipt_evictions.is_empty());
+}
+
+#[test]
+fn a_full_registry_refuses_without_evicting_when_the_principal_cannot_free_enough() {
+    let mut registry = Registry::default();
+    seed(&mut registry, PRINCIPAL, MAX_RECEIPTS_PER_PRINCIPAL);
+    // Only one finished receipt, but the registry is two over its global cap.
+    for index in 1..MAX_RECEIPTS_PER_PRINCIPAL {
+        registry
+            .messages
+            .push(message(&format!("message-{index:05}"), "unread"));
+    }
+    for index in 0..(MAX_RECEIPTS_GLOBAL - MAX_RECEIPTS_PER_PRINCIPAL + 1) {
+        registry.receipts.insert(
+            format!("other-{index}"),
+            IdempotencyReceipt {
+                principal: format!("other-{}", index % 64),
+                incarnation: "v1".into(),
+                operation: "operation".into(),
+                digest: "digest".into(),
+                outcome: json!({"operation": "claim"}),
+                expires_at_epoch: NOW + 1,
+            },
+        );
+    }
+    let before = registry.receipts.len();
+
+    let error = store(&mut registry, "fresh-key-0001").expect_err("global cap still exceeded");
+
+    assert_eq!(error.code(), "quota-exceeded");
+    assert_eq!(registry.receipts.len(), before);
+    assert!(registry.receipts.contains_key(&key(PRINCIPAL, 0)));
+    assert!(registry.receipt_evictions.is_empty());
+}
