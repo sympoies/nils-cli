@@ -219,25 +219,7 @@ fn idle_restart_relaunches_in_place_and_reports_a_ready_receipt() {
     let tmux = fake_tmux(tmp.path());
     let old_launch = running_session(&context, &tmux);
     session_ready(&context, &old_launch);
-    // The relaunched provider reports its resumed prompt once it is up.
-    let watcher = {
-        let context = context.clone();
-        let old_launch = old_launch.clone();
-        thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(30);
-            while Instant::now() < deadline {
-                if let Some(launch) = load_session_record(&context, ID)
-                    .ok()
-                    .and_then(|record| launch_id(&record))
-                    .filter(|launch| *launch != old_launch)
-                {
-                    session_ready(&context, &launch);
-                    return;
-                }
-                thread::sleep(Duration::from_millis(50));
-            }
-        })
-    };
+    let watcher = on_relaunched_prompt(&context, tmp.path(), &old_launch);
 
     let receipt = restart(&context, &restart_args(&tmux, false, 30));
     watcher.join().unwrap();
@@ -383,6 +365,23 @@ fn on_relaunch(
             }
             thread::sleep(Duration::from_millis(20));
         }
+    })
+}
+
+/// Like the provider, report the resumed prompt only once the relaunched pane
+/// runs, after resume activated the new runtime.
+fn on_relaunched_prompt(
+    context: &CliContext,
+    root: &Path,
+    old_launch: &str,
+) -> thread::JoinHandle<()> {
+    let root = root.to_path_buf();
+    on_relaunch(context, old_launch, move |context, launch| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while log(&root).matches("new-session").count() < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        session_ready(context, launch);
     })
 }
 
@@ -843,9 +842,7 @@ fn post_launch_failpoint_is_scoped_to_its_state_dir() {
     let tmux = fake_tmux(tmp.path());
     let old_launch = running_session(&context, &tmux);
     session_ready(&context, &old_launch);
-    let watcher = on_relaunch(&context, &old_launch, |context, launch| {
-        session_ready(context, launch);
-    });
+    let watcher = on_relaunched_prompt(&context, tmp.path(), &old_launch);
 
     let receipt = restart(&context, &restart_args(&tmux, false, 30));
     watcher.join().unwrap();
