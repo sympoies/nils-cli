@@ -785,9 +785,9 @@ to admit the receipt. A receipt
 is finished when it has expired, or when its outcome names a `message_id` whose
 message is `acknowledged`, `expired`, `deleted`, or no longer retained. Receipts
 for `unread` or `read` messages, and receipts whose outcome names no message
-(claims, operations), are never evicted. Each eviction is counted per principal
-with its latest time; counts older than the receipt TTL are dropped on the next
-eviction. A replay of an evicted key reads as a fresh request, so only finished
+(claims, operations), are never evicted. Evictions are counted cumulatively per
+principal with the latest eviction time; a record idle for one receipt TTL is
+removed lazily by a later eviction. A replay of an evicted key reads as a fresh request, so only finished
 work is ever exposed to that, and only once the principal is full.
 
 If the principal's finished receipts cannot make room, the store returns
