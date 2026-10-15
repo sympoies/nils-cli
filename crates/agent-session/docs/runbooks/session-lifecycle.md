@@ -134,23 +134,35 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
 
 - Admission requires the same verified idle prompt and empty composer as a
   guarded idle send. A busy or unverified session returns
-  `restart-session-not-idle` and is left running; `--force` terminates it
-  instead of typing the provider's exit command.
+  `restart-session-not-idle` and is left running. An exact mailbox
+  notification submission already in progress refuses the restart before
+  anything is typed.
+- Before the exit command, the restart fences the incarnation: new
+  notification attempts and `send` input (`session-restarting`) are refused
+  until the old runtime is stopped.
 - An admitted session gets the provider's own exit command (`/exit` for
-  Claude Code, `/quit` for Codex). A runtime still alive after
-  `--stop-timeout` seconds is terminated through the verified stop path.
+  Claude Code, `/quit` for Codex). A provider still running after
+  `--stop-timeout` seconds is left running with `restart-exit-timeout`; only
+  `--force` terminates it through the verified stop path, and `--force` on an
+  unverified session terminates without typing anything.
+- A runtime another operation replaced during the exit wait is kept and
+  reported as `restart-superseded`.
 - The stopped incarnation is retired before the relaunch; a heartbeat that
   cannot be proven stale is waited out for a bounded time.
 - The relaunch resumes the exact provider resume metadata, then waits up to
-  `--ready-timeout` seconds for the provider to report an idle prompt.
+  `--ready-timeout` seconds, every observation included, for the provider to
+  report an idle prompt.
 - Success returns an `agent-session.restart.v1` receipt with the old and new
   incarnation, generation, pane pid, and provider version, plus timestamps
   and `stop_method` (`provider-exit` or `terminated`). The provider version is
   probed from the installed binary; an old version is known only for a runtime
   that a previous restart launched.
-- A failure after the stop returns `restart-relaunch-failed`,
-  `restart-prior-incarnation-live`, or `restart-not-ready` with the receipt and
-  a `recovery` command in the error details, such as `agent-session resume <id>`.
+- Every failure after the exit command returns the receipt and a `recovery`
+  command in the error details: `agent-session resume <id>` when the session
+  is stopped (`restart-relaunch-failed`, `restart-prior-incarnation-live`, or a
+  relaunched provider that exited), otherwise `agent-session glance <id>`
+  (`restart-exit-timeout`, `restart-superseded`, `restart-stop-failed`,
+  `restart-post-launch-failed`, `restart-not-ready`).
 - A session cannot restart itself: the stop would end the command.
 
 Retired orchestration registries and sidecars are ignored. Session records

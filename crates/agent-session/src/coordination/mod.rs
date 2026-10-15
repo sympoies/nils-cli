@@ -389,6 +389,7 @@ impl SessionQuiescenceGuard {
             || self.active_claim
             || self.active_operation
             || self.uncertain_operation
+            || crate::restart::fenced(&self._locked.path, &self.session_id, &self.incarnation)
         {
             return Ok(false);
         }

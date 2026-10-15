@@ -144,8 +144,8 @@ fn refusal(code: &'static str, message: &'static str, record: &SessionRecord) ->
     CliError::runtime(code, message, Some(json!({ "id": record.id })))
 }
 
-/// A failure after the provider was stopped: the receipt says how far the
-/// restart got and the printed command recovers the session.
+/// A failure once the provider was asked to exit: the receipt says how far the
+/// restart got and the printed command recovers or inspects the session.
 fn failure(
     code: &'static str,
     message: &'static str,
@@ -170,6 +170,84 @@ fn failure(
     .with_hint(hint)
 }
 
+fn fence_path(state_dir: &Path, session_id: &str) -> PathBuf {
+    state_dir
+        .join("coordination")
+        .join(format!("restart-fence-{session_id}"))
+}
+
+/// Whether a live restart owns the exact incarnation's input. Notification
+/// attempts check this while holding the registry lock (`registry_path`) that
+/// the fence is written under.
+pub(crate) fn fenced(registry_path: &Path, session_id: &str, incarnation: &str) -> bool {
+    let Some(state_dir) = registry_path.parent().and_then(Path::parent) else {
+        return false;
+    };
+    let Ok(fence) = std::fs::read_to_string(fence_path(state_dir, session_id)) else {
+        return false;
+    };
+    let mut fields = fence.split_whitespace();
+    fields.next() == Some(incarnation)
+        && fields
+            .next()
+            .and_then(|pid| pid.parse::<libc::pid_t>().ok())
+            // SAFETY: signal 0 only probes whether the owning restart is alive.
+            .is_some_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
+}
+
+/// Refuse input to an incarnation a restart is stopping.
+pub(crate) fn ensure_not_fenced(
+    context: &CliContext,
+    record: &SessionRecord,
+) -> Result<(), CliError> {
+    let registry = context.state_dir.join("coordination").join("registry.json");
+    match launch_id(record) {
+        Some(launch) if fenced(&registry, &record.id, &launch) => Err(refusal(
+            "session-restarting",
+            "a restart is stopping this session",
+            record,
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Owns the restart fence of one incarnation; dropping it releases the fence.
+struct RestartFence(PathBuf);
+
+impl RestartFence {
+    /// Under the registry lock notification attempts take, refuse an exact
+    /// notification submission in progress and fence any later attempt.
+    fn acquire(
+        context: &CliContext,
+        record: &SessionRecord,
+        launch: &str,
+    ) -> Result<Self, CliError> {
+        let locked = coordination::lock_registry_for_lifecycle(context)?;
+        coordination::ensure_notification_submission_not_in_progress(
+            &locked.registry,
+            &record.id,
+            launch,
+        )?;
+        let path = fence_path(&context.state_dir, &record.id);
+        crate::write_private_file(
+            &path,
+            format!("{launch} {}\n", std::process::id()).as_bytes(),
+        )?;
+        drop(locked);
+        Ok(Self(path))
+    }
+}
+
+impl Drop for RestartFence {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(test)]
+pub(super) static FAIL_POST_LAUNCH: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError> {
     let started_at = now();
     let tmux = crate::resolve_tmux_bin(args.tmux_bin.as_deref());
@@ -193,7 +271,7 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
             &expected,
         ));
     };
-    let exit_requested =
+    let (exit_requested, _fence) =
         request_provider_exit(context, &expected, agent, &old_launch, &tmux, args.force)?;
     let mut receipt = Receipt {
         schema_version: SCHEMA_VERSION,
@@ -211,34 +289,70 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         ready_at: None,
         finished_at: String::new(),
     };
+    let glance = format!("agent-session glance {}", expected.id);
     let stop_deadline = Instant::now() + Duration::from_secs(args.stop_timeout);
-    while exit_requested
-        && crate::session_status(context, &tmux, &expected) != "stopped"
-        && Instant::now() < stop_deadline
-    {
+    while exit_requested && Instant::now() < stop_deadline {
+        let current = load_session_record(context, &expected.id).ok();
+        if current.as_ref().and_then(launch_id).as_deref() != Some(old_launch.as_str())
+            || crate::session_status(context, &tmux, &expected) == "stopped"
+        {
+            break;
+        }
         thread::sleep(POLL_INTERVAL);
     }
 
     let record_lock = crate::acquire_session_record_lock(context, &expected.id)?;
-    let mut record = load_session_record(context, &expected.id)?;
-    crate::ensure_same_session_identity(&expected, &record)?;
-    if launch_id(&record).as_deref() != Some(old_launch.as_str()) {
-        return Err(refusal(
-            "restart-superseded",
-            "another operation relaunched the session during the restart",
-            &record,
+    let mut record = match load_session_record(context, &expected.id).and_then(|record| {
+        crate::ensure_same_session_identity(&expected, &record)?;
+        Ok(record)
+    }) {
+        Ok(record) if launch_id(&record).as_deref() == Some(old_launch.as_str()) => record,
+        result => {
+            // Another operation replaced the runtime during the exit wait;
+            // that replacement is left exactly as it is.
+            return Err(failure(
+                "restart-superseded",
+                "another operation replaced the session runtime during the restart",
+                receipt,
+                "superseded",
+                result.err().as_ref().map(CliError::code),
+                glance,
+            ));
+        }
+    };
+    let exited = crate::session_status(context, &tmux, &record) == "stopped";
+    if !exited && !args.force {
+        // Only --force may terminate a provider that did not leave on its own;
+        // input admitted since the exit command must not be killed.
+        return Err(failure(
+            "restart-exit-timeout",
+            "the provider did not exit within the stop timeout; the session was left running",
+            receipt,
+            "exit-timeout",
+            None,
+            glance,
         ));
     }
-    let exited = crate::session_status(context, &tmux, &record) == "stopped";
-    crate::auto_resume::cancel_for_manual_input_locked(context, &record.id, &now())?;
-    crate::stop_session_runtime_locked(context, &mut record, &tmux)?;
+    let recovery = format!("agent-session resume {}", record.id);
+    if let Err(cause) =
+        crate::auto_resume::cancel_for_manual_input_locked(context, &record.id, &now())
+            .and_then(|()| crate::stop_session_runtime_locked(context, &mut record, &tmux))
+    {
+        return Err(failure(
+            "restart-stop-failed",
+            "the session runtime could not be verified stopped",
+            receipt,
+            "stop-failed",
+            Some(cause.code()),
+            glance,
+        ));
+    }
     receipt.stop_method = Some(if exit_requested && exited {
         "provider-exit"
     } else {
         "terminated"
     });
     receipt.stopped_at = Some(now());
-    let recovery = format!("agent-session resume {}", record.id);
     if let Err(cause) = coordination::retire_after_verified_stop(context, &record, &tmux)
         .and_then(|()| await_prior_lease(context, &record))
     {
@@ -266,14 +380,21 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         }
     };
     let new_launch = resumed.session_incarnation.unwrap_or_default();
-    let mut relaunched = load_session_record(context, &expected.id)?;
-    let profile = crate::validate_durable_profile_resume_context(&relaunched)?;
-    let version = provider_version(&resume_agent_bin(profile, &relaunched, agent));
-    relaunched.extra.insert(
-        PROVIDER_VERSION_KEY.to_string(),
-        json!({ "launch_id": new_launch, "version": version }),
-    );
-    crate::write_session_record(context, &relaunched)?;
+    receipt.new.session_incarnation = Some(new_launch.clone());
+    receipt.new.generation = resumed.session_generation;
+    let relaunched = match record_provider_version(context, &expected.id, agent, &new_launch) {
+        Ok(relaunched) => relaunched,
+        Err(cause) => {
+            return Err(failure(
+                "restart-post-launch-failed",
+                "the provider was relaunched but the restart could not record it",
+                receipt,
+                "post-launch-failed",
+                Some(cause.code()),
+                glance,
+            ));
+        }
+    };
     receipt.new = incarnation(&relaunched);
     drop(record_lock);
 
@@ -286,11 +407,6 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         }
         Err(cause) => {
             let exited = cause == "provider-exited";
-            let recovery = if exited {
-                format!("agent-session resume {}", expected.id)
-            } else {
-                format!("agent-session glance {}", expected.id)
-            };
             Err(failure(
                 "restart-not-ready",
                 "the session was relaunched but its provider did not reach a ready prompt in time",
@@ -301,15 +417,38 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
                     "not-ready"
                 },
                 Some(&cause),
-                recovery,
+                if exited { recovery } else { glance },
             ))
         }
     }
 }
 
-/// Type the provider's own exit command into a verified idle, empty composer.
-/// Returns whether it was sent. Without `force` an unverified session is
-/// refused before anything is stopped; with it, the runtime is terminated.
+/// Persist the installed provider version for the launched runtime.
+fn record_provider_version(
+    context: &CliContext,
+    id: &str,
+    agent: AgentKind,
+    launch: &str,
+) -> Result<SessionRecord, CliError> {
+    #[cfg(test)]
+    if FAIL_POST_LAUNCH.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(CliError::runtime("session-write-failed", "injected", None));
+    }
+    let mut relaunched = load_session_record(context, id)?;
+    let profile = crate::validate_durable_profile_resume_context(&relaunched)?;
+    let version = provider_version(&resume_agent_bin(profile, &relaunched, agent));
+    relaunched.extra.insert(
+        PROVIDER_VERSION_KEY.to_string(),
+        json!({ "launch_id": launch, "version": version }),
+    );
+    crate::write_session_record(context, &relaunched)?;
+    Ok(relaunched)
+}
+
+/// Type the provider's own exit command into a verified idle, empty composer
+/// once the incarnation's input is fenced. Returns whether it was sent and the
+/// fence, held until the old runtime is stopped. Without `force` an unverified
+/// session is refused before anything is typed or stopped.
 fn request_provider_exit(
     context: &CliContext,
     expected: &SessionRecord,
@@ -317,11 +456,13 @@ fn request_provider_exit(
     launch: &str,
     tmux: &Path,
     force: bool,
-) -> Result<bool, CliError> {
+) -> Result<(bool, RestartFence), CliError> {
     let _record_lock = crate::acquire_session_record_lock(context, &expected.id)?;
     let mut current = load_session_record(context, &expected.id)?;
     crate::ensure_same_session_identity(expected, &current)?;
-    if crate::session_status(context, tmux, &current) != "running" {
+    if launch_id(&current).as_deref() != Some(launch)
+        || crate::session_status(context, tmux, &current) != "running"
+    {
         return Err(refusal(
             "session-not-running",
             "restart requires a running session; use resume for a stopped one",
@@ -343,22 +484,24 @@ fn request_provider_exit(
         verify_composer: false,
         deadline: Instant::now() + crate::send_submit::HOLD_BUDGET,
     };
-    if let Err(cause) = admission.check(None, "admission") {
-        if force {
-            return Ok(false);
+    let admitted = match admission.check(None, "admission") {
+        Ok(()) => true,
+        Err(_) if force => false,
+        Err(cause) => {
+            return Err(CliError::runtime(
+                "restart-session-not-idle",
+                "restart requires a verified idle session with an empty composer",
+                Some(json!({ "id": current.id, "cause": cause.code() })),
+            )
+            .with_hint("retry once the session is idle, or pass --force to stop it now"));
         }
-        return Err(CliError::runtime(
-            "restart-session-not-idle",
-            "restart requires a verified idle session with an empty composer",
-            Some(json!({ "id": current.id, "cause": cause.code() })),
-        )
-        .with_hint("retry once the session is idle, or pass --force to stop it now"));
-    }
+    };
+    let fence = RestartFence::acquire(context, &current, launch)?;
     // Admission already refuses every provider without an observable prompt.
     let command = match agent {
-        AgentKind::Claude => "/exit",
-        AgentKind::Codex => "/quit",
-        _ => return Ok(false),
+        AgentKind::Claude if admitted => "/exit",
+        AgentKind::Codex if admitted => "/quit",
+        _ => return Ok((false, fence)),
     };
     crate::codex_account::authorize_terminal_input_locked(context, &mut current)?;
     crate::auto_resume::cancel_for_manual_input_locked(context, &current.id, &now())?;
@@ -371,7 +514,7 @@ fn request_provider_exit(
         None,
         crate::PasteMode::Raw,
     )?;
-    Ok(true)
+    Ok((true, fence))
 }
 
 /// Bounded wait for the stopped incarnation's lease. Retiring it normally
@@ -394,7 +537,8 @@ fn await_prior_lease(context: &CliContext, record: &SessionRecord) -> Result<(),
 }
 
 /// Bounded wait until the relaunched provider reports an idle prompt through
-/// the same admission a guarded idle send uses. Returns the last refusal code.
+/// the same admission a guarded idle send uses. Every observation and sleep is
+/// capped by `deadline`. Returns the last refusal code.
 fn await_ready(
     context: &CliContext,
     record: &SessionRecord,
@@ -407,7 +551,8 @@ fn await_ready(
         require_idle: true,
         ..GuardArgs::default()
     };
-    loop {
+    let mut cause = "ready-timeout".to_string();
+    while Instant::now() < deadline {
         if crate::session_status(context, tmux, record) == "stopped" {
             return Err("provider-exited".to_string());
         }
@@ -417,19 +562,17 @@ fn await_ready(
             args: &guards,
             tmux_bin: tmux,
             verify_composer: false,
-            deadline: Instant::now() + crate::send_submit::HOLD_BUDGET,
+            deadline: deadline.min(Instant::now() + crate::send_submit::HOLD_BUDGET),
         };
-        let cause = match admission.check(None, "readiness") {
+        match admission.check(None, "readiness") {
             Ok(()) => return Ok(()),
-            Err(cause) => cause.code().to_string(),
-        };
-        if Instant::now() >= deadline {
-            return Err(cause);
+            Err(refused) => cause = refused.code().to_string(),
         }
-        thread::sleep(POLL_INTERVAL);
+        thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
     }
+    Err(cause)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 #[path = "restart_tests.rs"]
 mod tests;

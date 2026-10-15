@@ -26,7 +26,8 @@ fn executable(path: &Path, body: &str) -> PathBuf {
 /// held launch, the new incarnation's heartbeat starts once the broker gate
 /// opens, so the prior incarnation's beat is the one on disk while a resume
 /// provisions coordination. An Enter key stands in for the provider exiting on
-/// its exit command, and a `fail-launch` marker makes the next launch fail.
+/// its exit command unless `hold-exit` exists, a `fail-launch` marker makes the
+/// next launch fail, and a `stall` marker stalls pane identity observations.
 fn fake_tmux(root: &Path) -> PathBuf {
     let script = format!(
         r#"#!/bin/sh
@@ -61,9 +62,9 @@ case "$1" in
     printf '%s\t%s\t%s\n' '$77' '%77' "$(cat "$root/pane")"
     ;;
   display-message) printf '%s\t%s\t%s\n' '$77' '%77' "$(cat "$root/pane")" ;;
-  show-environment) grep "^$4=" "$root/env" || exit 1 ;;
+  show-environment) [ -f "$root/stall" ] && sleep 3; grep "^$4=" "$root/env" || exit 1 ;;
   capture-pane) cat "$root/screen" ;;
-  send-keys) case " $* " in *" Enter "*) stop_pane ;; esac ;;
+  send-keys) case " $* " in *" Enter "*) [ -f "$root/hold-exit" ] || stop_pane ;; esac ;;
   if-shell|kill-session) stop_pane ;;
 esac
 exit 0
@@ -176,7 +177,6 @@ fn details(error: &CliError) -> Value {
 /// Right after a provider exits cleanly, `resume` was refused with "the prior
 /// coordination incarnation is still live" until the exited incarnation's
 /// last heartbeat aged out, although its runtime was verified stopped.
-#[cfg(target_os = "linux")]
 #[test]
 fn resume_right_after_a_provider_exit_relaunches_the_stopped_incarnation() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -203,7 +203,6 @@ fn resume_right_after_a_provider_exit_relaunches_the_stopped_incarnation() {
     );
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn idle_restart_relaunches_in_place_and_reports_a_ready_receipt() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -282,7 +281,6 @@ fn idle_restart_relaunches_in_place_and_reports_a_ready_receipt() {
     assert_eq!(broker["state"], "ready");
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn busy_session_is_refused_without_force_and_left_running() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -311,7 +309,6 @@ fn busy_session_is_refused_without_force_and_left_running() {
     );
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn failed_relaunch_leaves_a_receipt_and_a_resumable_session() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -351,4 +348,312 @@ fn failed_relaunch_leaves_a_receipt_and_a_resumable_session() {
         record.provider_resume.as_ref().unwrap().session_id,
         CONVERSATION
     );
+}
+
+fn log(root: &Path) -> String {
+    fs::read_to_string(root.join("tmux.log")).unwrap_or_default()
+}
+
+/// Run `action` once the relaunch replaced `old_launch`.
+fn on_relaunch(
+    context: &CliContext,
+    old_launch: &str,
+    action: impl FnOnce(&CliContext, &str) + Send + 'static,
+) -> thread::JoinHandle<()> {
+    let context = context.clone();
+    let old_launch = old_launch.to_string();
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            if let Some(launch) = load_session_record(&context, ID)
+                .ok()
+                .and_then(|record| launch_id(&record))
+                .filter(|launch| *launch != old_launch)
+            {
+                action(&context, &launch);
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    })
+}
+
+/// Queue one mailbox notification for the running fixture incarnation.
+fn queued_notification(
+    context: &CliContext,
+    root: &Path,
+) -> crate::coordination::NotificationCandidate {
+    let env = fs::read_to_string(root.join("env")).unwrap();
+    let capability = env
+        .lines()
+        .find_map(|line| line.strip_prefix("AGENT_SESSION_CAPABILITY_FILE="))
+        .unwrap();
+    let body = root.join("body.md");
+    fs::write(&body, "status?").unwrap();
+    crate::coordination::mailbox::send(
+        context,
+        crate::cli::MessageSendArgs {
+            from_session: ID.to_string(),
+            to_session: ID.to_string(),
+            to_machine: None,
+            body_file: body,
+            capability_file: Some(PathBuf::from(capability)),
+            idempotency_key: "restart-fixture-note".to_string(),
+            reply_to: None,
+            expires_in: None,
+            format: nils_common::cli_contract::OutputFormat::Json,
+            category: None,
+        },
+    )
+    .expect("queue a notification");
+    coordination::pending_notifications(context)
+        .unwrap()
+        .into_iter()
+        .find(|candidate| candidate.target_session_id == ID)
+        .expect("queued notification")
+}
+
+fn try_notification(
+    context: &CliContext,
+    candidate: &crate::coordination::NotificationCandidate,
+) -> bool {
+    let mut guard = coordination::lock_session_quiescence(
+        context,
+        &candidate.target_session_id,
+        &candidate.target_incarnation,
+    )
+    .unwrap();
+    guard.begin_notification_attempt(candidate).unwrap()
+}
+
+/// An exact notification submission already in progress must refuse the
+/// restart before the exit command is typed, not only at the later stop.
+#[test]
+fn in_progress_notification_refuses_before_the_exit_command() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let launch = running_session(&context, &tmux);
+    session_ready(&context, &launch);
+    let candidate = queued_notification(&context, tmp.path());
+    assert!(try_notification(&context, &candidate));
+
+    let error = restart(&context, &restart_args(&tmux, false, 1)).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        "coordination-notification-submission-in-progress"
+    );
+    assert!(
+        !log(tmp.path()).contains("paste-buffer"),
+        "{}",
+        log(tmp.path())
+    );
+    let record = load_session_record(&context, ID).unwrap();
+    assert_eq!(crate::session_status(&context, &tmux, &record), "running");
+}
+
+/// Between the exit command and the stop, new notification attempts and
+/// terminal input are fenced; a provider that does not leave on its own is
+/// left running without --force, and the fence is released afterwards.
+#[test]
+fn exit_wait_fences_input_and_never_kills_without_force() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let launch = running_session(&context, &tmux);
+    session_ready(&context, &launch);
+    let candidate = queued_notification(&context, tmp.path());
+    fs::write(tmp.path().join("hold-exit"), "").unwrap();
+    let racer = {
+        let context = context.clone();
+        let root = tmp.path().to_path_buf();
+        let tmux = tmux.clone();
+        let candidate = candidate.clone();
+        thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !log(&root).contains("send-keys") && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(20));
+            }
+            let notified = try_notification(&context, &candidate);
+            let sent = crate::send::send_to_session(
+                &context,
+                crate::cli::SendArgs {
+                    id: ID.to_string(),
+                    text: Some("new work".to_string()),
+                    text_stdin: false,
+                    keys: vec![SpecialKey::Enter],
+                    allow_blocked: false,
+                    guards: GuardArgs::default(),
+                    tmux_bin: Some(tmux),
+                    format: nils_common::cli_contract::OutputFormat::Json,
+                },
+            );
+            (notified, sent.err().map(|error| error.code().to_string()))
+        })
+    };
+
+    let mut args = restart_args(&tmux, false, 1);
+    args.stop_timeout = 2;
+    let error = restart(&context, &args).unwrap_err();
+    let (notified, sent) = racer.join().unwrap();
+
+    assert!(!notified, "a notification attempt raced the exit command");
+    assert_eq!(sent.as_deref(), Some("session-restarting"));
+    assert_eq!(error.code(), "restart-exit-timeout");
+    assert_eq!(details(&error)["receipt"]["outcome"], "exit-timeout");
+    let record = load_session_record(&context, ID).unwrap();
+    assert_eq!(launch_id(&record).as_deref(), Some(launch.as_str()));
+    assert_eq!(crate::session_status(&context, &tmux, &record), "running");
+    assert!(!log(tmp.path()).contains("if-shell"), "{}", log(tmp.path()));
+    // The fence ends with the restart.
+    assert!(try_notification(&context, &candidate));
+}
+
+/// A resume that replaces the runtime while the restart waits for the exit is
+/// kept, and the restart reports it with its receipt.
+#[test]
+fn runtime_replaced_during_the_exit_wait_is_reported_and_kept() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let launch = running_session(&context, &tmux);
+    session_ready(&context, &launch);
+    fs::write(tmp.path().join("hold-exit"), "").unwrap();
+    let replacer = {
+        let context = context.clone();
+        let root = tmp.path().to_path_buf();
+        let tmux = tmux.clone();
+        thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !log(&root).contains("send-keys") && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(20));
+            }
+            // Another operator holds the session while the provider leaves,
+            // its wrapper stops the broker, and the operator resumes it.
+            let _lock = crate::acquire_session_record_lock(&context, ID).unwrap();
+            let pane = fs::read_to_string(root.join("pane")).unwrap();
+            let _ = ProcessCommand::new("kill")
+                .arg("--")
+                .arg(format!("-{}", pane.trim()))
+                .status();
+            fs::remove_file(root.join("running")).unwrap();
+            fs::remove_file(root.join("hold-exit")).unwrap();
+            let record = load_session_record(&context, ID).unwrap();
+            coordination::revoke(&context, &record).unwrap();
+            crate::resume_session_locked(&context, record, &tmux).expect("concurrent resume");
+            launch_id(&load_session_record(&context, ID).unwrap()).unwrap()
+        })
+    };
+
+    let error = restart(&context, &restart_args(&tmux, false, 1)).unwrap_err();
+    let replacement = replacer.join().unwrap();
+
+    assert_eq!(error.code(), "restart-superseded");
+    let details = details(&error);
+    assert_eq!(details["receipt"]["outcome"], "superseded");
+    assert_eq!(
+        details["recovery"],
+        format!("agent-session glance {ID}").as_str()
+    );
+    let record = load_session_record(&context, ID).unwrap();
+    assert_eq!(launch_id(&record).as_deref(), Some(replacement.as_str()));
+    assert_eq!(crate::session_status(&context, &tmux, &record), "running");
+}
+
+/// Every readiness observation is capped by --ready-timeout, even one that
+/// stalls, and an unready relaunch reports how to inspect it.
+#[test]
+fn ready_timeout_bounds_a_stalled_readiness_observation() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let old_launch = running_session(&context, &tmux);
+    session_ready(&context, &old_launch);
+    let root = tmp.path().to_path_buf();
+    let staller = on_relaunch(&context, &old_launch, move |_, _| {
+        fs::write(root.join("stall"), "").unwrap();
+    });
+
+    let error = restart(&context, &restart_args(&tmux, false, 1)).unwrap_err();
+    staller.join().unwrap();
+
+    assert_eq!(error.code(), "restart-not-ready");
+    let details = details(&error);
+    let receipt = &details["receipt"];
+    assert_eq!(receipt["outcome"], "not-ready");
+    assert_eq!(
+        details["recovery"],
+        format!("agent-session glance {ID}").as_str()
+    );
+    let relaunched: Timestamp = receipt["relaunched_at"].as_str().unwrap().parse().unwrap();
+    let finished: Timestamp = receipt["finished_at"].as_str().unwrap().parse().unwrap();
+    let waited = finished.duration_since(relaunched).as_secs_f64();
+    assert!(waited < 2.5, "readiness waited {waited}s past a 1s timeout");
+}
+
+#[test]
+fn relaunched_provider_exit_reports_the_resume_recovery() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let old_launch = running_session(&context, &tmux);
+    session_ready(&context, &old_launch);
+    let root = tmp.path().to_path_buf();
+    let crasher = on_relaunch(&context, &old_launch, move |_, _| {
+        // Crash the relaunched provider once its runtime exists.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while log(&root).matches("new-session").count() < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        thread::sleep(Duration::from_millis(300));
+        let _ = fs::remove_file(root.join("running"));
+    });
+
+    let error = restart(&context, &restart_args(&tmux, false, 5)).unwrap_err();
+    crasher.join().unwrap();
+
+    assert_eq!(error.code(), "restart-not-ready");
+    let details = details(&error);
+    assert_eq!(details["receipt"]["outcome"], "relaunch-exited");
+    assert_eq!(
+        details["recovery"],
+        format!("agent-session resume {ID}").as_str()
+    );
+}
+
+/// A persistence failure after the relaunch still returns the receipt with
+/// the new incarnation and a command to inspect the running session.
+#[test]
+fn post_launch_persistence_failure_keeps_the_receipt() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let old_launch = running_session(&context, &tmux);
+    session_ready(&context, &old_launch);
+    FAIL_POST_LAUNCH.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let error = restart(&context, &restart_args(&tmux, false, 1)).unwrap_err();
+    FAIL_POST_LAUNCH.store(false, std::sync::atomic::Ordering::SeqCst);
+
+    assert_eq!(error.code(), "restart-post-launch-failed");
+    let details = details(&error);
+    let record = load_session_record(&context, ID).unwrap();
+    let launch = launch_id(&record).unwrap();
+    assert_ne!(launch, old_launch);
+    assert_eq!(
+        details["receipt"]["new"]["session_incarnation"],
+        launch.as_str()
+    );
+    assert_eq!(
+        details["recovery"],
+        format!("agent-session glance {ID}").as_str()
+    );
+    assert_eq!(crate::session_status(&context, &tmux, &record), "running");
 }
