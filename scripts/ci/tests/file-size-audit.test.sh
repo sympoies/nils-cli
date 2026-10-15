@@ -277,15 +277,20 @@ case_in_file_test_module_counts_as_test_lines() {
 }
 
 case_raw_string_column_zero_brace_does_not_end_module() {
-  echo "== raw string with a column-0 brace does not end a test module early =="
+  local prefix="${1:-r}" sample_type="&str"
+  if [[ "$prefix" == "cr" ]]; then
+    sample_type="&std::ffi::CStr"
+  fi
+  echo "== $prefix raw string with an embedded quote and brace preserves module boundaries =="
   local dir total
-  dir="$(make_repo raw-string)"
+  dir="$(make_repo "raw-string-$prefix")"
   mkdir -p "$dir/crates/demo/src"
   {
     echo "fn a() {}"
     echo "#[cfg(test)]"
     echo "mod tests {"
-    echo '    const SAMPLE: &str = r#"'
+    printf '    const SAMPLE: %s = %s#"\n' "$sample_type" "$prefix"
+    echo '" embedded quote'
     echo '}'
     echo '"#;'
     gen_lines 3000
@@ -475,6 +480,7 @@ case_baseline_total_cannot_increase
 case_rename_moves_row_without_raising_total
 case_in_file_test_module_counts_as_test_lines
 case_raw_string_column_zero_brace_does_not_end_module
+case_raw_string_column_zero_brace_does_not_end_module cr
 case_out_of_line_and_tests_dir_files_are_test_only
 case_cfg_all_test_items_count_as_test_and_any_test_items_do_not
 case_cfg_all_test_in_any_position_counts_as_test

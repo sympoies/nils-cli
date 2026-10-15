@@ -114,12 +114,16 @@ class ConsumerExecutionTests(unittest.TestCase):
                  'scripts/ci/merge-plan-policy.v1.json', 'scripts/ci/merge-plan-extra-inputs.v1.json',
                  'scripts/ci/merge-plan.schema.v1.json', 'scripts/ci/merge-plan.schema.v2.json',
                  'scripts/ci/nils-cli-scoped-checks.sh',
+                 'scripts/ci/assert-import-audit.py', 'scripts/ci/lib/rust_file_size.py',
                  'scripts/ci/test-env.sh')
         for path in paths:
             dest = self.repo / path
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes((ROOT / path).read_bytes())
         (self.repo / 'Cargo.toml').write_text('[workspace]\nmembers = []\n')
+        audit_test = self.repo / 'scripts/ci/tests/assert-import-audit.test.py'
+        audit_test.parent.mkdir(parents=True)
+        audit_test.write_text('# Audit self-tests run separately against the complete source tree.\n')
         for name in ('selected', 'consumer', 'untouched', 'unrelated'):
             source = self.repo / f'crates/{name}/src/lib.rs'
             source.parent.mkdir(parents=True)
@@ -166,6 +170,10 @@ else:
         self.base = self.git('rev-parse', 'HEAD')
         if change == 'source':
             (self.repo / 'crates/selected/src/lib.rs').write_text('// changed synthetic fixture\n')
+        elif change == 'ambiguous':
+            (self.repo / 'crates/selected/src/lib.rs').write_text(
+                '#[cfg(test)] mod tests { use pretty_assertions::assert_eq; '
+                'mod child { use super::*; fn check() { assert_eq!(1, 1); } } }\n')
         elif change == 'full':
             with (self.repo / 'Cargo.toml').open('a') as stream:
                 stream.write('# manifest escalation\n')
@@ -225,6 +233,14 @@ else:
                              ['consumer', 'selected'])
         self.assertEqual(next(c for c in calls if c[0] == 'clippy')[-2:], ['-D', 'warnings'])
         self.assertTrue(all(not r['identity_present'] for r in rows if r['args'][0] in ('nextest', 'test')))
+
+    def test_ambiguous_assert_imports_fail_before_compilation(self):
+        self.candidate(change='ambiguous')
+        result, rows = self.execute()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(rows, [])
+        self.assertIn('explicitly import pretty_assertions::assert_eq', result.stdout)
+        self.assertEqual(self.receipt()['status'], 'FAIL')
 
     def test_merge_group_head_is_candidate_not_reviewed_head(self):
         self.candidate()
