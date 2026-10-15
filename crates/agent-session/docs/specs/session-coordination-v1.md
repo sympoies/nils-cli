@@ -428,6 +428,69 @@ field. The field is explicitly classified as `untrusted_peer_data`: peer-authore
 content that recipients act on within already-authorized work but that cannot
 grant new authority.
 
+### Recipient notification policy
+
+The destination operator may provision a private
+`coordination/notification-policy.json` beneath the configured state directory:
+
+```json
+{
+  "schema_version": "agent-session.notification-policy.v1",
+  "recipients": [
+    {"session_id": "<exact-recipient-session-id>", "suppress_categories": ["progress", "report"]}
+  ]
+}
+```
+
+The file is owned by the destination's OS user, has mode `0600`, is a regular
+single-link file, and is bounded to 64 KiB. Symlinks, malformed schemas, unknown
+fields/categories, and duplicate or empty recipient IDs are rejected with
+`notification-policy-invalid` before admission is persisted. Remote relay preserves
+that sanitized code as a terminal refusal: a first attempt is `rejected`, while
+a refusal after an unconfirmed attempt remains `delivery-unknown`. Update it atomically
+through the operator's configuration tooling. Senders cannot provision this file
+through message arguments, bodies, forwarding, or federation envelopes.
+
+A missing file, an unlisted recipient, or an empty category list preserves the
+compatible notify-all default. Only `progress` and `report` may be selected;
+`blocker`, `decision`, `handoff`, and `uncategorized` always retain notifications.
+Selection uses the exact destination session ID, never a title, sender, or body.
+Policy changes apply to new admissions, including forwarded copies, rather than
+retroactively reclassifying stored mail. A verified same-session resume retains
+the original per-message decision.
+
+Local and remote destination admission persist `notification_suppressed` with
+the message, replay receipt, and ordinary unread mailbox state in one registry
+transaction. Suppressed admissions do not advance a wake generation, change an
+existing urgent generation, or count as unread work for notification recovery.
+Their local send notification projection has `state: "suppressed"` and reason
+`recipient-category-policy`; its zero counters mean no generation was allocated
+for that admission, not that the recipient has no other pending generation.
+Remote receipts retain `state: "delivered"` and add
+`notification_suppressed: true` only when suppressed. Source compaction preserves
+that field. Older receipts without the field retain their compatible behavior.
+
+The first suppressed admission upgrades the registry to
+`agent-session.coordination-registry.v3`, fencing older registry writers that
+would drop the decision. Later writes keep v3 even after suppressed mail is
+removed. Readers still accept registry v1/v2; they cannot reconstruct decisions
+an older writer already discarded. Before enabling the policy, upgrade all
+registry writers and projection readers for that state directory. Rollback
+requires a binary that understands v3; there is no automatic downgrade.
+
+Suppression means stored without a wake; it is neither rejection nor loss, read,
+acknowledgement, acceptance, or elevated authority.
+
+A digest consumer uses authenticated `message inbox --state unread --category
+progress --category report --format json` and the normal pagination cursor.
+Inbox/show/wait and local send metadata expose the category, exact
+`recipient_session_id`, `notification_suppressed`, and `created_at`, the existing
+destination admission/storage timestamp. Remote delivery exposes the exact
+recipient address and `persisted_at_epoch`. Suppressed messages remain readable
+through `message show` and acknowledgeable through the unchanged revision CAS;
+forwarding retains its original category and provenance while applying the new
+destination's policy independently.
+
 ### Broker status
 
 Broker projections use `agent-session.coordination-broker.v1` and expose only
@@ -451,14 +514,14 @@ it contains only this fixed set of metadata fields:
 | Field | Meaning and source |
 | --- | --- |
 | `state` | Normalized receipt state: `queued`, `attempting`, `attempt_unknown`, `prompt_submitted`, or `undeliverable`. Submission is not consumption. Invalid stored states normalize to `undeliverable`. |
-| `delivery_state` | `resolved` when no live unread mail remains, `submitted` when the generation has been notified and mail remains, otherwise `queued`. This diagnostic status does not replace the raw submission state. |
+| `delivery_state` | `resolved` when no notification-eligible live unread mail remains, `submitted` when the generation has been notified and eligible mail remains, otherwise `queued`. Suppressed mail remains counted in `live_unread_count`. This diagnostic status does not replace the raw submission state. |
 | `generation`, `attempted_generation`, `notified_generation` | Nonnegative receipt counters; an older attempt remains distinct from a newer queued generation. |
 | `queued_at_epoch` | Current generation queue time, recovered when needed from canonical local unread admission metadata. Remote sender clocks are not used. |
 | `attempted_queued_at_epoch` | Queue time retained for the attempted prompt, independent of newer mail or transcript compaction. |
 | `attempted_at_epoch`, `updated_at_epoch`, `next_attempt_at_epoch` | Attempt, receipt update, and scheduled retry times from the normalized snapshot. Existing normalization may recover a missing update time or requeue a newer generation at observation time. |
 | `last_reason` | Existing stable reason allowlist; unrecognized text becomes `notification-state-invalid`. An absent reason is `null`. |
-| `live_unread_count` | Nonexpired canonical unread messages for the exact recipient incarnation. Remote senders count; read, acknowledged, expired, and other-incarnation messages do not. |
-| `resolved` | `live_unread_count == 0` or `generation <= notified_generation`. Delivery discovery and both delivery boundaries retire drained generations with reason `mailbox-drained`, preserving submission counters and timestamps, without changing mailbox records. Active `attempting` receipts retain their fence until an outcome is recorded. Resolution alone proves neither submission nor acknowledgement. |
+| `live_unread_count` | Nonexpired canonical unread messages for the exact recipient incarnation. Remote senders and suppressed messages count; read, acknowledged, expired, and other-incarnation messages do not. |
+| `resolved` | No notification-eligible live unread mail, or `generation <= notified_generation`. Delivery discovery and both delivery boundaries retire drained generations with reason `mailbox-drained`, preserving submission counters and timestamps, without changing mailbox records. Active `attempting` receipts retain their fence until an outcome is recorded. Resolution alone proves neither submission nor acknowledgement. |
 | `controller_available` | `null`: status performs no controller probe, so availability is unknown. |
 | `source` | `registry: "canonical-local"`; `normalization_applied` reports changes to this incarnation's in-memory receipt snapshot. `queued_at` is `stored-receipt`, `canonical-unread-admission`, or `unavailable`. |
 | `observed_at_epoch` | Time the locked registry snapshot was observed. |
@@ -811,15 +874,16 @@ registry-locked transaction that replaces the broker:
 
 ## Notification ownership
 
-Every successful authenticated send or reply persists the unread message and
-advances a notification generation keyed by the exact
+Every successful authenticated send or reply persists the unread message. Unless
+the destination policy suppresses that admission, it advances a notification
+generation keyed by the exact
 `(recipient_session_id, recipient_incarnation)`. Message creation owns no
 provider side effect. The long-lived serve controller drains queued generations
 on startup, after HTTP registry writes, and while observing activity/registry
 changes, so a direct CLI send made while the controller is absent catches up
 after restart.
 
-Multiple unread messages coalesce into one mailbox-level notification for the
+Multiple notification-eligible unread messages coalesce into one mailbox-level notification for the
 newest pending generation. The bytes are generated solely from one of two
 fixed templates, selected by whether the generation carries a queue time:
 
@@ -908,7 +972,7 @@ creates a new generation and supersedes an older `attempt_unknown` outcome;
 that older receipt cannot acknowledge the new generation. An active
 `attempting` submission retains its side-effect fence until its owner records
 an outcome. Pending reminder queue timestamps never precede the newest live unread
-canonical message admitted to the exact recipient incarnation, including remote
+notification-eligible canonical message admitted to the exact recipient incarnation, including remote
 deliveries and carried guidance. Migrated timestamps are recovered from those
 records; existing upper bounds and original attempted timestamps are retained.
 
@@ -1479,19 +1543,25 @@ local sender identity; local controller guidance does not adopt remote origins.
 Remote replies preserve the original sender incarnation and existing revision
 and maximum-depth (16) checks.
 
-Federation never changes the local coordination registry schema or session runtime.
+Federation preserves the local coordination registry schema unless destination
+notification policy admits suppressed mail; it never changes session runtime.
 Source envelopes live in the private `coordination/federation-journal.json`,
-with supported schemas `agent-session.federation-journal.v1` through v5. The v2
+with supported schemas `agent-session.federation-journal.v1` through v6. The v2
 schema adds `retained` alongside `remote_outbox`, v3 retains category/forwarding
 metadata, v4 retains audit timestamps, and v5 retains quota refusal details as
-described in [Mail audit v1](mail-audit-v1.md). Reads and writes are bounded to
+described in [Mail audit v1](mail-audit-v1.md). The v6 schema retains destination
+suppression receipts. Reads and writes are bounded to
 38,535,168 bytes, 2048 queued envelopes and 16384 identities, with the admission
 reserve described above. A v1 journal is read and rewritten to a supported
 successor on the next write. Stored refusal details select v5; once v5 is stored,
-subsequent writes keep v5 even if those details are no longer present. Rollback
+subsequent writes keep at least v5 even if those details are no longer present. Rollback
 requires a reader/writer that understands the stored version and byte bound;
 releases that do not know v5 fail closed without discarding its metadata. There
 is no automatic downgrade or reconstruction of missing historical details.
+Stored suppression receipts select v6 and later writes keep v6, even after those
+receipts expire. Rollback after that write requires a reader/writer that
+understands v6; a prior strict reader refuses the successor schema rather than
+reading the new retained shape under an old version.
 A dedicated private `coordination/federation-journal.lock` serializes journal
 reads/writes with the same bounded, owner-checked file locking rules as the registry.
 Authorization uses session then registry then journal lock order. Journal-only
@@ -1865,3 +1935,10 @@ routing. Do not let an older registry writer rewrite new metadata: an older
 binary does not preserve fields it does not know. Untagged v1 operation remains
 available during rollout. Release and routing activation belong to the
 coordinator application owner.
+
+The headless HTTP fixture accepts `--previous-policy-agent-session-bin <path>`
+for a federation-aware build from before recipient notification policy. It
+checks that the old registry writer and daemon journal reader refuse the
+successor formats without rewriting bytes, then verifies new readers preserve
+suppression. The separate `--previous-agent-session-bin` option retains the
+older non-federated facade compatibility checks.

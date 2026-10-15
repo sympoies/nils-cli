@@ -63,6 +63,8 @@ pub(crate) struct StoredMessage {
     pub forwarded_at_epoch: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<MessageCategory>,
+    #[serde(default, skip_serializing_if = "super::notification_policy::is_false")]
+    pub notification_suppressed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forwarding: Option<super::forwarding::Provenance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,6 +110,7 @@ pub(crate) struct InboxCursor {
 #[derive(Clone, Debug, Serialize)]
 struct MessageMetadata {
     category: MessageCategory,
+    notification_suppressed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     forwarding: Option<super::forwarding::Provenance>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -975,7 +978,7 @@ fn send_authenticated(
         }
         None => 0,
     };
-    let message = StoredMessage {
+    let mut message = StoredMessage {
         schema_version: MESSAGE_VERSION.to_string(),
         message_id: uuid::Uuid::new_v4().to_string(),
         sender_session_id: sender_session_id.to_string(),
@@ -996,18 +999,15 @@ fn send_authenticated(
         forwarded_from_incarnation: None,
         forwarded_at_epoch: None,
         category,
+        notification_suppressed: false,
         forwarding,
         resume_carry: None,
         body_bytes: body.len(),
         body,
     };
+    let notification =
+        super::notification_policy::admit(context, &mut locked.registry, &mut message, now)?;
     let mut outcome = json_value(metadata(&message))?;
-    let notification = super::notification::schedule(
-        &mut locked.registry,
-        &recipient.id,
-        &recipient_incarnation,
-        now,
-    );
     outcome
         .as_object_mut()
         .expect("message metadata serializes as an object")
@@ -1056,6 +1056,7 @@ pub(super) fn carry_unread_after_verified_resume(
     };
     let machine = crate::board::machine_identity(None, context);
     let mut carried = 0usize;
+    let mut notify = false;
     for message in &mut registry.messages {
         if message.recipient_session_id != session_id
             || message.recipient_incarnation != previous_incarnation
@@ -1090,9 +1091,10 @@ pub(super) fn carry_unread_after_verified_resume(
         });
         message.recipient_incarnation = current_incarnation.to_string();
         message.revision = message.revision.saturating_add(1);
+        notify |= !message.notification_suppressed;
         carried = carried.saturating_add(1);
     }
-    if carried > 0 {
+    if notify {
         let _ = super::notification::schedule(registry, session_id, current_incarnation, now);
     }
     carried
@@ -1185,6 +1187,7 @@ fn body_classification(message: &StoredMessage) -> &'static str {
 fn metadata(message: &StoredMessage) -> MessageMetadata {
     MessageMetadata {
         category: message.category.unwrap_or_default(),
+        notification_suppressed: message.notification_suppressed,
         forwarding: message.forwarding.clone(),
         resume_carry: message.resume_carry.as_ref().map(|carry| ResumeCarryView {
             carry_count: carry.carry_count,
@@ -1682,6 +1685,7 @@ mod tests {
             forwarded_from_incarnation: None,
             forwarded_at_epoch: None,
             category: None,
+            notification_suppressed: false,
             forwarding: None,
             resume_carry: None,
             body_bytes: bytes,
@@ -1991,6 +1995,7 @@ mod tests {
             forwarded_from_incarnation: None,
             forwarded_at_epoch: None,
             category: None,
+            notification_suppressed: false,
             forwarding: None,
             resume_carry: None,
             body_bytes: 6,

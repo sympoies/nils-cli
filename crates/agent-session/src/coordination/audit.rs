@@ -362,7 +362,9 @@ fn snapshot_at(
         };
         if matches!(
             r.schema_version.as_str(),
-            "agent-session.coordination-registry.v1" | "agent-session.coordination-registry.v2"
+            "agent-session.coordination-registry.v1"
+                | "agent-session.coordination-registry.v2"
+                | "agent-session.coordination-registry.v3"
         ) {
             Ok(r)
         } else {
@@ -386,6 +388,7 @@ fn snapshot_at(
                 | "agent-session.federation-journal.v3"
                 | "agent-session.federation-journal.v4"
                 | "agent-session.federation-journal.v5"
+                | "agent-session.federation-journal.v6"
         ) && (j.schema_version != "agent-session.federation-journal.v1" || j.retained.is_empty())
         {
             Ok(j)

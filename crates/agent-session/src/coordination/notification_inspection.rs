@@ -167,10 +167,12 @@ fn inspect(
                 && message.expires_at_epoch > observed_at_epoch
         })
         .count();
+    let eligible_unread =
+        notification::has_live_unread(registry, session, incarnation, observed_at_epoch);
     let queued_at_epoch = timestamp_or_none(receipt.queued_at_epoch);
     Some(NotificationInspection {
         state: receipt.state.clone(),
-        delivery_state: if live_unread_count == 0 {
+        delivery_state: if !eligible_unread {
             "resolved"
         } else if receipt.generation <= receipt.notified_generation {
             "submitted"
@@ -190,7 +192,7 @@ fn inspect(
             .as_deref()
             .map(notification::safe_reason),
         live_unread_count,
-        resolved: live_unread_count == 0 || receipt.generation <= receipt.notified_generation,
+        resolved: !eligible_unread || receipt.generation <= receipt.notified_generation,
         controller_available: None,
         source: ReceiptSource {
             registry: "canonical-local",

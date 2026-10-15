@@ -159,8 +159,9 @@ scans; they must not treat a partial/failed scan as a clean host.
 
 ## Retention and compatibility
 
-Readers accept existing registry v1/v2 and federation journal v1/v2/v3/v4 plus
-`agent-session.federation-journal.v5`, which retains quota refusal details.
+Readers accept registry v1/v2/v3 and federation journal v1 through v6.
+Journal v5 retains quota refusal details; v6 retains destination suppression
+receipts. Registry v3 fences older writers that would erase suppression decisions.
 Missing stores are empty; corrupt/unreadable/unsupported stores produce `partial` with a fixed
 source code, leaving the other source observable. Store reads retain existing
 private-file checks. Federation journal reads are bounded to 38,535,168 bytes,
@@ -178,7 +179,7 @@ project `null`; expiry never serves as a substitute send time. A journal with
 these timestamp fields writes at least v4 so older strict readers fail closed
 rather than silently discarding metadata.
 
-Stored refusal details select v5 and survive terminal compaction. Once a journal is v5, later writes keep v5 even if
+Stored refusal details select v5 and survive terminal compaction. Once a journal is v5, later writes keep at least v5 even if
 no refusal details remain. Rollback after a v5 write requires a reader/writer
 that understands v5 and the 38,535,168-byte bound; older versions fail closed.
 There is no automatic downgrade, timestamp inference or reconstruction of

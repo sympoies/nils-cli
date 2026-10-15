@@ -20,6 +20,7 @@ const JOURNAL_VERSION: &str = "agent-session.federation-journal.v2";
 const EXTENDED_JOURNAL_VERSION: &str = "agent-session.federation-journal.v3";
 const REFUSAL_JOURNAL_VERSION: &str = "agent-session.federation-journal.v5";
 const AUDIT_JOURNAL_VERSION: &str = "agent-session.federation-journal.v4";
+const SUPPRESSION_JOURNAL_VERSION: &str = "agent-session.federation-journal.v6";
 const LEGACY_JOURNAL_VERSION: &str = "agent-session.federation-journal.v1";
 const JOURNAL_FILE: &str = "federation-journal.json";
 const MAX_QUOTA_TEXT_BYTES: usize = 128;
@@ -285,6 +286,10 @@ impl Outbox {
             refusal_details: self.refusal_details.clone(),
             category: self.envelope.category,
             forwarding: self.envelope.forwarding.clone(),
+            notification_suppressed: self
+                .receipt
+                .as_ref()
+                .and_then(|receipt| receipt["notification_suppressed"].as_bool()),
             persisted_at_epoch: self
                 .receipt
                 .as_ref()
@@ -318,19 +323,18 @@ struct Retained {
     refusal_details: Option<QuotaRefusal>,
     persisted_at_epoch: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    notification_suppressed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     category: Option<crate::cli::MessageCategory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     forwarding: Option<super::forwarding::Provenance>,
 }
-impl Retained {
-    /// The receipt drain accepted: exactly these fields, checked against this
-    /// message ID and recipient.
-    fn receipt(&self) -> Option<Value> {
-        self.persisted_at_epoch.map(|persisted| {
-            json!({"schema_version":DELIVERY_VERSION,"message_id":self.message_id,"state":"delivered","recipient":self.recipient,"persisted_at_epoch":persisted})
-        })
-    }
-}
+#[path = "remote_journal_version.rs"]
+mod journal_version;
+
+#[path = "remote_receipt.rs"]
+mod receipt;
+
 // Independent source state; existing registry writers never deserialize or rewrite it.
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -425,7 +429,8 @@ fn read_journal(context: &CliContext) -> Result<Journal, CliError> {
                 JOURNAL_VERSION
                 | EXTENDED_JOURNAL_VERSION
                 | AUDIT_JOURNAL_VERSION
-                | REFUSAL_JOURNAL_VERSION => true,
+                | REFUSAL_JOURNAL_VERSION
+                | SUPPRESSION_JOURNAL_VERSION => true,
                 LEGACY_JOURNAL_VERSION => journal.retained.is_empty(),
                 _ => false,
             };
@@ -464,45 +469,7 @@ impl LockedJournal {
     }
     fn encode(&mut self) -> Result<Vec<u8>, CliError> {
         self.registry.compact(now_epoch());
-        let refusal = self.registry.schema_version == REFUSAL_JOURNAL_VERSION
-            || self
-                .registry
-                .remote_outbox
-                .iter()
-                .any(|entry| entry.refusal_details.is_some())
-            || self
-                .registry
-                .retained
-                .iter()
-                .any(|entry| entry.refusal_details.is_some());
-        let audit = self.registry.schema_version == AUDIT_JOURNAL_VERSION
-            || self.registry.remote_outbox.iter().any(|entry| {
-                entry.last_attempt_at_epoch.is_some() || entry.state_changed_at_epoch.is_some()
-            })
-            || self.registry.retained.iter().any(|entry| {
-                entry.created_at_epoch.is_some()
-                    || entry.last_attempt_at_epoch.is_some()
-                    || entry.state_changed_at_epoch.is_some()
-            });
-        let extended = self.registry.schema_version == EXTENDED_JOURNAL_VERSION
-            || self.registry.remote_outbox.iter().any(|entry| {
-                entry.envelope.category.is_some() || entry.envelope.forwarding.is_some()
-            })
-            || self
-                .registry
-                .retained
-                .iter()
-                .any(|entry| entry.category.is_some() || entry.forwarding.is_some());
-        self.registry.schema_version = if refusal {
-            REFUSAL_JOURNAL_VERSION
-        } else if audit {
-            AUDIT_JOURNAL_VERSION
-        } else if extended {
-            EXTENDED_JOURNAL_VERSION
-        } else {
-            JOURNAL_VERSION
-        }
-        .into();
+        self.registry.schema_version = journal_version::select(&self.registry).into();
         serde_json::to_vec(&self.registry).map_err(|_| journal_error())
     }
     fn write(&self, bytes: &[u8]) -> Result<(), CliError> {
@@ -653,6 +620,7 @@ pub(super) fn relay_reason_code(code: &str) -> Option<&'static str> {
         "message-forward-loop",
         "message-forward-depth-exceeded",
         "message-forward-invalid",
+        "notification-policy-invalid",
     ]
     .into_iter()
     .find(|known| *known == code)
@@ -1684,8 +1652,8 @@ fn receive_admitted(
         now,
         now_millis,
     )?;
-    let receipt = json!({"schema_version":DELIVERY_VERSION,"message_id":envelope.message_id,"state":"delivered","recipient":envelope.to,"persisted_at_epoch":now});
-    let message = super::mailbox::StoredMessage {
+    let mut receipt = json!({"schema_version":DELIVERY_VERSION,"message_id":envelope.message_id,"state":"delivered","recipient":envelope.to,"persisted_at_epoch":now});
+    let mut message = super::mailbox::StoredMessage {
         schema_version: "agent-session.message.v1".into(),
         message_id: envelope.message_id.clone(),
         sender_session_id: envelope.from.stored_id(),
@@ -1706,17 +1674,17 @@ fn receive_admitted(
         forwarded_from_incarnation: None,
         forwarded_at_epoch: None,
         category: envelope.category,
+        notification_suppressed: false,
         forwarding: envelope.forwarding,
         resume_carry: None,
         body_bytes: envelope.body.len(),
         body: envelope.body,
     };
-    let notification = super::notification::schedule(
-        &mut locked.registry,
-        &recipient.id,
-        &recipient_incarnation,
-        now,
-    );
+    let notification =
+        super::notification_policy::admit(context, &mut locked.registry, &mut message, now)?;
+    if message.notification_suppressed {
+        receipt["notification_suppressed"] = json!(true);
+    }
     let mut local_outcome = super::mailbox::message_projection(&message);
     local_outcome["notification"] = serde_json::to_value(notification).expect("notification");
     locked.registry.messages.push(message);
@@ -1993,6 +1961,10 @@ fn receive_replay(
         )
     })
 }
+
+#[cfg(test)]
+#[path = "notification_policy_tests.rs"]
+mod notification_policy_tests;
 
 #[cfg(test)]
 #[path = "remote_inbox_regressions.rs"]
@@ -3091,6 +3063,7 @@ mod tests {
         assert!(
             sender_address(&super::super::mailbox::StoredMessage {
                 category: None,
+                notification_suppressed: false,
                 forwarding: None,
 
                 sender_session_id: "remote:malformed".into(),
@@ -3553,6 +3526,7 @@ mod tests {
                 .messages
                 .push(super::super::mailbox::StoredMessage {
                     category: None,
+                    notification_suppressed: false,
                     forwarding: None,
 
                     message_id: uuid::Uuid::new_v4().to_string(),

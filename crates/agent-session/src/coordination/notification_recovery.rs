@@ -23,11 +23,11 @@ pub(super) fn resume_new_generation(receipt: &mut NotificationReceipt, now: i64)
 /// rewrite the timestamp retained for reconciliation of an existing attempt.
 pub(super) fn refresh(registry: &mut Registry, now: i64) {
     let mut newest_by_recipient = std::collections::BTreeMap::new();
-    for message in registry
-        .messages
-        .iter()
-        .filter(|message| message.state == "unread" && message.expires_at_epoch > now)
-    {
+    for message in registry.messages.iter().filter(|message| {
+        !message.notification_suppressed
+            && message.state == "unread"
+            && message.expires_at_epoch > now
+    }) {
         let queued_at = message
             .forwarded_at_epoch
             .unwrap_or(message.created_at_epoch);
@@ -90,7 +90,11 @@ pub(super) fn resolve_drained_generations(registry: &mut Registry, now: i64) -> 
     let live: std::collections::BTreeSet<_> = registry
         .messages
         .iter()
-        .filter(|message| message.state == "unread" && message.expires_at_epoch > now)
+        .filter(|message| {
+            !message.notification_suppressed
+                && message.state == "unread"
+                && message.expires_at_epoch > now
+        })
         .map(|message| {
             (
                 message.recipient_session_id.as_str(),
