@@ -557,7 +557,7 @@ pub fn provision(context: &CliContext, record: &SessionRecord) -> Result<PathBuf
     broker::provision(context, record)
 }
 
-pub(crate) use broker::{PreviousRuntimeEvidence, capture_previous_runtime};
+pub(crate) use broker::{PreviousRuntimeEvidence, capture_stopped_runtime};
 
 pub(crate) fn provision_with_previous(
     context: &CliContext,
