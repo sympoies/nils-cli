@@ -1062,6 +1062,15 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   previously open identity; omissions fail as `review_observation_incomplete`
   with all missing identities and leave the ledger unchanged. Changing an open
   finding's blocking bit on the same head still fails closed.
+- Ordinary observations support delta input: omitted terminal findings retain
+  their recorded dispositions and lifecycle metadata. Every previously open
+  finding must be included, on both unchanged and new heads. Full-set input may
+  reassert an already `fixed` finding at the same head without advancing its
+  lifecycle counters; thread references are merged and deduplicated. For example,
+  after F1 is fixed at head H, either `[F2 open]` or `[F1 fixed, F2 open]` at H
+  retains F1 and admits F2. An identical full-set retry appends nothing. First
+  marking an open finding `fixed` still requires a repaired head; the error
+  explains that already fixed findings can instead be omitted or repeated.
 - To repair a historical omission error, pass an explicit correction envelope
   through the existing `observe --findings-file` path and an exact
   `--expected-state` tip. `--auto-state` cannot admit a correction.
@@ -1172,7 +1181,7 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   reading the new record kind; designated reviewer rebinding remains required
   when the assigned head changes.
 - An observation can only be appended at the current provider head, so history
-  cannot be backfilled, and a `fixed` disposition requires a repaired head.
+  cannot be backfilled, and first marking a finding `fixed` requires a repaired head.
   Together those force the observation to precede the repair push: observe the
   reviewed head as `open`, push the repair, observe the repaired head as
   `fixed`, then merge at that head. Doing every repair first and then trying to
