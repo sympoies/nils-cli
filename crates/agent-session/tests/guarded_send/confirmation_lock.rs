@@ -10,7 +10,7 @@ pub(super) fn record_available(session_dir: &Path) -> bool {
     unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
 }
 
-pub(super) fn ingest_after_lock(session_dir: &Path, replace: bool) -> bool {
+pub(super) fn ingest_after_lock(session_dir: &Path, mode: &str) -> bool {
     if !record_available(session_dir) {
         return false;
     }
@@ -25,8 +25,10 @@ pub(super) fn ingest_after_lock(session_dir: &Path, replace: bool) -> bool {
     let path = session_dir.join("session.json");
     let mut record: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     record["title"] = serde_json::json!("provider ingress committed");
-    if replace {
+    if mode == "hook-lock-runtime-replaced" {
         record["runtime"]["launch_id"] = serde_json::json!("replacement-runtime");
+    }
+    if mode == "hook-lock-provider-replaced" {
         record["provider_resume"]["session_id"] = serde_json::json!("replacement-provider");
     }
     fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -55,10 +57,19 @@ fn native_confirmation_allows_provider_ingress_after_ack_without_overwriting_it(
 }
 
 #[test]
-fn native_identity_replaced_during_confirmation_never_returns_a_success_receipt() {
+fn native_runtime_replaced_during_confirmation_never_returns_a_success_receipt() {
+    refuses_replaced_identity("hook-lock-runtime-replaced");
+}
+
+#[test]
+fn native_provider_session_replaced_during_confirmation_never_returns_a_success_receipt() {
+    refuses_replaced_identity("hook-lock-provider-replaced");
+}
+
+fn refuses_replaced_identity(mode: &'static str) {
     let fixture = Fixture::new("codex");
     let _lease = fixture.bind_codex();
-    let server = Server::start(&fixture, "hook-lock-replaced");
+    let server = Server::start(&fixture, mode);
     let value = fixture.refused(&fixture.send(GUARDS), "send-native-unconfirmed");
     assert_eq!(value["error"]["details"]["acknowledged"], true);
     assert_eq!(value["error"]["details"]["submitted"], true);

@@ -81,7 +81,7 @@ impl Server {
                                     let claimed = fs::read_dir(&claim_dir).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("send-key-"));
                                     let busy = mode == "busy" || (mode == "late-busy" && read_count >= 3)
                                         || (mode == "busy-after-claim" && claimed);
-                                    let submitted = if matches!(mode, "hook-lock" | "hook-lock-replaced") && !confirmation_lock::ingest_after_lock(&claim_dir, mode == "hook-lock-replaced") { None } else { submitted };
+                                    let submitted = if mode.starts_with("hook-lock") && !confirmation_lock::ingest_after_lock(&claim_dir, mode) { None } else { submitted };
                                     let submitted = if mode == "history-lag" && calls.iter().filter(|r| r["method"] == "thread/read" && r["params"]["includeTurns"] == true).count() == 1 { None } else { submitted };
                                     let mut turns = submitted.map_or(json!([]), |r| json!([{
                                         "id":"turn-one", "status":"inProgress", "items":[{
@@ -98,7 +98,7 @@ impl Server {
                                     json!({"thread":{"id":if mode == "wrong-thread" {"other-thread"} else {"provider-one"}, "status":{"type":if busy {"active"} else {"idle"}}, "turns":turns}})
                                 }
                                 "turn/start" => {
-                                    if matches!(mode, "hook-lock" | "hook-lock-replaced") {
+                                    if mode.starts_with("hook-lock") {
                                         assert!(!confirmation_lock::record_available(&claim_dir), "admission lock must cover dispatch");
                                     }
                                     if mode == "disconnect" { break; }
