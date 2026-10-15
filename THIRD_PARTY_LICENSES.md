@@ -3,8 +3,8 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `6ed10ecd7ead49027e25dd4eaa6731b4987d770317d97a3e64c5300623849226`
-- Third-party crates (`source != null`): 505
+- Cargo.lock SHA256: `c41a0cd2daa17da93f7071d5b204efa70fab373f80238791d3620a215fca37ca`
+- Third-party crates (`source != null`): 504
 - Workspace crates (`source == null`, excluded below): 42
 
 ## Notes
@@ -25,8 +25,8 @@ This file documents third-party Rust crate licenses used by this workspace.
 | MIT/Apache-2.0 | 15 |
 | Unlicense OR MIT | 9 |
 | ISC | 6 |
-| Apache-2.0 | 5 |
 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 5 |
+| Apache-2.0 | 4 |
 | MIT OR Apache-2.0 OR Zlib | 4 |
 | Apache-2.0 OR ISC OR MIT | 3 |
 | BSD-3-Clause | 3 |
@@ -268,12 +268,11 @@ This file documents third-party Rust crate licenses used by this workspace.
 | matchit | 0.8.4 | MIT AND BSD-3-Clause | crates.io |
 | memchr | 2.8.2 | Unlicense OR MIT | crates.io |
 | memmap2 | 0.9.11 | MIT OR Apache-2.0 | crates.io |
-| memo-map | 0.3.3 | Apache-2.0 | crates.io |
 | memoffset | 0.9.1 | MIT | crates.io |
 | micromap | 0.3.0 | MIT | crates.io |
 | mime | 0.3.17 | MIT OR Apache-2.0 | crates.io |
 | mime_guess | 2.0.5 | MIT | crates.io |
-| minijinja | 2.24.0 | Apache-2.0 | crates.io |
+| minijinja | 3.0.0 | Apache-2.0 | crates.io |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | crates.io |
 | mio | 1.2.1 | MIT | crates.io |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | crates.io |

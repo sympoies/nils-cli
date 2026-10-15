@@ -3,8 +3,8 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `6ed10ecd7ead49027e25dd4eaa6731b4987d770317d97a3e64c5300623849226`
-- Third-party crates (`source != null`): 505
+- Cargo.lock SHA256: `c41a0cd2daa17da93f7071d5b204efa70fab373f80238791d3620a215fca37ca`
+- Third-party crates (`source != null`): 504
 
 ## Notice Extraction Policy
 
@@ -1865,14 +1865,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### memo-map 0.3.3
-
-- License: `Apache-2.0`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE`
-
 ### memoffset 0.9.1
 
 - License: `MIT`
@@ -1906,7 +1898,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### minijinja 2.24.0
+### minijinja 3.0.0
 
 - License: `Apache-2.0`
 - Source: `crates.io`
