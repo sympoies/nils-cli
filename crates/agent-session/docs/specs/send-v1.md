@@ -91,13 +91,10 @@ padding or a hidden draft cannot be discarded to make this check pass.
 
 ## Native Codex continuation profile
 
-A guarded supported app-server text submission with exactly `--key enter`
-uses native dispatch, including identity-only or idempotency-only guards. This
-route always enforces idle and empty-composer observations, even when the
-caller did not explicitly request those two flags. It avoids leaving wrapped
-or opaque pasted input unsent when the TUI cannot expose exact bytes. Unguarded
-sends, key-only input and other key sequences retain terminal transport. There
-is no terminal fallback after failed native admission or delivery.
+A supported app-server text submission with exactly `--key enter` and both
+`--require-idle` and `--require-empty-composer` uses native dispatch. Partial
+flag selections retain their existing terminal transport; this is route
+selection, never a fallback after failed native admission or delivery.
 
 The native path preserves terminal runtime markers, durable provider identity,
 pending-ingress and attention checks, and the independently observable empty

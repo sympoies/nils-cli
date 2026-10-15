@@ -100,9 +100,6 @@ elif command == 'capture-pane':
     # Native capture trims occupied spaces without -N; -T excludes unused cells.
     occupied = text if '-N' in args else text.rstrip(' ')
     padding = ' ' * 8 if '-N' in args and '-T' not in args else ''
-    if text and (root / 'wrapped-capture').exists():
-        print((root / 'wrapped-capture').read_text())
-        sys.exit(0)
     native = (root / 'native-layout').exists()
     rows = ''
     footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'
