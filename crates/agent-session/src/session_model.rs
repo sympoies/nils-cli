@@ -190,7 +190,7 @@ pub(crate) fn observe_claude_hook(
     )
 }
 
-fn provider_session_matches(record: &SessionRecord, session_id: &str) -> bool {
+pub(crate) fn provider_session_matches(record: &SessionRecord, session_id: &str) -> bool {
     let Some(resume) = record.provider_resume.as_ref() else {
         return false;
     };

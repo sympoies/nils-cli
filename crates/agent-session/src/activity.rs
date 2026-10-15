@@ -59,7 +59,10 @@ pub use state_view::state_for_view;
 pub(crate) mod shadow;
 mod stream_shadow_observation;
 
-use provider::{normalize_provider_hook, normalize_provider_notification};
+pub(crate) use provider::ingest_codex_app_server_completion;
+use provider::{
+    normalize_provider_hook, normalize_provider_notification, provider_notification_metadata,
+};
 
 pub(crate) const TURN_EVENT_VERSION: &str = "agent-session.turn-event.v1";
 const CODEX_PROTOCOL_TURN_EVENT_VERSION: &str = "agent-session.turn-event.v2";
@@ -3327,20 +3330,7 @@ fn ingest_provider_notification(
     else {
         return Ok(ProviderNotificationIngest::Ignored);
     };
-    if payload.len() as u64 > MAX_EVENT_BYTES {
-        return Err(CliError::data(
-            "provider-notification-too-large",
-            "provider notification payload exceeds the local metadata parser limit",
-            None,
-        ));
-    }
-    let raw: Value = serde_json::from_str(payload).map_err(|_| {
-        CliError::data(
-            "provider-notification-invalid",
-            "provider notification payload is not valid JSON",
-            None,
-        )
-    })?;
+    let raw = provider_notification_metadata(payload)?;
     let Some(event) = normalize_provider_notification(agent, &runtime_id, &raw)? else {
         return Ok(ProviderNotificationIngest::Ignored);
     };

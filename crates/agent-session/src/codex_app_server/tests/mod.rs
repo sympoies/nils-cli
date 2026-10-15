@@ -263,7 +263,7 @@ async fn settle_projection(projection: &mut ProxyProjection) {
     }
 }
 
-fn record_with_runtime(id: &str, socket: &Path) -> SessionRecord {
+pub(super) fn record_with_runtime(id: &str, socket: &Path) -> SessionRecord {
     SessionRecord {
         schema_version: crate::SESSION_DOCUMENT_VERSION.to_string(),
         id: id.to_string(),

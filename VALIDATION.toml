@@ -1,0 +1,12 @@
+# Finish-line validation contract. agent-hook and the agent-runtime-kit
+# finish-line hooks block a turn that edited files until these commands pass.
+
+# Finish-line validation contract: code edits in this workspace must run the
+# local-fast CI gate before a project-dev task is declared done. The Stop hook
+# blocks finishing until this command has run since the last edit; waivable via
+# AGENT_RUNTIME_VALIDATION_WAIVER=1.
+[[validation]]
+context = "project-dev"
+commands = ["bash scripts/ci/nils-cli-checks-entrypoint.sh --local-fast"]
+marker = ".cache/agent-validation/project-dev.ok"
+description = "Run the nils-cli local-fast CI gate (fmt, clippy, workspace tests, docs/parity audits) before declaring a project-dev task done."

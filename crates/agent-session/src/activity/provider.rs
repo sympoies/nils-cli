@@ -1,5 +1,10 @@
 use super::*;
 
+// Codex passes its whole completion JSON, including conversation content that
+// grows with the session, as one notify argument. The raw cap only bounds the
+// parse; the extracted metadata is still held to MAX_EVENT_BYTES.
+const MAX_PROVIDER_NOTIFICATION_RAW_BYTES: usize = 8 * 1024 * 1024;
+
 pub(super) fn normalize_provider_hook(
     agent: AgentKind,
     event_override: Option<&str>,
@@ -255,4 +260,85 @@ pub(super) fn normalize_provider_notification(
         source_kind: SourceKind::ProviderHook,
         provider_time: None,
     }))
+}
+
+/// Only the identity fields a completion needs; message content is skipped by
+/// the parser instead of being retained.
+#[derive(Default, Deserialize, Serialize)]
+struct ProviderNotificationMetadata {
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    kind: Option<Value>,
+    #[serde(rename = "thread-id", default, skip_serializing_if = "Option::is_none")]
+    thread_id: Option<Value>,
+    #[serde(rename = "turn-id", default, skip_serializing_if = "Option::is_none")]
+    turn_id: Option<Value>,
+}
+
+pub(super) fn provider_notification_metadata(payload: &str) -> Result<Value, CliError> {
+    let too_large = || {
+        CliError::data(
+            "provider-notification-too-large",
+            "provider notification metadata exceeds the local metadata parser limit",
+            None,
+        )
+    };
+    if payload.len() > MAX_PROVIDER_NOTIFICATION_RAW_BYTES {
+        return Err(too_large());
+    }
+    let metadata = serde_json::from_str::<ProviderNotificationMetadata>(payload)
+        .or_else(|_| {
+            serde_json::from_str::<serde::de::IgnoredAny>(payload)
+                .map(|_| ProviderNotificationMetadata::default())
+        })
+        .map_err(|_| {
+            CliError::data(
+                "provider-notification-invalid",
+                "provider notification payload is not valid JSON",
+                None,
+            )
+        })?;
+    let raw = serde_json::to_value(metadata).map_err(|_| too_large())?;
+    if raw.to_string().len() as u64 > MAX_EVENT_BYTES {
+        return Err(too_large());
+    }
+    Ok(raw)
+}
+
+/// A successful app-server `turn/completed` is the same authoritative evidence
+/// as the notify completion; the shared reducer binds it to the open turn and
+/// de-duplicates it against notify.
+pub(crate) fn ingest_codex_app_server_completion(
+    context: &CliContext,
+    id: &str,
+    runtime_id: &str,
+    thread_id: &str,
+    turn_id: &str,
+) -> Result<ActivityResult, CliError> {
+    let provider_session_id =
+        projected_provider_identifier(runtime_id, AgentKind::Codex, "session", thread_id)?;
+    let provider_turn_id =
+        projected_provider_identifier(runtime_id, AgentKind::Codex, "turn", turn_id)?;
+    ingest_event_retry_with_admission(
+        context,
+        id,
+        TurnEvent {
+            schema_version: TURN_EVENT_VERSION.to_string(),
+            event_id: format!("codex-app-server-completed:{provider_turn_id}"),
+            runtime_id: runtime_id.to_string(),
+            provider: AgentKind::Codex.as_str().to_string(),
+            provider_session_id: Some(provider_session_id),
+            provider_turn_id: Some(provider_turn_id),
+            kind: TurnEventKind::TurnCompleted,
+            failure_reason: None,
+            attention_id: None,
+            attention_kind: None,
+            attention_correlation_ambiguous: false,
+            attention_correlation_exact: false,
+            completion_candidate: false,
+            confidence: Confidence::Authoritative,
+            source_kind: SourceKind::ProviderHook,
+            provider_time: None,
+        },
+        EventAdmission::CodexProtocol,
+    )
 }

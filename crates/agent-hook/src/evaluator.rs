@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::adapter::hook_deadline;
 use crate::contract::{
     effective_mode_for_product, matcher_expression_matches, runtime_handler_filename,
 };
@@ -1649,9 +1650,8 @@ fn run_session_activity(
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        // Optional metadata runs after mandatory activity, with its own deadline
-        // and no charge against enforcement's child/output budget.
-        let _ = run_bounded(command, &metadata, Duration::from_millis(250), 0, false);
+        // Runs after mandatory activity, outside enforcement's child/output budget.
+        let _ = run_bounded(command, &metadata, hook_deadline(&metadata), 0, false);
     }
     Ok(())
 }
