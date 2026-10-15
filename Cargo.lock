@@ -1276,9 +1276,9 @@ dependencies = [
 
 [[package]]
 name = "graphql-tools"
-version = "0.4.2"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9513662272317e955f5d72b13b4015ba31c84d68225f4b5d0a2ad6ffceec1258"
+checksum = "b1a3411a9bf840558955e00407c120650b249ad70c92076dff4cdba3206fd93b"
 dependencies = [
  "combine",
  "itoa",
@@ -1288,6 +1288,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "thiserror",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -5498,6 +5499,12 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "yansi"
