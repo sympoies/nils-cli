@@ -139,7 +139,8 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
   anything is typed.
 - Before the exit command, the restart fences the incarnation: new
   notification attempts and `send` input (`session-restarting`) are refused
-  until the old runtime is stopped.
+  until the old runtime is stopped. A second restart of the session while
+  one is in progress returns `restart-in-progress`.
 - An admitted session gets the provider's own exit command (`/exit` for
   Claude Code, `/quit` for Codex). A provider still running after
   `--stop-timeout` seconds is left running with `restart-exit-timeout`; only
@@ -148,7 +149,8 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
   overrides identity: a pane that does not prove the session's runtime returns
   `restart-identity-unverified`, and an in-progress notification still refuses.
 - A runtime another operation replaced during the exit wait is kept and
-  reported as `restart-superseded`.
+  reported as `restart-superseded`. A session record another writer holds for
+  longer than `--stop-timeout` after the exit returns `restart-stop-failed`.
 - The stopped incarnation is retired before the relaunch; a heartbeat that
   cannot be proven stale is waited out for a bounded time.
 - The relaunch resumes the exact provider resume metadata, then waits up to

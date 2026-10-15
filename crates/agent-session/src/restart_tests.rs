@@ -27,7 +27,8 @@ fn executable(path: &Path, body: &str) -> PathBuf {
 /// opens, so the prior incarnation's beat is the one on disk while a resume
 /// provisions coordination. An Enter key stands in for the provider exiting on
 /// its exit command unless `hold-exit` exists, a `fail-launch` marker makes the
-/// next launch fail, and a `stall` marker stalls pane identity observations.
+/// next launch fail, a `stall` marker stalls pane identity observations and a
+/// `stall-status` marker stalls `has-session`.
 fn fake_tmux(root: &Path) -> PathBuf {
     let script = format!(
         r#"#!/bin/sh
@@ -62,6 +63,7 @@ case "$1" in
     printf '%s\t%s\t%s\n' '$77' '%77' "$(cat "$root/pane")"
     ;;
   display-message) printf '%s\t%s\t%s\n' '$77' '%77' "$(cat "$root/pane")" ;;
+  has-session) [ -f "$root/stall-status" ] && {{ : > "$root/status-stalled"; sleep 5; }} ;;
   show-environment) [ -f "$root/stall" ] && sleep 3; grep "^$4=" "$root/env" || exit 1 ;;
   capture-pane) cat "$root/screen" ;;
   send-keys) case " $* " in *" Enter "*) [ -f "$root/hold-exit" ] || stop_pane ;; esac ;;
@@ -168,6 +170,12 @@ fn restart_args(tmux: &Path, force: bool, ready_timeout: u64) -> RestartArgs {
         tmux_bin: Some(tmux.to_path_buf()),
         format: nils_common::cli_contract::OutputFormat::Json,
     }
+}
+
+/// Fail the next post-launch persistence of restarts in `context` only.
+fn arm_post_launch_failure(context: &CliContext) {
+    fs::create_dir_all(&context.state_dir).unwrap();
+    fs::write(context.state_dir.join(FAIL_POST_LAUNCH), "").unwrap();
 }
 
 fn details(error: &CliError) -> Value {
@@ -637,10 +645,9 @@ fn post_launch_persistence_failure_keeps_the_receipt() {
     let tmux = fake_tmux(tmp.path());
     let old_launch = running_session(&context, &tmux);
     session_ready(&context, &old_launch);
-    FAIL_POST_LAUNCH.store(true, std::sync::atomic::Ordering::SeqCst);
+    arm_post_launch_failure(&context);
 
     let error = restart(&context, &restart_args(&tmux, false, 1)).unwrap_err();
-    FAIL_POST_LAUNCH.store(false, std::sync::atomic::Ordering::SeqCst);
 
     assert_eq!(error.code(), "restart-post-launch-failed");
     let details = details(&error);
@@ -682,4 +689,166 @@ fn force_never_overrides_a_runtime_identity_mismatch() {
     assert_eq!(launch_id(&record).as_deref(), Some(launch.as_str()));
     assert_eq!(crate::session_status(&context, &tmux, &record), "running");
     assert!(!log(tmp.path()).contains("if-shell"), "{}", log(tmp.path()));
+}
+
+/// The readiness status probe is capped by --ready-timeout as well: a stalled
+/// tmux has-session must not hold the restart for the fixed probe timeout.
+#[test]
+fn ready_timeout_bounds_a_stalled_status_probe() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let old_launch = running_session(&context, &tmux);
+    session_ready(&context, &old_launch);
+    let root = tmp.path().to_path_buf();
+    // Stall has-session once the relaunch is recorded and readiness begins.
+    let staller = on_relaunch(&context, &old_launch, move |context, launch| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline
+            && !load_session_record(context, ID)
+                .ok()
+                .and_then(|record| record.extra.get(PROVIDER_VERSION_KEY).cloned())
+                .is_some_and(|recorded| recorded["launch_id"] == launch)
+        {
+            thread::sleep(Duration::from_millis(5));
+        }
+        fs::write(root.join("stall-status"), "").unwrap();
+    });
+
+    let error = restart(&context, &restart_args(&tmux, false, 1)).unwrap_err();
+    staller.join().unwrap();
+
+    assert_eq!(error.code(), "restart-not-ready");
+    assert!(
+        tmp.path().join("status-stalled").exists(),
+        "{}",
+        log(tmp.path())
+    );
+    let receipt = &details(&error)["receipt"];
+    let relaunched: Timestamp = receipt["relaunched_at"].as_str().unwrap().parse().unwrap();
+    let finished: Timestamp = receipt["finished_at"].as_str().unwrap().parse().unwrap();
+    let waited = finished.duration_since(relaunched).as_secs_f64();
+    assert!(waited < 2.5, "readiness waited {waited}s past a 1s timeout");
+}
+
+/// A lifecycle writer that holds the session record past the stop timeout
+/// after the exit leaves the restart with its receipt and a recovery command.
+#[test]
+fn post_exit_record_lock_contention_returns_the_receipt() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let launch = running_session(&context, &tmux);
+    session_ready(&context, &launch);
+    fs::write(tmp.path().join("hold-exit"), "").unwrap();
+    let holder = {
+        let context = context.clone();
+        let root = tmp.path().to_path_buf();
+        thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !log(&root).contains("send-keys") && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(20));
+            }
+            let _lock = crate::acquire_session_record_lock(&context, ID).unwrap();
+            // The provider leaves while the record stays held.
+            let pane = fs::read_to_string(root.join("pane")).unwrap();
+            let _ = ProcessCommand::new("kill")
+                .arg("--")
+                .arg(format!("-{}", pane.trim()))
+                .status();
+            fs::remove_file(root.join("running")).unwrap();
+            thread::sleep(Duration::from_secs(3));
+        })
+    };
+
+    let mut args = restart_args(&tmux, false, 1);
+    args.stop_timeout = 1;
+    let error = restart(&context, &args).unwrap_err();
+    holder.join().unwrap();
+
+    assert_eq!(error.code(), "restart-stop-failed", "{error:?}");
+    let details = details(&error);
+    assert_eq!(details["cause"], "session-record-lock-timeout");
+    assert_eq!(details["receipt"]["outcome"], "stop-failed");
+    assert_eq!(
+        details["receipt"]["old"]["session_incarnation"],
+        launch.as_str()
+    );
+    assert_eq!(
+        details["recovery"],
+        format!("agent-session glance {ID}").as_str()
+    );
+}
+
+/// A second restart that overlaps the first is refused and leaves the first
+/// restart's fence in place, so input stays fenced until the first ends.
+#[test]
+fn overlapping_restart_is_refused_and_keeps_the_first_fence() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let launch = running_session(&context, &tmux);
+    session_ready(&context, &launch);
+    let candidate = queued_notification(&context, tmp.path());
+    fs::write(tmp.path().join("hold-exit"), "").unwrap();
+    let first = {
+        let context = context.clone();
+        let mut args = restart_args(&tmux, false, 1);
+        args.stop_timeout = 3;
+        thread::spawn(move || restart(&context, &args).map(|_| ()))
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !log(tmp.path()).contains("send-keys") && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let mut args = restart_args(&tmux, false, 1);
+    args.stop_timeout = 1;
+    let second = restart(&context, &args).unwrap_err();
+
+    assert_eq!(second.code(), "restart-in-progress");
+    assert!(!try_notification(&context, &candidate));
+    let sent = crate::send::send_to_session(
+        &context,
+        crate::cli::SendArgs {
+            id: ID.to_string(),
+            text: Some("new work".to_string()),
+            text_stdin: false,
+            keys: vec![SpecialKey::Enter],
+            allow_blocked: false,
+            guards: GuardArgs::default(),
+            tmux_bin: Some(tmux.clone()),
+            format: nils_common::cli_contract::OutputFormat::Json,
+        },
+    );
+    assert_eq!(sent.unwrap_err().code(), "session-restarting");
+    let first = first.join().unwrap().unwrap_err();
+    assert_eq!(first.code(), "restart-exit-timeout");
+    assert_eq!(log(tmp.path()).matches("paste-buffer").count(), 1);
+    assert!(try_notification(&context, &candidate));
+}
+
+/// The post-launch failpoint is scoped to its state directory, so a restart
+/// elsewhere in the same test process is unaffected.
+#[test]
+fn post_launch_failpoint_is_scoped_to_its_state_dir() {
+    let armed = tempfile::TempDir::new().unwrap();
+    arm_post_launch_failure(&context(armed.path()));
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let old_launch = running_session(&context, &tmux);
+    session_ready(&context, &old_launch);
+    let watcher = on_relaunch(&context, &old_launch, |context, launch| {
+        session_ready(context, launch);
+    });
+
+    let receipt = restart(&context, &restart_args(&tmux, false, 30));
+    watcher.join().unwrap();
+
+    assert_eq!(receipt.map(|receipt| receipt.outcome).ok(), Some("ready"));
 }

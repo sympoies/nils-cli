@@ -186,13 +186,17 @@ pub(crate) fn fenced(registry_path: &Path, session_id: &str, incarnation: &str) 
     let Ok(fence) = std::fs::read_to_string(fence_path(state_dir, session_id)) else {
         return false;
     };
-    let mut fields = fence.split_whitespace();
-    fields.next() == Some(incarnation)
-        && fields
-            .next()
-            .and_then(|pid| pid.parse::<libc::pid_t>().ok())
-            // SAFETY: signal 0 only probes whether the owning restart is alive.
-            .is_some_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
+    fence.split_whitespace().next() == Some(incarnation) && owner_alive(&fence)
+}
+
+/// Whether the restart that wrote `fence` is still running.
+fn owner_alive(fence: &str) -> bool {
+    fence
+        .split_whitespace()
+        .nth(1)
+        .and_then(|pid| pid.parse::<libc::pid_t>().ok())
+        // SAFETY: signal 0 only probes whether the owning restart is alive.
+        .is_some_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
 }
 
 /// Refuse input to an incarnation a restart is stopping.
@@ -211,12 +215,18 @@ pub(crate) fn ensure_not_fenced(
     }
 }
 
-/// Owns the restart fence of one incarnation; dropping it releases the fence.
-struct RestartFence(PathBuf);
+/// One restart's fence of an incarnation; dropping it releases the fence
+/// while it still carries this restart's owner token.
+struct RestartFence {
+    context: CliContext,
+    path: PathBuf,
+    owner: String,
+}
 
 impl RestartFence {
-    /// Under the registry lock notification attempts take, refuse an exact
-    /// notification submission in progress and fence any later attempt.
+    /// Under the registry lock notification attempts take, refuse a live
+    /// restart of the session or an exact notification submission in
+    /// progress, and fence any later attempt.
     fn acquire(
         context: &CliContext,
         record: &SessionRecord,
@@ -229,24 +239,39 @@ impl RestartFence {
             launch,
         )?;
         let path = fence_path(&context.state_dir, &record.id);
-        crate::write_private_file(
-            &path,
-            format!("{launch} {}\n", std::process::id()).as_bytes(),
-        )?;
+        if std::fs::read_to_string(&path).is_ok_and(|fence| owner_alive(&fence)) {
+            return Err(refusal(
+                "restart-in-progress",
+                "another restart is stopping this session",
+                record,
+            ));
+        }
+        let owner = format!("{launch} {} {}\n", std::process::id(), uuid::Uuid::new_v4());
+        crate::write_private_file(&path, owner.as_bytes())?;
         drop(locked);
-        Ok(Self(path))
+        Ok(Self {
+            context: context.clone(),
+            path,
+            owner,
+        })
     }
 }
 
 impl Drop for RestartFence {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        let Ok(_locked) = coordination::lock_registry_for_lifecycle(&self.context) else {
+            return;
+        };
+        if std::fs::read_to_string(&self.path).is_ok_and(|fence| fence == self.owner) {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
+/// A marker in a test's state directory that fails its next post-launch
+/// persistence.
 #[cfg(test)]
-pub(super) static FAIL_POST_LAUNCH: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+pub(super) const FAIL_POST_LAUNCH: &str = "restart-fail-post-launch";
 
 fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError> {
     let started_at = now();
@@ -301,7 +326,23 @@ fn restart(context: &CliContext, args: &RestartArgs) -> Result<Receipt, CliError
         thread::sleep(POLL_INTERVAL);
     }
 
-    let record_lock = crate::acquire_session_record_lock(context, &expected.id)?;
+    let record_lock = match crate::acquire_session_record_lock_timed(
+        context,
+        &expected.id,
+        Duration::from_secs(args.stop_timeout),
+    ) {
+        Ok(lock) => lock,
+        Err(cause) => {
+            return Err(failure(
+                "restart-stop-failed",
+                "the session record could not be locked to stop the runtime",
+                receipt,
+                "stop-failed",
+                Some(cause.code()),
+                glance,
+            ));
+        }
+    };
     let mut record = match load_session_record(context, &expected.id).and_then(|record| {
         crate::ensure_same_session_identity(&expected, &record)?;
         Ok(record)
@@ -431,7 +472,7 @@ fn record_provider_version(
     launch: &str,
 ) -> Result<SessionRecord, CliError> {
     #[cfg(test)]
-    if FAIL_POST_LAUNCH.load(std::sync::atomic::Ordering::SeqCst) {
+    if context.state_dir.join(FAIL_POST_LAUNCH).exists() {
         return Err(CliError::runtime("session-write-failed", "injected", None));
     }
     let mut relaunched = load_session_record(context, id)?;
@@ -561,7 +602,7 @@ fn await_ready(
     };
     let mut cause = "ready-timeout".to_string();
     while Instant::now() < deadline {
-        if crate::session_status(context, tmux, record) == "stopped" {
+        if status_before(tmux, record, deadline) == "stopped" {
             return Err("provider-exited".to_string());
         }
         let admission = Admission {
@@ -579,6 +620,20 @@ fn await_ready(
         thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
     }
     Err(cause)
+}
+
+/// `session_status` with its tmux probe capped by the time left before
+/// `deadline`.
+fn status_before(tmux: &Path, record: &SessionRecord, deadline: Instant) -> String {
+    if crate::recorded_runtime_is_from_prior_boot(record) {
+        return "stopped".to_string();
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    crate::live_status_with_timeout(
+        tmux,
+        &record.tmux_session,
+        crate::PANE_INPUT_COMMAND_TIMEOUT.min(remaining),
+    )
 }
 
 #[cfg(all(test, target_os = "linux"))]

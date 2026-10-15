@@ -10607,7 +10607,7 @@ fn runtime_is_from_prior_boot(identity: &TmuxRuntimeIdentity) -> bool {
     }
 }
 
-fn recorded_runtime_is_from_prior_boot(record: &SessionRecord) -> bool {
+pub(crate) fn recorded_runtime_is_from_prior_boot(record: &SessionRecord) -> bool {
     let Ok(Some(identity)) = persisted_tmux_runtime_identity(record) else {
         return false;
     };
@@ -12380,8 +12380,8 @@ fn live_status(tmux_bin: &Path, tmux_session: &str) -> String {
     live_status_with_timeout(tmux_bin, tmux_session, PANE_INPUT_COMMAND_TIMEOUT)
 }
 
-fn live_status_with_timeout(tmux_bin: &Path, tmux_session: &str, timeout: Duration) -> String {
-    verified_tmux_status_with_timeout(tmux_bin, &exact_tmux_target(tmux_session), timeout)
+pub(crate) fn live_status_with_timeout(tmux: &Path, session: &str, timeout: Duration) -> String {
+    verified_tmux_status_with_timeout(tmux, &exact_tmux_target(session), timeout)
 }
 
 fn run_status(mut command: ProcessCommand, label: &str) -> Result<(), CliError> {
