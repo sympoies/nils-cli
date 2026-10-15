@@ -7,6 +7,30 @@ rules that apply throughout. The HTTP routes that share these code paths are
 specified in [Serve API v1](../specs/serve-api-v1.md); turn phases and provider
 hooks are specified in the [turn-state contract](../turn-state-contract.md).
 
+## Start origin and workspace
+
+`agent-session start --agent codex --workspace example-workspace` selects a
+public workspace slug; omit `--workspace` to inherit the known managed
+parent's workspace. A plain-shell start is unassigned by default. Origin
+captures the managed caller's session id and machine automatically, including
+console starts relayed to another host.
+
+Tag an existing long-running session without restarting it:
+
+```bash
+agent-session workspace set SESSION_ID example-workspace --format json
+agent-session list --format json
+agent-session command SESSION_ID --format json
+```
+
+The list/command session view exposes `origin: {"parent": null}` and
+`workspace: null` when unassigned. Use only public, non-secret slugs: 1–64
+lowercase ASCII letters/digits, single hyphen or dot separators, alphanumeric
+ends. Invalid values return `workspace-invalid` with a fix-it command. Resume
+and account handoff preserve both fields. See the
+[session record contract](../specs/session-lineage-work-v1.md#origin-and-workspace)
+for cross-host inheritance and nullable JSON details.
+
 ## Send input and glance
 
 `send` pushes input to a live session: literal text (`--text` /

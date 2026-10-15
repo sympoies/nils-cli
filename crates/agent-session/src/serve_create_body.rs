@@ -2,10 +2,13 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{CreateTitleInput, SessionTitleStateInput};
+use crate::CliError;
 use crate::cli;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateBody {
+    #[serde(flatten)]
+    pub(super) origin: crate::origin::Fields,
     #[serde(default)]
     pub(super) launch_env: crate::launch_env::LaunchEnv,
     pub(super) agent: String,
@@ -38,4 +41,34 @@ pub(super) struct CreateBody {
     /// `session-lineage-work-v1`: configured launch role, stored verbatim.
     #[serde(default)]
     pub(super) role: Option<Value>,
+}
+
+/// The lineage and work a create body states, validated for a session on
+/// `machine`. Without `lineage` the session is an operator root over HTTP.
+pub(super) fn create_body_lineage(
+    machine: &str,
+    lineage: Option<&Value>,
+    work: Option<&Value>,
+    role: Option<&Value>,
+) -> Result<crate::InitialLineage, CliError> {
+    let seed = match lineage.filter(|value| !value.is_null()) {
+        Some(value) => crate::lineage::LineageSeed::from_create_json(machine, value)?,
+        None => crate::lineage::LineageSeed::root(
+            machine,
+            crate::lineage::STARTER_OPERATOR,
+            crate::lineage::VIA_HTTP,
+        ),
+    };
+    let work = match work.filter(|value| !value.is_null()) {
+        Some(value) => crate::lineage::work_from_create_body(value)?,
+        None => None,
+    };
+    let role = crate::lineage::role_from_create_body(role)?;
+    crate::lineage::require_root_for_role(role.as_deref(), seed.has_parent())?;
+    Ok(crate::InitialLineage {
+        seed,
+        work,
+        role,
+        origin: crate::origin::Fields::default(),
+    })
 }
