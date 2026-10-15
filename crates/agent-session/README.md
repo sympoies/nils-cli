@@ -48,16 +48,17 @@ agent-session send <id> --text "custom answer" --allow-blocked
 agent-session clear <id> --expect-idle --format json
 agent-session rebind <id> --format json
 agent-session resume <id>
+agent-session restart <id> --format json   # relaunch onto the installed provider
 agent-session account show <id> --format json
 agent-session account switch <id> --account <nickname> --format json
 agent-session delete <id>
 ```
 
 [Session lifecycle operations](docs/runbooks/session-lifecycle.md) covers
-prompt submission outcomes, blocked input, clear and rebind, resume, verified
-deletion, startup logs, DSH launch, account switching, model settings, and
-secret safety. [Send v1](docs/specs/send-v1.md) defines guarded continuation
-admission and its observation limits.
+prompt submission outcomes, blocked input, clear and rebind, resume, restart,
+verified deletion, startup logs, DSH launch, account switching, model
+settings, and secret safety. [Send v1](docs/specs/send-v1.md) defines guarded
+continuation admission and its observation limits.
 
 ### Coordinate work and exchange mail
 

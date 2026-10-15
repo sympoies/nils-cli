@@ -755,39 +755,62 @@ fn revoke_locked(
 
 /// Retire the coordination incarnation of a runtime the caller just verified
 /// stopped, as its launch wrapper's `broker stop` would have had it exited on
-/// its own. The heartbeat writer dies with that runtime, but its last beat stays
-/// fresh for the freshness window and would refuse the session's own resume as
-/// a live prior incarnation, so it is expired too. The heartbeat is touched only
-/// while the registry still proves this exact incarnation's runtime stopped.
+/// its own, then expire its last heartbeat as [`capture_stopped_runtime`] does.
 pub(crate) fn retire_after_verified_stop(
     context: &CliContext,
     record: &SessionRecord,
     tmux_bin: &Path,
 ) -> Result<(), CliError> {
-    let incarnation = incarnation(record)?;
+    incarnation(record)?;
     let previous_runtime = capture_previous_runtime(record, tmux_bin);
     revoke(context, record)?;
+    expire_stopped_heartbeat(context, &previous_runtime)
+}
+
+/// Capture the runtime a resume replaces. The heartbeat writer dies with that
+/// runtime, but its last beat stays fresh for the freshness window and would
+/// refuse the session's own resume as a live prior incarnation right after a
+/// clean provider exit. Once the incarnation's broker is stopped, its beat is
+/// expired while the registry still proves this exact runtime stopped.
+pub(crate) fn capture_stopped_runtime(
+    context: &CliContext,
+    record: &SessionRecord,
+    tmux_bin: &Path,
+) -> Result<PreviousRuntimeEvidence, CliError> {
+    let previous_runtime = capture_previous_runtime(record, tmux_bin);
+    expire_stopped_heartbeat(context, &previous_runtime)?;
+    Ok(previous_runtime)
+}
+
+fn expire_stopped_heartbeat(
+    context: &CliContext,
+    previous_runtime: &PreviousRuntimeEvidence,
+) -> Result<(), CliError> {
+    let record = &previous_runtime.record;
+    let Ok(incarnation) = incarnation(record) else {
+        return Ok(());
+    };
     let locked = lock_registry(context)?;
     let proven_stopped = locked
         .registry
         .brokers
         .get(&record.id)
-        .filter(|broker| broker.incarnation == incarnation)
+        .filter(|broker| broker.incarnation == incarnation && broker.state == "stopped")
         .is_some_and(|broker| {
             #[cfg(target_os = "macos")]
-            if stopped_macos_broker_matches_previous(context, broker, &previous_runtime) {
+            if stopped_macos_broker_matches_previous(context, broker, previous_runtime) {
                 return true;
             }
             broker
                 .runtime_identity
                 .as_ref()
                 .map(crate::coordination_runtime_status_for_identity)
-                .unwrap_or_else(|| {
-                    match legacy_process_runtime_status(&previous_runtime.record, &incarnation) {
+                .unwrap_or_else(
+                    || match legacy_process_runtime_status(record, &incarnation) {
                         crate::CoordinationRuntimeStatus::Stopped => previous_runtime.status,
                         status => status,
-                    }
-                })
+                    },
+                )
                 == crate::CoordinationRuntimeStatus::Stopped
         });
     if proven_stopped && heartbeat_fresh(context, &record.id, &incarnation, 0) {

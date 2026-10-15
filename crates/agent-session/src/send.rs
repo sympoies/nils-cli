@@ -67,6 +67,7 @@ pub(crate) fn send_to_session(
             Some(json!({ "id": record.id })),
         ));
     }
+    crate::restart::ensure_not_fenced(context, &record)?;
     if args.guards.enabled() {
         let admission = send_guard::Admission {
             context,
