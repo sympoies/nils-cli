@@ -8,6 +8,7 @@
 
 pub(crate) mod guarded;
 mod idle_probe;
+mod turn_outcome;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
@@ -5498,30 +5499,7 @@ async fn process_live_message(
             eprintln!("warning: provider authentication recovery reporting degraded");
         }
     }
-    let Some(failure) = reducer.ingest(value) else {
-        return Ok(());
-    };
-    let context = context.clone();
-    let id = record.id.clone();
-    let runtime_id = record
-        .runtime
-        .as_ref()
-        .map(|runtime| runtime.launch_id.clone())
-        .ok_or_else(|| "Codex runtime identity is missing".to_string())?;
-    tokio::task::spawn_blocking(move || {
-        crate::activity::ingest_codex_app_server_failure_with_kind(
-            &context,
-            &id,
-            &runtime_id,
-            &failure.thread_id,
-            &failure.turn_id,
-            failure.kind,
-        )
-    })
-    .await
-    .map_err(|_| "Codex failure ingestion worker failed".to_string())?
-    .map_err(|err| format!("Codex failure ingestion failed: {}", err.code()))?;
-    Ok(())
+    turn_outcome::ingest(context, record, reducer, value).await
 }
 
 async fn wake_from_open_usage(
