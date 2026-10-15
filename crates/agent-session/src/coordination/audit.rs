@@ -6,7 +6,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use super::{notification, remote};
+use super::{notification, receipt_retention, remote};
 use crate::{CliContext, CliError, cli::MessageCategory};
 
 pub(crate) const ROUTE: &str = "/coordination/messages/audit/v1";
@@ -37,6 +37,8 @@ struct Registry {
     messages: Vec<Inbox>,
     brokers: BTreeMap<String, Broker>,
     notifications: BTreeMap<String, notification::NotificationReceipt>,
+    receipts: BTreeMap<String, receipt_retention::ReceiptOwner>,
+    receipt_evictions: BTreeMap<String, receipt_retention::ReceiptEviction>,
 }
 #[derive(Deserialize)]
 struct Broker {
@@ -397,6 +399,10 @@ fn snapshot_at(
         }
     });
     let partial = registry.is_err() || journal.is_err();
+    let receipt_usage = registry
+        .as_ref()
+        .ok()
+        .map(|registry| receipt_retention::usage(&registry.receipts, &registry.receipt_evictions));
     let sources = json!({"inbox":registry.as_ref().err().copied().unwrap_or("available"), "notifications":registry.as_ref().err().copied().unwrap_or("available"), "outbox":journal.as_ref().err().copied().unwrap_or("available")});
     let mut rows = Vec::new();
     let mut statuses = BTreeMap::new();
@@ -614,7 +620,7 @@ fn snapshot_at(
         None
     };
     Ok(
-        json!({"schema_version":"agent-session.mail-audit.v1","machine":machine,"snapshot_at":super::timestamp(now),"observation_finished_at":super::timestamp(super::now_epoch()),"older_than_seconds":query.older_than,"partial":partial,"sources":sources,"records":rows,"next_cursor":next_cursor}),
+        json!({"schema_version":"agent-session.mail-audit.v1","machine":machine,"snapshot_at":super::timestamp(now),"observation_finished_at":super::timestamp(super::now_epoch()),"older_than_seconds":query.older_than,"partial":partial,"sources":sources,"records":rows,"next_cursor":next_cursor,"receipt_usage":receipt_usage}),
     )
 }
 #[derive(Deserialize, Serialize)]
@@ -731,6 +737,12 @@ mod tests {
         assert_eq!(page["partial"], true);
         assert_eq!(page["sources"]["outbox"], "unsupported");
         assert!(!page["records"].as_array().unwrap().is_empty());
+        // Malformed receipts never hide usage; their contents are not read.
+        assert_eq!(page["receipt_usage"]["count"], 1);
+        assert_eq!(
+            page["receipt_usage"]["limit"],
+            super::super::MAX_RECEIPTS_GLOBAL
+        );
         write_atomic(&journal, b"invalid", SECRET_FILE_MODE).unwrap();
         assert_eq!(
             snapshot_at(&context, "destination", Query::default(), 1000).unwrap()["sources"]["outbox"],

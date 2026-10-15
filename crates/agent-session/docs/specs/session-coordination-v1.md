@@ -778,11 +778,19 @@ cap, which surfaces as a failed registry write rather than a per-request
 `quota-exceeded`. The registry cap, not the receipt budget, is the outer bound
 on total retention.
 
-Exceeding either axis returns `quota-exceeded` before the transition. The
-budget rejects rather than evicts: dropping a retained receipt would let a
-later replay of that key read as a fresh request, which is the guarantee
-receipts exist to provide. Replacing an existing receipt charges only the
-difference, so a replayed request is not billed twice.
+At either per-principal axis, admission first evicts that principal's oldest
+finished receipts (earliest expiry first) until the new receipt fits. A receipt
+is finished when it has expired, or when its outcome names a `message_id` whose
+message is `acknowledged`, `expired`, `deleted`, or no longer retained. Receipts
+for `unread` or `read` messages, and receipts whose outcome names no message
+(claims, operations), are never evicted. Each eviction is counted per principal
+with its latest time; counts older than the receipt TTL are dropped on the next
+eviction. A replay of an evicted key reads as a fresh request, so only finished
+work is ever exposed to that, and only once the principal is full.
+
+If no finished receipt can make room, either axis returns `quota-exceeded`
+before the transition and evicts nothing. Replacing an existing receipt charges
+only the difference, so a replayed request is not billed twice.
 
 ## Mailbox limits and state machine
 
@@ -1535,7 +1543,9 @@ or acknowledgement; unavailable notice persistence is retried without changing
 the original terminal delivery state or replaying its remote envelope.
 
 Destination receipts are retained until 24 hours after envelope expiry (maximum seven days),
-up to 4096 receipts; capacity rejects instead of evicting live deduplication IDs.
+up to 4096 receipts. At capacity the oldest receipts of acknowledged, expired,
+or pruned messages are evicted first; capacity rejects instead of evicting the
+deduplication ID of an unread or read message.
 An exact retained receipt is returned before expiry, current recipient incarnation
 or mailbox admission checks, without re-entering the inbox. Same-ID changed-content retries
 are rejected. Remote senders retain machine/session/incarnation separately from

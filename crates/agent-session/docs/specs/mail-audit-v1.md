@@ -67,6 +67,7 @@ string `unknown`.
 | `sources` | `inbox`, `notifications`, `outbox`: each `available`, `invalid`, `unsupported`, or `unavailable` |
 | `records` | Ordered array of the record objects below |
 | `next_cursor` | Resume string, or `null` at end |
+| `receipt_usage` | Idempotency receipt usage: `{count, limit, principal_count, principals}`, where `principals` lists at most 16 principals by descending count as `{principal, count, limit, evicted, last_evicted_at}`; `evicted` counts finished receipts evicted at the cap within the receipt TTL. `null` when the registry is unavailable |
 
 | Record field | Type / meaning |
 | --- | --- |
