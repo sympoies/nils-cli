@@ -80,7 +80,7 @@ serde_json = "1"
 serde_yaml_ng = "0.10"
 sha2 = "0.11"
 shell-words = "1"
-minijinja = "3"
+minijinja = { version = "3", features = ["serde"] }
 thiserror = "2"
 toml = "1.1"
 tracing = "0.1"
