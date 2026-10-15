@@ -3295,7 +3295,7 @@ fn codex_adapter_uses_authoritative_notify_after_conservative_raw_stop() {
     let oversized = notify(
         json!({
             "type": "agent-turn-complete",
-            "thread-id": provider_session_secret,
+            "thread-id": "different-thread",
             "turn-id": provider_turn_secret,
             "last-assistant-message": oversized_secret.repeat(3_000)
         }),
@@ -3303,7 +3303,7 @@ fn codex_adapter_uses_authoritative_notify_after_conservative_raw_stop() {
     );
     assert_eq!(oversized.code, 0);
     let diagnostic = fs::read_to_string(&diagnostic_path).expect("oversized notify diagnostic");
-    assert!(diagnostic.contains("provider-notification-too-large"));
+    assert!(diagnostic.contains("provider-session-id-mismatch"));
     assert!(!diagnostic.contains(oversized_secret));
     let wrong_thread = notify(
         json!({

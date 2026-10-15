@@ -6,6 +6,8 @@ mod broker_retirement;
 mod cli;
 #[path = "integration/cli_launch_env.rs"]
 mod cli_launch_env;
+#[path = "integration/codex_notify.rs"]
+mod codex_notify;
 #[path = "integration/coordination.rs"]
 mod coordination;
 #[path = "integration/coordination_server.rs"]
