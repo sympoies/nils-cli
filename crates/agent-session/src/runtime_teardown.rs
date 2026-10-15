@@ -1,5 +1,8 @@
 use crate::*;
 
+#[cfg(target_os = "linux")]
+pub(super) const CGROUP_MEMBERSHIP_OBSERVATION_DURATION: Duration = Duration::from_millis(100);
+
 pub(super) fn retire_confirmed_broker(
     context: &CliContext,
     record: &SessionRecord,
