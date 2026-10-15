@@ -114,44 +114,21 @@ These are repository scripts (not third-party packages):
   - `scripts/ci/coverage-summary.sh`
   - `scripts/ci/coverage-badge.sh`
 
-## 5. `agent-docs` integration for `project-dev`
+## 5. Recommended Install Profiles
 
-Register this file as an on-demand `project-dev` reference in the project
-`AGENT_DOCS.toml` catalog. `AGENTS.md` routes dependency and toolchain changes
-here without injecting the full inventory into unrelated edits:
-
-```toml
-[[document]]
-context  = "project-dev"
-scope    = "project"
-path     = "BINARY_DEPENDENCIES.md"
-required = false
-notes    = "External runtime tools required by the repo"
-```
-
-`agent-docs init --print` emits an annotated stub with this schema. Verify the
-catalog remains valid:
-
-```bash
-cargo run -p agent-docs -- preflight --intent project-dev --format json \
-  | rg "BINARY_DEPENDENCIES\\.md"
-```
-
-## 6. Recommended Install Profiles
-
-### 6.1 Base contributor profile
+### 5.1 Base contributor profile
 
 ```bash
 brew install git gh glab fzf webp ffmpeg bat zsh python bash-completion rustup-init tmux sops
 ```
 
-### 6.2 Linux extra profile (audio/clipboard/network ergonomics)
+### 5.2 Linux extra profile (audio/clipboard/network ergonomics)
 
 ```bash
 brew install lsof wl-clipboard xclip xsel pulseaudio
 ```
 
-## 7. Linuxbrew Bootstrap (if `brew` is not installed)
+## 6. Linuxbrew Bootstrap (if `brew` is not installed)
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -163,7 +140,7 @@ After installation, initialize Linuxbrew in shell startup (example):
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 ```
 
-## 8. Quick Environment Verification
+## 7. Quick Environment Verification
 
 ```bash
 for c in git gh glab fzf grpcurl file ffmpeg bat curl tmux sops ssh tar unzip; do
