@@ -1,3 +1,10 @@
+#[cfg(test)]
+use history_images::normalize_message;
+pub(crate) mod history_images;
+pub(crate) use history_images::HistoryMessage;
+use history_images::{
+    push_incremental_message, push_reverse_message, read_compacted_image_line, read_messages,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -24,8 +31,8 @@ const SCAN_MAX_ENTRIES: usize = 10_000;
 const SCAN_MAX_DURATION: Duration = Duration::from_secs(2);
 const MAX_LINE_BYTES: usize = 1024 * 1024;
 // A Codex image may make one JSONL record much larger than its usable text.
-// Read only this bounded window, discard image_url bytes before parsing, and
-// retain the ordinary 1 MiB cap for the compacted record.
+// Read only this bounded window; normalized pages retain descriptors rather than
+// image bytes. Ordinary non-image records keep their 1 MiB cap.
 const MAX_IMAGE_RECORD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 64 * 1024;
 const MAX_STAR_BYTES: u64 = 4 * 1024;
@@ -141,17 +148,6 @@ pub(crate) struct HistoryPage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) next_cursor: Option<String>,
     pub(crate) truncated: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct HistoryMessage {
-    pub(crate) id: String,
-    pub(crate) role: String,
-    pub(crate) text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) timestamp: Option<String>,
-    #[serde(skip)]
-    pub(crate) human_prompt: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -1818,73 +1814,6 @@ fn read_bounded_line<R: BufRead>(
     }
 }
 
-fn read_messages(
-    session: &HistorySession,
-    offset: u64,
-    limit: usize,
-) -> Result<HistoryMessagesPage, HistoryError> {
-    let file = fs::File::open(&session.transcript_path).map_err(|_| HistoryError::NotFound)?;
-    let mut reader = BufReader::new(file);
-    reader
-        .seek(SeekFrom::Start(offset))
-        .map_err(|_| HistoryError::InvalidCursor)?;
-    let mut messages = Vec::new();
-    let mut line = Vec::new();
-    let mut scanned = 0usize;
-    let deadline = Instant::now() + MESSAGE_SCAN_MAX_DURATION;
-    while messages.len() < limit {
-        if scanned >= MAX_MESSAGE_SCAN_LINES || Instant::now() >= deadline {
-            let next = reader.stream_position().map_err(|_| HistoryError::Io)?;
-            return Ok(HistoryMessagesPage {
-                messages,
-                next_cursor: Some(next.to_string()),
-                older_cursor: None,
-            });
-        }
-        line.clear();
-        let line_offset = reader.stream_position().map_err(|_| HistoryError::Io)?;
-        let bounded = read_bounded_line(&mut reader, &mut line).map_err(|_| HistoryError::Io)?;
-        if bounded == BoundedLine::Eof {
-            return Ok(HistoryMessagesPage {
-                messages,
-                next_cursor: None,
-                older_cursor: None,
-            });
-        }
-        scanned += 1;
-        if bounded == BoundedLine::Oversized {
-            continue;
-        }
-        let Ok(value) = serde_json::from_slice::<Value>(&line) else {
-            continue;
-        };
-        let Some((role, text, timestamp, human_prompt)) = normalize_message(
-            &session.provider,
-            &session.provider_session_id,
-            &line,
-            &value,
-        ) else {
-            continue;
-        };
-        if text.trim().is_empty() {
-            continue;
-        }
-        messages.push(HistoryMessage {
-            id: format!("{}-{line_offset}", session.id),
-            role,
-            text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
-            timestamp,
-            human_prompt,
-        });
-    }
-    let next = reader.stream_position().map_err(|_| HistoryError::Io)?;
-    Ok(HistoryMessagesPage {
-        messages,
-        next_cursor: Some(next.to_string()),
-        older_cursor: None,
-    })
-}
-
 struct IncrementalReaderPage {
     messages: Vec<HistoryMessage>,
     next_offset: u64,
@@ -2081,7 +2010,7 @@ fn read_messages_incremental_from_reader<R: Read + Seek>(
             match read_compacted_image_line(reader, file_len, offset, &bytes)? {
                 ImageLineRead::Complete(line, next_offset) => {
                     let mut messages = Vec::new();
-                    push_incremental_message(session, &line, &mut messages);
+                    push_incremental_message(session, &line, offset, &mut messages);
                     return Ok(IncrementalReaderPage {
                         messages,
                         next_offset,
@@ -2111,16 +2040,19 @@ fn read_messages_incremental_from_reader<R: Read + Seek>(
     }
     let mut messages = Vec::new();
     let mut lines = bytes[..complete].split_inclusive(|byte| *byte == b'\n');
-    if discarding_oversized_line {
-        let _ = lines.next();
+    let mut line_offset = offset;
+    if discarding_oversized_line && let Some(line) = lines.next() {
+        line_offset += line.len() as u64;
     }
     for raw_line in lines {
+        let current_offset = line_offset;
+        line_offset += raw_line.len() as u64;
         let line = raw_line.strip_suffix(b"\n").unwrap_or(raw_line);
         let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if line.is_empty() || line.len() > MAX_LINE_BYTES {
+        if line.is_empty() || line.len() > MAX_IMAGE_RECORD_BYTES {
             continue;
         }
-        push_incremental_message(session, line, &mut messages);
+        push_incremental_message(session, line, current_offset, &mut messages);
     }
     Ok(IncrementalReaderPage {
         messages,
@@ -2133,85 +2065,6 @@ enum ImageLineRead {
     Complete(Vec<u8>, u64),
     Incomplete,
     Unsupported,
-}
-
-fn read_compacted_image_line<R: Read + Seek>(
-    reader: &mut R,
-    file_len: u64,
-    offset: u64,
-    initial: &[u8],
-) -> Result<ImageLineRead, HistoryError> {
-    let mut raw = initial.to_vec();
-    let mut position = offset.saturating_add(initial.len() as u64);
-    reader
-        .seek(SeekFrom::Start(position))
-        .map_err(|_| HistoryError::Io)?;
-    loop {
-        let remaining = file_len
-            .saturating_sub(position)
-            .min((MAX_IMAGE_RECORD_BYTES + 1 - raw.len()) as u64);
-        if remaining == 0 {
-            return Ok(if raw.len() > MAX_IMAGE_RECORD_BYTES {
-                ImageLineRead::Unsupported
-            } else {
-                ImageLineRead::Incomplete
-            });
-        }
-        let mut chunk = vec![0; remaining.min(REVERSE_MESSAGE_CHUNK_BYTES as u64) as usize];
-        reader
-            .read_exact(&mut chunk)
-            .map_err(|_| HistoryError::Io)?;
-        position = position.saturating_add(chunk.len() as u64);
-        if let Some(end) = chunk.iter().position(|byte| *byte == b'\n') {
-            raw.extend_from_slice(&chunk[..end]);
-            if raw.len() > MAX_IMAGE_RECORD_BYTES {
-                return Ok(ImageLineRead::Unsupported);
-            }
-            let Some(line) = crate::provider_prompt::compact_prompt_line(&raw) else {
-                return Ok(ImageLineRead::Unsupported);
-            };
-            return Ok(ImageLineRead::Complete(
-                line,
-                position - chunk.len() as u64 + end as u64 + 1,
-            ));
-        }
-        raw.extend_from_slice(&chunk);
-    }
-}
-
-fn push_incremental_message(
-    session: &HistorySession,
-    line: &[u8],
-    messages: &mut Vec<HistoryMessage>,
-) {
-    let Ok(value) = serde_json::from_slice::<Value>(line) else {
-        return;
-    };
-    let Some((role, text, timestamp, human_prompt)) = normalize_message(
-        &session.provider,
-        &session.provider_session_id,
-        line,
-        &value,
-    ) else {
-        return;
-    };
-    if text.trim().is_empty() {
-        return;
-    }
-    messages.push(HistoryMessage {
-        id: incremental_message_id(
-            session,
-            &value,
-            &role,
-            text.trim(),
-            timestamp.as_deref(),
-            human_prompt,
-        ),
-        role,
-        text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
-        timestamp,
-        human_prompt,
-    });
 }
 
 fn incremental_source_id(session: &HistorySession) -> String {
@@ -2904,176 +2757,6 @@ fn read_messages_reverse_from_reader<R: Read + Seek>(
     })
 }
 
-fn push_reverse_message(
-    session: &HistorySession,
-    raw_line: &[u8],
-    line_offset: u64,
-    messages: &mut Vec<HistoryMessage>,
-) {
-    let raw_line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
-    if raw_line.is_empty() || raw_line.len() > MAX_IMAGE_RECORD_BYTES {
-        return;
-    }
-    let compacted = if raw_line.len() > MAX_LINE_BYTES && session.provider == "codex" {
-        crate::provider_prompt::compact_prompt_line(raw_line)
-    } else {
-        None
-    };
-    let line = if raw_line.len() <= MAX_LINE_BYTES {
-        raw_line
-    } else if let Some(ref compacted) = compacted {
-        compacted.as_slice()
-    } else {
-        return;
-    };
-    let Ok(value) = serde_json::from_slice::<Value>(line) else {
-        return;
-    };
-    let Some((role, text, timestamp, human_prompt)) = normalize_message(
-        &session.provider,
-        &session.provider_session_id,
-        line,
-        &value,
-    ) else {
-        return;
-    };
-    if text.trim().is_empty() {
-        return;
-    }
-    messages.push(HistoryMessage {
-        id: format!("{}-{line_offset}", session.id),
-        role,
-        text: truncate_chars(text.trim(), MAX_MESSAGE_CHARS),
-        timestamp,
-        human_prompt,
-    });
-}
-
-fn normalize_message(
-    provider: &str,
-    provider_session_id: &str,
-    raw_line: &[u8],
-    value: &Value,
-) -> Option<(String, String, Option<String>, bool)> {
-    let timestamp = value
-        .get("timestamp")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    match provider {
-        "codex" => {
-            if value.get("type").and_then(Value::as_str) == Some("event_msg") {
-                let payload = value.get("payload")?;
-                if payload.get("type").and_then(Value::as_str) != Some("thread_goal_updated")
-                    || payload.get("threadId").and_then(Value::as_str) != Some(provider_session_id)
-                {
-                    return None;
-                }
-                let goal = payload.get("goal")?;
-                if goal.get("threadId").and_then(Value::as_str) != Some(provider_session_id)
-                    || goal.get("status").and_then(Value::as_str) != Some("active")
-                {
-                    return None;
-                }
-                let created_at = goal.get("createdAt")?.as_u64()?;
-                let event_second = timestamp
-                    .as_deref()?
-                    .parse::<jiff::Timestamp>()
-                    .ok()
-                    .and_then(|stamp| u64::try_from(stamp.as_second()).ok())?;
-                if event_second != created_at {
-                    return None;
-                }
-                let objective = goal.get("objective")?.as_str()?.trim();
-                if objective.is_empty() || objective.len() > MAX_MESSAGE_CHARS {
-                    return None;
-                }
-                return Some(("goal".to_string(), objective.to_string(), timestamp, true));
-            }
-            if value.get("type").and_then(Value::as_str) != Some("response_item") {
-                return None;
-            }
-            let payload = value.get("payload")?;
-            if payload.get("type").and_then(Value::as_str) != Some("message") {
-                return None;
-            }
-            let role = payload.get("role")?.as_str()?;
-            if !matches!(role, "user" | "assistant") {
-                return None;
-            }
-            let human_prompt = role == "user"
-                && parse_history_user_prompt(
-                    provider,
-                    provider_session_id,
-                    std::str::from_utf8(raw_line).ok()?,
-                )
-                .is_some();
-            // Older Codex transcripts have no content_item_kinds. Keep those
-            // rows visible, but do not promote them into retitle memory: an
-            // unclassified user frame could also be injected context.
-            let classified_non_human = payload
-                .pointer("/internal_chat_message_metadata_passthrough/content_item_kinds")
-                .and_then(Value::as_array)
-                .is_some_and(|kinds| !kinds.iter().any(|kind| kind.as_str() == Some("user.text")));
-            if role == "user" && !human_prompt && classified_non_human {
-                return None;
-            }
-            let text = content_text(payload.get("content")?);
-            Some((role.to_string(), text, timestamp, human_prompt))
-        }
-        "claude" => {
-            // A prompt sent while a turn was running is an attachment row.
-            let role = match value.get("type")?.as_str()? {
-                "attachment" => "user",
-                role @ ("user" | "assistant") => role,
-                _ => return None,
-            };
-            if value.get("isSidechain").and_then(Value::as_bool) == Some(true) {
-                return None;
-            }
-            let text = if role == "user" {
-                claude_user_message_text(value)
-                    .or_else(|| claude_queued_prompt_text(value).map(str::to_string))?
-            } else {
-                content_text(value.get("message")?.get("content")?)
-            };
-            let human_prompt = role == "user"
-                && parse_history_user_prompt(
-                    provider,
-                    provider_session_id,
-                    std::str::from_utf8(raw_line).ok()?,
-                )
-                .is_some();
-            if role == "user" && !human_prompt {
-                return None;
-            }
-            let text = if role == "user" {
-                claude_slash_command_text(&text).unwrap_or(text)
-            } else {
-                text
-            };
-            Some((role.to_string(), text, timestamp, human_prompt))
-        }
-        _ => None,
-    }
-}
-
-fn content_text(content: &Value) -> String {
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-    content
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|part| {
-            part.get("text")
-                .and_then(Value::as_str)
-                .or_else(|| part.get("content").and_then(Value::as_str))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn matches_metadata(session: &HistorySession, machine: &str, query: Option<&str>) -> bool {
     let Some(query) = query.map(str::trim).filter(|value| !value.is_empty()) else {
         return true;
@@ -3197,6 +2880,67 @@ fn truncate_chars(value: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use std::io::{Cursor, Read, Seek};
+
+    #[test]
+    fn history_image_descriptors_keep_text_and_image_only_messages() {
+        let mut session = history_session("image-contract", "2026-09-09T00:00:00Z");
+        for (provider, content) in [
+            (
+                "codex",
+                serde_json::json!([
+                    {"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo="}
+                ]),
+            ),
+            (
+                "claude",
+                serde_json::json!([
+                    {"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}
+                ]),
+            ),
+        ] {
+            session.provider = provider.to_string();
+            for with_text in [true, false] {
+                let mut content = content.clone();
+                if with_text {
+                    content
+                        .as_array_mut()
+                        .unwrap()
+                        .push(serde_json::json!({"type":"text","text":"describe this"}));
+                }
+                let row = if provider == "codex" {
+                    serde_json::json!({"type":"response_item","payload":{
+                        "type":"message","role":"user","content":content,
+                        "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.image","user.text"]}
+                    }})
+                } else {
+                    serde_json::json!({"type":"user","message":{"role":"user","content":content}})
+                };
+                let mut messages = Vec::new();
+                push_reverse_message(
+                    &session,
+                    &serde_json::to_vec(&row).unwrap(),
+                    0,
+                    &mut messages,
+                );
+                assert_eq!(
+                    messages.len(),
+                    1,
+                    "{provider}: image-only rows must be visible"
+                );
+                let projected = serde_json::to_value(&messages[0]).unwrap();
+                assert_eq!(
+                    projected["images"].as_array().map(Vec::len),
+                    Some(1),
+                    "{provider}: preserve an image descriptor"
+                );
+                assert_eq!(
+                    messages[0].text,
+                    if with_text { "describe this" } else { "" }
+                );
+                assert!(!serde_json::to_string(&projected).unwrap().contains("iVBOR"));
+            }
+        }
+    }
 
     struct CountingReader<R> {
         inner: R,

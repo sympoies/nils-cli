@@ -3674,7 +3674,6 @@ mod tests {
             record.title
         );
     }
-
     fn message(id: &str, role: &str, text: &str, human_prompt: bool) -> HistoryMessage {
         HistoryMessage {
             id: id.to_string(),
@@ -3682,6 +3681,7 @@ mod tests {
             text: text.to_string(),
             timestamp: None,
             human_prompt,
+            images: Vec::new(),
         }
     }
 

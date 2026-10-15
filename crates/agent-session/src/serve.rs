@@ -10,6 +10,9 @@
 //! Every response carries the daemon's `machine` identity so the edge can
 //! aggregate multiple machines. Literal keystroke text is never echoed.
 
+#[path = "serve/history_images.rs"]
+mod history_images;
+
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 #[path = "serve/codex_quiet.rs"]
 mod codex_quiet;
@@ -1262,10 +1265,7 @@ fn router(state: Arc<ServeState>) -> Router {
         )
         .route("/sessions", get(list_handler).post(create_handler))
         .route("/history/sessions", get(history_list_handler))
-        .route(
-            "/history/sessions/{id}/messages",
-            get(history_messages_handler),
-        )
+        .merge(history_images::routes())
         .route("/history/sessions/{id}/star", post(history_star_handler))
         .route(
             "/history/sessions/{id}/resume",
@@ -5628,37 +5628,6 @@ fn history_resume_profile_unavailable(profile_id: &str) -> CliError {
         "the history launch profile is unavailable on this machine",
         Some(json!({ "agent_profile": profile_id })),
     )
-}
-
-async fn history_messages_handler(
-    State(state): State<Arc<ServeState>>,
-    headers: HeaderMap,
-    AxPath(id): AxPath<String>,
-    Query(query): Query<HistoryMessagesQuery>,
-) -> Response {
-    if let Some(response) = deny_unauthorized(&state, &headers) {
-        return response;
-    }
-    let catalog = state.history_catalog.clone();
-    match tokio::task::spawn_blocking(move || {
-        catalog.messages(
-            &id,
-            query.cursor.as_deref(),
-            query.limit.unwrap_or(50),
-            query.direction.unwrap_or_default(),
-        )
-    })
-    .await
-    {
-        Ok(Ok(page)) => envelope_ok(json!({
-            "machine": state.machine,
-            "messages": page.messages,
-            "next_cursor": page.next_cursor,
-            "older_cursor": page.older_cursor,
-        })),
-        Ok(Err(error)) => history_error_response(error),
-        Err(_) => join_err(),
-    }
 }
 
 /// Toggle the star on one history session. The star is stored by history id, so
