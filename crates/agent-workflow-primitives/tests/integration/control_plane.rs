@@ -16,7 +16,7 @@ fn init_repo(root: &Path) {
     fs::write(root.join("tests/value.rs"), "#[test] fn value() {}\n").unwrap();
     fs::write(root.join("docs/guide.md"), "# Guide\n").unwrap();
     fs::write(
-        root.join("AGENT_DOCS.toml"),
+        root.join("VALIDATION.toml"),
         r#"[path_classes]
 production = ["src/**", "shared/**"]
 test = ["tests/**", "shared/**"]

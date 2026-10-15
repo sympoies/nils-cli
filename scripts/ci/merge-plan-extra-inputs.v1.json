@@ -17,6 +17,11 @@
       "packages": ["nils-semantic-commit", "nils-common", "nils-forge-cli"]
     },
     {
+      "id": "forge-cli-semantic-commit-sibling",
+      "paths": ["crates/agent-workflow-primitives/**", "crates/nils-build-info/**"],
+      "packages": ["nils-semantic-commit"]
+    },
+    {
       "id": "shared-identity-fixture",
       "paths": ["crates/nils-common/tests/fixtures/identity/**"],
       "packages": ["nils-common", "nils-git-cli", "nils-forge-cli"]
