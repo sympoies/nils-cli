@@ -643,13 +643,17 @@ mod tests {
         let value = retry_would_block(
             || {
                 attempts += 1;
+                if attempts == 1 {
+                    // A loaded host can deschedule the caller past a test-sized budget.
+                    thread::sleep(Duration::from_millis(150));
+                }
                 if attempts < 3 {
                     Err(io::Error::from(io::ErrorKind::WouldBlock))
                 } else {
                     Ok(7)
                 }
             },
-            Duration::from_millis(100),
+            SPAWN_RETRY_BUDGET,
         )
         .expect("transient spawn recovery");
         assert_eq!(value, 7);
@@ -667,7 +671,7 @@ mod tests {
                         Ok(9)
                     }
                 },
-                Duration::from_millis(100),
+                SPAWN_RETRY_BUDGET,
             )
             .expect("transient descriptor exhaustion recovery");
             assert_eq!(value, 9);
@@ -680,7 +684,7 @@ mod tests {
                 permanent_attempts += 1;
                 Err::<(), _>(io::Error::from(io::ErrorKind::NotFound))
             },
-            Duration::from_millis(100),
+            SPAWN_RETRY_BUDGET,
         )
         .expect_err("permanent spawn failure");
         assert_eq!(error.kind(), io::ErrorKind::NotFound);

@@ -9715,8 +9715,9 @@ mod tests {
         }
         let pid_path =
             env::var_os("NILS_PROCESS_SUPERVISOR_TEST_PID_PATH").expect("fixture pid path");
-        fs::write(pid_path, unsafe { libc::getpid() }.to_string())
-            .expect("publish fixture leaf PID");
+        let staged = Path::new(&pid_path).with_extension("staged");
+        fs::write(&staged, unsafe { libc::getpid() }.to_string()).expect("stage leaf PID");
+        fs::rename(staged, pid_path).expect("publish fixture leaf PID");
         loop {
             std::thread::park_timeout(Duration::from_secs(1));
         }
@@ -10815,7 +10816,6 @@ mod tests {
             DirtyCheckoutErrorKind::ResourceUnavailable
         );
 
-        #[cfg(target_os = "linux")]
         let still_running = {
             let exit_deadline = Instant::now() + Duration::from_millis(500);
             loop {
