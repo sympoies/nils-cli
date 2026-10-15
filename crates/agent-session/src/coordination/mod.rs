@@ -11,6 +11,7 @@ mod notification;
 mod notification_policy;
 pub use notification::NotificationProjection;
 pub mod readiness;
+mod receipt_retention;
 pub use readiness::checkpoint_path_for_state;
 pub(crate) mod remote;
 pub(crate) mod retirement;
@@ -68,11 +69,11 @@ const RECEIPT_TTL_SECS: i64 = 24 * 60 * 60;
 // each principal's serialized receipts, recomputed from the registry rather
 // than cached, so a reloaded registry enforces the same bound.
 //
-// At the limit `store_receipt` rejects rather than evicts. Evicting a retained
-// receipt would let a later replay of that key read as a fresh request, which
-// is exactly the idempotency guarantee these receipts exist to provide. A
-// principal at its budget recovers when the TTL prune releases expired
-// receipts, not by displacing live ones.
+// At the limit `store_receipt` first evicts the principal's oldest finished
+// receipts (see `receipt_retention`), then rejects. Receipts of unread, read,
+// or non-message work are never evicted: dropping one would let a later replay
+// of that key read as a fresh request, which is exactly the idempotency
+// guarantee these receipts exist to provide.
 //
 // All three values are normative and restated in `Idempotency` in
 // docs/specs/session-coordination-v1.md; change them together.
@@ -97,6 +98,7 @@ pub(crate) struct Registry {
     messages: Vec<mailbox::StoredMessage>,
     cursors: BTreeMap<String, mailbox::InboxCursor>,
     receipts: BTreeMap<String, IdempotencyReceipt>,
+    receipt_evictions: BTreeMap<String, receipt_retention::ReceiptEviction>,
     notifications: BTreeMap<String, notification::NotificationReceipt>,
     advisory_acknowledgements: BTreeMap<String, advisory::AdvisoryAcknowledgement>,
     advisory_observations: BTreeMap<String, advisory::AdvisoryObservation>,
@@ -1591,6 +1593,22 @@ pub(crate) fn store_receipt(
     now: i64,
 ) -> Result<(), CliError> {
     let receipt_key = receipt_key(&principal, &incarnation, &operation, &key);
+    let candidate = IdempotencyReceipt {
+        principal,
+        incarnation,
+        operation,
+        digest,
+        outcome,
+        expires_at_epoch: now.saturating_add(RECEIPT_TTL_SECS),
+    };
+    receipt_retention::make_room(
+        registry,
+        &candidate.principal,
+        &receipt_key,
+        candidate_receipt_bytes(&candidate),
+        now,
+    );
+    let principal = &candidate.principal;
     if !registry.receipts.contains_key(&receipt_key) {
         let refuse = |quota, count, limit| {
             Err(quota_exceeded(
@@ -1606,7 +1624,7 @@ pub(crate) fn store_receipt(
         let principal_receipts = registry
             .receipts
             .values()
-            .filter(|receipt| receipt.principal == principal)
+            .filter(|receipt| &receipt.principal == principal)
             .count();
         if principal_receipts >= MAX_RECEIPTS_PER_PRINCIPAL {
             return refuse(
@@ -1616,14 +1634,6 @@ pub(crate) fn store_receipt(
             );
         }
     }
-    let candidate = IdempotencyReceipt {
-        principal,
-        incarnation,
-        operation,
-        digest,
-        outcome,
-        expires_at_epoch: now.saturating_add(RECEIPT_TTL_SECS),
-    };
     // Charge only the delta: replacing a receipt releases the bytes its
     // predecessor held, so a replayed request cannot be billed twice. One pass
     // measures the principal and excludes the entry being replaced, so the

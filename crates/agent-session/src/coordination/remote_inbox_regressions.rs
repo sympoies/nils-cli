@@ -348,3 +348,49 @@ fn migrated_carried_mail_uses_its_current_incarnation_admission_time() {
         "a carried message must not date the new incarnation with its original creation time"
     );
 }
+
+#[test]
+fn receive_principal_at_receipt_cap_still_accepts_new_delivery() {
+    let (_temp, context) = tests::fixture();
+    let recent = tests::envelope();
+    receive(&context, "destination", recent.clone()).unwrap();
+    let mut locked = lock_registry(&context).unwrap();
+    // Fill the shared receive principal with older receipts whose messages
+    // were acknowledged and already pruned from the inbox.
+    for index in 1..super::super::MAX_RECEIPTS_PER_PRINCIPAL {
+        let id = format!("pruned-message-{index:05}");
+        locked.registry.receipts.insert(
+            super::super::receipt_key(
+                RECEIVE_PRINCIPAL,
+                RECEIVE_INCARNATION,
+                RECEIVE_OPERATION,
+                &id,
+            ),
+            super::super::IdempotencyReceipt {
+                principal: RECEIVE_PRINCIPAL.into(),
+                incarnation: RECEIVE_INCARNATION.into(),
+                operation: RECEIVE_OPERATION.into(),
+                digest: "digest".into(),
+                outcome: json!({"message_id": id, "state": "delivered"}),
+                expires_at_epoch: now_epoch() + 60 + index as i64,
+            },
+        );
+    }
+    locked.save().unwrap();
+    drop(locked);
+
+    let fresh = tests::envelope();
+    let delivered = receive(&context, "destination", fresh.clone())
+        .expect("a full principal with finished receipts must accept delivery");
+    assert_eq!(delivered["message_id"], json!(fresh.message_id));
+
+    // Recent deliveries still replay instead of entering the inbox twice.
+    let replay = receive(&context, "destination", recent.clone()).unwrap();
+    assert_eq!(replay["message_id"], json!(recent.message_id));
+    let locked = lock_registry(&context).unwrap();
+    assert_eq!(locked.registry.messages.len(), 2);
+    assert_eq!(
+        locked.registry.receipt_evictions[RECEIVE_PRINCIPAL].evicted,
+        1
+    );
+}
