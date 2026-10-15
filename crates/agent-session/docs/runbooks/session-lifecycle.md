@@ -144,7 +144,9 @@ agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
   Claude Code, `/quit` for Codex). A provider still running after
   `--stop-timeout` seconds is left running with `restart-exit-timeout`; only
   `--force` terminates it through the verified stop path, and `--force` on an
-  unverified session terminates without typing anything.
+  unverified session terminates without typing anything. `--force` never
+  overrides identity: a pane that does not prove the session's runtime returns
+  `restart-identity-unverified`, and an in-progress notification still refuses.
 - A runtime another operation replaced during the exit wait is kept and
   reported as `restart-superseded`.
 - The stopped incarnation is retired before the relaunch; a heartbeat that

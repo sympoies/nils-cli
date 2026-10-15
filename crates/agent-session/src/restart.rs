@@ -486,6 +486,14 @@ fn request_provider_exit(
     };
     let admitted = match admission.check(None, "admission") {
         Ok(()) => true,
+        // --force overrides idle quiescence only, never runtime identity.
+        Err(cause) if cause.code().starts_with("send-identity-") => {
+            return Err(CliError::runtime(
+                "restart-identity-unverified",
+                "the session pane does not prove this session's runtime identity",
+                Some(json!({ "id": current.id, "cause": cause.code() })),
+            ));
+        }
         Err(_) if force => false,
         Err(cause) => {
             return Err(CliError::runtime(

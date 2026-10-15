@@ -657,3 +657,29 @@ fn post_launch_persistence_failure_keeps_the_receipt() {
     );
     assert_eq!(crate::session_status(&context, &tmux, &record), "running");
 }
+
+/// --force overrides only idle quiescence: a pane whose runtime identity does
+/// not match the session is refused and left running, never terminated.
+#[test]
+fn force_never_overrides_a_runtime_identity_mismatch() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let context = context(tmp.path());
+    seed_exited_session(&context, tmp.path());
+    let tmux = fake_tmux(tmp.path());
+    let launch = running_session(&context, &tmux);
+    let env = tmp.path().join("env");
+    let foreign = fs::read_to_string(&env).unwrap().replace(
+        &format!("AGENT_SESSION_RUNTIME_ID={launch}"),
+        "AGENT_SESSION_RUNTIME_ID=foreign",
+    );
+    fs::write(&env, foreign).unwrap();
+
+    let error = restart(&context, &restart_args(&tmux, true, 1)).unwrap_err();
+
+    assert_eq!(error.code(), "restart-identity-unverified");
+    assert_eq!(details(&error)["cause"], "send-identity-mismatch");
+    let record = load_session_record(&context, ID).unwrap();
+    assert_eq!(launch_id(&record).as_deref(), Some(launch.as_str()));
+    assert_eq!(crate::session_status(&context, &tmux, &record), "running");
+    assert!(!log(tmp.path()).contains("if-shell"), "{}", log(tmp.path()));
+}
