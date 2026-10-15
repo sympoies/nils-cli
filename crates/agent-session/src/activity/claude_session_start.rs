@@ -62,10 +62,9 @@ fn observe_session_ready(
     else {
         return Ok(());
     };
+    // agent-hook forwards a runtime-scoped projection, not the raw id.
     if record.agent != AgentKind::Claude.as_str()
-        || record.provider_resume.as_ref().is_none_or(|resume| {
-            resume.provider != record.agent || resume.session_id != provider_session
-        })
+        || !crate::session_model::provider_session_matches(&record, provider_session)
     {
         return Ok(());
     }

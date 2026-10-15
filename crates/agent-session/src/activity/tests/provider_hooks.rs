@@ -1726,6 +1726,25 @@ fn claude_resume_session_start_projects_provider_idle() {
 }
 
 #[test]
+fn claude_resume_session_start_from_agent_hook_projection_projects_provider_idle() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);
+    let starting = activate_runtime(&context, &created.record).unwrap();
+    let runtime_id = &created.record.runtime.as_ref().unwrap().launch_id;
+    // agent-hook forwards only a runtime-scoped projection of the conversation.
+    let projected =
+        projected_provider_identifier(runtime_id, AgentKind::Claude, "session", "session-1")
+            .unwrap();
+
+    claude_session_start(&context, &created.record, "resume", &projected);
+
+    let turn = state_for_view(&context, &created.record).unwrap();
+    assert_eq!(turn.phase, TurnPhase::Waiting);
+    assert_eq!(turn.source.kind, SourceKind::ProviderHook);
+    assert_eq!(turn.revision, starting.revision + 1);
+}
+
+#[test]
 fn claude_session_start_never_settles_other_conversation_or_open_turn() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let (context, created) = test_session_for_agent(&tmp, AgentKind::Claude);

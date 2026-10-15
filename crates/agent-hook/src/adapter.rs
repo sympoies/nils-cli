@@ -34,13 +34,28 @@ pub(crate) fn project_session_model_hook(
         .or_else(|| value.get("to_model"))
         .filter(|value| !value.is_null());
     let effort_value = value.get("effort").filter(|value| !value.is_null());
-    if model_value.is_none() && effort_value.is_none() && request.event != "Stop" {
+    // SessionStart(startup|resume) is the only readiness signal of a resumed
+    // runtime, so it is forwarded even without display settings.
+    let ready_source = value
+        .get("source")
+        .and_then(Value::as_str)
+        .filter(|source| {
+            request.event == "SessionStart" && matches!(*source, "startup" | "resume")
+        });
+    if model_value.is_none()
+        && effort_value.is_none()
+        && ready_source.is_none()
+        && request.event != "Stop"
+    {
         return None;
     }
     let mut metadata = json!({
         "hook_event_name": if request.event == "SessionStart" { "SessionStart" } else { "ModelSettings" },
         "session_id": projected_provider_id(runtime_id, request.product, "session", session),
     });
+    if let Some(source) = ready_source {
+        metadata["source"] = json!(source);
+    }
     if let Some(value) = model_value {
         metadata["model"] = json!(
             value
@@ -57,6 +72,14 @@ pub(crate) fn project_session_model_hook(
         );
     }
     serde_json::to_vec(&metadata).ok()
+}
+
+/// Display settings stay best-effort, but a forwarded SessionStart readiness
+/// is the resumed runtime's only idle signal and gets the receipt deadline.
+pub(crate) fn hook_deadline(metadata: &[u8]) -> std::time::Duration {
+    let ready =
+        serde_json::from_slice::<Value>(metadata).is_ok_and(|value| value.get("source").is_some());
+    std::time::Duration::from_millis(if ready { 2000 } else { 250 })
 }
 
 /// Private clear identity receipt. It is sent only to the managed lifecycle
