@@ -1,6 +1,4 @@
 path	kind	lines
-crates/agent-docs/src/session.rs	impl	2930
-crates/agent-docs/tests/integration/user_config.rs	test	3468
 crates/agent-hook/src/dsh_policy.rs	impl	5804
 crates/agent-hook/src/evaluator.rs	impl	2208
 crates/agent-hook/src/finish_line.rs	impl	5179

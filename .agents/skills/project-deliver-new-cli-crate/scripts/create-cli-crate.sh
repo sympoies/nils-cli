@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  create-cli-crate.sh [--mode plan|implement] [--project-path <path>] [--strict] [--help]
+  create-cli-crate.sh [--mode plan|implement] [--project-path <path>] [--help]
 
 Purpose:
   Fast preflight + reminder utility for the project-local "create-cli-crate" skill.
@@ -12,7 +12,6 @@ Purpose:
 Options:
   --mode <plan|implement>   Show checklist for planning or implementation (default: plan)
   --project-path <path>     Target project path (default: current directory)
-  --strict                  Also run `agent-docs preflight --intent project-dev --strict`
   -h, --help                Show help
 USAGE
 }
@@ -24,7 +23,6 @@ die() {
 
 mode="plan"
 project_path="."
-strict=0
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -37,10 +35,6 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die "--project-path requires a value"
       project_path="${2:-}"
       shift 2
-      ;;
-    --strict)
-      strict=1
-      shift
       ;;
     -h|--help)
       usage
@@ -78,14 +72,6 @@ for rel in "${required_docs[@]}"; do
   fi
 done
 (( missing == 0 )) || die "required policy docs are missing"
-
-if (( strict == 1 )); then
-  command -v agent-docs >/dev/null 2>&1 || die "agent-docs not found on PATH"
-  (
-    cd "$repo_root"
-    agent-docs preflight --intent project-dev --strict >/dev/null
-  ) || die "agent-docs strict preflight failed for project-dev"
-fi
 
 echo "ok: create-cli-crate preflight passed"
 echo "project: ${repo_root}"

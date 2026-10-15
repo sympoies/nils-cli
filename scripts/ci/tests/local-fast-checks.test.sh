@@ -201,9 +201,9 @@ assert_docs_only_plan_does_not_require_cargo() {
 assert_crate_src_asset_md_runs_package() {
   echo "== crate src embedded .md runs package mode, not docs-only =="
   local output
-  output="$(plan_for --changed-file crates/agent-docs/src/templates/agents_default.md)"
+  output="$(plan_for --changed-file crates/agent-hook/src/templates/example.md)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
-  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-agent-docs"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-agent-hook"
   assert_not_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=docs-only"
   echo "ok"
 }

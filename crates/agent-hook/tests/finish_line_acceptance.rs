@@ -58,12 +58,12 @@ fn call(fixture: &Fixture, operation: &str, request: &Value) -> (i32, Value) {
 
 fn install_bash_contract(fixture: &Fixture, command: &str) {
     std::fs::write(
-        fixture.root.join("AGENT_DOCS.toml"),
+        fixture.root.join("VALIDATION.toml"),
         format!(
             "[[validation]]\ncontext = \"project-dev\"\nproduct = \"dsh\"\ncommands = [{command:?}]\ndescription = \"acceptance test\"\n"
         ),
     )
-    .expect("agent-docs contract");
+    .expect("validation contract");
 }
 
 fn finish_line_state_paths(fixture: &Fixture) -> (PathBuf, PathBuf) {

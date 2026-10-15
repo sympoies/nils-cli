@@ -10,7 +10,7 @@ description: Plan and implement new CLI crates by following repository standards
 Prereqs:
 
 - Run inside the `nils-cli` git work tree.
-- `agent-docs`, `bash`, `git`, and `python3` available on `PATH`.
+- `bash`, `git`, and `python3` available on `PATH`.
 - The following policy docs exist:
   - `docs/runbooks/new-cli-crate-development-standard.md`
   - `docs/specs/cli-service-json-contract-guideline-v1.md`
@@ -41,7 +41,6 @@ Exit codes:
 Failure modes:
 
 - Required policy documents are missing.
-- `agent-docs preflight --intent project-dev --strict` fails.
 - JSON contract or parity requirements are underspecified and cannot be inferred.
 - Local changed-scope checks or CI-required checks fail.
 
@@ -51,9 +50,8 @@ Failure modes:
 
 ## Workflow
 
-1. Run preflight policy resolution:
-   - `agent-docs audit --target all --strict`
-   - `agent-docs preflight --intent project-dev --strict`
+1. Run the skill preflight:
+   - `create-cli-crate.sh --mode plan` (or `--mode implement`)
 2. Read and apply canonical standards:
    - `docs/runbooks/new-cli-crate-development-standard.md`
    - `docs/specs/cli-service-json-contract-guideline-v1.md`

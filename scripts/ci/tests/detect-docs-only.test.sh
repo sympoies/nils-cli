@@ -49,7 +49,7 @@ assert_verdict "crate docs tree"          true  --changed-file crates/semantic-c
 assert_verdict "multiple docs"            true  --changed-file README.md --changed-file docs/runbooks/example.md
 
 # Source / test assets that merely end in .md -> full CI.
-assert_verdict "crate src embedded md"    false --changed-file crates/agent-docs/src/templates/agents_default.md
+assert_verdict "crate src embedded md"    false --changed-file crates/agent-hook/src/templates/example.md
 assert_verdict "crate-root embedded md"   false --changed-file crates/semantic-commit/template.md
 assert_verdict "crate test fixture md"    false --changed-file crates/semantic-commit/tests/fixtures/example.md
 

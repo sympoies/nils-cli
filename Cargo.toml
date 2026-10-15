@@ -30,7 +30,6 @@ members = [
   "crates/api-websocket",
   "crates/api-test",
   "crates/semantic-commit",
-  "crates/agent-docs",
   "crates/agent-out",
   "crates/agent-scope-lock",
   "crates/nils-evidence",
