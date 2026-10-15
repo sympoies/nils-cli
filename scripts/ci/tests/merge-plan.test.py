@@ -148,6 +148,19 @@ class SelectorTests(unittest.TestCase):
         self.registry['rules'][0]['packages'] = ['missing']
         self.assertEqual(self.select([{'status': 'M', 'paths': ['crates/leaf/src/main.rs']}])['scope'], 'FULL')
 
+    def test_forge_cli_integration_binary_follows_its_scoped_dependencies(self):
+        # forge-cli integration tests run the semantic-commit binary as a sibling.
+        # A change to a forge-cli dependency selects forge-cli by reverse closure
+        # but would not build that sibling, so the scoped lane fails with
+        # NILS_TEST_REQUIRE_SIBLING_BINS=1. Dependencies outside always-escalate
+        # must select it explicitly.
+        rules = json.loads(REGISTRY.read_text())['rules']
+        covered = {path for rule in rules if 'nils-semantic-commit' in rule['packages']
+                   for path in rule['paths']}
+        for path in ('crates/agent-workflow-primitives/**', 'crates/nils-build-info/**'):
+            with self.subTest(path=path):
+                self.assertIn(path, covered)
+
     def test_extra_input_reverse_closure(self):
         self.registry['rules'] = [{'id': 'include', 'paths': ['includes/**'], 'packages': ['base']}]
         metadata = graph(self.root, [('leaf', 'base', None, None)])
