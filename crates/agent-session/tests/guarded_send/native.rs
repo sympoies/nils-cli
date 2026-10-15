@@ -1,4 +1,6 @@
 //! Native RPC regressions retain independent modeled composer evidence.
+#[path = "confirmation_lock.rs"]
+mod confirmation_lock;
 #[path = "trace.rs"]
 mod trace;
 use super::*;
@@ -79,6 +81,7 @@ impl Server {
                                     let claimed = fs::read_dir(&claim_dir).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("send-key-"));
                                     let busy = mode == "busy" || (mode == "late-busy" && read_count >= 3)
                                         || (mode == "busy-after-claim" && claimed);
+                                    let submitted = if matches!(mode, "hook-lock" | "hook-lock-replaced") && !confirmation_lock::ingest_after_lock(&claim_dir, mode == "hook-lock-replaced") { None } else { submitted };
                                     let submitted = if mode == "history-lag" && calls.iter().filter(|r| r["method"] == "thread/read" && r["params"]["includeTurns"] == true).count() == 1 { None } else { submitted };
                                     let mut turns = submitted.map_or(json!([]), |r| json!([{
                                         "id":"turn-one", "status":"inProgress", "items":[{
@@ -95,6 +98,9 @@ impl Server {
                                     json!({"thread":{"id":if mode == "wrong-thread" {"other-thread"} else {"provider-one"}, "status":{"type":if busy {"active"} else {"idle"}}, "turns":turns}})
                                 }
                                 "turn/start" => {
+                                    if matches!(mode, "hook-lock" | "hook-lock-replaced") {
+                                        assert!(!confirmation_lock::record_available(&claim_dir), "admission lock must cover dispatch");
+                                    }
                                     if mode == "disconnect" { break; }
                                     json!({"turn":{"id":if mode == "invalid-ack" {""} else {"turn-one"},"status":"inProgress","items":[]}})
                                 }

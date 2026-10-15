@@ -13,6 +13,7 @@ pub(super) fn deliver(
     text: String,
     mut record: SessionRecord,
     tmux_bin: &Path,
+    manual_input: &mut ManualInputSection,
     started: Instant,
 ) -> Result<SendResult, CliError> {
     let observed = record.clone();
@@ -50,11 +51,40 @@ pub(super) fn deliver(
         .map_err(|code| refusal(&record, code, false, false))?;
     let mut prepared = false;
     prepare_guarded_input(context, &mut record, true, &mut prepared)?;
-    let confirmation = client
-        .dispatch(&text)
-        .map_err(|error| refusal(&record, "send-native-unconfirmed", true, error.acknowledged))?;
     record.updated_at = Zoned::now().timestamp().to_string();
     write_session_record(context, &record)?;
+    let confirmation = client
+        .dispatch(&text, || {
+            // Acknowledged input may wait for synchronous provider ingress
+            // before entering history. Ingress needs this record lock. Keep
+            // the account gate and durable claim, but perform no further
+            // record writes after releasing the lock.
+            drop(manual_input.record_lock.take());
+        })
+        .map_err(|error| refusal(&record, "send-native-unconfirmed", true, error.acknowledged))?;
+    if manual_input.record_lock.is_none() {
+        let unconfirmed = |_| refusal(&record, "send-native-unconfirmed", true, true);
+        let lock = crate::acquire_session_record_lock_timed(
+            context,
+            &record.id,
+            admission.deadline.saturating_duration_since(Instant::now()),
+        )
+        .map_err(unconfirmed)?;
+        let current = load_session_record(context, &record.id).map_err(unconfirmed)?;
+        if crate::ensure_same_session_identity(&record, &current).is_err()
+            || current
+                .provider_resume
+                .as_ref()
+                .map(|r| (&r.provider, &r.session_id))
+                != record
+                    .provider_resume
+                    .as_ref()
+                    .map(|r| (&r.provider, &r.session_id))
+        {
+            return Err(refusal(&record, "send-native-unconfirmed", true, true));
+        }
+        manual_input.record_lock = Some(lock);
+    }
     Ok(SendResult {
         id: record.id,
         tmux_session: record.tmux_session,
