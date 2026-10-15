@@ -25,6 +25,17 @@ pub(super) fn observe(
         return Ok(false);
     };
     let session_start = raw_event_name == Some("SessionStart");
+    // Readiness is the resumed runtime's only idle signal and takes no record
+    // lock, so it settles before best-effort model persistence can contend.
+    let ready = if session_start
+        && matches!(
+            raw.get("source").and_then(Value::as_str),
+            Some("startup" | "resume")
+        ) {
+        observe_session_ready(context, id, runtime_id, provider_session)
+    } else {
+        Ok(())
+    };
     let _ = crate::session_model::observe_claude_hook(
         context,
         id,
@@ -33,15 +44,7 @@ pub(super) fn observe(
         raw,
         session_start,
     );
-    if session_start
-        && matches!(
-            raw.get("source").and_then(Value::as_str),
-            Some("startup" | "resume")
-        )
-    {
-        observe_session_ready(context, id, runtime_id, provider_session)?;
-    }
-    Ok(true)
+    ready.map(|()| true)
 }
 
 /// Claude reports SessionStart(startup|resume) once its composer accepts
