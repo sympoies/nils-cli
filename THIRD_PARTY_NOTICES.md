@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `65920423c3b0d08f52bb607da19e14d81e30b0baf30cf5b0ff4d480a8c21e8bc`
+- Cargo.lock SHA256: `2c298081b3e242ff7ba685b7014a28a2d2cc8c44deb0df690f35e765e9d066d8`
 - Third-party crates (`source != null`): 504
 
 ## Notice Extraction Policy
@@ -1578,7 +1578,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - Notice files: No explicit NOTICE file discovered.
 - License file reference: none declared
 
-### jiff 0.2.37
+### jiff 0.2.38
 
 - License: `Unlicense OR MIT`
 - Source: `crates.io`
@@ -1598,7 +1598,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `COPYING`
   - `UNLICENSE`
 
-### jiff-static 0.2.37
+### jiff-static 0.2.38
 
 - License: `Unlicense OR MIT`
 - Source: `crates.io`
@@ -2056,7 +2056,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-Apache`
   - `LICENSE-MIT`
 
-### objc2 0.6.4
+### objc2 0.6.5
 
 - License: `MIT`
 - Source: `crates.io`
@@ -2930,7 +2930,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### serde_json 1.0.151
+### serde_json 1.0.154
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -3397,7 +3397,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### toml 1.1.3+spec-1.1.0
+### toml 1.1.6+spec-1.1.0
 
 - License: `MIT OR Apache-2.0`
 - Source: `crates.io`
@@ -3696,7 +3696,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### uuid 1.27.0
+### uuid 1.28.0
 
 - License: `Apache-2.0 OR MIT`
 - Source: `crates.io`

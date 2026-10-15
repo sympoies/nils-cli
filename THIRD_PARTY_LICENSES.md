@@ -3,7 +3,7 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `65920423c3b0d08f52bb607da19e14d81e30b0baf30cf5b0ff4d480a8c21e8bc`
+- Cargo.lock SHA256: `2c298081b3e242ff7ba685b7014a28a2d2cc8c44deb0df690f35e765e9d066d8`
 - Third-party crates (`source != null`): 504
 - Workspace crates (`source == null`, excluded below): 42
 
@@ -235,9 +235,9 @@ This file documents third-party Rust crate licenses used by this workspace.
 | jaq-core | 3.1.1 | MIT | crates.io |
 | jaq-json | 2.0.3 | MIT | crates.io |
 | jaq-std | 3.0.3 | MIT | crates.io |
-| jiff | 0.2.37 | Unlicense OR MIT | crates.io |
+| jiff | 0.2.38 | Unlicense OR MIT | crates.io |
 | jiff-core | 0.1.0 | Unlicense OR MIT | crates.io |
-| jiff-static | 0.2.37 | Unlicense OR MIT | crates.io |
+| jiff-static | 0.2.38 | Unlicense OR MIT | crates.io |
 | jiff-tzdb | 0.1.6 | Unlicense OR MIT | crates.io |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT | crates.io |
 | jni | 0.22.4 | MIT OR Apache-2.0 | crates.io |
@@ -290,7 +290,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | num-rational | 0.4.2 | MIT OR Apache-2.0 | crates.io |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | crates.io |
 | num_threads | 0.1.7 | MIT OR Apache-2.0 | crates.io |
-| objc2 | 0.6.4 | MIT | crates.io |
+| objc2 | 0.6.5 | MIT | crates.io |
 | objc2-av-foundation | 0.3.2 | Zlib OR Apache-2.0 OR MIT | crates.io |
 | objc2-avf-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | crates.io |
 | objc2-core-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | crates.io |
@@ -393,7 +393,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | serde | 1.0.229 | MIT OR Apache-2.0 | crates.io |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | crates.io |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | crates.io |
-| serde_json | 1.0.151 | MIT OR Apache-2.0 | crates.io |
+| serde_json | 1.0.154 | MIT OR Apache-2.0 | crates.io |
 | serde_path_to_error | 0.1.20 | MIT OR Apache-2.0 | crates.io |
 | serde_repr | 0.1.20 | MIT OR Apache-2.0 | crates.io |
 | serde_spanned | 1.1.1 | MIT OR Apache-2.0 | crates.io |
@@ -447,7 +447,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | tokio-macros | 2.7.0 | MIT | crates.io |
 | tokio-rustls | 0.26.4 | MIT OR Apache-2.0 | crates.io |
 | tokio-tungstenite | 0.29.0 | MIT | crates.io |
-| toml | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
+| toml | 1.1.6+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | toml_datetime | 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | toml_edit | 0.25.15+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
 | toml_parser | 1.1.4+spec-1.1.0 | MIT OR Apache-2.0 | crates.io |
@@ -482,7 +482,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | usvg | 0.48.1 | Apache-2.0 OR MIT | crates.io |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | crates.io |
 | utf8parse | 0.2.2 | Apache-2.0 OR MIT | crates.io |
-| uuid | 1.27.0 | Apache-2.0 OR MIT | crates.io |
+| uuid | 1.28.0 | Apache-2.0 OR MIT | crates.io |
 | uuid-simd | 0.8.0 | MIT | crates.io |
 | valuable | 0.1.1 | MIT | crates.io |
 | vcpkg | 0.2.15 | MIT/Apache-2.0 | crates.io |
