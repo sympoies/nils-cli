@@ -156,7 +156,11 @@ impl Client {
         }
     }
 
-    pub(crate) fn dispatch(&mut self, text: &str) -> Result<&'static str, DispatchError> {
+    pub(crate) fn dispatch(
+        &mut self,
+        text: &str,
+        on_turn_ack: impl FnOnce(),
+    ) -> Result<&'static str, DispatchError> {
         let unknown = |_| DispatchError {
             acknowledged: false,
         };
@@ -190,6 +194,7 @@ impl Client {
             acknowledged: false,
         })?;
         let turn_id = turn_id.to_owned();
+        on_turn_ack();
         self.confirm_input(&turn_id, text)
             .map_err(|_| DispatchError { acknowledged: true })?;
         Ok("input_observed")

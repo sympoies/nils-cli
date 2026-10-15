@@ -370,6 +370,7 @@ fn guarded(
             text.expect("literal native input"),
             record,
             tmux_bin,
+            manual_input,
             hold_started,
         );
     }
