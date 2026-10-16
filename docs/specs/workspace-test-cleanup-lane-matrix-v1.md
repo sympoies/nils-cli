@@ -31,10 +31,9 @@ The serialized order is frozen by Sprint 3 Task 3.1 and is no longer recomputed 
 | Order | Crate | Candidates | Helper Signals | allow(dead_code) | Score | Serial Group |
 | ---: | --- | ---: | ---: | ---: | ---: | --- |
 | 1 | `git-cli` | 37 | 27 | 1 | 94 | `serial-1` |
-| 2 | `agent-docs` | 32 | 20 | 1 | 75 | `serial-2` |
-| 3 | `macos-agent` | 37 | 7 | 2 | 57 | `serial-3` |
-| 4 | `fzf-cli` | 19 | 5 | 7 | 50 | `serial-4` |
-| 5 | `memo` | 25 | 5 | 5 | 50 | `serial-5` |
+| 2 | `macos-agent` | 37 | 7 | 2 | 57 | `serial-2` |
+| 3 | `fzf-cli` | 19 | 5 | 7 | 50 | `serial-3` |
+| 4 | `memo` | 25 | 5 | 5 | 50 | `serial-4` |
 
 All non-listed crates stay `parallel`.
 
@@ -44,7 +43,6 @@ From the current `execution-manifest.md`:
 
 | Crate | Safe | Medium | High-Risk | Serial Group |
 | --- | ---: | ---: | ---: | --- |
-| agent-docs | 1 | 30 | 1 | serial-2 |
 | api-gql | 0 | 5 | 1 | parallel |
 | api-grpc | 0 | 2 | 1 | parallel |
 | api-rest | 0 | 9 | 1 | parallel |
@@ -53,14 +51,14 @@ From the current `execution-manifest.md`:
 | api-websocket | 0 | 2 | 2 | parallel |
 | cli-template | 0 | 1 | 0 | parallel |
 | codex-cli | 0 | 29 | 11 | parallel |
-| fzf-cli | 0 | 18 | 1 | serial-4 |
+| fzf-cli | 0 | 18 | 1 | serial-3 |
 | git-cli | 13 | 22 | 2 | serial-1 |
 | git-lock | 0 | 15 | 2 | parallel |
 | git-scope | 0 | 15 | 3 | parallel |
 | git-summary | 0 | 10 | 1 | parallel |
 | image-processing | 0 | 8 | 0 | parallel |
-| macos-agent | 0 | 35 | 2 | serial-3 |
-| memo | 0 | 22 | 3 | serial-5 |
+| macos-agent | 0 | 35 | 2 | serial-2 |
+| memo | 0 | 22 | 3 | serial-4 |
 | nils-common | 0 | 1 | 1 | parallel |
 | nils-term | 0 | 1 | 0 | parallel |
 | nils-test-support | 0 | 6 | 0 | parallel |

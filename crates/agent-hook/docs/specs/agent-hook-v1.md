@@ -673,8 +673,8 @@ The request and response contracts are:
   `runner_capability`, an optional `execution`, and a timeout from 1 ms through
   60 minutes (30 minutes by default). The intent and command are compared
   byte-for-byte with the current repository validation contracts. The hook
-  reads root `VALIDATION.toml` and transitionally reads DSH-scoped
-  `[[validation]]` entries from `AGENT_DOCS.toml`. Omitting `execution`
+  reads only the root `VALIDATION.toml`; a repository without it declares
+  no validation contracts. Omitting `execution`
   performs the required non-executing capability and
   target probe: an exact current validation target returns `status = "ready"`
   with its target and contract digests, while a non-target returns

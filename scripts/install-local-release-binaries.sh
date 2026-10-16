@@ -142,7 +142,7 @@ for bin in "${bins[@]}"; do
 done
 
 if [[ "$explicit_bins" -eq 0 ]]; then
-  for retired in plan-issue plan-issue-local plan-tooling plan-archive main-agent; do
+  for retired in plan-issue plan-issue-local plan-tooling plan-archive main-agent agent-docs; do
     run rm -f -- "$prefix/$retired"
   done
   install_root="$(dirname -- "$prefix")"

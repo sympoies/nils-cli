@@ -27,15 +27,10 @@ pub struct PathClassification {
 impl PathClassContract {
     /// Loads `[path_classes]` from the repository-root `VALIDATION.toml`.
     ///
-    /// When that file is absent or declares no `path_classes` table, the
-    /// transitional root `AGENT_DOCS.toml` is read instead.
+    /// A missing file or a file without a `path_classes` table is
+    /// not configured.
     pub fn load_project(repo: &Path) -> Result<Option<Self>, String> {
-        for file in ["VALIDATION.toml", "AGENT_DOCS.toml"] {
-            if let Some(contract) = Self::load_file(&repo.join(file))? {
-                return Ok(Some(contract));
-            }
-        }
-        Ok(None)
+        Self::load_file(&repo.join("VALIDATION.toml"))
     }
 
     fn load_file(path: &Path) -> Result<Option<Self>, String> {
@@ -243,7 +238,7 @@ production = ["lib/**"]
 test = ["spec/**"]
 "#;
 
-    const AGENT_DOCS_CLASSES: &str = r#"[path_classes]
+    const RETIRED_CATALOG_CLASSES: &str = r#"[path_classes]
 production = ["src/**"]
 test = ["tests/**"]
 "#;
@@ -266,26 +261,21 @@ test = ["tests/**"]
     }
 
     #[test]
-    fn load_project_prefers_validation_toml_over_agent_docs() {
+    fn load_project_ignores_retired_agent_docs_toml() {
         let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("VALIDATION.toml"), VALIDATION_CLASSES).unwrap();
-        std::fs::write(tmp.path().join("AGENT_DOCS.toml"), AGENT_DOCS_CLASSES).unwrap();
-        assert_eq!(class_of(tmp.path(), "lib/value.rs"), "production");
-        assert_eq!(class_of(tmp.path(), "src/value.rs"), "unknown");
-    }
-
-    #[test]
-    fn load_project_falls_back_to_agent_docs_toml() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("AGENT_DOCS.toml"), AGENT_DOCS_CLASSES).unwrap();
-        assert_eq!(class_of(tmp.path(), "src/value.rs"), "production");
+        std::fs::write(tmp.path().join("AGENT_DOCS.toml"), RETIRED_CATALOG_CLASSES).unwrap();
+        assert_eq!(PathClassContract::load_project(tmp.path()).unwrap(), None);
 
         std::fs::write(
             tmp.path().join("VALIDATION.toml"),
             "[[validation]]\ncontext = \"project-dev\"\ncommands = [\"true\"]\n",
         )
         .unwrap();
-        assert_eq!(class_of(tmp.path(), "src/value.rs"), "production");
+        assert_eq!(PathClassContract::load_project(tmp.path()).unwrap(), None);
+
+        std::fs::write(tmp.path().join("VALIDATION.toml"), VALIDATION_CLASSES).unwrap();
+        assert_eq!(class_of(tmp.path(), "lib/value.rs"), "production");
+        assert_eq!(class_of(tmp.path(), "src/value.rs"), "unknown");
     }
 
     #[test]
