@@ -240,10 +240,11 @@ recovery; a bare completion or Stop cannot supply the missing binding.
 
 Existing stuck snapshots recover on their first view read, including after
 daemon startup, when a retained completion still matches the latest progress.
-Without such proof, a Codex working view becomes inferred `unknown` after
-300 seconds without provider progress. The signal is
-`current_turn.last_progress_at`; snapshots lacking it use the observed turn
-start. Reads preserve stored provider history and use a stable quiet deadline.
+Without such proof, a Codex working view remains `working` with inferred
+confidence after 300 seconds without provider progress. The
+`codex_progress_quiet` diagnostic reports `current_turn.last_progress_at` as
+the signal; snapshots lacking it use the observed turn start. Reads preserve
+stored provider history and use a stable quiet deadline.
 
 List, board and stream expose the raw progress timestamp and this additive
 diagnostic for a quiet projection:

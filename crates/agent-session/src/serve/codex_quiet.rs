@@ -130,7 +130,7 @@ mod tests {
                 .unwrap()
                 .turn_state;
             let mut value = serde_json::to_value(state).unwrap();
-            value["phase"] = json!("unknown");
+            value["phase"] = json!("working");
             value["source"]["confidence"] = json!("inferred");
             value["diagnostic"] = json!({
                 "reason":"codex_progress_quiet", "quiet_threshold_seconds":300,
