@@ -712,7 +712,7 @@ pub(crate) fn inbox(
     mailbox::inbox(
         context,
         cli::MessageInboxArgs {
-            session: id.to_string(),
+            session: Some(id.to_string()),
             capability_file: Some(server_capability.path.clone()),
             state: query.state,
             categories: query.category.into_iter().collect(),
