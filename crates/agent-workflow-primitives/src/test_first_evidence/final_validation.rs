@@ -93,8 +93,10 @@ pub struct ResolveFinalArgs {
     /// Passing canonical validation that covers the failed target on the same source.
     #[arg(long)]
     pub passing_command: String,
+    /// Scope of the passing canonical validation.
     #[arg(long, value_enum)]
     pub passing_scope: ValidationScope,
+    /// Passing attempt number, as shown by `show --format json`.
     #[arg(long)]
     pub passing_attempt: u32,
     /// Why this passing run resolves the failure, including scope and source equivalence.
@@ -277,7 +279,30 @@ pub fn final_resolution_summary(record: &EvidenceRecord) -> String {
         }
     }
     summary.push('\n');
-    redact_text(&summary).value
+    let summary = redact_text(&summary).value;
+    // Persisted records can come from producers that did not redact assignments.
+    // Apply compound-key masking only at export so stored command identities and
+    // their resolution references remain unchanged.
+    static COMPOUND_SECRET: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let assignments = COMPOUND_SECRET.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?ix)
+            (?P<key>\b(?:[a-z0-9_-]*[_-])?(?:access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|authorization|cookie|password|secret|session[_-]?id|token)(?:[_-][a-z0-9_-]+)*\b)
+            (?P<after_key>"?\s*[:=]\s*)
+            (?P<value>"[^"]*"|'[^']*'|[^\s,;&}`]+)
+            "#,
+        )
+        .expect("valid compound credential assignment regex")
+    });
+    assignments
+        .replace_all(&summary, |captures: &regex::Captures<'_>| {
+            if &captures["value"] == "[REDACTED]" {
+                captures[0].to_string()
+            } else {
+                format!("{}{}[REDACTED]", &captures["key"], &captures["after_key"])
+            }
+        })
+        .into_owned()
 }
 
 #[cfg(test)]

@@ -1764,6 +1764,182 @@ mod tests {
     }
 
     #[test]
+    fn final_disposition_backend_body_redacts_compound_credentials() {
+        use std::cell::RefCell;
+
+        struct CaptureRunner {
+            body: RefCell<Option<String>>,
+            head: String,
+        }
+        impl BackendRunner for CaptureRunner {
+            fn run(&self, call: &BackendCall) -> Result<BackendSuccess, ForgeError> {
+                let argv: Vec<_> = call.argv.iter().map(|s| s.to_string_lossy()).collect();
+                let stdout = if argv[1] == "create" {
+                    let index = argv.iter().position(|s| s == "--body-file").unwrap();
+                    *self.body.borrow_mut() =
+                        Some(std::fs::read_to_string(argv[index + 1].as_ref()).unwrap());
+                    "https://github.com/o/r/pull/1".to_string()
+                } else {
+                    assert_eq!(argv[1], "view");
+                    serde_json::json!({
+                        "headRefName": "fix/final-disposition",
+                        "headRefOid": self.head,
+                        "baseRefName": "main",
+                        "isDraft": true,
+                        "title": "fix: resolve final validation"
+                    })
+                    .to_string()
+                };
+                Ok(BackendSuccess {
+                    stdout,
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        for persisted_producer in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = subject_repo(tmp.path(), "repo", "git@github.com:o/r.git");
+            let evidence = tmp.path().join("evidence");
+            std::fs::create_dir_all(&evidence).unwrap();
+            bind_evidence(&repo, &evidence);
+            let out = evidence.to_str().unwrap();
+            let record = |args: &[&str]| {
+                let mut argv = vec!["test-first-evidence", args[0], "--out", out];
+                argv.extend_from_slice(&args[1..]);
+                assert_eq!(
+                    agent_workflow_primitives::test_first_evidence::run_with_args(argv),
+                    0
+                );
+            };
+            let failed_command = "cargo test affected AWS_SESSION_TOKEN=fixture-command-value";
+            let passing_command = "canonical CLIENT_SECRET=fixture-passing-value";
+            let detail = "isolated failure AWS_SECRET_ACCESS_KEY=fixture-summary-value";
+            let reason = "canonical run passed SECRET_ACCESS_KEY=fixture-reason-value";
+            let investigation = "unchanged source _CLIENT_SECRET='fixture-investigation-value'";
+            record(&[
+                "record-final",
+                "--command",
+                failed_command,
+                "--scope",
+                "affected-suite",
+                "--status",
+                "fail",
+                "--summary",
+                detail,
+            ]);
+            record(&[
+                "record-final",
+                "--command",
+                passing_command,
+                "--scope",
+                "affected-suite",
+                "--status",
+                "pass",
+                "--summary",
+                "canonical suite passed",
+            ]);
+            record(&[
+                "resolve-final",
+                "--command",
+                failed_command,
+                "--scope",
+                "affected-suite",
+                "--attempt",
+                "1",
+                "--passing-command",
+                passing_command,
+                "--passing-scope",
+                "affected-suite",
+                "--passing-attempt",
+                "1",
+                "--reason",
+                reason,
+                "--investigation",
+                investigation,
+            ]);
+            if persisted_producer {
+                // Alternate producers can persist valid records without recorder redaction.
+                let path = evidence.join("test-first-evidence.json");
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                for validation in value["final_validations"].as_array_mut().unwrap() {
+                    if validation["status"] == "fail" {
+                        validation["command"] = failed_command.into();
+                        validation["summary"] = detail.into();
+                        validation["resolution"]["passing_command"] = passing_command.into();
+                        validation["resolution"]["reason"] = reason.into();
+                        validation["resolution"]["investigation"] =
+                            serde_json::json!([investigation]);
+                    } else if validation["scope"] == "affected-suite" {
+                        validation["command"] = passing_command.into();
+                    }
+                }
+                std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+            }
+            git(&repo, &["branch", "fix/final-disposition"]);
+            let original_record = std::fs::read(evidence.join("test-first-evidence.json")).unwrap();
+            let runner = CaptureRunner {
+                body: RefCell::new(None),
+                head: git(&repo, &["rev-parse", "HEAD"]),
+            };
+            let env = Environment {
+                test_first_required: true,
+                workdir: repo,
+                ..passthrough_env()
+            };
+            let global = GlobalFlags {
+                format: Some(OutputFormat::Json),
+                remote: "origin".into(),
+                provider: Some(ProviderFlag::Local),
+                host: None,
+                repo: None,
+                store_root: None,
+                dry_run: false,
+            };
+            let body = "## Summary\n\nResolve a validation failure.\n\n## Test plan\n\nCanonical validation passed.\n";
+            let mut create = args("fix: resolve final validation", PrKindFlag::Bug, Some(body));
+            create.head = Some("fix/final-disposition".into());
+            create.test_first_evidence = Some(out.into());
+            assert_eq!(
+                run_with(&runner, &global, create, OutputFormat::Json, &env).unwrap(),
+                0
+            );
+            assert_eq!(
+                std::fs::read(evidence.join("test-first-evidence.json")).unwrap(),
+                original_record,
+                "export must preserve the original evidence record"
+            );
+            let body = runner.body.borrow();
+            let body = body
+                .as_ref()
+                .expect("backend create must receive a body file");
+            for value in ["command", "passing", "summary", "reason", "investigation"] {
+                assert!(
+                    !body.contains(&format!("fixture-{value}-value")),
+                    "credential in {value} reached backend; persisted producer: {persisted_producer}"
+                );
+            }
+            for retained in [
+                "FAIL: `cargo test affected AWS_SESSION_TOKEN=[REDACTED]` (scope",
+                "PASS: `canonical CLIENT_SECRET=[REDACTED]` (scope",
+                "Resolved by",
+                "canonical suite passed",
+                "isolated failure",
+                "canonical run passed",
+                "unchanged source",
+                "AWS_SESSION_TOKEN=[REDACTED]",
+                "CLIENT_SECRET=[REDACTED]",
+                "AWS_SECRET_ACCESS_KEY=[REDACTED]",
+                "SECRET_ACCESS_KEY=[REDACTED]",
+                "_CLIENT_SECRET=[REDACTED]",
+            ] {
+                assert!(body.contains(retained), "audit detail missing: {retained}");
+            }
+        }
+    }
+
+    #[test]
     fn test_first_gate_passes_when_not_required() {
         assert!(gate(PrKind::Feature, false, None).is_ok());
     }

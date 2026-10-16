@@ -113,8 +113,8 @@ _arguments "${_arguments_options[@]}" : \
 '--scope=[Scope of the failed final validation]:SCOPE:(focused affected-suite contract-consumer full manual)' \
 '--attempt=[Failed attempt number, as shown by \`show --format json\`]:ATTEMPT:_default' \
 '--passing-command=[Passing canonical validation that covers the failed target on the same source]:PASSING_COMMAND:_default' \
-'--passing-scope=[]:PASSING_SCOPE:(focused affected-suite contract-consumer full manual)' \
-'--passing-attempt=[]:PASSING_ATTEMPT:_default' \
+'--passing-scope=[Scope of the passing canonical validation]:PASSING_SCOPE:(focused affected-suite contract-consumer full manual)' \
+'--passing-attempt=[Passing attempt number, as shown by \`show --format json\`]:PASSING_ATTEMPT:_default' \
 '--reason=[Why this passing run resolves the failure, including scope and source equivalence]:REASON:_default' \
 '*--investigation=[Investigation evidence explaining the original failure. Repeatable]:INVESTIGATION:_default' \
 '-h[Print help]' \
