@@ -2565,6 +2565,13 @@ surface as `test_first_evidence_required`, `test_first_evidence_v1`,
 `test_first_evidence_provider_head_mismatch`, or
 `test_first_evidence_unreadable` (exit `DATA`).
 
+A failed final attempt from another command remains blocking after a canonical
+PASS until explicitly dispositioned with `test-first-evidence resolve-final`.
+The refusal names the command and required flags. The original FAIL remains in
+the record; create includes final attempt history and disposition in the PR body.
+See [failed final validation resolution](../../../agent-workflow-primitives/docs/specs/failed-final-validation-resolution-v1.md)
+for reference validation and investigation requirements.
+
 ### `[review_convergence]` — observed native review gate
 
 `require` defaults to `false`, `quiet_period` to `2m`, and `timeout` to `20m`.

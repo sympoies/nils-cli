@@ -1,4 +1,6 @@
 mod cli;
+mod final_validation;
+pub use final_validation::{FinalResolution, final_resolution_summary};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -89,7 +91,8 @@ fn dispatch(cli: Cli) -> i32 {
         Command::RecordFailing(args) => run_record_failing(args),
         Command::RecordImpact(args) => run_record_impact(args),
         Command::RecordWaiver(args) => run_record_waiver(args),
-        Command::RecordFinal(args) => run_record_final(args),
+        Command::RecordFinal(args) => final_validation::run_record_final(args),
+        Command::ResolveFinal(args) => final_validation::run_resolve_final(args),
         Command::RecordGap(args) => run_record_gap(args),
         Command::BindBaseline(args) => run_bind_baseline(args),
         Command::BindDelivery(args) => run_bind_delivery(args),
@@ -498,82 +501,6 @@ fn run_record_waiver(args: RecordWaiverArgs) -> i32 {
         Err(err) => render_error(
             RECORD_WAIVER_SCHEMA_VERSION,
             RECORD_WAIVER_COMMAND,
-            format,
-            err,
-        ),
-    }
-}
-
-fn run_record_final(args: RecordFinalArgs) -> i32 {
-    let format = args.common.format;
-    let full_record = args.output.full_record;
-    match update_record_with_item(args.common.out_dir.as_path(), |record| {
-        let command = required_text(Some(&args.command), "--command", "missing-final-command")?;
-        let command = redact_text(command).value;
-        let next_attempt = record
-            .final_validations
-            .iter()
-            .filter(|item| item.command.trim() == command && item.scope == Some(args.scope))
-            .map(|item| item.attempt)
-            .max()
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or_else(|| {
-                CliError::data(
-                    "final-validation-attempt-overflow",
-                    "final validation attempt counter is exhausted",
-                    None,
-                )
-            })?;
-        let validation = FinalValidation {
-            command,
-            status: args.status,
-            scope: Some(args.scope),
-            attempt: next_attempt,
-            summary: args
-                .summary
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|value| redact_text(value).value),
-            artifacts: normalized_paths(&args.artifact),
-        };
-        let latest = record
-            .final_validations
-            .iter()
-            .filter(|item| {
-                item.command.trim() == validation.command && item.scope == validation.scope
-            })
-            .max_by_key(|item| item.attempt);
-        if latest.is_some_and(|item| item.status == validation.status) {
-            return Err(CliError::data(
-                "duplicate-final-validation",
-                "latest final validation attempt already has this command, scope, and status",
-                None,
-            ));
-        }
-        record.final_validations.push(validation.clone());
-        record.final_validations.sort_by(|left, right| {
-            (left.scope, left.command.trim(), left.attempt).cmp(&(
-                right.scope,
-                right.command.trim(),
-                right.attempt,
-            ))
-        });
-        Ok(validation)
-    }) {
-        Ok((result, item)) => render_mutation_success(
-            RECORD_FINAL_RECEIPT_SCHEMA_VERSION,
-            RECORD_FINAL_SCHEMA_VERSION,
-            RECORD_FINAL_COMMAND,
-            format,
-            full_record,
-            &result,
-            &item,
-        ),
-        Err(err) => render_error(
-            RECORD_FINAL_SCHEMA_VERSION,
-            RECORD_FINAL_COMMAND,
             format,
             err,
         ),
@@ -1146,10 +1073,15 @@ fn missing_evidence_fields(record: &EvidenceRecord) -> Vec<String> {
     {
         missing.push("final_validation_identity".to_string());
     }
+    if record.final_validations.iter().any(|item| {
+        item.resolution.is_some() && !final_validation::valid_resolution_history(record, item)
+    }) {
+        missing.push("invalid_final_resolution".to_string());
+    }
     let latest_validations = effective_final_validations(record);
     if latest_validations
         .values()
-        .any(|item| item.status == ValidationStatus::Fail)
+        .any(|item| final_validation::unresolved_failure(record, item))
     {
         missing.push("failed_final_validation".to_string());
     }
@@ -1251,6 +1183,7 @@ fn is_post_edit_evidence_field(field: &str) -> bool {
         "focused_final_validation"
             | "final_validation_pass"
             | "final_validation_identity"
+            | "invalid_final_resolution"
             | "failed_final_validation"
             | "duplicate_final_validation"
             | "residual_gaps_declaration"
@@ -1775,7 +1708,7 @@ fn effective_final_validation_status(record: &EvidenceRecord) -> &'static str {
     let latest = effective_final_validations(record);
     if latest
         .values()
-        .any(|value| value.status == ValidationStatus::Fail)
+        .any(|value| final_validation::unresolved_failure(record, value))
         || record
             .final_validation
             .as_ref()
@@ -2061,6 +1994,8 @@ pub struct FinalValidation {
     pub scope: Option<ValidationScope>,
     #[serde(default = "one")]
     pub attempt: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<FinalResolution>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -2230,6 +2165,7 @@ mod tests {
             waiver: None,
             final_validations: vec![
                 super::FinalValidation {
+                    resolution: None,
                     command: "cargo test contract".to_string(),
                     status: super::ValidationStatus::Pass,
                     scope: Some(super::ValidationScope::Focused),
@@ -2238,6 +2174,7 @@ mod tests {
                     artifacts: Vec::new(),
                 },
                 super::FinalValidation {
+                    resolution: None,
                     command: "cargo test suite".to_string(),
                     status: super::ValidationStatus::Pass,
                     scope: Some(super::ValidationScope::AffectedSuite),

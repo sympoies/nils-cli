@@ -75,6 +75,7 @@ pub struct PrCreatePayload {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VerifiedTestFirstSubject {
     pub head: String,
+    validation_summary: String,
 }
 
 pub(crate) struct PrCreateComputation {
@@ -548,7 +549,10 @@ pub(crate) fn test_first_gate(
                                 None,
                             )
                         })?;
-                    Ok(Some(VerifiedTestFirstSubject { head }))
+                    Ok(Some(VerifiedTestFirstSubject {
+                        head,
+                        validation_summary: agent_workflow_primitives::test_first_evidence::final_resolution_summary(&result.record),
+                    }))
                 }
                 Ok(subject)
                     if matches!(
@@ -586,8 +590,12 @@ pub(crate) fn test_first_gate(
             "test_first_evidence_incomplete",
             format!(
                 "test-first evidence at '{dir}' is incomplete: missing {missing}",
-                missing = result.missing.join(", ")
-            ),
+                missing = result.missing.join(", "),
+            ) + if result.missing.iter().any(|field| field == "failed_final_validation") {
+                "; record the disposition with `test-first-evidence resolve-final --out <dir> --command <failed-command> --scope <failed-scope> --attempt <n> --passing-command <canonical-command> --passing-scope <scope> --passing-attempt <n> --reason <resolution> --investigation <evidence>`"
+            } else {
+                ""
+            },
             Some(format!("record_file={}", result.record_file)),
         )),
         Err(message) => Err(ForgeError::validation(
@@ -597,6 +605,19 @@ pub(crate) fn test_first_gate(
             Some(message),
         )),
     }
+}
+
+fn append_validation_summary(
+    mut body: String,
+    subject: Option<&VerifiedTestFirstSubject>,
+) -> Result<String, ForgeError> {
+    if let Some(subject) = subject.filter(|subject| !subject.validation_summary.is_empty()) {
+        body.push_str("\n\n");
+        body.push_str(&subject.validation_summary);
+        no_local_path(&body, "body")?;
+        no_agent_attribution(&body, "body")?;
+    }
+    Ok(body)
 }
 
 pub(crate) fn validate_provider_subject_head(
@@ -707,6 +728,7 @@ pub fn run_with<R: BackendRunner>(
         resolved_head.local_branch,
     )?;
 
+    let body = append_validation_summary(body, verified_subject.as_ref())?;
     let draft = !args.no_draft;
 
     // 4. Materialize body into a temp file for argv handoff. The temp file
@@ -855,6 +877,7 @@ fn compute_with_subject_inner<R: BackendRunner>(
         resolved_head.local_branch,
     )?;
 
+    let body = append_validation_summary(body, verified_subject.as_ref())?;
     let draft = !args.no_draft;
     let body_tempfile = write_body_tempfile(&body)?;
     let body_path = body_tempfile.path().to_path_buf();
@@ -1624,6 +1647,123 @@ mod tests {
     }
 
     #[test]
+    fn failed_final_disposition_admits_create_and_preserves_history() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = subject_repo(tmp.path(), "repo", "git@github.com:o/r.git");
+        let evidence = tmp.path().join("evidence");
+        std::fs::create_dir_all(&evidence).unwrap();
+        bind_evidence(&repo, &evidence);
+        let out = evidence.to_str().unwrap();
+        let record = |args: &[&str]| {
+            let mut argv = vec!["test-first-evidence", args[0], "--out", out];
+            argv.extend_from_slice(&args[1..]);
+            agent_workflow_primitives::test_first_evidence::run_with_args(argv)
+        };
+        assert_eq!(
+            record(&[
+                "record-final",
+                "--command",
+                "cargo test affected",
+                "--scope",
+                "affected-suite",
+                "--status",
+                "fail",
+                "--summary",
+                "isolated assertion failure"
+            ]),
+            0
+        );
+        assert_eq!(
+            record(&[
+                "record-final",
+                "--command",
+                "bash scripts/check.sh",
+                "--scope",
+                "affected-suite",
+                "--status",
+                "pass",
+                "--summary",
+                "canonical run passed on unchanged source"
+            ]),
+            0
+        );
+        let gate = || test_first_gate(PrKind::Bug, true, Some(out), &repo, "origin", None, "HEAD");
+        let err = gate().expect_err("unresolved failed attempt must refuse create");
+        assert_eq!(err.kind(), "test_first_evidence_incomplete");
+        assert!(
+            err.to_string()
+                .contains("test-first-evidence resolve-final"),
+            "{err}"
+        );
+        assert_eq!(
+            record(&[
+                "resolve-final",
+                "--command",
+                "cargo test affected",
+                "--scope",
+                "affected-suite",
+                "--attempt",
+                "1",
+                "--passing-command",
+                "bash scripts/check.sh",
+                "--passing-scope",
+                "affected-suite",
+                "--passing-attempt",
+                "1",
+                "--reason",
+                "canonical run covers the failed target on unchanged source",
+                "--investigation",
+                "isolated base and head runs passed"
+            ]),
+            0
+        );
+        gate().expect("explicit disposition admits create on the same source");
+        let result = agent_workflow_primitives::test_first_evidence::verify_dir(&evidence).unwrap();
+        let history = serde_json::to_value(&result.record).unwrap();
+        let failed = history["final_validations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["command"] == "cargo test affected")
+            .unwrap();
+        assert_eq!(failed["status"], "fail");
+        assert_eq!(
+            failed["resolution"]["passing_command"],
+            "bash scripts/check.sh"
+        );
+        let body = "## Summary\n\nResolve a validation failure.\n\n## Test plan\n\nCanonical validation passed.\n";
+        let summary_body =
+            append_validation_summary(body.to_string(), gate().unwrap().as_ref()).unwrap();
+        assert!(summary_body.contains("FAIL: `cargo test affected`"));
+        assert!(summary_body.contains("PASS: `bash scripts/check.sh`"));
+        assert!(summary_body.contains("isolated assertion failure"));
+        assert!(summary_body.contains("isolated base and head runs passed"));
+        assert!(summary_body.contains("Resolved by `bash scripts/check.sh`"));
+        git(&repo, &["branch", "fix/final-disposition"]);
+        let env = Environment {
+            test_first_required: true,
+            workdir: repo,
+            ..passthrough_env()
+        };
+        let global = GlobalFlags {
+            format: Some(OutputFormat::Json),
+            remote: "origin".into(),
+            provider: Some(ProviderFlag::Local),
+            host: None,
+            repo: None,
+            store_root: None,
+            dry_run: true,
+        };
+        let mut create = args("fix: resolve final validation", PrKindFlag::Bug, Some(body));
+        create.head = Some("fix/final-disposition".into());
+        create.test_first_evidence = Some(out.to_string());
+        assert_eq!(
+            run_with(&StubRunner, &global, create, OutputFormat::Json, &env).unwrap(),
+            0
+        );
+    }
+
+    #[test]
     fn test_first_gate_passes_when_not_required() {
         assert!(gate(PrKind::Feature, false, None).is_ok());
     }
@@ -1632,6 +1772,7 @@ mod tests {
     fn provider_head_must_match_the_verified_subject() {
         let subject = VerifiedTestFirstSubject {
             head: "abc123".into(),
+            validation_summary: String::new(),
         };
         assert!(validate_provider_subject_head(Some(&subject), Some("abc123")).is_ok());
         let mismatch = validate_provider_subject_head(Some(&subject), Some("def456"))

@@ -46,6 +46,9 @@ _test__first__evidence() {
             test__first__evidence,record-waiver)
                 cmd="test__first__evidence__record__waiver"
                 ;;
+            test__first__evidence,resolve-final)
+                cmd="test__first__evidence__resolve__final"
+                ;;
             test__first__evidence,show)
                 cmd="test__first__evidence__show"
                 ;;
@@ -59,7 +62,7 @@ _test__first__evidence() {
 
     case "${cmd}" in
         test__first__evidence)
-            opts="-h -V --help --version init record-failing record-impact record-waiver record-final record-gap bind-baseline bind-delivery check verify show completion"
+            opts="-h -V --help --version init record-failing record-impact record-waiver record-final resolve-final record-gap bind-baseline bind-delivery check verify show completion"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -486,6 +489,63 @@ _test__first__evidence() {
                     return 0
                     ;;
                 --expires)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        test__first__evidence__resolve__final)
+            opts="-h --out --format --command --scope --attempt --passing-command --passing-scope --passing-attempt --reason --investigation --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --out)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --command)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --scope)
+                    COMPREPLY=($(compgen -W "focused affected-suite contract-consumer full manual" -- "${cur}"))
+                    return 0
+                    ;;
+                --attempt)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --passing-command)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --passing-scope)
+                    COMPREPLY=($(compgen -W "focused affected-suite contract-consumer full manual" -- "${cur}"))
+                    return 0
+                    ;;
+                --passing-attempt)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --reason)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --investigation)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
