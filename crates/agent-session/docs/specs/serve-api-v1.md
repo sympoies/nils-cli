@@ -743,6 +743,9 @@ recorded in `sympoies/nils-cli#1409`.
   app-server transport so account and auto-resume controls remain available; unsupported or explicitly raw Codex runtimes retain
   the standalone resume fallback. In resume-id mode, omit `cwd`, `prompt`,
   and `agent_args`; invalid, missing, ambiguous, or unsupported provider ids return structured errors.
+  Both modes accept public `workspace` and descriptive `origin`; see
+  [origin and workspace](session-lineage-work-v1.md#origin-and-workspace) for
+  nullable defaults, inheritance, validation, and record preservation.
   Either mode may add `lineage` (who started the session) and `work` (its
   program and issue references), validated and stored as
   [Session lineage and work v1](session-lineage-work-v1.md#serve-create)

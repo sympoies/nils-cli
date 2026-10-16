@@ -7,6 +7,7 @@ use crate::cli::{self, Command};
 
 pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
     match command {
+        Command::Workspace(_) => Some("workspace-set"),
         Command::Readiness(_) => Some("readiness"),
         Command::WorkContext(args) => Some(match &args.command {
             cli::WorkContextCommand::Status(_) => "work-context-status",
@@ -104,6 +105,7 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("message", "reply") => Some("message-reply"),
             ("message", "wait") => Some("message-wait"),
             ("message", "reminder") => Some("message-reminder"),
+            ("workspace", "set") => Some("workspace-set"),
             ("metadata", "attach") => Some("metadata-attach"),
             ("metadata", "show") => Some("metadata-show"),
             ("account", "show") => Some("account-show"),

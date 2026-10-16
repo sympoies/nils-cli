@@ -123,6 +123,8 @@ fn seed_exited_session(context: &CliContext, root: &Path) -> SessionRecord {
             "launch_id": OLD
         },
         "delete_tmux_identity": identity.clone(),
+        "origin": {"parent":{"session_id":"origin-parent","machine":"worker-host"}},
+        "workspace": "example-workspace",
         "agent_args": []
     }))
     .unwrap();
@@ -215,7 +217,7 @@ fn resume_right_after_a_provider_exit_relaunches_the_stopped_incarnation() {
 fn idle_restart_relaunches_in_place_and_reports_a_ready_receipt() {
     let tmp = tempfile::TempDir::new().unwrap();
     let context = context(tmp.path());
-    seed_exited_session(&context, tmp.path());
+    let origin = crate::origin::Fields::of(&seed_exited_session(&context, tmp.path()));
     let tmux = fake_tmux(tmp.path());
     let old_launch = running_session(&context, &tmux);
     session_ready(&context, &old_launch);
@@ -232,6 +234,7 @@ fn idle_restart_relaunches_in_place_and_reports_a_ready_receipt() {
         ),
     };
     let record = load_session_record(&context, ID).unwrap();
+    assert_eq!(crate::origin::Fields::of(&record), origin);
     let new_launch = launch_id(&record).unwrap();
     assert_ne!(new_launch, old_launch);
     assert_eq!(receipt["outcome"], "ready");
