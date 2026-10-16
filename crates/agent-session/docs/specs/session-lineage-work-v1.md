@@ -352,8 +352,12 @@ managed session and with `--via-console`. Its bounded identifier and optional
 role are stored in `lineage.forge_context` once. Managed starts with a bound
 parent authenticate its broker capability and runtime incarnation before
 inheriting the initiator. The child uses its own explicitly assigned role or
-null. `--no-parent` preserves the authenticated initiator while starting a new
-root. Adoption and resume do not replace this launch context.
+null. A `--no-parent` start or console root from a managed session preserves
+the authenticated initiator only when the new root carries a role; a role-less
+root started by a managed session has no launch binding. A bound root without a
+role therefore always comes from a non-session launcher, which consumers may
+treat as the human-launch shape. Adoption and resume do not replace this launch
+context.
 
 Generic HTTP `POST /sessions` refuses any `lineage.forge_context` with HTTP 400
 `identity_session_binding_untrusted` before creating a record. HTTP authentication

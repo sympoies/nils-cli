@@ -221,12 +221,16 @@ fn child_session(
             lineage::STARTER_OPERATOR,
             lineage::VIA_CONSOLE,
         );
-        seed.set_forge_context(crate::forge_identity::context_of(caller)?.map(|context| {
-            nils_common::forge_identity::session::LaunchContext {
-                role: None,
-                ..context
-            }
-        }));
+        // A role-less bound root attests a launch by a non-session launcher,
+        // so a session passes its initiator only to a role-bound root.
+        if request.role.is_some() {
+            seed.set_forge_context(crate::forge_identity::context_of(caller)?.map(|context| {
+                nils_common::forge_identity::session::LaunchContext {
+                    role: None,
+                    ..context
+                }
+            }));
+        }
         (seed, request.work.resolve(None))
     } else {
         let seed = LineageSeed::child_of(
@@ -577,6 +581,44 @@ mod tests {
                 serde_json::from_value(Value::Object(child)).unwrap();
             fields.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn console_root_inherits_the_launch_initiator_only_with_a_role() {
+        let caller: crate::SessionRecord = serde_json::from_value(json!({
+            "schema_version":"agent-session.session.v1", "id":"caller", "agent":"codex", "mode":"interactive", "title":null,
+            "cwd":".", "tmux_session":"fixture", "prompt_file":null, "log_file":null,
+            "created_at":"2030-01-01T00:00:00Z", "updated_at":"2030-01-01T00:00:00Z",
+            "lineage": {
+                "schema_version":"agent-session.session-lineage.v1", "machine":"caller-host", "parent":null,
+                "root":{"machine":"caller-host", "session_id":"caller", "session_created_at":"2030-01-01T00:00:00Z"},
+                "depth":0, "starter":{"kind":"operator", "via":"cli"},
+                "forge_context":{"initiator":"operator", "role":null}
+            }
+        }))
+        .unwrap();
+        let session = json!({"agent":"codex"});
+        let start = |role: Option<&str>| {
+            let request = ChildLineage {
+                no_parent: true,
+                role: role.map(str::to_owned),
+                work: WorkRequest::default(),
+            };
+            child_session(
+                "caller-host",
+                &caller,
+                &request,
+                session.as_object().unwrap(),
+            )
+            .unwrap()
+        };
+        // A role-less bound root attests a non-session launcher; a session
+        // never produces one.
+        assert_eq!(start(None)["lineage"].get("forge_context"), None);
+        assert_eq!(
+            start(Some("coordinator"))["lineage"]["forge_context"],
+            json!({"initiator":"operator","role":null})
+        );
     }
 
     #[test]

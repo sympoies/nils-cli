@@ -609,9 +609,13 @@ impl LineageSeed {
 /// (`AGENT_SESSION_ID`), the caller is the parent when it resolves in this
 /// state directory and `AGENT_SESSION_RUNTIME_ID` names its current runtime;
 /// otherwise the new session is an operator root and the warning says why.
+/// A `--no-parent` root keeps the caller's launch initiator only when it
+/// carries a `role`: a role-less bound root attests a launch by a non-session
+/// launcher, so a managed session never produces one.
 pub(crate) fn resolve_cli_start(
     context: &CliContext,
     no_parent: bool,
+    role: Option<&str>,
     work: &WorkRequest,
 ) -> Result<(crate::InitialLineage, Option<String>), CliError> {
     let machine = crate::board::machine_identity(None, context);
@@ -623,6 +627,7 @@ pub(crate) fn resolve_cli_start(
     };
     let caller = crate::non_empty_env("AGENT_SESSION_ID");
     if no_parent
+        && role.is_some()
         && let Some(caller) = &caller
         && let Ok(parent) = crate::load_session_record(context, caller)
         && let Some(launch) = crate::forge_identity::context_of(&parent)?
