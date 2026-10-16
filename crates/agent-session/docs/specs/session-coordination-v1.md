@@ -1714,6 +1714,16 @@ timeout is 120 seconds, because a create that pastes a prompt or selects an
 account can take the target daemon over a minute. No lock is held across the
 network call.
 
+`console-start-unavailable` includes bounded `failure_stage` and
+`failure_cause` values plus typed `retryable`, `next_action`, and `recovery`
+details. A retry is safe only when `recovery.safe_to_retry` is true. Definite
+pre-create failures may permit retry; an aggregator authentication rejection is
+safe to repeat after configuration is repaired but is not itself retryable.
+Transport failures, unreadable responses, and unconfirmed create results are
+not safe to retry: inspect Console for the child before submitting again. The
+`--via-console` client preserves only recognized failure fields and treats
+missing or malformed details as unsafe.
+
 ## Service-origin submission
 
 `message service-send --service ID --service-generation GENERATION

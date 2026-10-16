@@ -37,8 +37,29 @@ fn disabled() -> CliError {
     )
 }
 
-fn unavailable(message: &str) -> CliError {
-    CliError::runtime(UNAVAILABLE_CODE, message, None)
+fn unavailable(
+    stage: &str,
+    cause: &str,
+    message: &str,
+    retryable: bool,
+    safe_to_retry: bool,
+) -> CliError {
+    let (next_action, recovery_kind) = match (retryable, safe_to_retry) {
+        (true, true) => ("retry_same_submission", "retry_same_submission"),
+        (false, true) => ("inspect_relay_configuration", "repair_relay_configuration"),
+        _ => ("inspect_console_before_retry", "inspect_console_state"),
+    };
+    CliError::runtime(
+        UNAVAILABLE_CODE,
+        message,
+        Some(json!({
+            "failure_stage": stage,
+            "failure_cause": cause,
+            "retryable": retryable,
+            "next_action": next_action,
+            "recovery": {"kind": recovery_kind, "safe_to_retry": safe_to_retry}
+        })),
+    )
 }
 
 fn invalid() -> CliError {
@@ -76,7 +97,15 @@ fn client() -> Result<reqwest::blocking::Client, CliError> {
         .timeout(REQUEST_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|_| unavailable("the console start client is unavailable"))
+        .map_err(|_| {
+            unavailable(
+                "http_client",
+                "client_setup_failed",
+                "the console start client is unavailable",
+                true,
+                true,
+            )
+        })
 }
 
 /// A bounded, single-line, non-empty diagnostic string, or `None`.
@@ -260,15 +289,30 @@ pub(crate) fn relay_route(
     if let Some(machine) = machine {
         request["machine"] = json!(machine);
     }
-    let aggregator_unavailable = || unavailable("the console aggregator is unavailable");
     let response = client()?
         .post(format!("{}/api/coordination/sessions/v1", config.url))
         .bearer_auth(&config.token)
         .json(&request)
         .send()
-        .map_err(|_| aggregator_unavailable())?;
+        .map_err(|_| {
+            unavailable(
+                "aggregator_request",
+                "transport_failed",
+                "the console aggregator request failed; inspect Console before retrying",
+                false,
+                false,
+            )
+        })?;
     let status = response.status();
-    let body = read_json(response).ok_or_else(aggregator_unavailable)?;
+    let body = read_json(response).ok_or_else(|| {
+        unavailable(
+            "aggregator_response",
+            "response_unreadable",
+            "the console aggregator response could not be read; inspect Console before retrying",
+            false,
+            false,
+        )
+    })?;
     if status.is_success() {
         let created = body.pointer("/data/session").filter(|_| body["ok"] == true);
         return match created {
@@ -277,15 +321,37 @@ pub(crate) fn relay_route(
                 "machine": machine.unwrap_or(&config.machine),
                 "session": created,
             })),
-            _ => Err(aggregator_unavailable()),
+            _ => Err(unavailable(
+                "aggregator_response",
+                "created_session_unconfirmed",
+                "the console aggregator response did not confirm the created session; inspect Console before retrying",
+                false,
+                false,
+            )),
         };
     }
     if status.as_u16() == 401 {
         return Err(unavailable(
+            "aggregator_authentication",
+            "relay_credential_rejected",
             "the console aggregator rejected this daemon's relay credential",
+            false,
+            true,
         ));
     }
     let error = &body["error"];
+    if error["code"] == UNAVAILABLE_CODE {
+        let message = bounded_line(&error["message"]).unwrap_or(
+            "the console aggregator reported an unavailable start; inspect Console before retrying",
+        );
+        return Err(unavailable(
+            "aggregator_response",
+            "upstream_unavailable",
+            message,
+            false,
+            false,
+        ));
+    }
     Err(forwarded(error["code"].as_str(), &error["message"]))
 }
 
@@ -307,10 +373,25 @@ pub(crate) fn cli_start(
     })?;
     let token = super::capability_token_from_file(capability_file)?;
     super::authenticate_token(context, &caller, &token)?;
-    let unreachable = || unavailable("the local agent-session daemon is unreachable");
-    let mut url = remote::daemon_url(context).map_err(|_| unreachable())?;
+    let mut url = remote::daemon_url(context).map_err(|_| {
+        unavailable(
+            "daemon_endpoint",
+            "endpoint_unavailable",
+            "the local agent-session daemon endpoint is unavailable",
+            true,
+            true,
+        )
+    })?;
     url.path_segments_mut()
-        .map_err(|_| unreachable())?
+        .map_err(|_| {
+            unavailable(
+                "daemon_endpoint",
+                "endpoint_invalid",
+                "the local agent-session daemon endpoint is invalid",
+                true,
+                true,
+            )
+        })?
         .pop_if_empty()
         .extend(["sessions", caller.as_str(), "console-start", "v1"]);
     let requested_pinned = session["title_mode"] == "pinned";
@@ -333,10 +414,25 @@ pub(crate) fn cli_start(
         .bearer_auth(&token)
         .json(&request)
         .send()
-        .map_err(|_| unreachable())?;
+        .map_err(|_| {
+            unavailable(
+                "daemon_request",
+                "transport_failed",
+                "the local daemon request failed; inspect Console before retrying",
+                false,
+                false,
+            )
+        })?;
     let status = response.status();
-    let body = read_json(response)
-        .ok_or_else(|| unavailable("the local daemon's console start answer is unreadable"))?;
+    let body = read_json(response).ok_or_else(|| {
+        unavailable(
+            "daemon_response",
+            "response_unreadable",
+            "the local daemon's console start answer is unreadable; inspect Console before retrying",
+            false,
+            false,
+        )
+    })?;
     if status.is_success() {
         if !requested_launch_env.is_empty()
             && body["session"]["id"].is_string()
@@ -361,16 +457,96 @@ pub(crate) fn cli_start(
         }
         return (body["schema_version"] == RESULT_SCHEMA && body["session"]["id"].is_string())
             .then_some(body)
-            .ok_or_else(|| unavailable("the console start answered with an unsupported result"));
+            .ok_or_else(|| {
+                unavailable(
+                    "daemon_response",
+                    "result_unconfirmed",
+                    "the console start answer did not confirm the created session; inspect Console before retrying",
+                    false,
+                    false,
+                )
+            });
     }
     let error = &body["error"];
+    if error["code"] == UNAVAILABLE_CODE {
+        return Err(unavailable_from_details(
+            &error["message"],
+            &error["details"],
+        ));
+    }
     Err(forwarded(error["code"].as_str(), &error["message"]))
+}
+
+/// Re-project the local daemon's typed unavailable details through a fixed
+/// allowlist. Older daemons and malformed detail objects fail closed.
+fn unavailable_from_details(message: &Value, details: &Value) -> CliError {
+    let classified = details["failure_stage"]
+        .as_str()
+        .zip(details["failure_cause"].as_str())
+        .and_then(|(stage, cause)| {
+            failure_policy(stage, cause).map(|policy| (stage, cause, policy))
+        });
+    let (stage, cause, (retryable, safe_to_retry)) =
+        classified.unwrap_or(("daemon_response", "result_unconfirmed", (false, false)));
+    let message = bounded_line(message).unwrap_or("the console start request failed");
+    unavailable(stage, cause, message, retryable, safe_to_retry)
+}
+
+/// Retry policy is bound to a recognized stage/cause pair, not caller data.
+fn failure_policy(stage: &str, cause: &str) -> Option<(bool, bool)> {
+    match (stage, cause) {
+        ("http_client", "client_setup_failed")
+        | ("daemon_endpoint", "endpoint_unavailable" | "endpoint_invalid") => Some((true, true)),
+        ("aggregator_authentication", "relay_credential_rejected") => Some((false, true)),
+        ("daemon_request" | "aggregator_request", "transport_failed")
+        | ("daemon_response", "response_unreadable" | "result_unconfirmed")
+        | (
+            "aggregator_response",
+            "response_unreadable" | "created_session_unconfirmed" | "upstream_unavailable",
+        ) => Some((false, false)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn unavailable_details_fail_closed_on_inconsistent_retry_policy() {
+        for details in [
+            json!({
+                "failure_stage": "aggregator_response",
+                "failure_cause": "result_unconfirmed",
+                "retryable": true,
+                "recovery": {"safe_to_retry": true}
+            }),
+            json!({
+                "failure_stage": "unknown",
+                "failure_cause": "result_unconfirmed",
+                "retryable": true,
+                "recovery": {"safe_to_retry": true}
+            }),
+            json!({
+                "failure_stage": "aggregator_response",
+                "failure_cause": "unknown",
+                "retryable": true,
+                "recovery": {"safe_to_retry": true}
+            }),
+            json!({
+                "failure_cause": "result_unconfirmed",
+                "retryable": true,
+                "recovery": {"safe_to_retry": true}
+            }),
+        ] {
+            let error = unavailable_from_details(&json!("untrusted"), &details);
+            let details = error.details().expect("typed details");
+            assert_eq!(details["retryable"], false);
+            assert_eq!(details["recovery"]["safe_to_retry"], false);
+            assert_eq!(details["next_action"], "inspect_console_before_retry");
+        }
+    }
 
     #[test]
     fn origin_console_start_transports_parent_and_workspace_across_hosts() {
