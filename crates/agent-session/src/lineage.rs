@@ -617,6 +617,7 @@ pub(crate) fn resolve_cli_start(
     let machine = crate::board::machine_identity(None, context);
     let root = || crate::InitialLineage {
         seed: LineageSeed::root(&machine, STARTER_OPERATOR, VIA_CLI),
+        origin: crate::origin::cli(context),
         work: work.resolve(None),
         role: None,
     };
@@ -661,6 +662,7 @@ pub(crate) fn resolve_cli_start(
     Ok((
         crate::InitialLineage {
             seed,
+            origin: crate::origin::cli(context),
             work,
             role: None,
         },

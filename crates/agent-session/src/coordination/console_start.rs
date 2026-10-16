@@ -124,6 +124,8 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
         | "lineage-invalid"
         | "lineage-parent-mismatch"
         | "work-ref-invalid"
+        | "workspace-invalid"
+        | "origin-invalid"
         | "launch-env-key-refused"
         | "launch-env-allowlist-invalid"
         | "launch-env-too-many"
@@ -207,6 +209,18 @@ fn child_session(
         )?;
         (seed, request.work.resolve(caller.work.as_ref()))
     };
+    let mut origin = crate::origin::Fields::of(caller);
+    origin.origin.parent = Some(crate::origin::Parent {
+        session_id: caller.id.clone(),
+        machine: relay_machine.to_owned(),
+    });
+    origin.workspace = match session.get("workspace") {
+        Some(value) if !value.is_null() => Some(value.as_str().ok_or_else(invalid)?.to_owned()),
+        _ => origin.workspace,
+    };
+    origin.validate()?;
+    session.insert("origin".into(), json!(origin.origin));
+    session.insert("workspace".into(), json!(origin.workspace));
     session.insert("lineage".to_string(), seed.to_create_json());
     if let Some(work) = work {
         session.insert(
@@ -357,6 +371,37 @@ pub(crate) fn cli_start(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn origin_console_start_transports_parent_and_workspace_across_hosts() {
+        let parent: crate::SessionRecord = serde_json::from_value(json!({
+            "schema_version":"agent-session.session.v1", "id":"parent", "agent":"codex", "mode":"interactive", "title":null,
+            "cwd":".", "tmux_session":"fixture", "prompt_file":null, "log_file":null,
+            "created_at":"2030-01-01T00:00:00Z", "updated_at":"2030-01-01T00:00:00Z", "workspace":"example-workspace"
+        })).unwrap();
+        for explicit in [None, Some("another-workspace")] {
+            let mut session = json!({"agent":"codex"});
+            if let Some(workspace) = explicit {
+                session["workspace"] = json!(workspace);
+            }
+            let child = child_session(
+                "parent-host",
+                &parent,
+                &ChildLineage::default(),
+                session.as_object().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                child["origin"],
+                json!({"parent":{"session_id":"parent","machine":"parent-host"}})
+            );
+            assert_eq!(child["workspace"], explicit.unwrap_or("example-workspace"));
+            // The target has no local parent record; the payload is self-contained.
+            let fields: crate::origin::Fields =
+                serde_json::from_value(Value::Object(child)).unwrap();
+            fields.validate().unwrap();
+        }
+    }
 
     #[test]
     fn requests_admit_only_machine_and_a_session_object() {
