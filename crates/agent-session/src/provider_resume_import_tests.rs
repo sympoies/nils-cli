@@ -58,6 +58,7 @@ fn worktree_lifecycle_blocks_provider_import_and_existing_resume() {
         codex_usage_account: None,
         agent_args: Vec::new(),
         initial_lineage: InitialLineage {
+            origin: origin::Fields::default(),
             seed: lineage::LineageSeed::root("fixture", "user", "test"),
             work: None,
             role: None,

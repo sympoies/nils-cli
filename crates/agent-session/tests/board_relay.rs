@@ -1014,7 +1014,9 @@ fn console_start_creates_the_child_through_the_aggregator_as_the_calling_session
             "session": {
                 "agent": "claude", "cwd": "/work/repo", "title": "Child task",
                 "prompt": "do the thing", "agent_args": ["--verbose"],
-                "lineage": child_lineage()
+                "lineage": child_lineage(),
+                "origin": {"parent":{"session_id":SESSION,"machine":MACHINE}},
+                "workspace": null
             }
         }))
     );
@@ -1464,7 +1466,7 @@ fn console_start_selects_the_account_for_its_agent_and_the_launch_profile() {
             .expect("body")["session"];
         assert_eq!(
             session,
-            &json!({"agent": agent, "cwd": "/w", field: "spare", "lineage": child_lineage()})
+            &json!({"agent": agent, "cwd": "/w", field: "spare", "lineage": child_lineage(), "origin":{"parent":{"session_id":SESSION,"machine":MACHINE}}, "workspace":null})
         );
     }
     aggregator.reply_json(201, &created);

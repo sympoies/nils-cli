@@ -3,8 +3,8 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `41c2d900139013d7960226cfe0835dc7a80b9a4daac875e18bb1644bbd18010c`
-- Third-party crates (`source != null`): 504
+- Cargo.lock SHA256: `2ebee0be26b7932764460323b527ebf113a539cc53a8d0af51011e87eee8912d`
+- Third-party crates (`source != null`): 505
 
 ## Notice Extraction Policy
 
@@ -1190,7 +1190,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### graphql-tools 0.4.2
+### graphql-tools 0.5.9
 
 - License: `MIT`
 - Source: `crates.io`
@@ -4178,6 +4178,14 @@ This file documents third-party notice-file discovery for Rust crates used by th
 ### xmlwriter 0.1.0
 
 - License: `MIT`
+- Source: `crates.io`
+- Notice files: No explicit NOTICE file discovered.
+- License file references:
+  - `LICENSE`
+
+### xxhash-rust 0.8.19
+
+- License: `BSL-1.0`
 - Source: `crates.io`
 - Notice files: No explicit NOTICE file discovered.
 - License file references:

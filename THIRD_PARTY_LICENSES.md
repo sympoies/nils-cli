@@ -3,8 +3,8 @@
 This file documents third-party Rust crate licenses used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `41c2d900139013d7960226cfe0835dc7a80b9a4daac875e18bb1644bbd18010c`
-- Third-party crates (`source != null`): 504
+- Cargo.lock SHA256: `2ebee0be26b7932764460323b527ebf113a539cc53a8d0af51011e87eee8912d`
+- Third-party crates (`source != null`): 505
 - Workspace crates (`source == null`, excluded below): 42
 
 ## Notes
@@ -43,6 +43,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | Apache-2.0 OR GPL-2.0-only | 1 |
 | Apache-2.0/MIT | 1 |
 | BSD-2-Clause | 1 |
+| BSL-1.0 | 1 |
 | CC0-1.0 | 1 |
 | CC0-1.0 OR MIT-0 OR Apache-2.0 | 1 |
 | ISC AND (Apache-2.0 OR ISC) | 1 |
@@ -189,7 +190,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | getrandom | 0.4.3 | MIT OR Apache-2.0 | crates.io |
 | gif | 0.14.2 | MIT OR Apache-2.0 | crates.io |
 | git2 | 0.21.0 | MIT OR Apache-2.0 | crates.io |
-| graphql-tools | 0.4.2 | MIT | crates.io |
+| graphql-tools | 0.5.9 | MIT | crates.io |
 | harfrust | 0.12.0 | MIT | crates.io |
 | hashbrown | 0.12.3 | MIT OR Apache-2.0 | crates.io |
 | hashbrown | 0.16.1 | MIT OR Apache-2.0 | crates.io |
@@ -537,6 +538,7 @@ This file documents third-party Rust crate licenses used by this workspace.
 | x11rb | 0.14.0 | MIT OR Apache-2.0 | crates.io |
 | x11rb-protocol | 0.14.0 | MIT OR Apache-2.0 | crates.io |
 | xmlwriter | 0.1.0 | MIT | crates.io |
+| xxhash-rust | 0.8.19 | BSL-1.0 | crates.io |
 | yansi | 1.0.1 | MIT OR Apache-2.0 | crates.io |
 | yoke | 0.8.3 | Unicode-3.0 | crates.io |
 | yoke-derive | 0.8.2 | Unicode-3.0 | crates.io |
