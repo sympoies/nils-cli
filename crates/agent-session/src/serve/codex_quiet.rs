@@ -22,7 +22,9 @@ pub(super) fn precheck(
 ) -> Result<(), crate::CliError> {
     if notification
         && activity::state_for_view(context, record).is_some_and(|state| {
-            state.phase == activity::TurnPhase::Unknown && !eligible(context, record, &state)
+            (state.phase == activity::TurnPhase::Unknown
+                || activity::codex_notification_maybe_idle(&state))
+                && !eligible(context, record, &state)
         })
     {
         return Err(crate::CliError::data(
