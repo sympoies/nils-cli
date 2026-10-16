@@ -210,6 +210,21 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id -- Session id:_default' \
 && ret=0
 ;;
+(restart)
+_arguments "${_arguments_options[@]}" : \
+'--stop-timeout=[Bound the wait for the provider to exit, in seconds]:STOP_TIMEOUT:_default' \
+'--ready-timeout=[Bound the wait for the relaunched provider'\''s ready prompt, in seconds]:READY_TIMEOUT:_default' \
+'--tmux-bin=[tmux binary override]:PATH:_files' \
+'--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'--force[Restart a session that is not verified idle; one that cannot take the provider'\''s exit command is terminated instead]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Session id:_default' \
+&& ret=0
+;;
 (clear)
 _arguments "${_arguments_options[@]}" : \
 '--timeout=[Bound the wait for provider-native clear confirmation, in seconds]:TIMEOUT:_default' \
@@ -1115,6 +1130,7 @@ _agent-session_commands() {
 'send:Send input (literal text and/or special keys) to a live session' \
 'glance:Capture the recent pane tail plus live status as a dashboard glance' \
 'resume:Recreate a missing tmux runtime from exact provider resume metadata' \
+'restart:Relaunch a running session in place on the installed provider binary' \
 'clear:Clear an idle conversation in place and verify its new provider identity' \
 'rebind:Recover an idle session by rebinding its live provider conversation' \
 'account:Show or switch the provider account of one session' \
@@ -1413,6 +1429,11 @@ _agent-session__subcmd__readiness_commands() {
 _agent-session__subcmd__rebind_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session rebind commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__restart_commands] )) ||
+_agent-session__subcmd__restart_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session restart commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__resume_commands] )) ||
 _agent-session__subcmd__resume_commands() {
