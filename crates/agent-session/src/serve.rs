@@ -36883,7 +36883,7 @@ exit 0
 
         send_notification_fixture(&state, &alpha_capability, "drained-mailbox-0002").await;
         let expected_prompt = fixture_notification_prompt(tmp.path());
-        assert!(expected_prompt.contains("(newest queued "));
+        assert!(expected_prompt.ends_with("Z; agent-session message inbox"));
         let responder = tokio::spawn(async move {
             let Some(codex_app_server::ControlCommand::Prompt { message, response }) =
                 commands.recv().await
