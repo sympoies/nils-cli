@@ -25,37 +25,35 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
         .strip_prefix(' ')
         .or_else(|| after_glyph.strip_prefix('\u{a0}'))
         .unwrap_or(after_glyph);
-    let hint = match agent {
-        "codex" => input == "Ask Codex to do anything",
-        "claude" => input.starts_with("Try \"") && input.ends_with('"'),
-        _ => false,
-    };
-    if hint {
-        let row = lines
+    let row = lines
+        .iter()
+        .position(|line| std::ptr::eq(*line, region[0]))?;
+    let offset = lines[..row]
+        .iter()
+        .map(|line| line.len() + 1)
+        .sum::<usize>()
+        + region[0].len()
+        - input.len();
+    let fully_dim = !input.trim().is_empty()
+        && dim[offset..offset + input.len()]
             .iter()
-            .position(|line| std::ptr::eq(*line, region[0]))?;
-        let offset = lines[..row]
-            .iter()
-            .map(|line| line.len() + 1)
-            .sum::<usize>()
-            + region[0].len()
-            - input.len();
-        // Content alone never proves emptiness. Every visible hint character
-        // must carry the provider's dim style, not merely a dim cursor/footer.
-        if !input.is_empty()
-            && dim[offset..offset + input.len()]
-                .iter()
-                .all(|styled| *styled)
-        {
-            return Some(String::new());
-        }
-        return None;
-    }
+            .all(|styled| *styled);
     let compressed = compact(input);
     if compressed == CLAUDE_QUEUED_HINT
         || PASTE_PLACEHOLDERS
             .iter()
             .any(|mark| compressed.contains(mark))
+    {
+        return None;
+    }
+    // Native suggestions are dynamic, not limited to the startup hint wording.
+    // Every character must carry dim styling; plain, partially dim and blank
+    // drafts retain their text. Never infer emptiness from grey color alone.
+    if fully_dim {
+        return Some(String::new());
+    }
+    if (agent == "codex" && input == "Ask Codex to do anything")
+        || (agent == "claude" && input.starts_with("Try \"") && input.ends_with('"'))
     {
         return None;
     }

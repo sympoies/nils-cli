@@ -389,6 +389,7 @@ impl SessionQuiescenceGuard {
             || self.active_claim
             || self.active_operation
             || self.uncertain_operation
+            || crate::restart::fenced(&self._locked.path, &self.session_id, &self.incarnation)
         {
             return Ok(false);
         }
@@ -557,7 +558,7 @@ pub fn provision(context: &CliContext, record: &SessionRecord) -> Result<PathBuf
     broker::provision(context, record)
 }
 
-pub(crate) use broker::{PreviousRuntimeEvidence, capture_previous_runtime};
+pub(crate) use broker::{PreviousRuntimeEvidence, capture_stopped_runtime};
 
 pub(crate) fn provision_with_previous(
     context: &CliContext,
