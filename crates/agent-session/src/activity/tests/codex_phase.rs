@@ -53,7 +53,7 @@ fn interrupted_then_unannounced_turn_completion_returns_to_idle() {
 }
 
 #[test]
-fn already_stuck_snapshot_projects_unknown_from_provider_quiet_on_first_read() {
+fn quiet_projection_keeps_a_codex_turn_out_of_the_unknown_attention_state() {
     let tmp = tempfile::TempDir::new().unwrap();
     let (context, created) = test_session(&tmp);
     activate_runtime(&context, &created.record).unwrap();
@@ -72,9 +72,10 @@ fn already_stuck_snapshot_projects_unknown_from_provider_quiet_on_first_read() {
     write_document(&path, &mut doc).unwrap();
     let raw = fs::read(&path).unwrap();
     let first = state_for_view(&context, &created.record).unwrap();
-    assert_eq!(first.phase, TurnPhase::Unknown);
-    assert_eq!(first.phase_changed_at, "2000-01-01T00:06:00Z");
+    assert_eq!(first.phase, TurnPhase::Working);
+    assert_eq!(first.phase_changed_at, "2000-01-01T00:00:00Z");
     assert_eq!(first.source.confidence, Confidence::Inferred);
+    assert!(codex_notification_maybe_idle(&first));
     assert_eq!(
         controller_state_for_record(&context, &created.record)
             .unwrap()
@@ -250,7 +251,9 @@ fn nonprovider_progress_cannot_extend_the_provider_quiet_clock() {
     observation.source_kind = SourceKind::Runtime;
     ingest_event(&context, &created.record.id, observation).unwrap();
     let view = state_for_view(&context, &created.record).unwrap();
-    assert_eq!(view.phase, TurnPhase::Unknown);
+    assert_eq!(view.phase, TurnPhase::Working);
+    assert_eq!(view.source.confidence, Confidence::Inferred);
+    assert!(codex_notification_maybe_idle(&view));
     assert_eq!(
         view.current_turn.unwrap().last_progress_at.as_deref(),
         Some("2000-01-01T00:01:00Z")
