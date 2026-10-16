@@ -4,7 +4,7 @@ use super::{
 };
 
 pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
-    let (plain, dim) = styled_text(pane, agent == "codex")?;
+    let (plain, dim) = styled_text(pane)?;
     let lines: Vec<&str> = plain.lines().collect();
     let (region, footer) = match agent {
         "claude" => claude_composer(&lines),
@@ -33,8 +33,15 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
         .sum::<usize>()
         + region[0].len()
         - input.len();
-    let fully_dim = !input.trim().is_empty()
-        && dim[offset..offset + input.len()]
+    // Claude pads native suggestions to the pane width after resetting SGR.
+    // Only this hint proof ignores trailing ASCII padding; drafts stay exact.
+    let hint = if agent == "claude" {
+        input.trim_end_matches(' ')
+    } else {
+        input
+    };
+    let fully_dim = !hint.trim().is_empty()
+        && dim[offset..offset + hint.len()]
             .iter()
             .all(|styled| *styled);
     let compressed = compact(input);
@@ -46,7 +53,7 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
         return None;
     }
     // Native suggestions are dynamic, not limited to the startup hint wording.
-    // Every character must carry dim styling; plain, partially dim and blank
+    // Every hint character must carry dim styling; plain, partially dim and blank
     // drafts retain their text. Never infer emptiness from grey color alone.
     if fully_dim {
         return Some(String::new());
@@ -59,7 +66,7 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     Some(input.to_string())
 }
 
-fn styled_text(pane: &str, allow_hyperlinks: bool) -> Option<(String, Vec<bool>)> {
+fn styled_text(pane: &str) -> Option<(String, Vec<bool>)> {
     let mut plain = String::new();
     let mut styles = Vec::new();
     let mut dim = false;
@@ -68,7 +75,7 @@ fn styled_text(pane: &str, allow_hyperlinks: bool) -> Option<(String, Vec<bool>)
         if ch == '\u{1b}' {
             match chars.next()? {
                 '[' => {}
-                ']' if allow_hyperlinks => {
+                ']' => {
                     hyperlink::consume(&mut chars)?;
                     continue;
                 }

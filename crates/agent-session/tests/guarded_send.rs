@@ -106,6 +106,7 @@ elif command == 'capture-pane':
     suggestion = (root / 'suggestion').read_text() if (root / 'suggestion').exists() else None
     if suggestion and not text:
         shown = ('\x1b[2m' + suggestion + '\x1b[22m') if '-e' in args else suggestion
+        if (root / 'suggestion-padding').exists(): shown += (root / 'suggestion-padding').read_text()
         if provider == 'claude': print('────────────────────────────\n❯\u00a0' + shown + '\n────────────────────────────\n  ' + footer)
         else: print('› ' + shown + '\n\n  ' + footer)
         sys.exit(0)

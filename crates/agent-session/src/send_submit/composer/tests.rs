@@ -35,7 +35,7 @@ fn osc8_hyperlinks_in_a_footer_preserve_exact_input_and_hint_style() {
                 "claude",
                 &claude("\u{1b}[2mTry \"edit a file\"\u{1b}[22m", "", &footer)
             ),
-            None
+            Some(String::new())
         );
         assert_eq!(
             exact_composer_input(
@@ -49,8 +49,8 @@ fn osc8_hyperlinks_in_a_footer_preserve_exact_input_and_hint_style() {
             Some("  café  ")
         );
         assert_eq!(
-            exact_composer_input("claude", &claude("  café  ", "", &footer)),
-            None
+            exact_composer_input("claude", &claude("  café  ", "", &footer)).as_deref(),
+            Some("  café  ")
         );
     }
 }
@@ -86,6 +86,10 @@ fn hyperlinks_never_hide_composer_text_or_replace_dim_proof() {
         exact_composer_input("codex", &codex(linked, "", "status")).as_deref(),
         Some("user draft")
     );
+    assert_eq!(
+        exact_composer_input("claude", &claude(linked, "", "status")).as_deref(),
+        Some("user draft")
+    );
     let unstyled =
         "\u{1b}]8;;https://example.invalid/\u{1b}\\Ask Codex to do anything\u{1b}]8;;\u{1b}\\";
     assert_eq!(
@@ -110,6 +114,10 @@ fn malformed_or_screen_mutating_escapes_remain_unobservable() {
         "\u{1b}]8;missing-delimiter\u{7}",
     ] {
         assert_eq!(exact_composer_input("codex", &codex("", "", footer)), None);
+        assert_eq!(
+            exact_composer_input("claude", &claude("", "", footer)),
+            None
+        );
     }
 }
 
@@ -186,9 +194,17 @@ fn hyperlink_metadata_has_a_bounded_payload() {
         exact_composer_input("codex", &codex("", "", &boundary)).as_deref(),
         Some("")
     );
+    assert_eq!(
+        exact_composer_input("claude", &claude("", "", &boundary)).as_deref(),
+        Some("")
+    );
     let oversized = format!("\u{1b}]8;;{}\u{7}", "x".repeat(4094));
     assert_eq!(
         exact_composer_input("codex", &codex("", "", &oversized)),
+        None
+    );
+    assert_eq!(
+        exact_composer_input("claude", &claude("", "", &oversized)),
         None
     );
 }
@@ -289,5 +305,67 @@ fn nonbreaking_separators_never_hide_choices_or_additional_draft_characters() {
                 Some(draft)
             );
         }
+    }
+}
+
+fn claude_fullpane_fixture() -> (String, String, usize) {
+    let data: serde_json::Value =
+        serde_json::from_str(include_str!("claude-native-capture.json")).unwrap();
+    (
+        data["capture"].as_str().unwrap().to_string(),
+        data["suggestion"].as_str().unwrap().to_string(),
+        data["padding_spaces"].as_u64().unwrap() as usize,
+    )
+}
+
+#[test]
+fn claude_fullpane_nbsp_dim_suggestion_is_empty() {
+    let (pane, _, _) = claude_fullpane_fixture();
+    assert_eq!(exact_composer_input("claude", &pane).as_deref(), Some(""));
+}
+
+#[test]
+fn claude_fullpane_nbsp_plain_text_remains_an_exact_draft() {
+    let (pane, suggestion, padding) = claude_fullpane_fixture();
+    // Synthetic plain twin: preserve the layout, caption and occupied spaces.
+    let pane = pane.replace(&format!("\u{1b}[2m{suggestion}\u{1b}[0m"), &suggestion);
+    let expected = format!("{suggestion}{}", " ".repeat(padding));
+    assert_eq!(
+        exact_composer_input("claude", &pane).as_deref(),
+        Some(expected.as_str())
+    );
+}
+
+#[test]
+fn claude_fullpane_bare_nbsp_is_empty() {
+    let (pane, suggestion, padding) = claude_fullpane_fixture();
+    // Synthetic bare overlay: remove the suggestion and its renderer padding.
+    let pane = pane.replace(
+        &format!("\u{1b}[2m{suggestion}\u{1b}[0m{}", " ".repeat(padding)),
+        "",
+    );
+    assert_eq!(exact_composer_input("claude", &pane).as_deref(), Some(""));
+}
+
+#[test]
+fn dim_suggestion_padding_does_not_hide_real_text_or_whitespace_drafts() {
+    let padded = "\u{1b}[2mContinue the fixture check\u{1b}[0m    ";
+    assert_eq!(
+        exact_composer_input("claude", &claude(padded, "", "status")).as_deref(),
+        Some("")
+    );
+    for input in [
+        "\u{1b}[2mContinue\u{1b}[0m the fixture check    ",
+        "\u{1b}[2mContinue the fixture check\u{1b}[0m user draft ",
+        "\u{1b}[2mContinue the fixture check\u{1b}[0m\u{a0}",
+        "\u{1b}[2mContinue the fixture check\u{1b}[0m\u{200b}",
+        "\u{1b}[2m \u{1b}[0m    ",
+        "    ",
+    ] {
+        assert!(
+            exact_composer_input("claude", &claude(input, "", "status"))
+                .is_none_or(|draft| !draft.is_empty()),
+            "input {input:?}"
+        );
     }
 }
