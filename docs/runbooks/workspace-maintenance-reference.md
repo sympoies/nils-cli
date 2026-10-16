@@ -398,6 +398,10 @@ with all features enabled. Normal, dev, build and target-specific dependencies
 participate; traversal can pass through external packages, which are excluded
 from the selected set. Binary coupling also expands this
 closure. The plan prints each selected package and its inclusion reasons.
+Any Cargo manifest or lockfile, toolchain file, `.cargo/` configuration, or
+build-script change uses the workspace lane; documentation-only routing stays
+the same. The full-check entrypoint and merge gates are unchanged.
+
 Tests can run another package's binary from `target/<profile>` through
 `nils_test_support::bin` or `nils_test_support::cmd`, and Cargo builds only the
 selected packages' binaries. Before running tests, the package lane also builds
@@ -405,9 +409,6 @@ each binary that the selected packages' sources name in a `resolve`,
 `resolve_optional`, `run_resolved`, `sibling_or_skip`, or `required_sibling`
 call. It prints these as `LOCAL_FAST_SIBLING_PACKAGE` lines with reasons, and
 does not lint or test those packages.
-Any Cargo manifest or lockfile, toolchain file, `.cargo/` configuration, or
-build-script change uses the workspace lane; documentation-only routing stays
-the same. The full-check entrypoint and merge gates are unchanged.
 
 ### 3.3 Full checks (CI gate / optional local parity)
 
