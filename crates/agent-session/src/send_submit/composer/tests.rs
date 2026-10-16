@@ -369,3 +369,6 @@ fn dim_suggestion_padding_does_not_hide_real_text_or_whitespace_drafts() {
         );
     }
 }
+
+#[path = "statusline_tests.rs"]
+mod statusline_tests;

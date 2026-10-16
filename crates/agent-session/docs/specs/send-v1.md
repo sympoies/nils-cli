@@ -13,7 +13,8 @@ agent-session send <id> --text-stdin --key enter --format json \
   --require-idle --require-empty-composer --idempotency-key <key>
 ```
 
-Each option is independent:
+Each option is independent. The empty-composer requirement also applies to
+text-only pastes without `--key`:
 
 - `--expect-runtime` matches the persisted runtime launch ID. Guarded sends
   also verify the live terminal's session and runtime environment markers.
@@ -46,7 +47,9 @@ identity and requested idle state, and presses Enter at most once. If a turn
 starts or the composer changes after paste, it refuses without Enter and
 preserves the composer, including user additions. It never clears user input
 or retries a swallowed Enter. Post-paste refusal is distinct from admission
-refusal: the text may already be present in the composer.
+refusal: the text may already be present in the composer. Every failure after
+a successful terminal paste reports `pasted: true`, including later identity,
+I/O and persistence errors; this does not prove Enter or submission succeeded.
 
 ## Observation limits
 
@@ -83,8 +86,8 @@ For both supported providers, well-formed OSC-8 hyperlink metadata terminated
 by BEL or ST is accepted without changing visible caption text or SGR state.
 Each metadata
 payload is bounded to 4096 UTF-8 bytes. Other OSC commands, malformed escapes
-and screen-mutating controls remain unobservable. Extra composer rows are not
-collapsed into empty input. Whitespace-only drafts remain nonempty; hyperlink
+and screen-mutating controls remain unobservable. Terminal soft wraps are joined by tmux while occupied spaces are preserved.
+Hard newline rows are not collapsed into empty input. Whitespace-only drafts remain nonempty; hyperlink
 metadata never substitutes for dim proof or hides visible caption text.
 
 The guarded post-paste check uses full visible text, preserving whitespace,

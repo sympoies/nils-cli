@@ -3,6 +3,8 @@
 mod native_composer;
 #[path = "guarded_send/repair.rs"]
 mod repair;
+#[path = "guarded_send/statusline.rs"]
+mod statusline;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -76,11 +78,14 @@ elif command == 'paste-buffer':
     with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
     if (root / 'inject-draft').exists():
         with (root / 'composer').open('a') as out: out.write(' user addition')
+    if (root / 'corrupt-record-after-paste').exists():
+        (root / 'state/sessions/guarded/session.json').write_text('{')
     if (root / 'start-after-paste').exists():
         p = root / 'state/sessions/guarded/activity.json'
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
         p.write_text(json.dumps(d))
 elif command == 'send-keys' and args[-1] == 'Enter':
+    if (root / 'key-fails').exists(): sys.exit(1)
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
     (root / 'composer').write_text('')
     if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
@@ -97,9 +102,15 @@ elif command == 'capture-pane':
         sys.exit(0)
     if (root / 'draft-fourth-capture').exists() and count >= 4: (root / 'composer').write_text('user addition')
     text = (root / 'composer').read_text()
-    # Native capture trims occupied spaces without -N; -T excludes unused cells.
-    occupied = text if '-N' in args else text.rstrip(' ')
+    # Native capture trims occupied spaces without -N/-J; -J also joins soft wraps.
+    occupied = text if '-N' in args or '-J' in args else text.rstrip(' ')
     padding = ' ' * 8 if '-N' in args and '-T' not in args else ''
+    if (root / 'statusline-template').exists():
+        shown = occupied
+        if (root / 'soft-wrap').exists() and '-J' not in args:
+            shown = '\n  '.join(shown[i:i+48] for i in range(0, len(shown), 48))
+        print((root / 'statusline-template').read_text().replace('{{input}}', shown))
+        sys.exit(0)
     native = (root / 'native-layout').exists()
     rows = ''
     footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'

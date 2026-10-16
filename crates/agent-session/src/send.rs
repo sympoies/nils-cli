@@ -1,5 +1,6 @@
 //! Terminal send delivery; opt-in guards preserve unguarded delivery.
 mod native;
+mod post_paste;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
@@ -409,74 +410,81 @@ fn guarded(
         admission.claim_key()?;
         admission.check(None, "admission")?;
     }
-    let submits_prompt = literal.is_some() && args.keys == [SpecialKey::Enter];
-    let submission = if submits_prompt {
-        let text = literal.expect("literal prompt");
-        let probe = send_submit::probe(text);
-        let mut press_enter = || {
-            manual_input.arm(context, &record)?;
-            admission.check(Some(text), "submit")?;
-            send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
-        };
-        if let Some(probe) = probe {
-            Some(send_submit::submit_and_confirm(
-                &record.agent,
-                &probe,
-                hold_started,
-                |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
-                || false,
-                press_enter,
-            )?)
-        } else {
-            press_enter()?;
-            Some(send_submit::SubmitReport {
-                outcome: send_submit::SubmitOutcome::Unverified,
-                enter_presses: 1,
-            })
-        }
-    } else {
-        if text.as_deref().is_some_and(crate::text_is_bare_newline) {
-            manual_input.arm(context, &record)?;
-            admission.check(None, "submit")?;
-            prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
-            send_tmux_key(tmux_bin, &target, SpecialKey::Enter)?;
-        }
-        for key in &args.keys {
-            if *key == SpecialKey::Enter {
+    let completion = (|| {
+        let submits_prompt = literal.is_some() && args.keys == [SpecialKey::Enter];
+        let submission = if submits_prompt {
+            let text = literal.expect("literal prompt");
+            let probe = send_submit::probe(text);
+            let mut press_enter = || {
                 manual_input.arm(context, &record)?;
+                admission.check(Some(text), "submit")?;
+                send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
+            };
+            if let Some(probe) = probe {
+                Some(send_submit::submit_and_confirm(
+                    &record.agent,
+                    &probe,
+                    hold_started,
+                    |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
+                    || false,
+                    press_enter,
+                )?)
+            } else {
+                press_enter()?;
+                Some(send_submit::SubmitReport {
+                    outcome: send_submit::SubmitOutcome::Unverified,
+                    enter_presses: 1,
+                })
             }
-            admission.check(literal, "submit")?;
-            prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
-            send_tmux_key(tmux_bin, &target, *key)?;
+        } else {
+            if text.as_deref().is_some_and(crate::text_is_bare_newline) {
+                manual_input.arm(context, &record)?;
+                admission.check(None, "submit")?;
+                prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
+                send_tmux_key(tmux_bin, &target, SpecialKey::Enter)?;
+            }
+            for key in &args.keys {
+                if *key == SpecialKey::Enter {
+                    manual_input.arm(context, &record)?;
+                }
+                admission.check(literal, "submit")?;
+                prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
+                send_tmux_key(tmux_bin, &target, *key)?;
+            }
+            None
+        };
+        record.updated_at = Zoned::now().timestamp().to_string();
+        write_session_record(context, &record)?;
+        if let Some(report) = submission
+            && report.outcome == send_submit::SubmitOutcome::Stuck
+        {
+            return Err(CliError::runtime(
+                "send-submit-stuck",
+                "guarded submission remained in the composer after one Enter; the delivery claim is retained",
+                Some(
+                    json!({"id": record.id, "outcome": report.outcome, "enter_presses": report.enter_presses, "atomic": false}),
+                ),
+            ));
         }
-        None
-    };
-    record.updated_at = Zoned::now().timestamp().to_string();
-    write_session_record(context, &record)?;
-    if let Some(report) = submission
-        && report.outcome == send_submit::SubmitOutcome::Stuck
-    {
-        return Err(CliError::runtime(
-            "send-submit-stuck",
-            "guarded submission remained in the composer after one Enter; the delivery claim is retained",
-            Some(
-                json!({"id": record.id, "outcome": report.outcome, "enter_presses": report.enter_presses, "atomic": false}),
-            ),
-        ));
+        Ok(SendResult {
+            id: record.id,
+            tmux_session: record.tmux_session,
+            sent_text: text.is_some(),
+            keys: args
+                .keys
+                .iter()
+                .map(|key| key.as_str().to_string())
+                .collect(),
+            submission,
+            guards: Some(send_guard::GuardReport { atomic: false }),
+            native: None,
+        })
+    })();
+    if literal.is_some() {
+        completion.map_err(post_paste::error)
+    } else {
+        completion
     }
-    Ok(SendResult {
-        id: record.id,
-        tmux_session: record.tmux_session,
-        sent_text: text.is_some(),
-        keys: args
-            .keys
-            .iter()
-            .map(|key| key.as_str().to_string())
-            .collect(),
-        submission,
-        guards: Some(send_guard::GuardReport { atomic: false }),
-        native: None,
-    })
 }
 
 /// Publish control state only after final admission, immediately before input.
