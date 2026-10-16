@@ -1389,9 +1389,10 @@ fn router(state: Arc<ServeState>) -> Router {
         .route("/sessions/{id}/buffer", get(buffer_handler))
         .route("/sessions/{id}/send", post(send_handler))
         .route("/sessions/{id}/prompt", post(structured_prompt_handler))
+        .route("/sessions/{id}/prompt/v2", post(prompt_receipts::submit))
         .route(
-            "/sessions/{id}/prompt/v2",
-            post(fenced_structured_prompt_handler),
+            "/sessions/{id}/prompt/v2/receipts/{request_id}",
+            get(prompt_receipts::lookup),
         )
         .route("/sessions/{id}/resume", post(resume_handler))
         .route("/sessions/{id}/archive", post(archive_handler))
@@ -3428,13 +3429,6 @@ struct SendBody {
 struct StructuredPromptBody {
     text: String,
     expected_session_incarnation: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FencedStructuredPromptBody {
-    text: String,
-    expected_session_incarnation: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -7581,33 +7575,7 @@ async fn structured_prompt_handler(
     submit_structured_prompt_handler(state, id, body.text, body.expected_session_incarnation).await
 }
 
-async fn fenced_structured_prompt_handler(
-    State(state): State<Arc<ServeState>>,
-    headers: HeaderMap,
-    AxPath(id): AxPath<String>,
-    body: Result<Json<FencedStructuredPromptBody>, JsonRejection>,
-) -> Response {
-    if let Some(resp) = deny_unauthorized(&state, &headers) {
-        return resp;
-    }
-    let Json(body) = match body {
-        Ok(body) => body,
-        Err(_) => {
-            return envelope_err(CliError::usage(
-                "invalid-json-body",
-                "request body must be JSON with text and expected_session_incarnation fields only",
-                None,
-            ));
-        }
-    };
-    submit_structured_prompt_handler(
-        state,
-        id,
-        body.text,
-        Some(body.expected_session_incarnation),
-    )
-    .await
-}
+mod prompt_receipts;
 
 async fn submit_structured_prompt_handler(
     state: Arc<ServeState>,
@@ -25659,33 +25627,6 @@ esac
     }
 
     #[tokio::test]
-    async fn fenced_structured_prompt_requires_exact_body_shape() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
-
-        for body in [
-            json!({ "text": "missing the required fence" }),
-            json!({
-                "text": "misspelled fence",
-                "expected_session_incarnaton": "launch-missing",
-            }),
-            json!({
-                "text": "unexpected field",
-                "expected_session_incarnation": "launch-missing",
-                "unexpected": true,
-            }),
-        ] {
-            let (status, body) = call(
-                router(st.clone()),
-                post_json("/sessions/missing/prompt/v2", Some(TOKEN), body),
-            )
-            .await;
-            assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
-            assert_eq!(body["error"]["code"], "invalid-json-body");
-        }
-    }
-
-    #[tokio::test]
     async fn structured_prompt_reports_stale_fence_before_unsupported_runtime() {
         let tmp = tempfile::TempDir::new().unwrap();
         seed_session_with_runtime(
@@ -37436,6 +37377,9 @@ exit 0
         });
         record
     }
+
+    #[path = "prompt_receipts.rs"]
+    mod prompt_receipts_tests;
 
     #[path = "launch_env.rs"]
     mod launch_env_tests;

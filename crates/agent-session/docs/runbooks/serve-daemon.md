@@ -292,6 +292,25 @@ does not deduplicate two submissions within the same incarnation. This
 procedure is for a provider-ready Codex control channel; it does not turn an
 unsupported raw TUI into a structured-prompt target.
 
+For durable client outboxes, persist a client-generated `request_id` before
+POST and add `require_idle: true` when delivery must wait for an idle provider
+and empty composer. Reconcile the exact attempt through authenticated
+`GET /sessions/SESSION_ID/prompt/v2/receipts/REQUEST_ID?expected_session_incarnation=INCARNATION`.
+Successful POSTs include `data.receipt`; errors include
+`error.details.receipt` when a claim was created. Lookup returns
+`data.receipt` for submitted, refused and unknown outcomes. Verify the session,
+incarnation and request ID against the persisted attempt.
+
+A stored `busy` refusal proves no delivery and stays refused under that key.
+After refreshing state, use a new attempt ID for the same outbox item. An
+unknown attempt retains its key: use lookup and observation, never a new key or
+unkeyed fallback. Typed `404 prompt-receipt-not-found` differs from an older
+server lacking the route, but neither proves an uncertain in-flight POST can
+be replayed. Receipts remain for the session lifetime and survive daemon
+restart and runtime replacement; explicit session deletion removes them. See
+the [v2 receipt contract](../specs/serve-api-v1.md) for full JSON shapes and
+storage/error semantics.
+
 For work coordination, consult [Work coordination](work-coordination.md).
 High-level self-targeting CLI operations such as `work-context set` do not have
 HTTP convenience routes; the daemon exposes the raw v1 operations documented
