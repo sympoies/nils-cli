@@ -106,11 +106,12 @@ elif command == 'capture-pane':
     suggestion = (root / 'suggestion').read_text() if (root / 'suggestion').exists() else None
     if suggestion and not text:
         shown = ('\x1b[2m' + suggestion + '\x1b[22m') if '-e' in args else suggestion
+        if (root / 'suggestion-padding').exists(): shown += (root / 'suggestion-padding').read_text()
         if provider == 'claude': print('────────────────────────────\n❯\u00a0' + shown + '\n────────────────────────────\n  ' + footer)
         else: print('› ' + shown + '\n\n  ' + footer)
         sys.exit(0)
     if provider == 'claude':
-        shown = occupied + padding if text else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
+        shown = occupied + padding if text or (root / 'bare-composer').exists() else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
         print('────────────────────────────\n❯\u00a0' + shown + '\n' + rows + '────────────────────────────\n  ' + footer)
     else:
         shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
