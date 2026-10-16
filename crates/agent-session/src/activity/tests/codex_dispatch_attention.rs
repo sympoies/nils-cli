@@ -51,7 +51,9 @@ impl Fixture {
             fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
         }
         let helper = nils_test_support::bin::resolve("agent-session");
-        let dispatcher = nils_test_support::bin::resolve("agent-hook");
+        // Fail here, naming the build command, on a missing or earlier-release
+        // dispatcher; the run_resolved calls below reuse this artifact.
+        let dispatcher = nils_test_support::bin::required_sibling("agent-hook", "nils-agent-hook");
         let env = vec![
             EnvGuard::set(lock, "HOME", home.to_str().unwrap()),
             EnvGuard::set(lock, "XDG_CONFIG_HOME", config_home.to_str().unwrap()),
