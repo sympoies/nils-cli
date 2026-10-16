@@ -80,10 +80,13 @@ pub struct AutoResumeView {
     pub(crate) enabled: bool,
     pub(crate) recovery_policy: String,
     pub(crate) state: String,
+    pub(crate) attempts: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) scheduled_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) failure_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) failure_class: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -270,8 +273,10 @@ fn view(record: &SessionRecord, state: DurableAutoResume) -> AutoResumeView {
         enabled: state.enabled,
         recovery_policy: state.recovery_policy,
         state: state.state,
+        attempts: state.attempt,
         scheduled_at: state.scheduled_at,
         failure_reason: state.failure_reason,
+        failure_class: state.recovery_cause,
     }
 }
 
@@ -288,8 +293,10 @@ pub fn view_for_record(context: &CliContext, record: &SessionRecord) -> AutoResu
             enabled: false,
             recovery_policy: default_recovery_policy(),
             state: "terminal_failure".to_string(),
+            attempts: 0,
             scheduled_at: None,
             failure_reason: Some("state_unavailable".to_string()),
+            failure_class: None,
         };
     }
     let now = Timestamp::now().to_string();
@@ -301,8 +308,10 @@ pub fn view_for_record(context: &CliContext, record: &SessionRecord) -> AutoResu
             enabled: false,
             recovery_policy: default_recovery_policy(),
             state: "terminal_failure".to_string(),
+            attempts: 0,
             scheduled_at: None,
             failure_reason: Some("state_unavailable".to_string()),
+            failure_class: None,
         },
     }
 }
@@ -339,14 +348,24 @@ pub(crate) fn set_enabled_with_policy(
     let _lock = acquire_session_record_lock(context, &canonical_id)?;
     let record = load_session_record(context, &canonical_id)?;
     crate::ensure_same_session_identity(&observed, &record)?;
-    if enabled && crate::activity::runtime_is_unhealthy(context, &record) {
+    set_enabled_locked(context, &record, enabled, recovery_policy, now)
+}
+
+fn set_enabled_locked(
+    context: &CliContext,
+    record: &SessionRecord,
+    enabled: bool,
+    recovery_policy: &str,
+    now: &str,
+) -> Result<AutoResumeView, CliError> {
+    if enabled && crate::activity::runtime_is_unhealthy(context, record) {
         return Err(CliError::data(
             "auto-resume-state-unavailable",
             "auto-resume projection is unavailable until this session runtime is restarted",
             Some(json!({ "id": record.id })),
         ));
     }
-    if enabled && !supported(&record) {
+    if enabled && !supported(record) {
         return Err(CliError::data(
             "auto-resume-unsupported",
             "this provider does not expose an authoritative structured auto-resume signal",
@@ -357,7 +376,7 @@ pub(crate) fn set_enabled_with_policy(
         && recovery_policy == NEXT_ACCOUNT_THEN_RESUME_POLICY
         && (record.agent != "codex"
             || !crate::codex_account::broker_is_configured()
-            || crate::codex_account::selected_account(&record).is_none())
+            || crate::codex_account::selected_account(record).is_none())
     {
         return Err(CliError::data(
             "auto-resume-account-failover-unsupported",
@@ -374,7 +393,7 @@ pub(crate) fn set_enabled_with_policy(
                 Some(json!({ "id": record.id })),
             ));
         }
-        return Ok(view(&record, state));
+        return Ok(view(record, state));
     }
     state.enabled = enabled;
     state.recovery_policy = recovery_policy.to_string();
@@ -394,7 +413,53 @@ pub(crate) fn set_enabled_with_policy(
     state.fallback_schedules = 0;
     state.attempted_accounts.clear();
     write_state(context, &record.id, &state)?;
-    Ok(view(&record, state))
+    Ok(view(record, state))
+}
+
+pub(crate) const SERVE_DEFAULT_POLICY_ENV: &str = "AGENT_SESSION_AUTO_RESUME_DEFAULT_POLICY";
+
+/// The recovery policy `serve` applies to newly created sessions, or `None`
+/// when no default is configured. An unrecognized value leaves the default off.
+pub(crate) fn serve_default_policy() -> Option<&'static str> {
+    match std::env::var(SERVE_DEFAULT_POLICY_ENV).ok()?.trim() {
+        WAIT_FOR_RESET_POLICY => Some(WAIT_FOR_RESET_POLICY),
+        NEXT_ACCOUNT_THEN_RESUME_POLICY => Some(NEXT_ACCOUNT_THEN_RESUME_POLICY),
+        _ => None,
+    }
+}
+
+/// Opt a just-created session in to auto-resume. It is a no-op once the session
+/// has durable auto-resume state, so an explicit `PUT` or `DELETE` always wins,
+/// and for a session that cannot honor the default (unsupported runtime or
+/// unavailable account failover), which stays disabled.
+pub(crate) fn apply_serve_default(
+    context: &CliContext,
+    id: &str,
+    recovery_policy: &str,
+    now: &str,
+) -> Result<(), CliError> {
+    let observed = load_session_record(context, id)?;
+    let canonical_id = observed.id.clone();
+    let _lock = acquire_session_record_lock(context, &canonical_id)?;
+    let record = load_session_record(context, &canonical_id)?;
+    crate::ensure_same_session_identity(&observed, &record)?;
+    if path(context, &record.id).exists() {
+        return Ok(());
+    }
+    match set_enabled_locked(context, &record, true, recovery_policy, now) {
+        Ok(_) => Ok(()),
+        Err(error)
+            if matches!(
+                error.code(),
+                "auto-resume-unsupported"
+                    | "auto-resume-account-failover-unsupported"
+                    | "auto-resume-state-unavailable"
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Atomically re-enable and arm usage-exhaustion recovery for one exact
@@ -3166,6 +3231,203 @@ mod tests {
             fs::read(&auto_resume_path).expect("auto-resume after rejected rearm"),
             before,
             "replacement runtime must not inherit any stale handoff auto-resume mutation"
+        );
+    }
+
+    fn ok_create_response() -> axum::response::Response {
+        axum::response::Response::new(axum::body::Body::empty())
+    }
+
+    fn finish_serve_create(context: &CliContext, id: &str, operation: &str) {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(crate::lifecycle::response(
+                context,
+                id,
+                operation,
+                None,
+                ok_create_response(),
+            ));
+    }
+
+    #[test]
+    fn serve_default_policy_accepts_only_known_policies() {
+        let lock = GlobalStateLock::new();
+        for (value, expected) in [
+            (None, None),
+            (Some(" "), None),
+            (Some("always"), None),
+            (Some("wait_for_reset"), Some(WAIT_FOR_RESET_POLICY)),
+            (
+                Some(" next_account_then_resume "),
+                Some(NEXT_ACCOUNT_THEN_RESUME_POLICY),
+            ),
+        ] {
+            let _guard = match value {
+                Some(value) => EnvGuard::set(&lock, SERVE_DEFAULT_POLICY_ENV, value),
+                None => EnvGuard::remove(&lock, SERVE_DEFAULT_POLICY_ENV),
+            };
+            assert_eq!(serve_default_policy(), expected, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn serve_created_session_schedules_capacity_continuation_without_put() {
+        let lock = GlobalStateLock::new();
+        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+        let _default = EnvGuard::set(&lock, SERVE_DEFAULT_POLICY_ENV, WAIT_FOR_RESET_POLICY);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
+
+        finish_serve_create(&context, &record.id, "create");
+        let view = view_for_record(
+            &context,
+            &crate::load_session_record(&context, &record.id).unwrap(),
+        );
+        assert!(view.supported);
+        assert!(view.enabled);
+        assert_eq!(view.state, "enabled");
+        assert_eq!(view.recovery_policy, WAIT_FOR_RESET_POLICY);
+
+        ingest_provider_capacity(&context, &record, "capacity-0");
+        let state = read_state(&context, &record.id, "2030-01-01T00:00:00Z").unwrap();
+        assert_eq!(state.state, "scheduled");
+        assert_eq!(
+            state.recovery_cause.as_deref(),
+            Some(PROVIDER_CAPACITY_CAUSE)
+        );
+    }
+
+    #[test]
+    fn serve_default_applies_to_imports_but_not_to_other_operations() {
+        let lock = GlobalStateLock::new();
+        let _default = EnvGuard::set(&lock, SERVE_DEFAULT_POLICY_ENV, WAIT_FOR_RESET_POLICY);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = seed_session(&tmp);
+
+        finish_serve_create(&context, &record.id, "resume");
+        assert!(!path(&context, &record.id).exists());
+
+        finish_serve_create(&context, &record.id, "import");
+        assert!(
+            read_state(&context, &record.id, "2030-01-01T00:00:00Z")
+                .unwrap()
+                .enabled
+        );
+    }
+
+    #[test]
+    fn serve_default_is_off_without_a_configured_policy() {
+        let lock = GlobalStateLock::new();
+        let _unset = EnvGuard::remove(&lock, SERVE_DEFAULT_POLICY_ENV);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = seed_session(&tmp);
+
+        finish_serve_create(&context, &record.id, "create");
+        assert!(!path(&context, &record.id).exists());
+    }
+
+    #[test]
+    fn explicit_delete_wins_over_the_serve_default() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = seed_session(&tmp);
+
+        // DELETE after the default was applied.
+        apply_serve_default(
+            &context,
+            &record.id,
+            WAIT_FOR_RESET_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        assert!(
+            read_state(&context, &record.id, "2030-01-01T00:00:00Z")
+                .unwrap()
+                .enabled
+        );
+        cancel(&context, &record.id, "2030-01-01T00:00:01Z").unwrap();
+        let cancelled = read_state(&context, &record.id, "2030-01-01T00:00:02Z").unwrap();
+        assert!(!cancelled.enabled);
+        assert_eq!(cancelled.state, "cancelled");
+
+        // A late default never re-enables an explicitly cancelled session.
+        apply_serve_default(
+            &context,
+            &record.id,
+            WAIT_FOR_RESET_POLICY,
+            "2030-01-01T00:00:03Z",
+        )
+        .unwrap();
+        let after = read_state(&context, &record.id, "2030-01-01T00:00:04Z").unwrap();
+        assert!(!after.enabled);
+        assert_eq!(after.state, "cancelled");
+    }
+
+    #[test]
+    fn serve_default_leaves_unsupported_sessions_disabled() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, mut record) = seed_session(&tmp);
+        record.runtime.as_mut().unwrap().extra.insert(
+            "agent_profile_auto_resume_supported".to_string(),
+            json!(false),
+        );
+        crate::write_session_record(&context, &record).unwrap();
+
+        apply_serve_default(
+            &context,
+            &record.id,
+            WAIT_FOR_RESET_POLICY,
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        let view = view_for_record(&context, &record);
+        assert!(!view.supported);
+        assert!(!view.enabled);
+        assert_eq!(view.state, "disabled");
+    }
+
+    #[test]
+    fn view_reports_attempts_and_failure_class_for_a_capacity_recovery() {
+        let lock = GlobalStateLock::new();
+        let _without_broker = EnvGuard::remove(&lock, "AGENT_SESSION_CODEX_ACCOUNT_BROKER");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record, _) = seed_bound_codex_auto_resume(&tmp);
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        let no_usage = UsageSnapshot {
+            authoritative: false,
+            has_exhausted_windows: false,
+            exhausted_reset_epochs: Vec::new(),
+            soonest_reset_epoch: None,
+        };
+
+        let idle = view_for_record(&context, &record);
+        assert_eq!((idle.attempts, idle.failure_class), (0, None));
+
+        ingest_provider_capacity(&context, &record, "capacity-0");
+        let scheduled = view_for_record(&context, &record);
+        assert_eq!(scheduled.attempts, 0);
+        assert_eq!(
+            scheduled.failure_class.as_deref(),
+            Some("provider_capacity")
+        );
+        let wake = epoch_from_string(scheduled.scheduled_at.as_deref().unwrap()).unwrap();
+        tick_for_runtime(
+            &context,
+            &record.id,
+            &record.runtime.as_ref().unwrap().launch_id,
+            wake,
+            &no_usage,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let resumed = view_for_record(&context, &record);
+        assert_eq!(resumed.state, "resumed");
+        assert_eq!(resumed.attempts, 1);
+        assert_eq!(resumed.failure_class.as_deref(), Some("provider_capacity"));
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap()["failure_class"],
+            "provider_capacity"
         );
     }
 

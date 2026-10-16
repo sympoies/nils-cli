@@ -428,6 +428,21 @@ pub(crate) async fn response(
     let context = context.clone();
     let operation = operation.to_owned();
     let _ = tokio::task::spawn_blocking(move || {
+        if error.is_none()
+            && matches!(operation.as_str(), "create" | "import")
+            && let Some(policy) = crate::auto_resume::serve_default_policy()
+            && let Err(err) = crate::auto_resume::apply_serve_default(
+                &context,
+                &target_id,
+                policy,
+                &jiff::Timestamp::now().to_string(),
+            )
+        {
+            eprintln!(
+                "warning: serve auto-resume default was not applied: {}",
+                err.code()
+            );
+        }
         let target = crate::load_session_record(&context, &target_id)
             .ok()
             .or(before);
