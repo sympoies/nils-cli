@@ -123,3 +123,22 @@ fn synthetic_dim_suggestion_sends_once_and_identical_human_drafts_block() {
         );
     }
 }
+
+#[test]
+fn claude_bare_nbsp_composer_admits_one_guarded_submission() {
+    let fixture = Fixture::new("claude");
+    fs::write(fixture.root().join("bare-composer"), "").unwrap();
+    let output = fixture.send(&["--require-idle", "--require-empty-composer"]);
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["submission"]["enter_presses"],
+        1
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}

@@ -22,8 +22,7 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     let glyph = if agent == "claude" { '❯' } else { '›' };
     let after_glyph = region[0].trim_start().strip_prefix(glyph)?;
     let input = after_glyph
-        .strip_prefix(' ')
-        .or_else(|| after_glyph.strip_prefix('\u{a0}'))
+        .strip_prefix([' ', '\u{a0}', '\u{2007}', '\u{202f}'])
         .unwrap_or(after_glyph);
     let row = lines
         .iter()

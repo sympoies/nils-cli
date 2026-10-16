@@ -110,7 +110,7 @@ elif command == 'capture-pane':
         else: print('› ' + shown + '\n\n  ' + footer)
         sys.exit(0)
     if provider == 'claude':
-        shown = occupied + padding if text else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
+        shown = occupied + padding if text or (root / 'bare-composer').exists() else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
         print('────────────────────────────\n❯\u00a0' + shown + '\n' + rows + '────────────────────────────\n  ' + footer)
     else:
         shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')

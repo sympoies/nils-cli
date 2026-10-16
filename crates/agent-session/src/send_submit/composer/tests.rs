@@ -221,3 +221,73 @@ fn synthetic_dim_suggestions_are_empty_for_both_harnesses_but_typed_twins_are_dr
         );
     }
 }
+
+#[test]
+fn claude_nbsp_separator_preserves_empty_suggestion_and_draft_states() {
+    for (input, expected) in [
+        ("", ""),
+        (
+            "\u{1b}[2mContinue reviewing the pending changes\u{1b}[22m",
+            "",
+        ),
+        (
+            "Continue reviewing the pending changes",
+            "Continue reviewing the pending changes",
+        ),
+    ] {
+        assert_eq!(
+            exact_composer_input(
+                "claude",
+                &claude(input, "", "Update installed; restart to apply")
+            )
+            .as_deref(),
+            Some(expected),
+            "input {input:?}"
+        );
+    }
+}
+
+#[test]
+fn claude_nonbreaking_separators_preserve_empty_suggestion_and_draft_states() {
+    for separator in ['\u{2007}', '\u{202f}'] {
+        for (input, expected) in [
+            ("", ""),
+            (
+                "\u{1b}[2mContinue reviewing the pending changes\u{1b}[22m",
+                "",
+            ),
+            (
+                "Continue reviewing the pending changes",
+                "Continue reviewing the pending changes",
+            ),
+        ] {
+            let pane = claude(input, "", "status").replacen('\u{a0}', &separator.to_string(), 1);
+            assert_eq!(
+                exact_composer_input("claude", &pane).as_deref(),
+                Some(expected),
+                "separator {separator:?}, input {input:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn nonbreaking_separators_never_hide_choices_or_additional_draft_characters() {
+    for separator in [' ', '\u{a0}', '\u{2007}', '\u{202f}'] {
+        let choice = claude("\u{1b}[2m1. Confirm\u{1b}[22m", "", "status").replacen(
+            '\u{a0}',
+            &separator.to_string(),
+            1,
+        );
+        assert_eq!(exact_composer_input("claude", &choice), None);
+        for draft in [
+            " ", "\u{a0}", "\u{2007}", "\u{202f}", "\u{200b}", "\u{feff}", " café ",
+        ] {
+            let pane = claude(draft, "", "status").replacen('\u{a0}', &separator.to_string(), 1);
+            assert_eq!(
+                exact_composer_input("claude", &pane).as_deref(),
+                Some(draft)
+            );
+        }
+    }
+}
