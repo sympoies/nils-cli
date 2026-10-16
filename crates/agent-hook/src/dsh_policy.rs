@@ -22,6 +22,8 @@ use crate::error::HookError;
 use crate::model::{DecisionAction, NormalizedRequest, OperationEffectClass};
 use crate::policy_parity::{DshCapabilityGroup, DshTier};
 
+mod mailbox_reminder;
+
 const MAX_COMMAND_BYTES: usize = 256 * 1024;
 const MAX_PARSE_DEPTH: usize = 5;
 const GOVERNED_COMMIT_TOOL: &str = "runtime_kit_governed_commit";
@@ -1634,8 +1636,6 @@ fn user_prompt_agent_memory(
 }
 
 const MAILBOX_REMINDER_SCHEMA: &str = "cli.agent-session.message-reminder.v1";
-const MAILBOX_REMINDER_PREFIX: &str = "Coordination mailbox has unread messages";
-const MAILBOX_REMINDER_MAX_BYTES: usize = 1024;
 
 /// The fixed mailbox reminder for the authenticated managed DSH session, if
 /// `agent-session` has a live unread generation to announce.
@@ -1694,12 +1694,7 @@ fn mailbox_reminder(
         return None;
     }
     let reminder = data.get("reminder")?.as_str()?;
-    let fixed = reminder.starts_with(MAILBOX_REMINDER_PREFIX)
-        && reminder.len() <= MAILBOX_REMINDER_MAX_BYTES
-        && !reminder.chars().any(char::is_control)
-        && reminder.contains(&format!(
-            "agent-session message inbox --session {session_id} --state unread"
-        ));
+    let fixed = mailbox_reminder::is_fixed(reminder, &session_id);
     fixed.then(|| reminder.to_string())
 }
 

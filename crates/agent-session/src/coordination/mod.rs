@@ -21,6 +21,7 @@ pub(crate) mod service;
 pub(crate) use broker::run_broker;
 pub(crate) use notification::NotificationCandidate;
 pub(crate) use notification::is_mailbox_reminder_prompt;
+pub(crate) use notification::observe_attempt as notification_prompt_observed_after;
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};

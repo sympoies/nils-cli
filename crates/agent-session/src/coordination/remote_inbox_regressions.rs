@@ -11,7 +11,7 @@ fn inbox(context: &CliContext, categories: Vec<MessageCategory>, cursor: Option<
     mailbox::inbox(
         context,
         MessageInboxArgs {
-            session: "recipient".into(),
+            session: Some("recipient".into()),
             capability_file: Some(super::super::capability_path(
                 context,
                 "recipient",

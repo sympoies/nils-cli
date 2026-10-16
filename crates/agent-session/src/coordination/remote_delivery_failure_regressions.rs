@@ -269,7 +269,7 @@ fn sender_inbox(context: &CliContext, capability: &Path) -> Value {
     super::super::mailbox::inbox(
         context,
         crate::cli::MessageInboxArgs {
-            session: SENDER.into(),
+            session: Some(SENDER.into()),
             capability_file: Some(capability.to_path_buf()),
             state: None,
             cursor: None,
