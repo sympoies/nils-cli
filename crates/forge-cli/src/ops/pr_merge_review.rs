@@ -39,10 +39,13 @@ pub(super) fn ensure_merge_ready<R: BackendRunner>(
             )
         })?;
         // Validate the complete trusted chain even when no observation exists.
-        // An assignment alone must not require a ledger under an explicit
-        // opt-out, as automated release PRs may have no review-loop workflow.
+        // Compatibility assignments permit explicit opt-out without a ledger.
+        // A strict final-approval assignment must still pass designated admission.
         let view = pr_review::read_review_loop_state_view(runner, ctx, &repository, number)?;
-        if review_state::latest_review_loop_state(&view.chain).is_none() {
+        if review_state::latest_review_loop_state(&view.chain).is_none()
+            && !super::pr_review_handoff::latest(&view.chain)
+                .is_some_and(|h| h.approval_policy == crate::cli::ApprovalPolicy::FinalApproval)
+        {
             return Ok(Some(MergeReviewGate::Unobserved {
                 state_tip_digest: view.chain.tip_digest,
             }));

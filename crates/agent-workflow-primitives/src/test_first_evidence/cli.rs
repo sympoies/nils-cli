@@ -31,6 +31,8 @@ pub enum Command {
     RecordWaiver(RecordWaiverArgs),
     /// Record final validation after the implementation.
     RecordFinal(RecordFinalArgs),
+    /// Resolve a failed final attempt using a passing validation and investigation evidence.
+    ResolveFinal(super::final_validation::ResolveFinalArgs),
     /// Record one residual gap or explicitly declare that none remain.
     RecordGap(RecordGapArgs),
     /// Bind the immutable repository and pre-edit baseline subject.

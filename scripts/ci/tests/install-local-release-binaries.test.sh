@@ -163,7 +163,7 @@ assert_default_inventory_builds_release_default_bins() {
   tmp="$(mktemp -d)"
   fixture_dirs+=("$tmp")
   mkdir -p "$tmp/install"
-  for retired in plan-issue plan-issue-local plan-tooling plan-archive main-agent; do
+  for retired in plan-issue plan-issue-local plan-tooling plan-archive main-agent agent-docs; do
     printf 'old\n' >"$tmp/install/$retired"
   done
   printf 'keep\n' >"$tmp/install/unrelated-tool"
@@ -185,7 +185,7 @@ assert_default_inventory_builds_release_default_bins() {
     exit 1
   fi
   [[ -x "$tmp/install/alpha" ]]
-  for retired in plan-issue plan-issue-local plan-tooling plan-archive main-agent; do
+  for retired in plan-issue plan-issue-local plan-tooling plan-archive main-agent agent-docs; do
     if [[ -e "$tmp/install/$retired" ]]; then
       echo "FAIL: $FUNCNAME left retired binary $retired"
       exit 1

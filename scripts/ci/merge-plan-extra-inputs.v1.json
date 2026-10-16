@@ -2,11 +2,6 @@
   "schema_version": "nils-cli.merge-extra-inputs.v1",
   "rules": [
     {
-      "id": "docs-hook-binaries",
-      "paths": ["crates/agent-docs/**", "crates/agent-hook/**"],
-      "packages": ["nils-agent-docs", "nils-agent-hook"]
-    },
-    {
       "id": "hook-session-binaries",
       "paths": ["crates/agent-hook/**", "crates/agent-session/**"],
       "packages": ["nils-agent-hook", "nils-agent-session"]

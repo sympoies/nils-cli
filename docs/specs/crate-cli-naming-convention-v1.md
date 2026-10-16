@@ -24,7 +24,7 @@ Applies to every crate under `crates/`. Enforced by
 - An internal shared library crate is prefixed `nils-`
   (for example `nils-common`, `nils-term`, `nils-markdown`).
 - A domain/service crate uses a plain descriptive name
-  (for example `agent-docs`, `screen-record`, `agent-out`).
+  (for example `agent-hook`, `screen-record`, `agent-out`).
 
 ### Package name
 

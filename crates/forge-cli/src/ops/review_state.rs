@@ -783,6 +783,7 @@ pub fn parse_chain<'a>(
                             || old.surrendered
                             || old.returned_reason.is_some()
                             || handoff.reviewer_digest != old.reviewer_digest
+                            || handoff.approval_policy != old.approval_policy
                             || handoff.returned_reason.is_some()))
                     || (next
                         && handoff.returned_reason.is_none()
@@ -2108,6 +2109,7 @@ mod tests {
                         surrendered,
                         coordinator_transfer: None,
                         base_ref: None,
+                        approval_policy: Default::default(),
                     },
                 },
             )

@@ -32,7 +32,7 @@ Completion obligations for those binaries are tracked in
 | API testing | `api-rest`, `api-gql`, `api-grpc`, `api-websocket`, `api-test` | Run protocol-specific API checks or orchestrate a mixed API test suite. |
 | Git tooling | `git-scope`, `git-cli`, `git-summary`, `git-lock` | Inspect changes, run Git helper flows, summarize commits, or manage repo-local commit locks. |
 | Forge automation | `forge-cli`, `github-app-cli` | Drive PR/MR + Issue lifecycle and repository label catalog maintenance on GitHub (via `gh`) or GitLab (via `glab`), or mint GitHub App installation tokens. |
-| Agent policy and evidence | `agent-runtime`, `agent-docs`, `agent-hook`, `agent-memory`, `agent-out`, `agent-session`, `agent-scope-lock`, `agent-run`, `test-first-evidence`, `web-evidence`, `browser-session`, `canary-check`, `docs-impact`, `heuristic-inbox`, `model-cross-check`, `repo-retro`, `review-evidence`, `review-specialists`, `skill-usage`, `evidence` | Render/install/audit runtime-kit surfaces, resolve agent policy docs, dispatch one shared cross-provider hook policy, manage local agent memory stores, run project commands through explicit env handling, allocate artifact paths, start tmux-backed agent sessions, enforce edit scope, inspect repo retrospectives, merge specialist review evidence, persist deterministic workflow evidence, or migrate and query the durable skill-usage evidence archive. |
+| Agent policy and evidence | `agent-runtime`, `agent-hook`, `agent-memory`, `agent-out`, `agent-session`, `agent-scope-lock`, `agent-run`, `test-first-evidence`, `web-evidence`, `browser-session`, `canary-check`, `docs-impact`, `heuristic-inbox`, `model-cross-check`, `repo-retro`, `review-evidence`, `review-specialists`, `skill-usage`, `evidence` | Render/install/audit runtime-kit surfaces, dispatch one shared cross-provider hook policy, manage local agent memory stores, run project commands through explicit env handling, allocate artifact paths, start tmux-backed agent sessions, enforce edit scope, inspect repo retrospectives, merge specialist review evidence, persist deterministic workflow evidence, or migrate and query the durable skill-usage evidence archive. |
 | Commit delivery | `semantic-commit` | Run validated commit workflows. |
 | Development log | `devlog` | Record durable outcomes in a repository development log, check its structural integrity, and search past decisions. |
 | Provider lanes | `codex-cli`, `claude-cli` | Run provider-specific diagnostics, auth checks, and workflow adapters. |
@@ -100,8 +100,6 @@ Each crate is either a standalone CLI binary, a multi-binary crate, or a shared 
   sync, and literal search over `docs/devlog` or `docs/source/devlog`.
 - [crates/agent-runtime](crates/agent-runtime): Runtime-kit tooling binary (`agent-runtime`) for render, install, doctor,
   audit-drift, runtime state maintenance, skill listing, and PR/MR body rendering.
-- [crates/agent-docs](crates/agent-docs): Deterministic policy-document resolver and auditor for Codex/agent workflows (`audit`,
-  `preflight`, `init`, `explain`, `list`, `remove`).
 - [crates/agent-memory](crates/agent-memory): Local agent memory-store resolver and manager (`path`, `index`, `init-agent`,
   `init-persona`, `doctor`, `completion`).
 - [crates/agent-out](crates/agent-out): Canonical `$AGENT_HOME/out/` path generator and layout auditor for agent workflow artifacts.

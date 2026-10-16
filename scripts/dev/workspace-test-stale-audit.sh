@@ -122,7 +122,6 @@ tmp_high_overlap="$(mktemp "${TMPDIR:-/tmp}/workspace-stale-tests.high-overlap.X
 # Frozen serial execution order from Sprint 3 Task 3.1.
 frozen_serial_crates=(
   git-cli
-  agent-docs
   macos-agent
   fzf-cli
   memo

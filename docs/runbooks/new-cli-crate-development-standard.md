@@ -25,8 +25,6 @@ Use these as the source of truth to avoid policy drift:
   - `scripts/publish-crates.sh`
   - `release/crates-io-publish-order.txt`
   - `.agents/skills/project-bump-version-tag-release/SKILL.md`
-- `agent-docs` command semantics and registration patterns:
-  - `crates/agent-docs/README.md`
 - JSON contract details:
   - `docs/specs/cli-output-contract-v1.md`
 

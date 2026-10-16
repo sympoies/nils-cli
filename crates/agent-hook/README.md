@@ -199,9 +199,8 @@ also receives a durable monotonic sequence in its capability derivation, so
 tombstone compaction can never make an old bearer valid again. `begin`
 durably advances the repository generation before an edit. `run` resolves the
 caller's exact `intent` and
-command against the current repository `VALIDATION.toml` contracts, with a
-transitional reader for DSH-scoped `[[validation]]` entries in
-`AGENT_DOCS.toml`. The DSH
+command against the current repository `VALIDATION.toml` contracts; no
+other file is read for validation contracts. The DSH
 integration probes every foreground Bash command with `run` before execution
 and rejects background Bash at the plugin boundary. A probe omits `execution`:
 an exact validation target returns `ready`, while any other command returns

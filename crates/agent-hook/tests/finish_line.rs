@@ -40,7 +40,7 @@ fn install_contracts(fixture: &Fixture, contracts: &[(&str, &[&str])]) {
             "[[validation]]\ncontext = {intent:?}\nproduct = \"dsh\"\ncommands = {commands:?}\ndescription = \"finish-line test\"\n\n"
         ));
     }
-    fs::write(fixture.root.join("AGENT_DOCS.toml"), body).expect("agent-docs catalog");
+    fs::write(fixture.root.join("VALIDATION.toml"), body).expect("validation contract");
 }
 
 fn one_contract(fixture: &Fixture, command: &str) {

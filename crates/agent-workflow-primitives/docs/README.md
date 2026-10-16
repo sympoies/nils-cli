@@ -48,8 +48,12 @@ repo-retro report --repo . --from 2026-05-11 --to 2026-05-17 \
 
 - [Test-first evidence mutation receipt v1](specs/test-first-evidence-mutation-receipt-v1.md):
   compact default JSON receipts and the explicit full-record compatibility mode.
+
 - [Mutation receipt JSON Schema](specs/test-first-evidence-mutation-receipt-v1.schema.json):
   machine-readable validation for the three compact v3 envelopes.
+
+- [Failed final validation resolution v1](specs/failed-final-validation-resolution-v1.md):
+  explicit investigated dispositions preserve failed attempts and reference passing validation.
 
 ## Runbooks
 

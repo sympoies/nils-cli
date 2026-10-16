@@ -1,4 +1,4 @@
-use minijinja::value::Kwargs;
+use minijinja::value::{Kwargs, Serde};
 use minijinja::{AutoEscape, Environment, UndefinedBehavior, Value};
 use serde::Serialize;
 
@@ -54,7 +54,7 @@ impl Engine {
             .get_template(name)
             .map_err(|_| RenderError::MissingTemplate { name: name.into() })?;
         template
-            .render(Value::from_serialize(view))
+            .render(Value::from(Serde(view)))
             .map_err(|source| RenderError::Render {
                 name: name.into(),
                 source,
@@ -133,7 +133,12 @@ impl EngineBuilder {
         // Preserve the template body's trailing newline. minijinja
         // strips one trailing `\n` by default; tera (and our golden
         // fixtures) keep it, so opt back in for byte-identical output.
-        env.set_keep_trailing_newline(true);
+        env.set_syntax(
+            minijinja::syntax::SyntaxConfig::builder()
+                .keep_trailing_newline(true)
+                .build()
+                .expect("the default MiniJinja syntax configuration is valid"),
+        );
         env.set_undefined_behavior(UndefinedBehavior::Strict);
         crate::filters::install_defaults(&mut env);
         Self { env }
@@ -159,11 +164,10 @@ fn serialize_to_context<T: Serialize>(view: &T) -> Result<Value, minijinja::Erro
         minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
     })?;
     match value {
-        serde_json::Value::Null => Ok(Value::from_serialize(serde_json::Map::<
-            String,
-            serde_json::Value,
-        >::new())),
-        serde_json::Value::Object(_) => Ok(Value::from_serialize(&value)),
+        serde_json::Value::Null => Ok(Value::from(Serde(serde_json::Value::Object(
+            serde_json::Map::new(),
+        )))),
+        serde_json::Value::Object(_) => Ok(Value::from(Serde(value))),
         other => Err(minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
             format!("render_str view must serialize to a JSON object or null, got {other:?}"),
@@ -225,6 +229,29 @@ mod tests {
         let view = serde_json::json!({"name": "world"});
         let out = engine.render_value("hello", &view).unwrap();
         assert_eq!(out, "Hello, world!");
+    }
+
+    #[test]
+    fn representative_markdown_template_preserves_rendered_bytes() {
+        let mut engine = build();
+        engine
+            .register_template(
+                "representative",
+                "# {{ title | upper }}\n{% for item in items %}- {{ item | md_cell }}\n{% endfor %}HTML: {{ raw }}\n",
+            )
+            .unwrap();
+        let view = serde_json::json!({
+            "title": "release notes",
+            "items": ["first", "second | value"],
+            "raw": "<b>literal</b>",
+        });
+
+        let rendered = engine.render_value("representative", &view).unwrap();
+
+        assert_eq!(
+            rendered,
+            "# RELEASE NOTES\n- first\n- second / value\nHTML: <b>literal</b>\n"
+        );
     }
 
     #[test]

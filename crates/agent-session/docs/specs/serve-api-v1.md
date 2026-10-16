@@ -450,6 +450,17 @@ recorded in `sympoies/nils-cli#1409`.
   submission without holding the global coordination registry lock across
   terminal I/O. Transcript observation determines acknowledged versus unknown
   outcome.
+- A daemon configured with `[auto_resume] default_enabled = true` (or
+  `AGENT_SESSION_AUTO_RESUME_DEFAULT_POLICY`; see the
+  [serve daemon runbook](../runbooks/serve-daemon.md#configuration-file))
+  opts every session that `POST /sessions` creates or imports into auto-resume
+  with the configured `default_recovery_policy` (`wait_for_reset` when
+  omitted), as if the client had sent that `PUT` right after creation, and the
+  create response already reports that view. It is applied once, only when the
+  session has no durable auto-resume state, so an explicit `PUT` or `DELETE`
+  always wins. Sessions that cannot report an authoritative capacity signal, or
+  cannot honor the policy (for example `next_account_then_resume` without a
+  bound Codex account), stay disabled; existing sessions are unchanged.
 - Every session view additively includes `auto_resume` using
   `agent-session.auto-resume.v1`. `GET /sessions/{id}/auto-resume` reads that
   status and is open on loopback; `PUT` with `{ "enabled": true|false,
@@ -477,7 +488,12 @@ recorded in `sympoies/nils-cli#1409`.
   the provider rejection as `usage_window_not_exhausted`. Both
   mutations require the bearer token. Claude Code is supported through its
   authoritative structured
-  `StopFailure.error == "rate_limit"` signal. Fresh interactive Codex sessions
+  `StopFailure.error == "rate_limit"` signal. It is the only Claude
+  `StopFailure.error` value that counts as capacity: `server_error` (a
+  provider overload or outage), `authentication_failed`, `oauth_org_not_allowed`,
+  `billing_error`, `invalid_request`, `max_output_tokens`, and any unknown value
+  never arm recovery, and the fixture
+  `tests/fixtures/activity/auto-resume-failures.jsonl` pins each of them. Fresh interactive Codex sessions
   created through the serve API are also supported when the installed CLI
   capability probe selects the app-server v2 runtime. The daemon consumes the
   live metadata-only protocol
@@ -492,8 +508,12 @@ recorded in `sympoies/nils-cli#1409`.
   unsupported. Terminal text and assistant output are never treated as
   authority.
   The response object is `{ schema_version, supported, enabled, recovery_policy,
-  state,
-  scheduled_at?, failure_reason? }`. `scheduled_at`, when present, is an
+  state, attempts,
+  scheduled_at?, failure_reason?, failure_class? }`. `attempts` is the number
+  of capacity-recovery continuations the current chain has submitted (`0`
+  before the first, and for usage-exhaustion recovery). `failure_class`, present while a recovery chain exists, is
+  `usage_exhaustion` or `provider_capacity`; clients render any other value as a
+  generic failure. `scheduled_at`, when present, is an
   RFC 3339 timestamp. The v1 `state` values are `disabled`, `enabled`, `armed`,
   `scheduled`, `switching_account`, `checking`, `resumed`, `cancelled`, `transient_failure`, and
   `terminal_failure`. The allowlisted `failure_reason` values are
