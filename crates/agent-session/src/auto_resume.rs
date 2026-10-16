@@ -267,13 +267,20 @@ fn write_state(context: &CliContext, id: &str, state: &DurableAutoResume) -> Res
 }
 
 fn view(record: &SessionRecord, state: DurableAutoResume) -> AutoResumeView {
+    // The durable counter also counts usage-check retries; only capacity
+    // recovery submits continuations, so only it projects an attempt count.
+    let attempts = if state.recovery_cause.as_deref() == Some(PROVIDER_CAPACITY_CAUSE) {
+        state.attempt
+    } else {
+        0
+    };
     AutoResumeView {
         schema_version: AUTO_RESUME_SCHEMA_VERSION,
         supported: supported(record),
         enabled: state.enabled,
         recovery_policy: state.recovery_policy,
         state: state.state,
-        attempts: state.attempt,
+        attempts,
         scheduled_at: state.scheduled_at,
         failure_reason: state.failure_reason,
         failure_class: state.recovery_cause,
@@ -428,26 +435,27 @@ pub(crate) fn serve_default_policy() -> Option<&'static str> {
     }
 }
 
-/// Opt a just-created session in to auto-resume. It is a no-op once the session
-/// has durable auto-resume state, so an explicit `PUT` or `DELETE` always wins,
-/// and for a session that cannot honor the default (unsupported runtime or
-/// unavailable account failover), which stays disabled.
+/// Opt a just-created session in to auto-resume and report whether it did. It
+/// is a no-op once the session has durable auto-resume state, so an explicit
+/// `PUT` or `DELETE` always wins, and for a session that cannot honor the
+/// default (unsupported runtime or unavailable account failover), which stays
+/// disabled.
 pub(crate) fn apply_serve_default(
     context: &CliContext,
     id: &str,
     recovery_policy: &str,
     now: &str,
-) -> Result<(), CliError> {
+) -> Result<bool, CliError> {
     let observed = load_session_record(context, id)?;
     let canonical_id = observed.id.clone();
     let _lock = acquire_session_record_lock(context, &canonical_id)?;
     let record = load_session_record(context, &canonical_id)?;
     crate::ensure_same_session_identity(&observed, &record)?;
     if path(context, &record.id).exists() {
-        return Ok(());
+        return Ok(false);
     }
     match set_enabled_locked(context, &record, true, recovery_policy, now) {
-        Ok(_) => Ok(()),
+        Ok(_) => Ok(true),
         Err(error)
             if matches!(
                 error.code(),
@@ -456,7 +464,7 @@ pub(crate) fn apply_serve_default(
                     | "auto-resume-state-unavailable"
             ) =>
         {
-            Ok(())
+            Ok(false)
         }
         Err(error) => Err(error),
     }
@@ -3249,6 +3257,101 @@ mod tests {
                 None,
                 ok_create_response(),
             ));
+    }
+
+    fn serve_create_response_body(
+        context: &CliContext,
+        record: &SessionRecord,
+        operation: &str,
+    ) -> serde_json::Value {
+        let before = serde_json::to_value(view_for_record(context, record)).unwrap();
+        let body = json!({
+            "schema_version": "agent-session.serve.v1",
+            "ok": true,
+            "data": {
+                "machine": "test",
+                "session": { "id": record.id, "auto_resume": before },
+            },
+        });
+        let response = axum::response::IntoResponse::into_response((
+            axum::http::StatusCode::OK,
+            axum::Json(body),
+        ));
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let response =
+                    crate::lifecycle::response(context, &record.id, operation, None, response)
+                        .await;
+                let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                    .await
+                    .unwrap();
+                serde_json::from_slice(&bytes).unwrap()
+            })
+    }
+
+    #[test]
+    fn serve_create_response_reflects_the_applied_default() {
+        let lock = GlobalStateLock::new();
+        let _default = EnvGuard::set(&lock, SERVE_DEFAULT_POLICY_ENV, WAIT_FOR_RESET_POLICY);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = seed_session(&tmp);
+
+        let body = serve_create_response_body(&context, &record, "create");
+
+        let after = serde_json::to_value(view_for_record(&context, &record)).unwrap();
+        assert_eq!(after["enabled"], true);
+        assert_eq!(body["data"]["session"]["auto_resume"], after);
+        assert_eq!(body["data"]["machine"], "test");
+    }
+
+    #[test]
+    fn serve_create_response_is_unchanged_without_a_default() {
+        let lock = GlobalStateLock::new();
+        let _unset = EnvGuard::remove(&lock, SERVE_DEFAULT_POLICY_ENV);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = seed_session(&tmp);
+
+        let body = serve_create_response_body(&context, &record, "create");
+
+        assert_eq!(body["data"]["session"]["auto_resume"]["enabled"], false);
+    }
+
+    #[test]
+    fn usage_check_retries_do_not_count_as_attempts() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = seed_session(&tmp);
+        set_enabled(&context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
+        let revision = waiting_revision(&context, &record);
+        arm_usage_exhaustion(
+            &context,
+            &record.id,
+            "turn-1".to_string(),
+            revision,
+            "2030-01-01T00:00:01Z",
+        )
+        .unwrap();
+
+        let outcome = tick(
+            &context,
+            &record.id,
+            1_893_456_000,
+            &UsageSnapshot {
+                authoritative: false,
+                has_exhausted_windows: false,
+                exhausted_reset_epochs: Vec::new(),
+                soonest_reset_epoch: None,
+            },
+            |_| panic!("must not submit without authoritative usage"),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, TickOutcome::Retrying);
+        assert!(read_state(&context, &record.id, "ignored").unwrap().attempt > 0);
+        let view = view_for_record(&context, &record);
+        assert_eq!(view.attempts, 0);
+        assert_eq!(view.failure_class.as_deref(), Some(USAGE_EXHAUSTION_CAUSE));
     }
 
     #[test]

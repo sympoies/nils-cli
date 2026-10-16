@@ -454,13 +454,12 @@ recorded in `sympoies/nils-cli#1409`.
   [serve daemon runbook](../runbooks/serve-daemon.md#configuration-file))
   opts every session that `POST /sessions` creates or imports into auto-resume
   with the configured `default_recovery_policy` (`wait_for_reset` when
-  omitted), as if the client had sent that `PUT` immediately after creation. The
-  default is applied once, only when the session has no durable auto-resume
-  state, so an explicit `PUT` or `DELETE` always wins. Sessions whose runtime
-  cannot report an authoritative capacity signal stay disabled and keep
-  `supported: false`, and a policy the session cannot honor (for example
-  `next_account_then_resume` without a bound Codex account) leaves it disabled.
-  Sessions created before the default was configured are unchanged.
+  omitted), as if the client had sent that `PUT` right after creation, and the
+  create response already reports that view. It is applied once, only when the
+  session has no durable auto-resume state, so an explicit `PUT` or `DELETE`
+  always wins. Sessions that cannot report an authoritative capacity signal, or
+  cannot honor the policy (for example `next_account_then_resume` without a
+  bound Codex account), stay disabled; existing sessions are unchanged.
 - Every session view additively includes `auto_resume` using
   `agent-session.auto-resume.v1`. `GET /sessions/{id}/auto-resume` reads that
   status and is open on loopback; `PUT` with `{ "enabled": true|false,
