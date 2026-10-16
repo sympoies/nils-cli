@@ -6563,11 +6563,11 @@ async fn create_handler(
     if let Err(error) = crate::launch_env::validate(&body.launch_env) {
         return envelope_err(error);
     }
-    let operation = if body.provider_resume_id.is_some() {
-        "import"
-    } else {
-        "create"
+    let origin = match body.origin_fields() {
+        Ok(origin) => origin,
+        Err(error) => return envelope_err(error),
     };
+    let operation = body.operation();
     let id = match crate::lifecycle::start_id(
         &state.context,
         body.id.as_deref(),
@@ -6582,7 +6582,7 @@ async fn create_handler(
     };
     let context = state.context.clone();
     let before = load_session_record(&context, &id).ok();
-    let response = create_handler_inner(State(state), headers, Json(body)).await;
+    let response = create_handler_inner(State(state), headers, Json(body), origin).await;
     crate::lifecycle::response(&context, &id, operation, before, response).await
 }
 
@@ -6590,6 +6590,7 @@ async fn create_handler_inner(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
     Json(body): Json<CreateBody>,
+    origin: crate::origin::Fields,
 ) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
@@ -6669,10 +6670,7 @@ async fn create_handler_inner(
         Ok(initial_lineage) => initial_lineage,
         Err(err) => return envelope_err(err),
     };
-    if let Err(error) = body.origin.validate() {
-        return envelope_err(error);
-    }
-    initial_lineage.origin = body.origin;
+    initial_lineage.origin = origin;
     if let Some(provider_resume_id) = body.provider_resume_id {
         if body.cwd.is_some() {
             return envelope_err(CliError::usage(

@@ -165,6 +165,10 @@ async fn origin_serve_create_and_projection_include_nullable_defaults_and_worksp
     for (id, fields) in [
         ("unassigned", json!({})),
         (
+            "nullable",
+            json!({"origin":{"parent":null},"workspace":null}),
+        ),
+        (
             "assigned",
             json!({"workspace":"example-workspace", "origin":{"parent":{"session_id":"remote-parent","machine":"other-host"}}}),
         ),
@@ -223,6 +227,91 @@ async fn origin_serve_create_and_projection_include_nullable_defaults_and_worksp
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
         assert!(!tmp.path().join("sessions/invalid/session.json").exists());
+    }
+}
+
+#[tokio::test]
+async fn origin_serve_workspace_shapes_use_the_error_envelope() {
+    assert_invalid_create_fields(
+        "workspace-invalid",
+        &[
+            json!({"workspace":7}),
+            json!({"workspace":[]}),
+            json!({"workspace":{}}),
+            json!({"workspace":true}),
+        ],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn origin_serve_origin_shapes_use_the_error_envelope() {
+    assert_invalid_create_fields(
+        "origin-invalid",
+        &[
+            json!({"origin":[]}),
+            json!({"origin":[null]}),
+            json!({"origin":7}),
+            json!({"origin":"invalid"}),
+            json!({"origin":null}),
+            json!({"origin":{"parent":7}}),
+            json!({"origin":{"parent":["parent","worker-host"]}}),
+            json!({"origin":{"parent":{"session_id":7,"machine":"worker-host"}}}),
+            json!({"origin":{"parent":{"session_id":"parent","machine":7}}}),
+            json!({"origin":{"parent":{"session_id":"parent"}}}),
+        ],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn origin_serve_unknown_nested_keys_use_the_error_envelope() {
+    assert_invalid_create_fields(
+        "origin-invalid",
+        &[
+            json!({"origin":{"parent":null,"unexpected":true}}),
+            json!({"origin":{"parent":{"session_id":"parent","machine":"worker-host","unexpected":true}}}),
+        ],
+    ).await;
+}
+
+async fn assert_invalid_create_fields(code: &str, fields: &[Value]) {
+    let _lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let log = tmp.path().join("tmux.log");
+    let st = state(tmp.path(), Some(TOKEN), logging_tmux(tmp.path(), &log));
+    for fields in fields {
+        for import in [false, true] {
+            let mut request = json!({"agent":"claude","id":"invalid","cwd":tmp.path()});
+            request
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            if import {
+                request["provider_resume_id"] = json!("provider-session");
+            }
+            let response = router(st.clone())
+                .oneshot(post_json("/sessions", Some(TOKEN), request.clone()))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "request={request}"
+            );
+            assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["schema_version"], "cli.agent-session.serve.v1");
+            assert_eq!(body["ok"], false);
+            assert_eq!(body["error"]["code"], code);
+            assert!(body["error"]["details"]["recovery"].is_object());
+            assert!(!tmp.path().join("sessions/invalid/session.json").exists());
+            assert!(!tmp.path().join("lifecycle/invalid").exists());
+            assert!(!log.exists(), "invalid metadata must not launch a runtime");
+        }
     }
 }
 

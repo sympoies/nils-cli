@@ -69,7 +69,7 @@ impl Fields {
     }
 }
 
-fn invalid_origin() -> CliError {
+pub(crate) fn invalid_origin() -> CliError {
     CliError::usage(
         "origin-invalid",
         "origin.parent requires a valid session_id and a bounded machine identifier",
@@ -80,11 +80,17 @@ fn invalid_origin() -> CliError {
 }
 
 pub(crate) fn validate_workspace(workspace: &str) -> Result<(), CliError> {
-    crate::metadata::validate_value("topic", workspace).map_err(|_| CliError::usage(
+    crate::metadata::validate_value("topic", workspace).map_err(|_| invalid_workspace())
+}
+
+pub(crate) fn invalid_workspace() -> CliError {
+    CliError::usage(
         "workspace-invalid",
         "workspace must be a public lowercase slug of 1-64 bytes with single hyphen or dot separators and alphanumeric ends",
-        Some(json!({"recovery":{"action":"correct-request", "command":"agent-session start --agent codex --workspace example-workspace", "hint":"Use a non-secret slug, for example example-workspace; paths are forbidden."}})),
-    ))
+        Some(
+            json!({"recovery":{"action":"correct-request", "command":"agent-session start --agent codex --workspace example-workspace", "hint":"Use a non-secret slug, for example example-workspace; paths are forbidden."}}),
+        ),
+    )
 }
 
 /// The environment identifies the caller, even if its record is on another

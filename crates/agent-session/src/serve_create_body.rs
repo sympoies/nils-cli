@@ -7,8 +7,11 @@ use crate::cli;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateBody {
-    #[serde(flatten)]
-    pub(super) origin: crate::origin::Fields,
+    // Decode new metadata in the handler so malformed shapes use its envelope.
+    #[serde(default = "default_origin")]
+    origin: Value,
+    #[serde(default)]
+    workspace: Value,
     #[serde(default)]
     pub(super) launch_env: crate::launch_env::LaunchEnv,
     pub(super) agent: String,
@@ -41,6 +44,39 @@ pub(super) struct CreateBody {
     /// `session-lineage-work-v1`: configured launch role, stored verbatim.
     #[serde(default)]
     pub(super) role: Option<Value>,
+}
+
+fn default_origin() -> Value {
+    serde_json::json!({"parent":null})
+}
+
+impl CreateBody {
+    pub(super) fn operation(&self) -> &'static str {
+        if self.provider_resume_id.is_some() {
+            "import"
+        } else {
+            "create"
+        }
+    }
+
+    pub(super) fn origin_fields(&self) -> Result<crate::origin::Fields, CliError> {
+        if !self.origin.is_object()
+            || self
+                .origin
+                .get("parent")
+                .is_some_and(|parent| !parent.is_null() && !parent.is_object())
+        {
+            return Err(crate::origin::invalid_origin());
+        }
+        let fields = crate::origin::Fields {
+            origin: serde_json::from_value(self.origin.clone())
+                .map_err(|_| crate::origin::invalid_origin())?,
+            workspace: serde_json::from_value(self.workspace.clone())
+                .map_err(|_| crate::origin::invalid_workspace())?,
+        };
+        fields.validate()?;
+        Ok(fields)
+    }
 }
 
 /// The lineage and work a create body states, validated for a session on
