@@ -408,7 +408,7 @@ fn validate_label(label: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn validate_value(label: &str, value: &str) -> Result<(), CliError> {
+pub(crate) fn validate_value(label: &str, value: &str) -> Result<(), CliError> {
     if value.is_empty() || value.len() > VALUE_MAX_BYTES || value.chars().any(char::is_control) {
         return Err(request_error(
             "metadata-value-invalid",

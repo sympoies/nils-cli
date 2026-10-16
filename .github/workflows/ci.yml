@@ -329,9 +329,11 @@ jobs:
           token: ${{ github.token }}
           check_name: JUnit Test Report
           report_paths: target/nextest/ci/junit.xml
-          detailed_summary: true
+          # Keep the job summary bounded; the JUnit artifact and failure
+          # annotations retain the detailed test results.
+          detailed_summary: false
           group_suite: true
-          include_passed: true
+          include_passed: false
           flaky_summary: true
 
       - name: Upload JUnit XML
@@ -411,11 +413,10 @@ jobs:
     outputs:
       validation_scope: ${{ steps.validation.outputs.validation_scope }}
     runs-on: macos-14
-    # Backstop like the `test` job's, under the same two waits. The slowest of
-    # 186 successful full-lane runs on 2026-09-28..30 took 25 minutes, and a
-    # cold-cache run 31. A hung test adds up to 20 minutes before nextest ends
-    # it, which fits except on a cold-cache run.
-    timeout-minutes: 50
+    # A recent full-plan run passed validation in 48m28s and reached 50m27s
+    # before timeout, mostly in that instrumented validation step. Allow 4m33s
+    # of headroom while staying below the release PR's 60-minute check wait.
+    timeout-minutes: 55
     permissions:
       contents: read
       checks: write
@@ -573,9 +574,11 @@ jobs:
           token: ${{ github.token }}
           check_name: JUnit Test Report (macOS)
           report_paths: target/**/nextest/ci/junit.xml
-          detailed_summary: true
+          # Keep the job summary bounded; the JUnit artifact and failure
+          # annotations retain the detailed test results.
+          detailed_summary: false
           group_suite: true
-          include_passed: true
+          include_passed: false
           flaky_summary: true
 
       - name: Upload JUnit XML

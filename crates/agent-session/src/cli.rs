@@ -105,6 +105,8 @@ pub enum Command {
     Message(MessageArgs),
     /// Attach and inspect bounded public metadata for one managed session.
     Metadata(MetadataArgs),
+    /// Assign a public workspace to a session.
+    Workspace(crate::origin::WorkspaceArgs),
     /// Name a later steward for a session (session lineage v1).
     Lineage(LineageArgs),
     /// Change a session's program and issue references (session lineage v1).
@@ -143,6 +145,9 @@ pub struct CodexAppServerProxyArgs {
 
 #[derive(Debug, Args)]
 pub struct StartArgs {
+    /// Public workspace slug; inherits the managed parent workspace when omitted.
+    #[arg(long, value_name = "SLUG")]
+    pub workspace: Option<String>,
     /// Internal: the serve daemon owns the Codex app-server control connection.
     #[arg(skip)]
     pub app_server_managed: bool,

@@ -43,3 +43,6 @@ fn hermetic_provider_options(dir: &std::path::Path) -> nils_test_support::cmd::C
         .with_env("AGENT_SESSION_CODEX_BIN", UNPINNED_PROVIDER_BIN)
         .with_env("AGENT_SESSION_CLAUDE_BIN", UNPINNED_PROVIDER_BIN)
 }
+
+#[path = "integration/origin.rs"]
+mod origin;
