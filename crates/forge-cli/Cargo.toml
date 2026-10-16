@@ -36,6 +36,6 @@ uuid = "1"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 
 [dev-dependencies]
-graphql-tools = "0.4"
+graphql-tools = "0.5"
 nils-test-support = { version = "1.34.0", path = "../nils-test-support" }
 pretty_assertions = { workspace = true }
