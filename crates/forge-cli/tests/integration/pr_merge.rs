@@ -2438,6 +2438,7 @@ fn assigned_live_merge_refuses_before_backend_without_published_review() {
     let repo = tempdir.path().join("repo");
     let head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let handoff = forge_cli::ops::pr_review_handoff::ReviewHandoff {
+        approval_policy: Default::default(),
         coordinator_digest: forge_cli::ops::review_state::sha256_digest(b"worker-session"),
         reviewer_digest: forge_cli::ops::review_state::sha256_digest(b"reviewer-session"),
         review_author: "review-app[bot]".into(),

@@ -822,6 +822,23 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   reviewer-owned observation and publication; old-generation writes and old
   reports never satisfy the new interval. A different reviewer or author still
   requires surrender or explicit recovery, as does reassignment at the same base.
+- Approval policy: `assign` accepts `--approval-policy <policy>` with values
+  `source-pass` and `final-approval`. New assignments default to `source-pass`,
+  preserving documented COMMENT-only source closure. Omission during handover
+  or refresh preserves the existing policy. Missing policy fields in old
+  records also mean `source-pass`; serialization omits that default so existing
+  record digests and ledgers remain valid. Changing policy requires ordinary
+  surrender/recovery and a fresh assignment interval; a base-only scope refresh
+  cannot change it.
+
+  Assigned delivery and merge enforce the persisted policy, including explicit
+  merge review opt-out. `final-approval` requires a canonical passing native
+  `APPROVED` report on the current provider head. `check` accepts the same flag
+  to demand stricter approval for that invocation; it cannot weaken the
+  assignment. A source pass under a strict policy returns DATA 65,
+  `designated_final_approval_required`. No natural-language hold phrases are
+  interpreted. The newest admissible report still owns the verdict; an earlier
+  approval cannot override a newer source-only or blocked report.
 - `inspect <id> [--expected-head <sha>] [--review-author <login>]` validates the
   supplied head and any existing assignment before private mailbox handoff.
   Base drift returns success with `status: review-scope-changed`, the current
@@ -960,6 +977,19 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   Before assignment or recovery appends, tip/ownership and provider head/base
   are reread. Surrender can retain a stale base so the reviewer can relinquish
   the old interval after integration.
+- Approval output: every handoff operation also emits effective
+  `approval_policy` (`source-pass` or `final-approval`). Successful `check`
+  retains `status: reviewed` for compatibility and adds `approval`: `state`
+  is `source-passed` or `finally-approved`; `review_id`, `review_url`,
+  `review_author`, `native_state`, and `reviewed_head` identify the selected
+  native report. `finally-approved` requires `APPROVED` on the current head.
+  Approval carried from an older head across a verified base sync remains
+  source closure and cannot satisfy `final-approval`.
+
+  Other operations omit `approval` because they do not admit a publication.
+  Consumers requiring final approval must select the strict policy or inspect
+  `approval.state`; existing `status: reviewed` alone does not mean final
+  delivery approval. Independent delivery checks still apply.
 
 `AGENT_SESSION_ID` fences the invoking session; routing metadata does not grant
 provider authorization. Reviewer appends and native publication also require
