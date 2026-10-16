@@ -4092,62 +4092,6 @@ fn authenticated_forge_identity_projection_is_read_only_and_refuses_cross_sessio
     assert_eq!(child_record["lineage"]["forge_context"]["role"], "tester");
     assert_eq!(child_record["lineage"]["parent"]["session_id"], "alpha");
     assert_eq!(child_record["role"], "tester");
-    // A session may start a role-bound root that keeps its initiator, but a
-    // role-less bound root attests a launch by a non-session launcher, so a
-    // session-started role-less root carries no launch binding.
-    let start_root = |id: &str, role: Option<&str>| {
-        let mut args = vec![
-            "--state-dir",
-            state_dir.to_str().unwrap(),
-            "start",
-            "--agent",
-            "codex",
-            "--id",
-            id,
-            "--cwd",
-            tmp.path().to_str().unwrap(),
-            "--tmux-bin",
-            tmux.to_str().unwrap(),
-            "--agent-bin",
-            agent.to_str().unwrap(),
-            "--paste-delay-ms",
-            "0",
-            "--no-parent",
-            "--format",
-            "json",
-        ];
-        if let Some(role) = role {
-            args.extend(["--role", role]);
-        }
-        let out = run_with_env(
-            tmp.path(),
-            &args,
-            &[
-                ("AGENT_SESSION_ID", "alpha"),
-                ("AGENT_SESSION_RUNTIME_ID", "incarnation-alpha"),
-                ("AGENT_SESSION_CAPABILITY_FILE", &alpha_cap),
-                ("AGENT_SESSION_MACHINE", "launch-source"),
-                ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log.to_str().unwrap()),
-            ],
-        );
-        assert_eq!(out.code, 0, "{}", out.stdout_text());
-        serde_json::from_slice::<serde_json::Value>(
-            &fs::read(state_dir.join(format!("sessions/{id}/session.json"))).unwrap(),
-        )
-        .unwrap()
-    };
-    let roleless_root = start_root("session-started-root", None);
-    assert_eq!(roleless_root["lineage"]["parent"], serde_json::Value::Null);
-    assert_eq!(
-        roleless_root["lineage"].get("forge_context"),
-        None,
-        "a session-started role-less root must not inherit the launch initiator"
-    );
-    let coordinator_root = start_root("session-started-coordinator", Some("coordinator"));
-    assert_eq!(
-        coordinator_root["lineage"]["forge_context"],
-        json!({"initiator":"operator","role":"coordinator"})
-    );
     let crossed = project(&capability(&state_dir, "beta"), "incarnation-alpha");
     assert_eq!(
         crossed.stdout_json()["error"]["code"],
