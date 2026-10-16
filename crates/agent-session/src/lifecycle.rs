@@ -427,7 +427,8 @@ pub(crate) async fn response(
         });
     let context = context.clone();
     let operation = operation.to_owned();
-    let _ = tokio::task::spawn_blocking(move || {
+    let refreshed = tokio::task::spawn_blocking(move || {
+        let refreshed = apply_serve_auto_resume_default(&context, &operation, &target_id, &error);
         let target = crate::load_session_record(&context, &target_id)
             .ok()
             .or(before);
@@ -440,10 +441,77 @@ pub(crate) async fn response(
             error.as_ref().map_or(Ok(()), Err),
             None,
         );
+        refreshed
     })
-    .await;
+    .await
+    .ok()
+    .flatten();
 
-    response
+    match refreshed {
+        Some(view) => with_auto_resume_view(response, view).await,
+        None => response,
+    }
+}
+
+/// Apply the serve auto-resume default to a session that `create` or `import`
+/// just made, returning the session's resulting view when the default took
+/// effect so the response can report it.
+fn apply_serve_auto_resume_default(
+    context: &CliContext,
+    operation: &str,
+    id: &str,
+    error: &Option<CliError>,
+) -> Option<Value> {
+    if error.is_some() || !matches!(operation, "create" | "import") {
+        return None;
+    }
+    let policy = crate::auto_resume::serve_default_policy()?;
+    let now = jiff::Timestamp::now().to_string();
+    match crate::auto_resume::apply_serve_default(context, id, policy, &now) {
+        Ok(true) => {
+            let record = crate::load_session_record(context, id).ok()?;
+            serde_json::to_value(crate::auto_resume::view_for_record(context, &record)).ok()
+        }
+        Ok(false) => None,
+        Err(err) => {
+            eprintln!(
+                "warning: serve auto-resume default was not applied: {}",
+                err.code()
+            );
+            None
+        }
+    }
+}
+
+/// Replace `data.session.auto_resume` in a JSON envelope response so the body
+/// agrees with an immediate `GET` of the same session.
+async fn with_auto_resume_view(
+    response: axum::response::Response,
+    view: Value,
+) -> axum::response::Response {
+    const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+    let (mut parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, MAX_BODY_BYTES).await else {
+        return axum::response::Response::builder()
+            .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+            .body(axum::body::Body::empty())
+            .unwrap_or_default();
+    };
+    let mut document: Value = match serde_json::from_slice(&bytes) {
+        Ok(document) => document,
+        Err(_) => {
+            return axum::response::Response::from_parts(parts, axum::body::Body::from(bytes));
+        }
+    };
+    let Some(slot) = document.pointer_mut("/data/session/auto_resume") else {
+        return axum::response::Response::from_parts(parts, axum::body::Body::from(bytes));
+    };
+    *slot = view;
+    let Ok(rewritten) = serde_json::to_vec(&document) else {
+        return axum::response::Response::from_parts(parts, axum::body::Body::from(bytes));
+    };
+    parts.headers.remove(axum::http::header::CONTENT_LENGTH);
+    axum::response::Response::from_parts(parts, axum::body::Body::from(rewritten))
 }
 
 /// Inventory and controller probes can observe an external disappearance even

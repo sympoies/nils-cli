@@ -482,6 +482,10 @@ argv = ["/absolute/path/to/broker"]
 [claude_account_broker]
 argv = ["/absolute/path/to/claude-broker"]
 
+[auto_resume]
+default_enabled = true
+default_recovery_policy = "wait_for_reset"
+
 [retitle]
 provider = "openai_compatible"
 base_url = "http://127.0.0.1:1237/v1"
@@ -507,6 +511,12 @@ arrays of `AGENT_SESSION_CODEX_ACCOUNT_BROKER` /
 `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER`. `path.append` holds at most 16 absolute
 directories without `:` or control characters. Every table is optional; only
 `schema_version` is required. An unknown key is an error rather than ignored.
+
+`auto_resume.default_enabled` is a boolean that opts every session created or
+imported through `POST /sessions` into auto-resume (see
+[Serve API v1](../specs/serve-api-v1.md)). `auto_resume.default_recovery_policy`
+is `wait_for_reset` (the default) or `next_account_then_resume` and is accepted
+only with `default_enabled = true`.
 
 Validate a document, together with the environment it will merge with, without
 starting the daemon:
@@ -535,6 +545,7 @@ whitespace-only variable counts as unset, as it does without a config file.
 | `AGENT_SESSION_RETITLE_CONFIG` | `[retitle]` | The environment value replaces the whole table, with a warning. |
 | `AGENT_SESSION_CODEX_ACCOUNT_BROKER` | `[codex_account_broker] argv` | The environment value replaces the whole table, with a warning. |
 | `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER` | `[claude_account_broker] argv` | The environment value replaces the whole table, with a warning. |
+| `AGENT_SESSION_AUTO_RESUME_DEFAULT_POLICY` | `[auto_resume]` | The environment value (`wait_for_reset` or `next_account_then_resume`; anything else leaves the default off) replaces the whole table, with a warning. |
 | `PATH` (a launcher's appended entries) | `[path] append` | File entries are appended after the inherited `PATH`, never before it; entries already present are skipped. |
 
 The ordered, first-id-wins launch-profile merge is the same one a launcher
