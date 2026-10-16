@@ -65,7 +65,7 @@ use crate::provider_history::{
 use crate::provider_prompt::{
     LastPrompt, MAX_PROVIDER_PROMPT_BYTES, PROVIDER_PROMPT_CAPABILITY, ProviderKind,
     ProviderLastPromptRefresh, ProviderLastPromptTracker, ProviderPromptEvent,
-    ProviderPromptSource, ProviderPromptTail, prompt_observed_after,
+    ProviderPromptSource, ProviderPromptTail,
 };
 use crate::{
     BINARY, CliContext, CliError, DshHistoryResumeArgs, ProviderResumeImportArgs, SessionRecord,
@@ -8127,27 +8127,7 @@ async fn reconcile_coordination_notifications(state: Arc<ServeState>) {
         let context = state.context.clone();
         let observed_candidate = candidate.clone();
         let observation = tokio::task::spawn_blocking(move || {
-            let record =
-                load_session_record(&context, &observed_candidate.target_session_id).ok()?;
-            if record
-                .runtime
-                .as_ref()
-                .map(|runtime| runtime.launch_id.as_str())
-                != Some(observed_candidate.target_incarnation.as_str())
-            {
-                return None;
-            }
-            let attempted_at = observed_candidate
-                .attempted_at
-                .as_deref()?
-                .parse::<jiff::Timestamp>()
-                .ok()?;
-            let source = ProviderPromptTail::resolve_source(&record)?;
-            prompt_observed_after(
-                &source,
-                &crate::coordination::notification_prompt(&observed_candidate),
-                &attempted_at,
-            )
+            crate::coordination::notification_prompt_observed_after(&context, &observed_candidate)
         })
         .await
         .ok()
@@ -37029,77 +37009,8 @@ exit 0
         );
     }
 
-    #[tokio::test]
-    async fn coordination_notification_reconcile_finds_delivered_prompt_before_later_prompt() {
-        let lock = GlobalStateLock::new();
-        let tmp = tempfile::TempDir::new().expect("tempdir");
-        let codex_home = tmp.path().join("codex-home");
-        let transcript = codex_home.join("sessions/2026/07/session.jsonl");
-        fs::create_dir_all(transcript.parent().expect("transcript parent"))
-            .expect("transcript dir");
-        let provider_id = "notification-reconcile-delivered";
-        write_codex_notification_transcript(&transcript, provider_id, &[]);
-        let _codex_home = EnvGuard::set(&lock, "CODEX_HOME", codex_home.to_str().unwrap());
-
-        seed_session_with_runtime(tmp.path(), "alpha", "codex", "hs-codex-alpha");
-        seed_fresh_provider_session(
-            tmp.path(),
-            "beta",
-            "codex",
-            "hs-codex-beta",
-            tmp.path(),
-            Some((provider_id, "codex-explicit-session-id")),
-        );
-        let state = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
-        let alpha = load_session_record(&state.context, "alpha").expect("alpha");
-        let beta = load_session_record(&state.context, "beta").expect("beta");
-        let alpha_capability = provision_ready_coordination_fixture(&state.context, &alpha);
-        provision_ready_coordination_fixture(&state.context, &beta);
-
-        send_notification_fixture(&state, &alpha_capability, "notification-delivered-gen").await;
-        let candidate = crate::coordination::pending_notifications(&state.context)
-            .expect("pending notification")
-            .pop()
-            .expect("notification candidate");
-        assert!(
-            crate::coordination::begin_notification_attempt(&state.context, &candidate)
-                .expect("begin notification")
-        );
-        assert!(
-            crate::coordination::mark_notification_unknown(
-                &state.context,
-                &candidate,
-                "submission-outcome-unknown",
-            )
-            .expect("unknown notification")
-        );
-        write_codex_notification_transcript(
-            &transcript,
-            provider_id,
-            &[
-                (
-                    "2030-01-01T00:01:40.800000000Z",
-                    crate::coordination::notification_prompt(&candidate),
-                ),
-                (
-                    "2030-01-01T00:01:41.100000000Z",
-                    "later unrelated recipient prompt".to_string(),
-                ),
-            ],
-        );
-        set_notification_attempted_at(tmp.path(), "2030-01-01T00:01:40.700000000Z");
-
-        reconcile_coordination_notifications(state.clone()).await;
-
-        let notification = notification_fixture(tmp.path());
-        assert_eq!(notification["state"], "prompt_submitted");
-        assert_eq!(notification["notified_generation"], 1);
-        assert!(
-            crate::coordination::pending_notifications(&state.context)
-                .expect("pending notifications")
-                .is_empty(),
-            "the acknowledged generation must not be queued for duplicate delivery"
-        );
+    mod notification_reconciliation {
+        include!("serve/tests/notification_reconciliation.rs");
     }
 
     mod terminal_mailbox {

@@ -7,6 +7,10 @@ use sha2::{Digest, Sha256};
 mod recovery;
 pub(crate) use recovery::resolve_drained_generation;
 
+#[path = "notification_observation.rs"]
+mod observation;
+pub(crate) use observation::observe_attempt;
+
 use super::{Registry, now_epoch};
 use crate::{CliContext, CliError};
 
@@ -44,6 +48,9 @@ pub(crate) struct NotificationReceipt {
     pub attempted_at_epoch: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempted_at: Option<String>,
+    /// Only a known attempt format can prove absence from a transcript.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempted_prompt_format: Option<String>,
     pub updated_at_epoch: i64,
     pub next_attempt_at_epoch: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,7 +100,16 @@ pub(crate) fn fixed_prompt(_session_id: &str, queued_at_epoch: i64) -> String {
 /// Whether a transcript prompt is a mailbox reminder this crate injected.
 pub(crate) fn is_mailbox_reminder_prompt(prompt: &str) -> bool {
     let prompt = prompt.trim_start();
-    prompt.starts_with(PROMPT_PREFIX) || prompt.starts_with(LEGACY_PROMPT_PREFIX)
+    prompt.starts_with(LEGACY_PROMPT_PREFIX)
+        || prompt == UNDATED_PROMPT_TEMPLATE
+        || (prompt.len() <= 60
+            && prompt
+                .strip_prefix(PROMPT_PREFIX)
+                .and_then(|body| body.strip_suffix("; agent-session message inbox"))
+                .is_some_and(|date| {
+                    date.parse::<jiff::Timestamp>()
+                        .is_ok_and(|timestamp| timestamp.to_string() == date)
+                }))
 }
 
 /// Whether the exact recipient incarnation still holds live unread mail. A
@@ -149,6 +165,7 @@ pub(crate) fn claim_hook_reminder(
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
     receipt.attempted_at_epoch = now;
     receipt.attempted_at = Some(attempted_at.to_string());
+    receipt.attempted_prompt_format = Some(observation::PROMPT_FORMAT.to_string());
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some("prompt-accepted".to_string());
     Some(NotificationCandidate {
@@ -236,6 +253,8 @@ pub(crate) fn normalize_registry(registry: &mut Registry, now: i64) -> bool {
                     receipt.state = "attempt_unknown".to_string();
                     receipt.attempted_generation = receipt.generation;
                     receipt.attempted_at_epoch = historical_receipt.attempted_at_epoch;
+                    receipt.attempted_prompt_format =
+                        historical_receipt.attempted_prompt_format.clone();
                     receipt.last_reason = Some(REASON_MIGRATED_UNKNOWN.to_string());
                 }
                 "prompt_submitted" => {
@@ -243,6 +262,8 @@ pub(crate) fn normalize_registry(registry: &mut Registry, now: i64) -> bool {
                     receipt.attempted_generation = receipt.generation;
                     receipt.notified_generation = receipt.generation;
                     receipt.attempted_at_epoch = historical_receipt.attempted_at_epoch;
+                    receipt.attempted_prompt_format =
+                        historical_receipt.attempted_prompt_format.clone();
                     receipt.last_reason = Some("prompt-accepted".to_string());
                 }
                 "queued" => {
@@ -477,6 +498,7 @@ pub(super) fn transition_attempt_at(
     receipt.attempted_queued_at_epoch = receipt.queued_at_epoch;
     receipt.attempted_at_epoch = now;
     receipt.attempted_at = Some(attempted_at.to_string());
+    receipt.attempted_prompt_format = Some(observation::PROMPT_FORMAT.to_string());
     receipt.updated_at_epoch = now;
     receipt.last_reason = Some(REASON_ATTEMPTING.to_string());
     Some(NotificationCandidate {
