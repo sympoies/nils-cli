@@ -89,7 +89,7 @@ mod create_body;
 mod prompt_scan;
 #[path = "serve_remote_outbox.rs"]
 mod remote_outbox;
-use create_body::CreateBody;
+use create_body::{CreateBody, create_body_lineage};
 #[path = "serve_shell.rs"]
 mod shell;
 
@@ -1389,9 +1389,10 @@ fn router(state: Arc<ServeState>) -> Router {
         .route("/sessions/{id}/buffer", get(buffer_handler))
         .route("/sessions/{id}/send", post(send_handler))
         .route("/sessions/{id}/prompt", post(structured_prompt_handler))
+        .route("/sessions/{id}/prompt/v2", post(prompt_receipts::submit))
         .route(
-            "/sessions/{id}/prompt/v2",
-            post(fenced_structured_prompt_handler),
+            "/sessions/{id}/prompt/v2/receipts/{request_id}",
+            get(prompt_receipts::lookup),
         )
         .route("/sessions/{id}/resume", post(resume_handler))
         .route("/sessions/{id}/archive", post(archive_handler))
@@ -3382,31 +3383,6 @@ struct MaintenanceQuery {
     schema_version: maintenance::MaintenanceContract,
 }
 
-/// The lineage and work a create body states, validated for a session on
-/// `machine`. Without `lineage` the session is an operator root over HTTP.
-fn create_body_lineage(
-    machine: &str,
-    lineage: Option<&Value>,
-    work: Option<&Value>,
-    role: Option<&Value>,
-) -> Result<crate::InitialLineage, CliError> {
-    let seed = match lineage.filter(|value| !value.is_null()) {
-        Some(value) => crate::lineage::LineageSeed::from_create_json(machine, value)?,
-        None => crate::lineage::LineageSeed::root(
-            machine,
-            crate::lineage::STARTER_OPERATOR,
-            crate::lineage::VIA_HTTP,
-        ),
-    };
-    let work = match work.filter(|value| !value.is_null()) {
-        Some(value) => crate::lineage::work_from_create_body(value)?,
-        None => None,
-    };
-    let role = crate::lineage::role_from_create_body(role)?;
-    crate::lineage::require_root_for_role(role.as_deref(), seed.has_parent())?;
-    Ok(crate::InitialLineage { seed, work, role })
-}
-
 #[derive(Debug, Default)]
 enum CreateTitleInput {
     #[default]
@@ -3453,13 +3429,6 @@ struct SendBody {
 struct StructuredPromptBody {
     text: String,
     expected_session_incarnation: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FencedStructuredPromptBody {
-    text: String,
-    expected_session_incarnation: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -6588,11 +6557,11 @@ async fn create_handler(
     if let Err(error) = crate::launch_env::validate(&body.launch_env) {
         return envelope_err(error);
     }
-    let operation = if body.provider_resume_id.is_some() {
-        "import"
-    } else {
-        "create"
+    let origin = match body.origin_fields() {
+        Ok(origin) => origin,
+        Err(error) => return envelope_err(error),
     };
+    let operation = body.operation();
     let id = match crate::lifecycle::start_id(
         &state.context,
         body.id.as_deref(),
@@ -6607,7 +6576,7 @@ async fn create_handler(
     };
     let context = state.context.clone();
     let before = load_session_record(&context, &id).ok();
-    let response = create_handler_inner(State(state), headers, Json(body)).await;
+    let response = create_handler_inner(State(state), headers, Json(body), origin).await;
     crate::lifecycle::response(&context, &id, operation, before, response).await
 }
 
@@ -6615,6 +6584,7 @@ async fn create_handler_inner(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
     Json(body): Json<CreateBody>,
+    origin: crate::origin::Fields,
 ) -> Response {
     if let Some(resp) = deny_unauthorized(&state, &headers) {
         return resp;
@@ -6685,7 +6655,7 @@ async fn create_handler_inner(
     ) {
         return envelope_err(err);
     }
-    let initial_lineage = match create_body_lineage(
+    let mut initial_lineage = match create_body_lineage(
         &state.machine,
         body.lineage.as_ref(),
         body.work.as_ref(),
@@ -6694,6 +6664,7 @@ async fn create_handler_inner(
         Ok(initial_lineage) => initial_lineage,
         Err(err) => return envelope_err(err),
     };
+    initial_lineage.origin = origin;
     if let Some(provider_resume_id) = body.provider_resume_id {
         if body.cwd.is_some() {
             return envelope_err(CliError::usage(
@@ -6805,6 +6776,7 @@ async fn create_handler_inner(
         None
     };
     let args = cli::StartArgs {
+        workspace: None,
         title_mode: match body.title_mode {
             crate::display_metadata::TitleMode::Auto => "auto",
             crate::display_metadata::TitleMode::Pinned => "pinned",
@@ -7603,33 +7575,7 @@ async fn structured_prompt_handler(
     submit_structured_prompt_handler(state, id, body.text, body.expected_session_incarnation).await
 }
 
-async fn fenced_structured_prompt_handler(
-    State(state): State<Arc<ServeState>>,
-    headers: HeaderMap,
-    AxPath(id): AxPath<String>,
-    body: Result<Json<FencedStructuredPromptBody>, JsonRejection>,
-) -> Response {
-    if let Some(resp) = deny_unauthorized(&state, &headers) {
-        return resp;
-    }
-    let Json(body) = match body {
-        Ok(body) => body,
-        Err(_) => {
-            return envelope_err(CliError::usage(
-                "invalid-json-body",
-                "request body must be JSON with text and expected_session_incarnation fields only",
-                None,
-            ));
-        }
-    };
-    submit_structured_prompt_handler(
-        state,
-        id,
-        body.text,
-        Some(body.expected_session_incarnation),
-    )
-    .await
-}
+mod prompt_receipts;
 
 async fn submit_structured_prompt_handler(
     state: Arc<ServeState>,
@@ -12156,6 +12102,8 @@ async fn remote_receive_handler(
 }
 #[cfg(test)]
 mod tests {
+    #[path = "origin_tests.rs"]
+    mod origin_tests;
     include!("serve_claude_completion_tests.rs");
     include!("serve_codex_idle_notification_tests.rs");
     #[path = "interrupt_tests.rs"]
@@ -25679,33 +25627,6 @@ esac
     }
 
     #[tokio::test]
-    async fn fenced_structured_prompt_requires_exact_body_shape() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
-
-        for body in [
-            json!({ "text": "missing the required fence" }),
-            json!({
-                "text": "misspelled fence",
-                "expected_session_incarnaton": "launch-missing",
-            }),
-            json!({
-                "text": "unexpected field",
-                "expected_session_incarnation": "launch-missing",
-                "unexpected": true,
-            }),
-        ] {
-            let (status, body) = call(
-                router(st.clone()),
-                post_json("/sessions/missing/prompt/v2", Some(TOKEN), body),
-            )
-            .await;
-            assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
-            assert_eq!(body["error"]["code"], "invalid-json-body");
-        }
-    }
-
-    #[tokio::test]
     async fn structured_prompt_reports_stale_fence_before_unsupported_runtime() {
         let tmp = tempfile::TempDir::new().unwrap();
         seed_session_with_runtime(
@@ -29602,157 +29523,6 @@ esac
         }
     }
 
-    #[tokio::test]
-    async fn claude_account_switch_queues_while_busy_and_restarts_only_at_idle() {
-        let lock = GlobalStateLock::new();
-        let tmp = tempfile::TempDir::new().unwrap();
-        let cwd = tmp.path().join("repo");
-        fs::create_dir_all(&cwd).unwrap();
-        let broker = claude_broker_fixture(&lock, tmp.path());
-        let log = tmp.path().join("tmux.log");
-        let running = tmp.path().join("running");
-        let pane_pid = tmp.path().join("pane.pid");
-        let tmux = claude_live_tmux(tmp.path(), &log, &running, &pane_pid);
-        let st = state(tmp.path(), Some(TOKEN), tmux);
-        let first_pane = TestProcessGroup::spawn();
-        fs::write(&pane_pid, first_pane.pid().to_string()).unwrap();
-        let _first_pane = first_pane.into_background_reaper();
-
-        let (status, body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions",
-                Some(TOKEN),
-                json!({"agent":"claude","id":"claude-live","cwd":cwd,"claude_account":"alpha"}),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "body={body}");
-        let record = load_session_record(&st.context, "claude-live").unwrap();
-        let first_launch = record.runtime.as_ref().unwrap().launch_id.clone();
-        let provider_session_id = record.provider_resume.as_ref().unwrap().session_id.clone();
-
-        // A busy turn keeps the switch queued without restarting the session.
-        let turn = |event_id: &str, kind: &str| {
-            serde_json::from_value(json!({
-                "schema_version": crate::activity::TURN_EVENT_VERSION,
-                "event_id": event_id,
-                "runtime_id": first_launch,
-                "provider": "claude",
-                "provider_session_id": provider_session_id,
-                "provider_turn_id": "turn-claude-switch",
-                "kind": kind,
-                "confidence": "authoritative"
-            }))
-            .unwrap()
-        };
-        crate::activity::ingest_event(&st.context, &record.id, turn("turn-start", "turn_started"))
-            .unwrap();
-        let (status, body) = call(
-            router(st.clone()),
-            put_json(
-                "/sessions/claude-live/account",
-                Some(TOKEN),
-                json!({"account":"beta","expected_session_incarnation":first_launch}),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "body={body}");
-        assert_eq!(body["data"]["session_incarnation"], first_launch.as_str());
-        assert_eq!(body["data"]["claude_account"]["selected_account"], "alpha");
-        assert_eq!(body["data"]["claude_account"]["next"]["account"], "beta");
-        let launches = |log: &Path| {
-            fs::read_to_string(log)
-                .unwrap()
-                .lines()
-                .filter(|line| line.starts_with("new-session"))
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(launches(&log).len(), 1, "a busy turn must not restart");
-
-        // A nickname the broker does not list is refused before queueing.
-        let (status, body) = call(
-            router(st.clone()),
-            put_json(
-                "/sessions/claude-live/account",
-                Some(TOKEN),
-                json!({"account":"delta","expected_session_incarnation":first_launch}),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
-        assert_eq!(body["error"]["code"], "claude-account-unknown");
-
-        crate::activity::ingest_event(&st.context, &record.id, turn("turn-done", "turn_completed"))
-            .unwrap();
-
-        // An idle switch materializes the next account before stopping
-        // anything. A broker refusal leaves the running session and its
-        // durable account state untouched.
-        let before_refusal = session_record_json(tmp.path(), "claude-live");
-        let (status, body) = call(
-            router(st.clone()),
-            put_json(
-                "/sessions/claude-live/account",
-                Some(TOKEN),
-                json!({"account":"gamma","expected_session_incarnation":first_launch}),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body={body}");
-        assert_eq!(body["error"]["code"], "claude-account-switch-refused");
-        assert_eq!(
-            body["error"]["details"]["cause"],
-            "claude-account-broker-rejected"
-        );
-        let calls = fs::read_to_string(&log).unwrap();
-        assert!(
-            !calls.contains("kill-session") && !calls.contains("if-shell"),
-            "a refused preflight must never stop the runtime: {calls:?}"
-        );
-        assert!(running.exists(), "the session must still be running");
-        assert_eq!(launches(&log).len(), 1);
-        let after_refusal = session_record_json(tmp.path(), "claude-live");
-        assert_eq!(
-            after_refusal["claude_account_binding"],
-            before_refusal["claude_account_binding"]
-        );
-        assert_eq!(
-            after_refusal["claude_account_next"], before_refusal["claude_account_next"],
-            "a refused preflight keeps the previously queued intent unchanged"
-        );
-
-        // At the idle boundary the switch restarts the runtime. This fixture
-        // pane has no dedicated control group, so the verified stop refuses
-        // and the switch fails safe: nothing relaunches, the applied account
-        // is unchanged, and the intent stays queued for the next resume.
-        let (status, body) = call(
-            router(st.clone()),
-            put_json(
-                "/sessions/claude-live/account",
-                Some(TOKEN),
-                json!({"account":"beta","expected_session_incarnation":first_launch}),
-            ),
-        )
-        .await;
-        assert_ne!(status, StatusCode::OK, "body={body}");
-        assert_eq!(body["error"]["code"], "session-termination-failed");
-        assert_eq!(launches(&log).len(), 1, "a refused stop must not relaunch");
-        let persisted = load_session_record(&st.context, "claude-live").unwrap();
-        let account = crate::claude_account::view_for_record(&persisted).unwrap();
-        assert_eq!(account.selected_account.as_deref(), Some("alpha"));
-        assert!(crate::claude_account::has_queued_next(&persisted));
-        assert_eq!(
-            broker
-                .calls()
-                .matches("materialize --provider claude --account beta")
-                .count(),
-            1,
-            "the idle switch preflights the next account once, before the stop"
-        );
-    }
-
     /// `agent-session account switch` runs the same Claude switch as the serve
     /// route: busy queues, an unknown or unpreparable account is refused before
     /// anything stops, and an idle switch preflights and then stops the runtime
@@ -30154,48 +29924,6 @@ esac
         let result = crate::resume_session_locked(&context, record, &tmux)
             .expect("the new runtime may reuse the stopped internal tmux ID");
         assert_eq!(result.session.status, "running");
-    }
-
-    #[test]
-    fn claude_legacy_switch_retires_the_verified_stop_and_applies_next_account() {
-        use crate::coordination::broker::test_support;
-        let lock = GlobalStateLock::new();
-        let tmp = tempfile::TempDir::new().unwrap();
-        let cwd = tmp.path().join("repo");
-        fs::create_dir_all(&cwd).unwrap();
-        let _broker = claude_broker_fixture(&lock, tmp.path());
-        let context = CliContext {
-            state_dir: tmp.path().to_path_buf(),
-            host: None,
-        };
-        seed_bound_claude_session(tmp.path(), "prior-switch", &cwd, "alpha");
-        let mut record = load_session_record(&context, "prior-switch").unwrap();
-        let old = record.runtime.as_ref().unwrap().launch_id.clone();
-        let mut identity =
-            test_support::process_group_identity(test_support::exited_process_group());
-        identity["launch_id"] = json!(old);
-        record.extra.remove("tmux_runtime_never_launched");
-        record
-            .extra
-            .insert("delete_tmux_identity".to_string(), identity.clone());
-        crate::claude_account::queue_next(&mut record, "beta").unwrap();
-        crate::write_session_record(&context, &record).unwrap();
-        test_support::seed_live_broker(&context, &record.id, &old, identity);
-        test_support::make_legacy_broker(&context, &record.id, true);
-        let tmux = resume_tmux(tmp.path(), &tmp.path().join("tmux.log"));
-        let script = fs::read_to_string(&tmux).unwrap().replace(
-            r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then"#,
-            r#"if [ -n "$heartbeat" ] && [ -n "$incarnation" ]; then gate="$(dirname "$heartbeat")/broker-provisioned"; (i=0; while [ ! -f "$gate" ] && [ "$i" -lt 1000 ]; do i=$((i + 1)); sleep 0.01; done; printf '%s:%s\n' "$incarnation" "$(date +%s)" > "$heartbeat"; chmod 600 "$heartbeat") >/dev/null 2>&1 & fi; if false; then"#,
-        );
-        fs::write(&tmux, script).unwrap();
-        let (incarnation, _) =
-            crate::session_account::resume_after_switch_stop(&context, &record.id, &tmux)
-                .expect("verified older runtime stop must resume under the queued account");
-        assert_ne!(incarnation.as_deref(), Some(old.as_str()));
-        let resumed = load_session_record(&context, &record.id).unwrap();
-        let view = serde_json::to_value(crate::claude_account::view_for_record(&resumed)).unwrap();
-        assert_eq!(view["selected_account"], "beta");
-        assert!(view.get("next").is_none());
     }
 
     #[test]
@@ -37649,6 +37377,9 @@ exit 0
         });
         record
     }
+
+    #[path = "prompt_receipts.rs"]
+    mod prompt_receipts_tests;
 
     #[path = "launch_env.rs"]
     mod launch_env_tests;

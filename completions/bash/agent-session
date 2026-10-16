@@ -73,6 +73,9 @@ _agent__session() {
             agent__session,rebind)
                 cmd="agent__session__rebind"
                 ;;
+            agent__session,restart)
+                cmd="agent__session__restart"
+                ;;
             agent__session,resume)
                 cmd="agent__session__resume"
                 ;;
@@ -93,6 +96,9 @@ _agent__session() {
                 ;;
             agent__session,work-context)
                 cmd="agent__session__work__context"
+                ;;
+            agent__session,workspace)
+                cmd="agent__session__workspace"
                 ;;
             agent__session__account,show)
                 cmd="agent__session__account__show"
@@ -226,6 +232,9 @@ _agent__session() {
             agent__session__work__context,status)
                 cmd="agent__session__work__context__status"
                 ;;
+            agent__session__workspace,set)
+                cmd="agent__session__workspace__set"
+                ;;
             *)
                 ;;
         esac
@@ -233,7 +242,7 @@ _agent__session() {
 
     case "${cmd}" in
         agent__session)
-            opts="-h -V --state-dir --host --help --version start run list board command attach logs diagnose send glance resume clear rebind account activity work-context broker readiness message metadata lineage work serve codex-app-server-proxy delete completion"
+            opts="-h -V --state-dir --host --help --version start run list board command attach logs diagnose send glance resume restart clear rebind account activity work-context broker readiness message metadata workspace lineage work serve codex-app-server-proxy delete completion"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2532,6 +2541,58 @@ _agent__session() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        agent__session__restart)
+            opts="-h --force --stop-timeout --ready-timeout --tmux-bin --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --stop-timeout)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --ready-timeout)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --tmux-bin)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         agent__session__resume)
             opts="-h --tmux-bin --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
@@ -2832,12 +2893,16 @@ _agent__session() {
             return 0
             ;;
         agent__session__start)
-            opts="-h --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --tmux-bin --agent-bin --agent-arg --env --coordination-mode --paste-delay-ms --via-console --machine --account --agent-profile --no-parent --role --title-mode --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
+            opts="-h --workspace --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --tmux-bin --agent-bin --agent-arg --env --coordination-mode --paste-delay-ms --via-console --machine --account --agent-profile --no-parent --role --title-mode --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --workspace)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --agent)
                     COMPREPLY=($(compgen -W "codex claude dsh" -- "${cur}"))
                     return 0
@@ -3802,6 +3867,60 @@ _agent__session() {
                     fi
                     return 0
                     ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__workspace)
+            opts="-h --state-dir --host --help set"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --state-dir)
+                    COMPREPLY=()
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o plusdirs
+                    fi
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agent__session__workspace__set)
+            opts="-h --format --state-dir --host --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
                 --format)
                     COMPREPLY=($(compgen -W "text json" -- "${cur}"))
                     return 0

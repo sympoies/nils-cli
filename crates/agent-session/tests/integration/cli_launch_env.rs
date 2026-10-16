@@ -91,6 +91,10 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
         );
         assert_eq!(list.code, 0, "{}", list.stdout_text());
         assert_eq!(list.stdout_json()["data"][0]["launch_env"], values);
+        let origin = json!({"parent":{"session_id":"launch-parent","machine":"worker-host"}});
+        record["origin"] = origin.clone();
+        record["workspace"] = json!("example-workspace");
+        fs::write(&path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
         // Pin a synthetic provider identity; provider history is outside this contract.
         if agent == "codex" {
             record["provider_resume"] = json!({"provider":"codex", "session_id":"fixture-conversation", "captured_at":"2030-01-01T00:00:00Z", "capture_method":"fixture", "resume_args":["resume","fixture-conversation","--cd",tmp.path(),"--no-alt-screen"]});
@@ -185,6 +189,14 @@ fn launch_env_cli_persists_projects_and_reapplies_on_resume() {
             resume.stderr_text()
         );
         assert_eq!(resume.stdout_json()["data"]["launch_env"], values);
+        assert_eq!(resume.stdout_json()["data"]["origin"], origin);
+        assert_eq!(
+            resume.stdout_json()["data"]["workspace"],
+            "example-workspace"
+        );
+        let resumed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(resumed["origin"], origin);
+        assert_eq!(resumed["workspace"], "example-workspace");
         let launches: Vec<_> = tmux_calls(&log)
             .into_iter()
             .filter(|args| args.first().is_some_and(|arg| arg == "new-session"))

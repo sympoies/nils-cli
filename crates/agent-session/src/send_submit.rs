@@ -245,7 +245,7 @@ fn codex_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a s
 /// Provider selection lists draw their cursor as the composer glyph followed by
 /// `1.`, `2.` …; such a line is a choice, not typed input.
 fn starts_with_numbered_choice(after_glyph: &str) -> bool {
-    let rest = after_glyph.trim_start_matches([' ', '\u{a0}']);
+    let rest = after_glyph.trim_start_matches([' ', '\u{a0}', '\u{2007}', '\u{202f}']);
     let digits = rest.chars().take_while(char::is_ascii_digit).count();
     digits > 0 && rest[digits..].starts_with('.')
 }

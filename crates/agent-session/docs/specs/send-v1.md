@@ -69,18 +69,23 @@ unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
 Guard captures use `tmux capture-pane -p -e -N -T` to retain occupied spaces
 and exclude unused terminal cells.
 
-The native Codex placeholder and
-Claude `Try "…"` hint count as empty only when every hint character carries
-dim styling (SGR 2). An unstyled or partially styled hint fails closed, as do
-unsupported styling sequences. Grey color alone is not treated as proof.
-A provider layout that exposes no distinguishable dim hint cannot support
-guarded empty-composer sends. Placeholder content alone is never inferred empty.
-For Codex only, well-formed OSC-8 hyperlink metadata terminated by BEL or ST
-is accepted without changing visible caption text or SGR state. Each metadata
+Native placeholders and dynamic suggestions in either supported harness count
+as empty only when every input character carries dim styling (SGR 2) and there
+is at least one non-whitespace character. Claude's trailing ASCII renderer
+padding is ignored only for this fully dim suggestion proof; it is preserved
+for real drafts. Plain or partially dim suggestions remain drafts; fixed startup hints without full dim proof are unobservable.
+Whitespace drafts, queued-message hints and opaque paste summaries never count
+as empty. Unsupported styling sequences fail closed. Grey color alone is not
+treated as proof; a provider layout without distinguishable dim styling remains
+unsupported. Placeholder content alone is never inferred empty.
+
+For both supported providers, well-formed OSC-8 hyperlink metadata terminated
+by BEL or ST is accepted without changing visible caption text or SGR state.
+Each metadata
 payload is bounded to 4096 UTF-8 bytes. Other OSC commands, malformed escapes
 and screen-mutating controls remain unobservable. Extra composer rows are not
-collapsed into empty input. Claude retains its existing parser and refuses
-OSC-8 captures or indistinguishable empty/whitespace composer states.
+collapsed into empty input. Whitespace-only drafts remain nonempty; hyperlink
+metadata never substitutes for dim proof or hides visible caption text.
 
 The guarded post-paste check uses full visible text, preserving whitespace,
 rather than the unguarded submission classifier's prefix matching. Occupied

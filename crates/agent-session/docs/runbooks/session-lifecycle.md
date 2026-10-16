@@ -7,6 +7,30 @@ rules that apply throughout. The HTTP routes that share these code paths are
 specified in [Serve API v1](../specs/serve-api-v1.md); turn phases and provider
 hooks are specified in the [turn-state contract](../turn-state-contract.md).
 
+## Start origin and workspace
+
+`agent-session start --agent codex --workspace example-workspace` selects a
+public workspace slug; omit `--workspace` to inherit the known managed
+parent's workspace. A plain-shell start is unassigned by default. Origin
+captures the managed caller's session id and machine automatically, including
+console starts relayed to another host.
+
+Tag an existing long-running session without restarting it:
+
+```bash
+agent-session workspace set SESSION_ID example-workspace --format json
+agent-session list --format json
+agent-session command SESSION_ID --format json
+```
+
+The list/command session view exposes `origin: {"parent": null}` and
+`workspace: null` when unassigned. Use only public, non-secret slugs: 1–64
+lowercase ASCII letters/digits, single hyphen or dot separators, alphanumeric
+ends. Invalid values return `workspace-invalid` with a fix-it command. Resume
+and account handoff preserve both fields. See the
+[session record contract](../specs/session-lineage-work-v1.md#origin-and-workspace)
+for cross-host inheritance and nullable JSON details.
+
 ## Send input and glance
 
 `send` pushes input to a live session: literal text (`--text` /
@@ -115,6 +139,59 @@ implicitly.
 - If tmux launch fails, the prior runtime and activity snapshot are restored
   only after any possibly launched replacement is verified stopped. An
   unverified replacement remains the current discoverable generation.
+- A provider that just exited cleanly leaves its last coordination heartbeat
+  fresh for up to 30 seconds. Once its own `broker stop` has stopped that
+  incarnation and the registry proves its runtime stopped, resume expires the
+  beat instead of refusing the relaunch as a live prior incarnation.
+
+## Restart onto the installed provider
+
+`restart` relaunches a running session in place, for example after the
+provider binary was upgraded on disk. The session id, provider conversation,
+tmux runtime name, mailbox, and routing stay the same; the runtime gets a new
+incarnation that runs whatever provider binary is installed now.
+
+```bash
+agent-session restart <id> --format json
+agent-session restart <id> --force --stop-timeout 30 --ready-timeout 60
+```
+
+- Admission requires the same verified idle prompt and empty composer as a
+  guarded idle send. A busy or unverified session returns
+  `restart-session-not-idle` and is left running. An exact mailbox
+  notification submission already in progress refuses the restart before
+  anything is typed.
+- Before the exit command, the restart fences the incarnation: new
+  notification attempts and `send` input (`session-restarting`) are refused
+  until the old runtime is stopped. A second restart of the session while
+  one is in progress returns `restart-in-progress`.
+- An admitted session gets the provider's own exit command (`/exit` for
+  Claude Code, `/quit` for Codex). A provider still running after
+  `--stop-timeout` seconds is left running with `restart-exit-timeout`; only
+  `--force` terminates it through the verified stop path, and `--force` on an
+  unverified session terminates without typing anything. `--force` never
+  overrides identity: a pane that does not prove the session's runtime returns
+  `restart-identity-unverified`, and an in-progress notification still refuses.
+- A runtime another operation replaced during the exit wait is kept and
+  reported as `restart-superseded`. A session record another writer holds for
+  longer than `--stop-timeout` after the exit returns `restart-stop-failed`.
+- The stopped incarnation is retired before the relaunch; a heartbeat that
+  cannot be proven stale is waited out for a bounded time.
+- The relaunch resumes the exact provider resume metadata, then waits up to
+  `--ready-timeout` seconds, every observation included, for the provider to
+  report an idle prompt.
+- Success returns an `agent-session.restart.v1` receipt with the old and new
+  incarnation, generation, pane pid, and provider version, plus timestamps
+  and `stop_method` (`provider-exit` or `terminated`). The provider version is
+  probed from the installed binary; an old version is known only for a runtime
+  that a previous restart launched.
+- Every failure after the exit command returns the receipt and a `recovery`
+  command in the error details: `agent-session resume <id>` when the session
+  is stopped (`restart-relaunch-failed`, `restart-prior-incarnation-live`, or a
+  relaunched provider that exited), otherwise `agent-session glance <id>`
+  (`restart-exit-timeout`, `restart-superseded`, `restart-stop-failed`,
+  `restart-post-launch-failed`, `restart-not-ready`).
+- A session cannot restart itself: the stop would end the command.
 
 Retired orchestration registries and sidecars are ignored. Session records
 retain unknown metadata through ordinary rewrites without projecting it or

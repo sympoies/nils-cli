@@ -113,6 +113,7 @@ fn correction_retry_after_same_head_reassignment_is_rejected_before_provider_pos
     let (original, rows, _) = fixture(false);
     let mut records = vec![original[0].clone()];
     let mut owner = ReviewHandoff {
+        approval_policy: Default::default(),
         coordinator_digest: review_state::sha256_digest(b"worker-session"),
         reviewer_digest: review_state::sha256_digest(b"reviewer-session"),
         review_author: "review-app[bot]".into(),

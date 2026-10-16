@@ -4,7 +4,7 @@ use super::{
 };
 
 pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
-    let (plain, dim) = styled_text(pane, agent == "codex")?;
+    let (plain, dim) = styled_text(pane)?;
     let lines: Vec<&str> = plain.lines().collect();
     let (region, footer) = match agent {
         "claude" => claude_composer(&lines),
@@ -22,35 +22,28 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     let glyph = if agent == "claude" { '❯' } else { '›' };
     let after_glyph = region[0].trim_start().strip_prefix(glyph)?;
     let input = after_glyph
-        .strip_prefix(' ')
-        .or_else(|| after_glyph.strip_prefix('\u{a0}'))
+        .strip_prefix([' ', '\u{a0}', '\u{2007}', '\u{202f}'])
         .unwrap_or(after_glyph);
-    let hint = match agent {
-        "codex" => input == "Ask Codex to do anything",
-        "claude" => input.starts_with("Try \"") && input.ends_with('"'),
-        _ => false,
+    let row = lines
+        .iter()
+        .position(|line| std::ptr::eq(*line, region[0]))?;
+    let offset = lines[..row]
+        .iter()
+        .map(|line| line.len() + 1)
+        .sum::<usize>()
+        + region[0].len()
+        - input.len();
+    // Claude pads native suggestions to the pane width after resetting SGR.
+    // Only this hint proof ignores trailing ASCII padding; drafts stay exact.
+    let hint = if agent == "claude" {
+        input.trim_end_matches(' ')
+    } else {
+        input
     };
-    if hint {
-        let row = lines
+    let fully_dim = !hint.trim().is_empty()
+        && dim[offset..offset + hint.len()]
             .iter()
-            .position(|line| std::ptr::eq(*line, region[0]))?;
-        let offset = lines[..row]
-            .iter()
-            .map(|line| line.len() + 1)
-            .sum::<usize>()
-            + region[0].len()
-            - input.len();
-        // Content alone never proves emptiness. Every visible hint character
-        // must carry the provider's dim style, not merely a dim cursor/footer.
-        if !input.is_empty()
-            && dim[offset..offset + input.len()]
-                .iter()
-                .all(|styled| *styled)
-        {
-            return Some(String::new());
-        }
-        return None;
-    }
+            .all(|styled| *styled);
     let compressed = compact(input);
     if compressed == CLAUDE_QUEUED_HINT
         || PASTE_PLACEHOLDERS
@@ -59,10 +52,21 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     {
         return None;
     }
+    // Native suggestions are dynamic, not limited to the startup hint wording.
+    // Every hint character must carry dim styling; plain, partially dim and blank
+    // drafts retain their text. Never infer emptiness from grey color alone.
+    if fully_dim {
+        return Some(String::new());
+    }
+    if (agent == "codex" && input == "Ask Codex to do anything")
+        || (agent == "claude" && input.starts_with("Try \"") && input.ends_with('"'))
+    {
+        return None;
+    }
     Some(input.to_string())
 }
 
-fn styled_text(pane: &str, allow_hyperlinks: bool) -> Option<(String, Vec<bool>)> {
+fn styled_text(pane: &str) -> Option<(String, Vec<bool>)> {
     let mut plain = String::new();
     let mut styles = Vec::new();
     let mut dim = false;
@@ -71,7 +75,7 @@ fn styled_text(pane: &str, allow_hyperlinks: bool) -> Option<(String, Vec<bool>)
         if ch == '\u{1b}' {
             match chars.next()? {
                 '[' => {}
-                ']' if allow_hyperlinks => {
+                ']' => {
                     hyperlink::consume(&mut chars)?;
                     continue;
                 }

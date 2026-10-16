@@ -43,7 +43,7 @@ impl CoordinationMode {
     about = "Start and manage tmux-backed Codex, Claude Code, and DSH sessions.",
     long_about = "Start and manage tmux-backed Codex, Claude Code, and DSH sessions for mobile handoff workflows.",
     disable_help_subcommand = true,
-    after_help = "EXAMPLES:\n  agent-session start --agent codex --cwd ~/Project/app --prompt-file prompt.md\n  agent-session list\n  agent-session glance <id> --tail 40\n  agent-session send <id> --text yes --key enter\n  agent-session send <id> --key c-c\n  agent-session resume <id>\n  agent-session metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json\n  agent-session metadata show <id> --label acceptance.synthetic --format json\n  agent-session command <id>\n  agent-session attach <id>\n  agent-session delete <id>\n\nENVIRONMENT:\n  AGENT_SESSION_HOST       Hostname used in generated ssh attach commands.\n  AGENT_SESSION_STATE_DIR  Default state directory override.\n  AGENT_SESSION_TMUX_BIN   tmux binary override.\n  AGENT_SESSION_CODEX_BIN  codex binary override.\n  AGENT_SESSION_CLAUDE_BIN claude binary override.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
+    after_help = "EXAMPLES:\n  agent-session start --agent codex --cwd ~/Project/app --prompt-file prompt.md\n  agent-session list\n  agent-session glance <id> --tail 40\n  agent-session send <id> --text yes --key enter\n  agent-session send <id> --key c-c\n  agent-session resume <id>\n  agent-session restart <id> --format json\n  agent-session metadata attach <id> --request-file metadata.json --if-revision 0 --idempotency-key attach-001 --format json\n  agent-session metadata show <id> --label acceptance.synthetic --format json\n  agent-session command <id>\n  agent-session attach <id>\n  agent-session delete <id>\n\nENVIRONMENT:\n  AGENT_SESSION_HOST       Hostname used in generated ssh attach commands.\n  AGENT_SESSION_STATE_DIR  Default state directory override.\n  AGENT_SESSION_TMUX_BIN   tmux binary override.\n  AGENT_SESSION_CODEX_BIN  codex binary override.\n  AGENT_SESSION_CLAUDE_BIN claude binary override.\n\nEXIT CODES:\n  0   success\n  1   runtime error\n  64  command-line usage error"
 )]
 pub struct Cli {
     /// State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session.
@@ -84,6 +84,8 @@ pub enum Command {
     Glance(GlanceArgs),
     /// Recreate a missing tmux runtime from exact provider resume metadata.
     Resume(ResumeArgs),
+    /// Relaunch a running session in place on the installed provider binary.
+    Restart(RestartArgs),
     /// Clear an idle conversation in place and verify its new provider identity.
     Clear(ConversationArgs),
     /// Recover an idle session by rebinding its live provider conversation.
@@ -103,6 +105,8 @@ pub enum Command {
     Message(MessageArgs),
     /// Attach and inspect bounded public metadata for one managed session.
     Metadata(MetadataArgs),
+    /// Assign a public workspace to a session.
+    Workspace(crate::origin::WorkspaceArgs),
     /// Name a later steward for a session (session lineage v1).
     Lineage(LineageArgs),
     /// Change a session's program and issue references (session lineage v1).
@@ -141,6 +145,9 @@ pub struct CodexAppServerProxyArgs {
 
 #[derive(Debug, Args)]
 pub struct StartArgs {
+    /// Public workspace slug; inherits the managed parent workspace when omitted.
+    #[arg(long, value_name = "SLUG")]
+    pub workspace: Option<String>,
     /// Internal: the serve daemon owns the Codex app-server control connection.
     #[arg(skip)]
     pub app_server_managed: bool,
@@ -1358,6 +1365,34 @@ pub struct ResumeArgs {
     /// Session id.
     #[arg(value_name = "ID")]
     pub id: String,
+
+    /// tmux binary override.
+    #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub tmux_bin: Option<PathBuf>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct RestartArgs {
+    /// Session id.
+    #[arg(value_name = "ID")]
+    pub id: String,
+
+    /// Restart a session that is not verified idle; one that cannot take the
+    /// provider's exit command is terminated instead.
+    #[arg(long)]
+    pub force: bool,
+
+    /// Bound the wait for the provider to exit, in seconds.
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=600))]
+    pub stop_timeout: u64,
+
+    /// Bound the wait for the relaunched provider's ready prompt, in seconds.
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=600))]
+    pub ready_timeout: u64,
 
     /// tmux binary override.
     #[arg(long = "tmux-bin", value_name = "PATH", value_hint = ValueHint::FilePath)]

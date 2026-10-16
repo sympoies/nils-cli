@@ -48,7 +48,7 @@ pub(crate) fn diagnostic_for_board(fields: &Map<String, Value>) -> Option<Value>
 /// Age is an uncertainty signal, never a completion or input authorization.
 pub(crate) fn notification_maybe_idle(state: &TurnState) -> bool {
     state.phase == TurnPhase::Waiting
-        || (state.phase == TurnPhase::Unknown
+        || (matches!(state.phase, TurnPhase::Working | TurnPhase::Unknown)
             && state.source.confidence == Confidence::Inferred
             && state.diagnostic.as_ref().and_then(metadata).is_some())
 }
@@ -83,8 +83,6 @@ pub(super) fn project(record: &SessionRecord, state: &mut TurnState, at: &str) {
     if at < deadline {
         return;
     }
-    state.phase = TurnPhase::Unknown;
-    state.phase_changed_at = deadline.to_string();
     state.source.confidence = Confidence::Inferred;
     state.diagnostic = Some(ActivityDiagnosticView {
         reason: REASON.into(),

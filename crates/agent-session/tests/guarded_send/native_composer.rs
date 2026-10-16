@@ -81,3 +81,106 @@ fn codex_hyperlink_footer_preserves_drafts_and_load_time_conflicts() {
         fixture.no_delivery();
     }
 }
+
+#[test]
+fn synthetic_dim_suggestion_sends_once_and_identical_human_drafts_block() {
+    for provider in ["claude", "codex"] {
+        let suggestion = "Continue reviewing the pending changes";
+        let fixture = Fixture::new(provider);
+        fs::write(fixture.root().join("suggestion"), suggestion).unwrap();
+        let guards = [
+            "--require-idle",
+            "--require-empty-composer",
+            "--idempotency-key",
+            "dim-suggestion",
+        ];
+        let output = fixture.send_text(Some("Proceed with the synthetic check"), &guards);
+        assert_eq!(output.code, 0, "{}", output.stdout_text());
+        assert_eq!(
+            output.stdout_json()["data"]["submission"]["outcome"],
+            "submitted"
+        );
+        assert_eq!(
+            output.stdout_json()["data"]["submission"]["enter_presses"],
+            1
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("submissions"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+        fixture.refused(&fixture.send(&guards), "send-idempotency-key-used");
+
+        let fixture = Fixture::new(provider);
+        fs::write(fixture.root().join("composer"), suggestion).unwrap();
+        fixture.refused(&fixture.send(&guards), "send-composer-not-empty");
+        fixture.no_delivery();
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("composer")).unwrap(),
+            suggestion
+        );
+    }
+}
+
+#[test]
+fn claude_bare_nbsp_composer_admits_one_guarded_submission() {
+    let fixture = Fixture::new("claude");
+    fs::write(fixture.root().join("bare-composer"), "").unwrap();
+    let output = fixture.send(&["--require-idle", "--require-empty-composer"]);
+    assert_eq!(output.code, 0, "{}", output.stdout_text());
+    assert_eq!(
+        output.stdout_json()["data"]["submission"]["enter_presses"],
+        1
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn claude_hyperlink_footer_admits_empty_hints_and_preserves_plain_drafts() {
+    let suggestion = "Continue the fixture check";
+    let padding = " ".repeat(52);
+    for dim_suggestion in [false, true] {
+        let fixture = Fixture::new("claude");
+        fs::write(fixture.root().join("native-layout"), "").unwrap();
+        if dim_suggestion {
+            fs::write(fixture.root().join("suggestion"), suggestion).unwrap();
+            fs::write(fixture.root().join("suggestion-padding"), &padding).unwrap();
+        } else {
+            fs::write(fixture.root().join("bare-composer"), "").unwrap();
+        }
+        let output = fixture.send(&["--require-idle", "--require-empty-composer"]);
+        assert_eq!(output.code, 0, "{}", output.stdout_text());
+        assert_eq!(
+            output.stdout_json()["data"]["submission"]["enter_presses"],
+            1
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("submissions"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+    }
+    let fixture = Fixture::new("claude");
+    let draft = format!("{suggestion}{padding}");
+    fs::write(fixture.root().join("native-layout"), "").unwrap();
+    fs::write(fixture.root().join("composer"), &draft).unwrap();
+    fixture.refused(
+        &fixture.send(&["--require-empty-composer"]),
+        "send-composer-not-empty",
+    );
+    fixture.no_delivery();
+    assert_eq!(
+        fs::read_to_string(fixture.root().join("composer")).unwrap(),
+        draft
+    );
+}

@@ -36,6 +36,7 @@ pub mod metadata;
 mod provider_history;
 #[doc(hidden)]
 pub mod provider_prompt;
+mod restart;
 mod retitle;
 mod retitle_v3;
 mod runtime_environment;
@@ -45,10 +46,12 @@ mod send;
 mod send_guard;
 mod send_submit;
 use send::{SendResult, load_and_paste_buffer_with_timeout, send_to_session};
+pub mod origin;
 mod serve;
 mod serve_config;
 mod session_account;
 mod session_model;
+mod session_record;
 mod usage;
 
 #[cfg(test)]
@@ -270,7 +273,10 @@ fn dispatch(cli: Cli) -> i32 {
         }
     };
 
-    if matches!(cli.command, Command::Account(_) | Command::Resume(_)) {
+    if matches!(
+        cli.command,
+        Command::Account(_) | Command::Resume(_) | Command::Restart(_)
+    ) {
         account_broker::adopt_serve_brokers(&context.state_dir);
     }
     match cli.command {
@@ -285,6 +291,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Send(args) => run_send(&context, args),
         Command::Glance(args) => run_glance(&context, args),
         Command::Resume(args) => run_resume(&context, args),
+        Command::Restart(args) => restart::run(&context, args),
         Command::Clear(args) => conversation::run(&context, args, true),
         Command::Rebind(args) => conversation::run(&context, args, false),
         Command::Account(args) => session_account::run_account(&context, args),
@@ -296,6 +303,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Metadata(args) => metadata::run_metadata(&context, args),
         Command::Lineage(args) => lineage::run_lineage(&context, args),
         Command::Work(args) => lineage::run_work(&context, args),
+        Command::Workspace(args) => origin::run(&context, args),
         Command::Serve(args) => serve::run_serve(&context, args),
         Command::CodexAppServerProxy(args) => codex_app_server::run_proxy(&context, args),
         Command::Delete(args) => run_delete(&context, args),
@@ -305,6 +313,7 @@ fn dispatch(cli: Cli) -> i32 {
 
 fn command_format(command: &Command) -> OutputFormat {
     match command {
+        Command::Workspace(args) => origin::format(args),
         Command::Readiness(args) => args.format,
         Command::Start(args) => args.format,
         Command::Run(args) => args.format,
@@ -316,6 +325,7 @@ fn command_format(command: &Command) -> OutputFormat {
         Command::Send(args) => args.format,
         Command::Glance(args) => args.format,
         Command::Resume(args) => args.format,
+        Command::Restart(args) => args.format,
         Command::Clear(args) | Command::Rebind(args) => args.format,
         Command::Account(args) => match &args.command {
             cli::AccountCommand::Show(args) => args.format,
@@ -534,6 +544,10 @@ fn start_via_console(
 ) -> Result<Value, CliError> {
     let cwd = absolute_path(args.cwd.as_deref().unwrap_or(Path::new(".")))?;
     let mut session = json!({ "agent": args.agent.as_str(), "cwd": cwd.to_string_lossy() });
+    if let Some(workspace) = &args.workspace {
+        origin::validate_workspace(workspace)?;
+        session["workspace"] = json!(workspace);
+    }
     let launch_env = launch_env::from_flags(&args.launch_env)?;
     if !launch_env.is_empty() {
         session["launch_env"] = json!(launch_env);
@@ -689,7 +703,8 @@ fn run_glance(context: &CliContext, args: cli::GlanceArgs) -> i32 {
 
 fn run_resume(context: &CliContext, args: cli::ResumeArgs) -> i32 {
     let format = args.format;
-    match resume_session(context, args) {
+    let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
+    match resume_session_by_id(context, &args.id, &tmux_bin) {
         Ok(result) => render_single_success(RESUME_COMMAND, format, &result, render_resumed_text),
         Err(err) => render_error(RESUME_COMMAND, format, err),
     }
@@ -977,52 +992,7 @@ impl CliContext {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SessionRecord {
-    pub schema_version: String,
-    pub id: String,
-    pub agent: String,
-    pub mode: String,
-    #[serde(default)]
-    pub coordination_mode: cli::CoordinationMode,
-    pub title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title_state: Option<SessionTitleState>,
-    #[serde(default)]
-    pub title_revision: u64,
-    pub cwd: String,
-    pub tmux_session: String,
-    pub prompt_file: Option<String>,
-    pub log_file: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_resume: Option<ProviderResume>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<RuntimeInfo>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub public_metadata: Option<metadata::SessionMetadataState>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub agent_args: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_bin: Option<String>,
-    /// Who started this session (`session-lineage-work-v1`); written once.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lineage: Option<lineage::SessionLineage>,
-    /// Program and issue references (`session-lineage-work-v1`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub work: Option<lineage::SessionWork>,
-    /// A later steward (`lineage adopt`); `lineage` itself never changes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lineage_adoption: Option<lineage::LineageAdoption>,
-    /// `coordinator` when the session was started as one; written once.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
-    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
-    pub extra: BTreeMap<String, Value>,
-    #[serde(skip)]
-    pub resume_sidecar_extra: BTreeMap<String, Value>,
-}
+pub use session_record::SessionRecord;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1723,6 +1693,8 @@ pub struct SessionView {
     claude_account: Option<claude_account::ClaudeAccountView>,
     #[serde(flatten)]
     coordination: coordination::CoordinationSummary,
+    #[serde(flatten)]
+    origin: origin::Fields,
     /// Additive `session-lineage-work-v1` projections; absent on records
     /// created before lineage existed.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2062,6 +2034,8 @@ fn start_session_inner_unjournaled(
     failure_disposition: StartFailureDisposition,
     claude_account: Option<InitialClaudeAccount>,
 ) -> Result<StartView, CliError> {
+    let initial_lineage =
+        origin::for_start(context, args.initial_lineage, args.workspace.as_deref())?;
     let launch_env = launch_env::from_flags(&args.launch_env)?;
     if args.agent == AgentKind::Dsh && args.initial_agent_profile.is_none() {
         // Refused before any durable side effect: a dsh pane is launched only
@@ -2110,7 +2084,7 @@ fn start_session_inner_unjournaled(
             agent_args: args.agent_args.clone(),
             agent_bin: Some(display_path(&agent_bin)),
         },
-        args.initial_lineage,
+        initial_lineage,
     )?;
     created
         .record
@@ -3044,6 +3018,7 @@ fn create_record(request: RecordRequest<'_>) -> Result<CreatedRecord, CliError> 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InitialLineage {
     pub seed: lineage::LineageSeed,
+    pub origin: origin::Fields,
     pub work: Option<lineage::SessionWork>,
     /// `coordinator` for a session started with `--role coordinator`.
     pub role: Option<String>,
@@ -3155,7 +3130,9 @@ fn create_record_with_lineage(
         resume_sidecar_extra: BTreeMap::new(),
     };
     session_model::ModelSettings::store_launch(&mut record);
+    origin::Fields::default().store(&mut record);
     if let Some(mut initial) = initial_lineage {
+        initial.origin.store(&mut record);
         initial.seed.set_forge_role(initial.role.clone());
         record.lineage = Some(initial.seed.finalize(&record.id, &record.created_at));
         record.work = initial.work;
@@ -5427,11 +5404,6 @@ fn rename_live_claude_session(
     )
 }
 
-fn resume_session(context: &CliContext, args: cli::ResumeArgs) -> Result<SessionView, CliError> {
-    let tmux_bin = resolve_tmux_bin(args.tmux_bin.as_deref());
-    resume_session_by_id(context, &args.id, &tmux_bin)
-}
-
 struct StartupArtifactBackup {
     entries: Vec<(PathBuf, PathBuf)>,
     finalized: bool,
@@ -5675,16 +5647,14 @@ fn resume_session_locked(
     record.extra.remove(DELETE_TMUX_TERMINATION_STATE_KEY);
     let previous_record = record.clone();
     // Capture absence before new-session can reuse the old internal tmux ID.
-    let previous_runtime = coordination::capture_previous_runtime(&previous_record, tmux_bin);
+    let previous_runtime =
+        coordination::capture_stopped_runtime(context, &previous_record, tmux_bin)?;
     let app_server_managed = agent == AgentKind::Codex
         && (codex_app_server::runtime_is_supported(&previous_record)
             || codex_account::binding_is_present(&previous_record));
     let previous_activity = activity::capture_snapshot(context, &record.id)?;
     let mut startup_artifacts = StartupArtifactBackup::stage(context, &record)?;
-    let agent_bin = durable_profile_context
-        .map(|profile| profile.agent_bin)
-        .or_else(|| record.agent_bin.as_deref().map(PathBuf::from))
-        .unwrap_or_else(|| resolve_agent_bin(agent, None));
+    let agent_bin = restart::resume_agent_bin(durable_profile_context, &record, agent);
     let now = Zoned::now();
     let next_generation = record
         .runtime
@@ -7694,6 +7664,7 @@ fn session_view_from_parts(
     });
     let (auth_incident, auth_detection_health) = auth_incident::projection(context, record);
     SessionView {
+        origin: origin::Fields::of(record),
         context_usage: context_usage::projection(context, record),
         launch_env: launch_env::projection(record.extra.get("launch_env")),
         model_settings: session_model::ModelSettings::for_record(record),
@@ -10607,7 +10578,7 @@ fn runtime_is_from_prior_boot(identity: &TmuxRuntimeIdentity) -> bool {
     }
 }
 
-fn recorded_runtime_is_from_prior_boot(record: &SessionRecord) -> bool {
+pub(crate) fn recorded_runtime_is_from_prior_boot(record: &SessionRecord) -> bool {
     let Ok(Some(identity)) = persisted_tmux_runtime_identity(record) else {
         return false;
     };
@@ -12380,8 +12351,8 @@ fn live_status(tmux_bin: &Path, tmux_session: &str) -> String {
     live_status_with_timeout(tmux_bin, tmux_session, PANE_INPUT_COMMAND_TIMEOUT)
 }
 
-fn live_status_with_timeout(tmux_bin: &Path, tmux_session: &str, timeout: Duration) -> String {
-    verified_tmux_status_with_timeout(tmux_bin, &exact_tmux_target(tmux_session), timeout)
+pub(crate) fn live_status_with_timeout(tmux: &Path, session: &str, timeout: Duration) -> String {
+    verified_tmux_status_with_timeout(tmux, &exact_tmux_target(session), timeout)
 }
 
 fn run_status(mut command: ProcessCommand, label: &str) -> Result<(), CliError> {
