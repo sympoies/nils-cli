@@ -28,6 +28,7 @@ fn assignment_record() -> ReviewStateRecord {
         None,
         ReviewStatePayload::ReviewHandoff {
             handoff: ReviewHandoff {
+                approval_policy: Default::default(),
                 coordinator_digest: sha256_digest(b"worker-session"),
                 reviewer_digest: sha256_digest(b"reviewer-session"),
                 review_author: "review-app[bot]".into(),

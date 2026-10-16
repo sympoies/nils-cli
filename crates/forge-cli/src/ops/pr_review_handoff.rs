@@ -15,12 +15,19 @@ use crate::ops::{pr_review, pr_reviews, pr_view, review_state};
 use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
 
+mod approval;
+use crate::cli::ApprovalPolicy;
+use approval::{Admission, PublishedApproval};
+
 const SCHEMA: &str = "pr.review-handoff";
 const PUBLICATION_BINDING_PREFIX: &str = "<!-- forge-cli:review-handoff:v1 ";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewHandoff {
+    /// Omit the compatibility default to preserve existing ledger digests.
+    #[serde(default, skip_serializing_if = "ApprovalPolicy::is_source_pass")]
+    pub approval_policy: ApprovalPolicy,
     pub coordinator_digest: String,
     pub reviewer_digest: String,
     pub review_author: String,
@@ -61,6 +68,9 @@ struct HandoffPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     sync_carry_over: Option<SyncCarryOver>,
     status: &'static str,
+    approval_policy: ApprovalPolicy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approval: Option<PublishedApproval>,
 }
 
 fn schema() -> String {
@@ -462,6 +472,7 @@ pub(crate) fn valid_scope_refresh(old: &ReviewHandoff, next: &ReviewHandoff) -> 
         && next.coordinator_digest == old.coordinator_digest
         && next.reviewer_digest == old.reviewer_digest
         && next.review_author == old.review_author
+        && next.approval_policy == old.approval_policy
         && next.base_sha != old.base_sha
         && Some(next.assignment_generation) == old.assignment_generation.checked_add(1)
 }
@@ -478,6 +489,7 @@ pub(crate) fn valid_coordinator_transfer(old: &ReviewHandoff, next: &ReviewHando
             && Some(next.assignment_generation) == old.assignment_generation.checked_add(1)
             && next.reviewer_digest == old.reviewer_digest
             && next.review_author == old.review_author
+            && next.approval_policy == old.approval_policy
             && !next.surrendered
     })
 }
@@ -627,7 +639,9 @@ pub(crate) fn ensure_published<R: BackendRunner>(
     chain: &review_state::ReviewStateChain,
     handoff_created_at: Option<&str>,
 ) -> Result<Option<SyncCarryOver>, ForgeError> {
-    let carry = admit_published(runner, ctx, number, url, head, chain, handoff_created_at)?;
+    let admission = admit_published(runner, ctx, number, url, head, chain, handoff_created_at)?;
+    admission.require_policy(latest(chain).map(|h| h.approval_policy).unwrap_or_default())?;
+    let carry = admission.sync_carry_over;
     if let Some(c) = &carry
         && recorded_carry_over(chain, head) != Some(c)
     {
@@ -653,9 +667,9 @@ fn admit_published<R: BackendRunner>(
     head: &str,
     chain: &review_state::ReviewStateChain,
     handoff_created_at: Option<&str>,
-) -> Result<Option<SyncCarryOver>, ForgeError> {
+) -> Result<Admission, ForgeError> {
     let Some(handoff) = assigned(chain)? else {
-        return Ok(None);
+        return Ok(Admission::default());
     };
     let state = owned_state(chain).ok_or_else(|| {
         fail(
@@ -799,24 +813,27 @@ fn admit_published<R: BackendRunner>(
                     "- Lens verdict: pass" | "- Lens verdict: follow-up-pass"
                 )
             });
-        passing = pass.then_some(r.url.as_str());
+        passing = pass.then_some(r);
         // The newest report not proven to belong to an older interval owns
         // the verdict, including blocked, malformed or unbound reports.
         break;
     }
-    let Some(review_url) = passing else {
+    let Some(selected) = passing else {
         return Err(fail(
             "awaiting_designated_review",
             "awaiting designated review: published passing review for the current head is missing",
         ));
     };
-    Ok(sync.map(|(_, merge)| SyncCarryOver {
-        review_url: review_url.to_string(),
-        reviewed_head: reviewed_head.to_string(),
-        head: head.to_string(),
-        base_commit: merge.base_commit,
-        merge_tree: merge.merge_tree,
-    }))
+    Ok(Admission {
+        approval: Some(PublishedApproval::from_review(selected, head)),
+        sync_carry_over: sync.map(|(_, merge)| SyncCarryOver {
+            review_url: selected.url.clone(),
+            reviewed_head: reviewed_head.to_string(),
+            head: head.to_string(),
+            base_commit: merge.base_commit,
+            merge_tree: merge.merge_tree,
+        }),
+    })
 }
 
 /// A bare login names a user; the REST `[bot]` suffix names an App account.
@@ -1066,6 +1083,10 @@ pub fn run(
     let base = provider_base(&runner, &ctx, id)?;
     let mut proposed = None;
     let mut sync_carry_over = None;
+    let mut approval = None;
+    let mut approval_policy = latest(&chain)
+        .map(|h| h.approval_policy)
+        .unwrap_or_default();
     match &args.command {
         PrReviewHandoffCommand::Inspect(a) => {
             if let Some(expected) = &a.expected_head {
@@ -1104,7 +1125,7 @@ pub fn run(
                     "no designated reviewer handoff exists",
                 ));
             }
-            let carry = admit_published(
+            let admission = admit_published(
                 &runner,
                 &ctx,
                 id,
@@ -1113,6 +1134,10 @@ pub fn run(
                 &chain,
                 state.handoff_created_at.as_deref(),
             )?;
+            approval_policy = approval_policy.requiring(a.approval_policy);
+            admission.require_policy(approval_policy)?;
+            approval = admission.approval;
+            let carry = admission.sync_carry_over;
             if let Some(c) = &carry
                 && recorded_carry_over(&chain, head) != Some(c)
                 && !global.dry_run
@@ -1184,6 +1209,7 @@ pub fn run(
                 ));
             }
             let next = ReviewHandoff {
+                approval_policy: a.approval_policy.unwrap_or(approval_policy),
                 coordinator_digest: coordinator,
                 reviewer_digest: reviewer,
                 review_author: a.review_author.clone(),
@@ -1331,6 +1357,11 @@ pub fn run(
             chain.records.push(record);
         }
     }
+    if !matches!(args.command, PrReviewHandoffCommand::Check(_)) {
+        approval_policy = latest(&chain)
+            .map(|h| h.approval_policy)
+            .unwrap_or_default();
+    }
     let payload = HandoffPayload {
         provider: ctx.provider.as_str(),
         number: id,
@@ -1353,9 +1384,15 @@ pub fn run(
         handoff: latest(&chain).cloned(),
         sync_carry_over,
         status,
+        approval_policy,
+        approval,
     };
     Ok(emit_success(schema(), payload, format, |p| {
-        println!("{}: {}", p.status, p.url)
+        if let Some(approval) = &p.approval {
+            println!("{} ({}): {}", p.status, approval.state.as_str(), p.url);
+        } else {
+            println!("{}: {}", p.status, p.url);
+        }
     }))
 }
 

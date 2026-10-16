@@ -833,6 +833,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
         case $line[1] in
             (assign)
 _arguments "${_arguments_options[@]}" : \
+'--approval-policy=[Approval required by check, assigned delivery and merge; defaults to source-pass. Omission preserves the existing assignment policy during handover or refresh]:APPROVAL_POLICY:(source-pass final-approval)' \
 '--reviewer-session=[Private session selector; only its session digest is published]:REVIEWER_SESSION:_default' \
 '--review-author=[Expected public author of the native governed or portable review]:REVIEW_AUTHOR:_default' \
 '--base-sha=[Exact provider base SHA captured for the assignment]:BASE_SHA:_default' \
@@ -870,6 +871,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (check)
 _arguments "${_arguments_options[@]}" : \
+'--approval-policy=[Require this approval level in addition to the persisted assignment policy]:APPROVAL_POLICY:(source-pass final-approval)' \
 '--expected-head=[Exact provider head SHA for this handoff operation]:EXPECTED_HEAD:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
