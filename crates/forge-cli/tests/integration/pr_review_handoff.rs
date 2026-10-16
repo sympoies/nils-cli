@@ -29,6 +29,7 @@ fn retired_coordinator_handoff() -> ReviewHandoff {
 
 fn handoff(returned: Option<&str>) -> ReviewHandoff {
     ReviewHandoff {
+        approval_policy: Default::default(),
         coordinator_digest: review_state::sha256_digest(b"worker-session"),
         reviewer_digest: review_state::sha256_digest(b"reviewer-session"),
         review_author: "review-app[bot]".into(),
@@ -2970,3 +2971,5 @@ fn qualified_reviewable_must_name_the_native_review_head() {
         assert_refusal(&check(&stub, HEAD), 65, "awaiting_designated_review");
     }
 }
+
+mod approval;

@@ -49,7 +49,7 @@ resolver = "2"
 # edition.
 edition = "2024"
 license = "MIT"
-version = "1.35.0"
+version = "1.36.1"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -80,7 +80,7 @@ serde_json = "1"
 serde_yaml_ng = "0.10"
 sha2 = "0.11"
 shell-words = "1"
-minijinja = "2"
+minijinja = { version = "3", features = ["serde"] }
 thiserror = "2"
 toml = "1.1"
 tracing = "0.1"

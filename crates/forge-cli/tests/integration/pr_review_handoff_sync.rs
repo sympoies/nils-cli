@@ -283,6 +283,46 @@ fn clean_base_sync_carries_the_pass_and_records_it_once() {
 }
 
 #[test]
+fn carried_native_approval_is_source_pass_until_current_head_is_approved() {
+    let s = sync(false);
+    let mut report = review(&s.reviewed, "pass");
+    report["state"] = json!("APPROVED");
+    let stub = provider(&s, &s.synced, vec![report]);
+    let preview = handoff_cmd(&stub, s.repo.path(), true, "check", &s.synced);
+    assert_eq!(preview.code, 0, "{} {}", preview.stdout, preview.stderr);
+    let data = &parse_envelope(&preview.stdout)["data"];
+    assert_eq!(data["approval"]["state"], "source-passed");
+    assert_eq!(data["approval"]["native_state"], "APPROVED");
+    assert_eq!(data["approval"]["reviewed_head"], s.reviewed);
+    let strict = run_forge_cli_in(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-handoff",
+            "check",
+            "7",
+            "--expected-head",
+            &s.synced,
+            "--approval-policy",
+            "final-approval",
+        ],
+        Some(s.repo.path()),
+    );
+    assert_refusal(&strict, 65, "designated_final_approval_required");
+    assert_eq!(
+        ledger_bodies(&stub).len(),
+        2,
+        "a refused check must not append carry-over"
+    );
+}
+
+#[test]
 fn conflicted_sync_requires_re_review() {
     let s = sync(true);
     let stub = provider(&s, &s.synced, vec![review(&s.reviewed, "pass")]);

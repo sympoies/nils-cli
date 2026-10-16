@@ -54,6 +54,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `GET /sessions/{id}/messages/{message_id}/wait/v1` | Bearer + capability | [Coordination HTTP coverage](session-coordination-v1.md#http-coverage) |
 | `GET /sessions/{id}/buffer` | Open | This specification |
 | `POST /sessions/{id}/{send,prompt,prompt/v2,resume}` | Bearer | This specification |
+| `GET /sessions/{id}/prompt/v2/receipts/{request_id}` | Bearer | This specification |
 | `POST /sessions/{id}/archive` | Bearer | This specification |
 | `GET /sessions/{id}/maintenance` and `POST /sessions/{id}/maintenance/actions` | Bearer | [Session maintenance v1](session-maintenance-v1.md#authentication-and-endpoints), successor [v2](session-maintenance-v2.md#negotiation) |
 | `PUT /sessions/{id}/account` | Bearer | This specification |
@@ -449,6 +450,17 @@ recorded in `sympoies/nils-cli#1409`.
   submission without holding the global coordination registry lock across
   terminal I/O. Transcript observation determines acknowledged versus unknown
   outcome.
+- A daemon configured with `[auto_resume] default_enabled = true` (or
+  `AGENT_SESSION_AUTO_RESUME_DEFAULT_POLICY`; see the
+  [serve daemon runbook](../runbooks/serve-daemon.md#configuration-file))
+  opts every session that `POST /sessions` creates or imports into auto-resume
+  with the configured `default_recovery_policy` (`wait_for_reset` when
+  omitted), as if the client had sent that `PUT` right after creation, and the
+  create response already reports that view. It is applied once, only when the
+  session has no durable auto-resume state, so an explicit `PUT` or `DELETE`
+  always wins. Sessions that cannot report an authoritative capacity signal, or
+  cannot honor the policy (for example `next_account_then_resume` without a
+  bound Codex account), stay disabled; existing sessions are unchanged.
 - Every session view additively includes `auto_resume` using
   `agent-session.auto-resume.v1`. `GET /sessions/{id}/auto-resume` reads that
   status and is open on loopback; `PUT` with `{ "enabled": true|false,
@@ -476,7 +488,12 @@ recorded in `sympoies/nils-cli#1409`.
   the provider rejection as `usage_window_not_exhausted`. Both
   mutations require the bearer token. Claude Code is supported through its
   authoritative structured
-  `StopFailure.error == "rate_limit"` signal. Fresh interactive Codex sessions
+  `StopFailure.error == "rate_limit"` signal. It is the only Claude
+  `StopFailure.error` value that counts as capacity: `server_error` (a
+  provider overload or outage), `authentication_failed`, `oauth_org_not_allowed`,
+  `billing_error`, `invalid_request`, `max_output_tokens`, and any unknown value
+  never arm recovery, and the fixture
+  `tests/fixtures/activity/auto-resume-failures.jsonl` pins each of them. Fresh interactive Codex sessions
   created through the serve API are also supported when the installed CLI
   capability probe selects the app-server v2 runtime. The daemon consumes the
   live metadata-only protocol
@@ -491,8 +508,12 @@ recorded in `sympoies/nils-cli#1409`.
   unsupported. Terminal text and assistant output are never treated as
   authority.
   The response object is `{ schema_version, supported, enabled, recovery_policy,
-  state,
-  scheduled_at?, failure_reason? }`. `scheduled_at`, when present, is an
+  state, attempts,
+  scheduled_at?, failure_reason?, failure_class? }`. `attempts` is the number
+  of capacity-recovery continuations the current chain has submitted (`0`
+  before the first, and for usage-exhaustion recovery). `failure_class`, present while a recovery chain exists, is
+  `usage_exhaustion` or `provider_capacity`; clients render any other value as a
+  generic failure. `scheduled_at`, when present, is an
   RFC 3339 timestamp. The v1 `state` values are `disabled`, `enabled`, `armed`,
   `scheduled`, `switching_account`, `checking`, `resumed`, `cancelled`, `transient_failure`, and
   `terminal_failure`. The allowlisted `failure_reason` values are
@@ -597,6 +618,103 @@ recorded in `sympoies/nils-cli#1409`.
   `queued: true` and the prompt runs as the next turn, so the client MUST NOT resend it. A new turn omits `queued`.
   When neither is observed the route answers 500 `structured-prompt-outcome-unknown`.
 
+  The v2 route additionally accepts optional `request_id` and `require_idle`
+  fields. Omitting both preserves the existing response and delivery behavior.
+  `request_id` contains 1–128 ASCII letters, digits, dots, underscores or
+  hyphens; invalid IDs return `400 invalid-request-id`. `require_idle` is a
+  boolean, default false. Malformed JSON/types or other unknown fields return
+  `400 invalid-json-body` before dispatch.
+
+  A keyed attempt is scoped to the canonical session ID, exact expected
+  incarnation and request ID. The daemon durably claims that key before
+  dispatch. Repeating the same text and idle flag returns the recorded outcome
+  without sending again; different text or idle flag returns
+  `409 request-id-conflict`, preserving the original receipt. An in-flight,
+  interrupted or incomplete claim returns `unknown`, never authorizing another
+  dispatch. This is at-most-once dispatch, not a guarantee of delivery or turn
+  completion.
+
+  Every keyed outcome contains this receipt (identifiers are illustrative):
+
+  ```json
+  {
+    "request_id": "attempt-1",
+    "session_id": "session-id",
+    "session_incarnation": "launch-id",
+    "outcome": "submitted",
+    "code": null
+  }
+  ```
+
+  `outcome` is `submitted`, `refused` or `unknown`. `code` is null for
+  submitted, the stable refusal code for refused, or
+  `structured-prompt-outcome-unknown` for unknown. Successful keyed POSTs retain
+  `data.machine`, `data.submitted: true`, `data.session_incarnation` and the
+  optional `data.queued: true`, adding `data.receipt`. Refused/unknown POSTs use
+  `ok: false` and place the receipt in `error.details.receipt`. Unknown returns
+  HTTP 500 with `error.code: structured-prompt-outcome-unknown`. Repeated POSTs
+  return the retained status and outcome; an unfinished claim may later resolve
+  through lookup when the original request completes.
+
+  Lookup requires bearer authorization:
+  `GET /sessions/{id}/prompt/v2/receipts/{request_id}?expected_session_incarnation=launch-id`.
+  A found receipt of any outcome returns HTTP 200:
+
+  ```json
+  {
+    "schema_version": "cli.agent-session.serve.v1",
+    "ok": true,
+    "data": {
+      "machine": "machine-id",
+      "receipt": {
+        "request_id": "attempt-1",
+        "session_id": "session-id",
+        "session_incarnation": "launch-id",
+        "outcome": "unknown",
+        "code": "structured-prompt-outcome-unknown"
+      }
+    }
+  }
+  ```
+
+  An absent key returns HTTP 404 with the same schema, `ok: false` and
+  `error.code: prompt-receipt-not-found`. Missing/malformed lookup query returns
+  `400 invalid-query`; invalid receipt identifiers return
+  `400 invalid-receipt-key`. An older server's absent route does not return the
+  typed `prompt-receipt-not-found` code. Neither an unsupported route nor
+  not-found after an uncertain POST permits blind replay: the original POST
+  may still be entering admission. Invalid receipt identifiers and
+  authentication failures are rejected before creating receipts. Storage failure returns
+  `prompt-receipt-storage-unavailable`; reconcile with the original key rather
+  than assuming non-delivery.
+
+  `require_idle: true` delegates to the CLI guarded send with exact runtime,
+  provider idle, no pending provider ingress and an observably empty composer.
+  Its existing record lock and pre-dispatch checks fence admission; Codex uses
+  native guarded dispatch and Claude uses guarded pane delivery. A positive
+  busy, pending-ingress or existing-draft observation before delivery returns
+  HTTP 409 `busy`. Unobservable state fails closed with the CLI's stable guard
+  code. These external provider/UI observations remain non-atomic, as in
+  [guarded send](send-v1.md); a later failure after possible paste or native
+  dispatch is `unknown`, even if no submission was confirmed.
+
+  A `refused` receipt proves no provider dispatch/paste. Refusals, including
+  `busy`, are terminal for that key. After a definite refusal and refreshed
+  session state, a client may mint a new attempt ID for the same outbox item.
+  Unknown attempts retain their original key and use lookup; clients MUST NOT
+  rotate the key or fall back to unkeyed sends. Persist the attempt ID and
+  expected incarnation before POST and verify receipt identifiers before
+  acknowledging an outbox item.
+
+  Private receipt claims and results use hashed filenames within session
+  storage, synced before dispatch and atomically published after completion.
+  They contain identifiers, a digest of text/idle policy and fixed outcome
+  metadata, never prompt text or provider output. No automatic expiry or
+  pruning is performed: receipts survive daemon restart and runtime
+  replacement for the session lifetime. Explicit session deletion removes
+  them; archive also ends the managed session and deletes its receipts. Lookup
+  can read a historical incarnation even after replacement.
+
   For an already resumed Codex runtime whose terminal path reports local
   JSON-RPC `-32001` busy, the error alone does not prove rejection before
   provider acceptance: the same response can be emitted while an earlier
@@ -651,8 +769,8 @@ recorded in `sympoies/nils-cli#1409`.
   provider turn remains in progress and the continuation was not accepted may
   the client bind one explicit recovery request to the exact current
   `session_incarnation` and submit through `prompt/v2`. The incarnation fence
-  prevents submission to a replacement runtime; it does not deduplicate two
-  submissions within one incarnation. Clients MUST NOT automatically replay an
+  prevents submission to a replacement runtime; unkeyed requests do not
+  deduplicate two submissions within one incarnation. Clients MUST NOT automatically replay an
   arbitrary failed terminal send through this route because transport and busy
   failures can leave provider-delivery outcome unknown. Incarnation conflict
   and outcome-unknown handling retain the rules above.

@@ -105,6 +105,22 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(resolve-final)
+_arguments "${_arguments_options[@]}" : \
+'--out=[Evidence artifact directory containing \`test-first-evidence.json\`]:DIR:_files -/' \
+'--format=[Output format]:FORMAT:(text json)' \
+'--command=[Command of the failed final validation]:COMMAND:_default' \
+'--scope=[Scope of the failed final validation]:SCOPE:(focused affected-suite contract-consumer full manual)' \
+'--attempt=[Failed attempt number, as shown by \`show --format json\`]:ATTEMPT:_default' \
+'--passing-command=[Passing canonical validation that covers the failed target on the same source]:PASSING_COMMAND:_default' \
+'--passing-scope=[Scope of the passing canonical validation]:PASSING_SCOPE:(focused affected-suite contract-consumer full manual)' \
+'--passing-attempt=[Passing attempt number, as shown by \`show --format json\`]:PASSING_ATTEMPT:_default' \
+'--reason=[Why this passing run resolves the failure, including scope and source equivalence]:REASON:_default' \
+'*--investigation=[Investigation evidence explaining the original failure. Repeatable]:INVESTIGATION:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
 (record-gap)
 _arguments "${_arguments_options[@]}" : \
 '--out=[Evidence artifact directory containing \`test-first-evidence.json\`]:DIR:_files -/' \
@@ -190,6 +206,7 @@ _test-first-evidence_commands() {
 'record-impact:Record one materially affected test target or declare none exist' \
 'record-waiver:Record an explicit waiver when failing evidence is not practical' \
 'record-final:Record final validation after the implementation' \
+'resolve-final:Resolve a failed final attempt using a passing validation and investigation evidence' \
 'record-gap:Record one residual gap or explicitly declare that none remain' \
 'bind-baseline:Bind the immutable repository and pre-edit baseline subject' \
 'bind-delivery:Append an attestation for the current delivered head and diff' \
@@ -249,6 +266,11 @@ _test-first-evidence__subcmd__record-impact_commands() {
 _test-first-evidence__subcmd__record-waiver_commands() {
     local commands; commands=()
     _describe -t commands 'test-first-evidence record-waiver commands' commands "$@"
+}
+(( $+functions[_test-first-evidence__subcmd__resolve-final_commands] )) ||
+_test-first-evidence__subcmd__resolve-final_commands() {
+    local commands; commands=()
+    _describe -t commands 'test-first-evidence resolve-final commands' commands "$@"
 }
 (( $+functions[_test-first-evidence__subcmd__show_commands] )) ||
 _test-first-evidence__subcmd__show_commands() {
