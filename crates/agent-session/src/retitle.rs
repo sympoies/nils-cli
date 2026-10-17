@@ -3424,7 +3424,6 @@ pub(crate) fn commit(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-
     fn turn(id: usize, user: &str) -> TitleContextTurn {
         TitleContextTurn {
             id: format!("turn-{id}"),
@@ -3432,7 +3431,6 @@ mod tests {
             assistant_excerpt: Some(format!("assistant {id}")),
         }
     }
-
     #[test]
     fn bounded_context_keeps_anchor_and_newest_turns_in_chronological_order() {
         let turns = (0..14)
@@ -3463,7 +3461,6 @@ mod tests {
         assert_eq!(selected[3].id, "turn-13");
         assert!(selected[0].user_prompt.contains("retitle"));
     }
-
     #[test]
     fn filtering_removes_paths_credentials_and_injected_setup() {
         let filtered = filter_text(
@@ -3471,7 +3468,6 @@ mod tests {
         );
         assert_eq!(filtered, "<redacted>");
     }
-
     #[test]
     fn filtering_removes_the_complete_agents_instruction_block_before_anchor_bounding() {
         let policy = (0..200)
@@ -3486,7 +3482,6 @@ mod tests {
             "Review auto retitle without losing the original objective"
         );
     }
-
     #[test]
     fn filtering_drops_authorization_and_quoted_json_credential_lines_fail_closed() {
         let filtered = filter_text(
@@ -4175,6 +4170,7 @@ mod tests {
                 text: "continue".into(),
                 timestamp: None,
                 human_prompt: true,
+                images: Vec::new(),
             },
             HistoryMessage {
                 id: "provider-turn-b".into(),
@@ -4182,6 +4178,7 @@ mod tests {
                 text: "continue".into(),
                 timestamp: None,
                 human_prompt: true,
+                images: Vec::new(),
             },
         ]);
         assert_eq!(turns.len(), 2);
@@ -4199,6 +4196,7 @@ mod tests {
                 text: "injected setup".into(),
                 timestamp: None,
                 human_prompt: false,
+                images: Vec::new(),
             },
             HistoryMessage {
                 id: "setup-answer".into(),
@@ -4206,6 +4204,7 @@ mod tests {
                 text: "private setup output".into(),
                 timestamp: None,
                 human_prompt: false,
+                images: Vec::new(),
             },
             HistoryMessage {
                 id: "turn-real".into(),
@@ -4213,6 +4212,7 @@ mod tests {
                 text: "Review #449".into(),
                 timestamp: None,
                 human_prompt: true,
+                images: Vec::new(),
             },
         ]);
         assert_eq!(turns.len(), 1);
