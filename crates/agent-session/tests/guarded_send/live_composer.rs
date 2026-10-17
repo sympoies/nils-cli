@@ -284,7 +284,7 @@ fn wrapped_refusal_preserves_and_classifies_a_mixed_draft() {
 }
 
 #[test]
-fn stalled_backspace_reports_a_fresh_observation() {
+fn stalled_backspace_requires_a_fresh_observation() {
     let fixture = Fixture::new("claude");
     live(
         &fixture,
@@ -293,9 +293,9 @@ fn stalled_backspace_reports_a_fresh_observation() {
     let output = guarded(&fixture);
     let details = details(&output, "send-session-not-idle");
     assert_eq!(details["cleared"], false);
-    assert_eq!(details["remaining_input"], "pasted_text");
-    assert_eq!(details["remaining_characters"], "continue-fixture".len());
-    assert_eq!(details["pasted_text_present"], true);
+    assert_eq!(details["remaining_input"], "unobservable");
+    assert!(details.get("remaining_characters").is_none());
+    assert!(details.get("pasted_text_present").is_none());
     assert_eq!(composer(&fixture), "continue-fixture");
     assert!(submissions(&fixture).is_empty());
 }

@@ -87,6 +87,7 @@ elif command == 'paste-buffer':
         p.write_text(json.dumps(d))
 elif command == 'send-keys' and args[-1] == 'BSpace':
     if (root / 'backspace-stalls').exists():
+        (root / 'capture-fails').touch()
         import time
         time.sleep(3)
     if not (root / 'backspace-ignored').exists():
