@@ -81,6 +81,8 @@ use crate::{
 use activity_stream::activity_notify_event_relevant;
 
 mod activity_stream;
+mod codex_account_drain;
+use codex_account_drain::{apply_pending_codex_accounts, repair_blocked_codex_accounts};
 #[path = "serve_claude_completion.rs"]
 mod claude_completion;
 #[path = "serve_create_body.rs"]
@@ -8903,7 +8905,7 @@ async fn codex_control_loop(state: Arc<ServeState>) {
         if let Ok(mut controls) = state.codex_controls.lock() {
             controls.retain(|id, entry| live.contains(&(id.clone(), entry.launch_id.clone())));
         }
-        let mut pending_account_handles = Vec::new();
+        let (mut pending_account_handles, mut repairs) = (Vec::new(), Vec::new());
         for record in records {
             let Some(launch_id) = record
                 .runtime
@@ -8919,7 +8921,9 @@ async fn codex_control_loop(state: Arc<ServeState>) {
                     .map(|entry| entry.handle.clone())
             });
             if let Some(handle) = running_handle {
-                if matches!(
+                if crate::codex_account::queued_switch_repair(&record).is_some() {
+                    repairs.push((record.id.clone(), launch_id, handle));
+                } else if matches!(
                     crate::codex_account::pending_next_apply(&record),
                     Ok(Some(_))
                 ) {
@@ -8976,19 +8980,12 @@ async fn codex_control_loop(state: Arc<ServeState>) {
                 }
             });
         }
-        apply_pending_codex_accounts(pending_account_handles).await;
+        tokio::join!(
+            apply_pending_codex_accounts(pending_account_handles),
+            repair_blocked_codex_accounts(&state.context, &state.account_switches, repairs),
+        );
         tokio::time::sleep(RECONCILE_INTERVAL).await;
     }
-}
-
-async fn apply_pending_codex_accounts(handles: Vec<ControlHandle>) {
-    let mut tasks = JoinSet::new();
-    for handle in handles {
-        tasks.spawn(async move {
-            let _ = handle.apply_next().await;
-        });
-    }
-    while tasks.join_next().await.is_some() {}
 }
 
 fn fence_codex_controls_before_listen(context: &CliContext, tmux: &Path) -> Result<(), CliError> {

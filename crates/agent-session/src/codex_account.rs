@@ -425,6 +425,67 @@ pub(crate) fn seed_bound_binding_for_test(
     .unwrap();
 }
 
+/// A Codex session record on a supported runtime carrying `value` as its
+/// durable binding.
+#[cfg(test)]
+pub(crate) fn record_with_binding_value(value: Value) -> SessionRecord {
+    SessionRecord {
+        schema_version: crate::SESSION_DOCUMENT_VERSION.to_string(),
+        id: "binding-fixture".to_string(),
+        agent: "codex".to_string(),
+        mode: "interactive".to_string(),
+        coordination_mode: crate::cli::CoordinationMode::Advisory,
+        title: None,
+        title_state: None,
+        title_revision: 0,
+        cwd: "/repo".to_string(),
+        tmux_session: "hs-binding-fixture".to_string(),
+        prompt_file: None,
+        log_file: None,
+        created_at: "2030-01-01T00:00:00Z".to_string(),
+        updated_at: "2030-01-01T00:00:00Z".to_string(),
+        provider_resume: None,
+        runtime: Some(crate::RuntimeInfo {
+            kind: crate::codex_app_server::RUNTIME_KIND.to_string(),
+            tmux_session: "hs-binding-fixture".to_string(),
+            generation: 1,
+            started_at: "2030-01-01T00:00:00Z".to_string(),
+            launch_id: "runtime-binding-fixture".to_string(),
+            extra: std::collections::BTreeMap::from([
+                (
+                    crate::codex_app_server::PROTOCOL_KEY.to_string(),
+                    json!(crate::codex_app_server::PROTOCOL_VERSION),
+                ),
+                (
+                    crate::codex_app_server::SOCKET_KEY.to_string(),
+                    json!("/run/codex.sock"),
+                ),
+                (
+                    crate::codex_app_server::PROXY_KEY.to_string(),
+                    json!("/run/codex.proxy"),
+                ),
+                (
+                    crate::codex_app_server::THREAD_HANDOFF_KEY.to_string(),
+                    json!("/run/codex.thread"),
+                ),
+                (
+                    crate::codex_app_server::THREAD_ATTACHED_KEY.to_string(),
+                    json!("/run/codex.attached"),
+                ),
+            ]),
+        }),
+        public_metadata: None,
+        agent_args: Vec::new(),
+        agent_bin: None,
+        extra: std::collections::BTreeMap::from([(BINDING_KEY.to_string(), value)]),
+        lineage: None,
+        work: None,
+        lineage_adoption: None,
+        role: None,
+        resume_sidecar_extra: std::collections::BTreeMap::new(),
+    }
+}
+
 pub(crate) fn mark_runtime_pending(record: &mut SessionRecord) -> Result<(), CliError> {
     let mut binding = match decode_binding(record) {
         DecodedBinding::Absent => return Ok(()),
@@ -864,7 +925,56 @@ pub(crate) fn begin_switch_binding(
     let _lock = acquire_session_record_lock(context, id)?;
     let _account_gate = crate::codex_app_server::acquire_account_mutation_gate(context, id)?;
     let mut record = load_session_record(context, id)?;
-    ensure_runtime(&record, expected_launch_id).map_err(|_| {
+    publish_switch_binding_locked(context, &mut record, expected_launch_id, account)
+}
+
+/// The queued explicit account that should repair a binding which is not
+/// ready for this runtime (failed, malformed, or still pending). A control in
+/// that state refuses `ApplyNext`, so the daemon promotes this intent with
+/// [`begin_queued_switch_repair`] instead.
+pub(crate) fn queued_switch_repair(record: &SessionRecord) -> Option<String> {
+    if binding_snapshot(record) != BindingSnapshot::Blocked {
+        return None;
+    }
+    match decode_next(record) {
+        DecodedNext::Valid(next)
+            if next.state == "queued"
+                && next.selection_source.as_deref() != Some("auto_failover") =>
+        {
+            Some(next.account)
+        }
+        DecodedNext::Valid(_) | DecodedNext::Absent | DecodedNext::Invalid => None,
+    }
+}
+
+/// Promote a [`queued_switch_repair`] intent into the immediate switch that
+/// `PUT /sessions/{id}/account` performs: the same incarnation, idleness, and
+/// input-fence checks publish a `pending` binding and clear the intent. The
+/// caller binds the returned account and revision on the control connection.
+pub(crate) fn begin_queued_switch_repair(
+    context: &CliContext,
+    id: &str,
+    expected_launch_id: &str,
+) -> Result<Option<(String, u64)>, CliError> {
+    let _lock = acquire_session_record_lock(context, id)?;
+    let _account_gate = crate::codex_app_server::acquire_account_mutation_gate(context, id)?;
+    let mut record = load_session_record(context, id)?;
+    let Some(account) = queued_switch_repair(&record) else {
+        return Ok(None);
+    };
+    let revision =
+        publish_switch_binding_locked(context, &mut record, expected_launch_id, &account)?;
+    Ok(Some((account, revision)))
+}
+
+fn publish_switch_binding_locked(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    expected_launch_id: &str,
+    account: &str,
+) -> Result<u64, CliError> {
+    let id = record.id.clone();
+    ensure_runtime(record, expected_launch_id).map_err(|_| {
         CliError::data(
             "codex-account-session-incarnation-conflict",
             "session was replaced before its Codex account switch was applied",
@@ -874,23 +984,23 @@ pub(crate) fn begin_switch_binding(
     if !broker_is_configured() {
         return Err(unsupported_error_with(Some(json!({ "id": id }))));
     }
-    let activity = crate::activity::state_for_view(context, &record);
+    let activity = crate::activity::state_for_view(context, record);
     let Some(activity) =
         activity.filter(|activity| activity.phase == crate::activity::TurnPhase::Waiting)
     else {
-        return Err(session_busy_error(&record));
+        return Err(session_busy_error(record));
     };
-    if input_fence(&record)?.is_some_and(|fence| {
+    if input_fence(record)?.is_some_and(|fence| {
         fence.launch_id == expected_launch_id && activity.revision <= fence.activity_revision
     }) {
-        return Err(session_busy_error(&record));
+        return Err(session_busy_error(record));
     }
     crate::auto_resume::cancel_for_account_switch_locked(
         context,
         &record.id,
         &jiff::Timestamp::now().to_string(),
     )?;
-    let prior = match decode_binding(&record) {
+    let prior = match decode_binding(record) {
         DecodedBinding::Valid(binding) => Some(binding),
         DecodedBinding::Absent | DecodedBinding::Invalid => None,
     };
@@ -901,9 +1011,9 @@ pub(crate) fn begin_switch_binding(
     // An immediate switch is authoritative over any queued, applying, failed,
     // or malformed next intent. Clear it under the same record lock before
     // publishing the pending binding so stale workers cannot win later.
-    clear_next(&mut record);
+    clear_next(record);
     store_binding(
-        &mut record,
+        record,
         &DurableBinding {
             schema_version: BINDING_SCHEMA_VERSION.to_string(),
             selected_account: account.to_string(),
@@ -916,7 +1026,7 @@ pub(crate) fn begin_switch_binding(
         },
     )?;
     record.updated_at = jiff::Timestamp::now().to_string();
-    write_session_record(context, &record)?;
+    write_session_record(context, record)?;
     Ok(revision)
 }
 
@@ -1189,9 +1299,17 @@ fn queue_next_account_inner(
     }
     let current = match decode_binding(&record) {
         DecodedBinding::Valid(binding) if binding.state == "bound" => Some(binding),
-        DecodedBinding::Absent if allow_unbound => None,
-        DecodedBinding::Absent => return Err(not_bound_error(&record, None)),
-        DecodedBinding::Valid(_) | DecodedBinding::Invalid => {
+        // The opt-in may also queue the repair of a failed, pending, or
+        // malformed binding (for example after a daemon rebuild). The binding
+        // stays blocked until the daemon promotes the intent into an explicit
+        // switch; see `begin_queued_switch_repair`.
+        DecodedBinding::Absent | DecodedBinding::Valid(_) | DecodedBinding::Invalid
+            if allow_unbound =>
+        {
+            None
+        }
+        DecodedBinding::Valid(binding) => return Err(not_bound_error(&record, Some(&binding))),
+        DecodedBinding::Absent | DecodedBinding::Invalid => {
             return Err(not_bound_error(&record, None));
         }
     };
@@ -1799,67 +1917,8 @@ fn unsupported_strategy_error() -> CliError {
 mod tests {
     use super::*;
     use nils_test_support::{EnvGuard, GlobalStateLock};
-    use std::collections::BTreeMap;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-
-    fn record_with_binding_value(value: Value) -> SessionRecord {
-        SessionRecord {
-            schema_version: crate::SESSION_DOCUMENT_VERSION.to_string(),
-            id: "binding-fixture".to_string(),
-            agent: "codex".to_string(),
-            mode: "interactive".to_string(),
-            coordination_mode: crate::cli::CoordinationMode::Advisory,
-            title: None,
-            title_state: None,
-            title_revision: 0,
-            cwd: "/repo".to_string(),
-            tmux_session: "hs-binding-fixture".to_string(),
-            prompt_file: None,
-            log_file: None,
-            created_at: "2030-01-01T00:00:00Z".to_string(),
-            updated_at: "2030-01-01T00:00:00Z".to_string(),
-            provider_resume: None,
-            runtime: Some(crate::RuntimeInfo {
-                kind: crate::codex_app_server::RUNTIME_KIND.to_string(),
-                tmux_session: "hs-binding-fixture".to_string(),
-                generation: 1,
-                started_at: "2030-01-01T00:00:00Z".to_string(),
-                launch_id: "runtime-binding-fixture".to_string(),
-                extra: BTreeMap::from([
-                    (
-                        crate::codex_app_server::PROTOCOL_KEY.to_string(),
-                        json!(crate::codex_app_server::PROTOCOL_VERSION),
-                    ),
-                    (
-                        crate::codex_app_server::SOCKET_KEY.to_string(),
-                        json!("/run/codex.sock"),
-                    ),
-                    (
-                        crate::codex_app_server::PROXY_KEY.to_string(),
-                        json!("/run/codex.proxy"),
-                    ),
-                    (
-                        crate::codex_app_server::THREAD_HANDOFF_KEY.to_string(),
-                        json!("/run/codex.thread"),
-                    ),
-                    (
-                        crate::codex_app_server::THREAD_ATTACHED_KEY.to_string(),
-                        json!("/run/codex.attached"),
-                    ),
-                ]),
-            }),
-            public_metadata: None,
-            agent_args: Vec::new(),
-            agent_bin: None,
-            extra: BTreeMap::from([(BINDING_KEY.to_string(), value)]),
-            lineage: None,
-            work: None,
-            lineage_adoption: None,
-            role: None,
-            resume_sidecar_extra: BTreeMap::new(),
-        }
-    }
 
     #[test]
     fn nickname_validation_rejects_paths_and_identity_values() {
@@ -2618,30 +2677,116 @@ esac
     }
 
     #[test]
-    fn unbound_queue_opt_in_still_rejects_blocked_binding_states() {
+    fn unbound_queue_opt_in_queues_repair_but_keeps_blocked_binding_states() {
         let lock = GlobalStateLock::new();
         let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
 
-        for (case, binding) in [
-            ("pending", valid_binding("pending")),
-            ("failed", valid_binding("failed")),
-            ("malformed", Value::String("malformed-binding".to_string())),
+        for (case, binding, state) in [
+            ("pending", valid_binding("pending"), "pending"),
+            ("failed", valid_binding("failed"), "failed"),
+            (
+                "malformed",
+                Value::String("malformed-binding".to_string()),
+                "invalid",
+            ),
         ] {
             let tmp = tempfile::TempDir::new().unwrap();
             let (context, record) = persist_record(&tmp, binding.clone());
-            let error = queue_next_account_with_unbound(
+            let error =
+                queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2")
+                    .unwrap_err();
+            assert_eq!(error.code(), "codex-account-not-bound", "{case}");
+            assert_eq!(error.details().unwrap()["state"], state, "{case}");
+            assert!(!reload(&context, &record.id).extra.contains_key(NEXT_KEY));
+
+            let queued = queue_next_account_with_unbound(
                 &context,
                 &record.id,
                 "runtime-binding-fixture",
                 "acct2",
             )
-            .unwrap_err();
-            assert_eq!(error.code(), "codex-account-not-bound", "{case}");
+            .unwrap();
+            assert_eq!(queued.next.map(|next| next.state), Some("queued"), "{case}");
 
             let current = reload(&context, &record.id);
             assert_eq!(current.extra.get(BINDING_KEY), Some(&binding), "{case}");
-            assert!(!current.extra.contains_key(NEXT_KEY), "{case}");
+            assert_eq!(queued_switch_repair(&current).as_deref(), Some("acct2"));
+            assert!(ensure_input_allowed(&current).is_err(), "{case}");
         }
+    }
+
+    #[test]
+    fn queued_repair_promotes_like_an_immediate_switch_under_the_same_fences() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = persisted_bound(&tmp);
+        rebuild_daemon_with_failed_rebind(&context, &record);
+        queue_next_account_with_unbound(&context, &record.id, "runtime-binding-fixture", "acct1")
+            .unwrap();
+
+        let error = begin_queued_switch_repair(&context, &record.id, "stale-launch").unwrap_err();
+        assert_eq!(error.code(), "codex-account-session-incarnation-conflict");
+        let mut busy = reload(&context, &record.id);
+        record_input_fence_locked(&context, &mut busy).unwrap();
+        let error = begin_queued_switch_repair(&context, &record.id, "runtime-binding-fixture")
+            .unwrap_err();
+        assert_eq!(error.code(), "codex-account-session-busy");
+        mark_waiting(&context, &record);
+
+        let (account, revision) =
+            begin_queued_switch_repair(&context, &record.id, "runtime-binding-fixture")
+                .unwrap()
+                .expect("queued repair is promoted");
+        assert_eq!((account.as_str(), revision), ("acct1", 8));
+        let pending = view_for_record(&reload(&context, &record.id));
+        assert_eq!(pending.state, "pending");
+        assert!(pending.next.is_none());
+        assert!(
+            begin_queued_switch_repair(&context, &record.id, "runtime-binding-fixture")
+                .unwrap()
+                .is_none()
+        );
+
+        let bound = finish_binding(
+            &context,
+            &record.id,
+            "runtime-binding-fixture",
+            &account,
+            revision,
+            Ok(()),
+        )
+        .unwrap();
+        assert_eq!(bound.state, "bound");
+        assert!(ensure_input_allowed(&reload(&context, &record.id)).is_ok());
+    }
+
+    #[test]
+    fn ready_bindings_and_automatic_intents_are_not_promoted_as_repairs() {
+        let lock = GlobalStateLock::new();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, r#"["/configured/broker"]"#);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = persisted_bound(&tmp);
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
+        assert!(queued_switch_repair(&reload(&context, &record.id)).is_none());
+
+        let mut failed = record_with_binding_value(valid_binding("failed"));
+        store_next(
+            &mut failed,
+            &DurableNextAccount {
+                schema_version: NEXT_SCHEMA_VERSION.to_string(),
+                account: "acct2".to_string(),
+                selection_source: Some("auto_failover".to_string()),
+                revision: 1,
+                intent_id: None,
+                state: "queued".to_string(),
+                applying_runtime_id: None,
+                failure_reason: None,
+                updated_at: "2030-01-01T00:00:00Z".to_string(),
+            },
+        )
+        .unwrap();
+        assert!(queued_switch_repair(&failed).is_none());
     }
 
     #[test]
@@ -3265,5 +3410,149 @@ esac
                 .next
                 .is_none()
         );
+    }
+
+    /// Replays a daemon rebuild: the reconnect fence republishes the bound
+    /// account as `pending` and the new control's startup rebind fails.
+    fn rebuild_daemon_with_failed_rebind(context: &CliContext, record: &SessionRecord) {
+        let prepared =
+            prepare_control_reconnect(context, &record.id, "runtime-binding-fixture").unwrap();
+        let (account, revision) = account_for_control_rebind(&prepared).unwrap().unwrap();
+        let view = finish_binding(
+            context,
+            &record.id,
+            "runtime-binding-fixture",
+            &account,
+            revision,
+            Err("apply_failed"),
+        )
+        .unwrap();
+        assert_eq!(view.state, "failed");
+    }
+
+    /// A broker argv that lists only `account`.
+    fn listing_broker(dir: &tempfile::TempDir, account: &str) -> String {
+        let script = dir.path().join("broker");
+        let listing = json!({
+            "schema_version": BROKER_SCHEMA_VERSION,
+            "accounts": [{ "account": account }]
+        });
+        fs::write(
+            &script,
+            format!("#!/bin/sh\n[ \"$1\" = list ] || exit 2\nprintf '%s\\n' '{listing}'\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        serde_json::to_string(&[script.to_string_lossy()]).unwrap()
+    }
+
+    #[test]
+    fn repair_of_an_account_the_broker_no_longer_lists_is_rejected_before_mutation() {
+        let lock = GlobalStateLock::new();
+        let broker_dir = tempfile::TempDir::new().unwrap();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, &listing_broker(&broker_dir, "acct2"));
+        for (case, binding) in [
+            ("failed", valid_binding("failed")),
+            ("pending", valid_binding("pending")),
+        ] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let (context, record) = persist_record(&tmp, binding.clone());
+            // The HTTP route, busy opt-in queue included, runs this precheck too.
+            let error = crate::session_account::codex_switch_precheck(
+                &record,
+                "runtime-binding-fixture",
+                "acct1",
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "codex-account-unknown", "{case}");
+
+            let error = crate::session_account::switch_unjournaled(
+                &context,
+                &record.id,
+                "acct1",
+                None,
+                std::path::Path::new("tmux"),
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "codex-account-unknown", "{case}");
+            let current = reload(&context, &record.id);
+            assert_eq!(current.extra.get(BINDING_KEY), Some(&binding), "{case}");
+            assert!(!current.extra.contains_key(NEXT_KEY), "{case}");
+        }
+
+        // Re-selecting the account bound to this runtime still cancels a
+        // queued switch without the broker listing it.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = persisted_bound(&tmp);
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
+        let switched = crate::session_account::switch_unjournaled(
+            &context,
+            &record.id,
+            "acct1",
+            None,
+            std::path::Path::new("tmux"),
+        )
+        .unwrap();
+        let switched = serde_json::to_value(&switched).unwrap();
+        assert_eq!(switched["codex_account"]["state"], "bound");
+        assert!(switched["codex_account"].get("next").is_none());
+    }
+
+    #[test]
+    fn cli_switch_queues_repair_of_a_binding_blocked_after_daemon_rebuild() {
+        let lock = GlobalStateLock::new();
+        // A repair is not a re-selection of a bound account, so the CLI lists it.
+        let broker_dir = tempfile::TempDir::new().unwrap();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, &listing_broker(&broker_dir, "acct1"));
+        for case in ["failed-after-rebuild", "malformed"] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let (context, record) = persisted_bound(&tmp);
+            if case == "malformed" {
+                let mut current = reload(&context, &record.id);
+                current
+                    .extra
+                    .insert(BINDING_KEY.to_string(), json!("malformed-binding"));
+                write_session_record(&context, &current).unwrap();
+            } else {
+                rebuild_daemon_with_failed_rebind(&context, &record);
+            }
+            let blocked = reload(&context, &record.id);
+            assert_eq!(
+                ensure_input_allowed(&blocked).unwrap_err().code(),
+                "codex-account-not-bound",
+                "{case}"
+            );
+
+            let switched = crate::session_account::switch_unjournaled(
+                &context,
+                &record.id,
+                "acct1",
+                None,
+                std::path::Path::new("tmux"),
+            )
+            .unwrap_or_else(|err| panic!("{case}: CLI switch failed: {}", err.code()));
+            let switched = serde_json::to_value(&switched).unwrap();
+            assert_eq!(
+                switched["session_incarnation"], "runtime-binding-fixture",
+                "{case}"
+            );
+            assert_eq!(
+                switched["codex_account"]["next"]["account"], "acct1",
+                "{case}"
+            );
+            assert_eq!(
+                switched["codex_account"]["next"]["state"], "queued",
+                "{case}"
+            );
+
+            // Queuing the repair never unblocks the binding by itself.
+            let current = reload(&context, &record.id);
+            assert_eq!(
+                current.extra.get(BINDING_KEY),
+                blocked.extra.get(BINDING_KEY),
+                "{case}"
+            );
+            assert!(ensure_input_allowed(&current).is_err(), "{case}");
+        }
     }
 }
