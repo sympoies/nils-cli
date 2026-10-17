@@ -15,6 +15,15 @@ pub(crate) fn input(agent: &str, pane: &str) -> Option<String> {
     if region.len() < 2 {
         return None;
     }
+    // At a wrap boundary, written Claude padding and a pasted space are
+    // indistinguishable. Trimming there would invent a different input.
+    if agent == "claude"
+        && region[..region.len() - 1]
+            .iter()
+            .any(|row| row.ends_with(' '))
+    {
+        return None;
+    }
     let start = lines
         .iter()
         .position(|line| std::ptr::eq(*line, region[0]))?;

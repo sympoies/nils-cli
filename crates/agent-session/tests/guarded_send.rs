@@ -55,10 +55,6 @@ if command == 'has-session':
         p.write_text(json.dumps(d))
     sys.exit(0)
 if command == 'show-environment':
-    # Leave less than one command timeout for deletion during cleanup.
-    if (root / 'backspace-stalls').exists() and (root / 'composer').read_text():
-        import time
-        time.sleep(0.6)
     key = args[-1]
     values = {'AGENT_SESSION_ID': 'guarded', 'AGENT_SESSION_RUNTIME_ID': 'runtime-one', 'AGENT_SESSION_STATE_DIR': str(root / 'state')}
     if key == 'AGENT_SESSION_RUNTIME_ID':

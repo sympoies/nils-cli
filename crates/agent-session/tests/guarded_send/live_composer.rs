@@ -284,7 +284,7 @@ fn wrapped_refusal_preserves_and_classifies_a_mixed_draft() {
 }
 
 #[test]
-fn cleanup_timeout_does_not_report_a_pre_deletion_observation_as_current() {
+fn stalled_backspace_reports_a_fresh_observation() {
     let fixture = Fixture::new("claude");
     live(
         &fixture,
@@ -293,7 +293,25 @@ fn cleanup_timeout_does_not_report_a_pre_deletion_observation_as_current() {
     let output = guarded(&fixture);
     let details = details(&output, "send-session-not-idle");
     assert_eq!(details["cleared"], false);
+    assert_eq!(details["remaining_input"], "pasted_text");
+    assert_eq!(details["remaining_characters"], "continue-fixture".len());
+    assert_eq!(details["pasted_text_present"], true);
+    assert_eq!(composer(&fixture), "continue-fixture");
+    assert!(submissions(&fixture).is_empty());
+}
+
+#[test]
+fn claude_wrap_boundary_spaces_are_reported_as_unobservable_without_deletion() {
+    let text = format!("{} {}", "x".repeat(77), "y".repeat(100));
+    let fixture = Fixture::new("claude");
+    live(&fixture, &["bare-composer", "wrap-80"]);
+    let output = guarded_text(&fixture, &text);
+    let details = details(&output, "send-composer-unobservable");
+    assert_eq!(details["cleared"], false);
     assert_eq!(details["remaining_input"], "unobservable");
     assert!(details.get("remaining_characters").is_none());
+    assert!(details.get("pasted_text_present").is_none());
+    assert_eq!(composer(&fixture), text);
+    assert_eq!(backspaces(&fixture), 0);
     assert!(submissions(&fixture).is_empty());
 }

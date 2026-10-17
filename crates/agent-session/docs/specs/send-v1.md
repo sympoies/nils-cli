@@ -271,8 +271,10 @@ to write the session record after Enter do not.
 wrapped rows only to compare their complete content with the paste; submission
 admission still requires a single observable row. Mixed drafts, blank
 continuation rows, dialogs, paste placeholders and unreadable captures are
-preserved. Matching text is removed in one bounded repeated-Backspace command
-and emptiness is read back.
+preserved. Claude row-end spaces at a wrap boundary cannot be distinguished
+from renderer padding, so those captures are reported as `unobservable` and
+left untouched. Matching text is removed in one bounded repeated-Backspace
+command and emptiness is read back.
 
 `remaining_input` classifies the last cleanup observation as `empty`,
 `pasted_text`, `different_text`, or `unobservable`. When observable,
