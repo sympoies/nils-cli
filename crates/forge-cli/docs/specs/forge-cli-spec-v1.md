@@ -1049,20 +1049,27 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   head and the review commit both equal `--expected-head`
   (`review_dismiss_head_mismatch`); the review is `CHANGES_REQUESTED`
   (`review_dismiss_state_invalid`); and the author is a provider App account
-  whose login is listed in `[[review_convergence.bots]]`
-  (`review_dismiss_author_not_automated`). A login spelling never makes an
-  author automated, and a configured login on a user account is refused.
+  whose login is listed in the user-global `[[review_convergence.bots]]`
+  (`review_dismiss_author_not_automated`). Repository `.forge-cli.toml` never
+  grants dismissal authority, because a PR branch can edit it. A login spelling
+  never makes an author automated, and a configured login on a user account is
+  refused.
 - Dismissal never replaces designated review. The PR must hold a designated
   PASS admitted at `--expected-head` by the same gate as `review-handoff check`
-  (`awaiting_designated_review`, also returned when no handoff exists). The
-  designated reviewer's own review is refused
-  (`review_dismiss_designated_reviewer`), and the designated reviewer session
-  cannot dismiss (`review_dismiss_self_review`).
+  (`awaiting_designated_review`, also returned when no handoff exists or a
+  blocking ledger finding is open). The review must be submitted before that
+  PASS, so the designated reviewer could judge it
+  (`review_dismiss_after_designated_pass`). The designated reviewer's own review
+  is refused (`review_dismiss_designated_reviewer`). A valid `AGENT_SESSION_ID`
+  is required, and neither the designated reviewer session nor the designated
+  review account may dismiss (`review_dismiss_self_review`).
 - The reason, head, and authenticated actor are posted as the provider
   dismissal message, which GitHub retains with the review. No review-loop
   ledger record is appended, so existing ledger readers stay compatible.
-  `--dry-run` runs every guard and prints the dismissal plan. GitLab and local
-  providers return `provider_unsupported` (exit 64).
+  `--dry-run` runs every guard and prints the dismissal plan. An unreadable
+  actor (`review_dismiss_actor_unknown`) or an unconfirmed provider response
+  (`review_dismiss_unconfirmed`) fails with exit 69. GitLab and local providers
+  return `provider_unsupported` (exit 64).
 
 ### `pr review-loop inspect` / `observe` / `extend` / `validate`
 

@@ -979,7 +979,9 @@ operations:
       - review_dismiss_author_not_automated
       - review_dismiss_designated_reviewer
       - review_dismiss_self_review
+      - review_dismiss_after_designated_pass
       - awaiting_designated_review
+      - review_dismiss_actor_unknown
       - review_dismiss_unconfirmed
     backends:
       github:
@@ -1003,7 +1005,7 @@ operations:
         reason: string
         actor: string
         dismissed_at: string # when forge-cli observed the provider confirmation
-    notes: "Automated means a provider App (Bot) account whose login is listed in [[review_convergence.bots]]; a login spelling alone never qualifies. The PR head and review commit must equal --expected-head, the review must be CHANGES_REQUESTED, the designated PASS must be admitted at that head by the review-handoff check gate, the designated reviewer's own review is refused, and the designated reviewer session cannot dismiss. Reason, head and actor are recorded in the provider dismissal message; no review-loop ledger record is appended."
+    notes: "Automated means a provider App (Bot) account whose login is listed in the user-global [[review_convergence.bots]]; repository config never grants dismissal authority and a login spelling alone never qualifies. The PR head and review commit must equal --expected-head, the review must be CHANGES_REQUESTED and submitted before the designated PASS admitted at that head by the review-handoff check gate, the designated reviewer's own review is refused, and a valid AGENT_SESSION_ID must show the actor is neither the designated reviewer session nor the designated review account. Reason, head and actor are recorded in the provider dismissal message; no review-loop ledger record is appended."
 
   - id: pr.review-loop.inspect
     schema_version: cli.forge-cli.pr.review-loop.inspect.v1

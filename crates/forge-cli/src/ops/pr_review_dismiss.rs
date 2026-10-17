@@ -3,11 +3,13 @@
 //!
 //! An automated review App can keep blocking a head whose finding has already
 //! been dispositioned. Dismissal is admitted only for a provider App account
-//! that is explicitly configured in `[[review_convergence.bots]]`, on the
-//! expected head, and only once the designated reviewer has published a PASS
-//! at that head. It never replaces designated review: the designated
-//! reviewer's own review cannot be dismissed, and the designated reviewer
-//! session cannot dismiss. GitHub-only; GitLab has no review dismissal.
+//! that is explicitly configured in the user-global `[[review_convergence.bots]]`,
+//! on the expected head, submitted before the designated reviewer's PASS at
+//! that head. Repository config never grants dismissal authority, because a PR
+//! branch can edit it. Dismissal never replaces designated review: the
+//! designated reviewer's own review cannot be dismissed, and neither the
+//! designated reviewer session nor its provider account can dismiss.
+//! GitHub-only; GitLab has no review dismissal.
 
 use std::ffi::OsString;
 
@@ -16,11 +18,11 @@ use serde::Serialize;
 
 use crate::backend::{BackendCall, BackendProgram, BackendRunner, DryRunPayload};
 use crate::cli::{BINARY, GlobalFlags, PrReviewDismissArgs};
-use crate::config::ReviewConvergenceBot;
+use crate::config::{ForgeConfig, ReviewConvergenceBot};
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::ops::github_write::text_file;
-use crate::ops::{pr_merge, pr_review, pr_review_handoff, pr_reviews, pr_view};
+use crate::ops::{pr_review, pr_review_handoff, pr_reviews, pr_view};
 use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
 use crate::validations::{no_agent_attribution, no_local_path};
@@ -65,6 +67,7 @@ struct TargetReview {
     author_node_id: Option<String>,
     state: String,
     commit_sha: String,
+    submitted_at: String,
 }
 
 pub fn run(
@@ -73,8 +76,7 @@ pub fn run(
     format: OutputFormat,
 ) -> Result<i32, ForgeError> {
     let runner = default_runner();
-    let workdir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    run_with(&runner, global, args, format, &workdir, git_remote_url)
+    run_with(&runner, global, args, format, git_remote_url)
 }
 
 pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
@@ -82,7 +84,6 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     global: &GlobalFlags,
     args: PrReviewDismissArgs,
     format: OutputFormat,
-    workdir: &std::path::Path,
     remote_url_lookup: F,
 ) -> Result<i32, ForgeError> {
     let ctx = detect(
@@ -110,7 +111,17 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     }
     no_local_path(&reason, "dismissal reason")?;
     no_agent_attribution(&reason, "dismissal reason")?;
-    let bots = pr_merge::resolve_review_convergence_for_workdir(workdir, None, ctx.provider)?.bots;
+    // Only the operator's user-global layer may name automated identities.
+    let bots = ForgeConfig::load_global()
+        .resolve_review_convergence(None)
+        .bots;
+    let actor_session = std::env::var("AGENT_SESSION_ID").unwrap_or_default();
+    let actor_session = pr_review_handoff::session_digest(&actor_session).map_err(|_| {
+        refuse(
+            "review_dismiss_self_review",
+            "a valid AGENT_SESSION_ID is required to prove the actor is not the designated reviewer",
+        )
+    })?;
 
     let view = pr_view::compute(runner, &ctx, args.id)?;
     let head = args.expected_head.as_str();
@@ -139,7 +150,7 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     if !is_configured_automated(target.author_type.as_deref(), &target.author, &bots) {
         return Err(refuse(
             "review_dismiss_author_not_automated",
-            "the review author is not a configured automated-review App account",
+            "the review author is not an automated-review App account configured in the user-global config",
         ));
     }
 
@@ -158,17 +169,13 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             "the designated reviewer's own review cannot be dismissed",
         ));
     }
-    let actor_session = std::env::var("AGENT_SESSION_ID").unwrap_or_default();
-    if !actor_session.is_empty()
-        && pr_review_handoff::session_digest(&actor_session)
-            .is_ok_and(|digest| digest == handoff.reviewer_digest)
-    {
+    if actor_session == handoff.reviewer_digest {
         return Err(refuse(
             "review_dismiss_self_review",
             "the designated reviewer session cannot dismiss reviews on the head it reviews",
         ));
     }
-    pr_review_handoff::ensure_published(
+    let pass_at = pr_review_handoff::ensure_published_pass_time(
         runner,
         &ctx,
         args.id,
@@ -176,9 +183,30 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         head,
         &state.chain,
         state.handoff_created_at.as_deref(),
-    )?;
+    )?
+    .ok_or_else(|| {
+        refuse(
+            "awaiting_designated_review",
+            "review dismissal requires a designated-review PASS at --expected-head",
+        )
+    })?;
+    // The PASS must have been able to see the finding; a later automated
+    // review raises something the designated reviewer has not judged.
+    let parse = |t: &str| t.parse::<jiff::Timestamp>().map_err(|_| incomplete());
+    if parse(&target.submitted_at)? >= parse(&pass_at)? {
+        return Err(refuse(
+            "review_dismiss_after_designated_pass",
+            "the review was submitted after the designated PASS; request a fresh designated review",
+        ));
+    }
 
     let actor = read_actor(runner, &ctx)?;
+    if login_name(&actor) == login_name(&handoff.review_author) {
+        return Err(refuse(
+            "review_dismiss_self_review",
+            "the designated review account cannot dismiss reviews on the head it reviews",
+        ));
+    }
     let message = format!(
         "{reason}\n\nDismissed with forge-cli pr review-dismiss at head {head} by {actor}."
     );
@@ -238,14 +266,16 @@ fn is_configured_automated(
     author: &str,
     bots: &[ReviewConvergenceBot],
 ) -> bool {
-    fn app_name(login: &str) -> String {
-        let login = login.trim().to_ascii_lowercase();
-        login.strip_suffix("[bot]").unwrap_or(&login).to_string()
-    }
     author_type == Some("Bot")
         && bots
             .iter()
-            .any(|bot| app_name(&bot.login) == app_name(author))
+            .any(|bot| login_name(&bot.login) == login_name(author))
+}
+
+/// Case-folded login with the REST App suffix removed, for identity equality.
+fn login_name(login: &str) -> String {
+    let login = login.trim().to_ascii_lowercase();
+    login.strip_suffix("[bot]").unwrap_or(&login).to_string()
 }
 
 fn read_target<R: BackendRunner>(
@@ -272,6 +302,7 @@ fn read_target<R: BackendRunner>(
         author_node_id: text("/user/node_id").map(str::to_string),
         state: text("/state").ok_or_else(incomplete)?.to_string(),
         commit_sha: text("/commit_id").ok_or_else(incomplete)?.to_string(),
+        submitted_at: text("/submitted_at").ok_or_else(incomplete)?.to_string(),
     })
 }
 
@@ -286,7 +317,7 @@ impl TargetReview {
             author_type: self.author_type.clone(),
             state: self.state.clone(),
             commit_sha: self.commit_sha.clone(),
-            submitted_at: String::new(),
+            submitted_at: self.submitted_at.clone(),
             summary: String::new(),
             summary_truncated: false,
         }

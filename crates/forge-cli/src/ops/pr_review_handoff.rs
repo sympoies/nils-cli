@@ -639,10 +639,37 @@ pub(crate) fn ensure_published<R: BackendRunner>(
     chain: &review_state::ReviewStateChain,
     handoff_created_at: Option<&str>,
 ) -> Result<Option<SyncCarryOver>, ForgeError> {
+    published_admission(runner, ctx, number, url, head, chain, handoff_created_at)
+        .map(|admission| admission.sync_carry_over)
+}
+
+/// Submission time of the designated PASS that `ensure_published` admits for
+/// `head`; `None` only when no reviewer is assigned.
+pub(crate) fn ensure_published_pass_time<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+    url: &str,
+    head: &str,
+    chain: &review_state::ReviewStateChain,
+    handoff_created_at: Option<&str>,
+) -> Result<Option<String>, ForgeError> {
+    published_admission(runner, ctx, number, url, head, chain, handoff_created_at)
+        .map(|admission| admission.approval.map(|approval| approval.submitted_at))
+}
+
+fn published_admission<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+    url: &str,
+    head: &str,
+    chain: &review_state::ReviewStateChain,
+    handoff_created_at: Option<&str>,
+) -> Result<Admission, ForgeError> {
     let admission = admit_published(runner, ctx, number, url, head, chain, handoff_created_at)?;
     admission.require_policy(latest(chain).map(|h| h.approval_policy).unwrap_or_default())?;
-    let carry = admission.sync_carry_over;
-    if let Some(c) = &carry
+    if let Some(c) = &admission.sync_carry_over
         && recorded_carry_over(chain, head) != Some(c)
     {
         return Err(ForgeError::validation(
@@ -654,7 +681,7 @@ pub(crate) fn ensure_published<R: BackendRunner>(
             )),
         ));
     }
-    Ok(carry)
+    Ok(admission)
 }
 
 /// Admit the designated PASS for `head`. A PASS at the reviewed head carries

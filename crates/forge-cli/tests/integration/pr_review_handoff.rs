@@ -146,7 +146,7 @@ fn fixture_with_native_and_comments(
         .map(|r| {
             let native = native_override.clone().unwrap_or_else(|| {
                 json!({"id":r["databaseId"],"html_url":r["url"],
-                "state":r["state"],"commit_id":r["commit"]["oid"],
+                "state":r["state"],"commit_id":r["commit"]["oid"],"submitted_at":r["submittedAt"],
                 "user":{"login":r["author"]["login"], "type":r["author"]["__typename"], "node_id":r["author"]["id"]},"body":r["body"]})
             });
             let id = r["databaseId"].as_u64().unwrap();

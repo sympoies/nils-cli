@@ -551,8 +551,8 @@ the recorded `--coordinator-session`, and exact `--base-sha`, `--expected-head`,
 and `--expected-state`. Fresh terminal session-board evidence is required;
 the transfer preserves findings and keeps review verdicts reviewer-owned.
 
-When a configured automated review App still blocks a head the designated
-reviewer has passed, `pr review-dismiss <id> --review-id <id> --expected-head
+When an automated review App configured in the user-global config still blocks
+a head the designated reviewer has passed, `pr review-dismiss <id> --review-id <id> --expected-head
 <sha> --reason-file <path>` dismisses that one CHANGES_REQUESTED review. It
 refuses human, unconfigured, wrong-head and wrong-state reviews, and any PR
 without a designated PASS at that head. See the

@@ -5,6 +5,10 @@ use std::fs;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
+use forge_cli::ops::review_state::{
+    self, ReviewFindingObservation, ReviewFindingStatus, ReviewStatePayload, ReviewStateRecord,
+};
+
 use super::pr_review_handoff::{assert_refusal, fixture, handoff, records, review};
 use super::support::{CmdOutput, StubEnv, parse_envelope, run_forge_cli};
 
@@ -12,11 +16,22 @@ const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OLD: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const BOT_REVIEW_ID: u64 = 5;
 
+/// An automated review submitted before the designated PASS (12:00:02).
 fn automated_review(head: &str, state: &str, login: &str, typename: &str) -> Value {
+    automated_review_at(head, state, login, typename, "2026-07-20T12:00:01Z")
+}
+
+fn automated_review_at(
+    head: &str,
+    state: &str,
+    login: &str,
+    typename: &str,
+    submitted_at: &str,
+) -> Value {
     json!({"id":"REVIEW_5", "databaseId":BOT_REVIEW_ID,
         "url":"https://github.com/acme/widgets/pull/7#pullrequestreview-5",
         "author":{"login":login, "__typename":typename, "id":"NODE_AUTOMATED"},
-        "state":state, "commit":{"oid":head}, "submittedAt":"2026-07-20T12:00:04Z",
+        "state":state, "commit":{"oid":head}, "submittedAt":submitted_at,
         "body":"Automated finding.", "viewerDidAuthor":false})
 }
 
@@ -28,6 +43,18 @@ fn dismissal_fixture(target: Value, with_pass: bool) -> StubEnv {
         reviews.push(review(HEAD, "pass"));
     }
     with_wrapper(fixture(HEAD, &records(handoff(None), Some(HEAD)), reviews))
+}
+
+fn dismissal_fixture_with(target: Value, with_pass: bool, seeded: &[ReviewStateRecord]) -> StubEnv {
+    let mut reviews = vec![target];
+    if with_pass {
+        reviews.push(review(HEAD, "pass"));
+    }
+    with_wrapper(fixture(HEAD, seeded, reviews))
+}
+
+fn configured_target() -> Value {
+    automated_review(HEAD, "CHANGES_REQUESTED", "lint-app", "Bot")
 }
 
 /// Answer the actor and dismissal calls, then delegate every read to the
@@ -44,10 +71,10 @@ fn with_wrapper(stub: StubEnv) -> StubEnv {
     let script = format!(
         r#"#!/bin/sh
 case "$*" in
-  "api user --jq .login") echo "$*" >> "{log}"; echo "delivery-actor"; exit 0 ;;
+  "api user --jq .login") echo "$*" >> "{log}"; echo "${{ACTOR_LOGIN-delivery-actor}}"; exit 0 ;;
   "api --method PUT repos/acme/widgets/pulls/7/reviews/{BOT_REVIEW_ID}/dismissals "*)
     echo "$*" >> "{log}"
-    echo '{{"id":{BOT_REVIEW_ID},"state":"DISMISSED","commit_id":"{HEAD}"}}'
+    echo "{{\"id\":{BOT_REVIEW_ID},\"state\":\"${{DISMISS_STATE:-DISMISSED}}\",\"commit_id\":\"{HEAD}\"}}"
     exit 0 ;;
 esac
 exec "{base}" "$@"
@@ -335,4 +362,137 @@ fn gitlab_refuses_as_unsupported_before_any_call() {
         output.stdout
     );
     assert!(output.stdout.contains("GitLab"), "{}", output.stdout);
+}
+
+#[test]
+fn repository_config_never_grants_dismissal_authority() {
+    // A PR branch can edit `.forge-cli.toml`, so only the user-global layer counts.
+    let stub = dismissal_fixture(configured_target(), true);
+    let dir = stub.tempdir.path();
+    fs::remove_file(dir.join("xdg-config/forge-cli/config.toml")).unwrap();
+    fs::write(
+        dir.join(".forge-cli.toml"),
+        "[[review_convergence.bots]]\nlogin = \"lint-app\"\nmode = \"observed\"\n",
+    )
+    .unwrap();
+    assert_refusal(
+        &dismiss(&stub, HEAD, REASON),
+        65,
+        "review_dismiss_author_not_automated",
+    );
+    assert_untouched(&stub);
+}
+
+#[test]
+fn review_submitted_after_the_designated_pass_is_refused() {
+    let stub = dismissal_fixture(
+        automated_review_at(
+            HEAD,
+            "CHANGES_REQUESTED",
+            "lint-app",
+            "Bot",
+            "2026-07-20T12:00:04Z",
+        ),
+        true,
+    );
+    assert_refusal(
+        &dismiss(&stub, HEAD, REASON),
+        65,
+        "review_dismiss_after_designated_pass",
+    );
+    assert_untouched(&stub);
+}
+
+#[test]
+fn actor_must_prove_it_is_neither_the_designated_session_nor_account() {
+    // The harness inherits the caller's session id, so blank it explicitly.
+    let anonymous = dismissal_fixture(configured_target(), true).env("AGENT_SESSION_ID", "");
+    assert_refusal(
+        &dismiss(&anonymous, HEAD, REASON),
+        65,
+        "review_dismiss_self_review",
+    );
+    assert_eq!(calls(&anonymous), "");
+
+    let same_account =
+        dismissal_fixture(configured_target(), true).env("ACTOR_LOGIN", "review-app[bot]");
+    assert_refusal(
+        &dismiss(&same_account, HEAD, REASON),
+        65,
+        "review_dismiss_self_review",
+    );
+    assert_untouched(&same_account);
+}
+
+#[test]
+fn open_blocking_ledger_finding_blocks_dismissal_despite_a_pass() {
+    let mut seeded = records(handoff(None), None);
+    let open = ReviewFindingObservation {
+        fingerprint: "correctness:fixture:open-finding".into(),
+        root_cause_fingerprint: None,
+        blocking: true,
+        status: ReviewFindingStatus::Open,
+        threads: vec![],
+    };
+    let state = review_state::observe_review_loop(None, HEAD, &[open])
+        .unwrap()
+        .state;
+    let previous = seeded.last().unwrap().record_digest.clone();
+    seeded.push(
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            HEAD,
+            1,
+            Some(previous),
+            ReviewStatePayload::ReviewLoop { state },
+        )
+        .unwrap()
+        .with_assignment_generation(Some(1))
+        .unwrap(),
+    );
+    let stub = dismissal_fixture_with(configured_target(), true, &seeded);
+    assert_refusal(
+        &dismiss(&stub, HEAD, REASON),
+        65,
+        "awaiting_designated_review",
+    );
+    assert_untouched(&stub);
+}
+
+#[test]
+fn unsafe_reason_text_is_refused_before_any_provider_call() {
+    for (reason, kind) in [
+        (
+            "Logs are under /Users/dev/Project/secret/out.md\n",
+            "local_path_present",
+        ),
+        (
+            "Dispositioned.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n",
+            "agent_attribution_present",
+        ),
+    ] {
+        let stub = dismissal_fixture(configured_target(), true);
+        assert_refusal(&dismiss(&stub, HEAD, reason), 65, kind);
+        assert_eq!(calls(&stub), "");
+    }
+}
+
+#[test]
+fn unknown_actor_or_unconfirmed_dismissal_fails_closed() {
+    let unknown = dismissal_fixture(configured_target(), true).env("ACTOR_LOGIN", "");
+    assert_refusal(
+        &dismiss(&unknown, HEAD, REASON),
+        69,
+        "review_dismiss_actor_unknown",
+    );
+    assert_untouched(&unknown);
+
+    let unconfirmed =
+        dismissal_fixture(configured_target(), true).env("DISMISS_STATE", "CHANGES_REQUESTED");
+    assert_refusal(
+        &dismiss(&unconfirmed, HEAD, REASON),
+        69,
+        "review_dismiss_unconfirmed",
+    );
 }

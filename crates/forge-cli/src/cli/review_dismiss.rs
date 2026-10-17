@@ -5,12 +5,14 @@ use clap::Args;
 #[derive(Args, Debug, Clone)]
 #[command(after_help = "GUARDS\n  \
       The review must be CHANGES_REQUESTED, on --expected-head, and authored by a \
-      provider App account whose login is listed in [[review_convergence.bots]]. \
-      A login alone never makes an author automated. The PR must hold a \
-      designated-review PASS at --expected-head, the designated reviewer's own \
-      review is never dismissable, and the designated reviewer session cannot \
-      dismiss. The reason is posted as the dismissal message together with the \
-      head and actor. --dry-run runs every guard and prints the dismissal plan.")]
+      provider App account whose login is listed in the user-global \
+      [[review_convergence.bots]]; repository config never counts. A login alone \
+      never makes an author automated. The PR must hold a designated-review PASS \
+      at --expected-head submitted after the review. The designated reviewer's own \
+      review is never dismissable, and a valid AGENT_SESSION_ID must show the actor \
+      is neither the designated reviewer session nor its provider account. The \
+      reason is posted as the dismissal message together with the head and actor. \
+      --dry-run runs every guard and prints the dismissal plan.")]
 pub struct PrReviewDismissArgs {
     /// Numeric pull request id.
     pub id: u64,
