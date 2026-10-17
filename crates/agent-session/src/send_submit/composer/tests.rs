@@ -537,3 +537,17 @@ fn composer_holds_pasted_text_modulo_claude_padding() {
     assert!(composer_holds("codex", "reply now", "reply now"));
     assert!(!composer_holds("codex", "reply now", "reply now  "));
 }
+
+/// A draft row that merely ends like a title border must not open the box.
+#[test]
+fn claude_draft_rows_never_open_the_box_as_a_titled_border() {
+    let rule = "────────────────────";
+    // A full rule already opens the box: the two-row draft stays unobservable.
+    let pane = format!("{rule}\n❯\u{a0}draft ─\n❯\n{rule}\n  status");
+    assert_eq!(exact_composer_input("claude", &pane), None);
+    // No full rule above: a continuation row or a prompt-glyph row is not a border.
+    for row in ["  more of the draft ─", "❯ another draft ─"] {
+        let pane = format!("{row}\n❯\u{a0}\n{rule}\n  status");
+        assert_eq!(exact_composer_input("claude", &pane), None, "{row}");
+    }
+}

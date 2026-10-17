@@ -11,6 +11,7 @@ use crate::{CliError, SpecialKey, send_submit, send_tmux_key_with_timeout};
 /// admission budget the refusal may already have spent.
 const CLEAR_BUDGET: Duration = Duration::from_millis(2500);
 const CLEAR_POLL: Duration = Duration::from_millis(100);
+const CLEAR_SETTLE: Duration = Duration::from_millis(300);
 
 impl Admission<'_> {
     /// Report a failure that happened after the send pasted `text`. The text is
@@ -56,9 +57,15 @@ impl Admission<'_> {
             send_submit::exact_composer_input(&self.record.agent, &pane)
         };
         self.identity("cleanup").ok()?;
-        let input = observe("cleanup")?;
+        let mut input = observe("cleanup")?;
         if input.is_empty() {
-            return Some(());
+            // A paste can still be rendering: only a second empty read proves it gone.
+            self.timeout("cleanup").ok()?;
+            thread::sleep(CLEAR_SETTLE);
+            input = observe("cleanup")?;
+            if input.is_empty() {
+                return Some(());
+            }
         }
         if !send_submit::composer_holds(&self.record.agent, &input, text) {
             return None;

@@ -75,7 +75,9 @@ if command == 'load-buffer':
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
         p.write_text(json.dumps(d))
 elif command == 'paste-buffer':
-    with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
+    if (root / 'late-render').exists(): (root / 'late').write_text((root / 'buffer').read_text())
+    else:
+        with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
     if (root / 'fail-capture-after-paste').exists(): (root / 'capture-fails').touch()
     if (root / 'inject-draft').exists():
         with (root / 'composer').open('a') as out: out.write(' user addition')
@@ -91,6 +93,13 @@ elif command == 'send-keys' and args[-1] == 'Enter':
     (root / 'composer').write_text('')
     if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
 elif command == 'capture-pane':
+    if (root / 'late').exists():
+        # A slow renderer shows the paste only from the third capture after it.
+        n = int((root / 'late-n').read_text()) + 1 if (root / 'late-n').exists() else 1
+        (root / 'late-n').write_text(str(n))
+        if n >= 3:
+            with (root / 'composer').open('a') as out: out.write((root / 'late').read_text())
+            (root / 'late').unlink()
     count_path = root / 'capture-count'
     count = int(count_path.read_text()) + 1 if count_path.exists() else 1
     count_path.write_text(str(count))

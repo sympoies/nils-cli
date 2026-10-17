@@ -68,10 +68,12 @@ fail closed for these checks. Exact composer
 verification supports an unambiguous, single visible input line. Dialogs,
 unknown layouts, wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
+
 Claude's composer is the box between its last horizontal border and the one
 above the input row. A top border that carries a session title keeps only the
 dashes the title leaves, so a long title can leave none: such a border starts
-with the title and ends in a lone dash after a space.
+with the title and ends in a lone dash after a space. It opens the box only
+when no full border already does, so rows of a draft never open it.
 
 Guard captures use `tmux capture-pane -p -e -N -T` to retain occupied spaces
 and exclude unused terminal cells.
@@ -255,7 +257,9 @@ Observation refusals include the failed `guard` and `stage` (`admission` or
 session/runtime and I/O failure reasons still apply. A nonzero exit after
 claiming must never be treated as permission to resend the same delivery.
 
-Any failure after the paste adds `pasted: true` and `cleared` to its details.
+A failure while the guarded send checks or presses its Enter adds
+`pasted: true` and `cleared` to its details; `send-submit-stuck` and a failure
+to write the session record after Enter do not.
 `cleared: true` means the composer was read back without the pasted text;
 `false` means it may remain and the message says so.
 

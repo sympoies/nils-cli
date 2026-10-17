@@ -162,3 +162,18 @@ fn refusal_after_paste_leaves_an_unobservable_composer_alone() {
     assert_eq!(details["cleared"], false);
     assert_eq!(backspaces(&fixture), 0);
 }
+
+#[test]
+fn refusal_after_paste_waits_out_a_slow_renderer_before_declaring_the_input_empty() {
+    let fixture = Fixture::new("claude");
+    live(
+        &fixture,
+        &["bare-composer", "start-after-paste", "late-render"],
+    );
+    let output = guarded(&fixture);
+    let details = details(&output, "send-session-not-idle");
+    assert_eq!(details["pasted"], true);
+    assert_eq!(details["cleared"], true, "{details}");
+    assert_eq!(composer(&fixture), "");
+    assert_eq!(backspaces(&fixture), "continue-fixture".len());
+}

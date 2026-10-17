@@ -184,14 +184,23 @@ fn claude_rules(lines: &[&str]) -> Vec<usize> {
 /// The rows of Claude's input box border: the last rule closes it, and the rule
 /// before it opens it. A title is drawn into the opening border and takes every
 /// dash that is left, so a long title leaves a line that starts with the title
-/// and ends in ` ─`. Such a line opens the box only directly above the input row.
+/// and ends in ` ─`. Such a line opens the box only when no full rule already
+/// opens it above an input row, and only directly above the input row. Rows of
+/// a draft (the prompt glyph, or the two-space continuation indent) never open it.
 fn claude_box(lines: &[&str]) -> Option<(usize, usize)> {
     let rules = claude_rules(lines);
     let bottom = *rules.last()?;
-    let titled = (0..bottom).rev().find(|&index| {
-        lines[index].trim_end().ends_with(" ─") && lines[index + 1].trim_start().starts_with('❯')
-    });
     let ruled = rules.iter().rev().nth(1).copied();
+    if ruled.is_some_and(|rule| lines[rule + 1].trim_start().starts_with('❯')) {
+        return ruled.map(|rule| (rule, bottom));
+    }
+    let titled = (0..bottom).rev().find(|&index| {
+        let line = lines[index];
+        line.trim_end().ends_with(" ─")
+            && !line.starts_with("  ")
+            && !line.trim_start().starts_with('❯')
+            && lines[index + 1].trim_start().starts_with('❯')
+    });
     Some((titled.into_iter().chain(ruled).max()?, bottom))
 }
 
