@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Resource admission regressions; fake workloads, no compiler or systemd."""
+import contextlib
 import importlib.util
+import io
+import json
 import multiprocessing
 import os
 from pathlib import Path
@@ -11,7 +14,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import DEFAULT, patch
 
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location('gate_resources', ROOT / 'scripts/ci/gate-resources.py')
@@ -24,6 +27,24 @@ def hold_slot(directory, started):
     started.set()
     time.sleep(30)
     lease.close()
+
+
+def legacy_first_ticket(directory, ticket_path):
+    """Frozen pre-priority admission scanner, as shipped before issue #2556."""
+    with resources.lock_file(directory / 'admission.lock') as admission:
+        resources.fcntl.flock(admission, resources.fcntl.LOCK_EX)
+        first = None
+        for path in sorted(directory.glob('queue-*.lock')):
+            if path == ticket_path:
+                first = path
+                break
+            with resources.lock_file(path) as queued:
+                if resources.try_lock(queued):
+                    path.unlink(missing_ok=True)
+                else:
+                    first = path
+                    break
+        return first
 
 
 def wait_until(predicate, timeout=5):
@@ -43,6 +64,200 @@ def process_running(pid):
 
 
 class GateUnits(unittest.TestCase):
+    @contextlib.contextmanager
+    def cancelled_wait(self, diagnostic=None):
+        output = io.StringIO()
+        with patch.object(resources.time, 'sleep', side_effect=InterruptedError('cancel wait')), \
+             contextlib.redirect_stderr(output):
+            with self.assertRaisesRegex(InterruptedError, 'cancel wait'):
+                yield
+        if diagnostic:
+            self.assertRegex(output.getvalue(), diagnostic)
+
+    def test_timeout_retains_original_ticket_and_fifo_position(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            earlier = root / 'queue-00000000000000000000-earlier.lock'
+            later = root / 'queue-99999999999999999999-later.lock'
+            with resources.lock_file(earlier) as predecessor, resources.lock_file(later) as successor:
+                resources.try_lock(predecessor)
+                resources.try_lock(successor)
+                clock = [100.0]
+                original = []
+                notices = io.StringIO()
+                def advance(seconds):
+                    clock[0] += seconds
+                    tickets = [path for path in root.glob('queue-*.lock')
+                               if path not in (earlier, later)]
+                    self.assertEqual(len(tickets), 1)
+                    self.assertEqual(json.loads(tickets[0].read_text())['priority'], 'normal')
+                    identity = (tickets[0].name, tickets[0].stat().st_ino)
+                    if not original:
+                        original.append(identity)
+                    self.assertEqual(identity, original[0], 'waiter lost its original ticket')
+                    if clock[0] >= 100.5:
+                        predecessor.close()
+                    self.assertLess(clock[0], 102, 'waiter did not retain its FIFO position')
+                with patch.object(resources.time, 'monotonic', side_effect=lambda: clock[0]), \
+                     patch.object(resources.time, 'sleep', side_effect=advance), \
+                     contextlib.redirect_stderr(notices):
+                    lease = resources.GateSemaphore(root, 1).acquire(.2)
+                    lease.close()
+                self.assertGreaterEqual(clock[0], 100.5)
+                self.assertIn('still queued', notices.getvalue())
+                self.assertFalse([path for path in root.glob('queue-*.lock') if path != later])
+
+    def test_urgent_ticket_passes_two_normal_waiters_and_is_auditable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with contextlib.ExitStack() as stack:
+                for index in range(2):
+                    ticket = stack.enter_context(resources.lock_file(
+                        root / f'queue-{index:020d}-normal.lock'))
+                    resources.try_lock(ticket)  # legacy metadata-free normal tickets
+                env = {'XDG_STATE_HOME': directory, 'NILS_CLI_GATE_PRIORITY': 'urgent',
+                       'NILS_CLI_GATE_TIMEOUT_SECONDS': '1'}
+                def launch(*args, **kwargs):
+                    semaphore = resources.GateSemaphore(resources.state_directory(), 1)
+                    self.assertIn('priority=urgent', semaphore.holders())
+                    return DEFAULT
+                with patch.dict(os.environ, env, clear=True), \
+                     patch.object(resources, 'state_directory', return_value=root), \
+                     patch.object(resources.time, 'sleep',
+                                  side_effect=AssertionError('urgent blocked by normal waiters')), \
+                     patch.object(resources.subprocess, 'Popen', side_effect=launch) as process:
+                    process.return_value.wait.return_value = 0
+                    self.assertEqual(resources.run_gate(['true'], False), 0)
+
+    def test_queued_priority_age_fifo_and_memory_protection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            earlier = root / 'queue-0-00000000000000000000-urgent.lock'
+            with resources.lock_file(earlier) as predecessor:
+                resources.try_lock(predecessor)
+                resources.write_owner(predecessor)
+                predecessor.seek(0)
+                owner = json.load(predecessor)
+                owner['priority'] = 'urgent'
+                predecessor.seek(0)
+                predecessor.truncate()
+                json.dump(owner, predecessor)
+                predecessor.flush()
+                def inspect_wait(_):
+                    semaphore = resources.GateSemaphore(root, 1)
+                    output = semaphore.holders()
+                    self.assertEqual(output.count('priority=urgent'), 2)
+                    self.assertEqual(output.count('age='), 2)
+                    tickets = sorted(root.glob('queue-*.lock'))
+                    self.assertEqual(json.loads(tickets[-1].read_text())['priority'], 'urgent')
+                    raise InterruptedError('cancel queued invocation')
+                with patch.object(resources.time, 'sleep', side_effect=inspect_wait):
+                    with self.assertRaisesRegex(InterruptedError, 'cancel queued invocation'):
+                        resources.GateSemaphore(root, 1).acquire(.1, priority='urgent')
+                predecessor.close()
+                earlier.unlink()
+            # Urgent admission still requires the memory predicate to pass.
+            with patch.object(resources.time, 'sleep', side_effect=InterruptedError('memory blocked')):
+                with self.assertRaisesRegex(InterruptedError, 'memory blocked'):
+                    resources.GateSemaphore(root, 1).acquire(.1, lambda: False, priority='urgent')
+            self.assertFalse(list(root.glob('queue-*.lock')))
+
+    def test_urgent_waiter_does_not_preempt_a_running_holder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            holder = resources.GateSemaphore(root, 1).acquire(.1)
+            before = (root / 'gate-0.lock').read_text()
+            try:
+                with patch.object(resources.time, 'sleep', side_effect=InterruptedError('still held')):
+                    with self.assertRaisesRegex(InterruptedError, 'still held'):
+                        resources.GateSemaphore(root, 1).acquire(.1, priority='urgent')
+                self.assertEqual((root / 'gate-0.lock').read_text(), before)
+            finally:
+                holder.close()
+
+    def test_previous_normal_consumer_defers_to_live_urgent_after_holder_exits(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            root = Path(directory)
+            normal = []
+            for index in range(2):
+                path = root / f'queue-{index:020d}-legacy.lock'
+                ticket = stack.enter_context(resources.lock_file(path))
+                resources.try_lock(ticket)
+                normal.append(path)
+            # Obtain the holder independently of the queued normal callers.
+            holder = resources.lock_file(root / 'gate-0.lock')
+            resources.try_lock(holder)
+            resources.write_owner(holder)
+            old_slot = []
+            def previous_consumer_runs_first(_):
+                holder.close()
+                # Schedule the frozen previous decision immediately after the
+                # holder exits, before the new urgent consumer gets another turn.
+                if legacy_first_ticket(root, normal[0]) == normal[0]:
+                    slot = resources.lock_file(root / 'gate-0.lock')
+                    old_slot.append(slot)
+                    self.assertTrue(resources.try_lock(slot))
+                    resources.write_owner(slot)
+                self.assertFalse(old_slot, 'previous normal consumer admitted ahead of live urgent')
+            try:
+                with patch.object(resources.time, 'sleep', side_effect=previous_consumer_runs_first):
+                    lease = resources.GateSemaphore(root, 1).acquire(.1, priority='urgent')
+                    lease.close()
+                self.assertEqual(legacy_first_ticket(root, normal[0]), normal[0])
+            finally:
+                holder.close()
+                for slot in old_slot:
+                    slot.close()
+
+    def test_previous_scanner_preserves_urgent_and_legacy_fifo_and_queue_age(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            root = Path(directory)
+            normal = []
+            for index in range(2):
+                path = root / f'queue-{index:020d}-legacy.lock'
+                ticket = stack.enter_context(resources.lock_file(path))
+                resources.try_lock(ticket)
+                normal.append(path)
+            clock = [2_000_000_000]
+            def monotonic_ns():
+                clock[0] += 100_000
+                return clock[0]
+            def enqueue_second(_):
+                first = next(path for path in root.glob('queue-*.lock') if path not in normal)
+                def inspect_order(_):
+                    second = next(path for path in root.glob('queue-*.lock')
+                                  if path not in [*normal, first])
+                    self.assertEqual(sorted(root.glob('queue-*.lock')), [first, second, *normal])
+                    self.assertEqual(legacy_first_ticket(root, normal[0]), first)
+                    diagnostics = resources.GateSemaphore(root, 1).holders()
+                    urgent = [item for item in diagnostics.split('; ') if 'priority=urgent' in item]
+                    self.assertEqual(len(urgent), 2)
+                    for item in urgent:
+                        self.assertIn('age=0s', item)
+                    raise InterruptedError('cancel FIFO fixture')
+                with patch.object(resources.time, 'sleep', side_effect=inspect_order):
+                    with self.assertRaisesRegex(InterruptedError, 'cancel FIFO fixture'):
+                        resources.GateSemaphore(root, 1).acquire(.1, lambda: False, priority='urgent')
+                raise InterruptedError('cancel FIFO fixture')
+            with patch.object(resources.time, 'monotonic_ns', side_effect=monotonic_ns), \
+                 patch.object(resources.time, 'sleep', side_effect=enqueue_second):
+                with self.assertRaisesRegex(InterruptedError, 'cancel FIFO fixture'):
+                    resources.GateSemaphore(root, 1).acquire(.1, lambda: False, priority='urgent')
+            self.assertEqual(list(sorted(root.glob('queue-*.lock'))), normal)
+            self.assertEqual(legacy_first_ticket(root, normal[0]), normal[0])
+            stack.close()
+            self.assertIsNone(legacy_first_ticket(root, root / 'absent-ticket'))
+
+    def test_invalid_priority_is_rejected_before_queueing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {'XDG_STATE_HOME': directory,
+                                         'NILS_CLI_GATE_PRIORITY': 'unexpected'}, clear=True), \
+                 patch.object(resources, 'GateSemaphore') as semaphore, \
+                 patch.object(resources.subprocess, 'Popen'):
+                with self.assertRaisesRegex(ValueError, 'NILS_CLI_GATE_PRIORITY'):
+                    resources.run_gate(['true'], False)
+                semaphore.assert_not_called()
+
     def test_impossible_memory_floor_fails_before_queueing(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.dict(os.environ, {'XDG_STATE_HOME': directory}, clear=True), \
@@ -147,7 +362,7 @@ class GateUnits(unittest.TestCase):
             holder.start()
             try:
                 self.assertTrue(started.wait(5))
-                with self.assertRaisesRegex(TimeoutError, 'holders: pid=.*since='):
+                with self.cancelled_wait('holders: pid=.*since='):
                     resources.GateSemaphore(root, 1).acquire(.1)
                 holder.kill()
                 holder.join(5)
@@ -166,7 +381,7 @@ class GateUnits(unittest.TestCase):
             ticket = resources.lock_file(root / 'queue-00000000000000000000-live.lock')
             resources.try_lock(ticket)
             try:
-                with self.assertRaisesRegex(TimeoutError, 'timed out'):
+                with self.cancelled_wait('gate queued'):
                     resources.GateSemaphore(root, 2).acquire(.1)
             finally:
                 ticket.close()
@@ -175,7 +390,7 @@ class GateUnits(unittest.TestCase):
 
     def test_insufficient_memory_never_admits_work(self):
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(TimeoutError, 'waiting for memory'):
+            with self.cancelled_wait('waiting for memory'):
                 resources.GateSemaphore(Path(directory), 1).acquire(.1, lambda: False)
 
     def test_scope_and_shared_slice_properties(self):
@@ -230,7 +445,7 @@ class GateUnits(unittest.TestCase):
             root = Path(directory)
             lease = resources.GateSemaphore(root, 1).acquire(.5, slice_name='nilsgate' + 'a' * 32 + '.slice')
             lease.close()  # supervisor gone, slice still running
-            with self.assertRaisesRegex(TimeoutError, 'holders: pid='):
+            with self.cancelled_wait('holders: pid='):
                 resources.GateSemaphore(root, 1, quiescent=lambda _: False).acquire(.1)
             lease = resources.GateSemaphore(root, 1, quiescent=lambda _: True).acquire(.5)
             lease.close()
@@ -240,7 +455,7 @@ class GateUnits(unittest.TestCase):
             root = Path(directory)
             env = {'XDG_STATE_HOME': directory, 'NILS_CLI_RUNNER_MAX': '2'}
             def cleanup(*args, **kwargs):
-                with self.assertRaises(TimeoutError):
+                with self.cancelled_wait():
                     resources.GateSemaphore(resources.state_directory(), 1).acquire(.1)
             with patch.dict(os.environ, env, clear=True), \
                  patch.object(resources, 'available_memory', return_value=32 * resources.GIB), \

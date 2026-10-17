@@ -816,6 +816,10 @@ recorded in `sympoies/nils-cli#1409`.
   The local `agent-session account switch` CLI shares this route's code path.
   Without the daemon's in-process Codex control it always takes the durable
   `next` path above, which the control loop applies before the next prompt.
+  With the unbound opt-in, a binding that is `failed`, `pending`, or malformed
+  (for example after a daemon restart) also accepts a queued explicit account;
+  the binding stays fenced until the daemon, at `waiting`, promotes the intent
+  into this route's immediate switch with the same incarnation fence.
 - `POST /sessions` normally creates a fresh session from `agent`, optional
   `cwd`, `title`, `title_state`, `id`, `prompt`, `coordination_mode`, and
   `agent_args`, and `launch_env`. `launch_env` is an optional string-to-string

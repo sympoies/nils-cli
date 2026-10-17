@@ -66,7 +66,10 @@ pub(crate) fn show(context: &CliContext, id: &str) -> Result<SessionAccount, Cli
 /// Claude takes the serve route's exact path. Codex binds live only through
 /// the daemon's in-process control connection, so the CLI takes the serve
 /// route's durable queue path: the account is bound for the next prompt, which
-/// stays fenced until the daemon applies it at the idle boundary.
+/// stays fenced until the daemon applies it at the idle boundary. A binding
+/// left failed, pending, or malformed (for example by a serve restart) is
+/// repaired the same way: the daemon promotes the queued account into the
+/// route's immediate switch once the session is idle.
 pub(crate) fn switch(
     context: &CliContext,
     id: &str,
@@ -271,9 +274,14 @@ pub(crate) fn codex_switch_precheck(
         ));
     }
     // Like Claude, refuse an account the broker does not list before any
-    // binding or queued intent is written. Re-selecting the current account
-    // stays allowed so it can still cancel a queued switch.
-    if crate::codex_account::selected_account(record).as_deref() != Some(account) {
+    // binding or queued intent is written. Re-selecting the account bound to
+    // this runtime stays allowed so it can still cancel a queued switch; a
+    // repair of a failed, pending, or malformed binding is not exempt.
+    let reselects_bound = matches!(
+        crate::codex_account::binding_snapshot(record),
+        crate::codex_account::BindingSnapshot::Bound { account: bound, .. } if bound == account
+    );
+    if !reselects_bound {
         crate::codex_account::ensure_listed(account)?;
     }
     Ok(launch_id)
