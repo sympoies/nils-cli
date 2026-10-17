@@ -474,6 +474,33 @@ fn usage_v1_keeps_codex_usage_when_plan_broker_fails() {
 }
 
 #[test]
+fn usage_v1_slow_plan_broker_does_not_hide_completed_codex_usage() {
+    let (tmp, stubs) = setup();
+    fs::write(stubs.dir.join("codex-list.delay"), "9").unwrap();
+    let broker = serde_json::to_string(&vec![stubs.dir.join("codex-account-broker")]).unwrap();
+    let serve = Serve::spawn(
+        tmp.path(),
+        &stubs,
+        &[("AGENT_SESSION_CODEX_ACCOUNT_BROKER", &broker)],
+    );
+
+    let started = Instant::now();
+    let body = serve.usage("/usage/v1");
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "optional plan lookup delayed usage"
+    );
+    let providers = body["data"]["usage"]["providers"].as_array().unwrap();
+    let entry = providers
+        .iter()
+        .find(|entry| entry["account"] == "charlie")
+        .expect("completed usage");
+    assert_eq!(entry["ok"], true);
+    assert_eq!(entry["plan"], Value::Null);
+    assert_eq!(entry["windows"][0]["used_percent"], 60);
+}
+
+#[test]
 fn usage_v1_keeps_healthy_codex_when_other_accounts_fail() {
     let (tmp, stubs) = setup();
     let mut diag = fixture("codex-diag-all.json");

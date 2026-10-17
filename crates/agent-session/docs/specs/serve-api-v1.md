@@ -1136,8 +1136,9 @@ synthetic fixtures under `tests/fixtures/usage-v1/` pin that projection.
   helper's order. `account` is the profile nickname. `plan` retains a non-empty
   token of at most 64 ASCII letters, digits, dots, underscores, or hyphens,
   preferring `raw_usage.plan_type` and otherwise using the matching account's
-  public broker plan when available. Broker failure leaves usage available
-  with an unknown plan. `reset_credits` is only a non-negative integer count;
+  public broker plan when available. This optional enrichment waits at most
+  one second; a broker failure or timeout leaves completed usage available
+  with missing plans unknown. `reset_credits` is only a non-negative integer count;
   absence means unknown, not zero. Window labels must be `Weekly` or a
   provider duration such as `5h`, from which `key` and `window_minutes` are
   derived. An account the helper reports as failed is `ok: false` with a

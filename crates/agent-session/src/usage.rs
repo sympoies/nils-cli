@@ -52,6 +52,8 @@ const REFRESH_WAIT: Duration = Duration::from_secs(7);
 /// served as the last snapshot with a refreshing note.
 const RESET_RESPONSE_BUDGET: Duration = Duration::from_secs(6);
 const HELPER_TIMEOUT: Duration = Duration::from_secs(30);
+/// Optional plan enrichment must not hold back completed usage for a slow broker.
+const CODEX_PLAN_TIMEOUT: Duration = Duration::from_secs(1);
 const RESET_TIMEOUT: Duration = Duration::from_secs(30);
 /// `claude-cli` may probe the Claude Code version (3 seconds), reads status
 /// (`CLAUDE_RESET_STATUS_SECONDS`), and then posts once
@@ -668,7 +670,8 @@ fn refresh_codex() -> Refresh {
             let mut refresh = parse_codex(&output, now_epoch());
             if let Refresh::Completed(entries) = &mut refresh
                 && entries.iter().any(|entry| entry.ok && entry.plan.is_none())
-                && let Ok(accounts) = crate::codex_account::list_accounts()
+                && let Ok(accounts) =
+                    crate::codex_account::list_accounts_with_timeout(CODEX_PLAN_TIMEOUT)
             {
                 for entry in entries
                     .iter_mut()

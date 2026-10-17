@@ -1660,7 +1660,14 @@ fn not_bound_error(record: &SessionRecord, binding: Option<&DurableBinding>) -> 
 }
 
 pub(crate) fn list_accounts() -> Result<Vec<CodexAccountSummary>, CliError> {
-    Ok(list_inventory()?.accounts)
+    list_accounts_with_timeout(BROKER_TIMEOUT)
+}
+
+/// Lists public account metadata within the caller's time budget.
+pub(crate) fn list_accounts_with_timeout(
+    timeout: Duration,
+) -> Result<Vec<CodexAccountSummary>, CliError> {
+    Ok(BROKER.list::<BrokerListedAccount>(timeout)?.accounts)
 }
 
 /// Validated accounts plus the selection strategies the daemon understands.
