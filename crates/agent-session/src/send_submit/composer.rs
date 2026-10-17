@@ -179,3 +179,5 @@ mod hyperlink;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) mod cleanup;
