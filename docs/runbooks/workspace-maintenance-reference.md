@@ -254,32 +254,48 @@ batch. Required hosted checks and branch protections continue to apply.
 ### Gate resource budgets
 
 Executing code gates, including local-fast and direct required-checks script
-calls, share a FIFO semaphore under
+calls, share a priority/FIFO semaphore under
 `${XDG_STATE_HOME:-$HOME/.local/state}/nils-cli/resources`. The semaphore is
 shared across worktrees and repositories using this entrypoint for the same
 user on a host. Kernel `flock` ownership and recorded unit quiescence govern admission:
 crashed holders and waiters do not require deleting lock files. A crashed
 supervisor slot remains unavailable while its scope/services are draining. Waiting callers print the holder
-PID and UTC start time every five seconds; admission times out after one hour.
+PID, UTC start time, and priority every five seconds. Diagnostics also list live
+queued tickets in admission order with their age in seconds and priority.
+
+After each `NILS_CLI_GATE_TIMEOUT_SECONDS` interval, admission reports "still
+queued" and keeps the same ticket and queue position until admitted or cancelled.
+This interval is a progress reminder, not a gate admission deadline; no
+`pre-pr.sh` timeout override or requeue is needed. Cancellation removes the
+ticket, so a later invocation gets a new position.
 Help, plan-only inspection, and the explicit docs-only lane do not take a slot.
 
 | Knob | Default | Purpose |
 | --- | --- | --- |
 | `NILS_CLI_GATE_SLOTS` | `1` | Maximum concurrent code gates for the user on this host. |
-| `NILS_CLI_GATE_TIMEOUT_SECONDS` | `3600` | Bounded gate and contained-runner queue wait. |
+| `NILS_CLI_GATE_TIMEOUT_SECONDS` | `3600` | Gate "still queued" reminder interval; contained-runner queue waits remain bounded by this value. |
+| `NILS_CLI_GATE_PRIORITY` | `normal` | `urgent` tickets precede normal tickets; FIFO within each priority. Other values fail before queueing. |
 | `NILS_CLI_RUNNER_MAX` | `max(1, min(2, CPU count / 4, MemAvailable / 4 GiB))` | Host contained-runner slots and upper bound on nextest/libtest concurrency; integer division. |
 | `CARGO_BUILD_JOBS` | `1` | Cargo compilation concurrency, including coverage compilation; clamped to the runner maximum. |
 | `NILS_CLI_GATE_MEMORY_MAX_GIB` | `16` | Linux aggregate hard memory cap per gate. |
 | `NILS_CLI_GATE_MEMORY_HIGH_GIB` | `75%` of the hard cap, rounded down, minimum `1` | Linux memory throttle threshold (`12` GiB with defaults). |
-| `NILS_CLI_GATE_MIN_AVAILABLE_GIB` | `20` | Linux admission requires at least this much `MemAvailable`; waits within the same timeout. A floor above `MemTotal` fails immediately. |
+| `NILS_CLI_GATE_MIN_AVAILABLE_GIB` | `20` | Linux admission requires at least this much `MemAvailable`; keeps its ticket while waiting. A floor above `MemTotal` fails immediately. |
 
 These defaults intentionally serialize ordinary `agent-hook` finish-line
 workloads across checkouts, including small commands. The 16 GiB no-swap cap
-and bounded one-hour admission wait are the default resource policy. Configure
+and one-hour gate queue reminder interval are the default resource policy. Configure
 the shared runner and gate limits together to permit additional concurrency.
 If the admission floor exceeds the host's total memory, the wrapper rejects it
-before joining FIFO; lower the floor and memory caps together on a smaller
+before joining the queue; lower the floor and memory caps together on a smaller
 dedicated host.
+
+For an explicitly prioritized invocation, set `NILS_CLI_GATE_PRIORITY=urgent`
+on the gate command (for example, `NILS_CLI_GATE_PRIORITY=urgent bash
+.agents/scripts/pre-pr.sh`). Tickets and admitted slot metadata record the
+priority, and holder diagnostics and admission notices display it. Running
+holders are never preempted, and urgent callers satisfy the same memory floor
+and slot limits. Existing metadata-free tickets count as normal. Sustained
+urgent traffic can delay normal tickets; use priority deliberately.
 
 The default expected peak **budget** for a complete gate is 12–16 GiB,
 including compilation, linking, tests, and their contained services. This is a
