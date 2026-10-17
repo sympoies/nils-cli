@@ -100,6 +100,11 @@ collapsed into empty input. Codex whitespace-only drafts remain nonempty;
 hyperlink metadata never substitutes for dim proof or hides visible caption
 text.
 
+A guarded text-and-key send drops trailing line breaks before it pastes, since a
+submitted prompt ignores them and a pasted break would add a composer row that
+cannot be read back exactly. A line break anywhere else is refused before paste
+with `send-text-multiline`.
+
 The guarded post-paste check uses the full visible text, rather than the
 unguarded submission classifier's prefix matching, ignoring only Claude's
 renderer padding. A hidden draft cannot be discarded to make this check pass.
@@ -243,6 +248,7 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-composer-not-empty` | A visible draft exists before paste. |
 | `send-composer-unobservable` | The composer cannot be read exactly. |
 | `send-composer-mismatch` | After paste, the composer differs from the submitted text. |
+| `send-text-multiline` | Guarded text with a line break other than a trailing one; refused before paste. |
 | `send-guard-observation-timeout` | The bounded guard observation budget expired. |
 | `send-guard-unsupported` | The provider/runtime cannot perform a requested observation. |
 | `send-idempotency-key-used` | This stable session already contains the delivery claim. |

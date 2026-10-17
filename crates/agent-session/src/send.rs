@@ -378,9 +378,13 @@ fn guarded(
     let submits = codex_app_server::input_contains_submission(text.as_deref(), &args.keys);
     let mut input_prepared = false;
     let target = format!("{}:0.0", record.tmux_session);
-    let literal = text
+    let literal = match text
         .as_deref()
-        .filter(|_| carries_literal_text(text.as_deref()));
+        .filter(|_| carries_literal_text(text.as_deref()))
+    {
+        Some(text) => Some(admission.observable_text(text)?),
+        None => None,
+    };
     if let Some(text) = literal {
         let nonce = uuid::Uuid::new_v4();
         let buffer = format!("{}-send-{nonce}", record.id);
