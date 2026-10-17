@@ -7,9 +7,9 @@ or integrating a specific subsystem.
 ## Operator runbooks
 
 - [Session lifecycle operations](runbooks/session-lifecycle.md): sending input
-  and prompt submission outcomes, clear and rebind, resume, verified deletion,
-  startup logs, DSH launch, account switching, model settings, and secret
-  safety.
+  and prompt submission outcomes, clear and rebind, resume, restart, verified
+  deletion, startup logs, DSH launch, account switching, model settings, and
+  secret safety.
 - [Lifecycle incident evidence](runbooks/lifecycle-journal.md): bounded per-session
   lifecycle records, refusal proof steps, retention, and runtime exit observations.
 - [Work coordination](runbooks/work-coordination.md): coordination modes,
@@ -42,8 +42,9 @@ or integrating a specific subsystem.
   revision-fenced attachment requests, replay receipts, and read-back privacy.
 - [Session lineage and work v1](specs/session-lineage-work-v1.md): the
   `lineage` (parent, root, depth, starter) and `work` (program and issue
-  references) members of every session record, and how each start path fills
-  them.
+  references) members of every session record, how each start path fills
+  them, and the additive `origin` (launch parent) and `workspace` (grouping
+  label) members.
 - [Turn-state contract](turn-state-contract.md): runtime-bound activity state,
   privacy projection, replay, and provider setup behavior.
 - [Activity stream v1](specs/activity-stream-v1.md): SSE stream, replay,

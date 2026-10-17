@@ -10,4 +10,5 @@ This crate owns Claude-specific CLI helpers that have moved out of zsh-kit shell
   the Claude limit-reset redemption command.
 - [Usage consumer runbook](runbooks/usage-consumer.md): safe parsing and
   `agent-session` integration rules.
-- Workspace new-CLI and completion standards are resolved through the repository `project-dev` preflight.
+- Workspace standards: `docs/runbooks/new-cli-crate-development-standard.md`
+  and `docs/runbooks/cli-completion-development-standard.md`.
