@@ -65,14 +65,18 @@ fail closed for these checks. Exact composer
 verification supports an unambiguous, single visible input line. Dialogs,
 unknown layouts, wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
+Claude's composer is the box between its last two horizontal borders; a top
+border that carries a long session title may keep as few as three dashes.
 
 Guard captures use `tmux capture-pane -p -e -N -T` to retain occupied spaces
 and exclude unused terminal cells.
 
 Native placeholders and dynamic suggestions in either supported harness count
-as empty only when every input character carries dim styling (SGR 2) and there
-is at least one non-whitespace character. Claude's trailing ASCII renderer
-padding is ignored only for this fully dim suggestion proof; it is preserved
+as empty only when every non-space input character carries dim styling (SGR 2),
+the input neither begins nor ends with whitespace, and at least one character
+is present. Claude styles each suggestion word on its own, so unstyled ASCII
+spaces between dim words are part of the suggestion. Claude's trailing ASCII
+renderer padding is ignored only for this dim suggestion proof; it is preserved
 for real drafts. Plain or partially dim suggestions remain drafts; fixed startup hints without full dim proof are unobservable.
 Whitespace drafts, queued-message hints and opaque paste summaries never count
 as empty. Unsupported styling sequences fail closed. Grey color alone is not

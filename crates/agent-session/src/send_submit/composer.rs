@@ -40,10 +40,7 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     } else {
         input
     };
-    let fully_dim = !hint.trim().is_empty()
-        && dim[offset..offset + hint.len()]
-            .iter()
-            .all(|styled| *styled);
+    let fully_dim = dim_hint(hint, &dim[offset..offset + hint.len()]);
     let compressed = compact(input);
     if compressed == CLAUDE_QUEUED_HINT
         || PASTE_PLACEHOLDERS
@@ -53,7 +50,7 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
         return None;
     }
     // Native suggestions are dynamic, not limited to the startup hint wording.
-    // Every hint character must carry dim styling; plain, partially dim and blank
+    // Every hint word must carry dim styling; plain, partially dim and blank
     // drafts retain their text. Never infer emptiness from grey color alone.
     if fully_dim {
         return Some(String::new());
@@ -64,6 +61,20 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
         return None;
     }
     Some(input.to_string())
+}
+
+/// Claude styles each suggestion word separately, so the spaces between words
+/// carry no dim style. A hint is dim when it neither begins nor ends with
+/// whitespace and every character is dim or an unstyled ASCII space.
+fn dim_hint(hint: &str, dim: &[bool]) -> bool {
+    let (Some(first), Some(last)) = (hint.chars().next(), hint.chars().next_back()) else {
+        return false;
+    };
+    !first.is_whitespace()
+        && !last.is_whitespace()
+        && hint
+            .char_indices()
+            .all(|(index, ch)| dim[index] || ch == ' ')
 }
 
 fn styled_text(pane: &str) -> Option<(String, Vec<bool>)> {

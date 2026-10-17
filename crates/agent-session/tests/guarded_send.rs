@@ -104,15 +104,18 @@ elif command == 'capture-pane':
     rows = ''
     footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'
     suggestion = (root / 'suggestion').read_text() if (root / 'suggestion').exists() else None
+    top = '─── a long session title that fills the width of the pane ─' if (root / 'titled-border').exists() else '────────────────────────────'
     if suggestion and not text:
         shown = ('\x1b[2m' + suggestion + '\x1b[22m') if '-e' in args else suggestion
+        # Claude styles every suggestion word on its own; the spaces stay plain.
+        if (root / 'suggestion-words').exists() and '-e' in args: shown = ' '.join('\x1b[2m' + w + '\x1b[0m' for w in suggestion.split(' '))
         if (root / 'suggestion-padding').exists(): shown += (root / 'suggestion-padding').read_text()
-        if provider == 'claude': print('────────────────────────────\n❯\u00a0' + shown + '\n────────────────────────────\n  ' + footer)
+        if provider == 'claude': print(top + '\n❯\u00a0' + shown + '\n────────────────────────────\n  ' + footer)
         else: print('› ' + shown + '\n\n  ' + footer)
         sys.exit(0)
     if provider == 'claude':
         shown = occupied + padding if text or (root / 'bare-composer').exists() else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
-        print('────────────────────────────\n❯\u00a0' + shown + '\n' + rows + '────────────────────────────\n  ' + footer)
+        print(top + '\n❯\u00a0' + shown + '\n' + rows + '────────────────────────────\n  ' + footer)
     else:
         shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
         print('› ' + shown + '\n' + rows + '\n  ' + footer)
