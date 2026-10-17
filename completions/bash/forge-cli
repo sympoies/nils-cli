@@ -1668,7 +1668,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__comment__edit)
-            opts="-h --kind --body --body-file --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --kind --body --body-file --expected-updated-at --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1683,6 +1683,10 @@ _forge__cli() {
                     return 0
                     ;;
                 --body-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expected-updated-at)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
