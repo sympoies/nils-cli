@@ -152,7 +152,9 @@ class GateSemaphore:
         with lock_file(self.directory / 'admission.lock') as admission:
             fcntl.flock(admission, fcntl.LOCK_EX)
             for path, owner in self.queued():
-                age = max(0, (time.monotonic_ns() - int(path.name.split('-')[1])) // 10**9)
+                parts = path.name.split('-')
+                stamp = parts[2] if parts[1] == '0' else parts[1]
+                age = max(0, (time.monotonic_ns() - int(stamp)) // 10**9)
                 output += (f'; queued pid={owner.get("pid", "unknown")} age={age}s '
                            f'priority={owner.get("priority", "normal")}')
         return output
@@ -165,7 +167,10 @@ class GateSemaphore:
         # would otherwise look like a crashed waiter.
         with lock_file(self.directory / 'admission.lock') as admission:
             fcntl.flock(admission, fcntl.LOCK_EX)
-            ticket_path = self.directory / f'queue-{time.monotonic_ns():020d}-{uuid.uuid4().hex}.lock'
+            # '-' sorts before digits: previous lexical scanners also put
+            # queue-0-<timestamp> urgent tickets before queue-<timestamp>.
+            prefix = 'queue-0' if priority == 'urgent' else 'queue'
+            ticket_path = self.directory / f'{prefix}-{time.monotonic_ns():020d}-{uuid.uuid4().hex}.lock'
             ticket = lock_file(ticket_path)
             fcntl.flock(ticket, fcntl.LOCK_EX)
             write_owner(ticket, priority=priority)

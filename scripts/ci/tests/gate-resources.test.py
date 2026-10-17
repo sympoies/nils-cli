@@ -29,6 +29,24 @@ def hold_slot(directory, started):
     lease.close()
 
 
+def legacy_first_ticket(directory, ticket_path):
+    """Frozen pre-priority admission scanner, as shipped before issue #2556."""
+    with resources.lock_file(directory / 'admission.lock') as admission:
+        resources.fcntl.flock(admission, resources.fcntl.LOCK_EX)
+        first = None
+        for path in sorted(directory.glob('queue-*.lock')):
+            if path == ticket_path:
+                first = path
+                break
+            with resources.lock_file(path) as queued:
+                if resources.try_lock(queued):
+                    path.unlink(missing_ok=True)
+                else:
+                    first = path
+                    break
+        return first
+
+
 def wait_until(predicate, timeout=5):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -114,7 +132,7 @@ class GateUnits(unittest.TestCase):
     def test_queued_priority_age_fifo_and_memory_protection(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            earlier = root / 'queue-00000000000000000000-urgent.lock'
+            earlier = root / 'queue-0-00000000000000000000-urgent.lock'
             with resources.lock_file(earlier) as predecessor:
                 resources.try_lock(predecessor)
                 resources.write_owner(predecessor)
@@ -156,6 +174,79 @@ class GateUnits(unittest.TestCase):
                 self.assertEqual((root / 'gate-0.lock').read_text(), before)
             finally:
                 holder.close()
+
+    def test_previous_normal_consumer_defers_to_live_urgent_after_holder_exits(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            root = Path(directory)
+            normal = []
+            for index in range(2):
+                path = root / f'queue-{index:020d}-legacy.lock'
+                ticket = stack.enter_context(resources.lock_file(path))
+                resources.try_lock(ticket)
+                normal.append(path)
+            # Obtain the holder independently of the queued normal callers.
+            holder = resources.lock_file(root / 'gate-0.lock')
+            resources.try_lock(holder)
+            resources.write_owner(holder)
+            old_slot = []
+            def previous_consumer_runs_first(_):
+                holder.close()
+                # Schedule the frozen previous decision immediately after the
+                # holder exits, before the new urgent consumer gets another turn.
+                if legacy_first_ticket(root, normal[0]) == normal[0]:
+                    slot = resources.lock_file(root / 'gate-0.lock')
+                    old_slot.append(slot)
+                    self.assertTrue(resources.try_lock(slot))
+                    resources.write_owner(slot)
+                self.assertFalse(old_slot, 'previous normal consumer admitted ahead of live urgent')
+            try:
+                with patch.object(resources.time, 'sleep', side_effect=previous_consumer_runs_first):
+                    lease = resources.GateSemaphore(root, 1).acquire(.1, priority='urgent')
+                    lease.close()
+                self.assertEqual(legacy_first_ticket(root, normal[0]), normal[0])
+            finally:
+                holder.close()
+                for slot in old_slot:
+                    slot.close()
+
+    def test_previous_scanner_preserves_urgent_and_legacy_fifo_and_queue_age(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            root = Path(directory)
+            normal = []
+            for index in range(2):
+                path = root / f'queue-{index:020d}-legacy.lock'
+                ticket = stack.enter_context(resources.lock_file(path))
+                resources.try_lock(ticket)
+                normal.append(path)
+            clock = [2_000_000_000]
+            def monotonic_ns():
+                clock[0] += 100_000
+                return clock[0]
+            def enqueue_second(_):
+                first = next(path for path in root.glob('queue-*.lock') if path not in normal)
+                def inspect_order(_):
+                    second = next(path for path in root.glob('queue-*.lock')
+                                  if path not in [*normal, first])
+                    self.assertEqual(sorted(root.glob('queue-*.lock')), [first, second, *normal])
+                    self.assertEqual(legacy_first_ticket(root, normal[0]), first)
+                    diagnostics = resources.GateSemaphore(root, 1).holders()
+                    urgent = [item for item in diagnostics.split('; ') if 'priority=urgent' in item]
+                    self.assertEqual(len(urgent), 2)
+                    for item in urgent:
+                        self.assertIn('age=0s', item)
+                    raise InterruptedError('cancel FIFO fixture')
+                with patch.object(resources.time, 'sleep', side_effect=inspect_order):
+                    with self.assertRaisesRegex(InterruptedError, 'cancel FIFO fixture'):
+                        resources.GateSemaphore(root, 1).acquire(.1, lambda: False, priority='urgent')
+                raise InterruptedError('cancel FIFO fixture')
+            with patch.object(resources.time, 'monotonic_ns', side_effect=monotonic_ns), \
+                 patch.object(resources.time, 'sleep', side_effect=enqueue_second):
+                with self.assertRaisesRegex(InterruptedError, 'cancel FIFO fixture'):
+                    resources.GateSemaphore(root, 1).acquire(.1, lambda: False, priority='urgent')
+            self.assertEqual(list(sorted(root.glob('queue-*.lock'))), normal)
+            self.assertEqual(legacy_first_ticket(root, normal[0]), normal[0])
+            stack.close()
+            self.assertIsNone(legacy_first_ticket(root, root / 'absent-ticket'))
 
     def test_invalid_priority_is_rejected_before_queueing(self):
         with tempfile.TemporaryDirectory() as directory:

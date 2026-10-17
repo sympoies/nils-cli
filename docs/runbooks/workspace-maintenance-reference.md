@@ -292,7 +292,9 @@ dedicated host.
 For an explicitly prioritized invocation, set `NILS_CLI_GATE_PRIORITY=urgent`
 on the gate command (for example, `NILS_CLI_GATE_PRIORITY=urgent bash
 .agents/scripts/pre-pr.sh`). Tickets and admitted slot metadata record the
-priority, and holder diagnostics and admission notices display it. Running
+priority, and holder diagnostics and admission notices display it. Urgent ticket
+filenames also sort first for already-running helpers that use lexical queue
+ordering, preserving priority across older checkouts. Running
 holders are never preempted, and urgent callers satisfy the same memory floor
 and slot limits. Existing metadata-free tickets count as normal. Sustained
 urgent traffic can delay normal tickets; use priority deliberately.
