@@ -1,0 +1,28 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ready": {
+          "nodes": [
+            {
+              "createdAt": "2026-01-02T02:00:00Z"
+            }
+          ]
+        },
+        "isInMergeQueue": true,
+        "mergeQueueEntry": {
+          "state": "AWAITING_CHECKS",
+          "position": 2,
+          "enqueuedAt": "2026-01-03T03:00:00Z",
+          "headCommit": {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "pullRequest": {
+            "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      }
+    }
+  }
+}

@@ -282,7 +282,8 @@ class GateIntegration(unittest.TestCase):
         (ci / 'lib').mkdir()
         for name in ('nils-cli-checks-entrypoint.sh', 'nils-cli-local-fast.sh', 'test-env.sh'):
             shutil.copy(ROOT / 'scripts/ci' / name, ci / name)
-        shutil.copy(ROOT / 'scripts/ci/lib/doc_classify.py', ci / 'lib/doc_classify.py')
+        for name in ('doc_classify.py', 'sibling_bins.py'):
+            shutil.copy(ROOT / 'scripts/ci/lib' / name, ci / 'lib' / name)
         verify = root / '.agents/skills/project-verify-required-checks/scripts'
         verify.mkdir(parents=True)
         (verify / 'project-verify-required-checks.sh').write_text('touch "$DOCS_CALLED"\n')

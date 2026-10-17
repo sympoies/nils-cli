@@ -19,6 +19,8 @@ Description:
     generator scripts, or the generated third-party artifact files change.
   - Builds, lints, and tests changed non-shared packages and their transitive
     workspace reverse dependencies (including dev/build dependencies).
+  - Also builds the binaries of other workspace packages that those packages'
+    tests resolve, so no test runs a missing or stale sibling binary.
   - Escalates to a workspace Rust gate for shared crates or workspace-level
     files, manifests, toolchain/configuration files, and build scripts.
 
@@ -172,6 +174,7 @@ changed = [
 # docs-only gate (scripts/ci/detect-docs-only.sh) shares one definition.
 sys.path.insert(0, str(repo / "scripts" / "ci" / "lib"))
 from doc_classify import affects_third_party_artifacts, is_doc_path
+from sibling_bins import sibling_packages
 
 
 def emit(key, value):
@@ -341,6 +344,10 @@ else:
     mode = "workspace"
     workspace_reasons.append("fallback workspace mode")
 
+# Tests resolve other packages' binaries from target/<profile>, which a
+# package-scoped run builds only for the selected packages.
+siblings = sibling_packages(workspace_packages.values(), packages) if mode == "packages" else {}
+
 emit("mode", mode)
 emit("docs_checks", "1" if docs_checks else "0")
 # docs-hygiene-audit scans runtime surfaces (crates/**/*.rs and specific source
@@ -356,6 +363,10 @@ for package_name in sorted(packages):
     emit("package", package_name)
     for reason in sorted(package_reasons[package_name]):
         emit("package_reason", f"{package_name}: {reason}")
+for package_name in sorted(siblings):
+    emit("sibling", package_name)
+    for reason in sorted(siblings[package_name]):
+        emit("sibling_reason", f"{package_name}: {reason}")
 for package_name in sorted(packages):
     if package_has_doctests.get(package_name, False):
         emit("package_doctest", package_name)
@@ -375,6 +386,8 @@ changed_count=0
 declare -a packages=()
 declare -a package_reasons=()
 declare -a package_doctests=()
+declare -a siblings=()
+declare -a sibling_reasons=()
 declare -a reasons=()
 declare -a changed_files=()
 declare -a shell_files=()
@@ -389,6 +402,8 @@ while IFS=$'\t' read -r key value; do
     package) packages+=("$value") ;;
     package_reason) package_reasons+=("$value") ;;
     package_doctest) package_doctests+=("$value") ;;
+    sibling) siblings+=("$value") ;;
+    sibling_reason) sibling_reasons+=("$value") ;;
     reason) reasons+=("$value") ;;
     changed) changed_files+=("$value") ;;
     shell) shell_files+=("$value") ;;
@@ -418,6 +433,12 @@ print_plan() {
   done
   for package in "${package_doctests[@]}"; do
     echo "LOCAL_FAST_PACKAGE_DOCTEST=$package"
+  done
+  for package in "${siblings[@]}"; do
+    echo "LOCAL_FAST_SIBLING_PACKAGE=$package"
+  done
+  for reason in "${sibling_reasons[@]}"; do
+    echo "LOCAL_FAST_SIBLING_REASON=$reason"
   done
   for reason in "${reasons[@]}"; do
     echo "LOCAL_FAST_REASON=$reason"
@@ -590,11 +611,12 @@ for package in "${packages[@]}"; do
   run cargo clippy -p "$package" --all-targets --all-features -- -D warnings
 done
 
-# Build every selected package's binaries first: coupled packages resolve each
-# other's binaries from target/<profile>, which a package-scoped test run does
-# not build for a sibling package.
+# Build every selected package's binaries first, plus the sibling binaries
+# their tests resolve: tests read another package's binary from
+# target/<profile>, which a package-scoped test run does not build, so an
+# absent or earlier-release artifact would otherwise be what they run.
 declare -a package_args=()
-for package in "${packages[@]}"; do
+for package in "${packages[@]}" "${siblings[@]}"; do
   package_args+=(-p "$package")
 done
 run cargo build "${package_args[@]}" --bins

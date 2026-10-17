@@ -463,6 +463,7 @@ mod tests {
             repo: Some("o/r".into()),
         };
         let view = pr_view::PrViewPayload {
+            lifecycle: Default::default(),
             provider: "github",
             number: 7,
             url: "https://internal.ghe.com/o/r/pull/7".into(),
