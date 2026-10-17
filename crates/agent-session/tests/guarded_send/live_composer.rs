@@ -221,3 +221,16 @@ fn text_with_an_inner_newline_is_refused_before_anything_is_pasted() {
         assert_eq!(again.code, 0, "{provider}: {}", again.stdout_text());
     }
 }
+
+#[test]
+fn text_made_only_of_line_breaks_is_refused_before_anything_is_pasted() {
+    for text in ["\n\n", "\r\n\r\n", "\r\r"] {
+        let fixture = Fixture::new("claude");
+        live(&fixture, &["bare-composer"]);
+        let output = guarded_text(&fixture, text);
+        let details = details(&output, "send-text-multiline");
+        assert_eq!(details["pasted"], false, "{text:?}");
+        fixture.no_delivery();
+        assert_eq!(composer(&fixture), "");
+    }
+}
