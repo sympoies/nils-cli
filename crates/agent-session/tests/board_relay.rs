@@ -1014,7 +1014,9 @@ fn console_start_creates_the_child_through_the_aggregator_as_the_calling_session
             "session": {
                 "agent": "claude", "cwd": "/work/repo", "title": "Child task",
                 "prompt": "do the thing", "agent_args": ["--verbose"],
-                "lineage": child_lineage()
+                "lineage": child_lineage(),
+                "origin": {"parent":{"session_id":SESSION,"machine":MACHINE}},
+                "workspace": null
             }
         }))
     );
@@ -1341,7 +1343,58 @@ fn console_start_forwards_ownership_refusals_with_fixed_classes() {
         &json!({"ok": false, "error": {"code": "unauthorized", "message": "x"}}),
     );
     let output = fixture.start_via_console(&["--agent", "codex", "--format", "json"], true);
-    assert_eq!(error_of(&output)["code"], "console-start-unavailable");
+    let error = error_of(&output);
+    assert_eq!(error["code"], "console-start-unavailable");
+    assert_eq!(
+        error["details"]["failure_stage"],
+        "aggregator_authentication"
+    );
+    assert_eq!(error["details"]["retryable"], false);
+    assert_eq!(
+        error["details"]["next_action"],
+        "inspect_relay_configuration"
+    );
+    assert_eq!(
+        error["details"]["recovery"],
+        json!({"kind":"repair_relay_configuration","safe_to_retry":true})
+    );
+
+    aggregator.reply_json(
+        502,
+        &json!({"ok": false, "error": {"code": "console-start-unavailable", "message": "temporarily unavailable"}}),
+    );
+    let output = fixture.start_via_console(&["--agent", "codex", "--format", "json"], true);
+    let error = error_of(&output);
+    assert_eq!(error["code"], "console-start-unavailable");
+    assert_eq!(error["message"], "temporarily unavailable");
+    assert_eq!(error["details"]["failure_stage"], "aggregator_response");
+    assert_eq!(error["details"]["retryable"], false);
+    assert_eq!(
+        error["details"]["next_action"],
+        "inspect_console_before_retry"
+    );
+    assert_eq!(
+        error["details"]["recovery"],
+        json!({"kind":"inspect_console_state","safe_to_retry":false})
+    );
+
+    aggregator.reply(String::new());
+    let output = fixture.start_via_console(&["--agent", "codex", "--format", "json"], true);
+    let error = error_of(&output);
+    assert_eq!(error["code"], "console-start-unavailable");
+    assert_eq!(error["details"]["failure_stage"], "aggregator_request");
+    assert_eq!(error["details"]["failure_cause"], "transport_failed");
+    assert_eq!(error["details"]["retryable"], false);
+    assert_eq!(error["details"]["recovery"]["safe_to_retry"], false);
+
+    aggregator.reply(raw(201, "not-json", ""));
+    let output = fixture.start_via_console(&["--agent", "codex", "--format", "json"], true);
+    let error = error_of(&output);
+    assert_eq!(error["code"], "console-start-unavailable");
+    assert_eq!(error["details"]["failure_stage"], "aggregator_response");
+    assert_eq!(error["details"]["failure_cause"], "response_unreadable");
+    assert_eq!(error["details"]["retryable"], false);
+    assert_eq!(error["details"]["recovery"]["safe_to_retry"], false);
 }
 
 #[test]
@@ -1464,7 +1517,7 @@ fn console_start_selects_the_account_for_its_agent_and_the_launch_profile() {
             .expect("body")["session"];
         assert_eq!(
             session,
-            &json!({"agent": agent, "cwd": "/w", field: "spare", "lineage": child_lineage()})
+            &json!({"agent": agent, "cwd": "/w", field: "spare", "lineage": child_lineage(), "origin":{"parent":{"session_id":SESSION,"machine":MACHINE}}, "workspace":null})
         );
     }
     aggregator.reply_json(201, &created);

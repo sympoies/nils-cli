@@ -6628,12 +6628,16 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__review__handoff__assign)
-            opts="-h --reviewer-session --review-author --base-sha --expected-head --expected-state --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --approval-policy --reviewer-session --review-author --base-sha --expected-head --expected-state --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --approval-policy)
+                    COMPREPLY=($(compgen -W "source-pass final-approval" -- "${cur}"))
+                    return 0
+                    ;;
                 --reviewer-session)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
@@ -6686,12 +6690,16 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__review__handoff__check)
-            opts="-h --expected-head --format --remote --provider --host --repo --store-root --dry-run --help"
+            opts="-h --approval-policy --expected-head --format --remote --provider --host --repo --store-root --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --approval-policy)
+                    COMPREPLY=($(compgen -W "source-pass final-approval" -- "${cur}"))
+                    return 0
+                    ;;
                 --expected-head)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0

@@ -3086,14 +3086,10 @@ fn message_reminder_claims_each_live_unread_generation_once() {
         .as_str()
         .expect("reminder text")
         .to_string();
-    assert!(
-        text.starts_with("Coordination mailbox has unread messages (newest queued "),
-        "{text}"
-    );
-    assert!(text.contains("agent-session message inbox --session beta --state unread"));
-    assert!(
-        text.contains("If you already read the inbox after that time, nothing new is waiting.")
-    );
+    assert!(text.starts_with("Mailbox: "), "{text}");
+    assert!(text.ends_with("agent-session message inbox"));
+    assert!(text.is_ascii() && text.len() <= 60);
+    assert!(!text.contains("beta"));
     assert!(!first.stdout_text().contains("REMINDER-BODY-CANARY"));
     assert_eq!(data(&first)["generation"], 1);
     let receipt = coordination_registry(&state_dir)["notifications"]

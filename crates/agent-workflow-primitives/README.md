@@ -409,9 +409,7 @@ Stable subject reason codes are `subject-match`, `unbound-subject`,
 
 `check` is read-only. `classified` confirms classification exists, `pre-edit`
 uses the repository's `[path_classes]` contract from the root
-`VALIDATION.toml` (falling back to the transitional root `AGENT_DOCS.toml`
-when `VALIDATION.toml` is absent or declares no `path_classes` table; the
-same contract drives `docs-impact`), and `delivery` is the
+`VALIDATION.toml` (the same contract drives `docs-impact`), and `delivery` is the
 phase-aware spelling of strict v2 completeness. Production paths require a
 contract delta, test-impact declaration, and meaningful failing evidence or a
 complete waiver; unknown and overlapping classes fail closed. A repository

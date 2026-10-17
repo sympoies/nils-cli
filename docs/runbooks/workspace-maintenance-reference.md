@@ -125,9 +125,8 @@ failures, contributors must:
   contract tests.
 
 This contract applies to new or touched automation-facing failures. Existing
-CLIs are audited incrementally; the first bounded implementation covers
-`agent-docs session` errors rather than claiming a workspace-wide migration is
-already complete.
+CLIs are audited incrementally rather than claiming a workspace-wide migration
+is already complete.
 
 ## 3. Canonical validation flows
 

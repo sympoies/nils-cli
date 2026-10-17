@@ -34,10 +34,9 @@ lanes do not drift as cleanup work lands.
 The serialized crate order is fixed:
 
 1. `git-cli` (`serial-1`)
-2. `agent-docs` (`serial-2`)
-3. `macos-agent` (`serial-3`)
-4. `fzf-cli` (`serial-4`)
-5. `memo` (`serial-5`)
+2. `macos-agent` (`serial-2`)
+3. `fzf-cli` (`serial-3`)
+4. `memo` (`serial-4`)
 
 All other crates remain `parallel` unless the matrix spec is intentionally revised.
 

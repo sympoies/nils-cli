@@ -292,6 +292,25 @@ does not deduplicate two submissions within the same incarnation. This
 procedure is for a provider-ready Codex control channel; it does not turn an
 unsupported raw TUI into a structured-prompt target.
 
+For durable client outboxes, persist a client-generated `request_id` before
+POST and add `require_idle: true` when delivery must wait for an idle provider
+and empty composer. Reconcile the exact attempt through authenticated
+`GET /sessions/SESSION_ID/prompt/v2/receipts/REQUEST_ID?expected_session_incarnation=INCARNATION`.
+Successful POSTs include `data.receipt`; errors include
+`error.details.receipt` when a claim was created. Lookup returns
+`data.receipt` for submitted, refused and unknown outcomes. Verify the session,
+incarnation and request ID against the persisted attempt.
+
+A stored `busy` refusal proves no delivery and stays refused under that key.
+After refreshing state, use a new attempt ID for the same outbox item. An
+unknown attempt retains its key: use lookup and observation, never a new key or
+unkeyed fallback. Typed `404 prompt-receipt-not-found` differs from an older
+server lacking the route, but neither proves an uncertain in-flight POST can
+be replayed. Receipts remain for the session lifetime and survive daemon
+restart and runtime replacement; explicit session deletion removes them. See
+the [v2 receipt contract](../specs/serve-api-v1.md) for full JSON shapes and
+storage/error semantics.
+
 For work coordination, consult [Work coordination](work-coordination.md).
 High-level self-targeting CLI operations such as `work-context set` do not have
 HTTP convenience routes; the daemon exposes the raw v1 operations documented
@@ -463,6 +482,10 @@ argv = ["/absolute/path/to/broker"]
 [claude_account_broker]
 argv = ["/absolute/path/to/claude-broker"]
 
+[auto_resume]
+default_enabled = true
+default_recovery_policy = "wait_for_reset"
+
 [retitle]
 provider = "openai_compatible"
 base_url = "http://127.0.0.1:1237/v1"
@@ -488,6 +511,12 @@ arrays of `AGENT_SESSION_CODEX_ACCOUNT_BROKER` /
 `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER`. `path.append` holds at most 16 absolute
 directories without `:` or control characters. Every table is optional; only
 `schema_version` is required. An unknown key is an error rather than ignored.
+
+`auto_resume.default_enabled` is a boolean that opts every session created or
+imported through `POST /sessions` into auto-resume (see
+[Serve API v1](../specs/serve-api-v1.md)). `auto_resume.default_recovery_policy`
+is `wait_for_reset` (the default) or `next_account_then_resume` and is accepted
+only with `default_enabled = true`.
 
 Validate a document, together with the environment it will merge with, without
 starting the daemon:
@@ -516,6 +545,7 @@ whitespace-only variable counts as unset, as it does without a config file.
 | `AGENT_SESSION_RETITLE_CONFIG` | `[retitle]` | The environment value replaces the whole table, with a warning. |
 | `AGENT_SESSION_CODEX_ACCOUNT_BROKER` | `[codex_account_broker] argv` | The environment value replaces the whole table, with a warning. |
 | `AGENT_SESSION_CLAUDE_ACCOUNT_BROKER` | `[claude_account_broker] argv` | The environment value replaces the whole table, with a warning. |
+| `AGENT_SESSION_AUTO_RESUME_DEFAULT_POLICY` | `[auto_resume]` | The environment value (`wait_for_reset` or `next_account_then_resume`; anything else leaves the default off) replaces the whole table, with a warning. |
 | `PATH` (a launcher's appended entries) | `[path] append` | File entries are appended after the inherited `PATH`, never before it; entries already present are skipped. |
 
 The ordered, first-id-wins launch-profile merge is the same one a launcher

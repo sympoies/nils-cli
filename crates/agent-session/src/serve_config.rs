@@ -42,6 +42,7 @@ const LAUNCH_PROFILES_ENV: &str = "AGENT_SESSION_LAUNCH_PROFILES";
 const RETITLE_ENV: &str = "AGENT_SESSION_RETITLE_CONFIG";
 const BROKER_ENV: &str = "AGENT_SESSION_CODEX_ACCOUNT_BROKER";
 const CLAUDE_BROKER_ENV: &str = "AGENT_SESSION_CLAUDE_ACCOUNT_BROKER";
+const AUTO_RESUME_POLICY_ENV: &str = crate::auto_resume::SERVE_DEFAULT_POLICY_ENV;
 
 const ROOT_KEYS: &[&str] = &[
     "schema_version",
@@ -49,9 +50,11 @@ const ROOT_KEYS: &[&str] = &[
     "retitle",
     "codex_account_broker",
     "claude_account_broker",
+    "auto_resume",
     "path",
 ];
 const PATH_KEYS: &[&str] = &["append"];
+const AUTO_RESUME_KEYS: &[&str] = &["default_enabled", "default_recovery_policy"];
 const BROKER_KEYS: &[&str] = &["argv"];
 const LAUNCH_PROFILE_KEYS: &[&str] = &[
     "id",
@@ -156,6 +159,7 @@ struct CheckSummary {
     retitle: SourceSummary,
     codex_account_broker: SourceSummary,
     claude_account_broker: SourceSummary,
+    auto_resume: SourceSummary,
     path: PathSummary,
 }
 
@@ -481,6 +485,22 @@ fn resolve(
         }
     };
 
+    let auto_resume = resolve_auto_resume(root.get("auto_resume"))?;
+    let auto_resume_source = match (auto_resume, env_value(AUTO_RESUME_POLICY_ENV)) {
+        (None, None) => Source::None,
+        (None, Some(_)) => Source::Environment,
+        (Some(_), Some(_)) => {
+            warnings.push(format!(
+                "{AUTO_RESUME_POLICY_ENV} overrides the config file's auto_resume table"
+            ));
+            Source::Environment
+        }
+        (Some(policy), None) => {
+            assignments.push((AUTO_RESUME_POLICY_ENV, OsString::from(policy)));
+            Source::File
+        }
+    };
+
     let file_profiles = resolve_file_launch_profiles(root.get("launch_profiles"))?;
     let launch_profiles = merge_launch_profiles(
         file_profiles,
@@ -502,6 +522,9 @@ fn resolve(
             },
             claude_account_broker: SourceSummary {
                 source: claude_broker_source,
+            },
+            auto_resume: SourceSummary {
+                source: auto_resume_source,
             },
             path: PathSummary {
                 append: path_entries.len(),
@@ -627,6 +650,50 @@ fn resolve_path_append(value: Option<&Value>) -> Result<Vec<PathBuf>, CliError> 
         entries.push(PathBuf::from(entry));
     }
     Ok(entries)
+}
+
+/// The `[auto_resume]` table: the recovery policy to apply to newly created
+/// sessions, or `None` when the default is off.
+fn resolve_auto_resume(value: Option<&Value>) -> Result<Option<&'static str>, CliError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let table = section(value, "auto_resume")?;
+    reject_unknown_keys(table, AUTO_RESUME_KEYS, "auto_resume")?;
+    let enabled = match table.get("default_enabled") {
+        None => false,
+        Some(Value::Bool(enabled)) => *enabled,
+        Some(_) => {
+            return Err(invalid_value(
+                "auto_resume.default_enabled",
+                "must be a boolean",
+            ));
+        }
+    };
+    let policy = match table.get("default_recovery_policy") {
+        None => crate::auto_resume::WAIT_FOR_RESET_POLICY,
+        Some(Value::String(policy)) if policy == crate::auto_resume::WAIT_FOR_RESET_POLICY => {
+            crate::auto_resume::WAIT_FOR_RESET_POLICY
+        }
+        Some(Value::String(policy))
+            if policy == crate::auto_resume::NEXT_ACCOUNT_THEN_RESUME_POLICY =>
+        {
+            crate::auto_resume::NEXT_ACCOUNT_THEN_RESUME_POLICY
+        }
+        Some(_) => {
+            return Err(invalid_value(
+                "auto_resume.default_recovery_policy",
+                "must be \"wait_for_reset\" or \"next_account_then_resume\"",
+            ));
+        }
+    };
+    if !enabled && table.contains_key("default_recovery_policy") {
+        return Err(invalid_value(
+            "auto_resume.default_recovery_policy",
+            "requires default_enabled = true",
+        ));
+    }
+    Ok(enabled.then_some(policy))
 }
 
 /// A provider account-broker table (`codex_account_broker` or
@@ -986,6 +1053,77 @@ mod tests {
         .expect("profiles json");
         assert_eq!(profiles[0]["id"], "a");
         assert_eq!(assignment(&resolved, "PATH"), None);
+    }
+
+    #[test]
+    fn auto_resume_default_materializes_the_policy_environment_variable() {
+        let resolved = resolve(
+            DocumentFormat::Toml,
+            &document("[auto_resume]\ndefault_enabled = true\n"),
+            &lookup_from(&[]),
+        )
+        .expect("resolve");
+        assert_eq!(
+            assignment(&resolved, AUTO_RESUME_POLICY_ENV),
+            Some(&OsString::from("wait_for_reset"))
+        );
+
+        let resolved = resolve(
+            DocumentFormat::Toml,
+            &document(
+                "[auto_resume]\ndefault_enabled = true\ndefault_recovery_policy = \"next_account_then_resume\"\n",
+            ),
+            &lookup_from(&[]),
+        )
+        .expect("resolve");
+        assert_eq!(
+            assignment(&resolved, AUTO_RESUME_POLICY_ENV),
+            Some(&OsString::from("next_account_then_resume"))
+        );
+
+        for off in ["", "[auto_resume]\ndefault_enabled = false\n"] {
+            let resolved =
+                resolve(DocumentFormat::Toml, &document(off), &lookup_from(&[])).expect("resolve");
+            assert_eq!(assignment(&resolved, AUTO_RESUME_POLICY_ENV), None);
+        }
+    }
+
+    #[test]
+    fn auto_resume_default_environment_value_takes_precedence() {
+        let resolved = resolve(
+            DocumentFormat::Toml,
+            &document("[auto_resume]\ndefault_enabled = true\n"),
+            &lookup_from(&[(AUTO_RESUME_POLICY_ENV, "next_account_then_resume")]),
+        )
+        .expect("resolve");
+        assert_eq!(assignment(&resolved, AUTO_RESUME_POLICY_ENV), None);
+        assert!(
+            resolved
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(AUTO_RESUME_POLICY_ENV))
+        );
+    }
+
+    #[test]
+    fn auto_resume_default_rejects_unknown_keys_and_policies() {
+        for bad in [
+            "[auto_resume]\ndefault_enabled = \"yes\"\n",
+            "[auto_resume]\ndefault_enabled = true\ndefault_recovery_policy = \"always\"\n",
+            "[auto_resume]\ndefault_recovery_policy = \"wait_for_reset\"\n",
+            "[auto_resume]\nunknown = true\n",
+        ] {
+            let error =
+                resolve(DocumentFormat::Toml, &document(bad), &lookup_from(&[])).expect_err(bad);
+            assert!(
+                matches!(
+                    error.code(),
+                    "serve-config-invalid-value" | "serve-config-unknown-key"
+                ),
+                "{bad}: {}",
+                error.code()
+            );
+        }
     }
 
     #[test]

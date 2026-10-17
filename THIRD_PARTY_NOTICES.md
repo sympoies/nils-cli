@@ -3,7 +3,7 @@
 This file documents third-party notice-file discovery for Rust crates used by this workspace.
 
 - Data source: `cargo metadata --format-version 1 --locked`
-- Cargo.lock SHA256: `3f2045fd1e0fd0f1b50e4f136e9017aa20324a102751bf9cc476970b93de7dc2`
+- Cargo.lock SHA256: `0c243a88fcc2c54682b4ceeb17e06238057d8569b0caaf5f2090ad60fc59596c`
 - Third-party crates (`source != null`): 505
 
 ## Notice Extraction Policy
@@ -1190,7 +1190,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### graphql-tools 0.4.2
+### graphql-tools 0.5.9
 
 - License: `MIT`
 - Source: `crates.io`
@@ -1865,14 +1865,6 @@ This file documents third-party notice-file discovery for Rust crates used by th
   - `LICENSE-APACHE`
   - `LICENSE-MIT`
 
-### memo-map 0.3.3
-
-- License: `Apache-2.0`
-- Source: `crates.io`
-- Notice files: No explicit NOTICE file discovered.
-- License file references:
-  - `LICENSE`
-
 ### memoffset 0.9.1
 
 - License: `MIT`
@@ -1906,7 +1898,7 @@ This file documents third-party notice-file discovery for Rust crates used by th
 - License file references:
   - `LICENSE`
 
-### minijinja 2.24.0
+### minijinja 3.0.0
 
 - License: `Apache-2.0`
 - Source: `crates.io`
@@ -4186,6 +4178,14 @@ This file documents third-party notice-file discovery for Rust crates used by th
 ### xmlwriter 0.1.0
 
 - License: `MIT`
+- Source: `crates.io`
+- Notice files: No explicit NOTICE file discovered.
+- License file references:
+  - `LICENSE`
+
+### xxhash-rust 0.8.19
+
+- License: `BSL-1.0`
 - Source: `crates.io`
 - Notice files: No explicit NOTICE file discovered.
 - License file references:

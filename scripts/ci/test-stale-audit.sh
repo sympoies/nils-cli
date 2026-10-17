@@ -85,7 +85,6 @@ trap cleanup EXIT
 
 write_frozen_baseline_allowlist() {
   cat >"$frozen_baseline_allowlist" <<'EOF'
-agent-docs	crates/agent-docs/tests/common.rs	drop (fanout=0)	helper_fanout	remove
 git-cli	crates/git-cli/tests/utils.rs	utils_commit_hash_missing_ref_errors (fanout=0)	helper_fanout	remove
 git-cli	crates/git-cli/tests/utils.rs	utils_commit_hash_outputs_sha_for_head (fanout=0)	helper_fanout	remove
 git-cli	crates/git-cli/tests/utils.rs	utils_commit_hash_resolves_annotated_tag (fanout=0)	helper_fanout	remove

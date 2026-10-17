@@ -399,3 +399,59 @@ none; readers treat an absent `role` as null.
 | `work-revision-conflict` | data | `work set --if-revision` does not match. |
 | `work-set-forbidden` | data | A managed session sets another session's work. |
 | `session-has-live-children` | data / 409 | A delete or archive of a session that local sessions name as their effective parent, without `--orphan-children`. |
+
+## Origin and workspace
+
+The additive `origin` and `workspace` members of `agent-session.session.v1`
+record where a session was launched and provide a public grouping label:
+
+```json
+{
+  "origin": {
+    "parent": {"session_id": "coordinator-01", "machine": "worker-host"}
+  },
+  "workspace": "example-workspace"
+}
+```
+
+`origin` is always an object in the CLI/serve session projection, with a
+nullable `parent`. The parent contains only `session_id` and `machine`, never
+paths, prompts, credentials, or runtime state. It is captured once. For CLI
+starts, `AGENT_SESSION_ID` identifies the caller and `AGENT_SESSION_MACHINE`
+identifies its machine; a local parent record or the normal machine identity
+supplies the machine when that environment variable is absent. This is
+untrusted descriptive provenance, independent of lineage authentication and
+admission. Even an intentional `--no-parent` lineage root retains its actual
+launch origin. A plain shell or HTTP create with no caller identity records
+`{"origin":{"parent":null},"workspace":null}`.
+
+`start --workspace SLUG` and the serve create `workspace` field select a
+workspace explicitly. Without an explicit workspace, CLI starts copy the
+known parent's workspace. Console starts compute origin and inheritance from
+the authenticated caller's record before forwarding the self-contained
+create body to the target host; the target need not have the parent record.
+A raw CLI start with a remote parent identity records that origin, but cannot
+inherit a workspace unless the parent record is available. No implicit remote
+lookup occurs. A direct serve caller may supply `origin.parent` as descriptive
+caller identity and must also supply any inherited workspace; the daemon's
+own managed environment is never used as the HTTP caller.
+
+A workspace uses the public-metadata slug value grammar: 1–64 bytes,
+lowercase ASCII letters and digits, single `-` or `.` separators, alphanumeric
+ends, no adjacent separators. Credential-shaped values and filesystem paths
+are rejected. Invalid workspace values return `workspace-invalid` (usage/64,
+HTTP 400) with a recovery command and hint. A malformed parent identifier
+returns `origin-invalid` (usage/64, HTTP 400).
+
+`agent-session workspace set ID SLUG [--format json]` assigns or replaces an
+existing session's workspace under its record lock, without restarting it or
+changing origin, lineage, work, or runtime. The JSON result contains `id`,
+`origin`, and `workspace`. This affects inheritance by future children; it
+never rewrites existing children. Workspace membership grants no authority.
+
+Both fields survive resume, provider account handoff, and runtime replacement
+because they belong to the session record, not its runtime. CLI start/list/
+command and serve create/list projections expose the same fields. Older
+records without these members project `origin.parent: null` and
+`workspace: null`; older readers preserve the additive members through the
+record's unknown-key passthrough. Schema versions remain unchanged.

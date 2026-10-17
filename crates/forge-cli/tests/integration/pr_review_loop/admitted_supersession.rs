@@ -48,6 +48,7 @@ fn supersession_retry_after_same_head_reassignment_refuses_before_post() {
     let (mut records, rows) = super::supersession::stopped_fixture();
     let request = request(&records);
     let mut owner = ReviewHandoff {
+        approval_policy: Default::default(),
         coordinator_digest: review_state::sha256_digest(b"worker-session"),
         reviewer_digest: review_state::sha256_digest(b"reviewer-session"),
         review_author: "review-app[bot]".into(),
