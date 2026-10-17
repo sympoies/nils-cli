@@ -840,3 +840,87 @@ fn domain_coordinator_start_requires_root_and_names_the_requested_role() {
     assert_eq!(root["lineage"]["parent"], Value::Null);
     assert_eq!(parent["title_mode"], "auto");
 }
+
+#[test]
+fn session_started_root_keeps_the_launch_initiator_only_with_a_role() {
+    use super::coordination::{capability, run_with_env, seed_brokers, write_private_json};
+
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state_dir = tmp.path().join("state");
+    fs::create_dir(&state_dir).unwrap();
+    seed_brokers(
+        &state_dir,
+        &[(
+            "alpha",
+            "incarnation-alpha",
+            "alpha-private-capability-material",
+        )],
+    );
+    let path = state_dir.join("sessions/alpha/session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record["lineage"] = json!({
+        "schema_version":"agent-session.session-lineage.v1", "parent":null,
+        "root":{"machine":"launch-source", "session_id":"alpha", "session_created_at":record["created_at"]},
+        "depth":0, "starter":{"kind":"operator", "via":"cli"},
+        "forge_context":{"initiator":"operator", "role":null}
+    });
+    write_private_json(&path, &record);
+    let alpha_cap = capability(&state_dir, "alpha");
+    let (tmux, tmux_log) = fake_tmux(tmp.path());
+    let agent = fake_agent(tmp.path(), "codex");
+    let start_root = |id: &str, role: Option<&str>| {
+        let mut args = vec![
+            "--state-dir",
+            state_dir.to_str().unwrap(),
+            "start",
+            "--agent",
+            "codex",
+            "--id",
+            id,
+            "--cwd",
+            tmp.path().to_str().unwrap(),
+            "--tmux-bin",
+            tmux.to_str().unwrap(),
+            "--agent-bin",
+            agent.to_str().unwrap(),
+            "--paste-delay-ms",
+            "0",
+            "--no-parent",
+            "--format",
+            "json",
+        ];
+        if let Some(role) = role {
+            args.extend(["--role", role]);
+        }
+        let out = run_with_env(
+            tmp.path(),
+            &args,
+            &[
+                ("AGENT_SESSION_ID", "alpha"),
+                ("AGENT_SESSION_RUNTIME_ID", "incarnation-alpha"),
+                ("AGENT_SESSION_CAPABILITY_FILE", &alpha_cap),
+                ("AGENT_SESSION_MACHINE", "launch-source"),
+                ("AGENT_SESSION_FAKE_TMUX_LOG", tmux_log.to_str().unwrap()),
+            ],
+        );
+        assert_eq!(out.code, 0, "{}", out.stdout_text());
+        serde_json::from_slice::<Value>(
+            &fs::read(state_dir.join(format!("sessions/{id}/session.json"))).unwrap(),
+        )
+        .unwrap()
+    };
+    // A role-less bound root attests a launch by a non-session launcher, so a
+    // session-started role-less root carries no launch binding.
+    let roleless = start_root("session-started-root", None);
+    assert_eq!(roleless["lineage"]["parent"], Value::Null);
+    assert_eq!(
+        roleless["lineage"].get("forge_context"),
+        None,
+        "a session-started role-less root must not inherit the launch initiator"
+    );
+    let coordinator = start_root("session-started-coordinator", Some("coordinator"));
+    assert_eq!(
+        coordinator["lineage"]["forge_context"],
+        json!({"initiator":"operator","role":"coordinator"})
+    );
+}

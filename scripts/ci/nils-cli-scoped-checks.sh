@@ -99,7 +99,8 @@ print("\n".join(sorted(names - selected)))
       "${coverage_args[@]}" \
       --no-fail-fast --lcov --output-path target/coverage/lcov.info \
       --fail-under-lines "${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"
-    run cargo llvm-cov report --html --output-dir target/coverage "${coverage_args[@]}"
+    run cargo llvm-cov report --html --output-dir target/coverage "${package_args[@]}" \
+      --fail-under-lines "${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"
     ;;
   *)
     echo "error: unsupported scoped CI test runner" >&2
