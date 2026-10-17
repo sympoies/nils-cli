@@ -74,10 +74,10 @@ def try_lock(file):
         return False
 
 
-def write_owner(file, slice_name=None):
+def write_owner(file, slice_name=None, priority='normal'):
     file.seek(0)
     file.truncate()
-    json.dump({'pid': os.getpid(), 'slice': slice_name, 'since': datetime.datetime.now(
+    json.dump({'pid': os.getpid(), 'slice': slice_name, 'priority': priority, 'since': datetime.datetime.now(
         datetime.timezone.utc).isoformat(timespec='seconds')}, file)
     file.flush()
 
@@ -108,12 +108,30 @@ def slice_quiescent(unit):
 
 
 class GateSemaphore:
-    """FIFO among live tickets; kernel locks, rather than PIDs, prove ownership."""
+    """Urgent before normal, FIFO within each; kernel locks prove ownership."""
     def __init__(self, directory, slots, quiescent=slice_quiescent):
         self.directory = directory
         self.slots = slots
         self.slot = None
         self.quiescent = quiescent
+
+    def queued(self):
+        # Caller holds admission.lock, fencing ticket publication and scans.
+        tickets = []
+        for path in self.directory.glob('queue-*.lock'):
+            with lock_file(path) as queued:
+                if try_lock(queued):
+                    path.unlink(missing_ok=True)  # crashed waiter
+                    continue
+                try:
+                    owner = json.load(queued)
+                except ValueError:
+                    owner = {}
+                if not isinstance(owner, dict):
+                    owner = {}
+                tickets.append((path, owner))
+        return sorted(tickets, key=lambda item: (
+            item[1].get('priority') != 'urgent', item[0].name))
 
     def holders(self):
         holders = []
@@ -124,38 +142,44 @@ class GateSemaphore:
                     owner = json.load(file)
                     if free and (not owner.get('slice') or self.quiescent(owner['slice'])):
                         continue
-                    holders.append(f'pid={int(owner["pid"])} since={owner["since"]}')
+                    holders.append(f'pid={int(owner["pid"])} since={owner["since"]} '
+                                   f'priority={owner.get("priority", "normal")}')
                 except (ValueError, KeyError):
                     if free:
                         continue
                     holders.append('holder metadata pending')
-        return ', '.join(holders) or 'none (waiting for memory or earlier queued caller)'
+        output = ', '.join(holders) or 'none (waiting for memory or earlier queued caller)'
+        with lock_file(self.directory / 'admission.lock') as admission:
+            fcntl.flock(admission, fcntl.LOCK_EX)
+            for path, owner in self.queued():
+                parts = path.name.split('-')
+                stamp = parts[2] if parts[1] == '0' else parts[1]
+                age = max(0, (time.monotonic_ns() - int(stamp)) // 10**9)
+                output += (f'; queued pid={owner.get("pid", "unknown")} age={age}s '
+                           f'priority={owner.get("priority", "normal")}')
+        return output
 
-    def acquire(self, timeout, ready=lambda: True, slice_name=None):
+    def acquire(self, timeout, ready=lambda: True, slice_name=None, priority='normal'):
+        if priority not in ('normal', 'urgent'):
+            raise ValueError('NILS_CLI_GATE_PRIORITY must be normal or urgent')
         deadline = time.monotonic() + timeout
         # Publish only while scanners are fenced: an unlocked visible ticket
         # would otherwise look like a crashed waiter.
         with lock_file(self.directory / 'admission.lock') as admission:
             fcntl.flock(admission, fcntl.LOCK_EX)
-            ticket_path = self.directory / f'queue-{time.monotonic_ns():020d}-{uuid.uuid4().hex}.lock'
+            # '-' sorts before digits: previous lexical scanners also put
+            # queue-0-<timestamp> urgent tickets before queue-<timestamp>.
+            prefix = 'queue-0' if priority == 'urgent' else 'queue'
+            ticket_path = self.directory / f'{prefix}-{time.monotonic_ns():020d}-{uuid.uuid4().hex}.lock'
             ticket = lock_file(ticket_path)
             fcntl.flock(ticket, fcntl.LOCK_EX)
+            write_owner(ticket, priority=priority)
         last_notice = 0
         try:
             while True:
                 with lock_file(self.directory / 'admission.lock') as admission:
                     fcntl.flock(admission, fcntl.LOCK_EX)
-                    first = None
-                    for path in sorted(self.directory.glob('queue-*.lock')):
-                        if path == ticket_path:
-                            first = path
-                            break
-                        with lock_file(path) as queued:
-                            if try_lock(queued):
-                                path.unlink(missing_ok=True)  # crashed waiter
-                            else:
-                                first = path
-                                break
+                    first = self.queued()[0][0]
                     if first == ticket_path and ready():
                         for index in range(self.slots):
                             slot = lock_file(self.directory / f'gate-{index}.lock')
@@ -171,16 +195,19 @@ class GateSemaphore:
                                     slot.close()
                                     continue  # crashed supervisor; scope/services still draining
                                 self.slot = slot
-                                write_owner(slot, slice_name)
+                                write_owner(slot, slice_name, priority)
                                 return self
                             slot.close()
                 now = time.monotonic()
                 if now >= deadline:
-                    raise TimeoutError(f'gate queue timed out after {timeout}s; holders: {self.holders()}')
-                if now - last_notice >= 5:
+                    print(f'gate still queued after {timeout}s; holders: {self.holders()}',
+                          file=sys.stderr, flush=True)
+                    deadline = now + timeout
+                    last_notice = now
+                elif now - last_notice >= 5:
                     print(f'gate queued; holders: {self.holders()}', file=sys.stderr, flush=True)
                     last_notice = now
-                time.sleep(min(.1, max(0, deadline - now)))
+                time.sleep(.1)
         finally:
             ticket_path.unlink(missing_ok=True)
             ticket.close()
@@ -230,6 +257,9 @@ def run_gate(command, linux):
     minimum = positive('NILS_CLI_GATE_MIN_AVAILABLE_GIB', 20, 1048576)
     timeout = positive('NILS_CLI_GATE_TIMEOUT_SECONDS', 3600)
     slots = positive('NILS_CLI_GATE_SLOTS', 1, 64)
+    priority = os.environ.get('NILS_CLI_GATE_PRIORITY', 'normal')
+    if priority not in ('normal', 'urgent'):
+        raise ValueError('NILS_CLI_GATE_PRIORITY must be normal or urgent')
     threads = positive('NILS_CLI_RUNNER_MAX', runner_limit(os.cpu_count() or 1,
                        available_memory() if linux else 8 * GIB), 64)
     if linux and threads == 1 and os.environ.get('NILS_CLI_CONTAINED_RUNNER_ACTIVE') == '1':
@@ -248,8 +278,8 @@ def run_gate(command, linux):
     ready = (lambda: available_memory() >= minimum * GIB) if linux else (lambda: True)
     slice_name = f'nilsgate{uuid.uuid4().hex}.slice' if linux else None
     with contextlib.closing(GateSemaphore(state_directory(), slots).acquire(
-            timeout, ready, slice_name)) as lease:
-        print(f'gate admitted: slots={slots} runners={threads} build_jobs={jobs} '
+            timeout, ready, slice_name, priority)) as lease:
+        print(f'gate admitted: slots={slots} priority={priority} runners={threads} build_jobs={jobs} '
               f'memory_high={high}GiB memory_max={maximum}GiB', file=sys.stderr, flush=True)
         os.environ['NILS_CLI_GATE_ACTIVE'] = '1'
         os.environ['NILS_CLI_GATE_SUPERVISOR_PID'] = str(os.getpid())
