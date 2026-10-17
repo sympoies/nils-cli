@@ -614,9 +614,9 @@ recorded in `sympoies/nils-cli#1409`.
   `session_incarnation`, while the provider turn id remains private. These mutations never send multiline text through
   terminal keys; unsupported or not-yet-ready sessions fail closed.
   On a Claude (pane-delivered) runtime, success means Claude's `UserPromptSubmit` hook started a new turn within the
-  acknowledgement wait, or the pane lists the prompt among its queued messages behind a running turn; the queued case adds
-  `queued: true` and the prompt runs as the next turn, so the client MUST NOT resend it. A new turn omits `queued`.
-  When neither is observed the route answers 500 `structured-prompt-outcome-unknown`.
+  acknowledgement wait, or a poll of the wait saw the pane list the prompt among its queued messages behind a running turn
+  (a tool-call turn takes the queue at its next tool call); the queued case adds `queued: true` and the client MUST NOT
+  resend it. A new turn omits `queued`. When neither is observed the route answers 500 `structured-prompt-outcome-unknown`.
 
   The v2 route additionally accepts optional `request_id` and `require_idle`
   fields. Omitting both preserves the existing response and delivery behavior.

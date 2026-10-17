@@ -1,6 +1,9 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[path = "claude_prompt_ack.rs"]
+mod claude_prompt_ack;
+
 fn keyed_body(incarnation: &str) -> Value {
     json!({"text":"inspect the workspace", "expected_session_incarnation":incarnation,
         "request_id":"attempt-1"})

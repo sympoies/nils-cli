@@ -85,6 +85,8 @@ mod codex_account_drain;
 use codex_account_drain::{apply_pending_codex_accounts, repair_blocked_codex_accounts};
 #[path = "serve_claude_completion.rs"]
 mod claude_completion;
+#[path = "serve_claude_prompt_ack.rs"]
+mod claude_prompt_ack;
 #[path = "serve_create_body.rs"]
 mod create_body;
 #[path = "serve_prompt_scan.rs"]
@@ -7765,57 +7767,34 @@ async fn submit_claude_structured_prompt(
         }
     };
 
-    let deadline = Instant::now() + acknowledgement_wait;
-    loop {
-        let context = state.context.clone();
-        let observed_record = record.clone();
-        let observed_baseline = baseline.clone();
-        let acknowledged = match tokio::task::spawn_blocking(move || {
-            crate::activity::prompt_turn_started_since(
-                &context,
-                &observed_record,
-                &observed_baseline,
-            )
-        })
-        .await
-        {
-            Ok(acknowledged) => acknowledged,
-            Err(_) => return join_err(),
-        };
-        if acknowledged {
+    match claude_prompt_ack::await_claude_prompt_ack(
+        state,
+        record,
+        &baseline,
+        text,
+        acknowledgement_wait,
+    )
+    .await
+    {
+        Ok(claude_prompt_ack::ClaudePromptAck::Turn) => {
             return envelope_ok(json!({
                 "machine": state.machine,
                 "submitted": true,
                 "session_incarnation": session_incarnation,
             }));
         }
-        if Instant::now() >= deadline {
-            break;
+        // A prompt sent mid-turn starts no turn until the running one ends, but
+        // Claude Code shows it queued; that is a delivery, not an unknown outcome.
+        Ok(claude_prompt_ack::ClaudePromptAck::Queued) => {
+            return envelope_ok(json!({
+                "machine": state.machine,
+                "submitted": true,
+                "queued": true,
+                "session_incarnation": session_incarnation,
+            }));
         }
-        tokio::time::sleep(CLAUDE_STRUCTURED_PROMPT_ACK_POLL_INTERVAL).await;
-    }
-    // A prompt sent mid-turn starts no turn until the running one ends, but
-    // Claude Code shows it queued; that is a delivery, not an unknown outcome.
-    let queued = {
-        let record = record.clone();
-        let text = text.to_string();
-        let tmux_bin = state.tmux_bin.clone();
-        match tokio::task::spawn_blocking(move || {
-            crate::claude_prompt_queued(&record, &text, &tmux_bin)
-        })
-        .await
-        {
-            Ok(queued) => queued,
-            Err(_) => return join_err(),
-        }
-    };
-    if queued {
-        return envelope_ok(json!({
-            "machine": state.machine,
-            "submitted": true,
-            "queued": true,
-            "session_incarnation": session_incarnation,
-        }));
+        Ok(claude_prompt_ack::ClaudePromptAck::Unknown) => {}
+        Err(()) => return join_err(),
     }
     status_json(
         StatusCode::INTERNAL_SERVER_ERROR,
