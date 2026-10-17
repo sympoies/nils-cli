@@ -9,6 +9,9 @@ const DRAINED_CLAUDE_PANE: &str = "● Ran the next tool call.
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
 ";
 
+/// Milliseconds since the epoch; BSD `date` has no `%N`, so the stub asks Python.
+const MILLIS_NOW: &str = "python3 -c 'import time; print(int(time.time() * 1000))'";
+
 /// A tmux stub whose pane lists the prompt as queued for `queued_for` after the
 /// Enter that submits it, and shows the drained composer from then on.
 fn queue_draining_tmux(dir: &Path, queued_for: Duration) -> PathBuf {
@@ -23,7 +26,8 @@ fn queue_draining_tmux(dir: &Path, queued_for: Duration) -> PathBuf {
         .replace(
             "  capture-pane) printf 'pane\\n'; exit 0 ;;",
             &format!(
-                "  send-keys) case \"$*\" in *Enter*) date +%s%N > '{entered}' ;; esac; exit 0 ;;\n  capture-pane) if [ -f '{entered}' ] && [ $(( ( $(date +%s%N) - $(cat '{entered}') ) / 1000000 )) -lt {ms} ]; then cat '{queued}'; else cat '{drained}'; fi; exit 0 ;;",
+                "  send-keys) case \"$*\" in *Enter*) {now} > '{entered}' ;; esac; exit 0 ;;\n  capture-pane) if [ -f '{entered}' ] && [ $(( $({now}) - $(cat '{entered}') )) -lt {ms} ]; then cat '{queued}'; else cat '{drained}'; fi; exit 0 ;;",
+                now = MILLIS_NOW,
                 entered = entered.display(),
                 queued = queued.display(),
                 drained = drained.display(),
@@ -51,7 +55,7 @@ async fn submit(
             &launch_id,
             Some(&launch_id),
             text,
-            Duration::from_millis(900),
+            Duration::from_millis(1500),
         )
         .await,
     )
@@ -66,7 +70,7 @@ async fn queued_prompt_that_leaves_the_queue_without_a_new_turn_is_submitted() {
         tmp.path(),
         "claude-drained",
         "Second queued message.",
-        Duration::from_millis(400),
+        Duration::from_millis(800),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body={body}");
@@ -82,7 +86,7 @@ async fn prompt_absent_from_the_queue_stays_unknown() {
         tmp.path(),
         "claude-never-queued",
         "A prompt the queue never received",
-        Duration::from_millis(400),
+        Duration::from_millis(800),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "body={body}");
