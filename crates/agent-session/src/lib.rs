@@ -498,7 +498,7 @@ fn run_start(context: &CliContext, mut args: cli::StartArgs) -> i32 {
         };
     }
     let (mut initial_lineage, warning) =
-        match lineage::resolve_cli_start(context, args.no_parent, &work) {
+        match lineage::resolve_cli_start(context, args.no_parent, args.role.as_deref(), &work) {
             Ok(resolved) => resolved,
             Err(err) => return render_error(START_COMMAND, format, err),
         };
@@ -2372,7 +2372,7 @@ fn start_run_session_unjournaled(
         inherit: true,
         ..lineage::WorkRequest::default()
     };
-    let (initial_lineage, warning) = lineage::resolve_cli_start(context, false, &inherit)?;
+    let (initial_lineage, warning) = lineage::resolve_cli_start(context, false, None, &inherit)?;
     if let Some(warning) = warning {
         eprintln!("warning: {warning}");
     }
