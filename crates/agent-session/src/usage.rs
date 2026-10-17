@@ -68,16 +68,6 @@ const RESET_REPLAY_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_ACCOUNTS: usize = 64;
 const MAX_WINDOWS: usize = 8;
 
-const CODEX_PLAN_TYPES: &[&str] = &[
-    "free",
-    "go",
-    "plus",
-    "pro",
-    "team",
-    "business",
-    "enterprise",
-    "edu",
-];
 const RESET_OUTCOMES: &[&str] = &["reset", "nothing_to_reset", "no_credit", "already_redeemed"];
 const CLAUDE_PROGRAMS: &[&str] = &["juniper_tide", "cedar_ember"];
 const CLAUDE_RESET_OUTCOMES: &[&str] = &[
@@ -635,7 +625,7 @@ fn codex_entry(result: &Value, updated_at: i64) -> Option<Entry> {
         .get("raw_usage")
         .and_then(|raw| raw.get("plan_type"))
         .and_then(Value::as_str)
-        .filter(|plan| CODEX_PLAN_TYPES.contains(plan))
+        .filter(|plan| safe_token(plan, 64, b"._-"))
         .map(str::to_string);
     entry.reset_credits = result
         .get("reset_credits")
@@ -674,7 +664,26 @@ fn refresh_codex() -> Refresh {
         HELPER_TIMEOUT,
         HELPER_OUTPUT_LIMIT,
     ) {
-        Ok(output) => parse_codex(&output, now_epoch()),
+        Ok(output) => {
+            let mut refresh = parse_codex(&output, now_epoch());
+            if let Refresh::Completed(entries) = &mut refresh
+                && entries.iter().any(|entry| entry.ok && entry.plan.is_none())
+                && let Ok(accounts) = crate::codex_account::list_accounts()
+            {
+                for entry in entries
+                    .iter_mut()
+                    .filter(|entry| entry.ok && entry.plan.is_none())
+                {
+                    entry.plan = accounts
+                        .iter()
+                        .find(|account| Some(account.account.as_str()) == entry.account.as_deref())
+                        .and_then(|account| account.plan.as_deref())
+                        .filter(|plan| safe_token(plan, 64, b"._-"))
+                        .map(str::to_string);
+                }
+            }
+            refresh
+        }
         Err(error) => Refresh::Failed(helper_failure(error)),
     }
 }
