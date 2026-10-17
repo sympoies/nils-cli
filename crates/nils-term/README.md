@@ -96,12 +96,15 @@ Types:
 
 Workspace crates that depend on `nils-term` (see each crate's `Cargo.toml` and the `use nils_term::progress::...` import sites):
 
+- `agent-workflow-primitives`
 - `api-gql`, `api-grpc`, `api-rest`, `api-test`, `api-testing-core`, `api-websocket`
+- `claude-cli`
 - `cli-template`
 - `codex-cli`
 - `fzf-cli`
-- `git-lock`, `git-scope`, `git-summary`
+- `git-lock`, `git-scope`
 - `image-processing`
+- `memo`
 - `semantic-commit`
 
 To re-derive this list: `rg -nl '^nils-term\b|"nils-term"' crates/*/Cargo.toml` (excluding the crate itself).
