@@ -849,7 +849,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (inbox)
 _arguments "${_arguments_options[@]}" : \
-'--session=[Authenticated recipient session id]:SESSION:_default' \
+'--session=[Authenticated recipient session id; defaults to AGENT_SESSION_ID]:SESSION:_default' \
 '--capability-file=[Private capability file; defaults to AGENT_SESSION_CAPABILITY_FILE]:PATH:_files' \
 '--state=[]:STATE:_default' \
 '--cursor=[]:CURSOR:_default' \

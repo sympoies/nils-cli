@@ -622,6 +622,18 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&tmux, fs::Permissions::from_mode(0o700)).unwrap();
+        // A newly written script can exceed the observer deadline on its first
+        // macOS invocation. Initialize the fixture before sampling so this test
+        // checks viewport selection under the unchanged production deadline.
+        let prewarm = ProcessCommand::new(&tmux)
+            .arg("display-message")
+            .output()
+            .expect("initialize fake tmux");
+        assert!(
+            prewarm.status.success(),
+            "fake tmux setup failed: {prewarm:?}"
+        );
+        assert_eq!(prewarm.stdout, b"Claude\n");
         let interrupted = interrupted_pane_with_footer("");
         fs::write(&viewport, &interrupted).unwrap();
         fs::write(&scrollback, &interrupted).unwrap();
@@ -634,7 +646,7 @@ mod tests {
         fs::write(&viewport, fresh).unwrap();
         fs::write(&scrollback, format!("{interrupted}\n{fresh}")).unwrap();
         let observation = sample(&record, &tmux, &TurnPhase::Working);
-        assert_ne!(observation.rule_id, "claude_interrupt_marker");
+        assert_eq!(observation.rule_id, "claude_prompt_visible");
         let mut working = state(json!({
             "schema_version": "agent-session.turn-state.v1", "phase": "working",
             "phase_changed_at": now(), "revision": 5,

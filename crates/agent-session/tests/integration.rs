@@ -46,3 +46,6 @@ fn hermetic_provider_options(dir: &std::path::Path) -> nils_test_support::cmd::C
 
 #[path = "integration/origin.rs"]
 mod origin;
+
+#[path = "integration/mailbox_reminder.rs"]
+mod mailbox_reminder;

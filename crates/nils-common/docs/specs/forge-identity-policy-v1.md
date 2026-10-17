@@ -135,8 +135,10 @@ An operator CLI launch supplies `agent-session start --forge-initiator ID` and a
 optional `--role ROLE`. The immutable `lineage.forge_context` stores initiator and
 role. Managed children authenticate their parent broker, inherit the initiator,
 and record their explicitly assigned role; they cannot replace the initiator.
-An authenticated managed `--no-parent` start preserves the initiator while
-creating a new lineage root. Roles are never inherited. Resume and adoption
+An authenticated managed `--no-parent` start preserves the initiator only when
+the new lineage root carries a role; a role-less root started by a managed
+session has no binding, so a bound role-less root always comes from a
+non-session launcher. Roles are never inherited. Resume and adoption
 preserve the original context.
 
 Each resolver calls `agent-session broker identity --session ID --format json`
