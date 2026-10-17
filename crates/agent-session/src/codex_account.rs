@@ -3430,20 +3430,80 @@ esac
         assert_eq!(view.state, "failed");
     }
 
-    #[test]
-    fn cli_switch_queues_repair_of_a_binding_blocked_after_daemon_rebuild() {
-        let lock = GlobalStateLock::new();
-        // A malformed binding has no selected account, so the CLI lists it.
-        let broker_dir = tempfile::TempDir::new().unwrap();
-        let script = broker_dir.path().join("broker");
+    /// A broker argv that lists only `account`.
+    fn listing_broker(dir: &tempfile::TempDir, account: &str) -> String {
+        let script = dir.path().join("broker");
+        let listing = json!({
+            "schema_version": BROKER_SCHEMA_VERSION,
+            "accounts": [{ "account": account }]
+        });
         fs::write(
             &script,
-            "#!/bin/sh\n[ \"$1\" = list ] || exit 2\nprintf '%s\\n' '{\"schema_version\":\"agent-session.codex-auth-broker.v1\",\"accounts\":[{\"account\":\"acct1\"}]}'\n",
+            format!("#!/bin/sh\n[ \"$1\" = list ] || exit 2\nprintf '%s\\n' '{listing}'\n"),
         )
         .unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
-        let argv = serde_json::to_string(&[script.to_string_lossy()]).unwrap();
-        let _broker = EnvGuard::set(&lock, BROKER_ENV, &argv);
+        serde_json::to_string(&[script.to_string_lossy()]).unwrap()
+    }
+
+    #[test]
+    fn repair_of_an_account_the_broker_no_longer_lists_is_rejected_before_mutation() {
+        let lock = GlobalStateLock::new();
+        let broker_dir = tempfile::TempDir::new().unwrap();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, &listing_broker(&broker_dir, "acct2"));
+        for (case, binding) in [
+            ("failed", valid_binding("failed")),
+            ("pending", valid_binding("pending")),
+        ] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let (context, record) = persist_record(&tmp, binding.clone());
+            // The HTTP route, busy opt-in queue included, runs this precheck too.
+            let error = crate::session_account::codex_switch_precheck(
+                &record,
+                "runtime-binding-fixture",
+                "acct1",
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "codex-account-unknown", "{case}");
+
+            let error = crate::session_account::switch_unjournaled(
+                &context,
+                &record.id,
+                "acct1",
+                None,
+                std::path::Path::new("tmux"),
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "codex-account-unknown", "{case}");
+            let current = reload(&context, &record.id);
+            assert_eq!(current.extra.get(BINDING_KEY), Some(&binding), "{case}");
+            assert!(!current.extra.contains_key(NEXT_KEY), "{case}");
+        }
+
+        // Re-selecting the account bound to this runtime still cancels a
+        // queued switch without the broker listing it.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (context, record) = persisted_bound(&tmp);
+        queue_next_account(&context, &record.id, "runtime-binding-fixture", "acct2").unwrap();
+        let switched = crate::session_account::switch_unjournaled(
+            &context,
+            &record.id,
+            "acct1",
+            None,
+            std::path::Path::new("tmux"),
+        )
+        .unwrap();
+        let switched = serde_json::to_value(&switched).unwrap();
+        assert_eq!(switched["codex_account"]["state"], "bound");
+        assert!(switched["codex_account"].get("next").is_none());
+    }
+
+    #[test]
+    fn cli_switch_queues_repair_of_a_binding_blocked_after_daemon_rebuild() {
+        let lock = GlobalStateLock::new();
+        // A repair is not a re-selection of a bound account, so the CLI lists it.
+        let broker_dir = tempfile::TempDir::new().unwrap();
+        let _broker = EnvGuard::set(&lock, BROKER_ENV, &listing_broker(&broker_dir, "acct1"));
         for case in ["failed-after-rebuild", "malformed"] {
             let tmp = tempfile::TempDir::new().unwrap();
             let (context, record) = persisted_bound(&tmp);

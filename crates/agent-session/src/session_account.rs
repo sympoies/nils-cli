@@ -274,9 +274,14 @@ pub(crate) fn codex_switch_precheck(
         ));
     }
     // Like Claude, refuse an account the broker does not list before any
-    // binding or queued intent is written. Re-selecting the current account
-    // stays allowed so it can still cancel a queued switch.
-    if crate::codex_account::selected_account(record).as_deref() != Some(account) {
+    // binding or queued intent is written. Re-selecting the account bound to
+    // this runtime stays allowed so it can still cancel a queued switch; a
+    // repair of a failed, pending, or malformed binding is not exempt.
+    let reselects_bound = matches!(
+        crate::codex_account::binding_snapshot(record),
+        crate::codex_account::BindingSnapshot::Bound { account: bound, .. } if bound == account
+    );
+    if !reselects_bound {
         crate::codex_account::ensure_listed(account)?;
     }
     Ok(launch_id)
