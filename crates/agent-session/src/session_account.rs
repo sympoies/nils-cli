@@ -66,7 +66,10 @@ pub(crate) fn show(context: &CliContext, id: &str) -> Result<SessionAccount, Cli
 /// Claude takes the serve route's exact path. Codex binds live only through
 /// the daemon's in-process control connection, so the CLI takes the serve
 /// route's durable queue path: the account is bound for the next prompt, which
-/// stays fenced until the daemon applies it at the idle boundary.
+/// stays fenced until the daemon applies it at the idle boundary. A binding
+/// left failed, pending, or malformed (for example by a serve restart) is
+/// repaired the same way: the daemon promotes the queued account into the
+/// route's immediate switch once the session is idle.
 pub(crate) fn switch(
     context: &CliContext,
     id: &str,

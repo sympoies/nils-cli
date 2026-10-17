@@ -290,7 +290,9 @@ path and need no serve token.
 - Codex binds the account for the next prompt: the CLI durably queues it and
   the serve daemon's control connection applies it at the idle boundary, so the
   next prompt is fenced until then. A Codex switch needs a running serve daemon
-  to apply; re-selecting the current account cancels a queued switch.
+  to apply; re-selecting the current account cancels a queued switch. A
+  binding shown as `failed` after a serve restart is repaired the same way,
+  including by re-selecting its own account.
 - `--expected-incarnation` fences the switch to one runtime and defaults to the
   current one.
 - JSON output returns the provider's `codex_account` or `claude_account` view
