@@ -21,6 +21,9 @@ use crate::error::ForgeError;
 use crate::ops;
 use crate::provider::ProviderHint;
 
+mod comment;
+pub use comment::CommentEditArgs;
+
 mod review_loop;
 pub use review_loop::PrReviewLoopObserveArgs;
 
@@ -356,22 +359,6 @@ pub enum CommentKind {
     Issue,
     /// Pull request review (diff) comments.
     Review,
-}
-#[derive(Args, Debug)]
-pub struct CommentEditArgs {
-    #[arg(value_parser = clap::value_parser!(u64).range(1..))]
-    pub id: u64,
-    #[arg(long, value_enum, default_value = "issue")]
-    pub kind: CommentKind,
-    #[arg(
-        long,
-        required_unless_present = "body_file",
-        conflicts_with = "body_file"
-    )]
-    pub body: Option<String>,
-    /// Markdown body file; use - to read stdin.
-    #[arg(long)]
-    pub body_file: Option<String>,
 }
 #[derive(Args, Debug)]
 pub struct CommentDeleteArgs {
