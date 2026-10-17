@@ -177,3 +177,60 @@ fn refusal_after_paste_waits_out_a_slow_renderer_before_declaring_the_input_empt
     assert_eq!(composer(&fixture), "");
     assert_eq!(backspaces(&fixture), "continue-fixture".len());
 }
+
+fn guarded_text(fixture: &Fixture, text: &str) -> super::CmdOutput {
+    fixture.send_text(
+        Some(text),
+        &[
+            "--require-idle",
+            "--require-empty-composer",
+            "--idempotency-key",
+            "live-text",
+        ],
+    )
+}
+
+#[test]
+fn trailing_newline_is_not_pasted_so_the_single_row_composer_verifies() {
+    for suffix in ["\n", "\r\n", "\n\n"] {
+        let fixture = Fixture::new("claude");
+        live(&fixture, &["bare-composer"]);
+        let output = guarded_text(&fixture, &format!("continue-fixture{suffix}"));
+        assert_eq!(output.code, 0, "{suffix:?}: {}", output.stdout_text());
+        assert_eq!(
+            submissions(&fixture),
+            ["\"continue-fixture\""],
+            "{suffix:?}"
+        );
+    }
+}
+
+#[test]
+fn text_with_an_inner_newline_is_refused_before_anything_is_pasted() {
+    for provider in ["claude", "codex"] {
+        let fixture = Fixture::new(provider);
+        let output = guarded_text(&fixture, "first line\nsecond line\n");
+        let details = details(&output, "send-text-multiline");
+        assert_eq!(details["stage"], "admission", "{provider}");
+        assert_eq!(details["pasted"], false);
+        assert_eq!(details["submitted"], false);
+        fixture.no_delivery();
+        assert_eq!(composer(&fixture), "");
+        // The refusal consumed nothing: the same key still delivers one line.
+        let again = guarded_text(&fixture, "single line");
+        assert_eq!(again.code, 0, "{provider}: {}", again.stdout_text());
+    }
+}
+
+#[test]
+fn text_made_only_of_line_breaks_is_refused_before_anything_is_pasted() {
+    for text in ["\n\n", "\r\n\r\n", "\r\r"] {
+        let fixture = Fixture::new("claude");
+        live(&fixture, &["bare-composer"]);
+        let output = guarded_text(&fixture, text);
+        let details = details(&output, "send-text-multiline");
+        assert_eq!(details["pasted"], false, "{text:?}");
+        fixture.no_delivery();
+        assert_eq!(composer(&fixture), "");
+    }
+}

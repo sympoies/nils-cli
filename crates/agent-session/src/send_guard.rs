@@ -14,6 +14,7 @@ use crate::{
 
 mod clear;
 mod key;
+mod text;
 
 #[derive(Debug, Default, Args)]
 pub struct GuardArgs {
