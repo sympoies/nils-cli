@@ -260,6 +260,9 @@ case "$1 $2" in
 {view_json}
 EOF
     ;;
+  "api graphql")
+    printf '%s\n' '{{"data":{{"repository":{{"pullRequest":{{"ready":{{"nodes":[]}},"isInMergeQueue":false,"mergeQueueEntry":null}}}}}}}}'
+    ;;
   *)
     echo "stub: unexpected gh args: $*" >&2
     exit 99 ;;

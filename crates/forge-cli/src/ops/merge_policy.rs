@@ -44,8 +44,6 @@ const FREEZE_QUERY: &str = "query ForgeMergeFreezes($owner:String!,$name:String!
 
 const ENQUEUE_MUTATION: &str = "mutation ForgeEnqueuePullRequest($pullRequestId:ID!,$expectedHeadOid:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$pullRequestId,expectedHeadOid:$expectedHeadOid}){mergeQueueEntry{state position}}}";
 
-const POLL_QUERY: &str = "query ForgeMergeQueuePoll($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){state mergeCommit{oid} mergeQueueEntry{state position}}}}";
-
 /// One active merge freeze.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Freeze {
@@ -304,7 +302,7 @@ pub fn wait_for_merge<R: BackendRunner, C: Clock>(
     loop {
         let call = graphql_call(
             ctx,
-            POLL_QUERY,
+            &crate::ops::merge_queue::query("ForgeMergeQueuePoll", "", true),
             &[("owner", owner), ("name", name)],
             &[("pr", pr)],
         );
@@ -407,7 +405,7 @@ fn parse_method(value: &str) -> Option<MergeMethod> {
     }
 }
 
-fn graphql_call(
+pub(crate) fn graphql_call(
     ctx: &ProviderContext,
     query: &str,
     strings: &[(&str, &str)],
