@@ -65,8 +65,15 @@ bound from the caller's trusted PATH, compiler wrappers are disabled, and rustup
 auto-install is disabled. Candidate configuration and toolchain files never
 select metadata tooling. Cargo, rustc, the trusted base toolchain and registry
 cache must already be available. The caller must provide its normal
-resource containment and environment for metadata; this command does not fetch,
+resource containment and environment for metadata; this command does not
 compile packages, create a test gate, or manage a gate slot.
+
+By default it does not fetch either. When
+`NILS_CLI_MERGE_PLAN_PREPARE_METADATA=1`, each snapshot first runs the same
+command without `--offline`, so Cargo may download locked dependencies that a
+restored cache lacks; build scripts do not run. That output is discarded:
+selection still consumes the offline, locked run above. The CI `test` and
+`test_macos` jobs set it after restoring the Cargo cache.
 
 Root Cargo configuration in either snapshot, or any changed `.cargo`/toolchain
 input, yields `METADATA_FAILED` at `candidate_configuration` before Cargo runs.
