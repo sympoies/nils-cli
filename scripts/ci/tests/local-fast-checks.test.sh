@@ -21,6 +21,7 @@ fi
 
 python3 "$repo_root/scripts/ci/tests/local-fast-graph.test.py"
 python3 "$repo_root/scripts/ci/tests/sibling-bins.test.py"
+python3 "$repo_root/scripts/ci/tests/local-fast-execution.test.py"
 
 # These routing assertions use manifest-only workspace metadata, including
 # declared path dependencies. External resolved edges remain covered above.
