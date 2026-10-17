@@ -71,7 +71,7 @@ unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
 Claude's composer is the box between its last horizontal border and the one
 above the input row. A top border that carries a session title keeps only the
 dashes the title leaves, so a long title can leave none: such a border starts
-with the title and ends in ` ─`.
+with the title and ends in a lone dash after a space.
 
 Guard captures use `tmux capture-pane -p -e -N -T` to retain occupied spaces
 and exclude unused terminal cells.
