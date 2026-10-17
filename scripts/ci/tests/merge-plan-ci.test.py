@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -331,8 +332,20 @@ else:
                          ['unrelated', 'untouched'])
         self.assertEqual(command[command.index('--fail-under-lines') + 1], '85')
         report = next(r['args'] for r in rows if r['args'][:2] == ['llvm-cov', 'report'])
-        self.assertEqual([report[i + 1] for i, arg in enumerate(report) if arg == '--exclude-from-report'],
-                         ['unrelated', 'untouched'])
+        cargo = shutil.which('cargo')
+        if cargo and subprocess.run([cargo, 'llvm-cov', '--version'], capture_output=True,
+                                    text=True).returncode == 0:
+            # cargo-llvm-cov 0.9.1's report parser is the contract: invalid
+            # flags fail here even though the surrounding executor is stubbed.
+            parsed = subprocess.run([cargo, *report], cwd=self.repo,
+                                    env=dict(os.environ, PATH=os.environ['PATH']),
+                                    capture_output=True, text=True)
+            self.assertNotIn("not supported for subcommand 'report'", parsed.stderr)
+            self.assertNotIn('unexpected argument', parsed.stderr)
+        self.assertEqual([report[i + 1] for i, arg in enumerate(report) if arg == '-p'],
+                         ['consumer', 'selected'])
+        self.assertNotIn('--exclude-from-report', report)
+        self.assertEqual(report[report.index('--fail-under-lines') + 1], '85')
         self.assertNotIn('--workspace', command)
         self.assertFalse(any(r['args'][0] == 'test' for r in rows))
 
