@@ -139,6 +139,7 @@ Parity matrix (v1):
 | `pr pending-review submit <id> …`           | exact pending snapshot CAS + `submitPullRequestReview`                                                                                       | unsupported in v1                                                      | GitHub-only guarded unmarked adoption that preserves inline content                                                      |
 | `pr pending-review discard <id> …`          | exact pending snapshot CAS + `deletePullRequestReview`                                                                                       | unsupported in v1                                                      | GitHub-only destructive recovery with distinct inline-content-loss confirmation                                          |
 | `pr pending-review delete <id> --review …`  | PR view + complete pending-only membership snapshot + exact-target final read with content/viewer/comment guards + `deletePullRequestReview` | unsupported in v1                                                      | GitHub-only compatibility recovery for one confirmed-abandoned body-only pending review                                  |
+| `pr review-dismiss <id> --review-id …`      | PR view + REST review read + designated-PASS admission + `gh api user` + `PUT …/reviews/{id}/dismissals`                                     | unsupported (no review dismissal)                                      | GitHub-only governed dismissal of one configured automated CHANGES_REQUESTED review                                      |
 | `pr tasks <id>`                             | `gh pr view <id> --json number,url,body`                                                                                                     | `glab mr view <id> -F json` (`description`)                            | normalized task-list state                                                                                               |
 | `pr merge <id>`                             | `gh pr merge <id> --squash --delete-branch`                                                                                                  | `glab api --method PUT .../merge` after gates                          | exact (method honoured per repo cfg)                                                                                     |
 | `pr close <id>`                             | `gh pr close <id>`                                                                                                                           | `glab mr close <id>`                                                   | exact                                                                                                                    |
@@ -221,6 +222,7 @@ forge-cli
 │   │   ├── submit
 │   │   ├── discard
 │   │   └── delete
+│   ├── review-dismiss
 │   ├── ready
 │   ├── merge
 │   ├── close
@@ -1034,6 +1036,40 @@ proof. Assigned merge preview and live merge use the same gate. Live delivery,
 merge, and publication detect persisted assignment with the environment absent.
 Mailbox `pass`, stale publication, missing handoff, open findings, and unavailable
 reviewers cannot satisfy admission. Existing convergence and merge gates remain.
+
+### `pr review-dismiss`
+
+- `pr review-dismiss <id> --review-id <id> --expected-head <sha>
+  --reason-file <path>` dismisses one native GitHub review and emits
+  `cli.forge-cli.pr.review-dismiss.v1` with `review_id`, `review_url`,
+  `author`, `head_sha`, `state`, `reason`, `actor`, and `dismissed_at` (when
+  forge-cli observed the provider confirm the dismissal).
+- It refuses with exit 65 unless every guard holds: a non-empty reason
+  (`review_dismiss_reason_missing`, checked before any provider call); the PR
+  head and the review commit both equal `--expected-head`
+  (`review_dismiss_head_mismatch`); the review is `CHANGES_REQUESTED`
+  (`review_dismiss_state_invalid`); and the author is a provider App account
+  whose login is listed in the user-global `[[review_convergence.bots]]`
+  (`review_dismiss_author_not_automated`). Repository `.forge-cli.toml` never
+  grants dismissal authority, because a PR branch can edit it. A login spelling
+  never makes an author automated, and a configured login on a user account is
+  refused.
+- Dismissal never replaces designated review. The PR must hold a designated
+  PASS admitted at `--expected-head` by the same gate as `review-handoff check`
+  (`awaiting_designated_review`, also returned when no handoff exists or a
+  blocking ledger finding is open). The review must be submitted before that
+  PASS, so the designated reviewer could judge it
+  (`review_dismiss_after_designated_pass`). The designated reviewer's own review
+  is refused (`review_dismiss_designated_reviewer`). A valid `AGENT_SESSION_ID`
+  is required, and neither the designated reviewer session nor the designated
+  review account may dismiss (`review_dismiss_self_review`).
+- The reason, head, and authenticated actor are posted as the provider
+  dismissal message, which GitHub retains with the review. No review-loop
+  ledger record is appended, so existing ledger readers stay compatible.
+  `--dry-run` runs every guard and prints the dismissal plan. An unreadable
+  actor (`review_dismiss_actor_unknown`) or an unconfirmed provider response
+  (`review_dismiss_unconfirmed`) fails with exit 69. GitLab and local providers
+  return `provider_unsupported` (exit 64).
 
 ### `pr review-loop inspect` / `observe` / `extend` / `validate`
 

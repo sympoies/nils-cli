@@ -17,6 +17,9 @@ pub(super) struct PublishedApproval {
     review_author: String,
     native_state: String,
     reviewed_head: String,
+    /// Orders other provider events against the PASS; not part of the payload.
+    #[serde(skip)]
+    pub submitted_at: String,
 }
 
 impl ApprovalState {
@@ -41,6 +44,7 @@ impl PublishedApproval {
             review_author: review.author.clone(),
             native_state: review.state.clone(),
             reviewed_head: review.commit_sha.clone(),
+            submitted_at: review.submitted_at.clone(),
         }
     }
 }

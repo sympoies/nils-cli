@@ -86,7 +86,7 @@ fn fail(kind: &'static str, message: &str) -> ForgeError {
 }
 
 /// Hash only the globally unique session id, never its machine suffix.
-fn session_digest(selector: &str) -> Result<String, ForgeError> {
+pub(crate) fn session_digest(selector: &str) -> Result<String, ForgeError> {
     let id = selector.split('@').next().unwrap_or("");
     if id.is_empty()
         || id.len() > 128
@@ -639,10 +639,37 @@ pub(crate) fn ensure_published<R: BackendRunner>(
     chain: &review_state::ReviewStateChain,
     handoff_created_at: Option<&str>,
 ) -> Result<Option<SyncCarryOver>, ForgeError> {
+    published_admission(runner, ctx, number, url, head, chain, handoff_created_at)
+        .map(|admission| admission.sync_carry_over)
+}
+
+/// Submission time of the designated PASS that `ensure_published` admits for
+/// `head`; `None` only when no reviewer is assigned.
+pub(crate) fn ensure_published_pass_time<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+    url: &str,
+    head: &str,
+    chain: &review_state::ReviewStateChain,
+    handoff_created_at: Option<&str>,
+) -> Result<Option<String>, ForgeError> {
+    published_admission(runner, ctx, number, url, head, chain, handoff_created_at)
+        .map(|admission| admission.approval.map(|approval| approval.submitted_at))
+}
+
+fn published_admission<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+    url: &str,
+    head: &str,
+    chain: &review_state::ReviewStateChain,
+    handoff_created_at: Option<&str>,
+) -> Result<Admission, ForgeError> {
     let admission = admit_published(runner, ctx, number, url, head, chain, handoff_created_at)?;
     admission.require_policy(latest(chain).map(|h| h.approval_policy).unwrap_or_default())?;
-    let carry = admission.sync_carry_over;
-    if let Some(c) = &carry
+    if let Some(c) = &admission.sync_carry_over
         && recorded_carry_over(chain, head) != Some(c)
     {
         return Err(ForgeError::validation(
@@ -654,7 +681,7 @@ pub(crate) fn ensure_published<R: BackendRunner>(
             )),
         ));
     }
-    Ok(carry)
+    Ok(admission)
 }
 
 /// Admit the designated PASS for `head`. A PASS at the reviewed head carries
@@ -839,7 +866,10 @@ fn admit_published<R: BackendRunner>(
 /// A bare login names a user; the REST `[bot]` suffix names an App account.
 /// App accounts require a typed Bot with a stable node id for either login form.
 /// The exact REST review read-back must bind that node to the expected login.
-fn matches_designated_author(review: &pr_reviews::NativeReviewSummary, expected: &str) -> bool {
+pub(crate) fn matches_designated_author(
+    review: &pr_reviews::NativeReviewSummary,
+    expected: &str,
+) -> bool {
     let expected_bot = expected.to_ascii_lowercase().ends_with("[bot]");
     if review
         .author_type
