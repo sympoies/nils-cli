@@ -391,7 +391,7 @@ operations:
       - { name: <id>, type: integer-or-branch, required: true }
     validations: []
     backends:
-      github: { program: gh,   argv: [pr,   view, "{id}", --json, "number,url,state,isDraft,title,headRefName,headRefOid,headRepository,baseRefName,mergeable,mergedAt,mergeCommit,labels,body,closingIssuesReferences"] }
+      github: { program: gh,   argv: [pr,   view, "{id}", --json, "number,url,state,isDraft,title,headRefName,headRefOid,headRepository,baseRefName,mergeable,mergedAt,mergeCommit,labels,body,closingIssuesReferences,createdAt"] }
       gitlab: { program: glab, argv: [mr,   view, "{id}", -F, json] }
     output:
       data:
@@ -405,11 +405,17 @@ operations:
         head_repository: optional<string>
         base: string
         mergeable: enum<yes|no|unknown>
+        created_at: nullable<string>
+        ready_for_review_at: nullable<string>
+        merge_queue: "nullable<{ queued: bool, position: nullable<integer>, enqueued_at: nullable<string>, state: nullable<string>, head_sha: nullable<string> }>"
+        merge_group: "nullable<{ head_sha: string, started_at: nullable<string>, completed_at: nullable<string>, checks: list<{ name, status, conclusion, started_at, completed_at }> }>"
         merged_at: optional<string>
         merge_commit_sha: optional<string>
         labels: list<string>
         body: optional<string>   # GitHub `body` / GitLab `description`; null when the response omits it
         closing_issue_refs: list<{ number, url }>  # GitHub closingIssuesReferences (Closes/Fixes #N); always [] on GitLab / when absent
+
+    notes: "Standalone GitHub JSON view adds a lifecycle/queue GraphQL read and, when a synthetic group is present, paginated check-run reads. Null semantics and the shared queue contract are defined in pr-lifecycle-v1.md. Text and mutation flows do not add lifecycle reads."
 
   - id: pr.list
     schema_version: cli.forge-cli.pr.list.v1
