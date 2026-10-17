@@ -41,6 +41,8 @@ Errors use the ordinary JSON `ok: false` envelope:
 | 422 | `history-image-unavailable` | Image unavailable |
 
 Missing history, transcript, referenced file, or stale row ids are deleted.
+A managed attachment whose session has no matching live provider identity or
+matching archive original session id is also deleted (404).
 Malformed ids, remote URLs, unsupported data, excessive size, forbidden paths,
 symlinks and unreadable/invalid images are unavailable. Infrastructure failures
 remain ordinary server errors; clients can show unavailable and allow retry.
@@ -51,7 +53,9 @@ These states are observations at read time, not promises of permanent storage.
 File references resolve only under the transcript's recorded working directory
 or a daemon-owned session attachment directory. Attachment reads additionally
 verify the live record's provider conversation identity or the archive's
-original session id. Components containing `..` are refused. Reads walk below
+original session id. A broad recorded working directory broadens the file
+boundary; authenticated consumers retain their own history ownership checks.
+Components containing `..` are refused. Reads walk below
 the trusted root with descriptor-relative `O_NOFOLLOW` opens, including parent
 directories; FIFOs/devices and other non-regular files are refused.
 

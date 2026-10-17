@@ -14,7 +14,7 @@ crates/agent-session/src/codex_app_server/tests/mod.rs	test	8545
 crates/agent-session/src/lib.rs	impl	13556
 crates/agent-session/src/lib.rs	test	6345
 crates/agent-session/src/provider_history.rs	impl	2761
-crates/agent-session/src/retitle.rs	impl	3408
+crates/agent-session/src/retitle.rs	impl	3378
 crates/agent-session/src/retitle_v3.rs	impl	3634
 crates/agent-session/src/retitle_v3.rs	test	3648
 crates/agent-session/src/serve.rs	impl	11974

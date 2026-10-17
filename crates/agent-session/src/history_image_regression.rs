@@ -105,3 +105,34 @@ fn claude_history_images_keep_paging_and_resolve_nested_embedded_sources() {
         ));
     }
 }
+
+#[test]
+fn image_text_incremental_ids_match_pre_attachment_applied_memory() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path().join("history");
+    fs::create_dir(&root).unwrap();
+    let meta = serde_json::json!({"type":"session_meta","payload":{"id":"stable-image-id","cwd":temp.path(),"timestamp":"2026-10-16T00:00:00Z","source":"cli"}});
+    let row = serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Inspect the image"},{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo="}],"internal_chat_message_metadata_passthrough":{"turn_id":"stable-turn","content_item_kinds":["user.text","user.image"]}}});
+    fs::write(root.join("rollout.jsonl"), format!("{meta}\n{row}\n")).unwrap();
+    let catalog = HistoryCatalog::new(
+        vec![HistorySource {
+            provider: "codex".into(),
+            agent_profile: None,
+            root,
+        }],
+        archive_root(temp.path()),
+        star_root(temp.path()),
+    );
+    let id = stable_history_id("codex", None, "stable-image-id");
+    let snapshot = catalog.snapshot();
+    let session = &snapshot.incremental_segments[&id][0];
+    let old_id = incremental_message_id(session, &row, "user", "Inspect the image", None, true);
+    let replay = catalog
+        .incremental_messages_with_applied_ids(&id, None, &[old_id], 1024 * 1024)
+        .unwrap();
+    assert_eq!(
+        replay.messages.len(),
+        0,
+        "Previously applied text-bearing images must remain deduplicated after upgrade/recovery"
+    );
+}

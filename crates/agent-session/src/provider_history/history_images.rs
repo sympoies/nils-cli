@@ -165,7 +165,8 @@ pub(super) fn push_incremental_message(
         timestamp.as_deref(),
         human_prompt,
     );
-    let id = if images.is_empty() {
+    // Preserve IDs already stored in semantic memory for text-bearing rows.
+    let id = if images.is_empty() || !text.trim().is_empty() {
         base_id
     } else {
         digest_parts(&[base_id.as_bytes(), row_key(&value).as_bytes()])
