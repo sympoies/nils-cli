@@ -16,6 +16,7 @@ name = "agent-session"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.23"
 clap = { workspace = true }
 clap_complete = { workspace = true }
 jiff = { workspace = true }
