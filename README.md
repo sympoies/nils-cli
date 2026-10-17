@@ -204,3 +204,5 @@ maintenance, and crates.io publishing live in the
 
 New CLI crate onboarding is documented in
 [docs/runbooks/new-cli-crate-development-standard.md](docs/runbooks/new-cli-crate-development-standard.md).
+The [workspace documentation index](docs/README.md) lists every workspace
+runbook and spec by task.

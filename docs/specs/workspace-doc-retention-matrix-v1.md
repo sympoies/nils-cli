@@ -18,6 +18,7 @@ Decision fields:
 | `README.md` | `workspace-level` | `canonical` | `keep` | Workspace overview and contributor entrypoint. |
 | `DEVELOPMENT.md` | `workspace-level` | `canonical` | `keep` | Maintenance principles, routine workflow, and canonical reference routing. |
 | `AGENTS.md` | `workspace-level` | `canonical` | `keep` | Agent execution policy for this repository. |
+| `docs/README.md` | `workspace-level` | `canonical` | `keep` | Workspace runbook and spec index grouped by reader task. |
 | `BINARY_DEPENDENCIES.md` | `workspace-level` | `canonical` | `keep` | Shared runtime/tooling dependency contract. |
 | `docs/devlog/README.md` | `workspace-level` | `canonical` | `keep` | Development log conventions, entry template, and month index. |
 | `docs/devlog/YYYY-MM.md` | `workspace-level` | `canonical` | `keep` | Append-only monthly development log entries. |
