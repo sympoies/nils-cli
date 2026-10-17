@@ -369,3 +369,92 @@ fn dim_suggestion_padding_does_not_hide_real_text_or_whitespace_drafts() {
         );
     }
 }
+
+/// Claude draws a suggestion as one dim run per word; the spaces between the
+/// words carry no style. This is the layout of a live idle pane.
+fn dim_words(suggestion: &str) -> String {
+    suggestion
+        .split(' ')
+        .map(|word| format!("\u{1b}[2m{word}\u{1b}[0m"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[test]
+fn per_word_dim_suggestion_is_empty_but_typed_twins_stay_drafts() {
+    let suggestion = "Read your mailbox and proceed";
+    let padding = " ".repeat(20);
+    for provider in ["claude", "codex"] {
+        let render = if provider == "claude" { claude } else { codex };
+        let styled = dim_words(suggestion);
+        assert_eq!(
+            exact_composer_input(provider, &render(&styled, "", "status")).as_deref(),
+            Some(""),
+            "{provider}"
+        );
+        // Typed text is never dim, whatever its words.
+        assert_eq!(
+            exact_composer_input(provider, &render(suggestion, "", "status")).as_deref(),
+            Some(suggestion),
+            "{provider}"
+        );
+    }
+    assert_eq!(
+        exact_composer_input(
+            "claude",
+            &claude(&format!("{}{padding}", dim_words(suggestion)), "", "status")
+        )
+        .as_deref(),
+        Some("")
+    );
+}
+
+#[test]
+fn per_word_dim_suggestion_never_hides_a_partly_typed_or_padded_draft() {
+    let words = dim_words("Read your mailbox and proceed");
+    for input in [
+        // One typed word among dim words.
+        format!("{} typed", words),
+        format!("typed {words}"),
+        words.replacen("\u{1b}[2mmailbox\u{1b}[0m", "mailbox", 1),
+        // Unstyled whitespace around or instead of the suggestion.
+        format!(" {words}"),
+        format!("{words}\u{a0}"),
+        "\u{1b}[2mRead\u{1b}[0m\u{a0}\u{1b}[2mmailbox\u{1b}[0m".to_string(),
+        " ".to_string(),
+        "\u{1b}[2m \u{1b}[0m \u{1b}[2m \u{1b}[0m".to_string(),
+    ] {
+        for provider in ["claude", "codex"] {
+            let render = if provider == "claude" { claude } else { codex };
+            assert!(
+                exact_composer_input(provider, &render(&input, "", "status"))
+                    .is_none_or(|draft| !draft.is_empty()),
+                "{provider} {input:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn claude_titled_top_border_still_locates_the_composer() {
+    // A long session title leaves only a few border dashes on the top rule.
+    let titled = "─── a long session title that fills the width of the pane ─";
+    let rule = "────────────────────";
+    for (input, expected) in [("", ""), ("user draft", "user draft")] {
+        let pane = format!("{titled}\n❯\u{a0}{input}\n{rule}\n  status");
+        assert_eq!(
+            exact_composer_input("claude", &pane).as_deref(),
+            Some(expected)
+        );
+    }
+    let pane = format!(
+        "{titled}\n❯\u{a0}{}\n{rule}\n  status",
+        dim_words("Try it now")
+    );
+    assert_eq!(exact_composer_input("claude", &pane).as_deref(), Some(""));
+    // Prose that merely starts with dashes is not a composer border.
+    for line in ["─── not a border", "── a ──", "─── x ─ y"] {
+        let pane = format!("{line}\n❯\u{a0}\n{rule}\n  status");
+        assert_eq!(exact_composer_input("claude", &pane), None, "{line}");
+    }
+}

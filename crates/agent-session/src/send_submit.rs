@@ -172,7 +172,10 @@ fn claude_rules(lines: &[&str]) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, line)| {
-            line.trim_start().starts_with('─') && line.chars().filter(|ch| *ch == '─').count() >= 10
+            let line = line.trim();
+            (line.starts_with('─') && line.chars().filter(|ch| *ch == '─').count() >= 10)
+                // A long session title leaves a few dashes on the top border.
+                || (line.starts_with("───") && line.ends_with('─'))
         })
         .map(|(index, _)| index)
         .collect()

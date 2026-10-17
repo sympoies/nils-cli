@@ -184,3 +184,51 @@ fn claude_hyperlink_footer_admits_empty_hints_and_preserves_plain_drafts() {
         draft
     );
 }
+
+#[test]
+fn claude_per_word_dim_suggestion_admits_one_guarded_submission() {
+    let suggestion = "Read your mailbox and proceed";
+    let guards = ["--require-idle", "--require-empty-composer"];
+    for titled in [false, true] {
+        let fixture = Fixture::new("claude");
+        fs::write(fixture.root().join("suggestion"), suggestion).unwrap();
+        fs::write(fixture.root().join("suggestion-words"), "").unwrap();
+        if titled {
+            fs::write(fixture.root().join("titled-border"), "").unwrap();
+        }
+        let output = fixture.send(&guards);
+        assert_eq!(output.code, 0, "titled {titled}: {}", output.stdout_text());
+        assert_eq!(
+            output.stdout_json()["data"]["submission"]["enter_presses"],
+            1
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("submissions"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn claude_typed_draft_with_the_suggestion_words_is_still_refused() {
+    let suggestion = "Read your mailbox and proceed";
+    for titled in [false, true] {
+        let fixture = Fixture::new("claude");
+        fs::write(fixture.root().join("composer"), suggestion).unwrap();
+        if titled {
+            fs::write(fixture.root().join("titled-border"), "").unwrap();
+        }
+        fixture.refused(
+            &fixture.send(&["--require-idle", "--require-empty-composer"]),
+            "send-composer-not-empty",
+        );
+        fixture.no_delivery();
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("composer")).unwrap(),
+            suggestion
+        );
+    }
+}
