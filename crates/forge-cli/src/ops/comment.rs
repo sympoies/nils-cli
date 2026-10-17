@@ -1,6 +1,6 @@
 //! Native issue/PR timeline and review comment mutation by database id.
 use super::github_write::{self as write, invalid};
-use crate::backend::{BackendCall, BackendProgram};
+use crate::backend::{BackendCall, BackendProgram, BackendRunner};
 use crate::cli::{BINARY, CommentCommand, CommentKind, GlobalFlags};
 use crate::error::ForgeError;
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
@@ -11,6 +11,7 @@ struct EditedComment {
     id: u64,
     html_url: String,
     body: String,
+    updated_at: String,
 }
 #[derive(Serialize)]
 struct CommentPayload {
@@ -22,6 +23,8 @@ struct CommentPayload {
     url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    updated_at: Option<String>,
     deleted: bool,
 }
 pub fn run(
@@ -34,7 +37,7 @@ pub fn run(
         CommentCommand::Delete(_) => "comment.delete",
     };
     let ctx = write::target(global, op)?;
-    let (id, kind, body) = match command {
+    let (id, kind, body, expected_updated_at) = match command {
         CommentCommand::Edit(args) => {
             let body = match args.body {
                 Some(body) => body,
@@ -53,19 +56,23 @@ pub fn run(
                 ));
             }
             write::guard_text(&body, "comment")?;
-            (args.id, args.kind, Some(body))
+            (args.id, args.kind, Some(body), args.expected_updated_at)
         }
-        CommentCommand::Delete(args) => (args.id, args.kind, None),
+        CommentCommand::Delete(args) => (args.id, args.kind, None, None),
     };
     let category = match kind {
         CommentKind::Issue => "issues",
         CommentKind::Review => "pulls",
     };
     let repo = ctx.repo.as_deref().expect("target repository");
+    let endpoint = format!("repos/{repo}/{category}/comments/{id}");
+    if body.is_some() && !global.dry_run {
+        preflight(&ctx, &endpoint, id, expected_updated_at.as_deref(), op)?;
+    }
     let mut argv: Vec<OsString> = vec!["api".into()];
     ctx.push_github_api_hostname(&mut argv);
     argv.extend([
-        format!("repos/{repo}/{category}/comments/{id}").into(),
+        endpoint.into(),
         "--method".into(),
         if body.is_some() { "PATCH" } else { "DELETE" }.into(),
     ]);
@@ -111,6 +118,7 @@ pub fn run(
                 id,
                 kind,
                 url: edited.as_ref().map(|c| c.html_url.clone()),
+                updated_at: edited.as_ref().map(|c| c.updated_at.clone()),
                 body: edited.map(|c| c.body),
                 deleted: body.is_none(),
             })
@@ -118,4 +126,76 @@ pub fn run(
     );
     drop(payload_file);
     result
+}
+
+#[derive(Deserialize)]
+struct Actor {
+    login: String,
+}
+#[derive(Deserialize)]
+struct CommentSnapshot {
+    id: u64,
+    user: Actor,
+    updated_at: String,
+}
+
+// This is a read-then-write guard, not a provider atomic compare-and-swap.
+// Another edit between this read and the PATCH can still be overwritten.
+fn preflight(
+    ctx: &crate::provider::ProviderContext,
+    endpoint: &str,
+    id: u64,
+    expected_updated_at: Option<&str>,
+    op: &str,
+) -> Result<(), ForgeError> {
+    fn read<T: serde::de::DeserializeOwned>(
+        ctx: &crate::provider::ProviderContext,
+        endpoint: &str,
+        op: &str,
+    ) -> Result<T, ForgeError> {
+        let mut argv: Vec<OsString> = vec!["api".into()];
+        ctx.push_github_api_hostname(&mut argv);
+        argv.push(endpoint.into());
+        // Keep the enclosing edit's write-identity scope for both reads.
+        let output =
+            crate::rate_limit::default_runner().run(&BackendCall::new(BackendProgram::Gh, argv))?;
+        serde_json::from_str(&output.stdout).map_err(|_| {
+            ForgeError::software(
+                schema_version_for(BINARY, op, 1),
+                "invalid comment preflight response",
+                None,
+            )
+        })
+    }
+    let actor: Actor = read(ctx, "user", op)?;
+    let current: CommentSnapshot = read(ctx, endpoint, op)?;
+    if current.id != id {
+        return Err(invalid(
+            op,
+            "comment_response_mismatch",
+            "provider returned a different comment",
+        ));
+    }
+    if actor.login.is_empty() || current.user.login.is_empty() || current.updated_at.is_empty() {
+        return Err(invalid(
+            op,
+            "comment_snapshot_invalid",
+            "comment preflight requires an authenticated author and updated_at",
+        ));
+    }
+    if !actor.login.eq_ignore_ascii_case(&current.user.login) {
+        return Err(invalid(
+            op,
+            "comment_author_mismatch",
+            "refusing to edit a comment authored by another identity",
+        ));
+    }
+    if expected_updated_at.is_some_and(|expected| expected != current.updated_at) {
+        return Err(invalid(
+            op,
+            "comment_stale",
+            "comment changed since the expected updated_at; read it again before editing",
+        ));
+    }
+    Ok(())
 }

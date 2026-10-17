@@ -1,0 +1,24 @@
+[
+  {
+    "check_runs": [
+      {
+        "name": "test",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-01-03T03:01:00Z",
+        "completed_at": "2026-01-03T03:04:00Z"
+      }
+    ]
+  },
+  {
+    "check_runs": [
+      {
+        "name": "coverage",
+        "status": "in_progress",
+        "conclusion": null,
+        "started_at": "2026-01-03T03:02:00Z",
+        "completed_at": null
+      }
+    ]
+  }
+]

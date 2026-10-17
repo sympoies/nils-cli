@@ -24,7 +24,7 @@ use crate::rate_limit::default_runner;
 const SCHEMA: &str = "pr.view";
 const SCHEMA_VERSION: u32 = 1;
 
-pub(crate) const GH_JSON_FIELDS: &str = "number,url,state,isDraft,title,headRefName,headRefOid,headRepository,baseRefName,mergeable,mergedAt,mergeCommit,labels,body,closingIssuesReferences";
+pub(crate) const GH_JSON_FIELDS: &str = "number,url,state,isDraft,title,headRefName,headRefOid,headRepository,baseRefName,mergeable,mergedAt,mergeCommit,labels,body,closingIssuesReferences,createdAt";
 
 /// A single issue a PR/MR closes on merge via a `Closes/Fixes #N` closing
 /// keyword. GitHub surfaces these through the `closingIssuesReferences`
@@ -55,6 +55,8 @@ pub struct PrViewPayload {
     pub base: String,
     pub mergeable: &'static str,
     pub merged_at: Option<String>,
+    #[serde(flatten)]
+    pub lifecycle: crate::ops::pr_lifecycle::PrLifecycle,
     /// Commit SHA of the merge commit when the PR/MR is merged. Always
     /// emitted (the field defaults to `null` for non-merged PRs); GitHub
     /// derives it from `mergeCommit.oid`, GitLab reads the top-level
@@ -117,7 +119,10 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
     }
 
     let output = runner.run(&call)?;
-    let payload = parse_view_output(&ctx, &output)?;
+    let mut payload = parse_view_output(&ctx, &output)?;
+    if ctx.provider == Provider::GitHub && format == OutputFormat::Json {
+        crate::ops::pr_lifecycle::enrich(runner, &ctx, &mut payload)?;
+    }
     Ok(emit_success(
         schema_version_for(BINARY, SCHEMA, SCHEMA_VERSION),
         payload,
@@ -264,6 +269,14 @@ fn parse_github(
         base: required_str(value, "baseRefName")?,
         mergeable: normalize_mergeable_github(value.get("mergeable").and_then(|v| v.as_str())),
         merged_at,
+        lifecycle: crate::ops::pr_lifecycle::PrLifecycle {
+            created_at: if ctx.provider == Provider::Local {
+                None
+            } else {
+                crate::ops::merge_queue::string(&value["createdAt"])
+            },
+            ..Default::default()
+        },
         merge_commit_sha,
         labels,
         body: value
@@ -338,6 +351,10 @@ fn parse_gitlab(
         base: required_str(value, "target_branch")?,
         mergeable: normalize_mergeable_gitlab(value.get("merge_status").and_then(|v| v.as_str())),
         merged_at,
+        lifecycle: crate::ops::pr_lifecycle::PrLifecycle {
+            created_at: crate::ops::merge_queue::string(&value["created_at"]),
+            ..Default::default()
+        },
         merge_commit_sha,
         labels,
         body: value

@@ -10,6 +10,10 @@ case "$GH_TOKEN" in
  fixture-b) actor=account-b;;
 esac
 if test "$1:$2" = api:user; then printf '{"login":"%s"}' "$actor"; exit 0; fi
+case "$1:$2:$*" in
+ api:repos/*/comments/*:*PATCH*|api:repos/*/comments/*:*DELETE*) :;;
+ api:repos/*/comments/*:*) printf '{"id":17,"user":{"login":"%s"},"updated_at":"2026-01-01T00:00:00Z"}' "$actor"; exit 0;;
+esac
 printf '%s\n' "$actor" >> "$CALL_LOG"
 printf '%s\n' "$@" >> "$ARGV_LOG"
 previous=''
@@ -35,9 +39,9 @@ case "$1:$2" in
  api:*) case "$*" in
  *DELETE*|*POST*) :;;
  *) python3 - "$PAYLOAD_LOG" <<'FIXTURE_PY'
-import json, sys
+import json, os, sys
 payload = json.load(open(sys.argv[1]))
-print(json.dumps({"id":17,"html_url":"https://github.com/example/widget/issues/1#issuecomment-17","body":payload["body"]}, ensure_ascii=False))
+print(json.dumps({"id":int(os.environ.get("RESPONSE_ID", "17")),"html_url":"https://github.com/example/widget/issues/1#issuecomment-17","body":payload["body"],"updated_at":"2026-01-01T00:01:00Z"}, ensure_ascii=False))
 FIXTURE_PY
  ;;
  esac;;
@@ -459,7 +463,7 @@ fn provider_mutations_guard_posted_text_and_reject_mismatched_edit_response() {
     assert_eq!(result.code, 65, "{}", result.stdout);
     assert!(result.stdout.contains("agent_attribution_present"));
     assert!(!stub.tempdir.path().join("calls").exists());
-    let stub = fixture().gh_stub("#!/bin/sh\nprintf '{\"id\":18,\"html_url\":\"https://github.com/example/widget/issues/1#issuecomment-18\",\"body\":\"Updated comment\"}'\n");
+    let stub = fixture().env("RESPONSE_ID", "18");
     let result = invoke(&stub, &["comment", "edit", "17", "--body-file", "body.md"]);
     assert_eq!(result.code, 65, "{}", result.stdout);
     assert!(result.stdout.contains("comment_response_mismatch"));

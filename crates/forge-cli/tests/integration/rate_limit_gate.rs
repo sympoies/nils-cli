@@ -64,6 +64,9 @@ EOF
 {view}
 EOF
     ;;
+  "api graphql")
+    printf '%s\n' '{{"data":{{"repository":{{"pullRequest":{{"ready":{{"nodes":[]}},"isInMergeQueue":false,"mergeQueueEntry":null}}}}}}}}'
+    ;;
   *)
     echo "unexpected gh args: $*" >&2
     exit 99
@@ -188,6 +191,9 @@ EOF
     cat <<'EOF'
 {view}
 EOF
+    ;;
+  "api graphql")
+    printf '%s\n' '{{"data":{{"repository":{{"pullRequest":{{"ready":{{"nodes":[]}},"isInMergeQueue":false,"mergeQueueEntry":null}}}}}}}}'
     ;;
   *)
     echo "unexpected gh args: $*" >&2

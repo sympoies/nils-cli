@@ -1881,6 +1881,7 @@ _arguments "${_arguments_options[@]}" : \
 review\:"Pull request review (diff) comments"))' \
 '(--body-file)--body=[]:BODY:_default' \
 '--body-file=[Markdown body file; use - to read stdin]:BODY_FILE:_default' \
+'--expected-updated-at=[Refuse if updated_at differs. This is read-then-write, not atomic CAS; a concurrent edit after the preflight read can still be overwritten]:EXPECTED_UPDATED_AT:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \

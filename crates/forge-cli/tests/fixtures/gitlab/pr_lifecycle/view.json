@@ -1,0 +1,10 @@
+{
+  "iid": 7,
+  "web_url": "https://gitlab.com/acme/widget/-/merge_requests/7",
+  "state": "opened",
+  "draft": false,
+  "title": "Example change",
+  "source_branch": "feature/example",
+  "target_branch": "main",
+  "created_at": "2026-01-01T01:00:00Z"
+}

@@ -426,10 +426,33 @@ concurrent workflow list.
 ### `comment edit` / `comment delete`
 
 `comment edit <database-id> (--body <text>|--body-file <path|->)
-[--kind issue|review]` emits `cli.forge-cli.comment.edit.v1` with `provider`,
-`repository`, `id`, `kind`, `url`, `body`, and `deleted: false`. The provider
-response must match the requested id and body. Empty or guarded payloads fail
-before writing. `comment delete <database-id> [--kind issue|review]` emits
+[--kind issue|review] [--expected-updated-at <timestamp>]` emits
+`cli.forge-cli.comment.edit.v1` with `provider`, `repository`, `id`, `kind`,
+`url`, `body`, `updated_at`, and `deleted: false`. The provider response must
+match the requested id and body; `updated_at` is the timestamp returned by the
+successful PATCH. Empty or guarded payloads fail before writing.
+
+Before PATCH, the normal runner GETs `user` to identify the authenticated actor,
+then GETs the comment endpoint to read its id, author login, and `updated_at`.
+Both reads retain the edit's `api_write` identity scope. Author logins are
+compared without ASCII case sensitivity; a different author is refused with
+`DATA 65` and `comment_author_mismatch`, even without a freshness option. When
+`--expected-updated-at` is supplied, its exact string must equal the current
+provider `updated_at`; otherwise `DATA 65` and `comment_stale` refuse the edit
+before PATCH. Read the comment again before retrying a stale edit. A mismatched
+comment id yields `comment_response_mismatch`; an empty actor/author login or
+empty snapshot timestamp yields `comment_snapshot_invalid`, both `DATA 65`.
+Malformed or incomplete preflight JSON yields `SOFTWARE 70` / `software_error`;
+backend failures remain errors and prevent the PATCH.
+
+The freshness guard is read-then-write, not provider atomic compare-and-swap
+(CAS). Another edit after the preflight read can still be overwritten. Edits
+sharing the same `updated_at` string are also indistinguishable to this guard.
+Omitting the option skips only the timestamp comparison; ownership is still
+checked. Offline `--dry-run` validates local inputs and emits the PATCH plan
+without making either preflight GET or proving ownership/freshness.
+
+`comment delete <database-id> [--kind issue|review]` emits
 `cli.forge-cli.comment.delete.v1` with `provider`, `repository`, `id`, `kind`,
 and `deleted: true` after a successful DELETE. IDs must be positive.
 

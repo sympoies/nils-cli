@@ -1,0 +1,14 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ready": {
+          "nodes": []
+        },
+        "isInMergeQueue": false,
+        "mergeQueueEntry": null
+      }
+    }
+  }
+}

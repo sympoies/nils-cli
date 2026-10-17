@@ -308,17 +308,35 @@ operations:
 
   - id: comment.edit
     schema_version: cli.forge-cli.comment.edit.v1
-    summary: Edit a GitHub native timeline or review comment by database id.
+    summary: Edit only the authenticated actor's own GitHub timeline or review comment by database id.
     inputs:
       - { name: id, type: positive-integer, required: true }
       - { name: --kind, type: enum<issue|review>, default: issue }
       - { name: --body, type: string, optional: true }
       - { name: --body-file, type: path-or-stdin, optional: true }
+      - { name: --expected-updated-at, type: string, optional: true }
     validations: [no_local_path, no_agent_attribution]
     backends:
-      github: [api, "repos/<repo>/<issues|pulls>/comments/<id>", --method, PATCH]
+      github:
+        - { program: gh, argv: [api, user], notes: "GET the authenticated actor under the edit's api_write identity scope" }
+        - { program: gh, argv: [api, "repos/<repo>/<issues|pulls>/comments/<id>"], notes: "GET current id, author login and updated_at under the same identity scope" }
+        - { program: gh, argv: [api, "repos/<repo>/<issues|pulls>/comments/<id>", --method, PATCH, --input, <payload-file>] }
     output:
-      data: { provider: github, repository: string, id: integer, kind: "enum<issue|review>", url: string, body: string, deleted: bool }
+      data: { provider: github, repository: string, id: integer, kind: "enum<issue|review>", url: string, body: string, updated_at: string, deleted: bool }
+    notes: >-
+      Before PATCH, compare author and authenticated actor logins without ASCII case sensitivity;
+      a different author always fails with DATA 65 / comment_author_mismatch.
+      If supplied, --expected-updated-at must exactly equal the current provider updated_at string;
+      a mismatch fails with DATA 65 / comment_stale before PATCH. Read again before retrying.
+      A mismatched snapshot id fails with DATA 65 / comment_response_mismatch;
+      an empty actor/author login or empty snapshot timestamp fails with DATA 65 / comment_snapshot_invalid.
+      Malformed or incomplete preflight JSON fails with SOFTWARE 70 / software_error;
+      backend read failures remain errors and prevent PATCH.
+      This is read-then-write, not provider atomic CAS: post-read edits can be overwritten,
+      and edits sharing the same updated_at string are indistinguishable.
+      Successful output uses the PATCH response updated_at; the response id and body must match the request.
+      Without --expected-updated-at only the timestamp comparison is skipped; ownership is still checked.
+      Offline --dry-run emits the PATCH plan without GETs or ownership/freshness verification.
 
   - id: comment.delete
     schema_version: cli.forge-cli.comment.delete.v1
@@ -391,7 +409,7 @@ operations:
       - { name: <id>, type: integer-or-branch, required: true }
     validations: []
     backends:
-      github: { program: gh,   argv: [pr,   view, "{id}", --json, "number,url,state,isDraft,title,headRefName,headRefOid,headRepository,baseRefName,mergeable,mergedAt,mergeCommit,labels,body,closingIssuesReferences"] }
+      github: { program: gh,   argv: [pr,   view, "{id}", --json, "number,url,state,isDraft,title,headRefName,headRefOid,headRepository,baseRefName,mergeable,mergedAt,mergeCommit,labels,body,closingIssuesReferences,createdAt"] }
       gitlab: { program: glab, argv: [mr,   view, "{id}", -F, json] }
     output:
       data:
@@ -405,11 +423,17 @@ operations:
         head_repository: optional<string>
         base: string
         mergeable: enum<yes|no|unknown>
+        created_at: nullable<string>
+        ready_for_review_at: nullable<string>
+        merge_queue: "nullable<{ queued: bool, position: nullable<integer>, enqueued_at: nullable<string>, state: nullable<string>, head_sha: nullable<string> }>"
+        merge_group: "nullable<{ head_sha: string, started_at: nullable<string>, completed_at: nullable<string>, checks: list<{ name, status, conclusion, started_at, completed_at }> }>"
         merged_at: optional<string>
         merge_commit_sha: optional<string>
         labels: list<string>
         body: optional<string>   # GitHub `body` / GitLab `description`; null when the response omits it
         closing_issue_refs: list<{ number, url }>  # GitHub closingIssuesReferences (Closes/Fixes #N); always [] on GitLab / when absent
+
+    notes: "Standalone GitHub JSON view adds a lifecycle/queue GraphQL read and, when a synthetic group is present, paginated check-run reads. Null semantics and the shared queue contract are defined in pr-lifecycle-v1.md. Text and mutation flows do not add lifecycle reads."
 
   - id: pr.list
     schema_version: cli.forge-cli.pr.list.v1
