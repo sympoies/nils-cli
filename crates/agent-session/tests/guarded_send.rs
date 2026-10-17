@@ -86,8 +86,13 @@ elif command == 'paste-buffer':
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
         p.write_text(json.dumps(d))
 elif command == 'send-keys' and args[-1] == 'BSpace':
+    if (root / 'backspace-stalls').exists():
+        (root / 'capture-fails').touch()
+        import time
+        time.sleep(3)
     if not (root / 'backspace-ignored').exists():
-        (root / 'composer').write_text((root / 'composer').read_text()[:-1])
+        count = int(args[args.index('-N') + 1]) if '-N' in args else 1
+        (root / 'composer').write_text((root / 'composer').read_text()[:-count])
 elif command == 'send-keys' and args[-1] == 'Enter':
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
     (root / 'composer').write_text('')
@@ -117,6 +122,11 @@ elif command == 'capture-pane':
     padding = ' ' * 8 if '-N' in args and '-T' not in args else ''
     native = (root / 'native-layout').exists()
     rows = ''
+    # An 80-column pane leaves 78 cells after the prompt/continuation prefix.
+    if (root / 'wrap-80').exists() and len(occupied) > 78:
+        chunks = [occupied[i:i + 78] for i in range(0, len(occupied), 78)]
+        occupied = chunks[0]
+        rows = ''.join('  ' + row + (' ' * (78 - len(row)) if provider == 'claude' else '') + '\n' for row in chunks[1:])
     footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'
     suggestion = (root / 'suggestion').read_text() if (root / 'suggestion').exists() else None
     top = '─── a long session title that fills the width of the pane ─' if (root / 'titled-border').exists() else '────────────────────────────'
@@ -124,7 +134,9 @@ elif command == 'capture-pane':
     # is padded with written spaces that -N and -T keep.
     if (root / 'long-title').exists(): top = ' a deliberately long session title for the composer border lookup… ─'
     live = (root / 'live-layout').exists() and provider == 'claude'
-    def pad(row): return row + ' ' * 20 if live else row
+    def pad(row):
+        if live and (root / 'wrap-80').exists(): return row + ' ' * max(0, 78 - len(row))
+        return row + ' ' * 20 if live else row
     if suggestion and not text:
         shown = ('\x1b[2m' + suggestion + '\x1b[22m') if '-e' in args else suggestion
         # Claude styles every suggestion word on its own; the spaces stay plain.
