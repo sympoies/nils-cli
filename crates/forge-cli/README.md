@@ -550,3 +550,10 @@ A successor can recover a retired coordinator with `--reason coordinator-retired
 the recorded `--coordinator-session`, and exact `--base-sha`, `--expected-head`,
 and `--expected-state`. Fresh terminal session-board evidence is required;
 the transfer preserves findings and keeps review verdicts reviewer-owned.
+
+When a configured automated review App still blocks a head the designated
+reviewer has passed, `pr review-dismiss <id> --review-id <id> --expected-head
+<sha> --reason-file <path>` dismisses that one CHANGES_REQUESTED review. It
+refuses human, unconfigured, wrong-head and wrong-state reviews, and any PR
+without a designated PASS at that head. See the
+[dismissal contract](docs/specs/forge-cli-spec-v1.md#pr-review-dismiss).

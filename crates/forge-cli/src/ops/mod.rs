@@ -37,6 +37,7 @@ mod pr_merge_review;
 pub mod pr_pending_review;
 pub mod pr_ready;
 pub mod pr_review;
+pub mod pr_review_dismiss;
 pub mod pr_review_handoff;
 pub mod pr_review_loop;
 pub mod pr_review_thread_reply;

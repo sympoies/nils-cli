@@ -27,7 +27,7 @@ fn retired_coordinator_handoff() -> ReviewHandoff {
     h
 }
 
-fn handoff(returned: Option<&str>) -> ReviewHandoff {
+pub(super) fn handoff(returned: Option<&str>) -> ReviewHandoff {
     ReviewHandoff {
         approval_policy: Default::default(),
         coordinator_digest: review_state::sha256_digest(b"worker-session"),
@@ -43,7 +43,7 @@ fn handoff(returned: Option<&str>) -> ReviewHandoff {
     }
 }
 
-fn records(h: ReviewHandoff, reviewed_head: Option<&str>) -> Vec<ReviewStateRecord> {
+pub(super) fn records(h: ReviewHandoff, reviewed_head: Option<&str>) -> Vec<ReviewStateRecord> {
     let terminal = h.returned_reason.is_some();
     let mut initial = h.clone();
     if terminal {

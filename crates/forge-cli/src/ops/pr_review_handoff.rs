@@ -86,7 +86,7 @@ fn fail(kind: &'static str, message: &str) -> ForgeError {
 }
 
 /// Hash only the globally unique session id, never its machine suffix.
-fn session_digest(selector: &str) -> Result<String, ForgeError> {
+pub(crate) fn session_digest(selector: &str) -> Result<String, ForgeError> {
     let id = selector.split('@').next().unwrap_or("");
     if id.is_empty()
         || id.len() > 128
@@ -839,7 +839,10 @@ fn admit_published<R: BackendRunner>(
 /// A bare login names a user; the REST `[bot]` suffix names an App account.
 /// App accounts require a typed Bot with a stable node id for either login form.
 /// The exact REST review read-back must bind that node to the expected login.
-fn matches_designated_author(review: &pr_reviews::NativeReviewSummary, expected: &str) -> bool {
+pub(crate) fn matches_designated_author(
+    review: &pr_reviews::NativeReviewSummary,
+    expected: &str,
+) -> bool {
     let expected_bot = expected.to_ascii_lowercase().ends_with("[bot]");
     if review
         .author_type

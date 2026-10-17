@@ -967,6 +967,24 @@ esac
     ;;
 esac
 ;;
+(review-dismiss)
+_arguments "${_arguments_options[@]}" : \
+'--review-id=[Numeric provider review id (\`database_id\` in \`pr reviews\`)]:ID:_default' \
+'--expected-head=[Exact current provider head SHA; the review must be on this head]:SHA:_default' \
+'--reason-file=[Non-empty dismissal reason file (\`-\` reads stdin)]:PATH:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Numeric pull request id:_default' \
+&& ret=0
+;;
 (tasks)
 _arguments "${_arguments_options[@]}" : \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
@@ -1295,6 +1313,10 @@ _arguments "${_arguments_options[@]}" : \
         esac
     ;;
 esac
+;;
+(review-dismiss)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
 ;;
 (tasks)
 _arguments "${_arguments_options[@]}" : \
@@ -3362,6 +3384,10 @@ _arguments "${_arguments_options[@]}" : \
     ;;
 esac
 ;;
+(review-dismiss)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (tasks)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -4263,6 +4289,7 @@ _forge-cli__subcmd__help__subcmd__pr_commands() {
 'pending-review:Recover an authenticated actor'\''s pending native review' \
 'review-loop:Inspect and advance the durable review-loop ledger' \
 'review-handoff:Explicit designated reviewer handoff and published-review admission' \
+'review-dismiss:Dismiss one configured automated CHANGES_REQUESTED review after a designated PASS' \
 'tasks:List GFM task-list items in the PR / MR description with their state' \
 'merge:Merge a ready PR / MR' \
 'close:Close a PR / MR without merging' \
@@ -4369,6 +4396,11 @@ _forge-cli__subcmd__help__subcmd__pr__subcmd__review_commands() {
 _forge-cli__subcmd__help__subcmd__pr__subcmd__review__subcmd__validate_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help pr review validate commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__review-dismiss_commands] )) ||
+_forge-cli__subcmd__help__subcmd__pr__subcmd__review-dismiss_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help pr review-dismiss commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff_commands] )) ||
 _forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff_commands() {
@@ -5027,6 +5059,7 @@ _forge-cli__subcmd__pr_commands() {
 'pending-review:Recover an authenticated actor'\''s pending native review' \
 'review-loop:Inspect and advance the durable review-loop ledger' \
 'review-handoff:Explicit designated reviewer handoff and published-review admission' \
+'review-dismiss:Dismiss one configured automated CHANGES_REQUESTED review after a designated PASS' \
 'tasks:List GFM task-list items in the PR / MR description with their state' \
 'merge:Merge a ready PR / MR' \
 'close:Close a PR / MR without merging' \
@@ -5088,6 +5121,7 @@ _forge-cli__subcmd__pr__subcmd__help_commands() {
 'pending-review:Recover an authenticated actor'\''s pending native review' \
 'review-loop:Inspect and advance the durable review-loop ledger' \
 'review-handoff:Explicit designated reviewer handoff and published-review admission' \
+'review-dismiss:Dismiss one configured automated CHANGES_REQUESTED review after a designated PASS' \
 'tasks:List GFM task-list items in the PR / MR description with their state' \
 'merge:Merge a ready PR / MR' \
 'close:Close a PR / MR without merging' \
@@ -5200,6 +5234,11 @@ _forge-cli__subcmd__pr__subcmd__help__subcmd__review_commands() {
 _forge-cli__subcmd__pr__subcmd__help__subcmd__review__subcmd__validate_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli pr help review validate commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__review-dismiss_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__help__subcmd__review-dismiss_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr help review-dismiss commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff_commands() {
@@ -5435,6 +5474,11 @@ _forge-cli__subcmd__pr__subcmd__review__subcmd__help__subcmd__validate_commands(
 _forge-cli__subcmd__pr__subcmd__review__subcmd__validate_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli pr review validate commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__pr__subcmd__review-dismiss_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__review-dismiss_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr review-dismiss commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__review-handoff_commands() {
