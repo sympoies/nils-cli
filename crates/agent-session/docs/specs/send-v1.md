@@ -267,7 +267,18 @@ A failure while the guarded send checks or presses its Enter adds
 `pasted: true` and `cleared` to its details; `send-submit-stuck` and a failure
 to write the session record after Enter do not.
 `cleared: true` means the composer was read back without the pasted text;
-`false` means it may remain and the message says so.
+`false` means it may remain and the message says so. Cleanup can read indented
+wrapped rows only to compare their complete content with the paste; submission
+admission still requires a single observable row. Mixed drafts, blank
+continuation rows, dialogs, paste placeholders and unreadable captures are
+preserved. Matching text is removed in one bounded repeated-Backspace command
+and emptiness is read back.
+
+`remaining_input` classifies the last cleanup observation as `empty`,
+`pasted_text`, `different_text`, or `unobservable`. When observable,
+`remaining_characters` counts the reconstructed input's Unicode scalar values
+and `pasted_text_present` reports whether it contains the complete pasted text.
+These are observations, not atomic guarantees; no composer content is returned.
 
 Native refusal details always report `pasted: false`. `dispatched` indicates
 that a native mutation was attempted; `acknowledged` records a valid provider

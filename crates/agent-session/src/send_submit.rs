@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 mod composer;
+pub(crate) use composer::cleanup::input as cleanup_composer_input;
 pub(crate) use composer::{composer_holds, exact_composer_input};
 
 /// Leading non-whitespace characters used to find the text again. Short enough
