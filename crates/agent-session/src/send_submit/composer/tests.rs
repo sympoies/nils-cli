@@ -48,9 +48,10 @@ fn osc8_hyperlinks_in_a_footer_preserve_exact_input_and_hint_style() {
             exact_composer_input("codex", &codex("  café  ", "", &footer)).as_deref(),
             Some("  café  ")
         );
+        // Claude's trailing spaces are indistinguishable from its padding.
         assert_eq!(
             exact_composer_input("claude", &claude("  café  ", "", &footer)).as_deref(),
-            Some("  café  ")
+            Some("  café")
         );
     }
 }
@@ -58,9 +59,10 @@ fn osc8_hyperlinks_in_a_footer_preserve_exact_input_and_hint_style() {
 #[test]
 fn whitespace_and_multiline_drafts_remain_protected() {
     for input in [" ", "user draft "] {
+        // Claude's trailing spaces are indistinguishable from its padding.
         assert_eq!(
             exact_composer_input("claude", &claude(input, "", "status")).as_deref(),
-            Some(input)
+            Some(input.trim_end_matches(' '))
         );
         assert_eq!(
             exact_composer_input("codex", &codex(input, "", "status")).as_deref(),
@@ -297,7 +299,7 @@ fn nonbreaking_separators_never_hide_choices_or_additional_draft_characters() {
         );
         assert_eq!(exact_composer_input("claude", &choice), None);
         for draft in [
-            " ", "\u{a0}", "\u{2007}", "\u{202f}", "\u{200b}", "\u{feff}", " café ",
+            "\u{a0}", "\u{2007}", "\u{202f}", "\u{200b}", "\u{feff}", " café",
         ] {
             let pane = claude(draft, "", "status").replacen('\u{a0}', &separator.to_string(), 1);
             assert_eq!(
@@ -325,14 +327,14 @@ fn claude_fullpane_nbsp_dim_suggestion_is_empty() {
 }
 
 #[test]
-fn claude_fullpane_nbsp_plain_text_remains_an_exact_draft() {
+fn claude_fullpane_nbsp_plain_text_remains_a_draft_without_padding() {
     let (pane, suggestion, padding) = claude_fullpane_fixture();
     // Synthetic plain twin: preserve the layout, caption and occupied spaces.
     let pane = pane.replace(&format!("\u{1b}[2m{suggestion}\u{1b}[0m"), &suggestion);
-    let expected = format!("{suggestion}{}", " ".repeat(padding));
+    assert!(padding > 0);
     assert_eq!(
         exact_composer_input("claude", &pane).as_deref(),
-        Some(expected.as_str())
+        Some(suggestion.as_str())
     );
 }
 
@@ -360,7 +362,6 @@ fn dim_suggestion_padding_does_not_hide_real_text_or_whitespace_drafts() {
         "\u{1b}[2mContinue the fixture check\u{1b}[0m\u{a0}",
         "\u{1b}[2mContinue the fixture check\u{1b}[0m\u{200b}",
         "\u{1b}[2m \u{1b}[0m    ",
-        "    ",
     ] {
         assert!(
             exact_composer_input("claude", &claude(input, "", "status"))
@@ -421,7 +422,7 @@ fn per_word_dim_suggestion_never_hides_a_partly_typed_or_padded_draft() {
         format!(" {words}"),
         format!("{words}\u{a0}"),
         "\u{1b}[2mRead\u{1b}[0m\u{a0}\u{1b}[2mmailbox\u{1b}[0m".to_string(),
-        " ".to_string(),
+        "\u{a0}".to_string(),
         "\u{1b}[2m \u{1b}[0m \u{1b}[2m \u{1b}[0m".to_string(),
     ] {
         for provider in ["claude", "codex"] {
@@ -457,4 +458,82 @@ fn claude_titled_top_border_still_locates_the_composer() {
         let pane = format!("{line}\n❯\u{a0}\n{rule}\n  status");
         assert_eq!(exact_composer_input("claude", &pane), None, "{line}");
     }
+}
+
+/// Claude draws the title into the top border and gives it every dash that is
+/// left; a long title leaves none, so the line starts with the title itself.
+#[test]
+fn claude_title_without_border_dashes_still_locates_the_composer() {
+    let rule = "────────────────────";
+    for titled in [
+        " a long session title that fills the pane and is cut off… ─",
+        " title ─",
+        "── title ─",
+    ] {
+        for (input, expected) in [("", ""), ("user draft", "user draft")] {
+            let pane = format!("{titled}\n❯\u{a0}{input}\n{rule}\n  status");
+            assert_eq!(
+                exact_composer_input("claude", &pane).as_deref(),
+                Some(expected),
+                "{titled}"
+            );
+        }
+    }
+    // Indented prose is a border only directly above the input row.
+    let pane = format!(" prose that ends in a dash ─\nnot input\n{rule}\n  status");
+    assert_eq!(exact_composer_input("claude", &pane), None);
+    let pane = format!(" prose that ends in a dash\n❯\u{a0}\n{rule}\n  status");
+    assert_eq!(exact_composer_input("claude", &pane), None);
+}
+
+/// Claude writes spaces after the input up to the pane width, so the capture
+/// of an empty or short input carries them whatever the capture flags say.
+#[test]
+fn claude_renderer_padding_is_not_input() {
+    let padding = " ".repeat(60);
+    for (input, expected) in [
+        ("", Some("")),
+        ("draft one two", Some("draft one two")),
+        ("\u{1b}[2mContinue\u{1b}[0m", Some("")),
+    ] {
+        assert_eq!(
+            exact_composer_input(
+                "claude",
+                &claude(&format!("{input}{padding}"), "", "status")
+            )
+            .as_deref(),
+            expected,
+            "{input:?}"
+        );
+    }
+    // Only unstyled ASCII spaces are padding: other blanks stay input.
+    for input in [
+        format!("\u{a0}{padding}"),
+        format!("\u{200b}{padding}"),
+        format!("\u{1b}[2m \u{1b}[0m{padding}"),
+        format!("\u{3000}{padding}"),
+    ] {
+        assert!(
+            exact_composer_input("claude", &claude(&input, "", "status"))
+                .is_none_or(|draft| !draft.is_empty()),
+            "{input:?}"
+        );
+    }
+    // Codex pads nothing, so its occupied spaces stay exact.
+    assert_eq!(
+        exact_composer_input("codex", &codex("draft  ", "", "status")).as_deref(),
+        Some("draft  ")
+    );
+}
+
+#[test]
+fn composer_holds_pasted_text_modulo_claude_padding() {
+    use super::composer_holds;
+    assert!(composer_holds("claude", "reply now", "reply now"));
+    assert!(composer_holds("claude", "reply now", "reply now  "));
+    assert!(!composer_holds("claude", "reply now and more", "reply now"));
+    assert!(!composer_holds("claude", "", "reply now"));
+    assert!(!composer_holds("claude", "reply now", ""));
+    assert!(composer_holds("codex", "reply now", "reply now"));
+    assert!(!composer_holds("codex", "reply now", "reply now  "));
 }

@@ -43,10 +43,13 @@ short, nonblocking guard probes detect it without dropping that event.
 For a guarded text-and-Enter submission, send waits for paste settlement and
 then requires the composer to contain **exactly** its own text, rechecks
 identity and requested idle state, and presses Enter at most once. If a turn
-starts or the composer changes after paste, it refuses without Enter and
-preserves the composer, including user additions. It never clears user input
-or retries a swallowed Enter. Post-paste refusal is distinct from admission
-refusal: the text may already be present in the composer.
+starts or the composer changes after paste, it refuses without Enter. It
+then removes the text it pasted only while the composer still holds exactly
+that text, and reads the composer back to prove it is empty. User additions
+and unreadable composers are never cleared, and a swallowed Enter is never
+retried. Post-paste refusal is distinct from admission refusal: it carries
+`pasted: true` and `cleared`. When `cleared` is `false` the pasted text may
+remain in the input, and the outcome stays unknown to callers.
 
 ## Observation limits
 
@@ -65,8 +68,10 @@ fail closed for these checks. Exact composer
 verification supports an unambiguous, single visible input line. Dialogs,
 unknown layouts, wrapped/multiline input, opaque long-paste summaries, and
 unstyled placeholder text such as `Ask Codex to do anything` are unobservable.
-Claude's composer is the box between its last two horizontal borders; a top
-border that carries a long session title may keep as few as three dashes.
+Claude's composer is the box between its last horizontal border and the one
+above the input row. A top border that carries a session title keeps only the
+dashes the title leaves, so a long title can leave none: such a border starts
+with the title and ends in ` ─`.
 
 Guard captures use `tmux capture-pane -p -e -N -T` to retain occupied spaces
 and exclude unused terminal cells.
@@ -75,11 +80,12 @@ Native placeholders and dynamic suggestions in either supported harness count
 as empty only when every non-space input character carries dim styling (SGR 2),
 the input neither begins nor ends with whitespace, and at least one character
 is present. Claude styles each suggestion word on its own, so unstyled ASCII
-spaces between dim words are part of the suggestion. Claude's trailing ASCII
-renderer padding is ignored only for this dim suggestion proof; it is preserved
-for real drafts. Plain or partially dim suggestions remain drafts; fixed startup hints without full dim proof are unobservable.
-Whitespace drafts, queued-message hints and opaque paste summaries never count
-as empty. Unsupported styling sequences fail closed. Grey color alone is not
+spaces between dim words are part of the suggestion. Claude writes spaces after
+its input up to the pane width in every capture, so unstyled trailing ASCII
+spaces are renderer padding and not input; typed trailing spaces cannot be told
+apart from it. Plain or partially dim suggestions remain drafts; fixed startup
+hints without full dim proof are unobservable. Other whitespace drafts,
+queued-message hints and opaque paste summaries never count as empty. Unsupported styling sequences fail closed. Grey color alone is not
 treated as proof; a provider layout without distinguishable dim styling remains
 unsupported. Placeholder content alone is never inferred empty.
 
@@ -88,12 +94,13 @@ by BEL or ST is accepted without changing visible caption text or SGR state.
 Each metadata
 payload is bounded to 4096 UTF-8 bytes. Other OSC commands, malformed escapes
 and screen-mutating controls remain unobservable. Extra composer rows are not
-collapsed into empty input. Whitespace-only drafts remain nonempty; hyperlink
-metadata never substitutes for dim proof or hides visible caption text.
+collapsed into empty input. Codex whitespace-only drafts remain nonempty;
+hyperlink metadata never substitutes for dim proof or hides visible caption
+text.
 
-The guarded post-paste check uses full visible text, preserving whitespace,
-rather than the unguarded submission classifier's prefix matching. Occupied
-padding or a hidden draft cannot be discarded to make this check pass.
+The guarded post-paste check uses the full visible text, rather than the
+unguarded submission classifier's prefix matching, ignoring only Claude's
+renderer padding. A hidden draft cannot be discarded to make this check pass.
 
 ## Native Codex continuation profile
 
@@ -247,6 +254,10 @@ Observation refusals include the failed `guard` and `stage` (`admission` or
 `submit`), `atomic: false`, and whether paste preceded the check. Existing
 session/runtime and I/O failure reasons still apply. A nonzero exit after
 claiming must never be treated as permission to resend the same delivery.
+
+Any failure after the paste adds `pasted: true` and `cleared` to its details.
+`cleared: true` means the composer was read back without the pasted text;
+`false` means it may remain and the message says so.
 
 Native refusal details always report `pasted: false`. `dispatched` indicates
 that a native mutation was attempted; `acknowledged` records a valid provider
