@@ -402,54 +402,62 @@ fn guarded(
         );
         let _ = fs::remove_file(temp);
         delivered?;
-        if !args.keys.is_empty() {
-            thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);
-        }
     } else {
         admission.claim_key()?;
         admission.check(None, "admission")?;
     }
-    let submits_prompt = literal.is_some() && args.keys == [SpecialKey::Enter];
-    let submission = if submits_prompt {
-        let text = literal.expect("literal prompt");
-        let probe = send_submit::probe(text);
-        let mut press_enter = || {
-            manual_input.arm(context, &record)?;
-            admission.check(Some(text), "submit")?;
-            send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
-        };
-        if let Some(probe) = probe {
-            Some(send_submit::submit_and_confirm(
-                &record.agent,
-                &probe,
-                hold_started,
-                |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
-                || false,
-                press_enter,
-            )?)
-        } else {
-            press_enter()?;
-            Some(send_submit::SubmitReport {
-                outcome: send_submit::SubmitOutcome::Unverified,
-                enter_presses: 1,
-            })
+    // From here the pasted text sits in the input: a refusal must not leave it.
+    let mut after_paste = || -> Result<Option<send_submit::SubmitReport>, CliError> {
+        if literal.is_some() && !args.keys.is_empty() {
+            thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);
         }
-    } else {
-        if text.as_deref().is_some_and(crate::text_is_bare_newline) {
-            manual_input.arm(context, &record)?;
-            admission.check(None, "submit")?;
-            prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
-            send_tmux_key(tmux_bin, &target, SpecialKey::Enter)?;
-        }
-        for key in &args.keys {
-            if *key == SpecialKey::Enter {
+        let submits_prompt = literal.is_some() && args.keys == [SpecialKey::Enter];
+        if submits_prompt {
+            let text = literal.expect("literal prompt");
+            let probe = send_submit::probe(text);
+            let mut press_enter = || {
                 manual_input.arm(context, &record)?;
+                admission.check(Some(text), "submit")?;
+                send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
+            };
+            if let Some(probe) = probe {
+                Ok(Some(send_submit::submit_and_confirm(
+                    &record.agent,
+                    &probe,
+                    hold_started,
+                    |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
+                    || false,
+                    press_enter,
+                )?))
+            } else {
+                press_enter()?;
+                Ok(Some(send_submit::SubmitReport {
+                    outcome: send_submit::SubmitOutcome::Unverified,
+                    enter_presses: 1,
+                }))
             }
-            admission.check(literal, "submit")?;
-            prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
-            send_tmux_key(tmux_bin, &target, *key)?;
+        } else {
+            if text.as_deref().is_some_and(crate::text_is_bare_newline) {
+                manual_input.arm(context, &record)?;
+                admission.check(None, "submit")?;
+                prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
+                send_tmux_key(tmux_bin, &target, SpecialKey::Enter)?;
+            }
+            for key in &args.keys {
+                if *key == SpecialKey::Enter {
+                    manual_input.arm(context, &record)?;
+                }
+                admission.check(literal, "submit")?;
+                prepare_guarded_input(context, &mut record, submits, &mut input_prepared)?;
+                send_tmux_key(tmux_bin, &target, *key)?;
+            }
+            Ok(None)
         }
-        None
+    };
+    let submission = match (after_paste(), literal) {
+        (Ok(submission), _) => submission,
+        (Err(error), Some(text)) => return Err(admission.report_pasted_input(error, text)),
+        (Err(error), None) => return Err(error),
     };
     record.updated_at = Zoned::now().timestamp().to_string();
     write_session_record(context, &record)?;

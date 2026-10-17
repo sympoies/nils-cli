@@ -12,6 +12,7 @@ use crate::{
     send_submit, tmux_environment_value,
 };
 
+mod clear;
 mod key;
 
 #[derive(Debug, Default, Args)]
@@ -108,7 +109,7 @@ impl Admission<'_> {
                     )
                 })?;
             if let Some(expected) = pasted_text {
-                if input != expected {
+                if !send_submit::composer_holds(&self.record.agent, &input, expected) {
                     return Err(self.refusal(
                         "send-composer-mismatch",
                         "composer no longer contains exactly the submitted text",

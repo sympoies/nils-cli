@@ -109,13 +109,15 @@ fn guarded_send_whitespace_draft_refuses_before_input() {
     for provider in ["claude", "codex"] {
         for text in [Some("continue-fixture"), None] {
             let fixture = Fixture::new(provider);
-            fs::write(fixture.root().join("composer"), " ").unwrap();
+            // Claude's trailing ASCII spaces are renderer padding, not input.
+            let draft = if provider == "claude" { "\u{a0}" } else { " " };
+            fs::write(fixture.root().join("composer"), draft).unwrap();
             let output = fixture.send_text(text, &["--require-empty-composer"]);
             fixture.refused(&output, "send-composer-not-empty");
             fixture.no_delivery();
             assert_eq!(
                 fs::read_to_string(fixture.root().join("composer")).unwrap(),
-                " "
+                draft
             );
         }
     }

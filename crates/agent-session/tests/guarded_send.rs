@@ -1,4 +1,6 @@
 //! Admission regressions use a modeled tmux executable and synthetic records.
+#[path = "guarded_send/live_composer.rs"]
+mod live_composer;
 #[path = "guarded_send/native_composer.rs"]
 mod native_composer;
 #[path = "guarded_send/repair.rs"]
@@ -73,18 +75,31 @@ if command == 'load-buffer':
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
         p.write_text(json.dumps(d))
 elif command == 'paste-buffer':
-    with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
+    if (root / 'late-render').exists(): (root / 'late').write_text((root / 'buffer').read_text())
+    else:
+        with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
+    if (root / 'fail-capture-after-paste').exists(): (root / 'capture-fails').touch()
     if (root / 'inject-draft').exists():
         with (root / 'composer').open('a') as out: out.write(' user addition')
     if (root / 'start-after-paste').exists():
         p = root / 'state/sessions/guarded/activity.json'
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
         p.write_text(json.dumps(d))
+elif command == 'send-keys' and args[-1] == 'BSpace':
+    if not (root / 'backspace-ignored').exists():
+        (root / 'composer').write_text((root / 'composer').read_text()[:-1])
 elif command == 'send-keys' and args[-1] == 'Enter':
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
     (root / 'composer').write_text('')
     if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
 elif command == 'capture-pane':
+    if (root / 'late').exists():
+        # A slow renderer shows the paste only from the third capture after it.
+        n = int((root / 'late-n').read_text()) + 1 if (root / 'late-n').exists() else 1
+        (root / 'late-n').write_text(str(n))
+        if n >= 3:
+            with (root / 'composer').open('a') as out: out.write((root / 'late').read_text())
+            (root / 'late').unlink()
     count_path = root / 'capture-count'
     count = int(count_path.read_text()) + 1 if count_path.exists() else 1
     count_path.write_text(str(count))
@@ -105,17 +120,22 @@ elif command == 'capture-pane':
     footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'
     suggestion = (root / 'suggestion').read_text() if (root / 'suggestion').exists() else None
     top = '─── a long session title that fills the width of the pane ─' if (root / 'titled-border').exists() else '────────────────────────────'
+    # Live Claude: a long title leaves no border dashes, and every composer row
+    # is padded with written spaces that -N and -T keep.
+    if (root / 'long-title').exists(): top = ' a deliberately long session title for the composer border lookup… ─'
+    live = (root / 'live-layout').exists() and provider == 'claude'
+    def pad(row): return row + ' ' * 20 if live else row
     if suggestion and not text:
         shown = ('\x1b[2m' + suggestion + '\x1b[22m') if '-e' in args else suggestion
         # Claude styles every suggestion word on its own; the spaces stay plain.
         if (root / 'suggestion-words').exists() and '-e' in args: shown = ' '.join('\x1b[2m' + w + '\x1b[0m' for w in suggestion.split(' '))
         if (root / 'suggestion-padding').exists(): shown += (root / 'suggestion-padding').read_text()
-        if provider == 'claude': print(top + '\n❯\u00a0' + shown + '\n────────────────────────────\n  ' + footer)
+        if provider == 'claude': print(top + '\n❯\u00a0' + pad(shown) + '\n────────────────────────────\n  ' + footer)
         else: print('› ' + shown + '\n\n  ' + footer)
         sys.exit(0)
     if provider == 'claude':
         shown = occupied + padding if text or (root / 'bare-composer').exists() else ('\x1b[2mTry "edit <filepath> to..."\x1b[22m' if '-e' in args else 'Try "edit <filepath> to..."')
-        print(top + '\n❯\u00a0' + shown + '\n' + rows + '────────────────────────────\n  ' + footer)
+        print(top + '\n❯\u00a0' + pad(shown) + '\n' + rows + '────────────────────────────\n  ' + footer)
     else:
         shown = occupied + padding if text else ('\x1b[2mAsk Codex to do anything\x1b[22m' if '-e' in args else 'Ask Codex to do anything')
         print('› ' + shown + '\n' + rows + '\n  ' + footer)

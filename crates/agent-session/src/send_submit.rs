@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 mod composer;
-pub(crate) use composer::exact_composer_input;
+pub(crate) use composer::{composer_holds, exact_composer_input};
 
 /// Leading non-whitespace characters used to find the text again. Short enough
 /// to stay ahead of any provider rewriting further into a long text, long enough
@@ -181,6 +181,29 @@ fn claude_rules(lines: &[&str]) -> Vec<usize> {
         .collect()
 }
 
+/// The rows of Claude's input box border: the last rule closes it, and the rule
+/// before it opens it. A title is drawn into the opening border and takes every
+/// dash that is left, so a long title leaves a line that starts with the title
+/// and ends in ` ─`. Such a line opens the box only when no full rule already
+/// opens it above an input row, and only directly above the input row. Rows of
+/// a draft (the prompt glyph, or the two-space continuation indent) never open it.
+fn claude_box(lines: &[&str]) -> Option<(usize, usize)> {
+    let rules = claude_rules(lines);
+    let bottom = *rules.last()?;
+    let ruled = rules.iter().rev().nth(1).copied();
+    if ruled.is_some_and(|rule| lines[rule + 1].trim_start().starts_with('❯')) {
+        return ruled.map(|rule| (rule, bottom));
+    }
+    let titled = (0..bottom).rev().find(|&index| {
+        let line = lines[index];
+        line.trim_end().ends_with(" ─")
+            && !line.starts_with("  ")
+            && !line.trim_start().starts_with('❯')
+            && lines[index + 1].trim_start().starts_with('❯')
+    });
+    Some((titled.into_iter().chain(ruled).max()?, bottom))
+}
+
 /// Whether a Claude pane shows the sent text accepted into its queue: the
 /// composer shows the queued hint and the queued messages above it include the
 /// start of the text. The hint alone also appears for an earlier message.
@@ -189,8 +212,7 @@ pub(crate) fn claude_queue_holds(pane: &str, probe: &Probe) -> bool {
         return false;
     }
     let lines: Vec<&str> = pane.lines().map(str::trim_end).collect();
-    let rules = claude_rules(&lines);
-    let [.., top, _] = rules[..] else {
+    let Some((top, _)) = claude_box(&lines) else {
         return false;
     };
     compact(&lines[..top].join("\n")).contains(&probe.head)
@@ -200,10 +222,7 @@ pub(crate) fn claude_queue_holds(pane: &str, probe: &Probe) -> bool {
 /// starts it with `❯`. A permission or trust dialog replaces the box, so no
 /// such region exists while one is open.
 fn claude_composer<'a>(lines: &'a [&'a str]) -> Option<(&'a [&'a str], &'a [&'a str])> {
-    let rules = claude_rules(lines);
-    let [.., top, bottom] = rules[..] else {
-        return None;
-    };
+    let (top, bottom) = claude_box(lines)?;
     let region = &lines[top + 1..bottom];
     let first = region.first()?.trim_start();
     let input = first.strip_prefix('❯')?;
@@ -770,7 +789,7 @@ mod exact_composer_tests {
         let claude = "────────────────────\n❯  café  X \n────────────────────\n  status";
         assert_eq!(
             exact_composer_input("claude", claude).as_deref(),
-            Some(" café  X ")
+            Some(" café  X")
         );
         assert_eq!(
             exact_composer_input("codex", "› continue X\n\n  status").as_deref(),

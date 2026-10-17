@@ -33,14 +33,22 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
         .sum::<usize>()
         + region[0].len()
         - input.len();
-    // Claude pads native suggestions to the pane width after resetting SGR.
-    // Only this hint proof ignores trailing ASCII padding; drafts stay exact.
-    let hint = if agent == "claude" {
-        input.trim_end_matches(' ')
+    // Claude writes spaces after its input up to the pane width, in every
+    // capture mode, for empty inputs, suggestions and typed text alike. Written
+    // padding and typed trailing spaces cannot be told apart, so unstyled
+    // trailing ASCII spaces are not input. Any other blank stays input.
+    let input = if agent == "claude" {
+        let padding = input
+            .bytes()
+            .rev()
+            .enumerate()
+            .take_while(|(back, byte)| *byte == b' ' && !dim[offset + input.len() - 1 - back])
+            .count();
+        &input[..input.len() - padding]
     } else {
         input
     };
-    let fully_dim = dim_hint(hint, &dim[offset..offset + hint.len()]);
+    let fully_dim = dim_hint(input, &dim[offset..offset + input.len()]);
     let compressed = compact(input);
     if compressed == CLAUDE_QUEUED_HINT
         || PASTE_PLACEHOLDERS
@@ -75,6 +83,17 @@ fn dim_hint(hint: &str, dim: &[bool]) -> bool {
         && hint
             .char_indices()
             .all(|(index, ch)| dim[index] || ch == ' ')
+}
+
+/// Whether the observed `input` is exactly the text a send pasted. Claude's
+/// padding is not input (see `exact_composer_input`), so the pasted text is
+/// compared without its own trailing spaces.
+pub(crate) fn composer_holds(agent: &str, input: &str, pasted: &str) -> bool {
+    if agent == "claude" {
+        input == pasted.trim_end_matches(' ')
+    } else {
+        input == pasted
+    }
 }
 
 fn styled_text(pane: &str) -> Option<(String, Vec<bool>)> {
