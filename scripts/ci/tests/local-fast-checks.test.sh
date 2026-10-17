@@ -20,6 +20,8 @@ if [[ ! -f "$script" ]]; then
 fi
 
 python3 "$repo_root/scripts/ci/tests/local-fast-graph.test.py"
+python3 "$repo_root/scripts/ci/tests/sibling-bins.test.py"
+python3 "$repo_root/scripts/ci/tests/local-fast-execution.test.py"
 
 # These routing assertions use manifest-only workspace metadata, including
 # declared path dependencies. External resolved edges remain covered above.
@@ -99,6 +101,20 @@ assert_package_crate_uses_package_mode() {
   output="$(plan_for --changed-file crates/semantic-commit/src/commit.rs)"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
   assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-semantic-commit"
+  echo "ok"
+}
+
+assert_package_tests_build_resolved_sibling_bins() {
+  echo "== package tests build the sibling binaries they resolve =="
+  local output
+  # agent-session tests run the agent-hook binary, which no agent-session-only
+  # selection builds; a stale target/<profile> copy failed them (#2543).
+  output="$(plan_for --changed-file crates/agent-session/src/lib.rs)"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_MODE=packages"
+  assert_not_contains "$FUNCNAME" "$output" "LOCAL_FAST_PACKAGE=nils-agent-hook"
+  assert_contains "$FUNCNAME" "$output" "LOCAL_FAST_SIBLING_PACKAGE=nils-agent-hook"
+  assert_contains "$FUNCNAME" "$output" \
+    "LOCAL_FAST_SIBLING_REASON=nils-agent-hook: agent-hook resolved by nils-agent-session"
   echo "ok"
 }
 
@@ -308,6 +324,7 @@ assert_deleted_shell_script_escalates_without_syntax_check() {
 }
 
 assert_package_crate_uses_package_mode
+assert_package_tests_build_resolved_sibling_bins
 assert_bin_only_package_skips_doctests
 assert_library_package_keeps_doctests
 assert_shared_crate_escalates_to_workspace

@@ -107,6 +107,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/forge-cli/docs/specs/checks-scope-and-deadline-v1.md`
 - `crates/forge-cli/docs/specs/forge-cli-spec-v1.md`
 - `crates/forge-cli/docs/specs/local-provider-contract-v1.md`
+- `crates/forge-cli/docs/specs/pr-lifecycle-v1.md`
 - `crates/forge-cli/docs/specs/search-completions-v1.md`
 - `crates/git-cli/docs/specs/dirty-checkout-adoption-json-contract-v1.md`
 - `crates/git-cli/docs/specs/git-cli-remote-surfaces.md`

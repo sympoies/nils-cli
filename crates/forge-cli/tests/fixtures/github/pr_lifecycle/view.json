@@ -1,0 +1,16 @@
+{
+  "number": 7,
+  "url": "https://github.com/acme/widget/pull/7",
+  "state": "OPEN",
+  "isDraft": false,
+  "title": "Example change",
+  "headRefName": "feature/example",
+  "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "baseRefName": "main",
+  "mergeable": "MERGEABLE",
+  "mergedAt": null,
+  "mergeCommit": null,
+  "labels": [],
+  "body": "Example description",
+  "createdAt": "2026-01-01T01:00:00Z"
+}
