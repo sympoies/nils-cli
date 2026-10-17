@@ -25,6 +25,7 @@ comma-separated route segments below are exact alternatives, not wildcards.
 | `POST /sessions` | Bearer | This specification |
 | `GET /history/sessions` | Bearer | This specification |
 | `GET /history/sessions/{history_id}/messages` | Bearer | This specification |
+| `GET /history/sessions/{history_id}/images/{image_id}` | Bearer | [History images v1](history-images-v1.md) |
 | `POST /history/sessions/{history_id}/star` | Bearer | This specification |
 | `POST /history/sessions/{history_id}/resume` | Bearer | This specification |
 | `GET /codex/accounts` | Bearer | [Codex account broker](#codex-account-broker) |
@@ -147,6 +148,10 @@ new optional `older_cursor`. Reverse reads retain the 10,000-line and two-second
 message limits. The browser receives neither provider transcript paths nor raw
 provider JSONL records. Both history reads require the server bearer because
 conversation content is more sensitive than the live list projection.
+
+Message pages also carry bounded optional image descriptors, including image-only
+messages. [History images v1](history-images-v1.md) owns the authenticated binary
+read route, source/path boundaries, byte limits and deleted/unavailable outcomes.
 
 `POST /history/sessions/{history_id}/star` sets or clears one star, keyed by the
 history id the daemon itself minted: the body is `{ "starred": <bool> }`, the id
