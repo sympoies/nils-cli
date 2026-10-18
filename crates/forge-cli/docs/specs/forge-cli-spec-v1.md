@@ -1148,9 +1148,8 @@ cache_max_age = "30m"
 no_cache = false
 
 [test_first]
-require = false                       # when true, pr create / pr deliver for
-                                      # feature/bug kinds must carry verified
-                                      # test-first evidence (see below)
+require = false                       # opt in to verified evidence for selected kinds
+require_kinds = ["feature", "bug"]     # compatibility default; whole-list override
 
 [review_convergence]
 require = false                       # compatibility default
@@ -1212,8 +1211,23 @@ per-invocation override.
 `require` defaults to `false`; the gate is off unless a repo or the global
 config opts in. When it resolves `true`, `pr create` and `pr deliver` (both the
 create and adopt paths, and the `--dry-run` preflight) require
-`--test-first-evidence <dir>` for `--kind feature` / `bug`. The directory must
-hold a verified v2 `test-first-evidence` record with a testable classification,
+`--test-first-evidence <dir>` for kinds selected by `require_kinds`. If omitted,
+`require_kinds` defaults to `["feature", "bug"]`, preserving existing behavior.
+Set `require_kinds = ["bug"]` to require evidence only for bug PRs while allowing
+feature PRs without a record. The list accepts `feature`, `bug`, `docs`, `chore`,
+`ci`, `refactor`, and `test`; unselected kinds are exempt. An empty list selects
+no kinds. Setting the list alone does not enable the gate: `require` must still
+resolve `true`.
+
+The repository list replaces the global list in full, including an explicit
+empty list; an omitted list inherits the global setting. A non-array, non-string
+member, or unknown kind produces an
+`invalid-config-value:test_first.require_kinds:expected_array_of_pr_kinds`
+warning and ignores the entire list, retaining the lower-precedence list or
+compatibility default. The missing-evidence error names the selected `--kind`
+and directs the caller to `--test-first-evidence <dir>`.
+
+The directory must hold a verified v2 `test-first-evidence` record with a testable classification,
 an actual changed/added/removed behavior, an affected-test decision, meaningful
 failing evidence or an explicit waiver, scoped passing validation, and a
 residual-gap declaration. The record must also bind an immutable repository and
@@ -1224,8 +1238,7 @@ checks and after ready, and merge uses the same OID as a compare-and-swap
 condition. Amend, rebase, or post-check push operations invalidate the latest
 delivery attestation until `test-first-evidence bind-delivery` appends a new
 attempt; the baseline is never replaced. Record v1 remains readable but cannot
-satisfy this gate. `docs` / `chore` / `ci` / `refactor` / `test` kinds are exempt. Failures
-surface as `test_first_evidence_required`, `test_first_evidence_v1`,
+satisfy this gate. Failures surface as `test_first_evidence_required`, `test_first_evidence_v1`,
 `test_first_evidence_classification`, `test_first_evidence_incomplete`,
 `test_first_evidence_unbound`, `test_first_evidence_subject_mismatch`,
 `test_first_evidence_provider_head_unavailable`,

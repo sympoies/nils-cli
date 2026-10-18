@@ -55,6 +55,7 @@ mod integration {
     mod search;
     mod stacked_branch;
     mod support;
+    mod test_first_kinds;
     mod tracker_grammar;
     mod validations;
 }

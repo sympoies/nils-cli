@@ -28,7 +28,7 @@ use tempfile::NamedTempFile;
 
 use crate::backend::{BackendCall, BackendProgram, BackendRunner, BackendSuccess, DryRunPayload};
 use crate::cli::{BINARY, GlobalFlags, PrCreateArgs};
-use crate::config::ForgeConfig;
+use crate::config::{ForgeConfig, TestFirstPolicy};
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::ops::label::{LabelTarget, validate_label_inputs};
@@ -107,10 +107,10 @@ pub struct Environment<'a> {
     pub(crate) upstream_repository: UpstreamRepositoryFn<'a>,
     pub workdir: PathBuf,
     pub headings: BodyHeadings,
-    /// Resolved `[test_first].require`: when true, feature/bug PRs must carry
+    /// Resolved test-first policy: selected PR kinds must carry
     /// verified test-first evidence. Injected by tests; loaded from layered
     /// config in [`Environment::production`].
-    pub test_first_required: bool,
+    pub test_first_policy: TestFirstPolicy,
 }
 
 impl<'a> Environment<'a> {
@@ -151,7 +151,7 @@ impl<'a> Environment<'a> {
             upstream_repository: Box::new(git_branch_upstream_repository),
             workdir,
             headings: BodyHeadings::from_config(&cfg),
-            test_first_required: cfg.resolve_test_first_required(None),
+            test_first_policy: cfg.resolve_test_first_policy(),
         }
     }
 }
@@ -465,36 +465,34 @@ pub(crate) fn evidence_remote_url(
     }
 }
 
-fn test_first_gate_applies(kind: PrKind, required: bool) -> bool {
-    required && matches!(kind, PrKind::Feature | PrKind::Bug)
-}
-
-/// Test-first gate. When `required` is true (resolved from
-/// `[test_first].require`) and the PR is a feature/bug change, the
+/// Test-first gate. When the resolved policy requires evidence for this kind, the
 /// `--test-first-evidence` directory must hold a verified `test-first-evidence`
 /// v2 record with a testable classification, durable before-fix evidence,
 /// scoped passing validation, an explicit residual-gap declaration, and a
 /// baseline/delivery subject matching the current repository and head.
-/// Other kinds (docs, chore, ci, refactor, test) are exempt.
+/// Kinds absent from the configured list are exempt.
 pub(crate) fn test_first_gate(
     kind: PrKind,
-    required: bool,
+    policy: &TestFirstPolicy,
     evidence_dir: Option<&str>,
     workdir: &Path,
     remote: &str,
     repository_id: Option<&str>,
     delivery_ref: &str,
 ) -> Result<Option<VerifiedTestFirstSubject>, ForgeError> {
-    if !test_first_gate_applies(kind, required) {
+    if !policy.required_for(kind) {
         return Ok(None);
     }
     let Some(dir) = evidence_dir else {
         return Err(ForgeError::validation(
             schema_err(),
             "test_first_evidence_required",
-            "this repo requires test-first evidence for feature/bug PRs; pass \
+            format!(
+                "test-first evidence is required for --kind {}; pass \
              --test-first-evidence <dir> pointing at a verified test-first-evidence \
              v2 record with a testable classification and complete durable evidence",
+                kind.as_str()
+            ),
             None,
         ));
     };
@@ -517,8 +515,8 @@ pub(crate) fn test_first_gate(
                 schema_err(),
                 "test_first_evidence_classification",
                 format!(
-                    "test-first evidence at '{dir}' uses non-testable or unknown classification '{}'; feature/bug delivery requires behavior-change, bug-fix, or feature",
-                    result.record.change_classification
+                    "test-first evidence at '{dir}' uses non-testable or unknown classification '{}'; delivery for --kind {} requires behavior-change, bug-fix, or feature",
+                    result.record.change_classification, kind.as_str()
                 ),
                 Some(format!("record_file={}", result.record_file)),
             ))
@@ -707,7 +705,7 @@ pub fn run_with<R: BackendRunner>(
         (env.head_state)(w, branch)
     })?;
     let qualified_subject = qualified_head_subject_for_env(&ctx, resolved_head, env)?;
-    let gate_applies = test_first_gate_applies(kind, env.test_first_required);
+    let gate_applies = env.test_first_policy.required_for(kind);
     let remote_url = evidence_remote_url(
         gate_applies,
         &ctx,
@@ -720,7 +718,7 @@ pub fn run_with<R: BackendRunner>(
         .flatten();
     let verified_subject = test_first_gate(
         kind,
-        env.test_first_required,
+        &env.test_first_policy,
         args.test_first_evidence.as_deref(),
         &env.workdir,
         &global.remote,
@@ -856,7 +854,7 @@ fn compute_with_subject_inner<R: BackendRunner>(
         (env.head_state)(w, branch)
     })?;
     let qualified_subject = qualified_head_subject_for_env(&ctx, resolved_head, env)?;
-    let gate_applies = test_first_gate_applies(kind, env.test_first_required);
+    let gate_applies = env.test_first_policy.required_for(kind);
     let remote_url = evidence_remote_url(
         gate_applies,
         &ctx,
@@ -869,7 +867,7 @@ fn compute_with_subject_inner<R: BackendRunner>(
         .flatten();
     let verified_subject = test_first_gate(
         kind,
-        env.test_first_required,
+        &env.test_first_policy,
         args.test_first_evidence.as_deref(),
         &env.workdir,
         &global.remote,
@@ -1485,7 +1483,10 @@ mod tests {
             }),
             workdir: PathBuf::from("."),
             headings: BodyHeadings::default(),
-            test_first_required: false,
+            test_first_policy: TestFirstPolicy {
+                require: false,
+                ..TestFirstPolicy::default()
+            },
         }
     }
 
@@ -1599,7 +1600,10 @@ mod tests {
     fn gate(kind: PrKind, required: bool, evidence_dir: Option<&str>) -> Result<(), ForgeError> {
         test_first_gate(
             kind,
-            required,
+            &TestFirstPolicy {
+                require: required,
+                ..TestFirstPolicy::default()
+            },
             evidence_dir,
             Path::new("."),
             "origin",
@@ -1687,7 +1691,20 @@ mod tests {
             ]),
             0
         );
-        let gate = || test_first_gate(PrKind::Bug, true, Some(out), &repo, "origin", None, "HEAD");
+        let gate = || {
+            test_first_gate(
+                PrKind::Bug,
+                &TestFirstPolicy {
+                    require: true,
+                    ..TestFirstPolicy::default()
+                },
+                Some(out),
+                &repo,
+                "origin",
+                None,
+                "HEAD",
+            )
+        };
         let err = gate().expect_err("unresolved failed attempt must refuse create");
         assert_eq!(err.kind(), "test_first_evidence_incomplete");
         assert!(
@@ -1741,7 +1758,10 @@ mod tests {
         assert!(summary_body.contains("Resolved by `bash scripts/check.sh`"));
         git(&repo, &["branch", "fix/final-disposition"]);
         let env = Environment {
-            test_first_required: true,
+            test_first_policy: TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
             workdir: repo,
             ..passthrough_env()
         };
@@ -1884,7 +1904,10 @@ mod tests {
                 head: git(&repo, &["rev-parse", "HEAD"]),
             };
             let env = Environment {
-                test_first_required: true,
+                test_first_policy: TestFirstPolicy {
+                    require: true,
+                    ..TestFirstPolicy::default()
+                },
                 workdir: repo,
                 ..passthrough_env()
             };
@@ -2008,7 +2031,10 @@ mod tests {
         assert!(
             test_first_gate(
                 PrKind::Feature,
-                true,
+                &TestFirstPolicy {
+                    require: true,
+                    ..TestFirstPolicy::default()
+                },
                 evidence.to_str(),
                 &repo_a,
                 "origin",
@@ -2019,7 +2045,10 @@ mod tests {
         );
         let err = test_first_gate(
             PrKind::Feature,
-            true,
+            &TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
             evidence.to_str(),
             &repo_b,
             "origin",
@@ -2047,7 +2076,10 @@ mod tests {
         assert!(
             test_first_gate(
                 PrKind::Feature,
-                true,
+                &TestFirstPolicy {
+                    require: true,
+                    ..TestFirstPolicy::default()
+                },
                 evidence.to_str(),
                 &repo,
                 "origin",
@@ -2058,7 +2090,10 @@ mod tests {
         );
         let err = test_first_gate(
             PrKind::Feature,
-            true,
+            &TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
             evidence.to_str(),
             &repo,
             "origin",
@@ -2090,7 +2125,10 @@ mod tests {
         assert!(
             test_first_gate(
                 PrKind::Feature,
-                true,
+                &TestFirstPolicy {
+                    require: true,
+                    ..TestFirstPolicy::default()
+                },
                 evidence.to_str(),
                 &repo_a,
                 "origin",
@@ -2101,7 +2139,10 @@ mod tests {
         );
         let err = test_first_gate(
             PrKind::Feature,
-            true,
+            &TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
             evidence.to_str(),
             &repo_b,
             "origin",
@@ -2122,7 +2163,10 @@ mod tests {
         git(&repo, &["branch", "fix/local-evidence"]);
 
         let env = Environment {
-            test_first_required: true,
+            test_first_policy: TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
             workdir: repo,
             ..passthrough_env()
         };
@@ -2159,7 +2203,10 @@ mod tests {
         git(&repo, &["checkout", "-q", "main"]);
 
         let env = Environment {
-            test_first_required: true,
+            test_first_policy: TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
             workdir: repo,
             ..passthrough_env()
         };
@@ -2229,7 +2276,10 @@ mod tests {
     fn run_with_blocks_feature_when_required_without_evidence() {
         let runner = StubRunner;
         let env = Environment {
-            test_first_required: true,
+            test_first_policy: TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
             ..passthrough_env()
         };
         let global = GlobalFlags {
