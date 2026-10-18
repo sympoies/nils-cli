@@ -57,13 +57,13 @@ class WorkflowDispatchTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             return (root / 'call.log').read_text().splitlines()
 
-    def test_pr_and_merge_group_dispatch_plan_consumption(self):
+    def test_only_pr_dispatches_plan_consumption(self):
         for job in ('test', 'test_macos'):
             for event in ('pull_request', 'merge_group'):
                 with self.subTest(job=job, event=event):
                     argv = self.dispatch(job, event)
-                    self.assertIn('--ci-merge-plan', argv,
-                                  f'{job}/{event} still launches the full entrypoint without consuming a plan')
+                    self.assertEqual('--ci-merge-plan' in argv, event == 'pull_request',
+                                     f'{job}/{event} uses the wrong scope lane')
 
     def test_nightly_and_on_demand_keep_full_validation(self):
         for job in ('test', 'test_macos'):
@@ -77,7 +77,7 @@ class WorkflowDispatchTests(unittest.TestCase):
         self.assertEqual(len(markers), 3)
         for condition in markers:
             for event in ('pull_request', 'merge_group', 'schedule', 'workflow_dispatch'):
-                for scope in ('SCOPED', 'FULL'):
+                for scope in ('SCOPED', 'FULL', 'DEFERRED_FULL'):
                     expression = condition
                     values = {'needs.changes.outputs.docs_only': 'false',
                               'needs.changes.outputs.release_only': 'false',
@@ -88,7 +88,7 @@ class WorkflowDispatchTests(unittest.TestCase):
                         expression = expression.replace(key, repr(value))
                     observed = eval(expression.replace('&&', 'and').replace('||', 'or'),
                                     {'__builtins__': {}}, {})
-                    self.assertEqual(observed, scope == 'FULL' or event in ('schedule', 'workflow_dispatch'))
+                    self.assertEqual(observed, scope == 'FULL' or event in ('merge_group', 'schedule', 'workflow_dispatch'))
 
 
 class ConsumerExecutionTests(unittest.TestCase):
@@ -204,12 +204,12 @@ else:
                               '-p', self.base, '-m', 'fixture squash queue')
         self.git('checkout', '-q', '--detach', self.merge)
 
-    def execute(self, name='pull_request', event=None, env=None):
+    def execute(self, name='pull_request', event=None, env=None, extra_args=()):
         payload = self.root / 'event.json'
         payload.write_text(json.dumps(self.event(name) if event is None else event))
         result = subprocess.run([sys.executable, str(CONSUMER), '--repo', str(self.repo),
                                  '--event-name', name, '--event-path', str(payload),
-                                 '--candidate', self.merge, '--output', str(self.output)],
+                                 '--candidate', self.merge, '--output', str(self.output), *extra_args],
                                 env=dict(self.env, **(env or {})), capture_output=True, text=True)
         self.assertFalse(Path(str(self.log) + '.compiler').exists(), 'real compiler sentinel ran')
         rows = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
@@ -488,6 +488,25 @@ raise SystemExit(subprocess.call(sys.argv[sys.argv.index('--') + 1:], env=env))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(rows, [{'kind': 'admission'}, {'kind': 'xvfb'}, {'kind': 'full'}])
         self.assertIn('validation_scope=FULL', (self.root / 'github-output').read_text())
+
+
+def load_tests(loader, tests, pattern):
+    spec = importlib.util.spec_from_file_location('pr_lane', Path(__file__).with_name('merge-plan-pr-lane.test.py'))
+    lane = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lane)
+    tests.addTests(loader.loadTestsFromTestCase(lane.PrLaneTests))
+    tests.addTests(loader.loadTestsFromTestCase(lane.ScopedPrRatchetTests))
+    tests.addTests(loader.loadTestsFromTestCase(lane.CoverageLaneTests))
+    spec = importlib.util.spec_from_file_location('queue_detection', Path(__file__).with_name('merge-plan-queue-detection.test.py'))
+    queue = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(queue)
+    tests.addTests(loader.loadTestsFromTestCase(queue.QueueDetectionTests))
+    spec = importlib.util.spec_from_file_location('deferred_jobs', Path(__file__).with_name('merge-plan-deferred-jobs.test.py'))
+    deferred = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(deferred)
+    tests.addTests(loader.loadTestsFromTestCase(deferred.DeferredJobTests))
+    tests.addTests(loader.loadTestsFromTestCase(deferred.PreviewTests))
+    return tests
 
 
 if __name__ == '__main__':

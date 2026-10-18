@@ -124,7 +124,7 @@ assert_contains .github/workflows/ci.yml "key: llvm-cov" \
   "the instrumented macOS job caches its llvm-cov dependencies under their own key"
 assert_contains .github/workflows/ci.yml "NILS_CLI_TEST_RUNNER: llvm-cov" \
   "the macOS full lane runs the instrumented tests that enforce the coverage floor"
-assert_contains .github/workflows/ci.yml "needs: [changes, test_macos, test_containment]" \
+assert_contains .github/workflows/ci.yml "needs: [changes, test, test_macos, test_containment]" \
   "coverage reports from the macOS instrumented run instead of repeating it"
 # test_containment is not a required check; only the coverage job's own guard
 # connects it to merge and the release gate, so assert inside that job.
@@ -142,7 +142,7 @@ if [[ "$coverage_if_count" != "1" ]]; then
   exit 1
 fi
 echo "ok: coverage job has exactly one job-level if condition"
-assert_contains "$coverage_job" "if: \${{ !cancelled() && github.event_name != 'push' }}" \
+assert_contains "$coverage_job" "if: \${{ always() && github.event_name != 'push' && !(" \
   "coverage excludes push while still running after failed upstream lanes"
 assert_contains "$coverage_job" "TEST_CONTAINMENT_RESULT: \${{ needs.test_containment.result }}" \
   "coverage reads the parallel containment canaries' result"
