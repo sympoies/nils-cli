@@ -42,6 +42,15 @@ fn store_reason(
 /// Re-read under the record lock instead of re-queuing a discovered nickname:
 /// cancellation, replacement and a newer account choice must win over a tick.
 pub(crate) fn apply_queued(context: &CliContext, id: &str, tmux: &Path) -> Result<(), CliError> {
+    apply_queued_at(context, id, tmux, jiff::Timestamp::now())
+}
+
+pub(crate) fn apply_queued_at(
+    context: &CliContext,
+    id: &str,
+    tmux: &Path,
+    now: jiff::Timestamp,
+) -> Result<(), CliError> {
     let _lock = crate::acquire_session_record_lock(context, id)?;
     let mut record = load_session_record(context, id)?;
     if record.agent != "claude" || !crate::claude_account::has_queued_next(&record) {
@@ -50,16 +59,30 @@ pub(crate) fn apply_queued(context: &CliContext, id: &str, tmux: &Path) -> Resul
     if let Some(reason) = blocking_reason(context, &record, tmux, true) {
         return store_reason(context, &mut record, Some(reason));
     }
-    if let Err(error) = crate::claude_account::preflight_next(&record) {
+    if crate::claude_account::next_retry_is_deferred(&record, now) {
+        return Ok(());
+    }
+    let prior_reason = crate::claude_account::queued_blocking_reason(&record);
+    let attempt = crate::claude_account::preflight_next(&record)
+        .and_then(|()| restart_locked(context, &mut record, tmux).map(|_| ()));
+    if let Err(error) = attempt {
         let reason = error
             .details()
             .and_then(|details| details["cause"].as_str())
             .unwrap_or(error.code());
-        store_reason(context, &mut record, Some(reason))?;
+        // Restart may have persisted stop evidence or a failed resume. Only
+        // queued intents retry; retain the current record's lifecycle state.
+        let mut current = load_session_record(context, id)?;
+        if crate::claude_account::has_queued_next(&current) {
+            crate::claude_account::defer_next_retry(&mut current, reason, now)?;
+            write_session_record(context, &current)?;
+            if prior_reason.as_deref() == Some(reason) {
+                return Ok(()); // The daemon warns only when the reason changes.
+            }
+        }
         return Err(error);
     }
-    store_reason(context, &mut record, None)?;
-    restart_locked(context, &mut record, tmux).map(|_| ())
+    Ok(())
 }
 
 pub(super) fn restart_locked(

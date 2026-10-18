@@ -1496,6 +1496,10 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   A daemon preflight refusal records the broker's cause code there; a refused
   stop records its error code. The intent and revision remain queued for
   retry, and nothing relaunches until preflight and verified stop succeed.
+  Repeated broker or stop refusals retry at most once every 30 seconds for
+  an unchanged intent and runtime, with a warning only when the refusal reason
+  changes. A new intent revision, changed turn-state blocker, or replacement
+  runtime clears that delay. Explicit idle reissues still run immediately.
   After a verified stop, the switch retires the
   stopped runtime's coordination incarnation (its heartbeat writer died with
   it) before resuming, so the resume is not refused as a live prior

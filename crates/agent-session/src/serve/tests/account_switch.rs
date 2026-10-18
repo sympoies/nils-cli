@@ -386,3 +386,246 @@ async fn claude_idle_switch_keeps_stopped_and_unknown_turns_queued() {
     assert_eq!(view["next"]["blocking_reason"], "session_stopped");
     assert!(!broker.calls().contains("materialize"));
 }
+
+#[tokio::test]
+async fn claude_idle_switch_keeps_starting_and_needs_input_queued() {
+    let lock = GlobalStateLock::new();
+    for needs_input in [false, true] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
+        let (phase, reason) = if needs_input {
+            crate::activity::ingest_event(
+                &st.context,
+                &record.id,
+                idle_account_event(&record, "start", "turn_started"),
+            )
+            .unwrap();
+            let mut attention = idle_account_event(&record, "approval", "attention_requested");
+            attention.attention_id = Some("fixture-approval".into());
+            attention.attention_kind = Some("approval".into());
+            attention.source_kind = crate::activity::SourceKind::ProviderHook;
+            attention.confidence = crate::activity::Confidence::Observed;
+            crate::activity::ingest_event(&st.context, &record.id, attention).unwrap();
+            (crate::activity::TurnPhase::NeedsInput, "turn_needs_input")
+        } else {
+            (crate::activity::TurnPhase::Starting, "turn_starting")
+        };
+        assert_eq!(
+            crate::activity::state_for_view(&st.context, &record)
+                .unwrap()
+                .phase,
+            phase
+        );
+        crate::session_account::switch(&st.context, &record.id, "beta", None, &st.tmux_bin)
+            .unwrap();
+        crate::session_account::claude_idle::apply_queued(&st.context, &record.id, &st.tmux_bin)
+            .unwrap();
+        let current = load_session_record(&st.context, &record.id).unwrap();
+        let view = serde_json::to_value(crate::claude_account::view_for_record(&current)).unwrap();
+        assert_eq!(view["selected_account"], "alpha");
+        assert_eq!(view["next"]["state"], "queued");
+        assert_eq!(view["next"]["blocking_reason"], reason);
+        assert!(!broker.calls().contains("materialize"));
+        let log = fs::read_to_string(tmp.path().join("tmux.log")).unwrap_or_default();
+        for command in ["if-shell", "kill-session", "new-session"] {
+            assert!(!log.contains(command), "{reason}: {log}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn claude_idle_switch_backs_off_persistent_preflight_refusal() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
+    // Every tick sees the same live idle runtime; refusal prevents any stop.
+    let tmux = logging_tmux(tmp.path(), &tmp.path().join("tmux.log"));
+    crate::activity::ingest_event(
+        &st.context,
+        &record.id,
+        idle_account_event(&record, "start", "turn_started"),
+    )
+    .unwrap();
+    crate::session_account::switch(&st.context, &record.id, "gamma", None, &tmux).unwrap();
+    crate::activity::ingest_event(
+        &st.context,
+        &record.id,
+        idle_account_event(&record, "done", "turn_completed"),
+    )
+    .unwrap();
+    let mut warnings = 0;
+    for _ in 0..3 {
+        warnings += usize::from(
+            crate::session_account::claude_idle::apply_queued(&st.context, &record.id, &tmux)
+                .is_err(),
+        );
+    }
+    assert_eq!(
+        broker
+            .calls()
+            .matches("materialize --provider claude --account gamma")
+            .count(),
+        1,
+        "persistent refusal must not invoke the broker on every tick"
+    );
+    assert_eq!(warnings, 1, "only a changed refusal reason should warn");
+    let current = load_session_record(&st.context, &record.id).unwrap();
+    let view = serde_json::to_value(crate::claude_account::view_for_record(&current)).unwrap();
+    assert_eq!(view["selected_account"], "alpha");
+    assert_eq!(view["next"]["state"], "queued");
+    assert_eq!(
+        view["next"]["blocking_reason"],
+        "claude-account-broker-rejected"
+    );
+}
+
+#[tokio::test]
+async fn claude_idle_switch_retry_window_bounds_broker_and_stop_attempts() {
+    let lock = GlobalStateLock::new();
+    for account in ["gamma", "beta"] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (st, broker, record, probe) = idle_account_fixture(&lock, tmp.path());
+        // Without the stopped probe, the fake live pane lacks identity
+        // evidence, so beta's verified stop is refused before any signal.
+        drop(probe);
+        let tmux = logging_tmux(tmp.path(), &tmp.path().join("tmux.log"));
+        crate::activity::ingest_event(
+            &st.context,
+            &record.id,
+            idle_account_event(&record, "start", "turn_started"),
+        )
+        .unwrap();
+        crate::session_account::switch(&st.context, &record.id, account, None, &tmux).unwrap();
+        crate::activity::ingest_event(
+            &st.context,
+            &record.id,
+            idle_account_event(&record, "done", "turn_completed"),
+        )
+        .unwrap();
+        let base: jiff::Timestamp = "2030-01-01T00:00:00Z".parse().unwrap();
+        let mut warnings = 0;
+        for seconds in [0, 2, 4, 29, 30, 31] {
+            let now = base
+                .checked_add(jiff::SignedDuration::from_secs(seconds))
+                .unwrap();
+            warnings += usize::from(
+                crate::session_account::claude_idle::apply_queued_at(
+                    &st.context,
+                    &record.id,
+                    &tmux,
+                    now,
+                )
+                .is_err(),
+            );
+        }
+        assert_eq!(
+            broker
+                .calls()
+                .matches(&format!(
+                    "materialize --provider claude --account {account}"
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(
+            warnings, 1,
+            "an unchanged refusal must not warn again after retry"
+        );
+        let current = load_session_record(&st.context, &record.id).unwrap();
+        let view = serde_json::to_value(crate::claude_account::view_for_record(&current)).unwrap();
+        assert_eq!(view["selected_account"], "alpha");
+        assert_eq!(view["next"]["state"], "queued");
+        assert_eq!(
+            view["next"]["blocking_reason"],
+            if account == "gamma" {
+                "claude-account-broker-rejected"
+            } else {
+                "session-termination-failed"
+            }
+        );
+        let log = fs::read_to_string(tmp.path().join("tmux.log")).unwrap();
+        assert!(
+            !log.contains("kill-session")
+                && !log.contains("if-shell")
+                && !log.contains("new-session")
+        );
+    }
+}
+
+#[tokio::test]
+async fn claude_idle_switch_backoff_does_not_fence_new_intent_or_runtime() {
+    let lock = GlobalStateLock::new();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (st, broker, record, _probe) = idle_account_fixture(&lock, tmp.path());
+    let tmux = logging_tmux(tmp.path(), &tmp.path().join("tmux.log"));
+    crate::activity::ingest_event(
+        &st.context,
+        &record.id,
+        idle_account_event(&record, "start", "turn_started"),
+    )
+    .unwrap();
+    crate::session_account::switch(&st.context, &record.id, "gamma", None, &tmux).unwrap();
+    crate::activity::ingest_event(
+        &st.context,
+        &record.id,
+        idle_account_event(&record, "done", "turn_completed"),
+    )
+    .unwrap();
+    let now: jiff::Timestamp = "2030-01-01T00:00:00Z".parse().unwrap();
+    assert!(
+        crate::session_account::claude_idle::apply_queued_at(&st.context, &record.id, &tmux, now)
+            .is_err()
+    );
+    let mut current = load_session_record(&st.context, &record.id).unwrap();
+    let original_revision = current.extra["claude_account_next"]["revision"].clone();
+    crate::claude_account::queue_next(&mut current, "gamma").unwrap();
+    crate::write_session_record(&st.context, &current).unwrap();
+    assert!(
+        crate::session_account::claude_idle::apply_queued_at(&st.context, &record.id, &tmux, now)
+            .is_err()
+    );
+    assert_ne!(
+        current.extra["claude_account_next"]["revision"],
+        original_revision
+    );
+    let mut current = load_session_record(&st.context, &record.id).unwrap();
+    let runtime = current.runtime.as_mut().unwrap();
+    runtime.launch_id = "replacement-runtime".into();
+    runtime.generation += 1;
+    crate::write_session_record(&st.context, &current).unwrap();
+    crate::activity::activate_runtime(&st.context, &current).unwrap();
+    for (id, kind) in [
+        ("replacement-start", "turn_started"),
+        ("replacement-done", "turn_completed"),
+    ] {
+        crate::activity::ingest_event(
+            &st.context,
+            &current.id,
+            idle_account_event(&current, id, kind),
+        )
+        .unwrap();
+    }
+    crate::session_account::claude_idle::apply_queued_at(&st.context, &record.id, &tmux, now)
+        .unwrap();
+    assert_eq!(
+        broker
+            .calls()
+            .matches("materialize --provider claude --account gamma")
+            .count(),
+        3,
+        "new revision and replacement runtime must retry immediately"
+    );
+    let mut current = load_session_record(&st.context, &record.id).unwrap();
+    crate::claude_account::queue_next(&mut current, "alpha").unwrap();
+    crate::write_session_record(&st.context, &current).unwrap();
+    crate::session_account::claude_idle::apply_queued_at(&st.context, &record.id, &tmux, now)
+        .unwrap();
+    assert_eq!(
+        broker
+            .calls()
+            .matches("materialize --provider claude --account gamma")
+            .count(),
+        3,
+        "cancellation must win during backoff"
+    );
+}
