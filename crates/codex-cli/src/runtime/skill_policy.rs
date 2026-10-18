@@ -16,15 +16,23 @@ pub(super) fn apply_for_home(command: &mut Command, cwd: &Path, home: &Path) -> 
 }
 
 fn roots(cwd: &Path, home: Option<&Path>) -> Vec<PathBuf> {
-    let mut roots = cwd
+    // Match the isolated child's explicit project marker. Outside a Git
+    // project Codex uses cwd alone; unrelated filesystem ancestors are not
+    // part of the project skill inventory.
+    let boundary = cwd
         .ancestors()
-        .flat_map(|ancestor| {
-            [
-                ancestor.join(".agents/skills"),
-                ancestor.join(".codex/skills"),
-            ]
-        })
-        .collect::<Vec<_>>();
+        .find(|ancestor| ancestor.join(".git").exists())
+        .unwrap_or(cwd);
+    let mut roots = Vec::new();
+    for ancestor in cwd.ancestors() {
+        roots.extend([
+            ancestor.join(".agents/skills"),
+            ancestor.join(".codex/skills"),
+        ]);
+        if ancestor == boundary {
+            break;
+        }
+    }
     if let Some(home) = home {
         roots.push(home.join(".agents/skills"));
         roots.push(home.join(".codex/skills"));
@@ -52,7 +60,13 @@ fn apply_roots(command: &mut Command, roots: Vec<PathBuf>) -> Result<(), String>
         }
         for entry in fs::read_dir(canonical).map_err(|_| failure())? {
             let path = entry.map_err(|_| failure())?.path();
-            let metadata = fs::metadata(&path).map_err(|_| failure())?;
+            let metadata = match fs::metadata(&path) {
+                Ok(metadata) => metadata,
+                // A dangling link or removed entry has no readable skill.
+                // Permission and other inventory errors remain fail-closed.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => return Err(failure()),
+            };
             if metadata.is_dir() {
                 pending.push(path);
             } else if path.file_name().is_some_and(|name| name == "SKILL.md") {
@@ -81,6 +95,8 @@ fn apply_roots(command: &mut Command, roots: Vec<PathBuf>) -> Result<(), String>
     }
     config.push(']');
     command.args([
+        "-c",
+        r#"project_root_markers=[".git"]"#,
         "-c",
         "skills.include_instructions=false",
         "-c",
@@ -151,5 +167,62 @@ mod tests {
         let message = apply_roots(&mut command, vec![root]).unwrap_err();
         assert!(message.starts_with("isolated-runtime-unsupported:"));
         assert_eq!(command.get_args().count(), 0);
+    }
+    #[test]
+    fn dangling_entries_do_not_reject_valid_skills() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("skills");
+        let good = root.join("good");
+        fs::create_dir_all(&good).unwrap();
+        fs::write(good.join("SKILL.md"), "fixture").unwrap();
+        symlink(root.join("missing"), root.join("dangling")).unwrap();
+        let mut command = Command::new("codex");
+        apply_roots(&mut command, vec![root]).unwrap();
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            args.iter()
+                .any(|arg| arg.contains(good.join("SKILL.md").to_str().unwrap()))
+        );
+    }
+
+    #[test]
+    fn unreadable_directories_still_fail_closed() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("skills");
+        let blocked = root.join("blocked");
+        fs::create_dir_all(&blocked).unwrap();
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o000)).unwrap();
+        let result = apply_roots(&mut Command::new("codex"), vec![root]);
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            result
+                .unwrap_err()
+                .starts_with("isolated-runtime-unsupported:")
+        );
+    }
+
+    #[test]
+    fn project_discovery_stops_at_the_nearest_git_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let cwd = project.join("child");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(project.join(".git"), "gitdir: fixture").unwrap();
+        assert_eq!(
+            super::roots(&cwd, None),
+            vec![
+                cwd.join(".agents/skills"),
+                cwd.join(".codex/skills"),
+                project.join(".agents/skills"),
+                project.join(".codex/skills"),
+            ]
+        );
     }
 }

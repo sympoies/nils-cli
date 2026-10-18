@@ -1,8 +1,10 @@
 use nils_test_support::cmd::{self, CmdOptions};
 use nils_test_support::fs as test_fs;
+use nils_test_support::git as test_git;
 use nils_test_support::{GlobalStateLock, bin};
 use pretty_assertions::{assert_eq, assert_ne};
 use std::fs;
+use std::os::unix::fs::symlink;
 
 #[test]
 fn isolated_profiles_strip_control_environment_preserve_shell_and_cleanup_auth() {
@@ -65,9 +67,24 @@ exit 23
     );
     let home = temp.path().join("home");
     fs::create_dir_all(&home).unwrap();
+    let zdotdir = temp.path().join("shell-config");
+    let prompts = zdotdir.join("prompts");
+    fs::create_dir_all(&prompts).unwrap();
+    for template in ["actionable-advice", "actionable-knowledge"] {
+        fs::write(prompts.join(format!("{template}.md")), "$ARGUMENTS\n").unwrap();
+    }
     let capture = temp.path().join("capture");
     let cwd = temp.path().join("project/child");
     fs::create_dir_all(&cwd).unwrap();
+    test_git::git(cwd.parent().unwrap(), &["init"]);
+    let outside_skill = temp.path().join(".agents/skills/outside/SKILL.md");
+    fs::create_dir_all(outside_skill.parent().unwrap()).unwrap();
+    fs::write(&outside_skill, "unrelated ancestor skill").unwrap();
+    symlink(
+        temp.path().join("missing"),
+        temp.path().join(".agents/skills/dangling"),
+    )
+    .unwrap();
     let skills = [
         home.join(".agents/skills/home-agent/SKILL.md"),
         home.join(".codex/skills/home-codex/SKILL.md"),
@@ -93,6 +110,7 @@ exit 23
         )
         .with_env("HOME", &home.to_string_lossy())
         .with_env("EXPECTED_HOME", &home.to_string_lossy())
+        .with_env("ZDOTDIR", &zdotdir.to_string_lossy())
         .with_env("CAPTURE_HOME", &capture.to_string_lossy())
         .with_env("CODEX_SECRET_DIR", "control-sentinel")
         .with_env("CODEX_SECRET_CACHE_DIR", "control-sentinel")
@@ -117,7 +135,13 @@ exit 23
             &["agent", profile, "--ephemeral", "fixture request"],
             &options,
         );
-        assert_eq!(output.code, 23, "{}", output.stderr_text());
+        assert_eq!(
+            output.code,
+            23,
+            "profile={profile} stdout={} stderr={}",
+            output.stdout_text(),
+            output.stderr_text()
+        );
         let args = output.stdout_text();
         assert!(args.contains(&format!("--sandbox\n{sandbox}\n")));
         for feature in [
@@ -136,6 +160,8 @@ exit 23
         assert!(args.contains("skills.bundled.enabled=false"));
         assert!(args.contains("cloud.skills.enabled=false"));
         assert!(args.contains("skills.config="));
+        assert!(args.contains(r#"project_root_markers=[".git"]"#));
+        assert!(!args.contains(outside_skill.to_str().unwrap()));
         for skill in &skills {
             let path = skill.canonicalize().unwrap();
             assert!(args.contains(&format!(

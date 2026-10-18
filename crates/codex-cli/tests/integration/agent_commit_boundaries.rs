@@ -134,6 +134,7 @@ fn isolated_commit_rejects_invalid_message_fields_before_semantic_commit() {
         json!({"type":"fix","scope":"agent","subject":"valid","body_bullets":[],"push":true}),
         json!({"type":"invalid","scope":"agent","subject":"valid","body_bullets":[]}),
         json!({"type":"fix","scope":"invalid/scope","subject":"valid","body_bullets":[]}),
+        json!({"type":"fix","scope":"Core","subject":"valid","body_bullets":[]}),
     ];
     for (index, message) in cases.iter().enumerate() {
         let fixture = Fixture::new();

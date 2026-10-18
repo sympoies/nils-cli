@@ -11,9 +11,9 @@ pub(super) fn validate_generated_message(message: &GeneratedCommitMessage) -> Re
     if let Some(scope) = &message.scope
         && (scope.trim().is_empty()
             || scope.len() > 64
-            || scope
-                .chars()
-                .any(|ch| !(ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))))
+            || scope.chars().any(|ch| {
+                !(ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '_' | '-'))
+            }))
     {
         return Err("codex-cli agent commit: invalid commit scope".to_string());
     }

@@ -80,7 +80,13 @@ Agent flag notes:
   rules, disables hooks/plugins/apps/memory/goals/subagents, and always runs
   ephemerally without the dangerous bypass flag. Ambient home and ancestor
   `.agents/skills` / `.codex/skills` entries are disabled by canonical skill path,
-  including linked skill directories. Automatic skill instructions, bundled
+  including linked skill directories. Project discovery stops at the nearest
+  `.git` marker and uses cwd alone outside Git; the child receives the same
+  explicit project-root marker. Dangling skill links are ignored, while
+  unreadable directories fail closed.
+- Administrator skill scope
+  (`/etc/codex/skills`) is outside this user/project inventory; administrator-managed
+  Codex requirements remain authoritative. Automatic skill instructions, bundled
   skills, and authenticated cloud skills are disabled as well. An unreadable skill inventory or an encoded
   inventory over the 64 KiB launch budget fails before the
   model starts with `isolated-runtime-unsupported`.
@@ -91,7 +97,8 @@ Agent flag notes:
 - Isolated `agent commit` exposes only staged-context to the model, accepts
   strict structured message fields, detects HEAD/index drift, and delegates the
   commit exclusively to `semantic-commit`. Message fields reject control
-  characters and invalid scopes before commit invocation. Header width follows
+  characters and invalid scopes before commit invocation. Scopes use lowercase
+  ASCII letters, digits, `.`, `_`, and `-`. Header width follows
   `SEMANTIC_COMMIT_HEADER_WIDTH` (default: 100 Unicode characters), matching
   `semantic-commit`. If the configured model is rejected
   for a ChatGPT account, message generation retries with `gpt-6-luna`, then
