@@ -18,6 +18,12 @@ use super::remote::{self, Config};
 use crate::lineage::{self, LineageSeed, WorkRequest};
 use crate::{CliContext, CliError};
 
+pub(crate) mod diagnostics;
+mod operation;
+mod retention;
+mod start_args;
+pub(crate) use start_args::{OperationArgs, render_text, start_args};
+
 pub(crate) const RESULT_SCHEMA: &str = "agent-session.console-start.v1";
 pub(crate) const DISABLED_CODE: &str = "console-start-disabled";
 pub(crate) const UNAVAILABLE_CODE: &str = "console-start-unavailable";
@@ -65,7 +71,7 @@ fn unavailable(
 fn invalid() -> CliError {
     CliError::usage(
         INVALID_CODE,
-        "a console start takes only `machine`, `no_parent`, `work`, `role`, and a `session` object",
+        "a console start takes operation_id with session fields, or operation_id with reconcile:true",
         None,
     )
 }
@@ -147,6 +153,9 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
     let message = bounded_line(message).unwrap_or("the console start request failed");
     match code {
         INVALID_CODE
+        | "console-start-operation-conflict"
+        | "console-start-operation-not-found"
+        | "console-start-operation-expired"
         | "invalid-request"
         | "role-invalid"
         | "role-requires-root"
@@ -177,7 +186,7 @@ fn checked_request(body: &Value) -> Option<(Option<&str>, ChildLineage, &Map<Str
     if request.keys().any(|key| {
         !matches!(
             key.as_str(),
-            "machine" | "session" | "no_parent" | "work" | "role"
+            "machine" | "session" | "no_parent" | "work" | "role" | "operation_id"
         )
     }) {
         return None;
@@ -278,13 +287,93 @@ pub(crate) fn relay_route(
     token: &str,
     body: &Value,
 ) -> Result<Value, CliError> {
+    if body.get("operation_id").is_some_and(|id| !id.is_string()) {
+        return Err(invalid());
+    }
+    let operation = body
+        .get("operation_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+    if !operation::valid_id(&operation) {
+        return Err(invalid());
+    }
+    diagnostics::run(&operation, || {
+        relay_operation(context, federation, session, token, body, &operation)
+    })
+}
+
+fn relay_operation(
+    context: &CliContext,
+    federation: Option<&Config>,
+    session: &str,
+    token: &str,
+    body: &Value,
+    operation_id: &str,
+) -> Result<Value, CliError> {
     let (caller, incarnation) = super::authenticate_token(context, session, token)?;
     let Some(config) = federation else {
         return Err(disabled());
     };
+    if body["reconcile"] == true {
+        if body
+            .as_object()
+            .is_none_or(|body| body.len() != 2 || !body.contains_key("operation_id"))
+        {
+            return Err(invalid());
+        }
+        let (receipt, _) = operation::Receipt::begin(
+            context,
+            session,
+            &incarnation,
+            operation_id,
+            body,
+            &config.machine,
+            &caller.created_at,
+        )?;
+        return receipt.reconcile(config, session, &incarnation);
+    }
     let (machine, lineage, child) = checked_request(body).ok_or_else(invalid)?;
     lineage::require_root_for_role(lineage.role.as_deref(), !lineage.no_parent)?;
     let child = child_session(&config.machine, &caller, &lineage, child)?;
+    let (mut receipt, submit) = operation::Receipt::begin(
+        context,
+        session,
+        &incarnation,
+        operation_id,
+        body,
+        machine.unwrap_or(&config.machine),
+        &caller.created_at,
+    )?;
+    if !submit {
+        return receipt.reconcile(config, session, &incarnation);
+    }
+    let result = relay_create(config, session, &incarnation, machine, child, operation_id);
+    if receipt.finish(context, &result).is_err() {
+        let mut error = unavailable(
+            "operation_receipt",
+            "persist_failed",
+            "the start outcome could not be recorded; reconcile before retrying",
+            false,
+            false,
+        );
+        if let Ok(value) = &result {
+            error.details_mut().as_mut().unwrap()["created_session_id"] =
+                value["session"]["id"].clone();
+        }
+        return Err(error);
+    }
+    result
+}
+
+fn relay_create(
+    config: &Config,
+    session: &str,
+    incarnation: &str,
+    machine: Option<&str>,
+    child: Map<String, Value>,
+    operation_id: &str,
+) -> Result<Value, CliError> {
     let mut request = json!({
         "source_session_id": session,
         "source_incarnation": incarnation,
@@ -295,6 +384,7 @@ pub(crate) fn relay_route(
     }
     let response = client()?
         .post(format!("{}/api/coordination/sessions/v1", config.url))
+        .header("x-agent-session-operation-id", operation_id)
         .bearer_auth(&config.token)
         .json(&request)
         .send()
@@ -356,17 +446,56 @@ pub(crate) fn relay_route(
             false,
         ));
     }
-    Err(forwarded(error["code"].as_str(), &error["message"]))
+    let mut failure = forwarded(error["code"].as_str(), &error["message"]);
+    if matches!(
+        failure.code(),
+        "title-mode-unconfirmed" | "launch-env-unconfirmed"
+    ) && let Some(id) = error["details"]["created_session_id"].as_str()
+        && !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        *failure.details_mut() = Some(json!({"created_session_id":id,"safe_to_retry":false}));
+    }
+    Err(failure)
 }
 
-/// `agent-session start --via-console`: the child session through the local
-/// daemon, as the managed session this CLI runs in.
-pub(crate) fn cli_start(
+fn cli_operation(
     context: &CliContext,
     capability_file: Option<&Path>,
     machine: Option<&str>,
     session: Value,
     lineage: &ChildLineage,
+    options: &OperationArgs,
+) -> Result<Value, CliError> {
+    let operation_id = options
+        .operation_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+    if !operation::valid_id(&operation_id) {
+        return Err(invalid());
+    }
+    cli_request(
+        context,
+        capability_file,
+        machine,
+        session,
+        lineage,
+        options.reconcile,
+        &operation_id,
+    )
+}
+
+fn cli_request(
+    context: &CliContext,
+    capability_file: Option<&Path>,
+    machine: Option<&str>,
+    session: Value,
+    lineage: &ChildLineage,
+    reconcile: bool,
+    operation_id: &str,
 ) -> Result<Value, CliError> {
     let caller = crate::non_empty_env("AGENT_SESSION_ID").ok_or_else(|| {
         CliError::usage(
@@ -413,6 +542,10 @@ pub(crate) fn cli_start(
     if let Some(role) = &lineage.role {
         request["role"] = json!(role);
     }
+    request["operation_id"] = json!(operation_id);
+    if reconcile {
+        request = json!({"operation_id":operation_id,"reconcile":true});
+    }
     let response = client()?
         .post(url)
         .bearer_auth(&token)
@@ -438,6 +571,12 @@ pub(crate) fn cli_start(
         )
     })?;
     if status.is_success() {
+        if body["schema_version"] == RESULT_SCHEMA
+            && body["reconciliation"].is_object()
+            && (reconcile || body["reconciliation"]["state"] != "created")
+        {
+            return Ok(body);
+        }
         if !requested_launch_env.is_empty()
             && body["session"]["id"].is_string()
             && body["session"]["launch_env"] != json!(requested_launch_env)
@@ -472,13 +611,27 @@ pub(crate) fn cli_start(
             });
     }
     let error = &body["error"];
-    if error["code"] == UNAVAILABLE_CODE {
-        return Err(unavailable_from_details(
-            &error["message"],
-            &error["details"],
-        ));
+    let mut failure = if error["code"] == UNAVAILABLE_CODE {
+        unavailable_from_details(&error["message"], &error["details"])
+    } else {
+        forwarded(error["code"].as_str(), &error["message"])
+    };
+    let details = failure.details_mut().get_or_insert_with(|| json!({}));
+    diagnostics::copy(&error["details"], details, operation_id);
+    if matches!(
+        error["code"].as_str(),
+        Some("title-mode-unconfirmed" | "launch-env-unconfirmed" | "console-start-unavailable")
+    ) && let Some(id) = error["details"]["created_session_id"].as_str()
+        && !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        details["created_session_id"] = json!(id);
+        details["safe_to_retry"] = json!(false);
     }
-    Err(forwarded(error["code"].as_str(), &error["message"]))
+    Err(failure)
 }
 
 /// Re-project the local daemon's typed unavailable details through a fixed
@@ -502,6 +655,7 @@ fn failure_policy(stage: &str, cause: &str) -> Option<(bool, bool)> {
         ("http_client", "client_setup_failed")
         | ("daemon_endpoint", "endpoint_unavailable" | "endpoint_invalid") => Some((true, true)),
         ("aggregator_authentication", "relay_credential_rejected") => Some((false, true)),
+        ("operation_receipt", "persist_failed") => Some((false, false)),
         ("daemon_request" | "aggregator_request", "transport_failed")
         | ("daemon_response", "response_unreadable" | "result_unconfirmed")
         | (

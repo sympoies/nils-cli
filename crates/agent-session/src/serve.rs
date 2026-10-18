@@ -5186,8 +5186,7 @@ async fn board_relay_handler(
     }
 }
 
-/// `POST /sessions/{id}/console-start/v1`: a managed session's owned child
-/// session, created by the aggregator through `coordination/console_start.rs`.
+/// `POST /sessions/{id}/console-start/v1`: start or reconcile an owned child.
 async fn console_start_handler(
     State(state): State<Arc<ServeState>>,
     headers: HeaderMap,
@@ -6803,6 +6802,7 @@ async fn create_handler_inner(
             .collect(),
         paste_delay_ms: initial_prompt_paste_delay_ms(agent),
         via_console: false,
+        console_operation: Default::default(),
         machine: None,
         account: None,
         agent_profile: None,

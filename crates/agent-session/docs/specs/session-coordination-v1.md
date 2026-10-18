@@ -1711,7 +1711,8 @@ with the relay token as bearer and this body:
 }
 ```
 
-The daemon route accepts only `machine` (a nonempty string, optional),
+The daemon route accepts `operation_id` (a canonical UUIDv7, optional),
+`machine` (a nonempty string, optional),
 `no_parent` (a boolean, optional), `work` (optional), and a `session` object;
 anything else fails with `console-start-invalid` (HTTP 400) before any network
 call. The daemon computes the child's `lineage` and resolved `work` from the
@@ -1744,6 +1745,80 @@ Transport failures, unreadable responses, and unconfirmed create results are
 not safe to retry: inspect Console for the child before submitting again. The
 `--via-console` client preserves only recognized failure fields and treats
 missing or malformed details as unsafe.
+
+### Operation diagnostics and reconciliation
+
+Every Console start success and operational failure includes a canonical time-bearing UUIDv7
+`operation_id`. Supply `--operation-id UUID` before submitting when the caller
+must recover even if its own CLI response is lost. The CLI and relay daemon use
+the same identifier; the daemon also sends it as the
+`X-Agent-Session-Operation-Id` HTTP header to the aggregator. This header is
+correlation metadata, not an upstream idempotency guarantee.
+
+`diagnostics.coordination_lock_wait_ms` measures time spent acquiring
+coordination file locks in the CLI and relay daemon, including timed-out
+acquisitions. `diagnostics.command_elapsed_ms` measures the CLI command from
+request preparation through its result, including network and launch latency.
+Both are integer milliseconds from monotonic clocks. Lock wait is a component
+of elapsed time, not an additional duration. They do not claim to measure locks
+inside the aggregator or target daemon. Text errors include the identifier,
+these timings, and the reconciliation command in a hint.
+
+Use `agent-session start --via-console --operation-id UUID --reconcile --format
+json` to inspect a prior operation. This performs no create request. The
+private daemon receipt is bound to the authenticated caller incarnation and
+request fingerprint. Repeating the original submission with the same UUID
+also reconciles; changed arguments return `console-start-operation-conflict`.
+Older callers that omit the UUID still receive a generated identifier.
+
+- `reconciliation.state: created` reports the recorded existing session ID,
+  including a child created before registration or response delivery failed.
+  It does not launch, resume, or reattach the child, and does not assert the
+  child is still running. `safe_to_retry` remains false.
+- `not_created` records a definite pre-create refusal; `safe_to_retry: true`
+  permits a new operation after the reported cause is repaired.
+- `ambiguous` means the daemon cannot confirm the upstream outcome. A single
+  board read, bounded to five seconds and one MiB, reports up to 64 existing
+  candidate IDs on the target machine for the parent identity triple
+  (`machine`, `session_id`, `session_created_at`), which is the public board
+  projection. Audit-only parent incarnations are absent there. Root starts
+  report root candidates instead. Candidates are inspection aids, not
+  evidence that a particular child belongs to this operation. An unavailable
+  or empty board never establishes absence or permits another create;
+  `safe_to_retry` remains false. The `candidate_scan` field distinguishes an
+  observed board from an unavailable read.
+
+Receipts survive daemon restart and retain only request fingerprints and
+bounded session metadata, never prompts, launch environment values, or
+transcripts. They are reserved under a short coordination lock before the
+network call; no coordination lock spans network I/O.
+
+Unknown UUIDv7 IDs must
+be at most seven days old and no more than one minute ahead of the daemon's
+clock. At or above 1024 receipts the store prunes the oldest receipts in
+batches of up to 256, including recent ambiguous outcomes when necessary.
+Admission repeats bounded maintenance batches until a slot is available.
+
+A durable timestamp watermark is
+advanced before deletion: unknown IDs at or below it return
+`console-start-operation-expired` and can never create another child. Existing
+retained receipts can still be reconciled. Thus retention can shorten the
+reconciliation window under sustained volume without permitting a duplicate.
+
+Late completion writes take the same short store lock as pruning. If pruning
+already published its watermark and removed a reservation, completion reports
+the created child without recreating the receipt or consuming a reclaimed slot.
+
+Capacity pressure can expire ambiguous reconciliation evidence; its persisted
+watermark still prevents any evicted operation from being submitted again.
+Definite typed pre-create refusals are terminal
+`not_created` outcomes. Unknown receipts or another caller incarnation return
+`console-start-operation-not-found` on an explicit reconciliation only while
+the ID remains within the admission window and above the expiry watermark.
+Missing aged or evicted IDs return `console-start-operation-expired` with the
+same inspect-Console guidance as replay; neither check calls upstream. Reconciliation uses
+HTTP 201 and the existing Console start schema with the additive
+`reconciliation` object; ambiguous results omit `session`.
 
 ## Service-origin submission
 
