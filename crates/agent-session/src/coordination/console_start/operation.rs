@@ -11,12 +11,12 @@ use super::super::{
 use super::{RESULT_SCHEMA, client, read_json};
 use crate::{CliContext, CliError};
 
-const PREFIX: &str = "console-start-";
-const MAX_OPERATIONS: usize = 1024;
-const MAX_RECEIPT_BYTES: u64 = 16 * 1024;
+pub(super) const PREFIX: &str = "console-start-";
+pub(super) const MAX_OPERATIONS: usize = 1024;
+pub(super) const MAX_RECEIPT_BYTES: u64 = 16 * 1024;
 
 pub(super) fn valid_id(value: &str) -> bool {
-    uuid::Uuid::parse_str(value).is_ok_and(|id| id.to_string() == value)
+    super::retention::timestamp_ms(value).is_some()
 }
 
 fn invalid(code: &str, message: &str) -> CliError {
@@ -35,6 +35,7 @@ impl Receipt {
         operation: &str,
         body: &Value,
         machine: &str,
+        caller_created_at: &str,
     ) -> Result<(Self, bool), CliError> {
         let key = digest_bytes(format!("{caller}\n{incarnation}\n{operation}").as_bytes());
         let name = format!("{PREFIX}{key}");
@@ -69,29 +70,16 @@ impl Receipt {
                         "no start receipt exists for this caller incarnation and operation",
                     ));
                 }
-                // Retain ambiguous receipts; refuse new work rather than evicting deduplication evidence.
-                let count = std::fs::read_dir(&root)
-                    .map_err(|_| store_unavailable())?
-                    .filter_map(Result::ok)
-                    .filter(|entry| {
-                        let name = entry.file_name();
-                        let name = name.to_string_lossy();
-                        name.starts_with(PREFIX) && name.ends_with(".json")
-                    })
-                    .take(MAX_OPERATIONS)
-                    .count();
-                if count >= MAX_OPERATIONS {
-                    return Err(invalid(
-                        "console-start-operation-capacity",
-                        "start receipt capacity reached; inspect retained operations before starting again",
-                    ));
-                }
+                let started_ms =
+                    super::retention::timestamp_ms(operation).ok_or_else(super::invalid)?;
+                super::retention::admit(&root, started_ms)?;
                 let receipt = Self {
                     name,
                     value: json!({
                         "schema_version":"agent-session.console-start-operation.v1",
                         "request_hash":fingerprint,"machine":machine,"state":"ambiguous",
-                        "no_parent":body["no_parent"] == true,"safe_to_retry":false
+                        "no_parent":body["no_parent"] == true,"safe_to_retry":false,
+                        "caller_created_at":caller_created_at,"operation_started_at_ms":started_ms
                     }),
                 };
                 receipt.save(context)?;
@@ -133,9 +121,10 @@ impl Receipt {
             self.value["session"] = session;
             self.value["state"] = json!("created");
         } else if let Err(error) = result
-            && error
+            && (error
                 .details()
                 .is_some_and(|d| d["recovery"]["safe_to_retry"] == true)
+                || matches!(error.0.exit_code, 64 | 65))
         {
             self.value["state"] = json!("not_created");
             self.value["safe_to_retry"] = json!(true);
@@ -186,7 +175,7 @@ impl Receipt {
                 let parent = &record["lineage"]["parent"];
                 let matches_parent = parent["session_id"] == caller
                     && parent["machine"] == config.machine
-                    && parent["session_incarnation"] == incarnation;
+                    && parent["session_created_at"] == self.value["caller_created_at"];
                 if record["machine"] != self.value["machine"]
                     || !(matches_parent || self.value["no_parent"] == true && parent.is_null())
                 {

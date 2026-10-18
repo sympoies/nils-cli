@@ -1711,7 +1711,7 @@ with the relay token as bearer and this body:
 }
 ```
 
-The daemon route accepts `operation_id` (a canonical UUID, optional),
+The daemon route accepts `operation_id` (a canonical UUIDv7, optional),
 `machine` (a nonempty string, optional),
 `no_parent` (a boolean, optional), `work` (optional), and a `session` object;
 anything else fails with `console-start-invalid` (HTTP 400) before any network
@@ -1748,7 +1748,7 @@ missing or malformed details as unsafe.
 
 ### Operation diagnostics and reconciliation
 
-Every Console start success and operational failure includes a canonical UUID
+Every Console start success and operational failure includes a canonical time-bearing UUIDv7
 `operation_id`. Supply `--operation-id UUID` before submitting when the caller
 must recover even if its own CLI response is lost. The CLI and relay daemon use
 the same identifier; the daemon also sends it as the
@@ -1779,8 +1779,10 @@ Older callers that omit the UUID still receive a generated identifier.
   permits a new operation after the reported cause is repaired.
 - `ambiguous` means the daemon cannot confirm the upstream outcome. A single
   board read, bounded to five seconds and one MiB, reports up to 64 existing
-  candidate IDs on the target machine for the exact parent incarnation. Root
-  starts report root candidates instead. Candidates are inspection aids, not
+  candidate IDs on the target machine for the parent identity triple
+  (`machine`, `session_id`, `session_created_at`), which is the public board
+  projection. Audit-only parent incarnations are absent there. Root starts
+  report root candidates instead. Candidates are inspection aids, not
   evidence that a particular child belongs to this operation. An unavailable
   or empty board never establishes absence or permits another create;
   `safe_to_retry` remains false. The `candidate_scan` field distinguishes an
@@ -1789,10 +1791,25 @@ Older callers that omit the UUID still receive a generated identifier.
 Receipts survive daemon restart and retain only request fingerprints and
 bounded session metadata, never prompts, launch environment values, or
 transcripts. They are reserved under a short coordination lock before the
-network call; no coordination lock spans network I/O. The store admits at most
-1024 receipts and fails with `console-start-operation-capacity` rather than
-evicting uncertain deduplication evidence. Unknown receipts or another caller
-incarnation return `console-start-operation-not-found`. Reconciliation uses
+network call; no coordination lock spans network I/O.
+
+Unknown UUIDv7 IDs must
+be at most seven days old and no more than one minute ahead of the daemon's
+clock. At 1024 receipts the store prunes up to 256 oldest terminal receipts
+(`created` or `not_created`) or ambiguous receipts older than seven days.
+Recent ambiguous receipts are preserved.
+
+A durable timestamp watermark is
+advanced before deletion: unknown IDs at or below it return
+`console-start-operation-expired` and can never create another child. Existing
+retained receipts can still be reconciled. Thus retention can shorten the
+reconciliation window under sustained volume without permitting a duplicate.
+
+If all slots contain recent ambiguous evidence, `console-start-operation-capacity`
+is an actionable temporary refusal; the hint requests reconciliation of those
+operations or seven-day expiry. Definite typed pre-create refusals are terminal
+`not_created` outcomes. Unknown receipts or another caller incarnation return
+`console-start-operation-not-found` on an explicit reconciliation. Reconciliation uses
 HTTP 201 and the existing Console start schema with the additive
 `reconciliation` object; ambiguous results omit `session`.
 

@@ -4,7 +4,7 @@ use std::path::Path;
 
 #[derive(clap::Args, Debug, Clone, Default)]
 pub struct OperationArgs {
-    /// Stable UUID for a Console start; repeating it never creates another session.
+    /// Time-bearing UUIDv7 for a Console start; replay never creates another session.
     #[arg(long, value_name = "UUID", requires = "via_console")]
     pub operation_id: Option<String>,
     /// Inspect a prior Console start operation without creating a session.
@@ -21,7 +21,7 @@ pub(crate) fn start_args(
         .console_operation
         .operation_id
         .clone()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     if !super::operation::valid_id(&operation_id) {
         return Err(super::invalid());
     }

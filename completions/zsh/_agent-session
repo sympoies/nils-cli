@@ -49,7 +49,7 @@ dsh\:"DeepSeek Harness, launched through a launch profile or an external runtime
 enforce\:"Require authenticated claims and mutation admission leases"
 off\:"Disable agent-session collision warnings and admission"))' \
 '--paste-delay-ms=[Delay before pasting the initial prompt into the tmux pane]:PASTE_DELAY_MS:_default' \
-'--operation-id=[Stable UUID for a Console start; repeating it never creates another session]:UUID:_default' \
+'--operation-id=[Time-bearing UUIDv7 for a Console start; replay never creates another session]:UUID:_default' \
 '--machine=[Target machine for --via-console, as Agent Console names it. Defaults to this daemon'\''s machine]:MACHINE:_default' \
 '--account=[Account for --via-console, as the target daemon'\''s account broker names it\: a Codex account for --agent codex or a Claude account for --agent claude]:NAME:_default' \
 '--agent-profile=[Launch profile for --via-console, as the target daemon advertises it. A profile owns its launch command, so Agent Console ignores --agent-arg with it]:ID:_default' \

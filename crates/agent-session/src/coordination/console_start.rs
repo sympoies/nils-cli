@@ -20,6 +20,7 @@ use crate::{CliContext, CliError};
 
 pub(crate) mod diagnostics;
 mod operation;
+mod retention;
 mod start_args;
 pub(crate) use start_args::{OperationArgs, render_text, start_args};
 
@@ -154,7 +155,7 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
         INVALID_CODE
         | "console-start-operation-conflict"
         | "console-start-operation-not-found"
-        | "console-start-operation-capacity"
+        | "console-start-operation-expired"
         | "invalid-request"
         | "role-invalid"
         | "role-requires-root"
@@ -293,7 +294,7 @@ pub(crate) fn relay_route(
         .get("operation_id")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     if !operation::valid_id(&operation) {
         return Err(invalid());
     }
@@ -328,6 +329,7 @@ fn relay_operation(
             operation_id,
             body,
             &config.machine,
+            &caller.created_at,
         )?;
         return receipt.reconcile(config, session, &incarnation);
     }
@@ -341,6 +343,7 @@ fn relay_operation(
         operation_id,
         body,
         machine.unwrap_or(&config.machine),
+        &caller.created_at,
     )?;
     if !submit {
         return receipt.reconcile(config, session, &incarnation);
@@ -470,7 +473,7 @@ fn cli_operation(
     let operation_id = options
         .operation_id
         .clone()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     if !operation::valid_id(&operation_id) {
         return Err(invalid());
     }

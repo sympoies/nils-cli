@@ -61,8 +61,19 @@ pub(super) fn run(
         "command_elapsed_ms": elapsed
     });
     if let Err(error) = &mut result {
+        let action = match error.code() {
+            "console-start-operation-capacity" => {
+                "reconcile recent ambiguous starts or wait for seven-day receipt expiry".to_string()
+            }
+            "console-start-operation-expired" => {
+                "inspect Console for the earlier child before using a fresh UUIDv7".to_string()
+            }
+            _ => format!(
+                "inspect with agent-session start --via-console --operation-id {operation} --reconcile --format json"
+            ),
+        };
         error.0.hint = Some(format!(
-            "operation_id={operation}; coordination_lock_wait_ms={}; command_elapsed_ms={elapsed}; inspect with agent-session start --via-console --operation-id {operation} --reconcile --format json",
+            "operation_id={operation}; coordination_lock_wait_ms={}; command_elapsed_ms={elapsed}; {action}",
             local.saturating_add(remote).min(elapsed)
         ));
     }
