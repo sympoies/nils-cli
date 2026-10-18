@@ -20,6 +20,7 @@ use std::fmt::Write as _;
 use crate::error::ForgeError;
 
 pub mod correction;
+mod stopped_attempt;
 pub mod supersession;
 
 #[cfg(test)]
@@ -1000,12 +1001,10 @@ pub fn observe_review_loop(
         let observation_digest = review_observation_digest(expected_head, &current)?;
         if stop.attempted_head_sha != expected_head || stop.observation_digest != observation_digest
         {
-            return Err(state_conflict(
-                "a different observation cannot replace the durable review hard stop",
-                Some(format!(
-                    "stop_head={}; attempted_head={expected_head}; stop_observation={}; attempted_observation={observation_digest}",
-                    stop.attempted_head_sha, stop.observation_digest
-                )),
+            return Err(stopped_attempt::mismatch_error(
+                stop,
+                expected_head,
+                &observation_digest,
             ));
         }
         if !stop.extension_applied {

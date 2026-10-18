@@ -1,6 +1,9 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+#[path = "direct_prompt.rs"]
+mod direct_prompt;
+
 #[path = "claude_prompt_ack.rs"]
 mod claude_prompt_ack;
 
@@ -13,7 +16,7 @@ fn keyed_body(incarnation: &str) -> Value {
 async fn keyed_submission_replays_without_dispatch_and_survives_restart() {
     let tmp = tempfile::TempDir::new().unwrap();
     let launch = seed_codex_app_server_session(tmp.path(), "keyed");
-    let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
     let (handle, mut commands) = codex_app_server::control_channel();
     st.codex_controls.lock().unwrap().insert(
         "keyed".into(),
@@ -44,7 +47,7 @@ async fn keyed_submission_replays_without_dispatch_and_survives_restart() {
     assert_eq!(repeat, first);
     assert!(commands.try_recv().is_err());
     let mut replaced = load_session_record(
-        &state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path())).context,
+        &state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path())).context,
         "keyed",
     )
     .unwrap();
@@ -57,7 +60,7 @@ async fn keyed_submission_replays_without_dispatch_and_survives_restart() {
         &replaced,
     )
     .unwrap();
-    let restarted = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let restarted = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
     let lookup = format!("{uri}/receipts/attempt-1?expected_session_incarnation={launch}");
     let (status, receipt) = call(router(restarted), bearer_get(&lookup)).await;
     assert_eq!(status, StatusCode::OK, "{receipt}");
@@ -76,7 +79,7 @@ fn bearer_get(uri: &str) -> Request<Body> {
 async fn unknown_submission_is_recoverable_via_authenticated_lookup() {
     let tmp = tempfile::TempDir::new().unwrap();
     let launch = seed_codex_app_server_session(tmp.path(), "unknown-keyed");
-    let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
     let (handle, mut commands) = codex_app_server::control_channel();
     st.codex_controls.lock().unwrap().insert(
         "unknown-keyed".into(),
@@ -106,7 +109,7 @@ async fn unknown_submission_is_recoverable_via_authenticated_lookup() {
     let lookup = format!("{uri}/receipts/attempt-1?expected_session_incarnation={launch}");
     let (status, _) = call(router(st), get(&lookup)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let restarted = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let restarted = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
     let (status, body) = call(router(restarted), bearer_get(&lookup)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["data"]["receipt"]["outcome"], "unknown");
@@ -195,7 +198,7 @@ sys.exit(0)
 async fn concurrent_duplicate_observes_unknown_until_owner_finishes() {
     let tmp = tempfile::TempDir::new().unwrap();
     let launch = seed_codex_app_server_session(tmp.path(), "concurrent");
-    let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
     let (handle, mut commands) = codex_app_server::control_channel();
     st.codex_controls.lock().unwrap().insert(
         "concurrent".into(),
@@ -230,7 +233,7 @@ async fn concurrent_duplicate_observes_unknown_until_owner_finishes() {
 async fn keyed_validation_conflicts_and_missing_lookup_are_typed() {
     let tmp = tempfile::TempDir::new().unwrap();
     let launch = seed_codex_app_server_session(tmp.path(), "validation");
-    let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
     let uri = "/sessions/validation/prompt/v2";
     for invalid in [
         "".to_string(),
@@ -272,7 +275,7 @@ async fn keyed_validation_conflicts_and_missing_lookup_are_typed() {
 async fn stale_incarnation_receipt_remains_readable_after_runtime_replacement() {
     let tmp = tempfile::TempDir::new().unwrap();
     seed_codex_app_server_session(tmp.path(), "replaced");
-    let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
     let uri = "/sessions/replaced/prompt/v2";
     let body = keyed_body("previous-launch");
     let (status, first) = call(
@@ -381,7 +384,7 @@ async fn unobservable_idle_fails_closed_without_pasting() {
 #[tokio::test]
 async fn fenced_structured_prompt_requires_exact_body_shape() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+    let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
 
     for body in [
         json!({ "text": "missing the required fence" }),

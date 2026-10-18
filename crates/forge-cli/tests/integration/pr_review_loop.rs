@@ -25,6 +25,9 @@ mod supersession;
 #[path = "pr_review_loop/admitted_supersession.rs"]
 mod admitted_supersession;
 
+#[path = "pr_review_loop/applied_extension.rs"]
+mod applied_extension;
+
 #[path = "pr_review_loop/fixed_retry.rs"]
 mod fixed_retry;
 

@@ -19,7 +19,7 @@ pub(crate) use composer::cleanup::{
     cursor_at_start as cleanup_cursor_at_start, input as cleanup_composer_input,
     prefix_end as cleanup_prefix_end,
 };
-pub(crate) use composer::{composer_holds, exact_composer_input};
+pub(crate) use composer::{composer_holds, direct_composer_input, exact_composer_input};
 
 /// Leading non-whitespace characters used to find the text again. Short enough
 /// to stay ahead of any provider rewriting further into a long text, long enough
