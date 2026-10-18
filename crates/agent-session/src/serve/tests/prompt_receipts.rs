@@ -152,8 +152,9 @@ fn guard_tmux(root: &Path, id: &str) -> PathBuf {
     fs::write(root.join("guard-id"), id).unwrap();
     fs::write(root.join("composer"), "").unwrap();
     fs::write(&path, r#"#!/usr/bin/env python3
-import json, pathlib, sys
+import json, pathlib, sys, time
 root = pathlib.Path(__file__).parent
+if (root / 'transport-delay-ms').exists(): time.sleep(int((root / 'transport-delay-ms').read_text()) / 1000)
 args = sys.argv[1:]
 with (root / 'transport-calls').open('a') as out: out.write(json.dumps(args) + '\n')
 record = json.loads((root / 'sessions' / (root / 'guard-id').read_text() / 'session.json').read_text())
@@ -411,6 +412,8 @@ async fn idle_claude_guard_retries_swallowed_enter_without_residue() {
     let st = state(tmp.path(), Some(TOKEN), guard_tmux(tmp.path(), "swallowed"));
     make_idle(&st.context, "swallowed", &launch);
     fs::write(tmp.path().join("swallow-first"), "").unwrap();
+    // Exercise admission and retry round trips on a slower transport.
+    fs::write(tmp.path().join("transport-delay-ms"), "120").unwrap();
     let mut body = keyed_body(&launch);
     body["require_idle"] = json!(true);
     let uri = "/sessions/swallowed/prompt/v2";
@@ -489,5 +492,32 @@ async fn idle_claude_guard_reports_changed_composer_without_erasing_owner_input(
         fs::read_to_string(tmp.path().join("composer")).unwrap(),
         "inspect the workspace owner addition"
     );
+    assert!(!tmp.path().join("submitted").exists());
+}
+
+#[tokio::test]
+async fn unkeyed_idle_claude_guard_returns_unknown_with_cleanup() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch = seed_claude_prompt_session(tmp.path(), "unkeyed-stuck");
+    let st = state(
+        tmp.path(),
+        Some(TOKEN),
+        guard_tmux(tmp.path(), "unkeyed-stuck"),
+    );
+    make_idle(&st.context, "unkeyed-stuck", &launch);
+    fs::write(tmp.path().join("stuck"), "").unwrap();
+    let body = json!({"text":"inspect the workspace", "expected_session_incarnation":launch,
+        "require_idle":true});
+    let (status, result) = call(
+        router(st),
+        post_json("/sessions/unkeyed-stuck/prompt/v2", Some(TOKEN), body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{result}");
+    assert_eq!(result["error"]["code"], "structured-prompt-outcome-unknown");
+    assert_eq!(result["error"]["details"]["cleared"], true);
+    assert_eq!(result["error"]["details"]["remaining_input"], "empty");
+    assert!(result["error"]["details"].get("receipt").is_none());
+    assert_eq!(fs::read_to_string(tmp.path().join("composer")).unwrap(), "");
     assert!(!tmp.path().join("submitted").exists());
 }

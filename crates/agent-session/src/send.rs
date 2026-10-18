@@ -37,6 +37,17 @@ pub(crate) struct SendResult {
     pub(crate) native: Option<native::Receipt>,
 }
 
+// Native dispatch keeps its short deadline so provider event waiters can run.
+// Terminal admission and each guarded Enter require several tmux round trips;
+// reserve those checks as well as the swallowed-Enter confirmation interval.
+fn guarded_hold_budget(record: &SessionRecord) -> Duration {
+    if codex_app_server::runtime_is_supported(record) {
+        send_submit::HOLD_BUDGET
+    } else {
+        Duration::from_secs(15)
+    }
+}
+
 pub(crate) fn send_to_session(
     context: &CliContext,
     args: cli::SendArgs,
@@ -75,7 +86,7 @@ pub(crate) fn send_to_session(
             args: &args.guards,
             tmux_bin: &tmux_bin,
             verify_composer: carries_literal_text(text.as_deref()) && !args.keys.is_empty(),
-            deadline: guard_started + send_submit::HOLD_BUDGET,
+            deadline: guard_started + guarded_hold_budget(&record),
         };
         admission.check_key()?;
         admission.check(None, "admission")?;
@@ -204,7 +215,7 @@ fn confirm_prompt_submission(
     send_submit::submit_and_confirm(
         &record.agent,
         &probe,
-        hold_started,
+        hold_started + send_submit::HOLD_BUDGET,
         |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
         || {
             activity::state_for_view(context, record)
@@ -355,7 +366,7 @@ fn guarded(
         args: &args.guards,
         tmux_bin,
         verify_composer: carries_literal_text(text.as_deref()) && !args.keys.is_empty(),
-        deadline: hold_started + send_submit::HOLD_BUDGET,
+        deadline: hold_started + guarded_hold_budget(&record),
     };
     admission.check_key()?;
     admission.check(None, "admission")?;
@@ -432,7 +443,7 @@ fn guarded(
                 Ok(Some(send_submit::submit_and_confirm(
                     &record.agent,
                     &probe,
-                    hold_started,
+                    admission.deadline,
                     |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
                     || true,
                     press_enter,

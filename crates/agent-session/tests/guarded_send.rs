@@ -150,10 +150,14 @@ elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
         (root / 'composer').write_text(text)
         if (root / 'redraw-after-delete').exists(): (root / 'redraw-pending').touch()
 elif command == 'send-keys' and args[-1] == 'Enter':
+    if (root / 'unverified-after-enter').exists():
+        (root / 'entered').touch(); sys.exit(0)
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
     (root / 'composer').write_text('')
     if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
 elif command == 'capture-pane':
+    if (root / 'unverified-after-enter').exists() and (root / 'entered').exists() and '-e' not in args:
+        print('provider view unavailable'); sys.exit(0)
     if (root / 'redraw-pending').exists():
         (root / 'redraw-pending').unlink()
         sys.exit(1)
@@ -618,5 +622,42 @@ fn guarded_send_inferred_or_console_idle_is_unobservable() {
         fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
         fixture.refused(&fixture.send(&["--require-idle"]), "send-idle-unobservable");
         fixture.no_delivery();
+    }
+}
+
+#[test]
+fn guarded_send_unverified_submission_fails_cleans_and_retains_claim() {
+    for provider in ["claude", "codex"] {
+        let fixture = Fixture::new(provider);
+        fs::write(fixture.root().join("unverified-after-enter"), "").unwrap();
+        let guards = [
+            "--require-empty-composer",
+            "--idempotency-key",
+            "uncertain-attempt",
+        ];
+        let output = fixture.send(&guards);
+        let result = fixture.refused(&output, "send-submit-unconfirmed");
+        let details = &result["error"]["details"];
+        assert_eq!(details["outcome"], "unverified");
+        assert_eq!(details["enter_presses"], 1);
+        assert_eq!(details["pasted"], true);
+        assert_eq!(details["cleared"], true);
+        assert_eq!(details["remaining_input"], "empty");
+        assert_eq!(
+            fs::read_to_string(fixture.root().join("composer")).unwrap(),
+            ""
+        );
+        assert!(!fixture.root().join("submissions").exists());
+        assert_eq!(
+            fixture
+                .calls()
+                .iter()
+                .filter(
+                    |call| call[0] == "send-keys" && call.last().is_some_and(|key| key == "Enter")
+                )
+                .count(),
+            1
+        );
+        fixture.refused(&fixture.send(&guards), "send-idempotency-key-used");
     }
 }
