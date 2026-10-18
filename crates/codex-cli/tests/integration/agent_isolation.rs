@@ -177,6 +177,17 @@ case " $* " in
     test -f "$PWD/AGENTS.md"
     test ! -e "$CODEX_HOME/config.toml"
     test ! -e "$CODEX_HOME/hooks.json"
+    case " $* " in *" skills.include_instructions=false "*) ;; *) exit 92 ;; esac
+    case " $* " in *" skills.bundled.enabled=false "*) ;; *) exit 93 ;; esac
+    case " $* " in *" cloud.skills.enabled=false "*) ;; *) exit 96 ;; esac
+    config=''
+    for arg in "$@"; do
+      case "$arg" in skills.config=*) config="$arg" ;; esac
+    done
+    home_skill="$(cd "$HOME/.agents/skills/doctor-sentinel" && pwd -P)/SKILL.md"
+    project_skill="$(cd "$PWD/.agents/skills/doctor-sentinel" && pwd -P)/SKILL.md"
+    case "$config" in *"path=\"$home_skill\",enabled=false"*) ;; *) exit 94 ;; esac
+    case "$config" in *"path=\"$project_skill\",enabled=false"*) ;; *) exit 95 ;; esac
     printf '%s\n' '[]'
     exit 0
     ;;
@@ -198,6 +209,7 @@ exit 91
     assert_eq!(value["schema_version"], "cli.codex-cli.agent.doctor.v1");
     assert_eq!(value["data"]["ready"], true);
     assert_eq!(value["data"]["instruction_isolation"], true);
+    assert_eq!(value["data"]["skill_isolation"], true);
     assert_eq!(value["data"]["hook_isolation"], true);
     // The boolean is a child-home surface claim, never an observed-execution
     // claim, so the method descriptor has to travel with it.
@@ -230,6 +242,8 @@ case " $* " in
   *" debug prompt-input "*)
     if [ "${CODEX_TEST_LEAK:-}" = instruction ]; then
       cat "$PWD/AGENTS.md"
+    elif [ "${CODEX_TEST_LEAK:-}" = skill ]; then
+      cat "$PWD/.agents/skills/doctor-sentinel/SKILL.md"
     else
       printf '[features]\nhooks = true\n' > "$CODEX_HOME/config.toml"
       printf '%s\n' '[]'
@@ -242,6 +256,7 @@ exit 91
     );
     for (leak, field) in [
         ("instruction", "instruction_isolation"),
+        ("skill", "skill_isolation"),
         ("hook", "hook_isolation"),
     ] {
         let output = cmd::run_with(

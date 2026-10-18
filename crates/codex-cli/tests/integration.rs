@@ -9,6 +9,8 @@ mod account_reset_rate_limits;
 mod account_select;
 #[path = "integration/agent_commit.rs"]
 mod agent_commit;
+#[path = "integration/agent_commit_boundaries.rs"]
+mod agent_commit_boundaries;
 #[path = "integration/agent_exec.rs"]
 mod agent_exec;
 #[path = "integration/agent_isolation.rs"]
@@ -17,6 +19,8 @@ mod agent_isolation;
 mod agent_prompt;
 #[path = "integration/agent_resume.rs"]
 mod agent_resume;
+#[path = "integration/agent_runtime_boundaries.rs"]
+mod agent_runtime_boundaries;
 #[path = "integration/agent_templates.rs"]
 mod agent_templates;
 #[path = "integration/auth_auto_refresh.rs"]

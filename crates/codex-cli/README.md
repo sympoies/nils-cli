@@ -51,7 +51,7 @@ Help:
 - `knowledge [--runtime isolated|inherited] [--ephemeral] [CONCEPT...]`: Request a concept explanation.
 - `commit [--runtime isolated|inherited] [--ephemeral] [-p|--push] [-a|--auto-stage] [EXTRA...]`: Run the semantic-commit workflow.
 - `doctor [--format text|json]`: Probe isolated-runtime flags, features,
-  temporary-home/auth bridging, instruction isolation, and the private child
+  temporary-home/auth bridging, instruction and skill isolation, and the private child
   home's hook surface without an API request. `hook_isolation` asserts that the
   child home carries no hook definition or hook trust surface (`config.toml`,
   `hooks.json`, `hooks/`), checked before and after the probe turn and reported
@@ -59,7 +59,8 @@ Help:
   observable here, because no non-model `codex` subcommand runs config-defined
   lifecycle hooks and doctor must not spend a model turn; the execution-side
   guarantee is `--disable hooks`, reported as `features.hooks` in the same
-  payload.
+  payload. `skill_isolation` checks that synthetic home and project skill
+  descriptions are absent from model-visible input.
 - `resume <SESSION_ID> [--cd <dir>]`: Resolve the session's recorded working directory from local Codex history and launch
   `codex resume <SESSION_ID> --cd <cwd> --no-alt-screen` there, propagating Codex's exit status. Run it from any directory. Fails without
   launching Codex (`65`) when the id is unknown or matches more than one recorded directory; pass `--cd` to override the resolved directory
@@ -77,14 +78,29 @@ Agent flag notes:
 - `--runtime isolated` is the default for one-shot commands. It creates a
   temporary `CODEX_HOME` containing only an auth symlink, ignores user/project
   rules, disables hooks/plugins/apps/memory/goals/subagents, and always runs
-  ephemerally without the dangerous bypass flag.
+  ephemerally without the dangerous bypass flag. Ambient home and ancestor
+  `.agents/skills` / `.codex/skills` entries are disabled by canonical skill path,
+  including linked skill directories. Project discovery stops at the nearest
+  `.git` marker and uses cwd alone outside Git; the child receives the same
+  explicit project-root marker. Dangling skill links are ignored, while
+  unreadable directories fail closed.
+- Administrator skill scope
+  (`/etc/codex/skills`) is outside this user/project inventory; administrator-managed
+  Codex requirements remain authoritative. Automatic skill instructions, bundled
+  skills, and authenticated cloud skills are disabled as well. An unreadable skill inventory or an encoded
+  inventory over the 64 KiB launch budget fails before the
+  model starts with `isolated-runtime-unsupported`.
 - `--runtime inherited` explicitly restores the historical full-home executor and
   its `CODEX_ALLOW_DANGEROUS_ENABLED=true` gate. `agent resume` is always inherited.
 - `--ephemeral` is a compatibility no-op in isolated mode and keeps its existing
   forwarding behavior in inherited mode.
 - Isolated `agent commit` exposes only staged-context to the model, accepts
   strict structured message fields, detects HEAD/index drift, and delegates the
-  commit exclusively to `semantic-commit`. If the configured model is rejected
+  commit exclusively to `semantic-commit`. Message fields reject control
+  characters and invalid scopes before commit invocation. Scopes use lowercase
+  ASCII letters, digits, `.`, `_`, and `-`. Header width follows
+  `SEMANTIC_COMMIT_HEADER_WIDTH` (default: 100 Unicode characters), matching
+  `semantic-commit`. If the configured model is rejected
   for a ChatGPT account, message generation retries with `gpt-6-luna`, then
   with the Codex account default if Luna is also rejected.
   The inherited path retains its compatibility fallback.
