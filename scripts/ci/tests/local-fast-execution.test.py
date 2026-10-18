@@ -30,8 +30,14 @@ def main():
             'import json, os, subprocess, sys\n'
             'args = sys.argv[1:]\n'
             'if args[:1] == ["metadata"]:\n'
-            '    os.execv(os.environ["LOCAL_FAST_TEST_REAL_CARGO"], '
-            '[os.environ["LOCAL_FAST_TEST_REAL_CARGO"], *args])\n'
+            '    metadata = subprocess.check_output([\n'
+            '        os.environ["LOCAL_FAST_TEST_REAL_CARGO"], "metadata",\n'
+            '        "--no-deps", "--locked", "--all-features",\n'
+            '        "--format-version", "1"], text=True)\n'
+            '    result = json.loads(metadata)\n'
+            '    result["resolve"] = {"nodes": []}\n'
+            '    print(json.dumps(result))\n'
+            '    raise SystemExit(0)\n'
             'with open(os.environ["LOCAL_FAST_TEST_CARGO_LOG"], "a") as out:\n'
             '    out.write(json.dumps(args) + "\\n")\n'
         )
@@ -53,8 +59,11 @@ def main():
         fake_python.chmod(0o755)
 
         env = os.environ.copy()
+        cargo_home = root / 'cargo-home'
+        cargo_home.mkdir()
         env.update({
             'PATH': f'{bin_dir}{os.pathsep}{env.get("PATH", "")}',
+            'CARGO_HOME': str(cargo_home),
             'BASH': real_bash,
             'CARGO': str(cargo),
             'LOCAL_FAST_TEST_REAL_CARGO': real_cargo,
