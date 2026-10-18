@@ -214,7 +214,7 @@ restoring mode authority. Retirement does not migrate or delete durable state.
 
 ## Delete a session
 
-`delete` removes provider runtime files and session metadata only after bounded
+By default, `delete` removes provider runtime files and session metadata only after bounded
 checks verify the recorded runtime is stopped.
 
 Before killing a live runtime, it:
@@ -269,7 +269,42 @@ Cleanup and retry rules:
   persisted process boundary to verify stopped before removing metadata.
 
 Human success output reports the verified stopped state; the v1 JSON
-`killed: true` field remains stable for successful deletion.
+`killed: true` field remains stable for ordinary successful deletion.
+
+### Leave processes running explicitly
+
+A daemon can escape the pane tree or move out of its Linux cgroup while retaining
+`AGENT_SESSION_ID` and `AGENT_SESSION_RUNTIME_ID`. A failed ordinary delete now
+includes `blocking_processes` entries with `pid` and `command` (executable name
+only). Boundary-verification failures report `retryable: false` when associated
+live processes are observed, with an explicit recovery action.
+Stop or relocate those processes deliberately, or acknowledge leaving them behind:
+
+```bash
+agent-session delete <id> --leave-processes --format json
+```
+
+This CLI-only recovery path checks ownership, conditionally kills the exact tmux
+session, verifies its absence, revokes coordination capabilities, and removes
+session state. It deliberately does not signal process groups, the provider,
+broker processes, or escaped daemons directly. Processes that survive tmux shutdown
+remain running, lose normal session management, and appear in `survivors`.
+The response reports `termination_scope: "tmux-only"` and `killed: false`;
+it does not claim that the provider or every session-launched process stopped.
+Text output gives the same warning and names the observed survivors.
+
+The process inventory is a bounded snapshot of same-user processes carrying both
+exact runtime markers, on Linux and macOS. Arguments and environment values are
+never printed. `survivor_scan_complete: false` (or `process_scan_complete: false`
+in errors) means permissions, process churn, the time budget, or the 128-entry
+limit prevented a complete inventory. Processes that removed their markers may
+remain unlisted. Inspect survivors before taking any further action.
+
+`--leave-processes` preserves the existing child-session guard; use
+`--orphan-children` separately when deliberately orphaning managed child sessions.
+Ownership mismatches and ambiguous tmux probes still retain the record. An
+interrupted frozen/kill transaction must be recovered through ordinary deletion
+before this flag can be used. Retired external runtimes remain unsupported.
 
 ## Read logs
 

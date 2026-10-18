@@ -51,3 +51,6 @@ mod origin;
 
 #[path = "integration/mailbox_reminder.rs"]
 mod mailbox_reminder;
+
+#[path = "integration/delete_escaped.rs"]
+mod delete_escaped;
