@@ -64,6 +64,8 @@ pub enum Command {
     Start(Box<StartArgs>),
     /// Run a one-shot agent task in a tmux session and write output to a log file.
     Run(RunArgs),
+    /// Inspect or opt a session into daemon-owned automatic recovery.
+    AutoResume(AutoResumeArgs),
     /// List recorded agent sessions.
     List(ListArgs),
     /// Show which sessions exist, where they run, and what they are doing,
@@ -120,6 +122,26 @@ pub enum Command {
     Delete(DeleteArgs),
     /// Print shell completion script.
     Completion(CompletionArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AutoResumeArgs {
+    /// Session id or unambiguous id prefix.
+    pub id: String,
+    /// Enable automatic recovery for this session.
+    #[arg(long, conflicts_with = "disable")]
+    pub enable: bool,
+    /// Disable automatic recovery and clear pending recovery state.
+    #[arg(long, conflicts_with = "policy")]
+    pub disable: bool,
+    /// Recovery policy; requires --enable. Defaults to wait_for_reset.
+    #[arg(long, requires = "enable", value_parser = [
+        crate::auto_resume::WAIT_FOR_RESET_POLICY,
+        crate::auto_resume::NEXT_ACCOUNT_THEN_RESUME_POLICY,
+    ])]
+    pub policy: Option<String>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, Args)]

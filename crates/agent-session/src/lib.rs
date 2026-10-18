@@ -275,7 +275,7 @@ fn dispatch(cli: Cli) -> i32 {
 
     if matches!(
         cli.command,
-        Command::Account(_) | Command::Resume(_) | Command::Restart(_)
+        Command::Account(_) | Command::Resume(_) | Command::Restart(_) | Command::AutoResume(_)
     ) {
         account_broker::adopt_serve_brokers(&context.state_dir);
     }
@@ -284,7 +284,13 @@ fn dispatch(cli: Cli) -> i32 {
         Command::Run(args) => run_one_shot(&context, args),
         Command::List(args) => run_list(&context, args),
         Command::Board(args) => board::run(&context, args),
-        Command::Show(args) => run_command(&context, args),
+        Command::Show(args) => match load_session_view(&context, &args.id, None) {
+            Ok(view) => {
+                render_single_success(COMMAND_COMMAND, args.format, &view, render_command_text)
+            }
+            Err(err) => render_error(COMMAND_COMMAND, args.format, err),
+        },
+        Command::AutoResume(args) => auto_resume::cli::run(&context, args),
         Command::Attach(args) => run_attach(&context, args),
         Command::Logs(args) => run_logs(&context, args),
         Command::Diagnose(args) => diagnose::run_diagnose(&context, args),
@@ -315,6 +321,7 @@ fn command_format(command: &Command) -> OutputFormat {
     match command {
         Command::Workspace(args) => origin::format(args),
         Command::Readiness(args) => args.format,
+        Command::AutoResume(args) => args.format,
         Command::Start(args) => args.format,
         Command::Run(args) => args.format,
         Command::List(args) => args.format,
@@ -628,13 +635,6 @@ fn run_list(context: &CliContext, args: cli::ListArgs) -> i32 {
             &board::machine_identity(None, context),
         ),
         Err(err) => render_error(LIST_COMMAND, args.format, err),
-    }
-}
-
-fn run_command(context: &CliContext, args: cli::SessionRefArgs) -> i32 {
-    match load_session_view(context, &args.id, None) {
-        Ok(view) => render_single_success(COMMAND_COMMAND, args.format, &view, render_command_text),
-        Err(err) => render_error(COMMAND_COMMAND, args.format, err),
     }
 }
 

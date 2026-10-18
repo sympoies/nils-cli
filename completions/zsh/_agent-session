@@ -94,6 +94,20 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
+(auto-resume)
+_arguments "${_arguments_options[@]}" : \
+'--policy=[Recovery policy; requires --enable. Defaults to wait_for_reset]:POLICY:(wait_for_reset next_account_then_resume)' \
+'--format=[]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
+'--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'(--disable)--enable[Enable automatic recovery for this session]' \
+'(--policy)--disable[Disable automatic recovery and clear pending recovery state]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id -- Session id or unambiguous id prefix:_default' \
+&& ret=0
+;;
 (list)
 _arguments "${_arguments_options[@]}" : \
 '--format=[Output format]:FORMAT:((text\:"Human-readable text output (default)"
@@ -1154,6 +1168,7 @@ _agent-session_commands() {
     local commands; commands=(
 'start:Start an interactive tmux-backed agent session' \
 'run:Run a one-shot agent task in a tmux session and write output to a log file' \
+'auto-resume:Inspect or opt a session into daemon-owned automatic recovery' \
 'list:List recorded agent sessions' \
 'board:Show which sessions exist, where they run, and what they are doing, including recently closed ones (session board v1)' \
 'command:Print the attach command for a session' \
@@ -1247,6 +1262,11 @@ _agent-session__subcmd__activity__subcmd__status_commands() {
 _agent-session__subcmd__attach_commands() {
     local commands; commands=()
     _describe -t commands 'agent-session attach commands' commands "$@"
+}
+(( $+functions[_agent-session__subcmd__auto-resume_commands] )) ||
+_agent-session__subcmd__auto-resume_commands() {
+    local commands; commands=()
+    _describe -t commands 'agent-session auto-resume commands' commands "$@"
 }
 (( $+functions[_agent-session__subcmd__board_commands] )) ||
 _agent-session__subcmd__board_commands() {

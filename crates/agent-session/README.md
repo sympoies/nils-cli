@@ -49,6 +49,9 @@ agent-session clear <id> --expect-idle --format json
 agent-session rebind <id> --format json
 agent-session resume <id>
 agent-session restart <id> --format json   # relaunch onto the installed provider
+agent-session auto-resume <id> --enable --policy wait_for_reset
+agent-session auto-resume <id> --format json
+agent-session auto-resume <id> --disable
 agent-session account show <id> --format json
 agent-session account switch <id> --account <nickname> --format json
 agent-session delete <id>
@@ -59,6 +62,10 @@ prompt submission outcomes, blocked input, clear and rebind, resume, restart,
 verified deletion, startup logs, DSH launch, account switching, model
 settings, and secret safety. [Send v1](docs/specs/send-v1.md) defines guarded
 continuation admission and its observation limits.
+
+The local auto-resume command controls daemon-owned recovery for supported
+runtimes without a serve token. See [Serve API v1](docs/specs/serve-api-v1.md)
+for policy requirements, supported runtimes, and retry backoff.
 
 ### Coordinate work and exchange mail
 
