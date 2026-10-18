@@ -15,6 +15,8 @@ use crate::{
     render_single_success, resolve_tmux_bin, write_session_record,
 };
 
+pub(crate) mod claude_idle;
+
 const SHOW_COMMAND: &str = "account-show";
 const SWITCH_COMMAND: &str = "account-switch";
 
@@ -122,8 +124,8 @@ pub(crate) fn switch_unjournaled(
 /// Claude has no live credential swap, so a switch is a durable next-account
 /// intent applied by a restart plus `--resume` in the new account directory.
 /// The restart happens now only when the running session is idle; otherwise
-/// (busy, stopped, unknown, or `may_restart` false) the intent stays queued for
-/// the next resume.
+/// the intent stays queued for the daemon's next idle check. A stopped session
+/// applies it on its next explicit resume.
 pub(crate) fn claude_switch_locked(
     context: &CliContext,
     id: &str,
@@ -143,26 +145,22 @@ pub(crate) fn claude_switch_locked(
         ));
     }
     crate::claude_account::queue_next(&mut record, account)?;
-    let idle = may_restart
-        && crate::claude_account::has_queued_next(&record)
-        && crate::session_status(context, tmux_bin, &record) == "running"
-        && crate::activity::state_for_view(context, &record)
-            .is_some_and(|activity| activity.phase == crate::activity::TurnPhase::Waiting);
+    let reason = claude_idle::blocking_reason(context, &record, tmux_bin, may_restart);
+    let idle = crate::claude_account::has_queued_next(&record) && reason.is_none();
     if idle {
         // Prepare the new account before anything is stopped. A refusal
         // returns before the intent is written, so durable state (including
         // any previously queued intent) is left exactly as it was.
         crate::claude_account::preflight_next(&record)?;
     }
+    crate::claude_account::set_next_blocking_reason(&mut record, reason)?;
     let now = jiff::Timestamp::now().to_string();
-    record.updated_at = now.clone();
+    record.updated_at = now;
     write_session_record(context, &record)?;
     if !idle {
         return Ok((launch_id, crate::claude_account::view_for_record(&record)));
     }
-    crate::auto_resume::cancel_for_account_switch_locked(context, id, &now)?;
-    crate::stop_session_runtime_locked(context, &mut record, tmux_bin)?;
-    resume_after_switch_stop(context, id, tmux_bin)
+    claude_idle::restart_locked(context, &mut record, tmux_bin)
 }
 
 /// Resume a session the switch just verified stopped, under its queued
@@ -351,6 +349,9 @@ fn render_text(result: &SessionAccount) -> String {
         let account = field(next, "account").unwrap_or_else(|| "unknown".to_string());
         let state = field(next, "state").unwrap_or_default();
         text.push_str(&format!("next: {account} ({state})\n"));
+        if let Some(reason) = field(next, "blocking_reason") {
+            text.push_str(&format!("next blocked: {reason}\n"));
+        }
         if let Some(reason) = field(next, "failure_reason") {
             text.push_str(&format!("resume failure: {reason}\n"));
         }
