@@ -150,7 +150,7 @@ impl<'a> Environment<'a> {
             head_state: Box::new(git_branch_state),
             upstream_repository: Box::new(git_branch_upstream_repository),
             workdir,
-            headings: BodyHeadings::default(),
+            headings: BodyHeadings::from_config(&cfg),
             test_first_required: cfg.resolve_test_first_required(None),
         }
     }

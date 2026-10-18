@@ -9,15 +9,17 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use tempfile::NamedTempFile;
 
 use crate::backend::{BackendCall, BackendProgram, BackendRunner, DryRunPayload};
 use crate::cli::{BINARY, GlobalFlags, PrEditArgs};
+use crate::config::ForgeConfig;
 use crate::envelope::emit_success;
 use crate::error::ForgeError;
+use crate::ops::pr_create::find_git_toplevel;
 use crate::ops::pr_view::{self, PrViewPayload};
 use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
@@ -66,7 +68,9 @@ pub fn run_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
         no_agent_attribution(title, "title")?;
     }
     if let Some(body) = &new_body {
-        let headings = BodyHeadings::default();
+        let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let cfg = ForgeConfig::load_layered(&workdir, find_git_toplevel(&workdir).as_deref());
+        let headings = BodyHeadings::from_config(&cfg);
         body_summary(body, &headings)?;
         body_test_plan(body, &headings)?;
         no_local_path(body, "body")?;

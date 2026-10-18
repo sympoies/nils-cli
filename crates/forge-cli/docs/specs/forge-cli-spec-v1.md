@@ -422,8 +422,8 @@ See [publication and administration](forge-publication-admin-v1.md#comment-edit-
     `headRepository.nameWithOwner` MUST match the local branch, local commit,
     and upstream repository before success is reported;
   - title length ≤ 70 chars, no trailing whitespace;
-  - body MUST contain non-empty `## Summary` and `## Test plan`
-    sections;
+  - body MUST contain non-empty configured H2 sections (defaulting to
+    `## Summary` and `## Test plan`);
   - working tree MUST be clean (`git status --porcelain` empty);
   - resolved local head branch MUST be pushed and remote-tracked.
 - Output schema: `cli.forge-cli.pr.create.v1`,
@@ -585,9 +585,13 @@ backend implementations cannot diverge.
    on `fix/<slug>`. Slug is `[a-z0-9][a-z0-9-]{1,63}`. Ticket prefix
    `abc-123-` is allowed inside the slug. `--kind` and the branch
    prefix MUST agree.
-2. **Body schema.** PR/MR body MUST contain non-empty `## Summary` and
-   `## Test plan` sections. Order is not enforced; presence and
-   non-emptiness are.
+2. **Body schema.** PR/MR body MUST contain non-empty H2 sections named by
+   `[body].summary_heading` and `[body].test_plan_heading`. Defaults are
+   `## Summary` and `## Test plan`. Names match exactly, including the `##`
+   prefix and following space; no synonyms are inferred. Order is not enforced; presence and
+   non-emptiness are. The same resolved headings apply to `pr create`, body
+   replacement in `pr edit`, `pr deliver --dry-run` preflight, and the actual
+   provider body when `pr deliver` adopts an existing PR.
 3. **Title length.** ≤ 70 characters, no trailing whitespace, no
    trailing punctuation other than `?`.
 4. **Working tree.** `git status --porcelain` MUST be empty for
@@ -1165,13 +1169,16 @@ The same schema may live in a user-global file at
 beneath the per-repo `.forge-cli.toml`, so a setting (e.g. `[test_first]
 require = true` or `[merge] method = "rebase"`) applies across every repo
 without duplicating it into each checkout. A missing global file is not an
-error. The global layer feeds the sections forge-cli actually consumes from
-config today — `[merge]`, `[inbox]`, `[test_first]`, and
-`[review_convergence]`, plus `[checks].none` / `none_reason`. The other
-`[checks]` keys and the `[body]` and `[branch]` keys are parsed (and
-validated) for forward-compatibility but are not yet wired into the
-corresponding command paths at either layer, so values placed there are
-accepted but currently inert.
+error.
+
+The global layer feeds the sections forge-cli actually consumes from
+config today — `[merge]`, `[inbox]`, `[test_first]`,
+`[review_convergence]`, `[body]`, plus `[checks].none` / `none_reason`.
+Repository `[body]` values override global defaults field by field, so either
+heading can be configured independently. The other `[checks]` keys and the
+`[branch]` keys are parsed (and validated) for forward-compatibility but are
+not yet wired into the corresponding command paths at either layer, so values
+placed there are accepted but currently inert.
 
 Resolution order for any setting: explicit flag > repo `.forge-cli.toml` >
 global `config.toml` > spec default. Inbox env vars sit between explicit flags
