@@ -108,6 +108,12 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/forge-cli/docs/runbooks/pr-head-repair-loop.md`
 - `crates/forge-cli/docs/specs/checks-scope-and-deadline-v1.md`
 - `crates/forge-cli/docs/specs/forge-cli-spec-v1.md`
+- `crates/forge-cli/docs/specs/forge-publication-admin-v1.md`
+- `crates/forge-cli/docs/specs/forge-default-push-v1.md`
+- `crates/forge-cli/docs/specs/forge-checks-review-reads-v1.md`
+- `crates/forge-cli/docs/specs/forge-review-state-v1.md`
+- `crates/forge-cli/docs/specs/forge-review-publication-v1.md`
+- `crates/forge-cli/docs/specs/forge-merge-v1.md`
 - `crates/forge-cli/docs/specs/local-provider-contract-v1.md`
 - `crates/forge-cli/docs/specs/pr-lifecycle-v1.md`
 - `crates/forge-cli/docs/specs/search-completions-v1.md`
