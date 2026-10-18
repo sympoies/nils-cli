@@ -5,9 +5,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::{Admission, capture_styled};
-use crate::{
-    CliError, run_output_with_timeout_and_strict_cap, run_status_with_timeout, send_submit,
-};
+use crate::{CliError, run_status_with_timeout, send_submit};
 
 /// Time given to the observations and keys of one cleanup, independent of the
 /// admission budget the refusal may already have spent.
@@ -20,8 +18,13 @@ impl Admission<'_> {
     /// removed only when its ownership is observable: an exact match or an
     /// ASCII prefix of a line admitted with an empty composer. An appended
     /// draft is preserved. Every outcome includes a fresh input observation.
-    pub(crate) fn report_pasted_input(&self, mut error: CliError, text: &str) -> CliError {
-        let (remaining, cleared) = self.clear_pasted(text);
+    pub(crate) fn report_pasted_input(
+        &self,
+        mut error: CliError,
+        text: &str,
+        observed_paste: bool,
+    ) -> CliError {
+        let (remaining, cleared) = self.clear_pasted(text, observed_paste);
         let remaining_input = match remaining.as_deref() {
             Some("") => "empty",
             Some(input) if send_submit::composer_holds(&self.record.agent, input, text) => {
@@ -36,6 +39,7 @@ impl Admission<'_> {
         }
         details["pasted"] = Value::Bool(true);
         details["cleared"] = Value::Bool(cleared);
+        details["paste_observed_before_conflict"] = Value::Bool(observed_paste);
         details["remaining_input"] = json!(remaining_input);
         if let Some(input) = remaining {
             details["remaining_characters"] = json!(input.chars().count());
@@ -46,8 +50,11 @@ impl Admission<'_> {
             error.0.message,
             match remaining_input {
                 "empty" => "the session input no longer holds the pasted text",
-                _ if cleared => "the pasted prefix was removed; the user draft was preserved",
+                _ if cleared =>
+                    "the observed paste prefix was removed; remaining input matches the observed suffix",
                 "pasted_text" => "the session input still holds the pasted text",
+                "different_text" if !observed_paste =>
+                    "composer text was left unchanged; paste ownership was not verified",
                 "different_text" =>
                     "different composer text was preserved; removal of the pasted prefix was not verified",
                 _ =>
@@ -57,7 +64,7 @@ impl Admission<'_> {
         error
     }
 
-    fn clear_pasted(&self, text: &str) -> (Option<String>, bool) {
+    fn clear_pasted(&self, text: &str, observed_paste: bool) -> (Option<String>, bool) {
         let cleanup = Admission {
             deadline: Instant::now() + CLEAR_BUDGET,
             context: self.context,
@@ -67,11 +74,11 @@ impl Admission<'_> {
             verify_composer: self.verify_composer,
         };
         cleanup
-            .clear(text)
+            .clear(text, observed_paste)
             .map_or((None, false), |(input, restored)| (Some(input), restored))
     }
 
-    fn clear(&self, text: &str) -> Option<(String, bool)> {
+    fn clear(&self, text: &str, observed_paste: bool) -> Option<(String, bool)> {
         let target = format!("{}:0.0", self.record.tmux_session);
         let observe = |stage: &str| {
             let pane = capture_styled(self.tmux_bin, &target, self.timeout(stage).ok()?)?;
@@ -90,7 +97,8 @@ impl Admission<'_> {
         }
         let exact = send_submit::composer_holds(&self.record.agent, &input, text);
         let suffix = input.strip_prefix(text);
-        let prefix = self.record.agent == "claude"
+        let prefix = observed_paste
+            && self.record.agent == "claude"
             && self.args.require_empty_composer
             && suffix.is_some_and(|suffix| !suffix.is_empty())
             && input.bytes().all(|byte| (32..127).contains(&byte));
@@ -106,16 +114,26 @@ impl Admission<'_> {
         // including pasted-only input. Verify both the start and the endpoint
         // reached by walking exactly the known prefix length before deleting.
         // This also verifies spaces omitted by the word-wrapped rendering.
-        let forward =
-            self.record.agent == "claude" && input.bytes().all(|byte| (32..127).contains(&byte));
+        let single_row_exact =
+            capture_styled(self.tmux_bin, &target, self.timeout("cleanup").ok()?)
+                .and_then(|pane| send_submit::exact_composer_input(&self.record.agent, &pane))
+                .is_some_and(|current| {
+                    send_submit::composer_holds(&self.record.agent, &current, text)
+                });
+        let forward = !single_row_exact
+            && self.record.agent == "claude"
+            && input.bytes().all(|byte| (32..127).contains(&byte));
         if forward {
-            self.identity("cleanup").ok()?;
             let mut home = std::process::Command::new(self.tmux_bin);
             home.args(["send-keys", "-t", &target, "C-a"]);
             run_status_with_timeout(home, "tmux send-keys", self.timeout("cleanup").ok()?).ok()?;
             let mut endpoint = None;
             loop {
-                let pane = capture_styled(self.tmux_bin, &target, self.timeout("cleanup").ok()?)?;
+                let (pane, coordinates) = super::observation::pane_and_cursor(
+                    self.tmux_bin,
+                    &target,
+                    self.timeout("cleanup").ok()?,
+                )?;
                 let Some(current) =
                     send_submit::cleanup_composer_input(&self.record.agent, &pane, Some(text))
                 else {
@@ -125,34 +143,14 @@ impl Admission<'_> {
                     thread::sleep(CLEAR_POLL);
                     continue;
                 };
-                let mut cursor = std::process::Command::new(self.tmux_bin);
-                cursor.args([
-                    "display-message",
-                    "-p",
-                    "-t",
-                    &target,
-                    "#{cursor_x} #{cursor_y}",
-                ]);
-                let output = run_output_with_timeout_and_strict_cap(
-                    cursor,
-                    self.timeout("cleanup").ok()?,
-                    128,
-                )
-                .ok()?;
-                let coordinates = String::from_utf8(output.stdout).ok()?;
-                let coordinates: Vec<usize> = coordinates
-                    .split_whitespace()
-                    .map(str::parse)
-                    .collect::<Result<_, _>>()
-                    .ok()?;
-                if !output.status.success() || current != input || coordinates.len() != 2 {
+                if current != input {
                     return Some((current, false));
                 }
                 let at_target = match endpoint {
                     None => {
-                        send_submit::cleanup_cursor_at_start(&pane, coordinates[0], coordinates[1])
+                        send_submit::cleanup_cursor_at_start(&pane, coordinates.0, coordinates.1)
                     }
-                    Some(end) => end == (coordinates[0], coordinates[1]),
+                    Some(end) => end == (coordinates.0, coordinates.1),
                 };
                 if at_target {
                     if endpoint.is_some() {

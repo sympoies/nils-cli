@@ -26,7 +26,7 @@ fn word_wrapped_paste_only_refusal_restores_empty_composer() {
 
 #[test]
 fn paste_then_draft_refusal_restores_only_the_user_draft() {
-    // Injection is ordered immediately after paste and before submit observation,
+    // Injection is ordered after the exact-paste capture and before submit observation,
     // making the reported timing race deterministic without sleeps or live input.
     for text in ["short fixture".to_string(), payload()] {
         let fixture = Fixture::new("claude");
@@ -156,4 +156,79 @@ fn delayed_navigation_and_transient_post_key_redraw_still_restore_the_draft() {
         assert_eq!(composer(&fixture), " user addition");
         assert!(submissions(&fixture).is_empty());
     }
+}
+
+#[test]
+fn review_f1_draft_before_paste_with_same_prefix_is_never_deleted() {
+    let fixture = Fixture::new("claude");
+    live(&fixture, &["bare-composer", "draft-before-paste"]);
+    let output = guarded_text(&fixture, "hello");
+    let receipt = details(&output, "send-composer-mismatch");
+    assert_eq!(composer(&fixture), "hello world hello");
+    assert_eq!(receipt["cleared"], false);
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .all(|call| call.last().is_none_or(|key| key != "BSpace"))
+    );
+    assert!(submissions(&fixture).is_empty());
+}
+
+#[test]
+fn review_f2_exact_single_row_with_trailing_spaces_uses_only_backspace() {
+    let fixture = Fixture::new("claude");
+    live(&fixture, &["bare-composer", "start-after-paste"]);
+    let output = guarded_text(&fixture, "hello  ");
+    let receipt = details(&output, "send-session-not-idle");
+    assert_eq!(composer(&fixture), "");
+    assert_eq!(receipt["cleared"], true);
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .all(|call| !matches!(call.last().map(String::as_str), Some("C-a" | "Right")))
+    );
+    assert!(submissions(&fixture).is_empty());
+}
+
+#[test]
+fn review_f3_wrapped_cleanup_bounds_tmux_roundtrips_without_timing_assertions() {
+    let fixture = Fixture::new("claude");
+    live(&fixture, &["bare-composer", "wrap-80", "word-wrap"]);
+    let output = guarded_text(&fixture, &payload());
+    let calls = fixture.calls();
+    let paste = calls
+        .iter()
+        .position(|call| call[0] == "paste-buffer")
+        .unwrap();
+    let after_paste = calls.len() - paste - 1;
+    assert!(
+        after_paste <= 16,
+        "{after_paste} post-paste tmux round trips: {calls:?}"
+    );
+    assert_eq!(
+        details(&output, "send-composer-unobservable")["cleared"],
+        true
+    );
+    assert_eq!(composer(&fixture), "");
+}
+
+#[test]
+fn review_f1_immediate_unobserved_mixture_reports_unverified_ownership() {
+    let fixture = Fixture::new("claude");
+    std::fs::write(fixture.root().join("inject-draft"), "").unwrap();
+    let output = guarded_text(&fixture, "hello");
+    let receipt = details(&output, "send-composer-mismatch");
+    assert_eq!(composer(&fixture), "hello user addition");
+    assert_eq!(receipt["cleared"], false);
+    assert_eq!(receipt["paste_observed_before_conflict"], false);
+    let response = output.stdout_json();
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("paste ownership was not verified")
+    );
+    assert!(submissions(&fixture).is_empty());
 }

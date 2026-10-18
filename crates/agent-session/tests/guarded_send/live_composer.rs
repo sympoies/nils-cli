@@ -9,6 +9,9 @@ use super::Fixture;
 
 fn live(fixture: &Fixture, markers: &[&str]) {
     fs::write(fixture.root().join("live-layout"), "").unwrap();
+    if markers.contains(&"inject-draft") {
+        fs::write(fixture.root().join("draft-after-exact"), "").unwrap();
+    }
     for marker in markers {
         fs::write(fixture.root().join(marker), "").unwrap();
     }
@@ -139,7 +142,10 @@ fn refusal_after_paste_removes_its_prefix_and_preserves_the_draft() {
         .as_str()
         .unwrap()
         .to_string();
-    assert!(message.contains("user draft was preserved"), "{message}");
+    assert!(
+        message.contains("remaining input matches the observed suffix"),
+        "{message}"
+    );
 }
 
 #[test]

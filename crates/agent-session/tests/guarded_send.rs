@@ -42,51 +42,13 @@ impl Fixture {
         fs::write(temp.path().join("composer"), "").unwrap();
         fs::write(temp.path().join("calls"), "").unwrap();
         let script = r#"#!/usr/bin/env python3
-import json, pathlib, sys, textwrap
+import atexit, json, pathlib, sys, textwrap
 root = pathlib.Path(__file__).parent
 args = sys.argv[1:]
 with (root / 'calls').open('a') as out: out.write(json.dumps(args) + '\n')
 command = args[0]
 provider = (root / 'provider').read_text()
-if command == 'has-session':
-    if (root / 'start-turn').exists():
-        p = root / 'state/sessions/guarded/activity.json'
-        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
-        p.write_text(json.dumps(d))
-    sys.exit(0)
-if command == 'show-environment':
-    key = args[-1]
-    values = {'AGENT_SESSION_ID': 'guarded', 'AGENT_SESSION_RUNTIME_ID': 'runtime-one', 'AGENT_SESSION_STATE_DIR': str(root / 'state')}
-    if key == 'AGENT_SESSION_RUNTIME_ID':
-        path = root / 'runtime-read-count'
-        count = int(path.read_text()) + 1 if path.exists() else 1
-        path.write_text(str(count))
-        if (root / 'flip-second-runtime-read').exists() and count == 2:
-            values[key] = 'runtime-replaced'
-        if (root / 'runtime-replaced').exists(): values[key] = 'runtime-replaced'
-    if key in values: print(key + '=' + values[key]); sys.exit(0)
-    sys.exit(1)
-if command == 'load-buffer':
-    (root / 'buffer').write_bytes(pathlib.Path(args[-1]).read_bytes())
-    if (root / 'draft-on-load').exists(): (root / 'composer').write_text('new user draft')
-    if (root / 'capture-fails-on-load').exists(): (root / 'capture-fails').touch()
-    if (root / 'start-on-load').exists():
-        p = root / 'state/sessions/guarded/activity.json'
-        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
-        p.write_text(json.dumps(d))
-elif command == 'paste-buffer':
-    if (root / 'late-render').exists(): (root / 'late').write_text((root / 'buffer').read_text())
-    else:
-        with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
-    if (root / 'fail-capture-after-paste').exists(): (root / 'capture-fails').touch()
-    if (root / 'inject-draft').exists():
-        with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
-    if (root / 'replace-after-paste').exists(): (root / 'composer').write_text('replacement draft')
-    if (root / 'start-after-paste').exists():
-        p = root / 'state/sessions/guarded/activity.json'
-        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
-        p.write_text(json.dumps(d))
-elif command == 'display-message':
+def print_cursor():
     text = (root / 'composer').read_text()
     cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
     x, y = 2 + cursor, 1
@@ -109,6 +71,62 @@ elif command == 'display-message':
     if (root / 'cursor-not-at-start').exists(): x, y = 3, 1
     if (root / 'wrong-prefix-end').exists() and (root / 'right-sent').exists(): x += 1
     print(x, y)
+
+if command == 'capture-pane' and 'display-message' in args: atexit.register(print_cursor)
+def append_draft_after_capture():
+    if (root / 'replace-after-paste').exists(): return
+    if (root / 'draft-after-exact').exists() and (root / 'paste-completed').exists() and not (root / 'draft-injected').exists():
+        with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
+        (root / 'draft-injected').touch()
+if command == 'capture-pane': atexit.register(append_draft_after_capture)
+if command == 'has-session':
+    if (root / 'start-turn').exists():
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
+    sys.exit(0)
+if command == 'show-environment':
+    commands = []
+    for arg in args:
+        if arg == ';': commands.append([])
+        elif not commands: commands = [[arg]]
+        else: commands[-1].append(arg)
+    for row in commands:
+        key = row[-1]
+        values = {'AGENT_SESSION_ID': 'guarded', 'AGENT_SESSION_RUNTIME_ID': 'runtime-one', 'AGENT_SESSION_STATE_DIR': str(root / 'state')}
+        if key == 'AGENT_SESSION_RUNTIME_ID':
+            path = root / 'runtime-read-count'
+            count = int(path.read_text()) + 1 if path.exists() else 1
+            path.write_text(str(count))
+            if (root / 'flip-second-runtime-read').exists() and count == 2: values[key] = 'runtime-replaced'
+            if (root / 'runtime-replaced').exists(): values[key] = 'runtime-replaced'
+        if key not in values: sys.exit(1)
+        print(key + '=' + values[key])
+    sys.exit(0)
+if command == 'load-buffer':
+    (root / 'buffer').write_bytes(pathlib.Path(args[-1]).read_bytes())
+    if (root / 'draft-on-load').exists(): (root / 'composer').write_text('new user draft')
+    if (root / 'capture-fails-on-load').exists(): (root / 'capture-fails').touch()
+    if (root / 'start-on-load').exists():
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
+elif command == 'paste-buffer':
+    if (root / 'draft-before-paste').exists(): (root / 'composer').write_text('hello world ')
+    if (root / 'late-render').exists(): (root / 'late').write_text((root / 'buffer').read_text())
+    else:
+        with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
+    if (root / 'fail-capture-after-paste').exists(): (root / 'capture-fails').touch()
+    if (root / 'inject-draft').exists() and not (root / 'draft-after-exact').exists():
+        with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
+    (root / 'paste-completed').touch()
+    if (root / 'replace-after-paste').exists(): (root / 'composer').write_text('replacement draft')
+    if (root / 'start-after-paste').exists():
+        p = root / 'state/sessions/guarded/activity.json'
+        d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
+        p.write_text(json.dumps(d))
+elif command == 'display-message':
+    print_cursor()
 elif command == 'send-keys' and args[-1] == 'Right':
     cursor = int((root / 'cursor').read_text())
     count = int(args[args.index('-N') + 1])
@@ -427,11 +445,7 @@ fn guarded_send_post_paste_mismatch_preserves_user_input_without_submit() {
         assert!(!fixture.root().join("submissions").exists());
         assert_eq!(
             fs::read_to_string(fixture.root().join("composer")).unwrap(),
-            if provider == "claude" {
-                " user addition"
-            } else {
-                "continue-fixture user addition"
-            }
+            "continue-fixture user addition"
         );
         let repeated = fixture.send(&["--idempotency-key", "mismatch"]);
         fixture.refused(&repeated, "send-idempotency-key-used");
