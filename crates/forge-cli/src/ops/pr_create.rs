@@ -480,6 +480,16 @@ pub(crate) fn test_first_gate(
     repository_id: Option<&str>,
     delivery_ref: &str,
 ) -> Result<Option<VerifiedTestFirstSubject>, ForgeError> {
+    if policy.require && policy.invalid_require_kinds {
+        return Err(ForgeError::validation(
+            schema_err(),
+            "invalid_test_first_config",
+            "test_first.require_kinds is invalid in the repository or global config; \
+             use an array containing only feature, bug, docs, chore, ci, refactor, or test \
+             (for example, require_kinds = [\"bug\"]), then retry",
+            None,
+        ));
+    }
     if !policy.required_for(kind) {
         return Ok(None);
     }

@@ -8,6 +8,8 @@ use super::ForgeConfig;
 pub struct TestFirstPolicy {
     pub require: bool,
     pub require_kinds: Vec<PrKind>,
+    /// Any invalid list in the layered config must be fixed before an enabled gate runs.
+    pub invalid_require_kinds: bool,
 }
 
 impl Default for TestFirstPolicy {
@@ -15,6 +17,7 @@ impl Default for TestFirstPolicy {
         Self {
             require: false,
             require_kinds: vec![PrKind::Feature, PrKind::Bug],
+            invalid_require_kinds: false,
         }
     }
 }
@@ -29,6 +32,9 @@ impl ForgeConfig {
     pub fn resolve_test_first_policy(&self) -> TestFirstPolicy {
         TestFirstPolicy {
             require: self.resolve_test_first_required(None),
+            invalid_require_kinds: self.warnings.iter().any(|warning| {
+                warning.starts_with("invalid-config-value:test_first.require_kinds:")
+            }),
             require_kinds: self
                 .test_first_require_kinds
                 .clone()

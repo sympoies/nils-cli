@@ -1221,11 +1221,19 @@ resolve `true`.
 
 The repository list replaces the global list in full, including an explicit
 empty list; an omitted list inherits the global setting. A non-array, non-string
-member, or unknown kind produces an
-`invalid-config-value:test_first.require_kinds:expected_array_of_pr_kinds`
-warning and ignores the entire list, retaining the lower-precedence list or
-compatibility default. The missing-evidence error names the selected `--kind`
-and directs the caller to `--test-first-evidence <dir>`.
+member, or unknown kind records an internal parser warning and ignores the
+entire list when resolving the inherited/default selection. These parser warnings
+are not emitted in command envelopes.
+
+When `require` resolves `true`, any invalid `require_kinds` list in either layer
+blocks create (including dry-run) and adopted delivery with
+`invalid_test_first_config` (exit `DATA`). Deliver dry-run instead reports a failed
+`test_first` preflight verdict with the same code, preserving its preview format.
+The error names `test_first.require_kinds` and the accepted values so a typo cannot
+silently weaken an enabled gate. When `require` resolves `false`, the gate remains
+disabled.
+The missing-evidence error names the selected `--kind` and directs the caller to
+`--test-first-evidence <dir>`.
 
 The directory must hold a verified v2 `test-first-evidence` record with a testable classification,
 an actual changed/added/removed behavior, an affected-test decision, meaningful

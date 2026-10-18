@@ -1666,6 +1666,7 @@ mod tests {
         let policy = TestFirstPolicy {
             require: true,
             require_kinds: vec![PrKind::Bug],
+            ..TestFirstPolicy::default()
         };
         for (flag, kind) in [
             (PrKindFlag::Feature, PrKind::Feature),
@@ -1722,6 +1723,21 @@ mod tests {
             } else {
                 assert_eq!(result.unwrap_err().kind(), "test_first_evidence_required");
             }
+            let invalid_policy = ForgeConfig::parse_content(
+                "[test_first]\nrequire = true\nrequire_kinds = [\"feature\", \"bugs\"]",
+            )
+            .unwrap()
+            .resolve_test_first_policy();
+            let invalid_context = AdoptValidationContext {
+                test_first_policy: &invalid_policy,
+                ..context
+            };
+            assert_eq!(
+                validate_adopted(&view, &deliver, &invalid_context)
+                    .unwrap_err()
+                    .kind(),
+                "invalid_test_first_config"
+            );
         }
     }
 }

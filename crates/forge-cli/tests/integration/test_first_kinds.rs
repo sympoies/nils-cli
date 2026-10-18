@@ -55,10 +55,7 @@ fn test_first_kinds_create_and_deliver_dry_run_agree() {
         ("require = true\nrequire_kinds = []", vec![]),
         ("require = false\nrequire_kinds = [\"bug\"]", vec![]),
         ("require_kinds = [\"bug\"]", vec![]),
-        (
-            "require = true\nrequire_kinds = [\"unknown\"]",
-            vec!["feature", "bug"],
-        ),
+        ("require = false\nrequire_kinds = [\"unknown\"]", vec![]),
     ] {
         for kind in nils_common::git::PrKind::all() {
             let temp = TempDir::new().unwrap();
@@ -142,6 +139,116 @@ fn test_first_kinds_create_and_deliver_dry_run_agree() {
                     );
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn test_first_kinds_invalid_list_is_reported_by_create_and_deliver() {
+    for inherited in ["[]", "[\"docs\"]"] {
+        for invalid in ["true", "[1]", "[\"feature\", \"bugs\"]"] {
+            let temp = TempDir::new().unwrap();
+            let repo = init_subject_repo(
+                temp.path(),
+                "repo",
+                "https://github.com/example/project.git",
+            );
+            fs::write(
+                repo.join(".forge-cli.toml"),
+                format!("[test_first]\nrequire_kinds = {invalid}\n"),
+            )
+            .unwrap();
+            git(&repo, &["add", ".forge-cli.toml"]);
+            git(&repo, &["commit", "-qm", "configure evidence policy"]);
+            git(&repo, &["checkout", "-qb", "feat/sample"]);
+            git(
+                &repo,
+                &["update-ref", "refs/remotes/origin/feat/sample", "HEAD"],
+            );
+            git(
+                &repo,
+                &["branch", "--set-upstream-to", "origin/feat/sample"],
+            );
+            let global_dir = temp.path().join("global");
+            fs::create_dir_all(global_dir.join("forge-cli")).unwrap();
+            fs::write(
+                global_dir.join("forge-cli/config.toml"),
+                format!("[test_first]\nrequire = true\nrequire_kinds = {inherited}\n"),
+            )
+            .unwrap();
+            let stub = StubEnv::new()
+                .env("XDG_CONFIG_HOME", global_dir.to_string_lossy())
+                .gh_stub("#!/bin/sh\nexit 99\n");
+            for operation in ["create", "deliver"] {
+                let out = run_forge_cli_in(
+                    &stub,
+                    &[
+                        "--provider",
+                        "github",
+                        "--format",
+                        "json",
+                        "--dry-run",
+                        "pr",
+                        operation,
+                        "--kind",
+                        "feature",
+                        "--base",
+                        "main",
+                        "--title",
+                        "Configure evidence",
+                        "--body",
+                        "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                    ],
+                    Some(&repo),
+                );
+                let envelope = parse_envelope(&out.stdout);
+                let (code, message) = if operation == "create" {
+                    assert_eq!(out.code, 65, "{inherited} {invalid}: {out:?}");
+                    (&envelope["error"]["code"], &envelope["error"]["message"])
+                } else {
+                    assert_eq!(out.code, 0, "{out:?}");
+                    let verdict = envelope["data"]["local_preflight"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|item| item["rule"] == "test_first")
+                        .unwrap();
+                    assert_eq!(verdict["ok"], false, "{inherited} {invalid}: {out:?}");
+                    (&verdict["code"], &verdict["message"])
+                };
+                assert_eq!(code, "invalid_test_first_config");
+                assert!(
+                    message
+                        .as_str()
+                        .unwrap()
+                        .contains("test_first.require_kinds"),
+                    "{message}"
+                );
+                assert!(message.as_str().unwrap().contains("bug"), "{message}");
+            }
+            let text = run_forge_cli_in(
+                &stub,
+                &[
+                    "--provider",
+                    "github",
+                    "--format",
+                    "text",
+                    "pr",
+                    "create",
+                    "--kind",
+                    "feature",
+                    "--base",
+                    "main",
+                    "--title",
+                    "Configure evidence",
+                    "--body",
+                    "## Summary\nExample\n\n## Test plan\nUnit tests\n",
+                ],
+                Some(&repo),
+            );
+            assert_eq!(text.code, 65, "{text:?}");
+            assert!(text.stderr.contains("test_first.require_kinds"), "{text:?}");
+            assert!(text.stderr.contains("bug"), "{text:?}");
         }
     }
 }
