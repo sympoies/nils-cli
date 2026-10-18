@@ -142,7 +142,7 @@ if [[ "$coverage_if_count" != "1" ]]; then
   exit 1
 fi
 echo "ok: coverage job has exactly one job-level if condition"
-assert_contains "$coverage_job" "if: \${{ !cancelled() && github.event_name != 'push' }}" \
+assert_contains "$coverage_job" "if: \${{ always() && github.event_name != 'push' && !(" \
   "coverage excludes push while still running after failed upstream lanes"
 assert_contains "$coverage_job" "TEST_CONTAINMENT_RESULT: \${{ needs.test_containment.result }}" \
   "coverage reads the parallel containment canaries' result"

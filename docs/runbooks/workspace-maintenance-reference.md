@@ -462,10 +462,13 @@ publishes the summary from that run's LCOV artifact.
 
 PRs run the trusted affected scope. Selected macOS tests retain the immutable-base
 coverage no-decrease ratchet. When the macOS PR plan needs FULL or falls back
-from HOLD, the required `test_macos` and `coverage` names instead report
-`deferred-full: runs in merge group`, with a DEFERRED receipt and no full test
-or coverage measurement. Linux retains its full fallback. Full queue checks
-must pass before main advances; a deferred PR status is no full-suite proof.
+from HOLD, an early trusted preview makes `test_macos` conclude skipped.
+`coverage` concludes skipped only after real full Linux and containment success.
+Their required names stay the same, and their check titles state
+`deferred-full: runs in merge group`; neither is a plain success or full test
+measurement. Failed upstream jobs and scoped-Linux/deferred-macOS mismatches
+fail coverage. Full queue checks must pass before main advances.
+Full macOS lanes have 75 minutes; selected PR jobs retain 55 minutes.
 See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)
 for the event/check matrix and receipt versions.
 

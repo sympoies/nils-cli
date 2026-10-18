@@ -166,7 +166,9 @@ def make_plan(repo, expected):
     return plan, None
 
 
-def run(repo, event_name, event, candidate, output, bash='bash'):
+def run(repo, event_name, event, candidate, output, bash='bash', plan_only=False):
+    if plan_only and event_name != 'pull_request':
+        raise ValueError('scope preview is only available for PRs')
     expected, fallback = inputs(repo, event_name, event, candidate)
     plan = None
     if fallback is None:
@@ -178,6 +180,15 @@ def run(repo, event_name, event, candidate, output, bash='bash'):
     output.mkdir(parents=True, exist_ok=True)
     if plan is not None:
         (output / 'plan.json').write_text(json.dumps(plan, sort_keys=True, separators=(',', ':')) + '\n')
+    if plan_only:
+        summary = {'schema_version': 'nils-cli.merge-planning.v1', 'status': 'PLANNED',
+                   'inputs': expected, 'validation_scope': scope, 'packages': packages,
+                   'fallback': fallback, 'plan_digest': plan['digests']['plan'] if plan else None}
+        (output / 'planning.json').write_text(json.dumps(summary, sort_keys=True, indent=2) + '\n')
+        if os.environ.get('GITHUB_OUTPUT'):
+            Path(os.environ['GITHUB_OUTPUT']).write_text(f'validation_scope={scope}\n')
+        print(f'PR scope preview={scope}; no validation executed', flush=True)
+        return 0
     command = [bash]
     if scope == 'SCOPED':
         command += ['scripts/ci/nils-cli-scoped-checks.sh', *packages]
@@ -239,10 +250,11 @@ def main():
     parser.add_argument('--candidate', default=os.environ.get('GITHUB_SHA'))
     parser.add_argument('--output', type=Path, default=Path('target/ci-merge-plan'))
     parser.add_argument('--bash', default=os.environ.get('BASH', 'bash'))
+    parser.add_argument('--plan-only', action='store_true', help='preview trusted PR scope without executing validation')
     args = parser.parse_args()
     try:
         event = json.loads(args.event_path.read_text())
-        return run(args.repo.resolve(), args.event_name, event, args.candidate, args.output, args.bash)
+        return run(args.repo.resolve(), args.event_name, event, args.candidate, args.output, args.bash, args.plan_only)
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.CalledProcessError):
         print('error: CI merge plan or event binding is invalid; validation held', file=sys.stderr)
         return 1

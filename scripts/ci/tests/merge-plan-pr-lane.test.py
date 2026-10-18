@@ -73,7 +73,7 @@ class CoverageLaneTests(unittest.TestCase):
         workflow = (fixtures.ROOT / '.github/workflows/ci.yml').read_text()
         step = workflow.split('      - name: Require selected PR coverage\n', 1)[1]
         script = step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0]
-        script = '\n'.join(line[10:] for line in script.splitlines())
+        script = '\n'.join(line[10:] for line in script.splitlines() if line.startswith('          '))
         for linux, macos, succeeds in (('SCOPED', 'SCOPED', True), ('SCOPED', 'DEFERRED_FULL', False),
                                        ('SCOPED', '', False), ('FULL', 'DEFERRED_FULL', True)):
             with self.subTest(linux=linux, macos=macos), tempfile.TemporaryDirectory() as directory:

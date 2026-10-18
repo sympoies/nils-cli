@@ -204,12 +204,12 @@ else:
                               '-p', self.base, '-m', 'fixture squash queue')
         self.git('checkout', '-q', '--detach', self.merge)
 
-    def execute(self, name='pull_request', event=None, env=None):
+    def execute(self, name='pull_request', event=None, env=None, extra_args=()):
         payload = self.root / 'event.json'
         payload.write_text(json.dumps(self.event(name) if event is None else event))
         result = subprocess.run([sys.executable, str(CONSUMER), '--repo', str(self.repo),
                                  '--event-name', name, '--event-path', str(payload),
-                                 '--candidate', self.merge, '--output', str(self.output)],
+                                 '--candidate', self.merge, '--output', str(self.output), *extra_args],
                                 env=dict(self.env, **(env or {})), capture_output=True, text=True)
         self.assertFalse(Path(str(self.log) + '.compiler').exists(), 'real compiler sentinel ran')
         rows = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
@@ -497,6 +497,15 @@ def load_tests(loader, tests, pattern):
     tests.addTests(loader.loadTestsFromTestCase(lane.PrLaneTests))
     tests.addTests(loader.loadTestsFromTestCase(lane.ScopedPrRatchetTests))
     tests.addTests(loader.loadTestsFromTestCase(lane.CoverageLaneTests))
+    spec = importlib.util.spec_from_file_location('queue_detection', Path(__file__).with_name('merge-plan-queue-detection.test.py'))
+    queue = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(queue)
+    tests.addTests(loader.loadTestsFromTestCase(queue.QueueDetectionTests))
+    spec = importlib.util.spec_from_file_location('deferred_jobs', Path(__file__).with_name('merge-plan-deferred-jobs.test.py'))
+    deferred = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(deferred)
+    tests.addTests(loader.loadTestsFromTestCase(deferred.DeferredJobTests))
+    tests.addTests(loader.loadTestsFromTestCase(deferred.PreviewTests))
     return tests
 
 

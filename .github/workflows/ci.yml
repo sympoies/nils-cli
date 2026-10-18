@@ -34,6 +34,7 @@ jobs:
     outputs:
       base_sha: ${{ steps.detect.outputs.base_sha }}
       docs_only: ${{ steps.detect.outputs.docs_only }}
+      validation_scope: ${{ steps.pr_plan.outputs.validation_scope }}
       head_sha: ${{ steps.detect.outputs.head_sha }}
       release_branch: ${{ steps.detect.outputs.release_branch }}
       release_mode: ${{ steps.detect.outputs.release_mode }}
@@ -180,6 +181,31 @@ jobs:
           fi
           echo "release_only=${release_only}" >> "$GITHUB_OUTPUT"
           echo "release_only=${release_only}"
+
+      - name: Set up Rust for trusted PR scope
+        if: github.event_name == 'pull_request' && steps.detect.outputs.docs_only != 'true' && steps.finalize.outputs.release_only != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache PR planning cargo inputs
+        if: github.event_name == 'pull_request' && steps.detect.outputs.docs_only != 'true' && steps.finalize.outputs.release_only != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-test
+          save-if: false
+
+      - name: Preview trusted PR scope
+        id: pr_plan
+        if: github.event_name == 'pull_request' && steps.detect.outputs.docs_only != 'true' && steps.finalize.outputs.release_only != 'true'
+        env:
+          NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"
+        run: python3 scripts/ci/nils-cli-merge-plan-checks.py --plan-only --output target/ci-merge-preview
+
+      - name: Upload PR scope preview
+        if: always() && hashFiles('target/ci-merge-preview/planning.json') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: merge-scope-preview
+          path: target/ci-merge-preview
 
   cargo_deny:
     if: github.event_name != 'push'
@@ -414,15 +440,14 @@ jobs:
             -- --exact --nocapture
 
   test_macos:
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' && needs.changes.result == 'success' && needs.changes.outputs.validation_scope != 'FULL'
     needs: changes
     outputs:
       validation_scope: ${{ steps.validation.outputs.validation_scope }}
     runs-on: macos-14
-    # A recent full-plan run passed validation in 48m28s and reached 50m27s
-    # before timeout, mostly in that instrumented validation step. Allow 4m33s
-    # of headroom while staying below the release PR's 60-minute check wait.
-    timeout-minutes: 55
+    # Recent successful full merge-group jobs: n=13, p90=43m23s,
+    # maximum=44m33s. Full lanes get 75m; selected PRs retain 55m.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 55 || 75 }}
     permissions:
       contents: read
       checks: write
@@ -539,12 +564,11 @@ jobs:
             /opt/homebrew/bin/bash scripts/ci/nils-cli-checks-entrypoint.sh
           fi
 
-      - name: "deferred-full: runs in merge group"
-        if: steps.validation.outputs.validation_scope == 'DEFERRED_FULL'
+      - name: Require the selected PR scope
+        if: github.event_name == 'pull_request' && steps.validation.outputs.validation_scope == 'DEFERRED_FULL'
         run: |
-          echo '::notice title=deferred-full: runs in merge group::Full validation has not run on this PR candidate.'
-          echo '### deferred-full: runs in merge group' >> "$GITHUB_STEP_SUMMARY"
-          echo 'This PR ran no full macOS tests or full coverage. The required merge-group checks must pass before main can advance.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'error: the selected macOS PR scope could not be validated; coverage cannot be deferred' >&2
+          exit 1
 
       - name: Upload affected plan and validation receipt
         if: always() && hashFiles('target/ci-merge-plan/validation.json') != ''
@@ -612,7 +636,7 @@ jobs:
     # A job skipped because a needed job failed concludes `skipped`, which a
     # required check accepts. Run anyway and fail below instead, because
     # test_containment is not itself a required check.
-    if: ${{ !cancelled() && github.event_name != 'push' }}
+    if: ${{ always() && github.event_name != 'push' && !(github.event_name == 'pull_request' && needs.changes.result == 'success' && needs.changes.outputs.validation_scope == 'FULL' && needs.test.result == 'success' && needs.test.outputs.validation_scope == 'FULL' && needs.test_macos.result == 'skipped' && needs.test_containment.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -622,13 +646,15 @@ jobs:
       - name: Require the upstream lanes
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
+          TEST_RESULT: ${{ needs.test.result }}
           TEST_MACOS_RESULT: ${{ needs.test_macos.result }}
           TEST_CONTAINMENT_RESULT: ${{ needs.test_containment.result }}
         run: |
           if [ "${CHANGES_RESULT}" != "success" ] || \
+             [ "${TEST_RESULT}" != "success" ] || \
              [ "${TEST_MACOS_RESULT}" != "success" ] || \
              [ "${TEST_CONTAINMENT_RESULT}" != "success" ]; then
-            echo "error: changes=${CHANGES_RESULT} test_macos=${TEST_MACOS_RESULT} test_containment=${TEST_CONTAINMENT_RESULT}; coverage requires all three to succeed" >&2
+            echo "error: changes=${CHANGES_RESULT} test=${TEST_RESULT} test_macos=${TEST_MACOS_RESULT} test_containment=${TEST_CONTAINMENT_RESULT}; coverage requires all four to succeed" >&2
             exit 1
           fi
 
@@ -643,35 +669,28 @@ jobs:
             exit 1
           fi
 
-      - name: "deferred-full: runs in merge group"
-        if: github.event_name == 'pull_request' && needs.test_macos.outputs.validation_scope == 'DEFERRED_FULL'
-        run: |
-          echo '::notice title=deferred-full: runs in merge group::Full validation has not run on this PR candidate.'
-          echo '### deferred-full: runs in merge group' >> "$GITHUB_STEP_SUMMARY"
-          echo 'No full coverage measurement ran on this PR. The merge group must enforce the 85% workspace line floor.' >> "$GITHUB_STEP_SUMMARY"
-
       # Docs-only and proven release-only change sets skip coverage work at the
       # step level so the required `coverage` job still concludes `success`.
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Download coverage LCOV
-        if: (github.event_name != 'pull_request' || needs.test_macos.outputs.validation_scope != 'DEFERRED_FULL') && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
         uses: actions/download-artifact@v8
         with:
           name: coverage-lcov
           path: target/coverage
 
       - name: Require LCOV from the instrumented test run
-        if: (github.event_name != 'pull_request' || needs.test_macos.outputs.validation_scope != 'DEFERRED_FULL') && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
         run: test -s target/coverage/lcov.info
 
       - name: Full validation marker
-        if: (github.event_name != 'pull_request' || needs.test_macos.outputs.validation_scope != 'DEFERRED_FULL') && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (needs.test_macos.outputs.validation_scope == 'FULL' || github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (needs.test_macos.outputs.validation_scope == 'FULL' || github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         run: true
 
       - name: Coverage summary
-        if: always() && (github.event_name != 'pull_request' || needs.test_macos.outputs.validation_scope != 'DEFERRED_FULL') && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
         run: |
           env GITHUB_STEP_SUMMARY=/dev/stdout bash scripts/ci/coverage-summary.sh target/coverage/lcov.info \
             | tee target/coverage/coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -682,6 +701,26 @@ jobs:
         with:
           header: coverage
           path: target/coverage/coverage-summary.md
+
+  deferred_full:
+    name: "deferred-full: runs in merge group"
+    needs: [changes, test, test_macos, test_containment, coverage]
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.result == 'success' && needs.changes.outputs.validation_scope == 'FULL' && needs.test.result == 'success' && needs.test.outputs.validation_scope == 'FULL' && needs.test_macos.result == 'skipped' && needs.test_containment.result == 'success' && needs.coverage.result == 'skipped' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Label the skipped required checks
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { labelDeferredChecks } = require('./.github/scripts/deferred-full-checks.cjs');
+            await labelDeferredChecks({ github, context, core });
 
   coverage_badge:
     if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'

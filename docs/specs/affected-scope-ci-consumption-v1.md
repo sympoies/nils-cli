@@ -73,45 +73,59 @@ checkout and refs stay unchanged; the clone is removed on success or failure.
 `target/ci-merge-plan/scoped-coverage/` retains the baseline LCOV and a ratchet
 receipt with base/candidate commits, identical arguments, counts and verdict.
 
-On Linux PRs, FULL, empty selection and valid planner HOLD use the existing
-full entrypoint. The macOS PR lane opts into `NILS_CLI_PR_DEFER_FULL=1`:
-when a full stack would be required, it executes no full tests or coverage and
-records `DEFERRED_FULL` / `DEFERRED`, with the explicit explanation
-`deferred-full: runs in merge group`. The required job names stay `test_macos`
-and `coverage`; their step names, annotations and summaries distinguish this
-queue prerequisite from a full test pass. A macOS metadata HOLD remains HOLD
-in the plan artifact. Invalid protocol or candidate bindings still fail.
-The deferral opt-in has no effect for Linux or merge-group callers.
+A trusted PR preview runs in `changes` before the required jobs are scheduled.
+It uses the same consumer with `--plan-only`, preserving B/H/M/T, the accepted
+base selector, and fail-closed plan parsing, but executes no tests. A valid
+FULL/HOLD preview makes the required `test_macos` job conclude **skipped**.
+Linux retains its full fallback. `coverage` concludes **skipped** only after
+changes, Linux FULL validation, and containment have all succeeded, with macOS
+actually skipped. A failed/cancelled upstream or scoped-Linux mismatch runs the
+coverage guard and fails instead of receiving a deferral.
 
-SCOPED PRs still require the instrumented immutable-base coverage ratchet.
-`coverage` fails if Linux reports SCOPED but macOS attempts to defer that
-measurement. Missing LCOV or a decrease still fails. Merge groups always
-execute full tests and the absolute 85% floor, regardless of any PR deferral.
-A failed required queue check prevents the candidate from landing; the delivery
-owner investigates the original failure before retrying or requeueing. Nightly
-full-suite failures retain the existing alert and bisect/revert path.
+The separate `deferred-full: runs in merge group` job labels the actual skipped
+required check runs with that title and an explanation. It preserves their
+skipped conclusions and the required names `test_macos` and `coverage`; a
+deferred check is never presented as a plain success. It only labels completed
+skipped jobs from the same workflow run.
+
+SCOPED PRs still execute instrumented macOS tests with the immutable-base
+coverage ratchet. If macOS cannot reproduce the selected preview and falls
+back to FULL/HOLD, the macOS job fails rather than deferring selected coverage.
+Missing LCOV or a decrease still fails. Queue, nightly and on-demand workflows
+always run full Linux and macOS tests and the absolute 85% coverage floor.
+Full macOS lanes have a 75-minute timeout; selected PRs retain 55 minutes.
 
 | Required name | SCOPED PR candidate | FULL/HOLD PR candidate | Merge group / nightly |
 | --- | --- | --- | --- |
 | `test` | Selected Linux checks and doctests | Full Linux fallback | Full Linux checks and doctests |
-| `test_macos` | Selected instrumented tests and base ratchet | Explicit deferred-full status | Full instrumented macOS tests, 85% floor |
-| `coverage` | Selected LCOV and containment success | Explicit deferred-full status and containment success | Full LCOV and containment success |
+| `test_macos` | Selected instrumented tests and base ratchet | Skipped, explicitly labelled deferred-full | Full instrumented macOS tests, 85% floor |
+| `coverage` | Selected LCOV and containment success | Skipped only after full Linux and containment success | Full LCOV and containment success |
 
 Source review binds the PR candidate and selected evidence. Full macOS and
-coverage proof binds the queue candidate that will reach main. No required
-check name, ruleset or branch-protection configuration changes with this route.
+coverage proof binds the queue candidate that will reach main. A failed queue
+check prevents landing; the delivery owner investigates before retry/requeue.
+Nightly failures retain the alert and bisect/revert path. No required check
+name, ruleset or branch-protection configuration changes with this route.
 
 ## Evidence and provenance
 
-Platform artifacts retain `target/ci-merge-plan/plan.json` when available and
+The `merge-scope-preview` artifact retains `plan.json` and `planning.json`.
+The latter uses `nils-cli.merge-planning.v1`, status PLANNED, exact inputs,
+scope, packages, fallback and plan digest. A preview has no validation receipt
+and proves no tests passed. The hosted preview is available only for PRs;
+merge groups cannot replace actual validation with preview mode.
+
+Executed platform artifacts retain `target/ci-merge-plan/plan.json` when available and
 `validation.json`. The latter binds planning B/H/M/T, actual checkout/tree,
 captured event base, plan digest, effective scope,
 packages, fallback, runner, doctest choice, coverage policy/base or absolute
 floor, command, exit code, and PASS/FAIL. Existing executed receipts retain
-`nils-cli.merge-validation.v1`. Deferred receipts use the additive
+`nils-cli.merge-validation.v1`. The low-level deferral safety route uses the additive
 `nils-cli.merge-validation.v2` contract, with `status: DEFERRED`,
 `validation_scope: DEFERRED_FULL`, an empty command, no coverage policy/floor,
 and a `deferred_reason`. Exit 0 acknowledges deferral; it proves no tests ran.
+Hosted FULL/HOLD PRs now skip the macOS job before execution; an unexpected
+low-level deferral during selected macOS validation fails that required job.
 
 PASS is written only after the actual executor succeeds. Planner HOLD and passing full validation are separate
 facts. Executors do not receive `GITHUB_OUTPUT`; the consumer replaces the
