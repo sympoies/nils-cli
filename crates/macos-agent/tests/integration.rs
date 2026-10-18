@@ -8,6 +8,8 @@ mod cli_contract;
 pub mod common;
 #[path = "integration/completion_export.rs"]
 mod completion_export;
+#[path = "integration/doctor_missing_backend.rs"]
+mod doctor_missing_backend;
 #[path = "integration/journal.rs"]
 mod journal;
 #[path = "integration/mcp.rs"]
