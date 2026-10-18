@@ -38,7 +38,8 @@ const MACHINE: &str = "usage-host";
 const RESET_KEY: &str = "0b5f4c1e-8d2a-4c7b-9e3f-2a1b0c9d8e7f";
 const OTHER_KEY: &str = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
 
-const USAGE_ENV: [&str; 4] = [
+const USAGE_ENV: [&str; 5] = [
+    "AGENT_SESSION_CODEX_ACCOUNT_BROKER",
     "AGENT_SESSION_CODEX_RESET_ACCOUNTS",
     "AGENT_SESSION_CLAUDE_RESET_ACCOUNTS",
     "AGENT_SESSION_USAGE_V1_REFRESH_SECONDS",
@@ -77,6 +78,7 @@ impl Stubs {
                 "codex-cli",
                 &[("diag", "codex-diag"), ("account", "codex-reset")][..],
             ),
+            ("codex-account-broker", &[("list", "codex-list")][..]),
             (
                 "claude-cli",
                 &[("diag", "claude-diag"), ("auth", "claude-reset")][..],
@@ -100,6 +102,14 @@ impl Stubs {
             fs::write(&path, script).expect("stub script");
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("stub mode");
         }
+        stubs.answer(
+            "codex-list",
+            &json!({
+                "schema_version": "agent-session.codex-auth-broker.v1",
+                "accounts": []
+            }),
+            0,
+        );
         stubs.answer("codex-diag", &fixture("codex-diag-all.json"), 0);
         stubs.answer("claude-diag", &fixture("claude-diag-all.json"), 0);
         stubs.answer("codex-reset", &fixture("codex-reset-cli.json"), 0);
@@ -363,6 +373,131 @@ fn usage_v1_projects_provider_clis_into_the_edge_contract() {
     );
     let claude_env = fs::read_to_string(stubs.dir.join("claude-cli.env.log")).unwrap();
     assert!(claude_env.contains("diag_no_cache_fallback=1"));
+}
+
+#[test]
+fn usage_v1_keeps_safe_unfamiliar_codex_plan() {
+    let (tmp, stubs) = setup();
+    let mut diag = fixture("codex-diag-all.json");
+    diag["results"][0]["raw_usage"]["plan_type"] = json!("pro-new_1.0");
+    stubs.answer("codex-diag", &diag, 0);
+    let serve = Serve::spawn(tmp.path(), &stubs, &[]);
+
+    let body = serve.usage("/usage/v1");
+    assert_eq!(body["data"]["usage"]["providers"][0]["plan"], "pro-new_1.0");
+}
+
+#[test]
+fn usage_v1_falls_back_to_matching_codex_broker_plan() {
+    let (tmp, stubs) = setup();
+    let mut diag = fixture("codex-diag-all.json");
+    diag["results"][0]["raw_usage"]
+        .as_object_mut()
+        .unwrap()
+        .remove("plan_type");
+    diag["results"].as_array_mut().unwrap().extend([
+        json!({"name":"delta", "ok":true, "status":"ok", "raw_usage":{"plan_type":"plus"}}),
+        json!({"name":"echo", "ok":true, "status":"ok", "raw_usage":{"plan_type":"/srv/SECRET-MARKER"}}),
+        json!({"name":"foxtrot", "ok":true, "status":"ok"}),
+    ]);
+    stubs.answer("codex-diag", &diag, 0);
+    stubs.answer(
+        "codex-list",
+        &json!({
+            "schema_version":"agent-session.codex-auth-broker.v1",
+            "accounts":[
+                {"account":"delta", "plan":"pro"},
+                {"nickname":"charlie", "chatgpt_plan_type":"pro-new_1.0"},
+                {"account":"alpha", "plan":"pro"},
+                {"account":"bravo", "plan":"pro"},
+                {"account":"echo", "plan":"/srv/SECRET-MARKER"},
+                {"account":"unrelated", "plan":"team"}
+            ]
+        }),
+        0,
+    );
+    let broker = serde_json::to_string(&vec![stubs.dir.join("codex-account-broker")]).unwrap();
+    let serve = Serve::spawn(
+        tmp.path(),
+        &stubs,
+        &[("AGENT_SESSION_CODEX_ACCOUNT_BROKER", &broker)],
+    );
+
+    let body = serve.usage("/usage/v1");
+    let providers = body["data"]["usage"]["providers"].as_array().unwrap();
+    let plans: Vec<_> = providers
+        .iter()
+        .filter(|entry| entry["provider"] == "codex")
+        .map(|entry| (entry["account"].clone(), entry["plan"].clone()))
+        .collect();
+    assert_eq!(
+        plans,
+        vec![
+            (json!("alpha"), json!("pro")),
+            (json!("bravo"), Value::Null),
+            (json!("charlie"), json!("pro-new_1.0")),
+            (json!("delta"), json!("plus")),
+            (json!("echo"), Value::Null),
+            (json!("foxtrot"), Value::Null),
+        ]
+    );
+    assert_eq!(
+        stubs.calls("codex-account-broker", "list"),
+        vec!["list --format json"]
+    );
+    assert_eq!(
+        fs::read_to_string(stubs.log_path("codex-account-broker"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn usage_v1_keeps_codex_usage_when_plan_broker_fails() {
+    let (tmp, stubs) = setup();
+    stubs.answer("codex-list", &json!({"error":"SECRET-MARKER"}), 1);
+    let broker = serde_json::to_string(&vec![stubs.dir.join("codex-account-broker")]).unwrap();
+    let serve = Serve::spawn(
+        tmp.path(),
+        &stubs,
+        &[("AGENT_SESSION_CODEX_ACCOUNT_BROKER", &broker)],
+    );
+
+    let body = serve.usage("/usage/v1");
+    let providers = &body["data"]["usage"]["providers"];
+    assert_eq!(providers[0]["plan"], "team");
+    assert_eq!(providers[2]["plan"], Value::Null);
+    assert_eq!(providers[2]["ok"], true);
+    assert_eq!(providers[2]["windows"][0]["used_percent"], 60);
+}
+
+#[test]
+fn usage_v1_slow_plan_broker_does_not_hide_completed_codex_usage() {
+    let (tmp, stubs) = setup();
+    fs::write(stubs.dir.join("codex-list.delay"), "9").unwrap();
+    let broker = serde_json::to_string(&vec![stubs.dir.join("codex-account-broker")]).unwrap();
+    let serve = Serve::spawn(
+        tmp.path(),
+        &stubs,
+        &[("AGENT_SESSION_CODEX_ACCOUNT_BROKER", &broker)],
+    );
+
+    let started = Instant::now();
+    let body = serve.usage("/usage/v1");
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "optional plan lookup delayed usage"
+    );
+    let providers = body["data"]["usage"]["providers"].as_array().unwrap();
+    let entry = providers
+        .iter()
+        .find(|entry| entry["account"] == "charlie")
+        .expect("completed usage");
+    assert_eq!(entry["ok"], true);
+    assert_eq!(entry["plan"], Value::Null);
+    assert_eq!(entry["windows"][0]["used_percent"], 60);
 }
 
 #[test]
