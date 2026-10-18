@@ -23,6 +23,7 @@ mod conversation;
 pub mod coordination;
 mod coordination_routing;
 mod delete_recovery;
+pub use delete_recovery::{DeleteResult, ProcessInventory};
 mod diagnose;
 mod digest_format;
 use delete_recovery::{
@@ -1680,23 +1681,6 @@ pub(crate) struct DshHistoryResumeArgs {
     pub(crate) profile_graceful_shutdown: Option<String>,
     pub(crate) codex_usage_account: Option<String>,
     pub(crate) initial_lineage: InitialLineage,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DeleteResult {
-    /// The children check of a user delete or archive
-    /// (`session-lineage-work-v1`); absent on internal cleanup.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub children: Option<lineage::ChildrenCheck>,
-    id: String,
-    tmux_session: String,
-    killed: bool,
-    pub deleted: bool,
-    session_dir: String,
-    #[serde(skip)]
-    pub cleanup_pending: bool,
-    #[serde(skip)]
-    registry_fence: SessionRegistryFence,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -13445,22 +13429,6 @@ fn render_doctor_text(result: &activity::DoctorResult) -> String {
     text
 }
 
-fn render_delete_text(result: &DeleteResult) -> String {
-    let mut text = format!(
-        "deleted {} (tmux stopped: {})\n",
-        result.id,
-        if result.killed { "yes" } else { "no" }
-    );
-    for child in result
-        .children
-        .iter()
-        .flat_map(|children| &children.orphaned)
-    {
-        text.push_str(&format!("orphaned child: {}\n", child.session_id));
-    }
-    text
-}
-
 fn local_attach_command(tmux_session: &str) -> String {
     format!("tmux attach -t {}", shell_words::quote(tmux_session))
 }
@@ -13554,13 +13522,12 @@ mod provider_resume_import_tests;
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentKind, CliContext, DeleteResult, RecordRequest, SessionRegistryFence,
-        TmuxProcessIdentity, TmuxRuntimeIdentity, acquire_session_record_lock,
-        acquire_session_record_lock_timed, create_record, delete_session_with_timeouts,
-        kill_tmux_session_with_timeout, live_status_with_timeout, load_session_record, pane_drawn,
-        parse_pane_cursor, persist_tmux_runtime_identity, render_delete_text,
-        resolve_agent_session_executable_from, resolve_session_id, session_dir,
-        strip_trailing_blank_lines, tmux_launch_may_have_created_runtime,
+        AgentKind, CliContext, RecordRequest, SessionRegistryFence, TmuxProcessIdentity,
+        TmuxRuntimeIdentity, acquire_session_record_lock, acquire_session_record_lock_timed,
+        create_record, delete_session_with_timeouts, kill_tmux_session_with_timeout,
+        live_status_with_timeout, load_session_record, pane_drawn, parse_pane_cursor,
+        persist_tmux_runtime_identity, resolve_agent_session_executable_from, resolve_session_id,
+        session_dir, strip_trailing_blank_lines, tmux_launch_may_have_created_runtime,
         try_acquire_session_record_lock, write_session_record,
     };
 
@@ -19293,30 +19260,6 @@ exit 42
             "a longer prefix match must never be killed"
         );
         assert!(!session_dir(&context, &id).exists());
-    }
-
-    #[test]
-    fn delete_text_describes_verified_stop_instead_of_a_kill_command() {
-        let result = DeleteResult {
-            children: None,
-            id: "stopped-session".to_string(),
-            tmux_session: "hs-codex-stopped-session".to_string(),
-            killed: true,
-            deleted: true,
-            session_dir: "/state/sessions/stopped-session".to_string(),
-            cleanup_pending: false,
-            registry_fence: SessionRegistryFence {
-                session_id: "stopped-session".to_string(),
-                tmux_session: "hs-codex-stopped-session".to_string(),
-                runtime_launch_id: None,
-                runtime_generation: None,
-            },
-        };
-
-        assert_eq!(
-            render_delete_text(&result),
-            "deleted stopped-session (tmux stopped: yes)\n"
-        );
     }
 
     #[test]

@@ -16,6 +16,17 @@ impl Drop for Daemon {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_escaped_daemon_child() {
+    let Some(ready) = std::env::var_os("NILS_TEST_ESCAPED_DAEMON_READY") else {
+        return;
+    };
+    assert!(unsafe { libc::setsid() } > 0);
+    fs::write(ready, []).unwrap();
+    thread::sleep(Duration::from_secs(60));
+}
+
 #[test]
 fn delete_names_escaped_daemon_and_explicitly_leaves_it_running() {
     let tmp = tempfile::tempdir().unwrap();
@@ -83,14 +94,33 @@ esac
     let ready = tmp.path().join("daemon-ready");
     // A detached process carrying the runtime id, outside the fake pane tree.
     // Keep ownership of its child handle so assertion failures also clean up.
-    let mut daemon = Daemon(
-        Command::new("python3")
+    #[cfg(not(target_os = "macos"))]
+    let mut daemon_command = {
+        let mut command = Command::new("python3");
+        command
             .args([
                 "-c",
                 "import os,sys,time; os.setsid(); open(sys.argv[1], 'w').close(); time.sleep(60)",
             ])
             .arg(&ready)
-            .arg("private-argument-sentinel")
+            .arg("private-argument-sentinel");
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut daemon_command = {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "delete_escaped::macos_escaped_daemon_child",
+                "--skip",
+                "private-argument-sentinel",
+            ])
+            .env("NILS_TEST_ESCAPED_DAEMON_READY", &ready);
+        command
+    };
+    let mut daemon = Daemon(
+        daemon_command
             .env("AGENT_SESSION_ID", "escaped-daemon")
             .env(
                 "AGENT_SESSION_RUNTIME_ID",
@@ -226,6 +256,22 @@ esac
     assert_eq!(error["error"]["details"]["retryable"], false);
     assert!(session.exists());
     assert!(!output.stdout_text().contains("private-argument-sentinel"));
+    let text = run(
+        tmp.path(),
+        &[
+            "--state-dir",
+            state_arg,
+            "delete",
+            "escaped-daemon",
+            "--tmux-bin",
+            tmux_arg,
+        ],
+        &envs,
+    );
+    assert_eq!(text.code, 1);
+    assert!(text.stderr_text().contains(&daemon.0.id().to_string()));
+    assert!(text.stderr_text().contains("blocking process:"));
+    assert!(!text.stderr_text().contains("private-argument-sentinel"));
     let output = run(
         tmp.path(),
         &[

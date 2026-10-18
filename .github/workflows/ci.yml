@@ -460,9 +460,6 @@ jobs:
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
         run: python3 -m pip install 'jsonschema==4.26.0'
 
-      - name: Diagnose macOS session marker inspection
-        run: python3 scripts/ci/tests/agent-session-macos-marker-probe.py
-
       - name: Install bash + ripgrep + tmux
         if: needs.changes.outputs.release_only != 'true'
         run: |

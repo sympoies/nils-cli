@@ -270,6 +270,28 @@ Cleanup and retry rules:
 
 Human success output reports the verified stopped state; the v1 JSON
 `killed: true` field remains stable for ordinary successful deletion.
+Its `termination_scope: "recorded-boundaries"` describes the verified recorded
+runtime boundary; it does not certify that no escaped process exists.
+Any observed process carrying both runtime markers still blocks ordinary deletion
+and retains the session record.
+
+Every deletion success includes `process_inventory` with `complete`,
+`inspected_processes`, `uninspected_processes`, and a `reasons` count map.
+An incomplete inventory remains advisory on top of recorded-boundary verification;
+ordinary success prints the counts and reasons and warns that additional processes
+may remain. For example:
+
+```json
+{
+  "termination_scope": "recorded-boundaries",
+  "process_inventory": {
+    "complete": false,
+    "inspected_processes": 12,
+    "uninspected_processes": 2,
+    "reasons": { "permission-denied": 2 }
+  }
+}
+```
 
 ### Leave processes running explicitly
 
@@ -299,6 +321,18 @@ never printed. `survivor_scan_complete: false` (or `process_scan_complete: false
 in errors) means permissions, process churn, the time budget, or the 128-entry
 limit prevented a complete inventory. Processes that removed their markers may
 remain unlisted. Inspect survivors before taking any further action.
+The same inventory counts and reasons accompany this explicit recovery result.
+Reason classes include `permission-denied`, `process-read-failed`,
+`argv-only-or-sip-redacted`, `process-changed`, `time-budget-exhausted`, and
+`entry-limit-reached`. Counts cover observed inspection attempts; a time or entry
+limit can leave an unknown number of additional processes uninspected.
+
+On macOS the scanner uses the kernel's argument-size limit. System Integrity
+Protection can omit a protected process's environment even when its arguments
+were readable; an absent environment is reported as uninspected rather than
+proof that the process has no runtime markers. No elevated privileges or SIP
+changes are required. Ordinary deletion still verifies its recorded boundary;
+the extra inventory cannot prove complete termination outside that boundary.
 
 `--leave-processes` preserves the existing child-session guard; use
 `--orphan-children` separately when deliberately orphaning managed child sessions.
