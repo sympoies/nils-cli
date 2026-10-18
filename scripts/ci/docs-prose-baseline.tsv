@@ -1,7 +1,9 @@
 path	runs_over_limit	longest_run
-crates/agent-hook/README.md	9	45
-crates/agent-hook/docs/specs/agent-hook-v1.md	20	61
+crates/agent-hook/docs/specs/agent-hook-v1.md	1	13
+crates/agent-hook/docs/specs/dsh-finish-line-v1.md	1	13
+crates/agent-hook/docs/specs/evaluation-and-degradation-v1.md	1	13
 crates/agent-hook/docs/specs/finish-line-acceptance-v1.md	3	23
+crates/agent-hook/docs/specs/provider-setup-recovery-v1.md	1	13
 crates/agent-memory/README.md	1	13
 crates/agent-session/docs/provider-turn-signal-evidence.md	4	54
 crates/agent-session/docs/runbooks/serve-daemon.md	2	14

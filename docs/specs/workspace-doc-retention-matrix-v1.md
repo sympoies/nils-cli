@@ -67,6 +67,11 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-hook/docs/reports/agent-hook-completion-migration-contract.md`
 - `crates/agent-hook/docs/reports/dsh-finish-line-security-evidence.md`
 - `crates/agent-hook/docs/specs/agent-hook-v1.md`
+- `crates/agent-hook/docs/runbooks/commands.md`
+- `crates/agent-hook/docs/specs/dsh-workspace-lease-v1.md`
+- `crates/agent-hook/docs/specs/evaluation-and-degradation-v1.md`
+- `crates/agent-hook/docs/specs/provider-setup-recovery-v1.md`
+- `crates/agent-hook/docs/specs/dsh-finish-line-v1.md`
 - `crates/agent-hook/docs/specs/data-policy-v1.md`
 - `crates/agent-hook/docs/specs/finish-line-acceptance-v1.md`
 - `crates/agent-runtime/docs/determinism.md`
