@@ -5547,8 +5547,8 @@ fn resume_session_locked(
 ) -> Result<ResumeSessionOutcome, CliError> {
     ensure_session_lifecycle_mutation_allowed(context, &record)?;
     let _worktree_lifecycle = acquire_worktree_lifecycle(context, Path::new(&record.cwd))?;
-    match restart::resume_status(tmux_bin, &record).as_str() {
-        "running" => {
+    match restart::resume_status(tmux_bin, &record) {
+        restart::ResumeStatus::Running => {
             return Ok(ResumeSessionOutcome {
                 session: session_view(
                     context,
@@ -5564,11 +5564,11 @@ fn resume_session_locked(
                 session_generation: record.runtime.as_ref().map(|runtime| runtime.generation),
             });
         }
-        "unknown" => {
+        status @ restart::ResumeStatus::Unknown { .. } => {
             return Err(CliError::runtime(
                 "session-status-unknown",
                 format!("session status could not be checked: {}", record.id),
-                Some(restart::resume_retry_details(&record)),
+                Some(status.retry_details(&record)),
             ));
         }
         _ => {}

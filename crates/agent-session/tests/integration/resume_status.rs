@@ -32,6 +32,12 @@ impl Fixture {
             &tmux,
             format!(
                 r#"#!/bin/sh
+if [ "$1" = has-session ] && [ -f "$AGENT_SESSION_FAKE_TMUX_LOG.permanent" ]; then
+  case "$(cat "$AGENT_SESSION_FAKE_TMUX_LOG.permanent")" in
+    exit-127) exit 127 ;;
+    permission-denied) printf '%s\n' 'permission denied opening fixture socket' >&2; exit 1 ;;
+  esac
+fi
 if [ "$1" = has-session ] && [ -f "$AGENT_SESSION_FAKE_TMUX_LOG.hung" ]; then
   sleep 30
   exit 42
@@ -147,10 +153,8 @@ fn resume_status_recovers_immediately_after_runtime_kill() {
         let fixture = Fixture::new(agent);
         let before = fixture.stored();
         fixture.kill();
-        let killed = Instant::now();
         fixture.arm_unknown();
-        // No heartbeat-expiry wait or delayed retry by the caller.
-        assert!(killed.elapsed() < Duration::from_secs(3));
+        // Immediately resume: no heartbeat-expiry wait or caller retry.
         let resumed = fixture.resume(false);
         assert_eq!(resumed.code, 0, "{}", resumed.stdout_text());
         let after = fixture.stored();
@@ -239,4 +243,26 @@ fn resume_status_concurrent_requests_launch_one_replacement() {
     });
     assert_eq!(fixture.launches(), 2);
     assert_eq!(fixture.stored()["runtime"]["generation"], 3);
+}
+
+#[test]
+fn resume_status_permanent_probe_failure_is_not_retryable() {
+    for cause in ["exit-127", "permission-denied", "missing-executable"] {
+        let fixture = Fixture::new("claude");
+        fixture.kill();
+        let before = fixture.stored();
+        if cause == "missing-executable" {
+            fs::rename(&fixture.tmux, fixture.tmp.path().join("disabled-tmux")).unwrap();
+        } else {
+            fs::write(fixture.log.with_extension("log.permanent"), cause).unwrap();
+        }
+        let resumed = fixture.resume(false);
+        assert_eq!(resumed.code, 1, "{cause}");
+        let error = &resumed.stdout_json()["error"];
+        assert_eq!(error["code"], "session-status-unknown", "{cause}");
+        assert_eq!(error["details"]["retryable"], false, "{cause}");
+        assert_eq!(error["details"]["next_action"], "inspect-tmux", "{cause}");
+        assert_eq!(fixture.stored(), before);
+        assert_eq!(fixture.launches(), 1);
+    }
 }
