@@ -64,14 +64,15 @@ impl Receipt {
                 Ok((Self { name, value }, false))
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let started_ms =
+                    super::retention::timestamp_ms(operation).ok_or_else(super::invalid)?;
                 if body["reconcile"] == true {
+                    super::retention::require_live_id(&root, started_ms)?;
                     return Err(invalid(
                         "console-start-operation-not-found",
                         "no start receipt exists for this caller incarnation and operation",
                     ));
                 }
-                let started_ms =
-                    super::retention::timestamp_ms(operation).ok_or_else(super::invalid)?;
                 super::retention::admit(&root, started_ms)?;
                 let receipt = Self {
                     name,

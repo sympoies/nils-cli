@@ -35,18 +35,24 @@ fn watermark(root: &Path) -> Result<u64, CliError> {
     }
 }
 
-/// Caller holds the short operation-store lock. Existing receipts are read before this admission.
-pub(super) fn admit(root: &Path, started_ms: u64) -> Result<(), CliError> {
+/// Check missing receipt IDs without admitting an operation or pruning evidence.
+pub(super) fn require_live_id(root: &Path, started_ms: u64) -> Result<u64, CliError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| store_unavailable())?
         .as_millis()
         .min(u64::MAX as u128) as u64;
     let oldest = now.saturating_sub(RETENTION_MS);
-    let mut cutoff = watermark(root)?;
+    let cutoff = watermark(root)?;
     if started_ms <= cutoff || started_ms <= oldest || started_ms > now.saturating_add(60_000) {
         return Err(expired());
     }
+    Ok(cutoff)
+}
+
+/// Caller holds the short operation-store lock. Existing receipts are read before this admission.
+pub(super) fn admit(root: &Path, started_ms: u64) -> Result<(), CliError> {
+    let mut cutoff = require_live_id(root, started_ms)?;
     loop {
         let entries = fs::read_dir(root)
             .map_err(|_| store_unavailable())?

@@ -1813,7 +1813,10 @@ Capacity pressure can expire ambiguous reconciliation evidence; its persisted
 watermark still prevents any evicted operation from being submitted again.
 Definite typed pre-create refusals are terminal
 `not_created` outcomes. Unknown receipts or another caller incarnation return
-`console-start-operation-not-found` on an explicit reconciliation. Reconciliation uses
+`console-start-operation-not-found` on an explicit reconciliation only while
+the ID remains within the admission window and above the expiry watermark.
+Missing aged or evicted IDs return `console-start-operation-expired` with the
+same inspect-Console guidance as replay; neither check calls upstream. Reconciliation uses
 HTTP 201 and the existing Console start schema with the additive
 `reconciliation` object; ambiguous results omit `session`.
 

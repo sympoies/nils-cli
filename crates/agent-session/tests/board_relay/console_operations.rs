@@ -475,3 +475,58 @@ fn console_operation_capacity_reclaims_old_and_recent_ambiguity_with_replay_fenc
         assert_eq!(aggregator.seen().len(), 1);
     }
 }
+
+fn reconcile_expired_operation(evicted: bool) {
+    let fixture = Fixture::new();
+    let aggregator = Aggregator::start();
+    let serve = fixture.serve(&[], Some(&aggregator));
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let started = if evicted {
+        now - 2000
+    } else {
+        now - 8 * 24 * 60 * 60 * 1000
+    };
+    if evicted {
+        private_file(
+            &fixture
+                .state_dir
+                .join("coordination/console-start-expiry-watermark"),
+            (now - 1000).to_string().as_bytes(),
+        );
+    }
+    let operation =
+        uuid::Uuid::from_u128(((started as u128) << 80) | (7 << 76) | (2 << 62) | 1).to_string();
+    let (status, result) = route(&serve, json!({"operation_id":operation,"reconcile":true}));
+    assert_eq!(status, 400, "{result}");
+    assert_eq!(result["error"]["code"], "console-start-operation-expired");
+    assert!(
+        result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("inspect Console")
+    );
+    assert_eq!(result["error"]["details"]["operation_id"], operation);
+    let (status, result) = route(
+        &serve,
+        json!({"operation_id":operation_for(9000),"reconcile":true}),
+    );
+    assert_eq!(status, 400, "{result}");
+    assert_eq!(result["error"]["code"], "console-start-operation-not-found");
+    assert!(
+        aggregator.seen().is_empty(),
+        "missing receipt checks must not call upstream"
+    );
+}
+
+#[test]
+fn console_operation_reconcile_distinguishes_evicted_from_unused_ids() {
+    reconcile_expired_operation(true);
+}
+
+#[test]
+fn console_operation_reconcile_distinguishes_aged_from_unused_ids() {
+    reconcile_expired_operation(false);
+}
