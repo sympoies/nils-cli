@@ -10,7 +10,7 @@ pub(crate) fn require_empty_composer(
 ) -> Result<(), CliError> {
     let target = format!("{}:0.0", record.tmux_session);
     let input = capture_styled(tmux_bin, &target, PANE_OBSERVATION_COMMAND_TIMEOUT)
-        .and_then(|pane| send_submit::exact_composer_input(&record.agent, &pane));
+        .and_then(|pane| send_submit::direct_composer_input(&record.agent, &pane));
     if input.as_deref() == Some("") {
         return Ok(());
     }
