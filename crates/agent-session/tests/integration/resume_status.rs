@@ -1,5 +1,6 @@
 use super::cli::{
-    fake_agent, fake_tmux, run, tmux_calls, write_resumable_session_record_with_agent_bin,
+    fake_agent, fake_tmux, run, sha256_hex, tmux_calls,
+    write_resumable_session_record_with_agent_bin,
 };
 use nils_test_support::cmd::CmdOutput;
 use pretty_assertions::{assert_eq, assert_ne};
@@ -142,17 +143,48 @@ exec {} "$@"
             .count()
     }
 
+    fn stop_broker(&self) {
+        // The fake tmux kill uses SIGKILL for deterministic process cleanup;
+        // unlike a provider exit, that skips the launch wrapper's broker stop.
+        // Model that authenticated cleanup explicitly. macOS correctly refuses
+        // to replace an unrevoked broker using absent process-group evidence.
+        let record = self.stored();
+        let incarnation = record["runtime"]["launch_id"].as_str().unwrap();
+        let capability = self.record.parent().unwrap().join(format!(
+            "coordination/capability-{}",
+            sha256_hex(incarnation)
+        ));
+        let stopped = run(
+            self.tmp.path(),
+            &[
+                "--state-dir",
+                self.state.to_str().unwrap(),
+                "broker",
+                "stop",
+                "--session",
+                "resume-fixture",
+                "--capability-file",
+                capability.to_str().unwrap(),
+                "--format",
+                "json",
+            ],
+            &[],
+        );
+        assert_eq!(stopped.code, 0, "{}", stopped.stdout_text());
+    }
+
     fn stored(&self) -> Value {
         serde_json::from_slice(&fs::read(&self.record).unwrap()).unwrap()
     }
 }
 
 #[test]
-fn resume_status_recovers_immediately_after_runtime_kill() {
+fn resume_status_recovers_immediately_after_runtime_kill_with_broker_cleanup() {
     for agent in ["codex", "claude"] {
         let fixture = Fixture::new(agent);
         let before = fixture.stored();
         fixture.kill();
+        fixture.stop_broker();
         fixture.arm_unknown();
         // Immediately resume: no heartbeat-expiry wait or caller retry.
         let resumed = fixture.resume(false);
@@ -224,6 +256,7 @@ fn resume_status_hung_probe_respects_total_budget() {
 fn resume_status_concurrent_requests_launch_one_replacement() {
     let fixture = Fixture::new("claude");
     fixture.kill();
+    fixture.stop_broker();
     fixture.arm_unknown();
     std::thread::scope(|scope| {
         let first = scope.spawn(|| fixture.resume(false));
@@ -243,6 +276,21 @@ fn resume_status_concurrent_requests_launch_one_replacement() {
     });
     assert_eq!(fixture.launches(), 2);
     assert_eq!(fixture.stored()["runtime"]["generation"], 3);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn resume_status_raw_kill_preserves_macos_broker_retirement_requirement() {
+    let fixture = Fixture::new("claude");
+    fixture.kill();
+    fixture.arm_unknown();
+    let resumed = fixture.resume(false);
+    assert_eq!(resumed.code, 1, "{}", resumed.stdout_text());
+    let error = &resumed.stdout_json()["error"];
+    // The transient tmux error was retried successfully, but cannot authorize
+    // revoking a controller's retained coordination capability.
+    assert_eq!(error["code"], "coordination-runtime-unverified");
+    assert_eq!(error["details"]["proof_step"], "process-group-probe");
 }
 
 #[test]

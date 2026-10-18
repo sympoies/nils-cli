@@ -150,6 +150,14 @@ implicitly.
   fresh for up to 30 seconds. Once its own `broker stop` has stopped that
   incarnation and the registry proves its runtime stopped, resume expires the
   beat instead of refusing the relaunch as a live prior incarnation.
+- An abrupt external kill can skip that broker cleanup. On macOS, absence of
+  the process group alone cannot authorize replacing an unrevoked broker;
+  resume may return `coordination-runtime-unverified` after tmux absence is
+  confirmed. Follow [operator recovery after an external runtime stop](../specs/session-coordination-v1.md#operator-recovery-after-an-external-runtime-stop)
+  to preview and apply `broker retire-stopped` for the exact incarnation, then
+  resume the same session ID. Every retirement proof must pass, including stale
+  heartbeat evidence; repeated resume does not bypass them. Prefer `restart`
+  below when applying launcher changes to a live session.
 
 ## Restart onto the installed provider
 
