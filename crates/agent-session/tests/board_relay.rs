@@ -88,6 +88,7 @@ fn private_file(path: &Path, bytes: &[u8]) {
 struct Seen {
     target: String,
     authorization: Option<String>,
+    operation_id: Option<String>,
     body: Option<Value>,
 }
 
@@ -149,6 +150,7 @@ impl Aggregator {
                     })
                 };
                 let authorization = header("authorization");
+                let operation_id = header("x-agent-session-operation-id");
                 let length = header("content-length")
                     .and_then(|value| value.parse::<usize>().ok())
                     .unwrap_or(0);
@@ -162,6 +164,7 @@ impl Aggregator {
                     state.seen.push(Seen {
                         target,
                         authorization,
+                        operation_id,
                         body,
                     });
                     state.replies.pop_front()
@@ -994,12 +997,17 @@ fn console_start_creates_the_child_through_the_aggregator_as_the_calling_session
     assert_eq!(body["schema_version"], "cli.agent-session.console-start.v1");
     assert_eq!(
         body["data"],
-        json!({"schema_version": "agent-session.console-start.v1", "machine": "host-b", "session": child})
+        json!({"schema_version": "agent-session.console-start.v1", "machine": "host-b", "session": child,
+            "operation_id":body["data"]["operation_id"],"diagnostics":body["data"]["diagnostics"]})
     );
 
     let seen = aggregator.seen();
     assert_eq!(seen.len(), 1, "{seen:?}");
     assert_eq!(seen[0].path(), "/api/coordination/sessions/v1");
+    assert_eq!(
+        seen[0].operation_id.as_deref(),
+        body["data"]["operation_id"].as_str()
+    );
     assert_eq!(
         seen[0].authorization.as_deref(),
         Some(format!("Bearer {RELAY_TOKEN}").as_str())
@@ -1597,3 +1605,6 @@ fn launch_env_console_forwards_every_provider_and_requires_confirmation() {
         assert_eq!(request.body.unwrap()["session"]["launch_env"], values);
     }
 }
+
+#[path = "board_relay/console_operations.rs"]
+mod console_operations;
