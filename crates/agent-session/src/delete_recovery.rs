@@ -632,18 +632,52 @@ fn scan_processes(id: &str, runtime: &str) -> ProcessScan {
     };
     let mut command = ProcessCommand::new("/bin/ps");
     command.args(["-axo", "pid=,uid=,stat=,comm="]);
-    let Ok(output) = run_output_with_timeout(command, Duration::from_secs(1)) else {
-        return ProcessScan::default();
+    let output = match macos_process_listing(command) {
+        Ok(output) => output,
+        Err(error) => return failed_macos_process_listing(&error),
     };
     if !output.status.success() {
-        return ProcessScan::default();
+        return failed_macos_process_listing(&io::Error::other("process listing failed"));
     }
+    scan_macos_processes(id, runtime, &output.stdout, |pid| {
+        macos_process_arguments(pid, argument_limit)
+    })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_process_listing(command: ProcessCommand) -> io::Result<std::process::Output> {
+    // The 4 KiB tmux-probe cap silently omits later PIDs from a full ps table.
+    // Keep inventory separately bounded and never accept a truncated prefix.
+    run_output_with_timeout_and_strict_cap(command, Duration::from_secs(1), 1024 * 1024)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn failed_macos_process_listing(error: &io::Error) -> ProcessScan {
+    let mut scan = ProcessScan::default();
+    scan.incomplete(
+        if error.kind() == io::ErrorKind::InvalidData {
+            "process-list-output-limit"
+        } else {
+            "process-list-failed"
+        },
+        0,
+    );
+    scan
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn scan_macos_processes(
+    id: &str,
+    runtime: &str,
+    listing: &[u8],
+    mut read_arguments: impl FnMut(libc::pid_t) -> io::Result<Vec<u8>>,
+) -> ProcessScan {
     let mut scan = ProcessScan {
         complete: true,
         ..Default::default()
     };
     let deadline = Instant::now() + Duration::from_secs(1);
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
+    for line in String::from_utf8_lossy(listing).lines() {
         if Instant::now() >= deadline {
             scan.incomplete("time-budget-exhausted", 0);
             break;
@@ -664,7 +698,7 @@ fn scan_processes(id: &str, runtime: &str) -> ProcessScan {
         if fields.next().is_none_or(|state| state.starts_with('Z')) {
             continue;
         }
-        let bytes = match macos_process_arguments(pid, argument_limit) {
+        let bytes = match read_arguments(pid) {
             Ok(bytes) => bytes,
             Err(error) => {
                 scan.read_failed(&error);
@@ -787,6 +821,47 @@ fn scan_processes(_: &str, _: &str) -> ProcessScan {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn macos_process_listing_finds_marked_candidates_after_four_kib() {
+        let uid = unsafe { libc::geteuid() };
+        let mut listing = String::new();
+        for pid in 100..300 {
+            listing.push_str(&format!("{pid} {uid} S /bin/ordinary-process\n"));
+        }
+        let survivor_pid = 999_999;
+        assert!(listing.len() > 4096);
+        listing.push_str(&format!("{survivor_pid} {uid} S /bin/detached-provider\n"));
+        let mut command = ProcessCommand::new("/bin/sh");
+        command.args(["-c", &format!("printf '%s' '{listing}'")]);
+        let output = macos_process_listing(command).unwrap();
+        let scan = scan_macos_processes("session", "runtime", &output.stdout, |pid| {
+            let mut arguments = 1i32.to_ne_bytes().to_vec();
+            arguments.extend_from_slice(b"/bin/provider\0\0provider\0");
+            arguments.extend_from_slice(if pid == survivor_pid {
+                b"AGENT_SESSION_ID=session\0AGENT_SESSION_RUNTIME_ID=runtime\0"
+            } else {
+                b"OTHER=value\0"
+            });
+            Ok(arguments)
+        });
+        assert!(scan.complete);
+        assert_eq!(scan.processes.len(), 1);
+        assert_eq!(scan.processes[0].pid, survivor_pid);
+        assert_eq!(scan.processes[0].command, "detached-provider");
+    }
+
+    #[test]
+    fn macos_process_listing_rejects_overflow_instead_of_returning_a_prefix() {
+        let mut command = ProcessCommand::new("/bin/sh");
+        command.args(["-c", "printf '%1048577s' ''"]);
+        let error = macos_process_listing(command).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        let scan = failed_macos_process_listing(&error);
+        assert!(!scan.complete);
+        assert!(scan.processes.is_empty());
+        assert_eq!(scan.inventory().reasons["process-list-output-limit"], 1);
+    }
 
     // A locally built child keeps its environment inspectable under macOS
     // SIP; platform executables may intentionally hide theirs from sysctl.

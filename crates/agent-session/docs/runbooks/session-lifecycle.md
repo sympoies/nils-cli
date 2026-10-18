@@ -324,10 +324,13 @@ remain unlisted. Inspect survivors before taking any further action.
 The same inventory counts and reasons accompany this explicit recovery result.
 Reason classes include `permission-denied`, `process-read-failed`,
 `argv-only-or-sip-redacted`, `process-changed`, `time-budget-exhausted`, and
-`entry-limit-reached`. Counts cover observed inspection attempts; a time or entry
+`entry-limit-reached`, and `process-list-output-limit`. Counts cover observed
+inspection attempts; a time, output or entry
 limit can leave an unknown number of additional processes uninspected.
 
-On macOS the scanner uses the kernel's argument-size limit. System Integrity
+On macOS process enumeration has a separate 1 MiB output bound; exceeding it
+reports incomplete inventory instead of silently accepting a process-list prefix.
+The scanner uses the kernel's argument-size limit. System Integrity
 Protection can omit a protected process's environment even when its arguments
 were readable; an absent environment is reported as uninspected rather than
 proof that the process has no runtime markers. No elevated privileges or SIP
