@@ -2,12 +2,13 @@
 
 ## Routes
 
-The code lanes for `pull_request` and `merge_group` invoke the canonical checks
-entrypoint with `--ci-merge-plan`. They consume the existing
-[trusted-base plan](affected-scope-merge-plan-v1.md), with no second dependency
-selector. Established documentation-only and proven release-only routes retain
-their substantive audits and provenance checks. Scheduled and explicitly
-dispatched workflows retain full validation.
+PR code lanes invoke the canonical checks entrypoint with `--ci-merge-plan`.
+They consume the existing [trusted-base plan](affected-scope-merge-plan-v1.md),
+with no second dependency selector. Documentation-only and proven release-only
+PRs retain their substantive audits and provenance checks. Merge groups,
+nightly schedules and explicitly dispatched workflows run the full Linux and
+macOS stacks, including the absolute 85% workspace line-coverage floor. Queue
+candidates cannot select the docs-only, release-only or scoped shortcuts.
 
 Required checks remain `test`, `test_macos`, and `coverage`. Existing advisory
 and containment lanes retain their workflow dependencies; their work is
@@ -23,8 +24,9 @@ still have exactly ordered parents B/H, and local HEAD must equal M. The
 launcher and selector are read from that actual B, with no ancestry tolerance,
 alternate checkout, or substitution of a newly queried remote ref.
 
-A merge group binds
-B to `merge_group.base_sha` and M to `merge_group.head_sha`, which must match the
+The consumer also supports merge-group planning for diagnostics and legacy
+callers; the hosted merge-group workflow always runs full checks directly.
+In that diagnostic route, a merge group binds B to `merge_group.base_sha` and M to `merge_group.head_sha`, which must match the
 checkout. A two-parent queue candidate directly supplies H from its second
 parent. A single-parent squash queue uses its canonical reserved PR reference
 to resolve the exact pull-request head. A local merge-tree proof must equal the
@@ -38,7 +40,10 @@ Plan input, digest, or package mismatch also holds. Tracked files must be clean.
 
 The launcher comes from B and reads the accepted selector, policy, registry,
 schema, and exact trees. Candidate launcher bytes never select a plan. Offline
-planning uses caller-provided tools/cache without fetching or compilation.
+planning consumes locked metadata offline, without compilation. CI first
+prepares locked all-feature metadata for both exact snapshots using trusted
+base tooling, so a cold restored Cargo cache does not force a metadata HOLD.
+Preparation never replaces the final offline metadata evidence.
 
 Docs and release change detection use the same candidate first parent for
 their diff and trusted release policy. Wrong reviewed-head or checkout binding
@@ -66,12 +71,33 @@ checkout and refs stay unchanged; the clone is removed on success or failure.
 `target/ci-merge-plan/scoped-coverage/` retains the baseline LCOV and a ratchet
 receipt with base/candidate commits, identical arguments, counts and verdict.
 
-FULL uses the existing full entrypoint and configured absolute 85% floor.
-Empty selection also runs full checks
-rather than claiming an empty test PASS. Valid planner HOLD evidence remains
-HOLD while actual full validation runs as fallback; it never becomes a scoped
-plan PASS. A base without the launcher uses full checks without inventing READY.
-Invalid protocol or bindings fail before selected commands.
+On Linux PRs, FULL, empty selection and valid planner HOLD use the existing
+full entrypoint. The macOS PR lane opts into `NILS_CLI_PR_DEFER_FULL=1`:
+when a full stack would be required, it executes no full tests or coverage and
+records `DEFERRED_FULL` / `DEFERRED`, with the explicit explanation
+`deferred-full: runs in merge group`. The required job names stay `test_macos`
+and `coverage`; their step names, annotations and summaries distinguish this
+queue prerequisite from a full test pass. A macOS metadata HOLD remains HOLD
+in the plan artifact. Invalid protocol or candidate bindings still fail.
+The deferral opt-in has no effect for Linux or merge-group callers.
+
+SCOPED PRs still require the instrumented immutable-base coverage ratchet.
+`coverage` fails if Linux reports SCOPED but macOS attempts to defer that
+measurement. Missing LCOV or a decrease still fails. Merge groups always
+execute full tests and the absolute 85% floor, regardless of any PR deferral.
+A failed required queue check prevents the candidate from landing; the delivery
+owner investigates the original failure before retrying or requeueing. Nightly
+full-suite failures retain the existing alert and bisect/revert path.
+
+| Required name | SCOPED PR candidate | FULL/HOLD PR candidate | Merge group / nightly |
+| --- | --- | --- | --- |
+| `test` | Selected Linux checks and doctests | Full Linux fallback | Full Linux checks and doctests |
+| `test_macos` | Selected instrumented tests and base ratchet | Explicit deferred-full status | Full instrumented macOS tests, 85% floor |
+| `coverage` | Selected LCOV and containment success | Explicit deferred-full status and containment success | Full LCOV and containment success |
+
+Source review binds the PR candidate and selected evidence. Full macOS and
+coverage proof binds the queue candidate that will reach main. No required
+check name, ruleset or branch-protection configuration changes with this route.
 
 ## Evidence and provenance
 
@@ -79,15 +105,20 @@ Platform artifacts retain `target/ci-merge-plan/plan.json` when available and
 `validation.json`. The latter binds planning B/H/M/T, actual checkout/tree,
 captured event base, plan digest, effective scope,
 packages, fallback, runner, doctest choice, coverage policy/base or absolute
-floor, command, exit code, and PASS/FAIL. PASS and job output `validation_scope` are written only after the
-actual executor succeeds. Planner HOLD and passing full validation are separate
+floor, command, exit code, and PASS/FAIL. Existing executed receipts retain
+`nils-cli.merge-validation.v1`. Deferred receipts use the additive
+`nils-cli.merge-validation.v2` contract, with `status: DEFERRED`,
+`validation_scope: DEFERRED_FULL`, an empty command, no coverage policy/floor,
+and a `deferred_reason`. Exit 0 acknowledges deferral; it proves no tests ran.
+PASS is written only after the actual executor succeeds. Planner HOLD and passing full validation are separate
 facts. Executors do not receive `GITHUB_OUTPUT`; the consumer replaces the
 step's output with its authoritative scalar scope after success, or empties it
 after failure. Executor-written multiline framing cannot change that scope.
 
 Full-validation markers are emitted only for actual FULL validation or
-nightly/on-demand full routes, so scoped checks cannot prove full base CI to
-the release gate. Coverage still requires macOS LCOV and containment success.
+merge-group/nightly/on-demand full routes, so scoped or deferred checks cannot
+prove full base CI to the release gate. Executed coverage requires macOS LCOV
+and containment success; a deferred PR never downloads or publishes LCOV.
 
 ## Validation and measurement
 

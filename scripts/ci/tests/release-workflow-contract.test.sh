@@ -124,7 +124,7 @@ assert_contains .github/workflows/ci.yml "key: llvm-cov" \
   "the instrumented macOS job caches its llvm-cov dependencies under their own key"
 assert_contains .github/workflows/ci.yml "NILS_CLI_TEST_RUNNER: llvm-cov" \
   "the macOS full lane runs the instrumented tests that enforce the coverage floor"
-assert_contains .github/workflows/ci.yml "needs: [changes, test_macos, test_containment]" \
+assert_contains .github/workflows/ci.yml "needs: [changes, test, test_macos, test_containment]" \
   "coverage reports from the macOS instrumented run instead of repeating it"
 # test_containment is not a required check; only the coverage job's own guard
 # connects it to merge and the release gate, so assert inside that job.

@@ -454,11 +454,19 @@ Notes:
 
 ### 3.4 Full coverage flow (CI gate / explicit local parity)
 
-Coverage gate is mandatory in CI for non-doc changes and in explicit
-release-quality verification (total line coverage must stay `>= 85.00%`).
-In CI, the `test_macos` job runs the workspace tests once under
-`NILS_CLI_TEST_RUNNER=llvm-cov`, which enforces the floor, and the `coverage`
-job publishes the summary from that run's LCOV artifact.
+The full coverage gate is mandatory in merge-group, nightly, on-demand and
+explicit release-quality verification (total line coverage stays `>= 85.00%`).
+On those CI events, `test_macos` runs the workspace tests once under
+`NILS_CLI_TEST_RUNNER=llvm-cov`, which enforces the floor, and `coverage`
+publishes the summary from that run's LCOV artifact.
+PRs run the trusted affected scope. Selected macOS tests retain the immutable-base
+coverage no-decrease ratchet. When the macOS PR plan needs FULL or falls back
+from HOLD, the required `test_macos` and `coverage` names instead report
+`deferred-full: runs in merge group`, with a DEFERRED receipt and no full test
+or coverage measurement. Linux retains its full fallback. Full queue checks
+must pass before main advances; a deferred PR status is no full-suite proof.
+See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)
+for the event/check matrix and receipt versions.
 The Linux cgroup containment checks run in their own
 `test_containment` job beside `test`; `coverage` requires it to succeed.
 Normal local development does not need to run coverage before opening a PR:
