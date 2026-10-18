@@ -12,6 +12,8 @@ mod codex_notify;
 mod coordination;
 #[path = "integration/coordination_server.rs"]
 mod coordination_server;
+#[path = "integration/delete_guards.rs"]
+mod delete_guards;
 #[path = "integration/diagnose.rs"]
 mod diagnose;
 #[path = "integration/lineage.rs"]
@@ -51,3 +53,6 @@ mod origin;
 
 #[path = "integration/mailbox_reminder.rs"]
 mod mailbox_reminder;
+
+#[path = "integration/delete_escaped.rs"]
+mod delete_escaped;

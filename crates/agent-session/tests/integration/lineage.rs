@@ -645,6 +645,41 @@ fn delete_refuses_a_session_whose_effective_children_remain() {
         "fake tmux prewarm exited unexpectedly: {prewarm:?}"
     );
     for id in ["guard-parent", "guard-child", "guard-steward"] {
+        // The shared tmux fixture starts a real marker-bearing pane. Stop it
+        // before modeling an absent runtime so deletion still verifies truthfully.
+        let target = fixture.record(id)["tmux_session"]
+            .as_str()
+            .expect("tmux session")
+            .to_owned();
+        let pane_pid = fs::read_to_string(format!("{}.panes", fixture.tmux_log))
+            .expect("pane identities")
+            .lines()
+            .find_map(|line| {
+                let fields: Vec<_> = line.split('\t').collect();
+                (fields.first() == Some(&target.as_str())).then(|| fields[3].to_owned())
+            })
+            .expect("owned pane PID");
+        let stopped = std::process::Command::new(&fixture.tmux)
+            .env("AGENT_SESSION_FAKE_TMUX_LOG", &fixture.tmux_log)
+            .args(["kill-session", "-t", &target])
+            .output()
+            .expect("stop fixture pane");
+        assert!(stopped.status.success(), "{stopped:?}");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let state = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pane_pid])
+                .output()
+                .expect("probe stopped pane");
+            let state = String::from_utf8_lossy(&state.stdout);
+            if state.trim().is_empty()
+                || (cfg!(target_os = "linux") && state.trim_start().starts_with('Z'))
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "pane is still live");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let path = Path::new(&fixture.state)
             .join("sessions")
             .join(id)

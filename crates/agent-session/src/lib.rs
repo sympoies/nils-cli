@@ -22,8 +22,13 @@ mod conversation;
 #[doc(hidden)]
 pub mod coordination;
 mod coordination_routing;
+mod delete_recovery;
+pub use delete_recovery::{DeleteResult, ProcessInventory};
 mod diagnose;
 mod digest_format;
+use delete_recovery::{
+    capture_tmux_runtime_identity, finish_session_delete, run_delete, session_termination_error,
+};
 mod display_metadata;
 mod forge_identity;
 mod launch_env;
@@ -899,21 +904,6 @@ fn render_forwarded_setup_text(result: &Value) -> String {
     format!("{product} activity {action}: {status} (owner: agent-hook)\n")
 }
 
-fn run_delete(context: &CliContext, args: cli::DeleteArgs) -> i32 {
-    match delete_session_guarding_children(
-        context,
-        &board::machine_identity(None, context),
-        &args.id,
-        resolve_tmux_bin(args.tmux_bin.as_deref()),
-        args.orphan_children,
-    ) {
-        Ok(result) => {
-            render_single_success(DELETE_COMMAND, args.format, &result, render_delete_text)
-        }
-        Err(err) => render_error(DELETE_COMMAND, args.format, err),
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct CliContext {
     pub state_dir: PathBuf,
@@ -1691,23 +1681,6 @@ pub(crate) struct DshHistoryResumeArgs {
     pub(crate) profile_graceful_shutdown: Option<String>,
     pub(crate) codex_usage_account: Option<String>,
     pub(crate) initial_lineage: InitialLineage,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DeleteResult {
-    /// The children check of a user delete or archive
-    /// (`session-lineage-work-v1`); absent on internal cleanup.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub children: Option<lineage::ChildrenCheck>,
-    id: String,
-    tmux_session: String,
-    killed: bool,
-    pub deleted: bool,
-    session_dir: String,
-    #[serde(skip)]
-    pub cleanup_pending: bool,
-    #[serde(skip)]
-    registry_fence: SessionRegistryFence,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -8361,36 +8334,6 @@ fn ensure_session_deletion_supported(record: &SessionRecord) -> Result<(), CliEr
     Ok(())
 }
 
-fn finish_session_delete(
-    context: &CliContext,
-    record: SessionRecord,
-    session_dir: PathBuf,
-    registry_fence: SessionRegistryFence,
-    close_reason: board::CloseReason,
-) -> Result<DeleteResult, CliError> {
-    ensure_session_deletion_supported(&record)?;
-    ensure_session_lifecycle_mutation_allowed(context, &record)
-        .map_err(|error| contention::close_error(error, close_reason))?;
-    // Built while the record's state is readable; appended to the closed
-    // ledger only after the removal commits, and never failing it.
-    let closed = board::closed_record(context, &record, close_reason);
-    coordination::revoke(context, &record)
-        .map_err(|error| contention::close_error(error, close_reason))?;
-    codex_app_server::cleanup_runtime_files(context, &record)?;
-    let cleanup_pending = commit_session_directory_delete(context, &record.id, &session_dir)?;
-    board::record_close(context, closed);
-    Ok(DeleteResult {
-        children: None,
-        id: record.id,
-        tmux_session: record.tmux_session,
-        killed: true,
-        deleted: true,
-        session_dir: display_path(&session_dir),
-        cleanup_pending,
-        registry_fence,
-    })
-}
-
 fn commit_session_directory_delete(
     context: &CliContext,
     id: &str,
@@ -8632,24 +8575,6 @@ impl SessionTerminationFailure {
             _ => operation.retry_action(),
         }
     }
-}
-
-fn session_termination_error(
-    record: &SessionRecord,
-    reason: SessionTerminationFailure,
-    operation: SessionTerminationOperation,
-) -> CliError {
-    CliError::runtime(
-        "session-termination-failed",
-        format!("{}; session metadata was retained", reason.message()),
-        Some(json!({
-            "id": record.id,
-            "tmux_session": record.tmux_session,
-            "reason": reason.reason(),
-            "retryable": reason.retryable(),
-            "action": reason.action(operation),
-        })),
-    )
 }
 
 /// Bounded secondary state describing failed-launch cleanup.
@@ -9536,114 +9461,6 @@ pub(crate) mod tmux_probe_fixture {
     }
 
     include!("tests/tmux_probe_identity.rs");
-}
-
-fn capture_tmux_runtime_identity(
-    context: &CliContext,
-    record: &SessionRecord,
-    tmux_bin: &Path,
-    timeout: Duration,
-) -> Result<TmuxRuntimeProbe, SessionTerminationFailure> {
-    #[cfg(test)]
-    if let Some(probe) = tmux_probe_fixture::read(tmux_bin) {
-        return probe;
-    }
-    let launch_id = record
-        .runtime
-        .as_ref()
-        .map(|runtime| runtime.launch_id.as_str())
-        .filter(|launch_id| !launch_id.is_empty())
-        .map(ToOwned::to_owned);
-    let mut command = ProcessCommand::new(tmux_bin);
-    command
-        .env("LC_ALL", "C")
-        .arg("display-message")
-        .arg("-p")
-        .arg("-t")
-        .arg(managed_tmux_pane_target(&record.tmux_session))
-        .arg(TMUX_RUNTIME_IDENTITY_FORMAT);
-    let output = run_output_with_timeout(command, timeout)
-        .map_err(|_| SessionTerminationFailure::VerificationFailed)?;
-    if !output.status.success() {
-        return if tmux_output_reports_absent(&output) {
-            Ok(TmuxRuntimeProbe::Stopped)
-        } else {
-            Err(SessionTerminationFailure::VerificationFailed)
-        };
-    }
-    let output = String::from_utf8(output.stdout)
-        .map_err(|_| SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-    if output.trim().is_empty() {
-        let exact_session_target = format!("={}", record.tmux_session);
-        return match verified_tmux_status_with_timeout(tmux_bin, &exact_session_target, timeout)
-            .as_str()
-        {
-            "stopped" => Ok(TmuxRuntimeProbe::Stopped),
-            "running" => Err(SessionTerminationFailure::RuntimeIdentityUnavailable),
-            _ => Err(SessionTerminationFailure::VerificationFailed),
-        };
-    }
-    let (session_id, pane_id, pane_pid) = parse_tmux_runtime_identity_fields(&output)
-        .ok_or(SessionTerminationFailure::RuntimeIdentityUnavailable)?;
-    #[cfg(target_os = "linux")]
-    let (pane_start_time_ticks, pane_pidfd) = pin_live_linux_process_incarnation(pane_pid)?;
-    #[cfg(target_os = "linux")]
-    let pane_start_time = Some(pane_start_time_ticks);
-    #[cfg(not(target_os = "linux"))]
-    let pane_start_time = None;
-
-    let expected_state_dir = display_path(&context.state_dir);
-    let expected = [
-        ("AGENT_SESSION_ID", record.id.as_str()),
-        ("AGENT_SESSION_STATE_DIR", expected_state_dir.as_str()),
-    ];
-    for (name, expected_value) in expected {
-        let value = tmux_environment_value(tmux_bin, session_id, name, timeout)?;
-        if value != expected_value {
-            return Err(SessionTerminationFailure::RuntimeIdentityMismatch);
-        }
-    }
-    if let Some(expected_launch_id) = launch_id.as_deref()
-        && tmux_environment_value(tmux_bin, session_id, "AGENT_SESSION_RUNTIME_ID", timeout)?
-            != expected_launch_id
-    {
-        return Err(SessionTerminationFailure::RuntimeIdentityMismatch);
-    }
-    let process_group_id = process_group_id(pane_pid)?;
-    if process_group_id <= 1 || process_group_id == unsafe { libc::getpgrp() } {
-        return Err(SessionTerminationFailure::RuntimeIdentityUnavailable);
-    }
-    let process_session_id = process_session_id(pane_pid)?;
-    let process_session_members = process_session_members(process_session_id, pane_pid)?;
-    let control_group = linux_process_control_group(pane_pid)?;
-    #[cfg(target_os = "linux")]
-    let cgroup_mount = control_group
-        .as_ref()
-        .and_then(|_| capture_linux_cgroup_mount_identity());
-    #[cfg(not(target_os = "linux"))]
-    let cgroup_mount = None;
-    let pid_namespace = linux_process_identity_namespace(pane_pid)?;
-
-    if !tmux_pane_identity_matches(tmux_bin, record, session_id, pane_id, pane_pid, timeout) {
-        return Err(SessionTerminationFailure::RuntimeIdentityMismatch);
-    }
-    #[cfg(target_os = "linux")]
-    verify_pinned_linux_process_incarnation(pane_pid, pane_start_time_ticks, &pane_pidfd)?;
-    Ok(TmuxRuntimeProbe::Running(Box::new(TmuxRuntimeIdentity {
-        macos_boot_id: capture_macos_boot_id(),
-        launch_id,
-        session_id: session_id.to_string(),
-        pane_id: pane_id.to_string(),
-        pane_pid,
-        pane_start_time,
-        process_group_id: Some(process_group_id),
-        process_session_id,
-        process_session_members,
-        control_group_members: Vec::new(),
-        control_group,
-        cgroup_mount,
-        pid_namespace,
-    })))
 }
 
 fn tmux_environment_value(
@@ -13612,22 +13429,6 @@ fn render_doctor_text(result: &activity::DoctorResult) -> String {
     text
 }
 
-fn render_delete_text(result: &DeleteResult) -> String {
-    let mut text = format!(
-        "deleted {} (tmux stopped: {})\n",
-        result.id,
-        if result.killed { "yes" } else { "no" }
-    );
-    for child in result
-        .children
-        .iter()
-        .flat_map(|children| &children.orphaned)
-    {
-        text.push_str(&format!("orphaned child: {}\n", child.session_id));
-    }
-    text
-}
-
 fn local_attach_command(tmux_session: &str) -> String {
     format!("tmux attach -t {}", shell_words::quote(tmux_session))
 }
@@ -13721,13 +13522,12 @@ mod provider_resume_import_tests;
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentKind, CliContext, DeleteResult, RecordRequest, SessionRegistryFence,
-        TmuxProcessIdentity, TmuxRuntimeIdentity, acquire_session_record_lock,
-        acquire_session_record_lock_timed, create_record, delete_session_with_timeouts,
-        kill_tmux_session_with_timeout, live_status_with_timeout, load_session_record, pane_drawn,
-        parse_pane_cursor, persist_tmux_runtime_identity, render_delete_text,
-        resolve_agent_session_executable_from, resolve_session_id, session_dir,
-        strip_trailing_blank_lines, tmux_launch_may_have_created_runtime,
+        AgentKind, CliContext, RecordRequest, SessionRegistryFence, TmuxProcessIdentity,
+        TmuxRuntimeIdentity, acquire_session_record_lock, acquire_session_record_lock_timed,
+        create_record, delete_session_with_timeouts, kill_tmux_session_with_timeout,
+        live_status_with_timeout, load_session_record, pane_drawn, parse_pane_cursor,
+        persist_tmux_runtime_identity, resolve_agent_session_executable_from, resolve_session_id,
+        session_dir, strip_trailing_blank_lines, tmux_launch_may_have_created_runtime,
         try_acquire_session_record_lock, write_session_record,
     };
 
@@ -19460,30 +19260,6 @@ exit 42
             "a longer prefix match must never be killed"
         );
         assert!(!session_dir(&context, &id).exists());
-    }
-
-    #[test]
-    fn delete_text_describes_verified_stop_instead_of_a_kill_command() {
-        let result = DeleteResult {
-            children: None,
-            id: "stopped-session".to_string(),
-            tmux_session: "hs-codex-stopped-session".to_string(),
-            killed: true,
-            deleted: true,
-            session_dir: "/state/sessions/stopped-session".to_string(),
-            cleanup_pending: false,
-            registry_fence: SessionRegistryFence {
-                session_id: "stopped-session".to_string(),
-                tmux_session: "hs-codex-stopped-session".to_string(),
-                runtime_launch_id: None,
-                runtime_generation: None,
-            },
-        };
-
-        assert_eq!(
-            render_delete_text(&result),
-            "deleted stopped-session (tmux stopped: yes)\n"
-        );
     }
 
     #[test]

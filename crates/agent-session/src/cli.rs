@@ -1689,6 +1689,10 @@ pub struct ServeArgs {
 
 #[derive(Debug, Args)]
 pub struct DeleteArgs {
+    /// Stop only the verified tmux target and delete state, leaving processes running.
+    #[arg(long)]
+    pub leave_processes: bool,
+
     /// Session id.
     #[arg(value_name = "ID")]
     pub id: String,
