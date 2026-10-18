@@ -440,12 +440,12 @@ fn console_operation_capacity_classifies_definite_refusals_as_terminal() {
 }
 
 #[test]
-fn console_operation_capacity_expires_old_ambiguity_and_preserves_recent_evidence() {
+fn console_operation_capacity_reclaims_old_and_recent_ambiguity_with_replay_fence() {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
-    for (started_ms, expected) in [(now_ms - 8 * 24 * 60 * 60 * 1000, 201), (now_ms, 500)] {
+    for started_ms in [now_ms - 8 * 24 * 60 * 60 * 1000, now_ms - 10_000] {
         let fixture = Fixture::new();
         let aggregator = Aggregator::start();
         let serve = fixture.serve(&[], Some(&aggregator));
@@ -462,21 +462,16 @@ fn console_operation_capacity_expires_old_ambiguity_and_preserves_recent_evidenc
             &serve,
             json!({"operation_id":operation_for(5000),"session":{"agent":"claude"}}),
         );
-        assert_eq!(status, expected, "{result}");
-        if expected == 500 {
-            assert_eq!(result["error"]["code"], "console-start-operation-capacity");
-            assert!(aggregator.seen().is_empty());
-        } else {
-            let expired =
-                uuid::Uuid::from_u128(((started_ms as u128) << 80) | (7 << 76) | (2 << 62) | 1)
-                    .to_string();
-            let (status, result) = route(
-                &serve,
-                json!({"operation_id":expired,"session":{"agent":"claude"}}),
-            );
-            assert_eq!(status, 400, "{result}");
-            assert_eq!(result["error"]["code"], "console-start-operation-expired");
-            assert_eq!(aggregator.seen().len(), 1);
-        }
+        assert_eq!(status, 201, "{result}");
+        let expired =
+            uuid::Uuid::from_u128(((started_ms as u128) << 80) | (7 << 76) | (2 << 62) | 1)
+                .to_string();
+        let (status, result) = route(
+            &serve,
+            json!({"operation_id":expired,"session":{"agent":"claude"}}),
+        );
+        assert_eq!(status, 400, "{result}");
+        assert_eq!(result["error"]["code"], "console-start-operation-expired");
+        assert_eq!(aggregator.seen().len(), 1);
     }
 }

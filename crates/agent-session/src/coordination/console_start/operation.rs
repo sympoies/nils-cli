@@ -100,6 +100,13 @@ impl Receipt {
         context: &CliContext,
         result: &Result<Value, CliError>,
     ) -> Result<(), CliError> {
+        let _lock = lock_private_store(context, "console-start-operations.lock")?;
+        let path = coordination_root(context)?.join(format!("{}.json", self.name));
+        // Pruning publishes its rejection fence before removing the reservation.
+        // Serialize with that removal so a late response cannot consume a reclaimed slot.
+        if !path.try_exists().map_err(|_| store_unavailable())? {
+            return Ok(());
+        }
         let created = match result {
             Ok(value) => Some(value["session"].clone()),
             Err(error) => error
@@ -214,4 +221,48 @@ fn identifier(value: &Value) -> Option<&str> {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn late_completion_cannot_resurrect_a_pruned_receipt() {
+        let root = tempfile::tempdir().unwrap();
+        let context = CliContext {
+            state_dir: root.path().to_path_buf(),
+            host: None,
+        };
+        let operation = uuid::Uuid::now_v7().to_string();
+        let (mut receipt, submitted) = Receipt::begin(
+            &context,
+            "caller",
+            "launch",
+            &operation,
+            &json!({"session":{"agent":"claude"}}),
+            "target",
+            "2030-01-01T00:00:00Z",
+        )
+        .unwrap();
+        assert!(submitted);
+        let directory = coordination_root(&context).unwrap();
+        let path = directory.join(format!("{}.json", receipt.name));
+        // Model pruning after the operation's admission window expires while its response is pending.
+        let cutoff = super::super::retention::timestamp_ms(&operation).unwrap();
+        write_atomic(
+            &directory.join("console-start-expiry-watermark"),
+            &serde_json::to_vec(&cutoff).unwrap(),
+            SECRET_FILE_MODE,
+        )
+        .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        receipt
+            .finish(&context, &Ok(json!({"session":{"id":"created-child"}})))
+            .unwrap();
+        assert!(
+            !path.exists(),
+            "a late result must not recreate an evicted receipt and exceed capacity"
+        );
+    }
 }

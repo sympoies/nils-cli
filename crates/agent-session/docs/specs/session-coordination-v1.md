@@ -1795,9 +1795,9 @@ network call; no coordination lock spans network I/O.
 
 Unknown UUIDv7 IDs must
 be at most seven days old and no more than one minute ahead of the daemon's
-clock. At 1024 receipts the store prunes up to 256 oldest terminal receipts
-(`created` or `not_created`) or ambiguous receipts older than seven days.
-Recent ambiguous receipts are preserved.
+clock. At or above 1024 receipts the store prunes the oldest receipts in
+batches of up to 256, including recent ambiguous outcomes when necessary.
+Admission repeats bounded maintenance batches until a slot is available.
 
 A durable timestamp watermark is
 advanced before deletion: unknown IDs at or below it return
@@ -1805,9 +1805,13 @@ advanced before deletion: unknown IDs at or below it return
 retained receipts can still be reconciled. Thus retention can shorten the
 reconciliation window under sustained volume without permitting a duplicate.
 
-If all slots contain recent ambiguous evidence, `console-start-operation-capacity`
-is an actionable temporary refusal; the hint requests reconciliation of those
-operations or seven-day expiry. Definite typed pre-create refusals are terminal
+Late completion writes take the same short store lock as pruning. If pruning
+already published its watermark and removed a reservation, completion reports
+the created child without recreating the receipt or consuming a reclaimed slot.
+
+Capacity pressure can expire ambiguous reconciliation evidence; its persisted
+watermark still prevents any evicted operation from being submitted again.
+Definite typed pre-create refusals are terminal
 `not_created` outcomes. Unknown receipts or another caller incarnation return
 `console-start-operation-not-found` on an explicit reconciliation. Reconciliation uses
 HTTP 201 and the existing Console start schema with the additive

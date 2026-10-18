@@ -62,9 +62,6 @@ pub(super) fn run(
     });
     if let Err(error) = &mut result {
         let action = match error.code() {
-            "console-start-operation-capacity" => {
-                "reconcile recent ambiguous starts or wait for seven-day receipt expiry".to_string()
-            }
             "console-start-operation-expired" => {
                 "inspect Console for the earlier child before using a fresh UUIDv7".to_string()
             }
