@@ -146,8 +146,12 @@ validations_catalog:
     rule: "search refs-to <ref> parses as a GitHub URL, owner/name#number, or #number / number"
     error_kind: ref_invalid
     exit: DATA
+  test_first_config:
+    rule: "when [test_first].require resolves true, an invalid require_kinds list in any configuration layer blocks delivery with an actionable error before evidence selection can silently fall back"
+    error_kind: invalid_test_first_config
+    exit: DATA
   test_first_evidence:
-    rule: "when [test_first].require resolves true (repo or global config) and --kind is feature/bug, --test-first-evidence <dir> must point at a verified v2 record with a testable classification, contract delta, affected-test decision, meaningful failing evidence or explicit waiver, scoped passing validation, residual-gap declaration, immutable repository/baseline subject, and a latest delivery head/tree/diff attestation matching the selected ref and provider PR/MR head OID through merge CAS; docs/chore/ci/refactor/test are exempt"
+    rule: "when [test_first].require resolves true (repo or global config) and --kind belongs to [test_first].require_kinds (default: feature/bug), --test-first-evidence <dir> must point at a verified v2 record with a testable classification, contract delta, affected-test decision, meaningful failing evidence or explicit waiver, scoped passing validation, residual-gap declaration, immutable repository/baseline subject, and a latest delivery head/tree/diff attestation matching the selected ref and provider PR/MR head OID through merge CAS; unselected kinds are exempt; an empty list selects none"
     error_kind: test_first_evidence_required | test_first_evidence_v1 | test_first_evidence_classification | test_first_evidence_incomplete | test_first_evidence_unbound | test_first_evidence_subject_mismatch | test_first_evidence_provider_head_unavailable | test_first_evidence_provider_head_mismatch | test_first_evidence_unreadable
     exit: DATA
 
@@ -365,7 +369,7 @@ operations:
       - { name: --label,       type: list<string>,   default: [] }
       - { name: --label-catalog, type: path,          required: false }
       - { name: --strict-labels, type: bool,          default: false }
-      - { name: --test-first-evidence, type: path,    required: false } # required only when [test_first].require resolves true for feature/bug
+      - { name: --test-first-evidence, type: path,    required: false } # required only when [test_first].require resolves true for a selected require_kinds entry (default: feature/bug)
     validations:
       - branch_name
       - branch_kind_matches
@@ -378,6 +382,7 @@ operations:
       - worktree_clean
       - head_pushed
       - qualified_github_head # only for GitHub <user>:<branch>; binds upstream repository + provider branch/repository/SHA read-back
+      - test_first_config # rejects invalid kind lists when the gate is enabled
       - test_first_evidence # only when [test_first].require resolves true
       - delivery_base_matches # provider read-back must equal the requested --base
     backends:
@@ -1916,7 +1921,7 @@ macros:
       # `create` in data.steps[] (payload is the PR's pr.view shape, body
       # re-validated against the body-section gate). When [test_first].require
       # resolves true the adopt path also enforces the test_first_evidence
-      # validation, so an adopted feature/bug PR cannot bypass the gate. The
+      # validation, so an adopted PR of a selected kind cannot bypass the gate. The
       # lifecycle then resumes at wait_checks. The lookup is not a recorded step.
       # GitHub qualified <user>:<branch> lookup instead lists a bounded open
       # set without --head and selects exact branch + headRepository identity;

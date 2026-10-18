@@ -32,6 +32,9 @@ use toml::Value;
 
 use crate::cli::parse_duration;
 
+mod test_first;
+pub use test_first::TestFirstPolicy;
+
 /// File name searched upward from CWD.
 pub const CONFIG_FILE_NAME: &str = ".forge-cli.toml";
 
@@ -54,7 +57,7 @@ const KNOWN_SECTIONS: &[&str] = &[
 const KNOWN_MERGE_KEYS: &[&str] = &["method", "delete_branch", "hold_labels"];
 const KNOWN_BODY_KEYS: &[&str] = &["summary_heading", "test_plan_heading"];
 const KNOWN_BRANCH_KEYS: &[&str] = &["feature_prefix", "bug_prefix"];
-const KNOWN_TEST_FIRST_KEYS: &[&str] = &["require"];
+const KNOWN_TEST_FIRST_KEYS: &[&str] = &["require", "require_kinds"];
 const KNOWN_CHECKS_KEYS: &[&str] = &[
     "timeout",
     "interval",
@@ -197,9 +200,11 @@ pub struct ForgeConfig {
     pub inbox_cache_max_age: Option<Duration>,
     pub inbox_no_cache: Option<bool>,
     /// `[test_first].require` — when true, `pr create` / `pr deliver` for
-    /// feature/bug kinds must carry verified test-first evidence (a failing
+    /// selected kinds must carry verified test-first evidence (a failing
     /// test or explicit waiver plus a passing final validation).
     pub test_first_required: Option<bool>,
+    /// Whole-list override; absent inherits, empty selects no kinds.
+    pub test_first_require_kinds: Option<Vec<nils_common::git::PrKind>>,
     pub review_convergence_required: Option<bool>,
     pub review_convergence_quiet_period: Option<Duration>,
     pub review_convergence_timeout: Option<Duration>,
@@ -434,6 +439,9 @@ impl ForgeConfig {
             inbox_cache_max_age: top.inbox_cache_max_age.or(self.inbox_cache_max_age),
             inbox_no_cache: top.inbox_no_cache.or(self.inbox_no_cache),
             test_first_required: top.test_first_required.or(self.test_first_required),
+            test_first_require_kinds: top
+                .test_first_require_kinds
+                .or(self.test_first_require_kinds),
             review_convergence_required,
             review_convergence_quiet_period,
             review_convergence_timeout: top
@@ -749,6 +757,21 @@ fn parse_test_first(table: &toml::map::Map<String, Value>, cfg: &mut ForgeConfig
                     .warnings
                     .push("invalid-config-value:test_first.require:not_a_bool".to_string()),
             },
+            "require_kinds" => {
+                let kinds = value.as_array().and_then(|values| {
+                    values
+                        .iter()
+                        .map(|value| value.as_str().and_then(nils_common::git::PrKind::parse))
+                        .collect::<Option<Vec<_>>>()
+                });
+                match kinds {
+                    Some(kinds) => cfg.test_first_require_kinds = Some(kinds),
+                    None => cfg.warnings.push(
+                        "invalid-config-value:test_first.require_kinds:expected_array_of_pr_kinds"
+                            .into(),
+                    ),
+                }
+            }
             _ => unreachable!("key filtered above"),
         }
     }
