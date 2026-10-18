@@ -26,6 +26,8 @@ mod readiness;
 mod resume_contention;
 #[path = "integration/resume_mail.rs"]
 mod resume_mail;
+#[path = "integration/resume_status.rs"]
+mod resume_status;
 #[path = "integration/retitle_v3.rs"]
 mod retitle_v3;
 #[path = "integration/work_context_admission.rs"]

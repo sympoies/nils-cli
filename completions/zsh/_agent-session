@@ -33,7 +33,7 @@ _agent-session() {
             (start)
 _arguments "${_arguments_options[@]}" : \
 '--workspace=[Public workspace slug; inherits the managed parent workspace when omitted]:SLUG:_default' \
-'--agent=[Agent to run]:AGENT:((codex\:""
+'--agent=[Agent to run; not used when reconciling a Console operation]:AGENT:((codex\:""
 claude\:""
 dsh\:"DeepSeek Harness, launched through a launch profile or an external runtime"))' \
 '--cwd=[Working directory for the agent session. Defaults to the current directory]:PATH:_files -/' \
@@ -49,6 +49,7 @@ dsh\:"DeepSeek Harness, launched through a launch profile or an external runtime
 enforce\:"Require authenticated claims and mutation admission leases"
 off\:"Disable agent-session collision warnings and admission"))' \
 '--paste-delay-ms=[Delay before pasting the initial prompt into the tmux pane]:PASTE_DELAY_MS:_default' \
+'--operation-id=[Time-bearing UUIDv7 for a Console start; replay never creates another session]:UUID:_default' \
 '--machine=[Target machine for --via-console, as Agent Console names it. Defaults to this daemon'\''s machine]:MACHINE:_default' \
 '--account=[Account for --via-console, as the target daemon'\''s account broker names it\: a Codex account for --agent codex or a Claude account for --agent claude]:NAME:_default' \
 '--agent-profile=[Launch profile for --via-console, as the target daemon advertises it. A profile owns its launch command, so Agent Console ignores --agent-arg with it]:ID:_default' \
@@ -63,6 +64,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
 '--prompt-stdin[Read prompt from stdin]' \
 '(--id --tmux-bin --agent-bin --paste-delay-ms --coordination-mode)--via-console[Start the session through Agent Console, owned by the Console owner of the managed session this command runs in. Requires AGENT_SESSION_ID, its capability, and a daemon with federation configured]' \
+'(--prompt --prompt-file --prompt-stdin --env)--reconcile[Inspect a prior Console start operation without creating a session]' \
 '--no-parent[Start a new root session\: do not record the managed session this command runs in as the parent]' \
 '--no-inherit-work[Do not inherit the parent session'\''s program and issues]' \
 '-h[Print help (see more with '\''--help'\'')]' \

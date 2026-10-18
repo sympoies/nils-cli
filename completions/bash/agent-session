@@ -2929,7 +2929,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__start)
-            opts="-h --workspace --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --tmux-bin --agent-bin --agent-arg --env --coordination-mode --paste-delay-ms --via-console --machine --account --agent-profile --no-parent --role --title-mode --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
+            opts="-h --workspace --agent --cwd --title --id --prompt --prompt-file --prompt-stdin --tmux-bin --agent-bin --agent-arg --env --coordination-mode --paste-delay-ms --via-console --operation-id --reconcile --machine --account --agent-profile --no-parent --role --title-mode --forge-initiator --program --issue --no-inherit-work --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3020,6 +3020,10 @@ _agent__session() {
                     return 0
                     ;;
                 --paste-delay-ms)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --operation-id)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

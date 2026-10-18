@@ -549,72 +549,11 @@ fn start_via_console(
     args: cli::StartArgs,
     work: &lineage::WorkRequest,
 ) -> Result<Value, CliError> {
-    let cwd = absolute_path(args.cwd.as_deref().unwrap_or(Path::new(".")))?;
-    let mut session = json!({ "agent": args.agent.as_str(), "cwd": cwd.to_string_lossy() });
-    if let Some(workspace) = &args.workspace {
-        origin::validate_workspace(workspace)?;
-        session["workspace"] = json!(workspace);
-    }
-    let launch_env = launch_env::from_flags(&args.launch_env)?;
-    if !launch_env.is_empty() {
-        session["launch_env"] = json!(launch_env);
-    }
-    if args.title_mode == "pinned" {
-        session["title_mode"] = json!(args.title_mode);
-    }
-    if let Some(title) = &args.title {
-        session["title"] = json!(title);
-    }
-    if let Some(prompt) = read_prompt(&args.prompt, args.prompt_file.as_deref(), args.prompt_stdin)?
-    {
-        session["prompt"] = json!(prompt);
-    }
-    if !args.agent_args.is_empty() {
-        session["agent_args"] = json!(args.agent_args);
-    }
-    if let Some(profile) = &args.agent_profile {
-        session["agent_profile"] = json!(profile);
-    }
-    if let Some(account) = &args.account {
-        let field = match args.agent {
-            cli::AgentKind::Codex => "codex_account",
-            cli::AgentKind::Claude => "claude_account",
-            _ => {
-                return Err(CliError::usage(
-                    "console-start-account-unsupported",
-                    "--account selects a Codex or Claude account and needs --agent codex or --agent claude",
-                    None,
-                ));
-            }
-        };
-        session[field] = json!(account);
-    }
-    let lineage = coordination::console_start::ChildLineage {
-        no_parent: args.no_parent,
-        work: work.clone(),
-        role: args.role.clone(),
-    };
-    coordination::console_start::cli_start(
-        context,
-        None,
-        args.machine.as_deref(),
-        session,
-        &lineage,
-    )
+    coordination::console_start::start_args(context, args, work)
 }
 
 fn render_console_started_text(result: &Value) -> String {
-    let session = &result["session"];
-    let id = session["id"].as_str().unwrap_or_default();
-    let mut text = format!(
-        "started {} session {id} on {} through Agent Console\n",
-        session["agent"].as_str().unwrap_or_default(),
-        result["machine"].as_str().unwrap_or_default(),
-    );
-    if let Some(command) = session["attach_command"].as_str() {
-        text.push_str(&format!("attach: {command}\n"));
-    }
-    text
+    coordination::console_start::render_text(result)
 }
 
 fn run_one_shot(context: &CliContext, args: cli::RunArgs) -> i32 {
@@ -5547,8 +5486,8 @@ fn resume_session_locked(
 ) -> Result<ResumeSessionOutcome, CliError> {
     ensure_session_lifecycle_mutation_allowed(context, &record)?;
     let _worktree_lifecycle = acquire_worktree_lifecycle(context, Path::new(&record.cwd))?;
-    match session_status(context, tmux_bin, &record).as_str() {
-        "running" => {
+    match restart::resume_status(tmux_bin, &record) {
+        restart::ResumeStatus::Running => {
             return Ok(ResumeSessionOutcome {
                 session: session_view(
                     context,
@@ -5564,11 +5503,11 @@ fn resume_session_locked(
                 session_generation: record.runtime.as_ref().map(|runtime| runtime.generation),
             });
         }
-        "unknown" => {
+        status @ restart::ResumeStatus::Unknown { .. } => {
             return Err(CliError::runtime(
                 "session-status-unknown",
                 format!("session status could not be checked: {}", record.id),
-                Some(json!({ "id": record.id })),
+                Some(status.retry_details(&record)),
             ));
         }
         _ => {}

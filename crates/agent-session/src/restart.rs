@@ -80,6 +80,75 @@ fn render_text(receipt: &Receipt) -> String {
     )
 }
 
+pub(crate) enum ResumeStatus {
+    Running,
+    Stopped,
+    Unknown { retryable: bool },
+}
+
+impl ResumeStatus {
+    pub(crate) fn retry_details(self, record: &SessionRecord) -> serde_json::Value {
+        let retryable = matches!(self, Self::Unknown { retryable: true });
+        json!({
+            "id": record.id,
+            "retryable": retryable,
+            "next_action": if retryable { "retry-resume" } else { "inspect-tmux" },
+        })
+    }
+}
+
+fn resume_probe(tmux: &Path, record: &SessionRecord, timeout: Duration) -> ResumeStatus {
+    #[cfg(test)]
+    if let Some(status) = crate::tmux_probe_fixture::read_status(tmux) {
+        return if status == "running" {
+            ResumeStatus::Running
+        } else {
+            ResumeStatus::Stopped
+        };
+    }
+    let mut command = ProcessCommand::new(tmux);
+    command.env("LC_ALL", "C").args([
+        "has-session",
+        "-t",
+        &crate::exact_tmux_target(&record.tmux_session),
+    ]);
+    match crate::run_output_with_timeout(command, timeout) {
+        Ok(output) if output.status.success() => ResumeStatus::Running,
+        Ok(output) if crate::tmux_output_reports_absent(&output) => ResumeStatus::Stopped,
+        Ok(output) => ResumeStatus::Unknown {
+            retryable: output.status.code() == Some(1)
+                && String::from_utf8_lossy(&output.stderr)
+                    .lines()
+                    .any(|line| line.trim() == "server exited unexpectedly"),
+        },
+        Err(error) => ResumeStatus::Unknown {
+            retryable: error.kind() == std::io::ErrorKind::TimedOut,
+        },
+    }
+}
+
+/// Resolve transient tmux shutdown uncertainty before deciding whether resume
+/// is a no-op or may enter the existing stopped-runtime verification path.
+/// The caller holds the session record lock throughout this bounded wait.
+pub(crate) fn resume_status(tmux: &Path, record: &SessionRecord) -> ResumeStatus {
+    if crate::recorded_runtime_is_from_prior_boot(record) {
+        return ResumeStatus::Stopped;
+    }
+    let started = Instant::now();
+    let budget = Duration::from_secs(2);
+    loop {
+        let remaining = budget.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return ResumeStatus::Unknown { retryable: true };
+        }
+        match resume_probe(tmux, record, remaining.min(Duration::from_secs(1))) {
+            ResumeStatus::Unknown { retryable: true } => {}
+            status => return status,
+        }
+        thread::sleep(POLL_INTERVAL.min(budget.saturating_sub(started.elapsed())));
+    }
+}
+
 /// The provider binary a resume of `record` launches.
 pub(crate) fn resume_agent_bin(
     profile: Option<crate::DurableProfileResumeContext>,
