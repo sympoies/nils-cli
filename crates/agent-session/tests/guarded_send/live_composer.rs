@@ -9,6 +9,9 @@ use super::Fixture;
 
 fn live(fixture: &Fixture, markers: &[&str]) {
     fs::write(fixture.root().join("live-layout"), "").unwrap();
+    if markers.contains(&"inject-draft") {
+        fs::write(fixture.root().join("draft-after-exact"), "").unwrap();
+    }
     for marker in markers {
         fs::write(fixture.root().join(marker), "").unwrap();
     }
@@ -33,11 +36,13 @@ fn composer(fixture: &Fixture) -> String {
     fs::read_to_string(fixture.root().join("composer")).unwrap()
 }
 
-fn backspaces(fixture: &Fixture) -> usize {
+fn deletions(fixture: &Fixture) -> usize {
     fixture
         .calls()
         .iter()
-        .filter(|call| call[0] == "send-keys" && call[call.len() - 1] == "BSpace")
+        .filter(|call| {
+            call[0] == "send-keys" && matches!(call[call.len() - 1].as_str(), "BSpace" | "DC")
+        })
         .map(|call| {
             call.iter()
                 .position(|arg| arg == "-N")
@@ -111,7 +116,7 @@ fn refusal_after_paste_removes_exactly_the_pasted_text() {
     assert_eq!(details["submitted"], false);
     assert_eq!(details["cleared"], true, "{details}");
     assert_eq!(composer(&fixture), "");
-    assert_eq!(backspaces(&fixture), "continue-fixture".len());
+    assert_eq!(deletions(&fixture), "continue-fixture".len());
     assert!(submissions(&fixture).is_empty());
     let message = output.stdout_json()["error"]["message"]
         .as_str()
@@ -121,26 +126,26 @@ fn refusal_after_paste_removes_exactly_the_pasted_text() {
 }
 
 #[test]
-fn refusal_after_paste_never_clears_a_mixed_draft() {
+fn refusal_after_paste_removes_its_prefix_and_preserves_the_draft() {
     let fixture = Fixture::new("claude");
     live(&fixture, &["bare-composer", "inject-draft"]);
     let output = guarded(&fixture);
     let details = details(&output, "send-composer-mismatch");
     assert_eq!(details["pasted"], true);
-    assert_eq!(details["cleared"], false);
+    assert_eq!(details["cleared"], true);
     assert_eq!(details["remaining_input"], "different_text");
-    assert_eq!(details["pasted_text_present"], true);
-    assert_eq!(
-        details["remaining_characters"],
-        "continue-fixture user addition".len()
-    );
-    assert_eq!(backspaces(&fixture), 0);
-    assert_eq!(composer(&fixture), "continue-fixture user addition");
+    assert_eq!(details["pasted_text_present"], false);
+    assert_eq!(details["remaining_characters"], " user addition".len());
+    assert_eq!(deletions(&fixture), "continue-fixture".len());
+    assert_eq!(composer(&fixture), " user addition");
     let message = output.stdout_json()["error"]["message"]
         .as_str()
         .unwrap()
         .to_string();
-    assert!(message.contains("may remain"), "{message}");
+    assert!(
+        message.contains("remaining input matches the observed suffix"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -175,7 +180,7 @@ fn refusal_after_paste_leaves_an_unobservable_composer_alone() {
     assert_eq!(details["cleared"], false);
     assert_eq!(details["remaining_input"], "unobservable");
     assert!(details.get("remaining_characters").is_none());
-    assert_eq!(backspaces(&fixture), 0);
+    assert_eq!(deletions(&fixture), 0);
 }
 
 #[test]
@@ -190,7 +195,7 @@ fn refusal_after_paste_waits_out_a_slow_renderer_before_declaring_the_input_empt
     assert_eq!(details["pasted"], true);
     assert_eq!(details["cleared"], true, "{details}");
     assert_eq!(composer(&fixture), "");
-    assert_eq!(backspaces(&fixture), "continue-fixture".len());
+    assert_eq!(deletions(&fixture), "continue-fixture".len());
 }
 
 fn guarded_text(fixture: &Fixture, text: &str) -> super::CmdOutput {
@@ -275,10 +280,18 @@ fn wrapped_refusal_preserves_and_classifies_a_mixed_draft() {
         live(&fixture, &["bare-composer", "wrap-80", "inject-draft"]);
         let output = guarded_text(&fixture, &text);
         let details = details(&output, "send-composer-unobservable");
-        assert_eq!(details["cleared"], false);
+        let restored = provider == "claude";
+        assert_eq!(details["cleared"], restored);
         assert_eq!(details["remaining_input"], "different_text");
-        assert_eq!(composer(&fixture), format!("{text} user addition"));
-        assert_eq!(backspaces(&fixture), 0);
+        assert_eq!(
+            composer(&fixture),
+            if restored {
+                " user addition".to_string()
+            } else {
+                format!("{text} user addition")
+            }
+        );
+        assert_eq!(deletions(&fixture), if restored { text.len() } else { 0 });
         assert!(submissions(&fixture).is_empty());
     }
 }
@@ -301,17 +314,19 @@ fn stalled_backspace_requires_a_fresh_observation() {
 }
 
 #[test]
-fn claude_wrap_boundary_spaces_are_reported_as_unobservable_without_deletion() {
+fn known_paste_disambiguates_claude_wrap_boundary_spaces() {
     let text = format!("{} {}", "x".repeat(77), "y".repeat(100));
     let fixture = Fixture::new("claude");
     live(&fixture, &["bare-composer", "wrap-80"]);
     let output = guarded_text(&fixture, &text);
     let details = details(&output, "send-composer-unobservable");
-    assert_eq!(details["cleared"], false);
-    assert_eq!(details["remaining_input"], "unobservable");
-    assert!(details.get("remaining_characters").is_none());
-    assert!(details.get("pasted_text_present").is_none());
-    assert_eq!(composer(&fixture), text);
-    assert_eq!(backspaces(&fixture), 0);
+    assert_eq!(details["cleared"], true);
+    assert_eq!(details["remaining_input"], "empty");
+    assert_eq!(details["pasted_text_present"], false);
+    assert_eq!(composer(&fixture), "");
+    assert_eq!(deletions(&fixture), text.len());
     assert!(submissions(&fixture).is_empty());
 }
+
+#[path = "rollback.rs"]
+mod rollback;

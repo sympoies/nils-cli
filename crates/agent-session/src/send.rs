@@ -410,10 +410,14 @@ fn guarded(
         admission.claim_key()?;
         admission.check(None, "admission")?;
     }
-    // From here the pasted text sits in the input: a refusal must not leave it.
+    // Mixed-prefix recovery needs an exact-paste observation before a conflict.
+    let mut observed_paste = false;
+    // From here the pasted text sits in the input: a refusal must report it.
     let mut after_paste = || -> Result<Option<send_submit::SubmitReport>, CliError> {
-        if literal.is_some() && !args.keys.is_empty() {
-            thread::sleep(POST_PASTE_KEY_SETTLE_DELAY);
+        if let Some(text) = literal
+            && !args.keys.is_empty()
+        {
+            observed_paste = admission.settle_paste(text);
         }
         let submits_prompt = literal.is_some() && args.keys == [SpecialKey::Enter];
         if submits_prompt {
@@ -460,7 +464,9 @@ fn guarded(
     };
     let submission = match (after_paste(), literal) {
         (Ok(submission), _) => submission,
-        (Err(error), Some(text)) => return Err(admission.report_pasted_input(error, text)),
+        (Err(error), Some(text)) => {
+            return Err(admission.report_pasted_input(error, text, observed_paste));
+        }
         (Err(error), None) => return Err(error),
     };
     record.updated_at = Zoned::now().timestamp().to_string();
