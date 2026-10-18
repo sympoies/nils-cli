@@ -24,7 +24,7 @@ still have exactly ordered parents B/H, and local HEAD must equal M. The
 launcher and selector are read from that actual B, with no ancestry tolerance,
 alternate checkout, or substitution of a newly queried remote ref.
 
-The consumer also supports merge-group planning for diagnostics and legacy
+The consumer also supports merge-group planning for diagnostics and direct
 callers; the hosted merge-group workflow always runs full checks directly.
 In that diagnostic route, a merge group binds B to `merge_group.base_sha` and M to `merge_group.head_sha`, which must match the
 checkout. A two-parent queue candidate directly supplies H from its second
@@ -32,7 +32,9 @@ parent. A single-parent squash queue uses its canonical reserved PR reference
 to resolve the exact pull-request head. A local merge-tree proof must equal the
 actual checked-out tree before an unreferenced two-parent planning object is
 created. That object has ordered B/H parents and the actual tested tree; it
-never replaces the checkout or moves a ref. The receipt binds both the planning
+never replaces the checkout or moves a ref.
+
+The receipt binds both the planning
 object and actual checkout. Source races, unavailable provenance, attributes,
 or configured external merge drivers use explicit full fallback. Unknown base
 or event/checkout mismatch holds validation. T is read from the candidate.
@@ -110,6 +112,7 @@ floor, command, exit code, and PASS/FAIL. Existing executed receipts retain
 `nils-cli.merge-validation.v2` contract, with `status: DEFERRED`,
 `validation_scope: DEFERRED_FULL`, an empty command, no coverage policy/floor,
 and a `deferred_reason`. Exit 0 acknowledges deferral; it proves no tests ran.
+
 PASS is written only after the actual executor succeeds. Planner HOLD and passing full validation are separate
 facts. Executors do not receive `GITHUB_OUTPUT`; the consumer replaces the
 step's output with its authoritative scalar scope after success, or empties it

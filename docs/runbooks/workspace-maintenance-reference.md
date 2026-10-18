@@ -459,6 +459,7 @@ explicit release-quality verification (total line coverage stays `>= 85.00%`).
 On those CI events, `test_macos` runs the workspace tests once under
 `NILS_CLI_TEST_RUNNER=llvm-cov`, which enforces the floor, and `coverage`
 publishes the summary from that run's LCOV artifact.
+
 PRs run the trusted affected scope. Selected macOS tests retain the immutable-base
 coverage no-decrease ratchet. When the macOS PR plan needs FULL or falls back
 from HOLD, the required `test_macos` and `coverage` names instead report
@@ -467,6 +468,7 @@ or coverage measurement. Linux retains its full fallback. Full queue checks
 must pass before main advances; a deferred PR status is no full-suite proof.
 See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)
 for the event/check matrix and receipt versions.
+
 The Linux cgroup containment checks run in their own
 `test_containment` job beside `test`; `coverage` requires it to succeed.
 Normal local development does not need to run coverage before opening a PR:
