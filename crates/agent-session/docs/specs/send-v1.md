@@ -42,13 +42,18 @@ short, nonblocking guard probes detect it without dropping that event.
 
 For a guarded text-and-Enter submission, send waits for paste settlement and
 then requires the composer to contain **exactly** its own text, rechecks
-identity and requested idle state, and presses Enter at most once. If a turn
+identity and requested idle state, and presses Enter. If the exact paste remains,
+one swallowed Enter may be retried within a fifteen-second terminal observation
+budget, with all guards rechecked before the retry. Native continuation keeps
+its existing four-second budget. If a turn
 starts or the composer changes after paste, it refuses without Enter. It
 then attempts to remove only the text it pasted and verifies the result.
+
 An exact paste can be removed; with Claude, a provable ASCII paste prefix can
 also be removed when admission required an empty composer and an earlier
-post-paste observation saw exactly the pasted text before the conflicting edit. Unreadable input is preserved, and a swallowed Enter is never
-retried. Post-paste refusal is distinct from admission refusal: it carries
+post-paste observation saw exactly the pasted text before the conflicting edit.
+Unreadable input is preserved. Stuck and unverified submissions use the same
+cleanup path as post-paste guard failures. Post-paste refusal is distinct from admission refusal: it carries
 `pasted: true` and `cleared`. When `cleared` is `false` the pasted text may
 remain in the input, and the outcome stays unknown to callers.
 
@@ -258,7 +263,8 @@ included in refusal output. Use `--format json` to consume `error.code` and
 | `send-invalid-idempotency-key` | The key is outside the documented length bound. |
 | `send-native-command-unsupported` | The native continuation profile cannot execute this slash command; no input follows. |
 | `send-native-unconfirmed` | Native dispatch or subsequent exact-input confirmation is uncertain; the key is retained. |
-| `send-submit-stuck` | Text remains after the single guarded Enter; the claim is retained. |
+| `send-submit-stuck` | Text remains after at most two guarded Enter presses; the claim is retained. |
+| `send-submit-unconfirmed` | Pane observations cannot prove submission; the claim is retained. |
 
 Observation refusals include the failed `guard` and `stage` (`admission` or
 `submit`), `atomic: false`, and whether paste preceded the check. Existing
@@ -266,8 +272,10 @@ session/runtime and I/O failure reasons still apply. A nonzero exit after
 claiming must never be treated as permission to resend the same delivery.
 
 A failure while the guarded send checks or presses its Enter adds
-`pasted: true` and `cleared` to its details; `send-submit-stuck` and a failure
-to write the session record after Enter do not.
+`pasted: true`, `cleared` and `remaining_input` to its details. This includes
+`send-submit-stuck` and `send-submit-unconfirmed`, which attempt the same
+identity-fenced cleanup. A failure to write the session record after Enter
+does not include these cleanup details.
 `cleared: true` means a fresh observation verified the expected restoration:
 empty input, or the preserved suffix after removing this send's prefix.
 `cleared: true` does not mean the composer is empty: consumers must read

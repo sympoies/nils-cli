@@ -626,10 +626,12 @@ recorded in `sympoies/nils-cli#1409`.
   `session-incarnation-conflict` without submitting. Success returns `submitted: true` plus the locked
   `session_incarnation`, while the provider turn id remains private. These mutations never send multiline text through
   terminal keys; unsupported or not-yet-ready sessions fail closed.
+
   On a Claude (pane-delivered) runtime, success means Claude's `UserPromptSubmit` hook started a new turn within the
   acknowledgement wait, or a poll of the wait saw the pane list the prompt among its queued messages behind a running turn
   (a tool-call turn takes the queue at its next tool call); the queued case adds `queued: true` and the client MUST NOT
-  resend it. A new turn omits `queued`. When neither is observed the route answers 500 `structured-prompt-outcome-unknown`.
+  resend it. A new turn omits `queued`. Without `require_idle`, when neither is observed the route answers
+  HTTP 500 `structured-prompt-outcome-unknown`. Guarded outcomes follow the HTTP 409 rules below.
 
   The v2 route additionally accepts optional `request_id` and `require_idle`
   fields. Omitting both preserves the existing response and delivery behavior.
@@ -665,7 +667,11 @@ recorded in `sympoies/nils-cli#1409`.
   `data.machine`, `data.submitted: true`, `data.session_incarnation` and the
   optional `data.queued: true`, adding `data.receipt`. Refused/unknown POSTs use
   `ok: false` and place the receipt in `error.details.receipt`. Unknown returns
-  HTTP 500 with `error.code: structured-prompt-outcome-unknown`. Repeated POSTs
+  HTTP 500 with `error.code: structured-prompt-outcome-unknown`, except for
+  guarded dispatch failures described below, which return HTTP 409.
+
+  HTTP status alone does not establish non-delivery: clients MUST read `receipt.outcome`
+  for keyed attempts and `error.code` for unkeyed attempts. Repeated POSTs
   return the retained status and outcome; an unfinished claim may later resolve
   through lookup when the original request completes.
 
@@ -710,6 +716,25 @@ recorded in `sympoies/nils-cli#1409`.
   code. These external provider/UI observations remain non-atomic, as in
   [guarded send](send-v1.md); a later failure after possible paste or native
   dispatch is `unknown`, even if no submission was confirmed.
+
+  Guarded terminal submission retries one swallowed Enter only while its exact paste and all
+  guards still hold. A stuck or unverified submission attempts the same bounded,
+  identity-fenced cleanup as a post-paste guard failure. These uncertain guarded
+  results return HTTP 409 `structured-prompt-outcome-unknown`, including without
+  a request ID.
+
+  Keyed receipts retain optional `composer_cleanup` with `cleared`
+  (boolean) and `remaining_input` (`empty`, `pasted_text`, `different_text`, or
+  `unobservable`). This reports residue without exposing composer contents;
+  failed cleanup must not be treated as an empty composer. Cleanup does not
+  prove non-dispatch: the receipt remains `unknown`, the key stays consumed,
+  and clients reconcile that key instead of blindly resending. All guarded
+  pre-delivery observation refusals return HTTP 409: positive busy observations
+  use `busy`; identity, unsupported-observation, timeout and unobservable
+  refusals preserve their stable guard code. Guarded dispatch also returns
+  HTTP 409 `structured-prompt-outcome-unknown` if its blocking task fails or
+  completes without a confirmed submission; these outcomes do not prove
+  non-delivery and are never safe refusals.
 
   A `refused` receipt proves no provider dispatch/paste. Refusals, including
   `busy`, are terminal for that key. After a definite refusal and refreshed

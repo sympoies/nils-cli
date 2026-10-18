@@ -152,23 +152,37 @@ fn guard_tmux(root: &Path, id: &str) -> PathBuf {
     fs::write(root.join("guard-id"), id).unwrap();
     fs::write(root.join("composer"), "").unwrap();
     fs::write(&path, r#"#!/usr/bin/env python3
-import json, pathlib, sys
+import json, pathlib, sys, time
 root = pathlib.Path(__file__).parent
+if (root / 'transport-delay-ms').exists(): time.sleep(int((root / 'transport-delay-ms').read_text()) / 1000)
 args = sys.argv[1:]
 with (root / 'transport-calls').open('a') as out: out.write(json.dumps(args) + '\n')
 record = json.loads((root / 'sessions' / (root / 'guard-id').read_text() / 'session.json').read_text())
 if args[0] == 'show-environment':
     values = {'AGENT_SESSION_ID': record['id'], 'AGENT_SESSION_STATE_DIR': str(root), 'AGENT_SESSION_RUNTIME_ID': record['runtime']['launch_id']}
-    key = args[-1]
-    if key in values: print(key + '=' + values[key]); sys.exit(0)
+    keys = [key for key in args if key in values]
+    if keys:
+        for key in keys: print(key + '=' + values[key])
+        sys.exit(0)
     sys.exit(1)
 if args[0] == 'capture-pane':
     text = (root / 'composer').read_text()
     print('────────────────────────────\n❯ ' + text + '\n────────────────────────────')
     sys.exit(0)
 if args[0] == 'load-buffer': (root / 'buffer').write_bytes(pathlib.Path(args[-1]).read_bytes())
-if args[0] == 'paste-buffer': (root / 'composer').write_bytes((root / 'buffer').read_bytes())
+if args[0] == 'paste-buffer':
+    (root / 'composer').write_bytes((root / 'buffer').read_bytes())
+    if (root / 'owner-addition').exists():
+        with (root / 'composer').open('a') as out: out.write(' owner addition')
 if args[0] == 'send-keys':
+    if args[-1] == 'BSpace':
+        count = int(args[args.index('-N') + 1])
+        text = (root / 'composer').read_text()
+        (root / 'composer').write_text(text[:-count]); sys.exit(0)
+    count_file = root / 'enter-count'
+    count = int(count_file.read_text()) + 1 if count_file.exists() else 1
+    count_file.write_text(str(count))
+    if (root / 'stuck').exists() or ((root / 'swallow-first').exists() and count == 1): sys.exit(0)
     (root / 'submitted').write_text((root / 'composer').read_text())
     (root / 'composer').write_text('')
 sys.exit(0)
@@ -357,7 +371,7 @@ async fn unobservable_idle_fails_closed_without_pasting() {
         post_json("/sessions/unobservable/prompt/v2", Some(TOKEN), body),
     )
     .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{refusal}");
+    assert_eq!(status, StatusCode::CONFLICT, "{refusal}");
     assert_eq!(refusal["error"]["details"]["receipt"]["outcome"], "refused");
     assert_eq!(refusal["error"]["code"], "send-idle-unobservable");
     assert!(!tmp.path().join("submitted").exists());
@@ -389,4 +403,121 @@ async fn fenced_structured_prompt_requires_exact_body_shape() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "body={body}");
         assert_eq!(body["error"]["code"], "invalid-json-body");
     }
+}
+
+#[tokio::test]
+async fn idle_claude_guard_retries_swallowed_enter_without_residue() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch = seed_claude_prompt_session(tmp.path(), "swallowed");
+    let st = state(tmp.path(), Some(TOKEN), guard_tmux(tmp.path(), "swallowed"));
+    make_idle(&st.context, "swallowed", &launch);
+    fs::write(tmp.path().join("swallow-first"), "").unwrap();
+    // Exercise admission and retry round trips on a slower transport.
+    fs::write(tmp.path().join("transport-delay-ms"), "120").unwrap();
+    let mut body = keyed_body(&launch);
+    body["require_idle"] = json!(true);
+    let uri = "/sessions/swallowed/prompt/v2";
+    let (status, result) = call(
+        router(st.clone()),
+        post_json(uri, Some(TOKEN), body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["data"]["receipt"]["outcome"], "submitted");
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("submitted")).unwrap(),
+        "inspect the workspace"
+    );
+    assert_eq!(fs::read_to_string(tmp.path().join("composer")).unwrap(), "");
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("enter-count")).unwrap(),
+        "2"
+    );
+    let (_, replay) = call(router(st), post_json(uri, Some(TOKEN), body)).await;
+    assert_eq!(replay, result);
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("enter-count")).unwrap(),
+        "2"
+    );
+}
+
+#[tokio::test]
+async fn idle_claude_guard_cleans_stuck_prompt_and_returns_terminal_receipt() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch = seed_claude_prompt_session(tmp.path(), "stuck");
+    let st = state(tmp.path(), Some(TOKEN), guard_tmux(tmp.path(), "stuck"));
+    make_idle(&st.context, "stuck", &launch);
+    fs::write(tmp.path().join("stuck"), "").unwrap();
+    let mut body = keyed_body(&launch);
+    body["require_idle"] = json!(true);
+    let uri = "/sessions/stuck/prompt/v2";
+    let (status, result) = call(
+        router(st.clone()),
+        post_json(uri, Some(TOKEN), body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{result}");
+    assert_eq!(result["error"]["details"]["receipt"]["outcome"], "unknown");
+    assert_eq!(
+        result["error"]["details"]["receipt"]["composer_cleanup"],
+        json!({"cleared":true,"remaining_input":"empty"})
+    );
+    assert_eq!(fs::read_to_string(tmp.path().join("composer")).unwrap(), "");
+    assert!(!tmp.path().join("submitted").exists());
+    let (_, replay) = call(router(st), post_json(uri, Some(TOKEN), body)).await;
+    assert_eq!(replay, result);
+}
+
+#[tokio::test]
+async fn idle_claude_guard_reports_changed_composer_without_erasing_owner_input() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch = seed_claude_prompt_session(tmp.path(), "changed");
+    let st = state(tmp.path(), Some(TOKEN), guard_tmux(tmp.path(), "changed"));
+    make_idle(&st.context, "changed", &launch);
+    fs::write(tmp.path().join("owner-addition"), "").unwrap();
+    let mut body = keyed_body(&launch);
+    body["require_idle"] = json!(true);
+    let (status, result) = call(
+        router(st),
+        post_json("/sessions/changed/prompt/v2", Some(TOKEN), body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{result}");
+    assert_eq!(result["error"]["details"]["receipt"]["outcome"], "unknown");
+    assert_eq!(
+        result["error"]["details"]["receipt"]["composer_cleanup"],
+        json!({"cleared":false,"remaining_input":"different_text"})
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("composer")).unwrap(),
+        "inspect the workspace owner addition"
+    );
+    assert!(!tmp.path().join("submitted").exists());
+}
+
+#[tokio::test]
+async fn unkeyed_idle_claude_guard_returns_unknown_with_cleanup() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch = seed_claude_prompt_session(tmp.path(), "unkeyed-stuck");
+    let st = state(
+        tmp.path(),
+        Some(TOKEN),
+        guard_tmux(tmp.path(), "unkeyed-stuck"),
+    );
+    make_idle(&st.context, "unkeyed-stuck", &launch);
+    fs::write(tmp.path().join("stuck"), "").unwrap();
+    let body = json!({"text":"inspect the workspace", "expected_session_incarnation":launch,
+        "require_idle":true});
+    let (status, result) = call(
+        router(st),
+        post_json("/sessions/unkeyed-stuck/prompt/v2", Some(TOKEN), body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{result}");
+    assert_eq!(result["error"]["code"], "structured-prompt-outcome-unknown");
+    assert_eq!(result["error"]["details"]["cleared"], true);
+    assert_eq!(result["error"]["details"]["remaining_input"], "empty");
+    assert!(result["error"]["details"].get("receipt").is_none());
+    assert_eq!(fs::read_to_string(tmp.path().join("composer")).unwrap(), "");
+    assert!(!tmp.path().join("submitted").exists());
 }

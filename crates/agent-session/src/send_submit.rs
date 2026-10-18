@@ -31,11 +31,13 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const RETRY_AFTER: Duration = Duration::from_millis(1500);
 /// The caller's Enter plus one retry for the swallowed first Enter.
 const MAX_ENTER_PRESSES: u32 = 2;
-/// Upper bound on the record-lock hold from the paste to the last pane read,
+/// Default bound on the record-lock hold from paste to the last pane read,
 /// including the caller's settle delay (the tmux paste and Enter commands keep
 /// their own timeouts). `send` holds the session record lock throughout, and
 /// Codex app-server attention events and turn-complete notifications that
-/// find it busy wait only five seconds, so the hold must end well before that.
+/// find it busy wait only five seconds. Guarded terminal delivery supplies a
+/// longer deadline for its repeated identity, idle and exact-composer checks;
+/// native dispatch retains this default.
 pub(crate) const HOLD_BUDGET: Duration = Duration::from_millis(4000);
 /// Longest single pane read; a read never runs past the hold budget either.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -277,9 +279,8 @@ fn starts_with_numbered_choice(after_glyph: &str) -> bool {
 }
 
 /// Press the submitting Enter, then watch the composer until it proves the
-/// outcome within [`HOLD_BUDGET`] of `hold_started`, the moment the text was
-/// pasted. `observe` returns the visible pane read within the given timeout
-/// (`None` when tmux cannot answer),
+/// outcome before the caller's deadline. `observe` returns the visible pane
+/// within the given timeout (`None` when tmux cannot answer),
 /// `may_press` is consulted before every retry so a session recorded as waiting
 /// on a dialog is never answered, and `press_enter` sends one Enter. Provider
 /// events cannot land while the caller holds the session lock, so the pane
@@ -288,7 +289,7 @@ fn starts_with_numbered_choice(after_glyph: &str) -> bool {
 pub(crate) fn submit_and_confirm(
     agent: &str,
     probe: &Probe,
-    hold_started: Instant,
+    deadline: Instant,
     mut observe: impl FnMut(Duration) -> Option<String>,
     mut may_press: impl FnMut() -> bool,
     mut press_enter: impl FnMut() -> Result<(), crate::CliError>,
@@ -296,7 +297,6 @@ pub(crate) fn submit_and_confirm(
     let view = |pane: Option<String>| {
         pane.map_or(Composer::Unrecognized, |pane| classify(agent, &pane, probe))
     };
-    let deadline = hold_started + HOLD_BUDGET;
     let remaining = || deadline.saturating_duration_since(Instant::now());
     // A blank capture is a pane tmux could not show us, not an empty composer.
     let before = observe(remaining().min(CAPTURE_TIMEOUT)).filter(|pane| !pane.trim().is_empty());
@@ -622,7 +622,7 @@ mod tests {
         let result = submit_and_confirm(
             "claude",
             &probe,
-            Instant::now(),
+            Instant::now() + HOLD_BUDGET,
             |_| {
                 let mut index = observed.borrow_mut();
                 let pane = panes[(*index).min(panes.len() - 1)];
@@ -713,7 +713,7 @@ mod tests {
         let result = submit_and_confirm(
             "claude",
             &probe_of("[Monitoring] REPRO A1: Disk usage high"),
-            hold_started,
+            hold_started + HOLD_BUDGET,
             |timeout| {
                 thread::sleep(timeout.min(Duration::from_millis(900)));
                 Some(CLAUDE_PENDING.to_string())
@@ -738,7 +738,7 @@ mod tests {
         let result = submit_and_confirm(
             "claude",
             &probe_of("[Monitoring] REPRO A1: Disk usage high"),
-            Instant::now(),
+            Instant::now() + HOLD_BUDGET,
             |_| {
                 let mut reads = reads.borrow_mut();
                 *reads += 1;
