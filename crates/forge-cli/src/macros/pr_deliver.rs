@@ -315,6 +315,7 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
             remote: &global.remote,
             repository_id: repository_id.as_deref(),
             test_first_required,
+            headings: BodyHeadings::from_config(&cfg),
             resolved_head,
             qualified_subject: qualified_subject.as_ref(),
             expected_base: &expected_base,
@@ -787,6 +788,7 @@ struct AdoptValidationContext<'a> {
     remote: &'a str,
     repository_id: Option<&'a str>,
     test_first_required: bool,
+    headings: BodyHeadings,
     resolved_head: ResolvedHeadRef<'a>,
     qualified_subject: Option<&'a QualifiedHeadSubject>,
     expected_base: &'a str,
@@ -806,8 +808,7 @@ fn validate_adopted(
     )?;
     let prefix = branch_name(context.resolved_head.local_branch)?;
     branch_kind_matches(prefix, args.kind.into_kind())?;
-    let headings = BodyHeadings::default();
-    body_sections(view.body.as_deref().unwrap_or(""), &headings)?;
+    body_sections(view.body.as_deref().unwrap_or(""), &context.headings)?;
     worktree_clean(context.workdir, git_status_porcelain)?;
     branch_pushed(
         context.workdir,
@@ -970,7 +971,8 @@ fn build_dry_run_payload(
     // never a provider backend — so a dry-run predicts the real run's local
     // gates (e.g. a bad body and an unpushed head surface together).
     let body = resolve_preview_body(args);
-    let headings = BodyHeadings::default();
+    let cfg = ForgeConfig::load_layered(workdir, find_git_toplevel(workdir).as_deref());
+    let headings = BodyHeadings::from_config(&cfg);
     let inputs = PreflightInputs {
         branch: local_branch,
         kind: args.kind.into_kind(),
@@ -990,7 +992,6 @@ fn build_dry_run_payload(
     // evidence for feature/bug kinds (both create and adopt paths), so surface
     // the same verdict here instead of predicting a success the real deliver
     // would refuse.
-    let cfg = ForgeConfig::load_layered(workdir, find_git_toplevel(workdir).as_deref());
     let test_first_required = cfg.resolve_test_first_required(None);
     let gate_applies = test_first_required
         && matches!(

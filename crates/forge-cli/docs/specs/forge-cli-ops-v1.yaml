@@ -32,11 +32,11 @@ validations_catalog:
     error_kind: branch_kind_mismatch
     exit: DATA
   body_summary:
-    rule: "non-empty H2 `## Summary` section"
+    rule: "non-empty configured H2 section ([body].summary_heading; default `## Summary`)"
     error_kind: body_missing_summary
     exit: DATA
   body_test_plan:
-    rule: "non-empty H2 `## Test plan` section"
+    rule: "non-empty configured H2 section ([body].test_plan_heading; default `## Test plan`)"
     error_kind: body_missing_test_plan
     exit: DATA
   title_length:

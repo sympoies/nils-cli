@@ -14,6 +14,8 @@
 //! "section present but empty" produce the same `error.kind` because the
 //! user-visible failure is identical.
 
+mod body_headings;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -66,8 +68,8 @@ impl BranchPrefix {
     }
 }
 
-/// Configurable body H2 headings (set via `.forge-cli.toml` in later
-/// sprints). Defaults match the spec §"Lock-down policy" item 2.
+/// Configurable body H2 headings from `[body]` in `.forge-cli.toml`.
+/// Defaults match the spec §"Lock-down policy" item 2.
 #[derive(Debug, Clone)]
 pub struct BodyHeadings {
     pub summary: String,
