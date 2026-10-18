@@ -60,6 +60,7 @@ pub fn container_rm(args: ContainerRmArgs) -> i32 {
     if args.volumes {
         docker_args.push("-v".to_string());
     }
+    // End option parsing before passing container names to Docker.
     docker_args.push("--".to_string());
     docker_args.extend(args.containers);
 
