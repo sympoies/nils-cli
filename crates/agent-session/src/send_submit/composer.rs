@@ -4,6 +4,16 @@ use super::{
 };
 
 pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
+    composer_input(agent, pane, false)
+}
+
+/// Direct replies may follow a queued message when the sole input row is a
+/// native dim-styled queued hint. Literal or adjacent owner input stays a draft.
+pub(crate) fn direct_composer_input(agent: &str, pane: &str) -> Option<String> {
+    composer_input(agent, pane, true)
+}
+
+fn composer_input(agent: &str, pane: &str, allow_queued_hint: bool) -> Option<String> {
     let (plain, dim) = styled_text(pane)?;
     let lines: Vec<&str> = plain.lines().collect();
     let (region, footer) = match agent {
@@ -50,10 +60,19 @@ pub(crate) fn exact_composer_input(agent: &str, pane: &str) -> Option<String> {
     };
     let fully_dim = dim_hint(input, &dim[offset..offset + input.len()]);
     let compressed = compact(input);
-    if compressed == CLAUDE_QUEUED_HINT
-        || PASTE_PLACEHOLDERS
-            .iter()
-            .any(|mark| compressed.contains(mark))
+    if compressed == CLAUDE_QUEUED_HINT {
+        if !allow_queued_hint || agent != "claude" {
+            return None;
+        }
+        return Some(if fully_dim {
+            String::new()
+        } else {
+            input.to_string()
+        });
+    }
+    if PASTE_PLACEHOLDERS
+        .iter()
+        .any(|mark| compressed.contains(mark))
     {
         return None;
     }

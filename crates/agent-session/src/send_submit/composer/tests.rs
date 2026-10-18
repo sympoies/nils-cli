@@ -1,5 +1,5 @@
 //! Qualified generic captures and separately labeled synthetic OSC-8 variants.
-use super::exact_composer_input;
+use super::{direct_composer_input, exact_composer_input};
 use pretty_assertions::assert_eq;
 
 fn claude(input: &str, rows: &str, footer: &str) -> String {
@@ -549,5 +549,28 @@ fn claude_draft_rows_never_open_the_box_as_a_titled_border() {
     for row in ["  more of the draft ─", "❯ another draft ─"] {
         let pane = format!("{row}\n❯\u{a0}\n{rule}\n  status");
         assert_eq!(exact_composer_input("claude", &pane), None, "{row}");
+    }
+}
+
+#[test]
+fn direct_native_queued_hint_is_empty_without_relaxing_guarded_input() {
+    let hint = "\x1b[2mPress up to edit queued messages\x1b[22m";
+    let pane = claude(hint, "", "status");
+    assert_eq!(direct_composer_input("claude", &pane), Some(String::new()));
+    assert_eq!(exact_composer_input("claude", &pane), None);
+    for (shown, expected) in [
+        (
+            "Press up to edit queued messages".to_string(),
+            "Press up to edit queued messages",
+        ),
+        (
+            format!("owner draft {hint}"),
+            "owner draft Press up to edit queued messages",
+        ),
+    ] {
+        assert_eq!(
+            direct_composer_input("claude", &claude(&shown, "", "status")),
+            Some(expected.to_string())
+        );
     }
 }

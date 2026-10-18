@@ -633,6 +633,33 @@ recorded in `sympoies/nils-cli#1409`.
   resend it. A new turn omits `queued`. Without `require_idle`, when neither is observed the route answers
   HTTP 500 `structured-prompt-outcome-unknown`. Guarded outcomes follow the HTTP 409 rules below.
 
+  Direct structured replies through either route inspect the composer under the
+  submission's session-record lock before terminal paste or native dispatch.
+  An observed owner draft returns HTTP 409 `composer-not-empty`, preserving the
+  draft and sending nothing. An unreadable or ambiguous composer returns HTTP
+  409 `composer-unobservable`, also before dispatch. These refusals preserve
+  account/input control state and automatic recovery settings. The check uses
+  the existing exact composer observation limits in [Send v1](send-v1.md).
+  It is non-atomic against human keystrokes or provider redraws after the check.
+
+  A Claude queued-reply hint is empty only when its sole input row is the
+  native dim-styled hint and contains no owner text. A second direct reply is
+  then admitted. Unstyled literal text matching the hint, or owner input beside
+  it, remains a draft and returns `composer-not-empty`.
+
+  Codex numbered dialogs do not prove an empty composer and return
+  `composer-unobservable`; no keys are sent to select an option. Once the dialog
+  is resolved, retry only after observing an empty composer, using a fresh
+  request ID after a keyed refusal. Unreadable panes still refuse, and refusals
+  leave recovery armed. An empty composer behind a working Codex turn remains
+  admitted, subject to the existing provider controls.
+
+  An explicit owner clear followed by another submission is the draft recovery path;
+  the reply operation never clears a draft or sends Ctrl+C. Direct replies
+  retain their existing provider acknowledgement and queue confirmation rules
+  when the composer is observably empty. Initial creation prompts and internal
+  coordination notifications retain their separately owned admission policy.
+
   The v2 route additionally accepts optional `request_id` and `require_idle`
   fields. Omitting both preserves the existing response and delivery behavior.
   `request_id` contains 1–128 ASCII letters, digits, dots, underscores or
