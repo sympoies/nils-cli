@@ -27,14 +27,18 @@ or integrating a specific subsystem.
 - [Session display metadata v1](specs/session-display-metadata-v1.md): explicit
   roles, persisted auto/pinned titles, and exact-session revision-fenced updates.
 - [Serve API v1](specs/serve-api-v1.md): HTTP and WebSocket endpoints,
-  response/authentication rules, launch profiles, and session survival.
+  response/authentication rules, launch profiles, and session survival. Its
+  endpoint map routes history, observation, automation, prompts, accounts,
+  creation, terminal transport, and usage to topic contracts.
 - [Session retitle v2](specs/session-retitle-v2.md): bounded title context,
   automatic scheduling, mutation fences, provider configuration, and privacy.
 - [Session retitle v3](specs/session-retitle-v3.md): bounded semantic memory,
   incremental history projection, asynchronous operations, freshness, and
   long-session privacy/fencing guarantees.
 - [Session coordination v1](specs/session-coordination-v1.md): normative
-  schemas, state machines, authorization, routes, limits, and failure codes.
+  core state machines, trust, authorization, and owned children. Its contract
+  map routes schemas, mailbox, runtime recovery, interfaces, and federation
+  to topic contracts.
 - [Session board v1](specs/session-board-v1.md): opt-in cross-host board
   record, closed-session ledger and cursor, relay route, aggregator query
   contract, and the `agent-session board` CLI.
