@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::{Admission, capture_styled};
-use crate::{CliError, run_status_with_timeout, send_submit};
+use crate::{
+    CliError, run_output_with_timeout_and_strict_cap, run_status_with_timeout, send_submit,
+};
 
 /// Time given to the observations and keys of one cleanup, independent of the
 /// admission budget the refusal may already have spent.
@@ -15,12 +17,11 @@ const CLEAR_SETTLE: Duration = Duration::from_millis(300);
 
 impl Admission<'_> {
     /// Report a failure that happened after the send pasted `text`. The text is
-    /// removed only while the composer still holds exactly it, so a draft, a
-    /// submission or an unreadable composer is never touched. The error says
-    /// whether the input was proven empty or may still hold the text.
+    /// removed only when its ownership is observable: an exact match or an
+    /// ASCII prefix of a line admitted with an empty composer. An appended
+    /// draft is preserved. Every outcome includes a fresh input observation.
     pub(crate) fn report_pasted_input(&self, mut error: CliError, text: &str) -> CliError {
-        let remaining = self.clear_pasted(text);
-        let cleared = remaining.as_deref() == Some("");
+        let (remaining, cleared) = self.clear_pasted(text);
         let remaining_input = match remaining.as_deref() {
             Some("") => "empty",
             Some(input) if send_submit::composer_holds(&self.record.agent, input, text) => {
@@ -45,9 +46,10 @@ impl Admission<'_> {
             error.0.message,
             match remaining_input {
                 "empty" => "the session input no longer holds the pasted text",
+                _ if cleared => "the pasted prefix was removed; the user draft was preserved",
                 "pasted_text" => "the session input still holds the pasted text",
                 "different_text" =>
-                    "different composer text was preserved; the pasted text may remain",
+                    "different composer text was preserved; removal of the pasted prefix was not verified",
                 _ =>
                     "the composer is unobservable; the pasted text may remain in the session input",
             }
@@ -55,7 +57,7 @@ impl Admission<'_> {
         error
     }
 
-    fn clear_pasted(&self, text: &str) -> Option<String> {
+    fn clear_pasted(&self, text: &str) -> (Option<String>, bool) {
         let cleanup = Admission {
             deadline: Instant::now() + CLEAR_BUDGET,
             context: self.context,
@@ -64,14 +66,16 @@ impl Admission<'_> {
             tmux_bin: self.tmux_bin,
             verify_composer: self.verify_composer,
         };
-        cleanup.clear(text)
+        cleanup
+            .clear(text)
+            .map_or((None, false), |(input, restored)| (Some(input), restored))
     }
 
-    fn clear(&self, text: &str) -> Option<String> {
+    fn clear(&self, text: &str) -> Option<(String, bool)> {
         let target = format!("{}:0.0", self.record.tmux_session);
         let observe = |stage: &str| {
             let pane = capture_styled(self.tmux_bin, &target, self.timeout(stage).ok()?)?;
-            send_submit::cleanup_composer_input(&self.record.agent, &pane)
+            send_submit::cleanup_composer_input(&self.record.agent, &pane, Some(text))
         };
         self.identity("cleanup").ok()?;
         let mut input = observe("cleanup")?;
@@ -81,14 +85,101 @@ impl Admission<'_> {
             thread::sleep(CLEAR_SETTLE);
             input = observe("cleanup")?;
             if input.is_empty() {
-                return Some(input);
+                return Some((input, true));
             }
         }
-        if !send_submit::composer_holds(&self.record.agent, &input, text) {
-            return Some(input);
+        let exact = send_submit::composer_holds(&self.record.agent, &input, text);
+        let suffix = input.strip_prefix(text);
+        let prefix = self.record.agent == "claude"
+            && self.args.require_empty_composer
+            && suffix.is_some_and(|suffix| !suffix.is_empty())
+            && input.bytes().all(|byte| (32..127).contains(&byte));
+        if !exact && !prefix {
+            return Some((input, false));
         }
-        // One tmux command keeps long wrapped pastes inside the cleanup budget.
-        // As before, one Backspace per character cannot delete past the start.
+        let expected = if prefix {
+            suffix?.to_string()
+        } else {
+            String::new()
+        };
+        // Claude ASCII cleanup removes a prefix from the logical line start,
+        // including pasted-only input. Verify both the start and the endpoint
+        // reached by walking exactly the known prefix length before deleting.
+        // This also verifies spaces omitted by the word-wrapped rendering.
+        let forward =
+            self.record.agent == "claude" && input.bytes().all(|byte| (32..127).contains(&byte));
+        if forward {
+            self.identity("cleanup").ok()?;
+            let mut home = std::process::Command::new(self.tmux_bin);
+            home.args(["send-keys", "-t", &target, "C-a"]);
+            run_status_with_timeout(home, "tmux send-keys", self.timeout("cleanup").ok()?).ok()?;
+            let mut endpoint = None;
+            loop {
+                let pane = capture_styled(self.tmux_bin, &target, self.timeout("cleanup").ok()?)?;
+                let Some(current) =
+                    send_submit::cleanup_composer_input(&self.record.agent, &pane, Some(text))
+                else {
+                    if self.deadline.saturating_duration_since(Instant::now()) <= CLEAR_POLL {
+                        return None;
+                    }
+                    thread::sleep(CLEAR_POLL);
+                    continue;
+                };
+                let mut cursor = std::process::Command::new(self.tmux_bin);
+                cursor.args([
+                    "display-message",
+                    "-p",
+                    "-t",
+                    &target,
+                    "#{cursor_x} #{cursor_y}",
+                ]);
+                let output = run_output_with_timeout_and_strict_cap(
+                    cursor,
+                    self.timeout("cleanup").ok()?,
+                    128,
+                )
+                .ok()?;
+                let coordinates = String::from_utf8(output.stdout).ok()?;
+                let coordinates: Vec<usize> = coordinates
+                    .split_whitespace()
+                    .map(str::parse)
+                    .collect::<Result<_, _>>()
+                    .ok()?;
+                if !output.status.success() || current != input || coordinates.len() != 2 {
+                    return Some((current, false));
+                }
+                let at_target = match endpoint {
+                    None => {
+                        send_submit::cleanup_cursor_at_start(&pane, coordinates[0], coordinates[1])
+                    }
+                    Some(end) => end == (coordinates[0], coordinates[1]),
+                };
+                if at_target {
+                    if endpoint.is_some() {
+                        break;
+                    }
+                    endpoint = Some(send_submit::cleanup_prefix_end(&pane, text)?);
+                    let mut right = std::process::Command::new(self.tmux_bin);
+                    right.args([
+                        "send-keys",
+                        "-t",
+                        &target,
+                        "-N",
+                        &text.len().to_string(),
+                        "Right",
+                    ]);
+                    run_status_with_timeout(right, "tmux send-keys", self.timeout("cleanup").ok()?)
+                        .ok()?;
+                    continue;
+                }
+                if self.deadline.saturating_duration_since(Instant::now()) <= CLEAR_POLL {
+                    return None;
+                }
+                thread::sleep(CLEAR_POLL);
+            }
+        }
+        self.identity("cleanup").ok()?;
+        // One repeated-key command keeps long pastes inside the cleanup budget.
         let mut command = std::process::Command::new(self.tmux_bin);
         command.args([
             "send-keys",
@@ -100,17 +191,28 @@ impl Admission<'_> {
         ]);
         let timeout = self.timeout("cleanup").ok()?;
         let sent = run_status_with_timeout(command, "tmux send-keys", timeout).is_ok();
-        // Sending keys invalidates the earlier observation, even on timeout.
-        input = observe("cleanup")?;
+        // Rendering can be transiently unobservable while repeated keys are
+        // processed. Poll without issuing more keys; only a post-key read can
+        // establish restoration, including when tmux timed out.
+        let mut last_observed = None;
         loop {
-            if input.is_empty() || !sent || self.timeout("cleanup").is_err() {
-                return Some(input);
+            if self.timeout("cleanup").is_err() {
+                return last_observed.map(|input| (input, false));
             }
+            let remaining = observe("cleanup");
+            // A timeout cannot invalidate an earlier post-key observation:
+            // no further keys were issued. Other unreadable captures do.
+            if remaining.is_none() && self.timeout("cleanup").is_err() {
+                return last_observed.map(|input| (input, false));
+            }
+            if remaining.as_deref() == Some(expected.as_str()) {
+                return Some((remaining?, true));
+            }
+            if !sent || self.deadline.saturating_duration_since(Instant::now()) <= CLEAR_POLL {
+                return remaining.map(|input| (input, false));
+            }
+            last_observed = remaining;
             thread::sleep(CLEAR_POLL);
-            let Some(current) = observe("cleanup") else {
-                return self.timeout("cleanup").is_err().then_some(input);
-            };
-            input = current;
         }
     }
 }

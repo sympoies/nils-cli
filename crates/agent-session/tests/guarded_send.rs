@@ -42,7 +42,7 @@ impl Fixture {
         fs::write(temp.path().join("composer"), "").unwrap();
         fs::write(temp.path().join("calls"), "").unwrap();
         let script = r#"#!/usr/bin/env python3
-import json, pathlib, sys
+import json, pathlib, sys, textwrap
 root = pathlib.Path(__file__).parent
 args = sys.argv[1:]
 with (root / 'calls').open('a') as out: out.write(json.dumps(args) + '\n')
@@ -80,24 +80,65 @@ elif command == 'paste-buffer':
         with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
     if (root / 'fail-capture-after-paste').exists(): (root / 'capture-fails').touch()
     if (root / 'inject-draft').exists():
-        with (root / 'composer').open('a') as out: out.write(' user addition')
+        with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
+    if (root / 'replace-after-paste').exists(): (root / 'composer').write_text('replacement draft')
     if (root / 'start-after-paste').exists():
         p = root / 'state/sessions/guarded/activity.json'
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
         p.write_text(json.dumps(d))
-elif command == 'send-keys' and args[-1] == 'BSpace':
+elif command == 'display-message':
+    text = (root / 'composer').read_text()
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+    x, y = 2 + cursor, 1
+    if (root / 'wrap-80').exists() and len(text) > 78:
+        chunks = [text[i:i + 78] for i in range(0, len(text), 78)]
+        if (root / 'word-wrap').exists(): chunks = textwrap.wrap(text, width=78, drop_whitespace=False)
+        for row, chunk in enumerate(chunks):
+            if cursor <= len(chunk): x, y = 2 + cursor, 1 + row; break
+            cursor -= len(chunk)
+    if (root / 'captured-layout').exists():
+        snapshot = json.loads((root / 'captured-layout').read_text())
+        if text == snapshot['input']:
+            cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+            x, y = (2, 13) if cursor == 0 else snapshot['prefix_end']
+    if (root / 'late-home').exists():
+        count_path = root / 'cursor-reads'
+        count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+        count_path.write_text(str(count))
+        if count < 3: x, y = 3, 1
+    if (root / 'cursor-not-at-start').exists(): x, y = 3, 1
+    if (root / 'wrong-prefix-end').exists() and (root / 'right-sent').exists(): x += 1
+    print(x, y)
+elif command == 'send-keys' and args[-1] == 'Right':
+    cursor = int((root / 'cursor').read_text())
+    count = int(args[args.index('-N') + 1])
+    (root / 'cursor').write_text(str(min(len((root / 'composer').read_text()), cursor + count)))
+    (root / 'right-sent').touch()
+elif command == 'send-keys' and args[-1] == 'C-a':
+    (root / 'cursor').write_text('0')
+    if (root / 'draft-on-home').exists(): (root / 'composer').write_text('replacement draft')
+    if (root / 'replace-on-home').exists(): (root / 'runtime-replaced').touch()
+elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
     if (root / 'backspace-stalls').exists():
         (root / 'capture-fails').touch()
         import time
         time.sleep(3)
     if not (root / 'backspace-ignored').exists():
         count = int(args[args.index('-N') + 1]) if '-N' in args else 1
-        (root / 'composer').write_text((root / 'composer').read_text()[:-count])
+        text = (root / 'composer').read_text()
+        cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+        if args[-1] == 'DC': text = text[:cursor] + text[cursor + count:]
+        else: text = text[:max(0, cursor - count)] + text[cursor:]
+        (root / 'composer').write_text(text)
+        if (root / 'redraw-after-delete').exists(): (root / 'redraw-pending').touch()
 elif command == 'send-keys' and args[-1] == 'Enter':
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
     (root / 'composer').write_text('')
     if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
 elif command == 'capture-pane':
+    if (root / 'redraw-pending').exists():
+        (root / 'redraw-pending').unlink()
+        sys.exit(1)
     if (root / 'late').exists():
         # A slow renderer shows the paste only from the third capture after it.
         n = int((root / 'late-n').read_text()) + 1 if (root / 'late-n').exists() else 1
@@ -117,6 +158,11 @@ elif command == 'capture-pane':
         sys.exit(0)
     if (root / 'draft-fourth-capture').exists() and count >= 4: (root / 'composer').write_text('user addition')
     text = (root / 'composer').read_text()
+    if (root / 'captured-layout').exists():
+        snapshot = json.loads((root / 'captured-layout').read_text())
+        if text == snapshot['input']:
+            print(snapshot['pane'])
+            sys.exit(0)
     # Native capture trims occupied spaces without -N; -T excludes unused cells.
     occupied = text if '-N' in args else text.rstrip(' ')
     padding = ' ' * 8 if '-N' in args and '-T' not in args else ''
@@ -125,6 +171,10 @@ elif command == 'capture-pane':
     # An 80-column pane leaves 78 cells after the prompt/continuation prefix.
     if (root / 'wrap-80').exists() and len(occupied) > 78:
         chunks = [occupied[i:i + 78] for i in range(0, len(occupied), 78)]
+        if (root / 'word-wrap').exists():
+            chunks = textwrap.wrap(occupied, width=78, drop_whitespace=False)
+            # Preserve spaces belonging to the logical input as well as padding.
+            chunks = [row.ljust(78) for row in chunks[:-1]] + chunks[-1:]
         occupied = chunks[0]
         rows = ''.join('  ' + row + (' ' * (78 - len(row)) if provider == 'claude' else '') + '\n' for row in chunks[1:])
     footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'
@@ -355,7 +405,7 @@ fn guarded_send_unguarded_output_remains_compatible() {
 }
 
 #[test]
-fn guarded_send_post_paste_mismatch_preserves_composer_without_submit() {
+fn guarded_send_post_paste_mismatch_preserves_user_input_without_submit() {
     for provider in ["claude", "codex"] {
         let fixture = Fixture::new(provider);
         fs::write(fixture.root().join("inject-draft"), "").unwrap();
@@ -377,7 +427,11 @@ fn guarded_send_post_paste_mismatch_preserves_composer_without_submit() {
         assert!(!fixture.root().join("submissions").exists());
         assert_eq!(
             fs::read_to_string(fixture.root().join("composer")).unwrap(),
-            "continue-fixture user addition"
+            if provider == "claude" {
+                " user addition"
+            } else {
+                "continue-fixture user addition"
+            }
         );
         let repeated = fixture.send(&["--idempotency-key", "mismatch"]);
         fixture.refused(&repeated, "send-idempotency-key-used");
