@@ -9,6 +9,7 @@ use serde_json::json;
 
 use super::AgentCommandProfile;
 use super::child_home::{self, ChildHome};
+use super::commit_message::validate_generated_message;
 
 const REQUIRED_FLAGS: [&str; 5] = [
     "--ignore-user-config",
@@ -31,6 +32,7 @@ const COMMIT_DISABLED_FEATURES: [&str; 2] = ["shell_tool", "unified_exec"];
 const HOME_INSTRUCTION_SENTINEL: &str = "CODEX_CLI_AGENT_DOCTOR_HOME_INSTRUCTION_SENTINEL_7D70B264";
 const PROJECT_INSTRUCTION_SENTINEL: &str =
     "CODEX_CLI_AGENT_DOCTOR_PROJECT_INSTRUCTION_SENTINEL_B28F1E67";
+const SKILL_SENTINEL: &str = "CODEX_CLI_AGENT_DOCTOR_SKILL_SENTINEL_D71F05F8";
 /// Entry names inside a Codex home that can define hooks or carry hook trust
 /// state. The isolated runtime writes none of them, so their absence is a
 /// checkable property of the private child home. Hook *execution* is not
@@ -128,7 +130,13 @@ pub fn exec_isolated(prompt: &str, profile: AgentCommandProfile, stderr: &mut im
             return 1;
         }
     };
-    let mut command = isolated_command(&home, profile, ModelChoice::Configured);
+    let mut command = match isolated_command(&home, profile, ModelChoice::Configured) {
+        Ok(command) => command,
+        Err(message) => {
+            let _ = writeln!(stderr, "{message}");
+            return 1;
+        }
+    };
     command
         .args(["--", prompt])
         .stdin(Stdio::inherit())
@@ -176,7 +184,7 @@ pub fn generate_commit_message(
 
     let run_model =
         |model_choice: ModelChoice<'_>| -> Result<(std::process::ExitStatus, Vec<u8>), String> {
-            let mut command = isolated_command(&home, AgentCommandProfile::Commit, model_choice);
+            let mut command = isolated_command(&home, AgentCommandProfile::Commit, model_choice)?;
             command
                 .args(["--output-schema"])
                 .arg(&schema_path)
@@ -279,19 +287,20 @@ fn read_bounded_stderr(mut pipe: impl Read) -> std::io::Result<Vec<u8>> {
 
 pub fn doctor_isolated(json_output: bool) -> i32 {
     let capabilities = capability_report(AgentCommandProfile::Commit);
-    let (isolated_home, auth_bridge, instruction_isolation, hook_isolation) =
+    let (isolated_home, auth_bridge, instruction_isolation, hook_isolation, skill_isolation) =
         match IsolatedHome::create_without_refresh() {
             Ok(home) => {
-                let (instructions, hooks) = doctor_sentinel_probe(&home);
-                (true, true, instructions, hooks)
+                let (instructions, hooks, skills) = doctor_sentinel_probe(&home);
+                (true, true, instructions, hooks, skills)
             }
-            Err(_) => (false, false, false, false),
+            Err(_) => (false, false, false, false, false),
         };
     let ready = capabilities.ready()
         && isolated_home
         && auth_bridge
         && instruction_isolation
-        && hook_isolation;
+        && hook_isolation
+        && skill_isolation;
     if json_output {
         let result = json!({
             "schema_version": "cli.codex-cli.agent.doctor.v1",
@@ -304,6 +313,7 @@ pub fn doctor_isolated(json_output: bool) -> i32 {
                 "auth_bridge": auth_bridge,
                 "instruction_isolation": instruction_isolation,
                 "hook_isolation": hook_isolation,
+                "skill_isolation": skill_isolation,
                 "hook_isolation_method": HOOK_ISOLATION_METHOD
             }
         });
@@ -344,12 +354,12 @@ fn capability_report(profile: AgentCommandProfile) -> CapabilityReport {
     CapabilityReport { flags, features }
 }
 
-fn doctor_sentinel_probe(home: &IsolatedHome) -> (bool, bool) {
+fn doctor_sentinel_probe(home: &IsolatedHome) -> (bool, bool, bool) {
     let Ok(probe_root) = tempfile::Builder::new()
         .prefix("codex-cli-agent-doctor-")
         .tempdir()
     else {
-        return (false, false);
+        return (false, false, false);
     };
     let ambient_home = probe_root.path().join("ambient-home");
     let ambient_codex_home = ambient_home.join(".codex");
@@ -363,14 +373,23 @@ fn doctor_sentinel_probe(home: &IsolatedHome) -> (bool, bool) {
         .is_err()
         || fs::write(project.join("AGENTS.md"), PROJECT_INSTRUCTION_SENTINEL).is_err()
     {
-        return (false, false);
+        return (false, false, false);
+    }
+
+    let home_skill = ambient_home.join(".agents/skills/doctor-sentinel");
+    let project_skill = project.join(".agents/skills/doctor-sentinel");
+    for directory in [&home_skill, &project_skill] {
+        if fs::create_dir_all(directory).is_err() || fs::write(directory.join("SKILL.md"),
+            format!("---\nname: doctor-sentinel\ndescription: {SKILL_SENTINEL}\n---\nDiagnostic fixture\n")).is_err() {
+            return (false, false, false);
+        }
     }
 
     // Check the hook surface before the probe turn so a home builder that ever
     // started projecting ambient hook configuration is caught even if the turn
     // itself fails.
     if !hook_surface_absent(home.path()) {
-        return (false, false);
+        return (false, false, false);
     }
 
     let mut command = Command::new("codex");
@@ -380,6 +399,11 @@ fn doctor_sentinel_probe(home: &IsolatedHome) -> (bool, bool) {
     }
     for feature in COMMIT_DISABLED_FEATURES {
         command.args(["--disable", feature]);
+    }
+    // Use the diagnostic HOME as well as its project; never enumerate the
+    // caller's personal skills during this credential-free sentinel probe.
+    if super::skill_policy::apply_for_home(&mut command, &project, &ambient_home).is_err() {
+        return (false, false, false);
     }
     command
         .args([
@@ -394,10 +418,10 @@ fn doctor_sentinel_probe(home: &IsolatedHome) -> (bool, bool) {
         .stderr(Stdio::null());
     child_home::remove_control_environment(&mut command);
     let Ok(output) = command.output() else {
-        return (false, false);
+        return (false, false, false);
     };
     if !output.status.success() {
-        return (false, false);
+        return (false, false, false);
     }
     let instruction_isolation = !output
         .stdout
@@ -410,7 +434,11 @@ fn doctor_sentinel_probe(home: &IsolatedHome) -> (bool, bool) {
     // Re-check after the turn so anything the child materialized in its private
     // home is caught too, not only what the home builder wrote.
     let hook_isolation = hook_surface_absent(home.path());
-    (instruction_isolation, hook_isolation)
+    let skill_isolation = !output
+        .stdout
+        .windows(SKILL_SENTINEL.len())
+        .any(|window| window == SKILL_SENTINEL.as_bytes());
+    (instruction_isolation, hook_isolation, skill_isolation)
 }
 
 /// Report whether the child home carries no hook definition or hook trust
@@ -426,7 +454,7 @@ fn isolated_command(
     home: &IsolatedHome,
     profile: AgentCommandProfile,
     model_choice: ModelChoice<'_>,
-) -> Command {
+) -> Result<Command, String> {
     let mut command = Command::new("codex");
     command
         .args(["--ask-for-approval", "never", "exec"])
@@ -465,52 +493,11 @@ fn isolated_command(
         .args(["--sandbox", sandbox])
         .env("CODEX_HOME", home.path());
     child_home::remove_control_environment(&mut command);
-    command
-}
-
-fn validate_generated_message(message: &GeneratedCommitMessage) -> Result<(), String> {
-    const TYPES: [&str; 11] = [
-        "build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style",
-        "test",
-    ];
-    if !TYPES.contains(&message.commit_type.as_str()) {
-        return Err("codex-cli agent commit: invalid commit type".to_string());
-    }
-    if let Some(scope) = &message.scope
-        && (scope.trim().is_empty()
-            || scope.len() > 64
-            || scope
-                .chars()
-                .any(|ch| ch.is_whitespace() || ch == '(' || ch == ')'))
-    {
-        return Err("codex-cli agent commit: invalid commit scope".to_string());
-    }
-    let subject = message.subject.trim();
-    if subject.is_empty()
-        || subject != message.subject
-        || subject.len() > 100
-        || subject.contains(['\r', '\n'])
-    {
-        return Err("codex-cli agent commit: invalid commit subject".to_string());
-    }
-    let header_len = message.commit_type.len()
-        + message.scope.as_ref().map_or(0, |scope| scope.len() + 2)
-        + 2
-        + subject.len();
-    if header_len > 100 {
-        return Err("codex-cli agent commit: commit header exceeds 100 characters".to_string());
-    }
-    if message.body_bullets.len() > 20
-        || message.body_bullets.iter().any(|bullet| {
-            bullet.trim().is_empty()
-                || bullet != bullet.trim()
-                || bullet.len() > 500
-                || bullet.contains(['\r', '\n'])
-        })
-    {
-        return Err("codex-cli agent commit: invalid body bullet".to_string());
-    }
-    Ok(())
+    let cwd = std::env::current_dir().map_err(|_| {
+        "isolated-runtime-unsupported: cannot resolve working directory".to_string()
+    })?;
+    super::skill_policy::apply(&mut command, &cwd)?;
+    Ok(command)
 }
 
 fn warn_if_auth_replaced(home: &IsolatedHome, stderr: &mut impl Write) {

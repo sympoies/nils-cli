@@ -46,6 +46,24 @@ Use `--remote <name>` to select a remote other than `origin`. For the local
 provider, `--store-root <path>` overrides `FORGE_CLI_LOCAL_STORE`; it does not
 affect GitHub or GitLab operations.
 
+## PR body section headings
+
+`pr create`, `pr edit`, and `pr deliver` require non-empty H2 sections named
+`## Summary` and `## Test plan` by default. To use other headings, configure
+both names (or just the one to override) in the repository's `.forge-cli.toml`:
+
+```toml
+[body]
+summary_heading = "## 摘要"
+test_plan_heading = "## 驗證"
+```
+
+These names apply to delivery previews, newly created PRs, and adopted PRs'
+provider bodies. Headings match exactly, including the `##` prefix and following space; no
+localized synonyms are inferred. Repository values override user-global
+`[body]` defaults field by field. An unset heading retains its English default
+when neither configuration layer supplies it.
+
 ## GitHub release, workflow, and comment writes
 
 These narrow commands use the same selected-principal binding as issue/PR
