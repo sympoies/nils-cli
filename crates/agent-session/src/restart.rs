@@ -80,6 +80,40 @@ fn render_text(receipt: &Receipt) -> String {
     )
 }
 
+/// Resolve transient tmux shutdown uncertainty before deciding whether resume
+/// is a no-op or may enter the existing stopped-runtime verification path.
+/// The caller holds the session record lock throughout this bounded wait.
+pub(crate) fn resume_status(tmux: &Path, record: &SessionRecord) -> String {
+    if crate::recorded_runtime_is_from_prior_boot(record) {
+        return "stopped".to_string();
+    }
+    let started = Instant::now();
+    let budget = Duration::from_secs(2);
+    loop {
+        let remaining = budget.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return "unknown".to_string();
+        }
+        let status = crate::live_status_with_timeout(
+            tmux,
+            &record.tmux_session,
+            remaining.min(Duration::from_secs(1)),
+        );
+        if status != "unknown" {
+            return status;
+        }
+        thread::sleep(POLL_INTERVAL.min(budget.saturating_sub(started.elapsed())));
+    }
+}
+
+pub(crate) fn resume_retry_details(record: &SessionRecord) -> serde_json::Value {
+    json!({
+        "id": record.id,
+        "retryable": true,
+        "next_action": "retry-resume",
+    })
+}
+
 /// The provider binary a resume of `record` launches.
 pub(crate) fn resume_agent_bin(
     profile: Option<crate::DurableProfileResumeContext>,

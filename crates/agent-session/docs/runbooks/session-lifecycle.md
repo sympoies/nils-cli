@@ -127,6 +127,11 @@ defines the observation and recovery rules.
 provider resume metadata; it never resumes the latest provider conversation
 implicitly.
 
+- A transiently unknown tmux status is retried for up to two seconds while
+  holding the session record lock. A confirmed running runtime is a no-op;
+  confirmed absence proceeds through the stopped-runtime checks below. If
+  uncertainty persists, `session-status-unknown` includes `retryable: true` and
+  `next_action: retry-resume`; no replacement is launched.
 - Runtime metadata is persisted before launch so hooks see the new generation,
   and the immutable tmux session/pane identity is persisted before a successful
   start or resume returns.
