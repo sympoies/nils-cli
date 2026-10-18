@@ -123,17 +123,27 @@ exec {} "$@"
     }
 
     fn kill(&self) {
-        let group = self.stored()["delete_tmux_identity"]["process_group_id"]
-            .as_i64()
-            .unwrap()
-            .to_string();
+        let record = self.stored();
+        let identity = &record["delete_tmux_identity"];
+        let target = identity["session_id"].as_str().unwrap();
+        let group = identity["process_group_id"].as_i64().unwrap().to_string();
+        // The shared fake maps managed names to numeric IDs. Kill that exact
+        // ID so both aliases are absent, as for a real tmux session kill.
         let status = std::process::Command::new(&self.tmux)
-            .args(["kill-session", "-t", "hs-resume-fixture"])
+            .args(["kill-session", "-t", target])
             .env("AGENT_SESSION_FAKE_TMUX_LOG", &self.log)
             .env("AGENT_SESSION_FAKE_TMUX_PROCESS_GROUP_ID", group)
             .status()
             .unwrap();
         assert!(status.success());
+        for target in [record["tmux_session"].as_str().unwrap(), target] {
+            let probe = std::process::Command::new(&self.tmux)
+                .args(["has-session", "-t", target])
+                .env("AGENT_SESSION_FAKE_TMUX_LOG", &self.log)
+                .output()
+                .unwrap();
+            assert_eq!(probe.status.code(), Some(1), "killed target: {target}");
+        }
     }
 
     fn launches(&self) -> usize {
@@ -144,8 +154,8 @@ exec {} "$@"
     }
 
     fn stop_broker(&self) {
-        // The fake tmux kill uses SIGKILL for deterministic process cleanup;
-        // unlike a provider exit, that skips the launch wrapper's broker stop.
+        // The fake tmux stops the fixture process group without executing the
+        // real launch wrapper's broker stop after a provider exit.
         // Model that authenticated cleanup explicitly. macOS correctly refuses
         // to replace an unrevoked broker using absent process-group evidence.
         let record = self.stored();
@@ -262,7 +272,14 @@ fn resume_status_concurrent_requests_launch_one_replacement() {
         let first = scope.spawn(|| fixture.resume(false));
         let second = scope.spawn(|| fixture.resume(false));
         let results = [first.join().unwrap(), second.join().unwrap()];
-        assert!(results.iter().any(|resumed| resumed.code == 0));
+        assert!(
+            results.iter().any(|resumed| resumed.code == 0),
+            "{:?}",
+            results
+                .iter()
+                .map(CmdOutput::stdout_text)
+                .collect::<Vec<_>>()
+        );
         for resumed in results {
             if resumed.code != 0 {
                 // A waiter that observed the old incarnation before taking the
