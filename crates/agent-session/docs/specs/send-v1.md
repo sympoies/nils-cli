@@ -42,13 +42,16 @@ short, nonblocking guard probes detect it without dropping that event.
 
 For a guarded text-and-Enter submission, send waits for paste settlement and
 then requires the composer to contain **exactly** its own text, rechecks
-identity and requested idle state, and presses Enter at most once. If a turn
+identity and requested idle state, and presses Enter. If the exact paste remains,
+one swallowed Enter may be retried within the same observation budget, with all
+guards rechecked before the retry. If a turn
 starts or the composer changes after paste, it refuses without Enter. It
 then attempts to remove only the text it pasted and verifies the result.
 An exact paste can be removed; with Claude, a provable ASCII paste prefix can
 also be removed when admission required an empty composer and an earlier
-post-paste observation saw exactly the pasted text before the conflicting edit. Unreadable input is preserved, and a swallowed Enter is never
-retried. Post-paste refusal is distinct from admission refusal: it carries
+post-paste observation saw exactly the pasted text before the conflicting edit.
+Unreadable input is preserved. Stuck and unverified submissions use the same
+cleanup path as post-paste guard failures. Post-paste refusal is distinct from admission refusal: it carries
 `pasted: true` and `cleared`. When `cleared` is `false` the pasted text may
 remain in the input, and the outcome stays unknown to callers.
 

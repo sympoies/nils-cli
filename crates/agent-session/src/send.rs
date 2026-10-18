@@ -434,7 +434,7 @@ fn guarded(
                     &probe,
                     hold_started,
                     |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
-                    || false,
+                    || true,
                     press_enter,
                 )?))
             } else {
@@ -472,14 +472,25 @@ fn guarded(
     record.updated_at = Zoned::now().timestamp().to_string();
     write_session_record(context, &record)?;
     if let Some(report) = submission
-        && report.outcome == send_submit::SubmitOutcome::Stuck
+        && matches!(
+            report.outcome,
+            send_submit::SubmitOutcome::Stuck | send_submit::SubmitOutcome::Unverified
+        )
     {
-        return Err(CliError::runtime(
-            "send-submit-stuck",
-            "guarded submission remained in the composer after one Enter; the delivery claim is retained",
-            Some(
-                json!({"id": record.id, "outcome": report.outcome, "enter_presses": report.enter_presses, "atomic": false}),
-            ),
+        let error = CliError::runtime(
+            if report.outcome == send_submit::SubmitOutcome::Stuck {
+                "send-submit-stuck"
+            } else {
+                "send-submit-unconfirmed"
+            },
+            "guarded prompt submission was not confirmed; the delivery claim is retained",
+            Some(json!({"id": record.id, "outcome": report.outcome,
+                "enter_presses": report.enter_presses, "atomic": false})),
+        );
+        return Err(admission.report_pasted_input(
+            error,
+            literal.expect("unconfirmed literal prompt"),
+            observed_paste,
         ));
     }
     Ok(SendResult {

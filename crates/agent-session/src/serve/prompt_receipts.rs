@@ -2,6 +2,7 @@
 use super::*;
 
 mod store;
+mod terminal;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,6 +35,8 @@ struct Receipt {
     session_incarnation: String,
     outcome: Outcome,
     code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    composer_cleanup: Option<terminal::ComposerCleanup>,
 }
 
 impl Receipt {
@@ -44,6 +47,7 @@ impl Receipt {
             session_incarnation: incarnation,
             outcome: Outcome::Unknown,
             code: Some("structured-prompt-outcome-unknown".into()),
+            composer_cleanup: None,
         }
     }
 }
@@ -330,11 +334,11 @@ async fn dispatch(state: Arc<ServeState>, id: String, body: SubmitBody) -> Respo
                     "session is busy or its composer contains a draft",
                 )
             } else {
-                envelope_err(error)
+                terminal::failure(error)
             }
         }
         Ok(Ok(_)) | Err(_) => status_json(
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::CONFLICT,
             "structured-prompt-outcome-unknown",
             "structured prompt submission outcome is unknown",
         ),
@@ -359,6 +363,7 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
     }
     let code = body["error"]["code"].as_str().unwrap_or("");
     let details = &body["error"]["details"];
+    receipt.composer_cleanup = terminal::ComposerCleanup::from_details(details);
     let safe_guard_refusal = details["stage"] == "admission"
         && details["pasted"] == false
         && details["submitted"] == false;
@@ -383,6 +388,10 @@ async fn classify(response: Response, mut receipt: Receipt) -> ResultRecord {
             queued: false,
         }
     } else {
-        ResultRecord::unknown(receipt)
+        let mut result = ResultRecord::unknown(receipt);
+        if status == StatusCode::CONFLICT {
+            result.status = status.as_u16();
+        }
+        result
     }
 }

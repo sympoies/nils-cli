@@ -657,7 +657,8 @@ recorded in `sympoies/nils-cli#1409`.
   `data.machine`, `data.submitted: true`, `data.session_incarnation` and the
   optional `data.queued: true`, adding `data.receipt`. Refused/unknown POSTs use
   `ok: false` and place the receipt in `error.details.receipt`. Unknown returns
-  HTTP 500 with `error.code: structured-prompt-outcome-unknown`. Repeated POSTs
+  HTTP 500 with `error.code: structured-prompt-outcome-unknown`, except for the
+  guarded terminal outcomes described below, which return HTTP 409. Repeated POSTs
   return the retained status and outcome; an unfinished claim may later resolve
   through lookup when the original request completes.
 
@@ -701,7 +702,18 @@ recorded in `sympoies/nils-cli#1409`.
   HTTP 409 `busy`. Unobservable state fails closed with the CLI's stable guard
   code. These external provider/UI observations remain non-atomic, as in
   [guarded send](send-v1.md); a later failure after possible paste or native
-  dispatch is `unknown`, even if no submission was confirmed.
+  dispatch is `unknown`, even if no submission was confirmed. Guarded terminal
+  submission retries one swallowed Enter only while its exact paste and all
+  guards still hold. A stuck or unverified submission attempts the same bounded,
+  identity-fenced cleanup as a post-paste guard failure. These uncertain guarded
+  results return HTTP 409 `structured-prompt-outcome-unknown`, including without
+  a request ID. Keyed receipts retain optional `composer_cleanup` with `cleared`
+  (boolean) and `remaining_input` (`empty`, `pasted_text`, `different_text`, or
+  `unobservable`). This reports residue without exposing composer contents;
+  failed cleanup must not be treated as an empty composer. Cleanup does not
+  prove non-dispatch: the receipt remains `unknown`, the key stays consumed,
+  and clients reconcile that key instead of blindly resending. Pre-paste
+  unobservable guard refusals also return HTTP 409 with their stable guard code.
 
   A `refused` receipt proves no provider dispatch/paste. Refusals, including
   `busy`, are terminal for that key. After a definite refusal and refreshed
