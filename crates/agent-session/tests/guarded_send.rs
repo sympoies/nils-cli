@@ -42,12 +42,43 @@ impl Fixture {
         fs::write(temp.path().join("composer"), "").unwrap();
         fs::write(temp.path().join("calls"), "").unwrap();
         let script = r#"#!/usr/bin/env python3
-import json, pathlib, sys
+import atexit, json, pathlib, sys, textwrap
 root = pathlib.Path(__file__).parent
 args = sys.argv[1:]
 with (root / 'calls').open('a') as out: out.write(json.dumps(args) + '\n')
 command = args[0]
 provider = (root / 'provider').read_text()
+def print_cursor():
+    text = (root / 'composer').read_text()
+    cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+    x, y = 2 + cursor, 1
+    if (root / 'wrap-80').exists() and len(text) > 78:
+        chunks = [text[i:i + 78] for i in range(0, len(text), 78)]
+        if (root / 'word-wrap').exists(): chunks = textwrap.wrap(text, width=78, drop_whitespace=False)
+        for row, chunk in enumerate(chunks):
+            if cursor <= len(chunk): x, y = 2 + cursor, 1 + row; break
+            cursor -= len(chunk)
+    if (root / 'captured-layout').exists():
+        snapshot = json.loads((root / 'captured-layout').read_text())
+        if text == snapshot['input']:
+            cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+            x, y = (2, 13) if cursor == 0 else snapshot['prefix_end']
+    if (root / 'late-home').exists():
+        count_path = root / 'cursor-reads'
+        count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+        count_path.write_text(str(count))
+        if count < 3: x, y = 3, 1
+    if (root / 'cursor-not-at-start').exists(): x, y = 3, 1
+    if (root / 'wrong-prefix-end').exists() and (root / 'right-sent').exists(): x += 1
+    print(x, y)
+
+if command == 'capture-pane' and 'display-message' in args: atexit.register(print_cursor)
+def append_draft_after_capture():
+    if (root / 'replace-after-paste').exists(): return
+    if (root / 'draft-after-exact').exists() and (root / 'paste-completed').exists() and not (root / 'draft-injected').exists():
+        with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
+        (root / 'draft-injected').touch()
+if command == 'capture-pane': atexit.register(append_draft_after_capture)
 if command == 'has-session':
     if (root / 'start-turn').exists():
         p = root / 'state/sessions/guarded/activity.json'
@@ -55,17 +86,23 @@ if command == 'has-session':
         p.write_text(json.dumps(d))
     sys.exit(0)
 if command == 'show-environment':
-    key = args[-1]
-    values = {'AGENT_SESSION_ID': 'guarded', 'AGENT_SESSION_RUNTIME_ID': 'runtime-one', 'AGENT_SESSION_STATE_DIR': str(root / 'state')}
-    if key == 'AGENT_SESSION_RUNTIME_ID':
-        path = root / 'runtime-read-count'
-        count = int(path.read_text()) + 1 if path.exists() else 1
-        path.write_text(str(count))
-        if (root / 'flip-second-runtime-read').exists() and count == 2:
-            values[key] = 'runtime-replaced'
-        if (root / 'runtime-replaced').exists(): values[key] = 'runtime-replaced'
-    if key in values: print(key + '=' + values[key]); sys.exit(0)
-    sys.exit(1)
+    commands = []
+    for arg in args:
+        if arg == ';': commands.append([])
+        elif not commands: commands = [[arg]]
+        else: commands[-1].append(arg)
+    for row in commands:
+        key = row[-1]
+        values = {'AGENT_SESSION_ID': 'guarded', 'AGENT_SESSION_RUNTIME_ID': 'runtime-one', 'AGENT_SESSION_STATE_DIR': str(root / 'state')}
+        if key == 'AGENT_SESSION_RUNTIME_ID':
+            path = root / 'runtime-read-count'
+            count = int(path.read_text()) + 1 if path.exists() else 1
+            path.write_text(str(count))
+            if (root / 'flip-second-runtime-read').exists() and count == 2: values[key] = 'runtime-replaced'
+            if (root / 'runtime-replaced').exists(): values[key] = 'runtime-replaced'
+        if key not in values: sys.exit(1)
+        print(key + '=' + values[key])
+    sys.exit(0)
 if command == 'load-buffer':
     (root / 'buffer').write_bytes(pathlib.Path(args[-1]).read_bytes())
     if (root / 'draft-on-load').exists(): (root / 'composer').write_text('new user draft')
@@ -75,29 +112,51 @@ if command == 'load-buffer':
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
         p.write_text(json.dumps(d))
 elif command == 'paste-buffer':
+    if (root / 'draft-before-paste').exists(): (root / 'composer').write_text('hello world ')
     if (root / 'late-render').exists(): (root / 'late').write_text((root / 'buffer').read_text())
     else:
         with (root / 'composer').open('a') as out: out.write((root / 'buffer').read_text())
     if (root / 'fail-capture-after-paste').exists(): (root / 'capture-fails').touch()
-    if (root / 'inject-draft').exists():
-        with (root / 'composer').open('a') as out: out.write(' user addition')
+    if (root / 'inject-draft').exists() and not (root / 'draft-after-exact').exists():
+        with (root / 'composer').open('a') as out: out.write((root / 'draft-text').read_text() if (root / 'draft-text').exists() else ' user addition')
+    (root / 'paste-completed').touch()
+    if (root / 'replace-after-paste').exists(): (root / 'composer').write_text('replacement draft')
     if (root / 'start-after-paste').exists():
         p = root / 'state/sessions/guarded/activity.json'
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
         p.write_text(json.dumps(d))
-elif command == 'send-keys' and args[-1] == 'BSpace':
+elif command == 'display-message':
+    print_cursor()
+elif command == 'send-keys' and args[-1] == 'Right':
+    cursor = int((root / 'cursor').read_text())
+    count = int(args[args.index('-N') + 1])
+    (root / 'cursor').write_text(str(min(len((root / 'composer').read_text()), cursor + count)))
+    (root / 'right-sent').touch()
+elif command == 'send-keys' and args[-1] == 'C-a':
+    (root / 'cursor').write_text('0')
+    if (root / 'draft-on-home').exists(): (root / 'composer').write_text('replacement draft')
+    if (root / 'replace-on-home').exists(): (root / 'runtime-replaced').touch()
+elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
     if (root / 'backspace-stalls').exists():
         (root / 'capture-fails').touch()
         import time
         time.sleep(3)
     if not (root / 'backspace-ignored').exists():
         count = int(args[args.index('-N') + 1]) if '-N' in args else 1
-        (root / 'composer').write_text((root / 'composer').read_text()[:-count])
+        text = (root / 'composer').read_text()
+        cursor = int((root / 'cursor').read_text()) if (root / 'cursor').exists() else len(text)
+        if args[-1] == 'DC': text = text[:cursor] + text[cursor + count:]
+        else: text = text[:max(0, cursor - count)] + text[cursor:]
+        (root / 'composer').write_text(text)
+        if (root / 'redraw-after-delete').exists(): (root / 'redraw-pending').touch()
 elif command == 'send-keys' and args[-1] == 'Enter':
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
     (root / 'composer').write_text('')
     if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
 elif command == 'capture-pane':
+    if (root / 'redraw-pending').exists():
+        (root / 'redraw-pending').unlink()
+        sys.exit(1)
     if (root / 'late').exists():
         # A slow renderer shows the paste only from the third capture after it.
         n = int((root / 'late-n').read_text()) + 1 if (root / 'late-n').exists() else 1
@@ -117,6 +176,11 @@ elif command == 'capture-pane':
         sys.exit(0)
     if (root / 'draft-fourth-capture').exists() and count >= 4: (root / 'composer').write_text('user addition')
     text = (root / 'composer').read_text()
+    if (root / 'captured-layout').exists():
+        snapshot = json.loads((root / 'captured-layout').read_text())
+        if text == snapshot['input']:
+            print(snapshot['pane'])
+            sys.exit(0)
     # Native capture trims occupied spaces without -N; -T excludes unused cells.
     occupied = text if '-N' in args else text.rstrip(' ')
     padding = ' ' * 8 if '-N' in args and '-T' not in args else ''
@@ -125,6 +189,10 @@ elif command == 'capture-pane':
     # An 80-column pane leaves 78 cells after the prompt/continuation prefix.
     if (root / 'wrap-80').exists() and len(occupied) > 78:
         chunks = [occupied[i:i + 78] for i in range(0, len(occupied), 78)]
+        if (root / 'word-wrap').exists():
+            chunks = textwrap.wrap(occupied, width=78, drop_whitespace=False)
+            # Preserve spaces belonging to the logical input as well as padding.
+            chunks = [row.ljust(78) for row in chunks[:-1]] + chunks[-1:]
         occupied = chunks[0]
         rows = ''.join('  ' + row + (' ' * (78 - len(row)) if provider == 'claude' else '') + '\n' for row in chunks[1:])
     footer = '\x1b]8;;https://example.invalid/\x1b\\status\x1b]8;;\x1b\\' if native else 'status'
@@ -355,7 +423,7 @@ fn guarded_send_unguarded_output_remains_compatible() {
 }
 
 #[test]
-fn guarded_send_post_paste_mismatch_preserves_composer_without_submit() {
+fn guarded_send_post_paste_mismatch_preserves_user_input_without_submit() {
     for provider in ["claude", "codex"] {
         let fixture = Fixture::new(provider);
         fs::write(fixture.root().join("inject-draft"), "").unwrap();

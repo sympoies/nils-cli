@@ -44,9 +44,10 @@ For a guarded text-and-Enter submission, send waits for paste settlement and
 then requires the composer to contain **exactly** its own text, rechecks
 identity and requested idle state, and presses Enter at most once. If a turn
 starts or the composer changes after paste, it refuses without Enter. It
-then removes the text it pasted only while the composer still holds exactly
-that text, and reads the composer back to prove it is empty. User additions
-and unreadable composers are never cleared, and a swallowed Enter is never
+then attempts to remove only the text it pasted and verifies the result.
+An exact paste can be removed; with Claude, a provable ASCII paste prefix can
+also be removed when admission required an empty composer and an earlier
+post-paste observation saw exactly the pasted text before the conflicting edit. Unreadable input is preserved, and a swallowed Enter is never
 retried. Post-paste refusal is distinct from admission refusal: it carries
 `pasted: true` and `cleared`. When `cleared` is `false` the pasted text may
 remain in the input, and the outcome stays unknown to callers.
@@ -57,7 +58,8 @@ These terminal checks report `data.guards.atomic: false` on guarded success.
 Guard refusal details also carry `atomic: false`. They are submission-time
 observations, not an atomic compare-and-submit operation. A human keystroke or
 provider turn can still race the interval between the final observation and
-paste or Enter. A native atomic provider operation is tracked separately in
+paste, Enter or cleanup keys. Cleanup cannot exclude simultaneous human edits
+between its observations and keys. A native atomic provider operation is tracked separately in
 [#2374](https://github.com/sympoies/nils-cli/issues/2374).
 
 Idle and composer observations support Claude Code and Codex tmux runtimes,
@@ -266,21 +268,49 @@ claiming must never be treated as permission to resend the same delivery.
 A failure while the guarded send checks or presses its Enter adds
 `pasted: true` and `cleared` to its details; `send-submit-stuck` and a failure
 to write the session record after Enter do not.
-`cleared: true` means the composer was read back without the pasted text;
-`false` means it may remain and the message says so. Cleanup can read indented
-wrapped rows only to compare their complete content with the paste; submission
-admission still requires a single observable row. Mixed drafts, blank
-continuation rows, dialogs, paste placeholders and unreadable captures are
-preserved. Claude row-end spaces at a wrap boundary cannot be distinguished
-from renderer padding, so those captures are reported as `unobservable` and
-left untouched. Matching text is removed in one bounded repeated-Backspace
-command and emptiness is read back.
+`cleared: true` means a fresh observation verified the expected restoration:
+empty input, or the preserved suffix after removing this send's prefix.
+`cleared: true` does not mean the composer is empty: consumers must read
+`remaining_input`. `false` means restoration was not verified; the error message explicitly says
+whether the paste remains or the input is uncertain. `cleared` concerns the
+owned paste, so an identical copy typed by the user can remain as their draft.
+
+During the existing paste-settlement interval, cleanup records whether an
+exact-paste observation preceded the conflict. Without that observation, a
+draft typed before the paste can share its prefix; mixed input is left intact
+and ownership is reported as unverified. With that observation, prefix recovery
+treats later input as an appended suffix. This remains an observational
+assumption; simultaneous edits can still race the observations and keys.
+
+Cleanup uses the known paste to match wrapped Claude rows, considering written
+row-end padding and separator spaces omitted by word wrapping. A unique match
+is required; arbitrary unknown rows are never reconstructed. Submission
+admission still requires one observable row. Exact single-row matches retain
+Backspace-only cleanup, including the existing trailing-space comparison.
+For printable ASCII Claude wrapped or proven-prefix input, cleanup moves to the logical line start, verifies that the cursor reached the
+first composer row, moves right by exactly the paste length, and verifies its
+visual endpoint against the capture. The endpoint check prevents a guessed
+wrap separator from consuming a draft character. Input and runtime identity
+are rechecked before a bounded repeated-Backspace command removes that prefix.
+Navigation and deletion are allowed to settle within the cleanup budget;
+only a fresh post-deletion observation can establish restoration.
+
+Mixed input without proof of an empty admitted composer, non-ASCII mixed
+drafts, blank continuation rows, dialogs, paste placeholders, unexpected cursor
+positions and unreadable captures are preserved and reported. Cleanup batches
+only the three identity variables it needs and pairs each pane/cursor read in
+one tmux invocation, reducing subprocess round trips within the same budget.
+An exact match on the existing Codex or non-ASCII path retains its
+repeated-Backspace cleanup.
 
 `remaining_input` classifies the last cleanup observation as `empty`,
-`pasted_text`, `different_text`, or `unobservable`. When observable,
+`pasted_text`, `different_text`, or `unobservable`.
+`paste_observed_before_conflict` states whether the earlier exact-paste read
+succeeded; it does not claim atomic ownership. When observable,
 `remaining_characters` counts the reconstructed input's Unicode scalar values
-and `pasted_text_present` reports whether it contains the complete pasted text.
-These are observations, not atomic guarantees; no composer content is returned.
+and `pasted_text_present` reports whether it contains the complete pasted text
+as a substring, including any identical user-authored copy. These are
+observations, not atomic guarantees; no composer content is returned.
 
 Native refusal details always report `pasted: false`. `dispatched` indicates
 that a native mutation was attempted; `acknowledged` records a valid provider
