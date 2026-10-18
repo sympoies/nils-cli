@@ -501,6 +501,28 @@ reviewers cannot satisfy admission. Existing convergence and merge gates remain.
   the exact approval marker. The stop code must map to its canonical budget
   field and the proposal must match the active receipt. Each proposal is
   consumable once; retry and delivery paths cannot silently increase a budget.
+- An applied extension still binds the stopped head and the exact canonical
+  inventory: reviewer surrender/reassignment, a new assignment generation, or
+  a changed base does not clear that binding. A mismatched observation returns
+  `review_state_conflict` with recovery commands in the message, including in
+  `observe --dry-run` preflight. Start with
+  `forge-cli pr review-loop inspect <PR> --format json`.
+
+  If the provider head is unchanged, replay the original inventory whose digest
+  matches `hard_stop.observation_digest`:
+
+  ```bash
+  forge-cli pr review-loop observe <PR> --expected-head <stopped-head> \
+    --expected-state <current-tip> --findings-file <original-findings.json>
+  ```
+
+  The already applied extension is not applied again. An unapplied extension
+  still requires its exact approval and `extend` before replay. An altered
+  inventory cannot reuse that approval. If the provider head advanced, follow
+  the signed fast-forward supersession below instead; it requires fresh
+  approval even when the previous extension was consumed. Unsupported head
+  changes remain blocked. Neither recovery resets history or grants budget
+  implicitly.
 - When a stopped attempt at A is superseded by a signed fast-forward to B,
   inspect the current tip and pass this explicit findings-file wrapper to
   `observe` with `--expected-head B --expected-state <current-tip>`:
