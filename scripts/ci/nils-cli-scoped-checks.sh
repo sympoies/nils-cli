@@ -98,7 +98,7 @@ print("\n".join(sorted(names - selected)))
     run_test python3 scripts/ci/scoped-coverage-ratchet.py \
       --base "${NILS_CLI_SCOPED_COVERAGE_BASE:?missing immutable scoped coverage base}" \
       "${coverage_args[@]}" "$@"
-    run cargo llvm-cov report --html --output-dir target/coverage "${coverage_args[@]}"
+    run cargo llvm-cov report --html --output-dir target/coverage "${package_args[@]}"
     ;;
   *)
     echo "error: unsupported scoped CI test runner" >&2

@@ -28,6 +28,9 @@ class RatchetTests(unittest.TestCase):
         cargo.write_text('''#!/usr/bin/env python3
 import json, os, pathlib, subprocess, sys
 args = sys.argv[1:]
+if args[:2] == ['llvm-cov', 'report'] and '--exclude-from-report' in args:
+    sys.stderr.write('--exclude-from-report is not supported for subcommand report\\n')
+    raise SystemExit(1)
 if args[:2] != ['llvm-cov', 'nextest']:
     raise SystemExit(subprocess.call([str(pathlib.Path(__file__).with_name('cargo-base')), *args]))
 root = pathlib.Path.cwd()
@@ -163,8 +166,9 @@ if '--fail-under-lines' in args and 100 * hit / found < float(args[args.index('-
         self.assertEqual(result.returncode, 0, result.stderr)
         report = next(row['args'] for row in rows if row.get('args', [])[:2] == ['llvm-cov', 'report'])
         self.assertNotIn('--fail-under-lines', report)
-        self.assertEqual([report[i + 1] for i, arg in enumerate(report) if arg == '--exclude-from-report'],
-                         ['unrelated', 'untouched'])
+        self.assertNotIn('--exclude-from-report', report)
+        self.assertEqual([report[i + 1] for i, arg in enumerate(report) if arg == '-p'],
+                         ['consumer', 'selected'])
 
     def test_full_workspace_absolute_floor_is_retained(self):
         for relative in ['scripts/ci/nils-cli-checks-entrypoint.sh',
