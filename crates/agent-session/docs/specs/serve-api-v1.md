@@ -623,6 +623,19 @@ recorded in `sympoies/nils-cli#1409`.
   (a tool-call turn takes the queue at its next tool call); the queued case adds `queued: true` and the client MUST NOT
   resend it. A new turn omits `queued`. When neither is observed the route answers 500 `structured-prompt-outcome-unknown`.
 
+  Direct structured replies through either route inspect the composer under the
+  submission's session-record lock before terminal paste or native dispatch.
+  An observed owner draft returns HTTP 409 `composer-not-empty`, preserving the
+  draft and sending nothing. An unreadable or ambiguous composer returns HTTP
+  409 `composer-unobservable`, also before dispatch. These refusals preserve
+  account/input control state and automatic recovery settings. The check uses
+  the existing exact composer observation limits in [Send v1](send-v1.md).
+  An explicit owner clear followed by another submission is the recovery path;
+  the reply operation never clears a draft or sends Ctrl+C. Direct replies
+  retain their existing provider acknowledgement and queue confirmation rules
+  when the composer is observably empty. Initial creation prompts and internal
+  coordination notifications retain their separately owned admission policy.
+
   The v2 route additionally accepts optional `request_id` and `require_idle`
   fields. Omitting both preserves the existing response and delivery behavior.
   `request_id` contains 1–128 ASCII letters, digits, dots, underscores or

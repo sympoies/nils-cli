@@ -13,6 +13,8 @@ use crate::{
 };
 
 mod clear;
+mod composer;
+pub(crate) use composer::require_empty_composer;
 mod key;
 mod observation;
 mod ownership;

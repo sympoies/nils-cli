@@ -4775,16 +4775,13 @@ pub(crate) fn deliver_claude_structured_prompt_locked(
             Some(json!({ "id": record.id })),
         ));
     }
-    // The authoritative blocked check for a pane-delivered prompt. The caller's
-    // early reject runs before this lock is taken, so an `attention_requested`
-    // ingest landing in that gap would otherwise let the prompt paste into the
-    // dialog. Re-checking here puts the decision under the same lock that
-    // fences the launch id, liveness, and the write itself.
+    // Recheck blocked activity under the runtime lock before touching input.
     activity::refuse_if_blocked(
         context,
         &record,
         "answer the dialog with send --key, then resubmit the prompt",
     )?;
+    send_guard::require_empty_composer(&record, tmux_bin)?;
     codex_account::ensure_input_allowed(&record)?;
     auto_resume::cancel_for_manual_input_locked(
         context,

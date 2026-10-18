@@ -2516,6 +2516,7 @@ pub(crate) fn envelope_err(err: CliError) -> Response {
         | "agent-blocked"
         | "send-submit-stuck"
         | "session-has-live-children" => StatusCode::CONFLICT,
+        "composer-not-empty" | "composer-unobservable" => StatusCode::CONFLICT,
         "retitle-v3-memory-not-ready" => StatusCode::UNPROCESSABLE_ENTITY,
         "retitle-v3-objective-unavailable" => StatusCode::UNPROCESSABLE_ENTITY,
         "board-cursor-expired" => StatusCode::GONE,
@@ -7171,12 +7172,8 @@ async fn submit_structured_prompt_locked(
     handle: &ControlHandle,
     text: &str,
 ) -> Result<String, Response> {
-    if handle
-        .wait_ready(CODEX_CREATE_PROMPT_CONTROL_WAIT)
-        .await
-        .is_err()
-    {
-        // Preserve the incarnation error when startup lost its runtime fence.
+    let readiness = handle.wait_ready(CODEX_CREATE_PROMPT_CONTROL_WAIT).await;
+    if readiness.is_err() {
         load_structured_prompt_record_locked(state, id, Some(launch_id)).await?;
         return Err(status_json(
             StatusCode::CONFLICT,
@@ -7184,14 +7181,15 @@ async fn submit_structured_prompt_locked(
             "structured prompt control is not ready for this session",
         ));
     }
-
     let lock_context = state.context.clone();
+    let tmux_bin = state.tmux_bin.clone();
     let lock_id = id.to_string();
     let expected_launch_id = launch_id.to_string();
     let expected_session_incarnation = guards.expected_session_incarnation.map(str::to_string);
     let expected_binding = guards
         .expected_binding
         .map(|(account, revision)| (account.to_string(), revision));
+    let direct_reply = guards.expected_binding.is_none() && guards.notification.is_none();
     let notification_fence = guards.notification;
     let (record_lock, session_incarnation) = match tokio::task::spawn_blocking(move || {
         let record_lock = crate::acquire_session_record_lock(&lock_context, &lock_id)?;
@@ -7234,6 +7232,9 @@ async fn submit_structured_prompt_locked(
             ));
         }
         codex_quiet::precheck(&lock_context, &current, notification_fence.is_some())?;
+        if direct_reply {
+            crate::send_guard::require_empty_composer(&current, &tmux_bin)?;
+        }
         crate::codex_account::authorize_input_locked(&lock_context, &mut current)?;
         auto_resume::cancel_for_manual_input_locked(
             &lock_context,
@@ -7271,7 +7272,6 @@ async fn submit_structured_prompt_locked(
         Ok(Err(err)) => return Err(envelope_err(err)),
         Err(_) => return Err(join_err()),
     };
-
     let response = handle
         .submit_prompt(text)
         .await
@@ -24029,19 +24029,15 @@ esac
     }
 
     /// The Codex app-server route submits over the control channel and never
-    /// touches the pane, so the blocked-input hazard does not exist there and
-    /// the prompt must not be refused. The daemon's own in-turn coordination
+    /// writes to the pane. Read-only composer admission preserves owner drafts;
+    /// a blocked turn with an empty composer still admits a reply. In-turn coordination
     /// checkpoint delivers to a `NeedsInput` Codex session over the same
     /// channel; refusing callers for that would contradict it.
     #[tokio::test]
     async fn structured_prompt_admits_a_blocked_codex_app_server_session() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launch_id = seed_codex_app_server_session(tmp.path(), "blocked");
-        let st = state(
-            tmp.path(),
-            Some(TOKEN),
-            PathBuf::from("/terminal-transport-must-not-run"),
-        );
+        let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
         block_on_provider_attention(&st, "blocked", "codex");
         let (handle, mut commands) = codex_app_server::control_channel();
         st.codex_controls.lock().unwrap().insert(
@@ -24189,11 +24185,7 @@ esac
     async fn structured_prompt_submits_exact_multiline_without_terminal_paste() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launch_id = seed_codex_app_server_session(tmp.path(), "structured");
-        let st = state(
-            tmp.path(),
-            Some(TOKEN),
-            PathBuf::from("/terminal-transport-must-not-run"),
-        );
+        let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
         let record = load_session_record(&st.context, "structured").unwrap();
         crate::activity::activate_runtime(&st.context, &record).unwrap();
         auto_resume::set_enabled(&st.context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
@@ -24255,7 +24247,7 @@ esac
     async fn structured_prompt_reports_unknown_outcome_after_provider_rejection() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launch_id = seed_codex_app_server_session(tmp.path(), "structured-rejected");
-        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
         let record = load_session_record(&st.context, "structured-rejected").unwrap();
         crate::activity::activate_runtime(&st.context, &record).unwrap();
         let (handle, mut commands) = codex_app_server::control_channel();
@@ -24329,7 +24321,7 @@ esac
     async fn claude_structured_prompt_reports_submitted_after_provider_turn() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launch_id = seed_claude_prompt_session(tmp.path(), "claude-structured");
-        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
         let record = load_session_record(&st.context, "claude-structured").unwrap();
         crate::activity::activate_runtime(&st.context, &record).unwrap();
 
@@ -24373,7 +24365,7 @@ esac
     async fn claude_structured_prompt_without_provider_turn_reports_unknown_outcome() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launch_id = seed_claude_prompt_session(tmp.path(), "claude-unacknowledged");
-        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
         let record = load_session_record(&st.context, "claude-unacknowledged").unwrap();
         crate::activity::activate_runtime(&st.context, &record).unwrap();
 
@@ -24392,20 +24384,6 @@ esac
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "body={body}");
         assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
         assert!(body.pointer("/data/submitted").is_none());
-    }
-
-    /// A tmux stub whose pane shows `pane` for every `capture-pane`.
-    fn minimal_tmux_showing(dir: &Path, pane: &str) -> PathBuf {
-        let bin = minimal_tmux(dir);
-        let shown = dir.join("shown-pane");
-        std::fs::write(&shown, pane).unwrap();
-        let script = std::fs::read_to_string(&bin).unwrap();
-        let script = script.replace(
-            "capture-pane) printf 'pane\\n'; exit 0 ;;",
-            &format!("capture-pane) cat '{}'; exit 0 ;;", shown.display()),
-        );
-        std::fs::write(&bin, script).unwrap();
-        bin
     }
 
     const QUEUED_CLAUDE_PANE: &str = "  Second queued message.
@@ -24479,7 +24457,7 @@ esac
     async fn claude_structured_prompt_ignores_progress_on_an_existing_turn() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launch_id = seed_claude_prompt_session(tmp.path(), "claude-in-flight");
-        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
         let record = load_session_record(&st.context, "claude-in-flight").unwrap();
         crate::activity::activate_runtime(&st.context, &record).unwrap();
         crate::activity::ingest_event(
@@ -24702,7 +24680,7 @@ esac
         let tmp = tempfile::TempDir::new().unwrap();
         let id = "startup-prompt";
         let launch_id = seed_codex_app_server_session(tmp.path(), id);
-        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
         let record = load_session_record(&st.context, id).unwrap();
         let listener =
             tokio::net::UnixListener::bind(tmp.path().join("startup-prompt.sock")).unwrap();
@@ -25411,7 +25389,7 @@ esac
     async fn structured_prompt_cancels_armed_auto_resume_before_provider_control() {
         let tmp = tempfile::TempDir::new().unwrap();
         let launch_id = seed_codex_app_server_session(tmp.path(), "structured-armed");
-        let st = state(tmp.path(), Some(TOKEN), minimal_tmux(tmp.path()));
+        let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
         let record = load_session_record(&st.context, "structured-armed").unwrap();
         crate::activity::activate_runtime(&st.context, &record).unwrap();
         auto_resume::set_enabled(&st.context, &record.id, true, "2030-01-01T00:00:00Z").unwrap();
@@ -37234,6 +37212,9 @@ exit 0
         record
     }
 
+    #[path = "prompt_composer.rs"]
+    mod prompt_composer;
+    use prompt_composer::{empty_composer_tmux, minimal_tmux_showing};
     #[path = "prompt_receipts.rs"]
     mod prompt_receipts_tests;
 
