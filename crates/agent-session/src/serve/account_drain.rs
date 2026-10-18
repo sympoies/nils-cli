@@ -1,4 +1,4 @@
-//! Idle-boundary drain of queued Codex account switches.
+//! Idle-boundary drain of queued provider account switches.
 //!
 //! A control whose applied binding is ready drains a queued next account
 //! itself (`ApplyNext`). A control left without a ready binding (failed,
@@ -9,6 +9,12 @@
 //! that the control then binds.
 
 use tokio::task::JoinSet;
+
+mod claude;
+
+pub(super) async fn run(state: std::sync::Arc<super::ServeState>) {
+    tokio::join!(super::codex_control_loop(state.clone()), claude::run(state));
+}
 
 use super::AccountSwitchRegistry;
 use crate::CliContext;

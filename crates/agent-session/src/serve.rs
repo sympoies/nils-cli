@@ -83,9 +83,9 @@ use crate::{
 };
 use activity_stream::activity_notify_event_relevant;
 
+mod account_drain;
 mod activity_stream;
-mod codex_account_drain;
-use codex_account_drain::{apply_pending_codex_accounts, repair_blocked_codex_accounts};
+use account_drain::{apply_pending_codex_accounts, repair_blocked_codex_accounts};
 #[path = "serve_claude_completion.rs"]
 mod claude_completion;
 #[path = "serve_claude_prompt_ack.rs"]
@@ -1184,7 +1184,7 @@ pub fn run_serve(context: &CliContext, args: cli::ServeArgs) -> i32 {
         }
         let app = router(state.clone());
         let federation_task = tokio::spawn(remote_outbox::run(state.clone()));
-        let codex_control_task = tokio::spawn(codex_control_loop(state.clone()));
+        let codex_control_task = tokio::spawn(account_drain::run(state.clone()));
         let auto_resume_task = tokio::spawn(auto_resume_loop(state.clone()));
         let auth_incident_task = tokio::spawn(auth_incident_loop(state.clone()));
         let auto_retitle_task = tokio::spawn(auto_retitle_loop(state.clone()));
