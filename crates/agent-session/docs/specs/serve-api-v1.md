@@ -1495,7 +1495,7 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   (`agent-session.claude-account.v1`: `supported`, `state`
   `bound`/`unbound`/`failed`/`unsupported`, `selected_account`,
   `selection_source`, `revision`, `applied_runtime_id`, optional
-  `next: {account, revision, state: "queued" | "failed", failure_reason?}`). It is omitted for other
+  `next: {account, revision, state: "queued" | "failed", blocking_reason?, failure_reason?}`). It is omitted for other
   providers and for Claude sessions without binding state on a daemon without
   a Claude broker. It never contains the directory path.
 - Switch: `PUT /sessions/{id}/account` with
@@ -1511,9 +1511,23 @@ mismatched nickname is `claude-account-broker-invalid-response`.
   stops the runtime through the verified stop path and resumes the same
   conversation (`--resume <session-id>`) in the new account directory, then
   returns the new `session_incarnation`. While a turn
-  is busy, or while the session is stopped, the intent stays queued and the
-  next resume applies it. If the verified stop is refused, nothing relaunches
-  and the intent stays queued. After a verified stop, the switch retires the
+  is busy, the intent stays queued. The daemon rechecks queued Claude intents
+  every two seconds and applies them after a provider hook establishes
+  `waiting` (including the Stop completion quiet window). This explicit switch
+  is independent of auto-resume enablement and recovered auth incidents.
+  An external switch reissued while idle applies synchronously. A stopped
+  session retains the intent for its next explicit resume.
+  Queued intents expose a path-free `next.blocking_reason`: `turn_busy`,
+  `turn_needs_input`, `turn_starting`, `turn_state_unavailable`,
+  `session_stopped`, `session_status_unknown`, or `self_restart_deferred`.
+  A daemon preflight refusal records the broker's cause code there; a refused
+  stop records its error code. The intent and revision remain queued for
+  retry, and nothing relaunches until preflight and verified stop succeed.
+  Repeated broker or stop refusals retry at most once every 30 seconds for
+  an unchanged intent and runtime, with a warning only when the refusal reason
+  changes. A new intent revision, changed turn-state blocker, or replacement
+  runtime clears that delay. Explicit idle reissues still run immediately.
+  After a verified stop, the switch retires the
   stopped runtime's coordination incarnation (its heartbeat writer died with
   it) before resuming, so the resume is not refused as a live prior
   incarnation. If the resume still fails and the current runtime is proven

@@ -65,6 +65,12 @@ struct DurableBinding {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 struct DurableNextAccount {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry_after: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry_runtime_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blocking_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     failure_reason: Option<String>,
     schema_version: String,
     account: String,
@@ -99,6 +105,8 @@ pub(crate) struct ClaudeAccountView {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 struct ClaudeNextAccountView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    blocking_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     account: Option<String>,
     revision: u64,
@@ -144,6 +152,7 @@ pub(crate) fn view_for_record(record: &SessionRecord) -> Option<ClaudeAccountVie
     let next_view = match &next {
         Decoded::Absent => None,
         Decoded::Valid(next) => Some(ClaudeNextAccountView {
+            blocking_reason: next.blocking_reason.clone(),
             account: Some(next.account.clone()),
             revision: next.revision,
             state: if next.state == "failed" {
@@ -154,6 +163,7 @@ pub(crate) fn view_for_record(record: &SessionRecord) -> Option<ClaudeAccountVie
             failure_reason: next.failure_reason.clone(),
         }),
         Decoded::Invalid => Some(ClaudeNextAccountView {
+            blocking_reason: None,
             account: None,
             revision: 0,
             state: "failed",
@@ -373,6 +383,9 @@ pub(crate) fn queue_next(record: &mut SessionRecord, account: &str) -> Result<()
         .map_or(1, |binding| binding.revision.saturating_add(1))
         .max(prior_next_revision.saturating_add(1));
     let next = DurableNextAccount {
+        retry_after: None,
+        retry_runtime_id: None,
+        blocking_reason: None,
         failure_reason: None,
         schema_version: NEXT_SCHEMA_VERSION.to_string(),
         account: account.to_string(),
@@ -389,6 +402,73 @@ pub(crate) fn has_queued_next(record: &SessionRecord) -> bool {
     matches!(decode_next(record), Decoded::Valid(next) if next.state == "queued")
 }
 
+/// Update only a queued intent's path-free reason; unchanged reasons do not
+/// rewrite the record on every daemon tick.
+pub(crate) fn set_next_blocking_reason(
+    record: &mut SessionRecord,
+    reason: Option<&str>,
+) -> Result<bool, CliError> {
+    let Decoded::Valid(mut next) = decode_next(record) else {
+        return Ok(false);
+    };
+    if next.state != "queued" || next.blocking_reason.as_deref() == reason {
+        return Ok(false);
+    }
+    next.retry_after = None;
+    next.retry_runtime_id = None;
+    next.blocking_reason = reason.map(str::to_string);
+    next.updated_at = jiff::Timestamp::now().to_string();
+    let value = serde_json::to_value(next).map_err(|_| encode_error(record))?;
+    record.extra.insert(NEXT_KEY.to_string(), value);
+    Ok(true)
+}
+
+/// The refusal reason belongs to this intent's revision; a new explicit
+/// choice creates a fresh intent without a retry deadline.
+pub(crate) fn queued_blocking_reason(record: &SessionRecord) -> Option<String> {
+    match decode_next(record) {
+        Decoded::Valid(next) if next.state == "queued" => next.blocking_reason,
+        _ => None,
+    }
+}
+
+pub(crate) fn next_retry_is_deferred(record: &SessionRecord, now: jiff::Timestamp) -> bool {
+    matches!(decode_next(record), Decoded::Valid(next)
+        if next.state == "queued" && next.blocking_reason.is_some()
+            && next.retry_runtime_id.as_deref() == record.runtime.as_ref().map(|runtime| runtime.launch_id.as_str())
+            && next.retry_after.as_deref().and_then(|at| at.parse::<jiff::Timestamp>().ok())
+                .is_some_and(|deadline| now < deadline))
+}
+
+/// Persist a bounded retry window even when the refusal reason is unchanged.
+/// The regular reason setter clears it when the idle gate changes.
+pub(crate) fn defer_next_retry(
+    record: &mut SessionRecord,
+    reason: &str,
+    now: jiff::Timestamp,
+) -> Result<(), CliError> {
+    let Decoded::Valid(mut next) = decode_next(record) else {
+        return Ok(());
+    };
+    if next.state != "queued" {
+        return Ok(());
+    }
+    next.blocking_reason = Some(reason.to_string());
+    next.retry_runtime_id = record
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.launch_id.clone());
+    next.retry_after = Some(
+        now.checked_add(jiff::SignedDuration::from_secs(30))
+            .map_err(|_| encode_error(record))?
+            .to_string(),
+    );
+    next.updated_at = now.to_string();
+    let value = serde_json::to_value(next).map_err(|_| encode_error(record))?;
+    record.extra.insert(NEXT_KEY.to_string(), value);
+    Ok(())
+}
+
 /// Persist a failed post-stop attempt without losing its retryable account
 /// intent, even if launch rollback retained a newer runtime record.
 pub(crate) fn mark_next_resume_failed(
@@ -399,6 +479,9 @@ pub(crate) fn mark_next_resume_failed(
     let Decoded::Valid(mut next) = decode_next(stopped) else {
         return Err(invalid_binding_error(stopped));
     };
+    next.retry_after = None;
+    next.retry_runtime_id = None;
+    next.blocking_reason = None;
     next.state = "failed".to_string();
     next.failure_reason = Some(cause.to_string());
     next.updated_at = jiff::Timestamp::now().to_string();
