@@ -14,6 +14,8 @@ use crate::{
 
 mod clear;
 mod key;
+mod observation;
+mod ownership;
 mod text;
 
 #[derive(Debug, Default, Args)]
@@ -188,25 +190,51 @@ impl Admission<'_> {
             ));
         }
         let expected_state = crate::display_path(&self.context.state_dir);
-        for (name, expected) in [
+        let cleanup_values = if stage == "cleanup" {
+            Some(
+                observation::environment(
+                    self.tmux_bin,
+                    &current.tmux_session,
+                    self.timeout(stage)?,
+                )
+                .ok_or_else(|| {
+                    self.refusal(
+                        "send-identity-unobservable",
+                        "pane runtime identity cannot be observed",
+                        "identity",
+                        stage,
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+        for (index, (name, expected)) in [
             ("AGENT_SESSION_ID", current.id.as_str()),
             ("AGENT_SESSION_STATE_DIR", expected_state.as_str()),
             ("AGENT_SESSION_RUNTIME_ID", runtime.launch_id.as_str()),
-        ] {
-            let actual = tmux_environment_value(
-                self.tmux_bin,
-                &current.tmux_session,
-                name,
-                self.timeout(stage)?,
-            )
-            .map_err(|_| {
-                self.refusal(
-                    "send-identity-unobservable",
-                    "pane runtime identity cannot be observed",
-                    "identity",
-                    stage,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let actual = if let Some(values) = &cleanup_values {
+                values[index].clone()
+            } else {
+                tmux_environment_value(
+                    self.tmux_bin,
+                    &current.tmux_session,
+                    name,
+                    self.timeout(stage)?,
                 )
-            })?;
+                .map_err(|_| {
+                    self.refusal(
+                        "send-identity-unobservable",
+                        "pane runtime identity cannot be observed",
+                        "identity",
+                        stage,
+                    )
+                })?
+            };
             if actual != expected {
                 return Err(self.refusal(
                     "send-identity-mismatch",

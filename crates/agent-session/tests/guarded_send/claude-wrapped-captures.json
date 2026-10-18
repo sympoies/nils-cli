@@ -1,0 +1,32 @@
+{
+  "source": "https://github.com/sympoies/nils-cli/issues/2591#issuecomment-6244689593",
+  "note": "Sanitized composer rows and padding only; generic border and footer preserve the styling boundaries. Logical separator spaces are reconstructed from the known generic paste.",
+  "cases": [
+    {
+      "rows": [
+        "xxxxx xxxx xxx xxxxxx xxxx xxxxxxxxxxx xxx xxxxxxx xxxxx xx xxx xxx xxx",
+        "xxxxx xxxxxxx xx xxxx xxx xxxxxxxx xxxx xxxxxxx xxxxx xxxxx xxxx xxxxx xxxxx",
+        "xxxxxxx xxxx xxx xxxxx xxxx xxxxx xxxxxx xx xx xx xxxxxxx xx xxx xxxxx xxx",
+        "xxxxxxx xxx xxx xxx xxxxx xxxxx xxxx xxxxx xxxxx xxxxxxx xxxx xxx xxxxx xxxx",
+        "xxxxx xxxxxxx"
+      ],
+      "padding": [
+        0,
+        2,
+        0,
+        0,
+        47
+      ]
+    },
+    {
+      "rows": [
+        "xxxxx xxxx xxx xxxxxx xxxx xxxxxxxxxxx xxx xxxxxxx xxxxx xx xxx xxx xxx",
+        "xxxxxxxxxxxxxxx"
+      ],
+      "padding": [
+        0,
+        63
+      ]
+    }
+  ]
+}
