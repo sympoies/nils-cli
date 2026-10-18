@@ -7,6 +7,7 @@ use crate::cli::{self, Command};
 
 pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
     match command {
+        Command::AutoResume(_) => Some("auto-resume"),
         Command::Workspace(_) => Some("workspace-set"),
         Command::Readiness(_) => Some("readiness"),
         Command::WorkContext(args) => Some(match &args.command {
@@ -68,6 +69,7 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
                 root_args.next()?;
             }
             arg if arg.starts_with(b"--state-dir=") || arg.starts_with(b"--host=") => {}
+            b"auto-resume" => return Some("auto-resume"),
             b"readiness" => return Some("readiness"),
             _ => break,
         }

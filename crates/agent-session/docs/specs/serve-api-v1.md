@@ -466,6 +466,14 @@ recorded in `sympoies/nils-cli#1409`.
   always wins. Sessions that cannot report an authoritative capacity signal, or
   cannot honor the policy (for example `next_account_then_resume` without a
   bound Codex account), stay disabled; existing sessions are unchanged.
+- Local operators can use `agent-session auto-resume <id> --format json`
+  to read the same projection, or `--enable` / `--disable` to change it without
+  a serve bearer token, using the state directory's existing local session
+  access. `--policy wait_for_reset|next_account_then_resume` requires
+  `--enable` and defaults to `wait_for_reset`. The local command uses the same
+  locked policy setter and support guards as `PUT`; unsupported runtimes,
+  including standalone Codex TUI sessions, cannot be enabled. It configures
+  durable recovery; a running serve daemon still owns scheduling and submission.
 - Every session view additively includes `auto_resume` using
   `agent-session.auto-resume.v1`. `GET /sessions/{id}/auto-resume` reads that
   status and is open on loopback; `PUT` with `{ "enabled": true|false,
