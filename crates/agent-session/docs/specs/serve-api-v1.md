@@ -630,6 +630,7 @@ recorded in `sympoies/nils-cli#1409`.
   409 `composer-unobservable`, also before dispatch. These refusals preserve
   account/input control state and automatic recovery settings. The check uses
   the existing exact composer observation limits in [Send v1](send-v1.md).
+
   An explicit owner clear followed by another submission is the recovery path;
   the reply operation never clears a draft or sends Ctrl+C. Direct replies
   retain their existing provider acknowledgement and queue confirmation rules
