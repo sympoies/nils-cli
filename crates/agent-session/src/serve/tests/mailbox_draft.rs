@@ -36,7 +36,8 @@ elif command == 'paste-buffer':
         with (root / 'composer').open('a') as out: out.write(' operator addition')
 elif command == 'send-keys' and args[-1] == 'Enter':
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
-    (root / 'composer').write_text('')
+    if (root / 'swallow-first-enter').exists(): (root / 'swallow-first-enter').unlink()
+    else: (root / 'composer').write_text('')
 elif command == 'capture-pane':
     if (root / 'capture-unavailable').exists(): sys.exit(1)
     text = (root / 'composer').read_text()
@@ -272,4 +273,17 @@ async fn mailbox_wake_empty_composer_control_submits_once() {
             crate::coordination::notification_prompt(&fixture.candidate)
         );
     }
+}
+
+#[tokio::test]
+async fn mailbox_wake_retries_a_swallowed_enter_and_confirms_submission() {
+    let fixture = WakeFixture::new(AgentKind::Claude).await;
+    fs::write(fixture.temp.path().join("swallow-first-enter"), "").unwrap();
+    fixture.start().expect("swallowed Enter is retried");
+    let submissions = fs::read_to_string(fixture.temp.path().join("submissions")).unwrap();
+    assert_eq!(submissions.lines().count(), 2);
+    assert!(submissions.lines().all(|line| {
+        serde_json::from_str::<String>(line).unwrap()
+            == crate::coordination::notification_prompt(&fixture.candidate)
+    }));
 }
