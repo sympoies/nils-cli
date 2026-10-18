@@ -196,8 +196,14 @@ pub struct StartArgs {
     #[arg(skip)]
     pub initial_lineage: Option<crate::InitialLineage>,
 
-    /// Agent to run.
-    #[arg(long, value_enum)]
+    /// Agent to run; not used when reconciling a Console operation.
+    #[arg(
+        long,
+        value_enum,
+        required = false,
+        required_unless_present = "reconcile",
+        default_value_if("reconcile", "true", "codex")
+    )]
     pub agent: AgentKind,
 
     /// Working directory for the agent session. Defaults to the current directory.
@@ -256,6 +262,9 @@ pub struct StartArgs {
         conflicts_with_all = ["id", "tmux_bin", "agent_bin", "paste_delay_ms", "coordination_mode"]
     )]
     pub via_console: bool,
+
+    #[command(flatten)]
+    pub console_operation: crate::coordination::console_start::OperationArgs,
 
     /// Target machine for --via-console, as Agent Console names it. Defaults
     /// to this daemon's machine.

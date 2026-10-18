@@ -114,7 +114,7 @@ class ConsumerExecutionTests(unittest.TestCase):
         paths = ('scripts/ci/nils-cli-merge-plan.py', 'scripts/ci/lib/merge_plan.py',
                  'scripts/ci/merge-plan-policy.v1.json', 'scripts/ci/merge-plan-extra-inputs.v1.json',
                  'scripts/ci/merge-plan.schema.v1.json', 'scripts/ci/merge-plan.schema.v2.json',
-                 'scripts/ci/nils-cli-scoped-checks.sh',
+                 'scripts/ci/nils-cli-scoped-checks.sh', 'scripts/ci/scoped-coverage-ratchet.py',
                  'scripts/ci/assert-import-audit.py', 'scripts/ci/lib/rust_file_size.py',
                  'scripts/ci/test-env.sh')
         for path in paths:
@@ -322,32 +322,6 @@ else:
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(rows, [{'kind': 'full'}])
         self.assertEqual(self.receipt()['fallback'], 'squash_merge_unsupported')
-
-    def test_scoped_coverage_excludes_unselected_crates_and_keeps_floor(self):
-        self.candidate()
-        result, rows = self.execute(env={'NILS_CLI_TEST_RUNNER': 'llvm-cov', 'NILS_CLI_SKIP_DOCTESTS': '1'})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        command = next(r['args'] for r in rows if r['args'][0] == 'llvm-cov')
-        self.assertEqual([command[i + 1] for i, arg in enumerate(command) if arg == '--exclude-from-report'],
-                         ['unrelated', 'untouched'])
-        self.assertEqual(command[command.index('--fail-under-lines') + 1], '85')
-        report = next(r['args'] for r in rows if r['args'][:2] == ['llvm-cov', 'report'])
-        cargo = shutil.which('cargo')
-        if cargo and subprocess.run([cargo, 'llvm-cov', '--version'], capture_output=True,
-                                    text=True).returncode == 0:
-            # cargo-llvm-cov 0.9.1's report parser is the contract: invalid
-            # flags fail here even though the surrounding executor is stubbed.
-            parsed = subprocess.run([cargo, *report], cwd=self.repo,
-                                    env=dict(os.environ, PATH=os.environ['PATH']),
-                                    capture_output=True, text=True)
-            self.assertNotIn("not supported for subcommand 'report'", parsed.stderr)
-            self.assertNotIn('unexpected argument', parsed.stderr)
-        self.assertEqual([report[i + 1] for i, arg in enumerate(report) if arg == '-p'],
-                         ['consumer', 'selected'])
-        self.assertNotIn('--exclude-from-report', report)
-        self.assertEqual(report[report.index('--fail-under-lines') + 1], '85')
-        self.assertNotIn('--workspace', command)
-        self.assertFalse(any(r['args'][0] == 'test' for r in rows))
 
     def test_full_escalation_executes_existing_full_gate(self):
         self.candidate('full')

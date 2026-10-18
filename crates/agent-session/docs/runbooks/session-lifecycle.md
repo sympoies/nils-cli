@@ -127,6 +127,13 @@ defines the observation and recovery rules.
 provider resume metadata; it never resumes the latest provider conversation
 implicitly.
 
+- Tmux probe timeouts and server-shutdown uncertainty are retried for up to two
+  seconds while holding the session record lock. A confirmed running runtime is
+  a no-op; confirmed absence proceeds through the stopped-runtime checks below.
+  Persistent transient uncertainty returns `session-status-unknown` with
+  `retryable: true` and `next_action: retry-resume`. Other probe failures, such
+  as a missing executable or denied socket access, return the same code with
+  `retryable: false` and `next_action: inspect-tmux`. Neither launches a replacement.
 - Runtime metadata is persisted before launch so hooks see the new generation,
   and the immutable tmux session/pane identity is persisted before a successful
   start or resume returns.
@@ -143,6 +150,14 @@ implicitly.
   fresh for up to 30 seconds. Once its own `broker stop` has stopped that
   incarnation and the registry proves its runtime stopped, resume expires the
   beat instead of refusing the relaunch as a live prior incarnation.
+- An abrupt external kill can skip that broker cleanup. On macOS, absence of
+  the process group alone cannot authorize replacing an unrevoked broker;
+  resume may return `coordination-runtime-unverified` after tmux absence is
+  confirmed. Follow [operator recovery after an external runtime stop](../specs/session-coordination-v1.md#operator-recovery-after-an-external-runtime-stop)
+  to preview and apply `broker retire-stopped` for the exact incarnation, then
+  resume the same session ID. Every retirement proof must pass, including stale
+  heartbeat evidence; repeated resume does not bypass them. Prefer `restart`
+  below when applying launcher changes to a live session.
 
 ## Restart onto the installed provider
 

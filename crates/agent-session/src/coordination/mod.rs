@@ -653,6 +653,7 @@ fn lock_private_store_within(
         return Err(store_untrusted());
     }
     let started = Instant::now();
+    let _wait = console_start::diagnostics::LockWait::new();
     loop {
         // SAFETY: flock is called with a valid, owned file descriptor.
         let result = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
