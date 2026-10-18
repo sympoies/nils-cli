@@ -183,14 +183,18 @@ def run(repo, event_name, event, candidate, output, bash='bash'):
         command += ['scripts/ci/nils-cli-scoped-checks.sh', *packages]
     else:
         command += ['scripts/ci/nils-cli-checks-entrypoint.sh']
+    runner = os.environ.get('NILS_CLI_TEST_RUNNER', 'nextest')
+    ratchet = scope == 'SCOPED' and runner == 'llvm-cov'
     receipt = {'schema_version': 'nils-cli.merge-validation.v1', 'inputs': expected,
                'checkout': {'commit': candidate, 'tree': expected['tree']},
                'event_base': event['pull_request']['base']['sha'] if event_name == 'pull_request'
                              else event['merge_group']['base_sha'],
                'plan_digest': plan['digests']['plan'] if plan is not None else None,
                'validation_scope': scope, 'packages': packages, 'fallback': fallback,
-               'test_runner': os.environ.get('NILS_CLI_TEST_RUNNER', 'nextest'),
-               'coverage_fail_under_lines': os.environ.get('NILS_CLI_COVERAGE_FAIL_UNDER_LINES', '85'),
+               'test_runner': runner,
+               'coverage_policy': 'base-no-decrease' if ratchet else ('absolute-floor' if runner == 'llvm-cov' else None),
+               'coverage_base': expected['base'] if ratchet else None,
+               'coverage_fail_under_lines': None if ratchet else os.environ.get('NILS_CLI_COVERAGE_FAIL_UNDER_LINES', '85'),
                'doctests': os.environ.get('NILS_CLI_SKIP_DOCTESTS', '0') != '1',
                'command': command, 'status': 'RUNNING'}
     (output / 'validation.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
@@ -200,6 +204,7 @@ def run(repo, event_name, event, candidate, output, bash='bash'):
     github_output = os.environ.get('GITHUB_OUTPUT')
     executor_env = dict(os.environ)
     executor_env.pop('GITHUB_OUTPUT', None)
+    executor_env['NILS_CLI_SCOPED_COVERAGE_BASE'] = expected['base']
     result = subprocess.run(command, cwd=repo, env=executor_env)
     receipt.update(status='PASS' if result.returncode == 0 else 'FAIL', exit_code=result.returncode)
     (output / 'validation.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')

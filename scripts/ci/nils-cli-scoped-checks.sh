@@ -76,8 +76,8 @@ case "${NILS_CLI_TEST_RUNNER:-nextest}" in
     run_test cargo nextest run --profile ci "${package_args[@]}" --all-features
     ;;
   llvm-cov)
-    # -p selects tests, not the coverage corpus. Exclude unselected workspace
-    # crates explicitly so the unchanged floor measures the declared scope.
+    # -p selects tests, not the report corpus. The exact selected corpus is
+    # measured at immutable base and candidate; the full gate retains 85%.
     report_excludes="$(cargo metadata --offline --locked --no-deps --format-version 1 | python3 -c '
 import json, sys
 metadata = json.load(sys.stdin)
@@ -95,12 +95,10 @@ print("\n".join(sorted(names - selected)))
       fi
     done <<< "$report_excludes"
     run mkdir -p target/coverage
-    run_test cargo llvm-cov nextest --profile ci "${package_args[@]}" --all-features \
-      "${coverage_args[@]}" \
-      --no-fail-fast --lcov --output-path target/coverage/lcov.info \
-      --fail-under-lines "${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"
-    run cargo llvm-cov report --html --output-dir target/coverage "${package_args[@]}" \
-      --fail-under-lines "${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"
+    run_test python3 scripts/ci/scoped-coverage-ratchet.py \
+      --base "${NILS_CLI_SCOPED_COVERAGE_BASE:?missing immutable scoped coverage base}" \
+      "${coverage_args[@]}" "$@"
+    run cargo llvm-cov report --html --output-dir target/coverage "${package_args[@]}"
     ;;
   *)
     echo "error: unsupported scoped CI test runner" >&2

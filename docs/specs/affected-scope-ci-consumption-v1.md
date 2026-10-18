@@ -49,12 +49,25 @@ builds their binaries with all features for sibling fixtures, audits selected
 completion-required binaries against committed assets with the existing
 freshness audit and no additional build, and runs their nextest tests. Linux
 runs selected doctests. macOS runs selected instrumented tests for LCOV,
-explicitly excluding unselected workspace packages from the report. The
-configured 85% floor and test identity isolation remain. Cheap workspace audits
-and formatting still run. The unchanged policy escalates script, completion,
+explicitly excluding unselected workspace packages from the report.
+
+The selected-package aggregate line percentage must not decrease versus the exact
+immutable base. Both snapshots run the same selected packages, all features,
+nextest profile, and report exclusions on the same runner; no rounded tolerance
+is applied. Test identity isolation, cheap workspace audits and formatting
+remain. The unchanged policy escalates script, completion,
 shared helper, manifest, and sensitive-source changes to the complete stack.
 
-FULL uses the existing full entrypoint. Empty selection also runs full checks
+Scoped coverage measures the base freshly in a temporary local clone, with
+separate Cargo object/profile directories to avoid duplicate source mappings.
+It does not reuse cross-platform or cached report percentages. Missing base,
+failed baseline/candidate tests, or empty/invalid LCOV fails closed. The candidate
+checkout and refs stay unchanged; the clone is removed on success or failure.
+`target/ci-merge-plan/scoped-coverage/` retains the baseline LCOV and a ratchet
+receipt with base/candidate commits, identical arguments, counts and verdict.
+
+FULL uses the existing full entrypoint and configured absolute 85% floor.
+Empty selection also runs full checks
 rather than claiming an empty test PASS. Valid planner HOLD evidence remains
 HOLD while actual full validation runs as fallback; it never becomes a scoped
 plan PASS. A base without the launcher uses full checks without inventing READY.
@@ -65,12 +78,13 @@ Invalid protocol or bindings fail before selected commands.
 Platform artifacts retain `target/ci-merge-plan/plan.json` when available and
 `validation.json`. The latter binds planning B/H/M/T, actual checkout/tree,
 captured event base, plan digest, effective scope,
-packages, fallback, runner, doctest choice, coverage floor, command, exit code,
-and PASS/FAIL. PASS and job output `validation_scope` are written only after the
+packages, fallback, runner, doctest choice, coverage policy/base or absolute
+floor, command, exit code, and PASS/FAIL. PASS and job output `validation_scope` are written only after the
 actual executor succeeds. Planner HOLD and passing full validation are separate
 facts. Executors do not receive `GITHUB_OUTPUT`; the consumer replaces the
 step's output with its authoritative scalar scope after success, or empties it
 after failure. Executor-written multiline framing cannot change that scope.
+
 Full-validation markers are emitted only for actual FULL validation or
 nightly/on-demand full routes, so scoped checks cannot prove full base CI to
 the release gate. Coverage still requires macOS LCOV and containment success.
@@ -80,7 +94,7 @@ the release gate. Coverage still requires macOS LCOV and containment success.
 `python3 scripts/ci/tests/merge-plan-ci.test.py` executes real workflow scripts,
 the accepted planner on synthetic Git candidates, and the canonical entrypoint
 with fake Cargo/admission. It covers event binding, selected command arguments,
-coverage exclusions/floor, identity and launcher isolation, squash queue
+identity and launcher isolation, squash queue
 equivalence and source races, external-driver/attribute holds, escalation/HOLD,
 missing base policy, malformed inputs, dirty source, failed checks, empty scope,
 admission reentry, and full-marker provenance. It does not claim live compiler,
@@ -102,3 +116,9 @@ day against preceding full runs, retaining exact inputs, scope, fallback, and
 real check results. Synthetic package counts are not throughput measurements.
 Missed scopes use the existing nightly alert and maintainer bisect/revert path,
 followed by a selector regression. This consumer grants no release authority.
+
+`python3 scripts/ci/tests/scoped-coverage-ratchet.test.py` runs the same offline
+consumer fixture with controlled LCOV producers. It covers decreasing, equal
+and increasing percentages, immutable base selection, identical package scope,
+separate profile directories, baseline/candidate failures, fresh report evidence,
+exact fraction comparison and the unchanged full-workspace floor.

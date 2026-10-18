@@ -24,6 +24,7 @@ Runs the full CI/parity checks from DEVELOPMENT.md:
   - bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh
   - bash scripts/ci/tests/release-workflow-contract.test.sh
   - python3 scripts/ci/tests/merge-plan-metadata.test.py
+  - python3 scripts/ci/tests/scoped-coverage-ratchet.test.py
   - bash scripts/ci/tests/shared-helper-adoption-audit.test.sh
   - bash scripts/ci/tests/publish-order-audit.test.sh
   - bash scripts/ci/tests/docs-hygiene-audit.test.sh
@@ -201,6 +202,7 @@ run python3 scripts/ci/tests/gate-resources.test.py
 run python3 scripts/ci/assert-import-audit.py
 run python3 scripts/ci/tests/assert-import-audit.test.py
 run python3 scripts/ci/tests/merge-plan-ci.test.py
+run python3 scripts/ci/tests/scoped-coverage-ratchet.test.py
 run python3 scripts/ci/tests/merge-plan-ci-repairs.test.py
 run python3 scripts/ci/tests/merge-plan-ci-snapshot.test.py
 run bash scripts/ci/tests/test-env.test.sh
