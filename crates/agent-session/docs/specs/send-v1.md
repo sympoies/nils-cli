@@ -47,6 +47,7 @@ one swallowed Enter may be retried within the same observation budget, with all
 guards rechecked before the retry. If a turn
 starts or the composer changes after paste, it refuses without Enter. It
 then attempts to remove only the text it pasted and verifies the result.
+
 An exact paste can be removed; with Claude, a provable ASCII paste prefix can
 also be removed when admission required an empty composer and an earlier
 post-paste observation saw exactly the pasted text before the conflicting edit.

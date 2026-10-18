@@ -702,12 +702,15 @@ recorded in `sympoies/nils-cli#1409`.
   HTTP 409 `busy`. Unobservable state fails closed with the CLI's stable guard
   code. These external provider/UI observations remain non-atomic, as in
   [guarded send](send-v1.md); a later failure after possible paste or native
-  dispatch is `unknown`, even if no submission was confirmed. Guarded terminal
-  submission retries one swallowed Enter only while its exact paste and all
+  dispatch is `unknown`, even if no submission was confirmed.
+
+  Guarded terminal submission retries one swallowed Enter only while its exact paste and all
   guards still hold. A stuck or unverified submission attempts the same bounded,
   identity-fenced cleanup as a post-paste guard failure. These uncertain guarded
   results return HTTP 409 `structured-prompt-outcome-unknown`, including without
-  a request ID. Keyed receipts retain optional `composer_cleanup` with `cleared`
+  a request ID.
+
+  Keyed receipts retain optional `composer_cleanup` with `cleared`
   (boolean) and `remaining_input` (`empty`, `pasted_text`, `different_text`, or
   `unobservable`). This reports residue without exposing composer contents;
   failed cleanup must not be treated as an empty composer. Cleanup does not
