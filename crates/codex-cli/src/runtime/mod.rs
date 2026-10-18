@@ -10,7 +10,9 @@ use crate::provider_profile::CODEX_PROVIDER_PROFILE;
 
 mod agent_mode;
 mod child_home;
+mod commit_message;
 mod isolated;
+mod skill_policy;
 mod supervisor;
 
 pub use agent_mode::{AgentCommandProfile, AgentRuntimeMode, AgentRuntimeOptions};
