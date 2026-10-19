@@ -636,7 +636,11 @@ fn assignment_binds_the_base_ref_and_sha_from_the_same_provider_response() {
         .filter(|call| call.contains("pulls/7"))
         .collect();
     assert_eq!(pull_reads.len(), 2, "{calls}");
-    assert!(pull_reads[0].contains(".base.sha") && pull_reads[0].contains(".base.ref"), "{}", pull_reads[0]);
+    assert!(
+        pull_reads[0].contains(".base.sha") && pull_reads[0].contains(".base.ref"),
+        "{}",
+        pull_reads[0]
+    );
     let bodies = ledger_bodies(&stub);
     let record = review_state::parse_state_marker(&bodies[0])
         .unwrap()
