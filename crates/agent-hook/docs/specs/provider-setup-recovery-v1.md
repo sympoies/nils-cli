@@ -119,6 +119,12 @@ permissions, concurrent drift, and malformed provider roots fail without
 mutation. JSON provider configuration is decoded with recursive duplicate-key
 rejection before every plan, apply, repair, or remove path.
 
+Setup resolves provider configuration roots from `CODEX_HOME` for Codex and
+`CLAUDE_CONFIG_DIR` for Claude when the selected path is absolute. Relative
+overrides are ignored. Without an absolute override, setup uses the provider's
+default directory under `HOME`; Codex uses `$HOME/.codex` and Claude writes
+`settings.json` under `$HOME/.claude`.
+
 For Codex, `config.toml` and compatibility `hooks.json` are one transaction.
 The managed `config.toml` representation also owns the authoritative
 `agent-session activity notify --agent codex` argv: a safe singular user

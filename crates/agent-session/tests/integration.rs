@@ -2,6 +2,8 @@
 mod board;
 #[path = "integration/broker_retirement.rs"]
 mod broker_retirement;
+#[path = "integration/claude_doctor.rs"]
+mod claude_doctor;
 #[path = "integration/cli.rs"]
 mod cli;
 #[path = "integration/cli_launch_env.rs"]
@@ -42,10 +44,12 @@ mod work_context_admission;
 const UNPINNED_PROVIDER_BIN: &str = "/nonexistent/agent-session-unpinned-test-agent";
 
 /// Command options for the `agent-session` binary with provider binaries pinned
-/// away from `PATH`; a test's own environment entries override these defaults.
+/// away from `PATH`; host provider config overrides are removed unless a test
+/// explicitly owns one in its environment entries.
 fn hermetic_provider_options(dir: &std::path::Path) -> nils_test_support::cmd::CmdOptions {
     nils_test_support::cmd::CmdOptions::new()
         .with_cwd(dir)
+        .with_env_remove_many(&["CLAUDE_CONFIG_DIR", "CODEX_HOME"])
         .with_env("AGENT_SESSION_CODEX_BIN", UNPINNED_PROVIDER_BIN)
         .with_env("AGENT_SESSION_CLAUDE_BIN", UNPINNED_PROVIDER_BIN)
 }

@@ -195,3 +195,78 @@ fn is_owned_dispatch(handler: &Value) -> bool {
         && handler.get("timeout").and_then(Value::as_i64)
             == Some(AGENT_HOOK_DISPATCH_TIMEOUT_SECONDS)
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::has_dispatch_group;
+
+    #[test]
+    fn claude_dispatch_group_requires_exact_matcher_and_handler() {
+        let expected = json!({
+            "type": "command",
+            "command": "agent-hook dispatch --product claude",
+            "timeout": 60
+        });
+        let exact = json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Write|Edit",
+                    "hooks": [expected.clone()]
+                }]
+            }
+        });
+        assert!(has_dispatch_group(&exact, "PreToolUse", Some("Write|Edit")));
+
+        let wrong_matcher = json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Write",
+                    "hooks": [expected.clone()]
+                }]
+            }
+        });
+        assert!(!has_dispatch_group(
+            &wrong_matcher,
+            "PreToolUse",
+            Some("Write|Edit")
+        ));
+
+        for (field, invalid_value) in [
+            ("type", json!("prompt")),
+            ("command", json!("agent-hook dispatch --product codex")),
+            ("timeout", json!(30)),
+            ("unexpected", json!(true)),
+        ] {
+            let mut handler = expected.clone();
+            handler[if field == "unexpected" {
+                "extra"
+            } else {
+                field
+            }] = invalid_value;
+            let config = json!({
+                "hooks": {
+                    "PreToolUse": [{
+                        "matcher": "Write|Edit",
+                        "hooks": [handler]
+                    }]
+                }
+            });
+            assert!(
+                !has_dispatch_group(&config, "PreToolUse", Some("Write|Edit")),
+                "invalid handler field {field} must not satisfy registration"
+            );
+        }
+
+        let no_matcher = json!({
+            "hooks": {
+                "UserPromptSubmit": [{
+                    "hooks": [expected.clone()]
+                }]
+            }
+        });
+        assert!(has_dispatch_group(&no_matcher, "UserPromptSubmit", None));
+        assert!(!has_dispatch_group(&Value::Null, "UserPromptSubmit", None));
+    }
+}
