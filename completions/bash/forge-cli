@@ -352,6 +352,9 @@ _forge__cli() {
             forge__cli__help__pr__review__handoff,surrender)
                 cmd="forge__cli__help__pr__review__handoff__surrender"
                 ;;
+            forge__cli__help__pr__review__handoff,test-changes)
+                cmd="forge__cli__help__pr__review__handoff__test__changes"
+                ;;
             forge__cli__help__pr__review__loop,extend)
                 cmd="forge__cli__help__pr__review__loop__extend"
                 ;;
@@ -760,6 +763,9 @@ _forge__cli() {
             forge__cli__pr__help__review__handoff,surrender)
                 cmd="forge__cli__pr__help__review__handoff__surrender"
                 ;;
+            forge__cli__pr__help__review__handoff,test-changes)
+                cmd="forge__cli__pr__help__review__handoff__test__changes"
+                ;;
             forge__cli__pr__help__review__loop,extend)
                 cmd="forge__cli__pr__help__review__loop__extend"
                 ;;
@@ -841,6 +847,9 @@ _forge__cli() {
             forge__cli__pr__review__handoff,surrender)
                 cmd="forge__cli__pr__review__handoff__surrender"
                 ;;
+            forge__cli__pr__review__handoff,test-changes)
+                cmd="forge__cli__pr__review__handoff__test__changes"
+                ;;
             forge__cli__pr__review__handoff__help,assign)
                 cmd="forge__cli__pr__review__handoff__help__assign"
                 ;;
@@ -858,6 +867,9 @@ _forge__cli() {
                 ;;
             forge__cli__pr__review__handoff__help,surrender)
                 cmd="forge__cli__pr__review__handoff__help__surrender"
+                ;;
+            forge__cli__pr__review__handoff__help,test-changes)
+                cmd="forge__cli__pr__review__handoff__help__test__changes"
                 ;;
             forge__cli__pr__review__help,help)
                 cmd="forge__cli__pr__review__help__help"
@@ -2623,7 +2635,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__pr__review__handoff)
-            opts="assign inspect check surrender recover"
+            opts="assign inspect test-changes check surrender recover"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2693,6 +2705,20 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__help__pr__review__handoff__surrender)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__help__pr__review__handoff__test__changes)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -5693,7 +5719,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__help__review__handoff)
-            opts="assign inspect check surrender recover"
+            opts="assign inspect test-changes check surrender recover"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -5763,6 +5789,20 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__help__review__handoff__surrender)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__pr__help__review__handoff__test__changes)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -6681,7 +6721,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__review__handoff)
-            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help assign inspect check surrender recover help"
+            opts="-h --format --remote --provider --host --repo --store-root --dry-run --help assign inspect test-changes check surrender recover help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -6827,7 +6867,7 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__review__handoff__help)
-            opts="assign inspect check surrender recover help"
+            opts="assign inspect test-changes check surrender recover help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -6911,6 +6951,20 @@ _forge__cli() {
             return 0
             ;;
         forge__cli__pr__review__handoff__help__surrender)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__pr__review__handoff__help__test__changes)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -7040,6 +7094,48 @@ _forge__cli() {
                     return 0
                     ;;
                 --expected-state)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
+                --remote)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --provider)
+                    COMPREPLY=($(compgen -W "github gitlab local" -- "${cur}"))
+                    return 0
+                    ;;
+                --host)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --store-root)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        forge__cli__pr__review__handoff__test__changes)
+            opts="-h --expected-head --format --remote --provider --host --repo --store-root --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --expected-head)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
