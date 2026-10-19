@@ -20,7 +20,12 @@ pub struct SyncCarryOver {
 pub(crate) fn validate(c: &SyncCarryOver) -> bool {
     [&c.reviewed_head, &c.head, &c.base_commit, &c.merge_tree]
         .iter()
-        .all(|sha| sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        .all(|sha| {
+            sha.len() == 40
+                && sha
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
         && c.reviewed_head != c.head
         && c.review_url.starts_with("https://")
         && c.review_url.len() <= 512
@@ -144,7 +149,9 @@ impl Objects {
         };
         if *first != reviewed_head
             || base.len() != 40
-            || !base.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || !base
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         {
             return Err("not-a-sync-merge");
         }
