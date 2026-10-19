@@ -1118,7 +1118,13 @@ pub fn run(
         Some(_) => "awaiting-designated-review",
         None => "unassigned",
     };
-    let base = provider_base(&runner, &ctx, id)?;
+    let (base, base_ref) = match &args.command {
+        PrReviewHandoffCommand::Assign(_) => {
+            let (sha, name) = provider_base_scope(&runner, &ctx, id)?;
+            (sha, Some(name))
+        }
+        _ => (provider_base(&runner, &ctx, id)?, None),
+    };
     let mut proposed = None;
     let mut sync_carry_over = None;
     let mut approval = None;
@@ -1258,7 +1264,7 @@ pub fn run(
                 assignment_generation: generation,
                 surrendered: false,
                 coordinator_transfer: None,
-                base_ref: Some(view.base.clone()),
+                base_ref: base_ref.clone(),
             };
             if latest(&chain).is_some_and(|h| {
                 !h.surrendered && h.returned_reason.is_none() && !valid_scope_refresh(h, &next)
