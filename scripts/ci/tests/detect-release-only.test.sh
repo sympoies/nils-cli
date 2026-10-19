@@ -289,12 +289,102 @@ git -C "$producer_repo" config user.email "release-ci@example.test"
 git -C "$producer_repo" config maintenance.auto false
 git -C "$producer_repo" config gc.auto 0
 
+# This suite verifies release-only classification, not Cargo's registry
+# resolver. Keep the producer fixture deterministic under an empty Cargo home
+# by replacing its Cargo operations with the lockfile-only behavior that the
+# detector expects from a workspace version refresh.
+fixture_bin="$tmp_root/producer-bin"
+mkdir -p "$fixture_bin"
+cat >"$fixture_bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" != update || "${2:-}" != --workspace ]]; then
+  echo "unexpected cargo invocation in release-only fixture: $*" >&2
+  exit 2
+fi
+python3 - <<'PY'
+import pathlib
+import re
+
+root = pathlib.Path.cwd()
+root_manifest = (root / "Cargo.toml").read_text()
+new_version = re.search(
+    r'(?ms)^\[workspace[.]package\].*?^version\s*=\s*"([^"]+)"',
+    root_manifest,
+).group(1)
+names = set()
+for manifest in [root / "Cargo.toml", *sorted((root / "crates").glob("*/Cargo.toml"))]:
+    section = None
+    for line in manifest.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped.strip("[]")
+        elif section == "package":
+            match = re.match(r'\s*name\s*=\s*"([^"]+)"', line)
+            if match:
+                names.add(match.group(1))
+                break
+
+lock = (root / "Cargo.lock").read_text()
+blocks = re.split(r'(?=^\[\[package\]\]\s*$)', lock, flags=re.M)
+old_version = None
+for block in blocks:
+    if not block.startswith("[[package]]") or "\nsource = " in block:
+        continue
+    name = re.search(r'^name\s*=\s*"([^"]+)"\s*$', block, re.M)
+    version = re.search(r'^version\s*=\s*"([^"]+)"\s*$', block, re.M)
+    if name and name.group(1) in names and version:
+        old_version = version.group(1)
+        break
+if old_version is None:
+    raise SystemExit("workspace packages are missing from Cargo.lock")
+for index, block in enumerate(blocks):
+    if not block.startswith("[[package]]"):
+        continue
+    name = re.search(r'^name\s*=\s*"([^"]+)"\s*$', block, re.M)
+    if name and name.group(1) in names and "\nsource = " not in block:
+        blocks[index] = re.sub(
+            rf'(^version\s*=\s*)"{re.escape(old_version)}"',
+            rf'\g<1>"{new_version}"', block, count=1, flags=re.M,
+        )
+lock = "".join(blocks)
+for name in names:
+    lock = re.sub(
+        rf'(?m)^(\s*"{re.escape(name)} ){re.escape(old_version)}("\s*,?\s*)$',
+        rf'\g<1>{new_version}\g<2>', lock,
+    )
+(root / "Cargo.lock").write_text(lock)
+PY
+EOF
+chmod +x "$fixture_bin/cargo"
+
+# Preserve the checked-in generated artifact contents while updating only the
+# lockfile digest. Their generator is separately covered by its own tests.
+cat >"$producer_repo/scripts/generate-third-party-artifacts.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+python3 - <<'PY'
+import hashlib
+import pathlib
+import re
+
+root = pathlib.Path.cwd()
+lock_hash = hashlib.sha256((root / "Cargo.lock").read_bytes()).hexdigest()
+for name in ("THIRD_PARTY_LICENSES.md", "THIRD_PARTY_NOTICES.md"):
+    path = root / name
+    text = path.read_text()
+    path.write_text(re.sub(r'(?m)(Cargo.lock SHA256: `)[0-9a-f]+(`)', rf'\g<1>{lock_hash}\g<2>', text))
+PY
+EOF
+chmod +x "$producer_repo/scripts/generate-third-party-artifacts.sh"
+
 # Local validation runs before this change is committed, so copy the current
 # producer into the clone and make it part of the immutable fixture baseline.
 cp "$producer_script" \
   "$producer_repo/.agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh"
 git -C "$producer_repo" add \
-  .agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh
+  .agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh \
+  scripts/generate-third-party-artifacts.sh
 if ! git -C "$producer_repo" diff --cached --quiet; then
   git -C "$producer_repo" commit -q --amend --no-edit
 fi
@@ -315,7 +405,10 @@ PY
 )"
 (
   cd "$producer_repo"
-  bash \
+  PATH="$fixture_bin:$PATH" \
+    CARGO_HOME="$tmp_root/empty-cargo-home" \
+    CARGO_NET_OFFLINE=true \
+    bash \
     .agents/skills/project-bump-version-tag-release/scripts/project-bump-version-tag-release.sh \
     --version "$producer_version" \
     --prepare-only
