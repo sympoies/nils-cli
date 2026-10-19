@@ -7,6 +7,7 @@ pub mod context;
 mod forwarding;
 mod heartbeat_state;
 pub mod mailbox;
+mod mailbox_wait;
 mod notification;
 mod notification_policy;
 pub use notification::NotificationProjection;
