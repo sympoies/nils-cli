@@ -1,4 +1,5 @@
-//! Terminal mailbox wakes preserve observed operator drafts and never retry Enter.
+//! Terminal mailbox wakes preserve observed operator drafts and retry a swallowed Enter
+//! only while the exact wake remains visible.
 use super::*;
 
 pub(super) fn start_terminal_coordination_notification(
@@ -279,6 +280,9 @@ fn guarded_input(
             .ok()
             .filter(|output| output.status.success())
             .and_then(|output| String::from_utf8(output.stdout).ok())
+        },
+        |timeout| {
+            crate::live_status_with_timeout(tmux_bin, &record.tmux_session, timeout) == "stopped"
         },
         || {
             terminal_notification_waiting(context, record, expected_agent)

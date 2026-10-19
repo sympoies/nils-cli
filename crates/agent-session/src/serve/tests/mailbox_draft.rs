@@ -25,7 +25,14 @@ root = pathlib.Path(__file__).parent
 args = sys.argv[1:]
 with (root / 'calls').open('a') as out: out.write(json.dumps(args) + '\n')
 command = args[0]
-if command == 'has-session': sys.exit(0)
+if command == 'has-session':
+    if (root / 'exited-after-enter').exists():
+        sys.stderr.write("can't find session: beta\n")
+        sys.exit(1)
+    if (root / 'unknown-after-enter').exists():
+        sys.stderr.write("status probe failed\n")
+        sys.exit(1)
+    sys.exit(0)
 if command == 'display-message': print('0'); sys.exit(0)
 if command == 'load-buffer':
     (root / 'buffer').write_bytes(pathlib.Path(args[-1]).read_bytes())
@@ -36,10 +43,16 @@ elif command == 'paste-buffer':
         with (root / 'composer').open('a') as out: out.write(' operator addition')
 elif command == 'send-keys' and args[-1] == 'Enter':
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
-    if (root / 'swallow-first-enter').exists(): (root / 'swallow-first-enter').unlink()
+    if (root / 'exit-after-next-enter').exists(): (root / 'exited-after-enter').touch()
+    if (root / 'liveness-unknown-after-enter').exists(): (root / 'unknown-after-enter').touch()
+    if (root / 'operator-after-first-enter').exists() and not (root / 'first-enter-seen').exists():
+        (root / 'first-enter-seen').touch()
+        with (root / 'composer').open('a') as out: out.write(' operator addition')
+    elif (root / 'swallow-first-enter').exists(): (root / 'swallow-first-enter').unlink()
+    elif (root / 'swallow-every-enter').exists(): pass
     else: (root / 'composer').write_text('')
 elif command == 'capture-pane':
-    if (root / 'capture-unavailable').exists(): sys.exit(1)
+    if (root / 'capture-unavailable').exists() or ((root / 'capture-unavailable-after-enter').exists() and (root / 'submissions').exists()): sys.exit(1)
     text = (root / 'composer').read_text()
     if (root / 'provider').read_text() == 'claude':
         print('────────────────────\n❯\u00a0' + text + '\n────────────────────\n  status')
@@ -286,4 +299,86 @@ async fn mailbox_wake_retries_a_swallowed_enter_and_confirms_submission() {
         serde_json::from_str::<String>(line).unwrap()
             == crate::coordination::notification_prompt(&fixture.candidate)
     }));
+}
+
+#[tokio::test]
+async fn mailbox_wake_does_not_retry_after_operator_edits_composer() {
+    let fixture = WakeFixture::new(AgentKind::Claude).await;
+    fs::write(fixture.temp.path().join("operator-after-first-enter"), "").unwrap();
+    assert!(matches!(
+        fixture.start(),
+        Err(TerminalNotificationStartError::Known(
+            "submission-not-confirmed"
+        ))
+    ));
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    assert!(
+        fs::read_to_string(fixture.temp.path().join("composer"))
+            .unwrap()
+            .ends_with(" operator addition")
+    );
+}
+
+#[tokio::test]
+async fn mailbox_wake_reports_known_failure_after_two_swallowed_enters() {
+    let fixture = WakeFixture::new(AgentKind::Claude).await;
+    fs::write(fixture.temp.path().join("swallow-every-enter"), "").unwrap();
+    assert!(matches!(
+        fixture.start(),
+        Err(TerminalNotificationStartError::Known(
+            "submission-not-confirmed"
+        ))
+    ));
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+    assert_eq!(notification_fixture(fixture.temp.path())["state"], "queued");
+}
+
+#[tokio::test]
+async fn mailbox_wake_keeps_unreadable_pane_unverified_after_enter() {
+    let fixture = WakeFixture::new(AgentKind::Claude).await;
+    fs::write(
+        fixture.temp.path().join("capture-unavailable-after-enter"),
+        "",
+    )
+    .unwrap();
+    fs::write(fixture.temp.path().join("liveness-unknown-after-enter"), "").unwrap();
+    assert!(matches!(
+        fixture.start(),
+        Err(TerminalNotificationStartError::Unknown)
+    ));
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn mailbox_wake_accepts_verified_runtime_exit_after_enter() {
+    let fixture = WakeFixture::new(AgentKind::Claude).await;
+    fs::write(fixture.temp.path().join("exit-after-next-enter"), "").unwrap();
+    fixture
+        .start()
+        .expect("verified runtime exit confirms submission");
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("submissions"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
 }
