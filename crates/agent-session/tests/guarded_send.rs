@@ -1,4 +1,6 @@
 //! Admission regressions use a modeled tmux executable and synthetic records.
+#[path = "guarded_send/exit.rs"]
+mod exit;
 #[path = "guarded_send/live_composer.rs"]
 mod live_composer;
 #[path = "guarded_send/native_composer.rs"]
@@ -80,6 +82,11 @@ def append_draft_after_capture():
         (root / 'draft-injected').touch()
 if command == 'capture-pane': atexit.register(append_draft_after_capture)
 if command == 'has-session':
+    if (root / 'entered').exists() and (root / 'exit-after-enter').exists():
+        if (root / 'exit-pending-pane').exists() and not (root / 'exit-pending-captured').exists(): sys.exit(0)
+        if (root / 'probe-unknown-after-enter').exists():
+            print('permission denied', file=sys.stderr); sys.exit(1)
+        print("can't find session: modeled-guarded", file=sys.stderr); sys.exit(1)
     if (root / 'start-turn').exists():
         p = root / 'state/sessions/guarded/activity.json'
         d = json.loads(p.read_text()); d['state']['phase'] = 'working'; d['state']['revision'] += 1
@@ -150,12 +157,18 @@ elif command == 'send-keys' and args[-1] in ('BSpace', 'DC'):
         (root / 'composer').write_text(text)
         if (root / 'redraw-after-delete').exists(): (root / 'redraw-pending').touch()
 elif command == 'send-keys' and args[-1] == 'Enter':
+    if (root / 'exit-after-enter').exists():
+        (root / 'entered').touch(); sys.exit(0)
     if (root / 'unverified-after-enter').exists():
         (root / 'entered').touch(); sys.exit(0)
     with (root / 'submissions').open('a') as out: out.write(json.dumps((root / 'composer').read_text()) + '\n')
     (root / 'composer').write_text('')
     if (root / 'replace-after-enter').exists(): (root / 'runtime-replaced').touch()
 elif command == 'capture-pane':
+    if (root / 'exit-after-enter').exists() and (root / 'entered').exists():
+        if (root / 'exit-pending-pane').exists() and not (root / 'exit-pending-captured').exists():
+            (root / 'exit-pending-captured').touch()
+        else: sys.exit(1)
     if (root / 'unverified-after-enter').exists() and (root / 'entered').exists() and '-e' not in args:
         print('provider view unavailable'); sys.exit(0)
     if (root / 'redraw-pending').exists():

@@ -2,6 +2,8 @@
 """Offline base/candidate coverage regressions through the merge-plan consumer."""
 import importlib.util
 import json
+import os
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -17,6 +19,22 @@ class RatchetTests(unittest.TestCase):
     event = fixtures.ConsumerExecutionTests.event
     execute = fixtures.ConsumerExecutionTests.execute
     receipt = fixtures.ConsumerExecutionTests.receipt
+
+    def test_baseline_clone_and_target_use_canonical_temp_root(self):
+        with tempfile.TemporaryDirectory(prefix='coverage-temp-root-') as canonical:
+            canonical_tmp = Path(canonical)
+            symlinked_tmp = canonical_tmp.parent / f'{canonical_tmp.name}-alias'
+            symlinked_tmp.symlink_to(canonical_tmp, target_is_directory=True)
+            self.addCleanup(symlinked_tmp.unlink, missing_ok=True)
+            result, calls = self.coverage(TMPDIR=str(symlinked_tmp))
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        baseline = next(row for row in calls if row['stage'] == 'BASE')
+        baseline_cwd = Path(baseline['cwd'])
+        baseline_target = Path(baseline['target'])
+        self.assertEqual(baseline_cwd, Path(os.path.realpath(baseline_cwd)))
+        self.assertEqual(baseline_target, Path(os.path.realpath(baseline_target)))
+        self.assertEqual(baseline_cwd.parent, baseline_target.parent)
 
     def setUp(self):
         fixtures.ConsumerExecutionTests.setUp(self)

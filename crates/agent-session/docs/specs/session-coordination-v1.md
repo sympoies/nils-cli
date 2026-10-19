@@ -423,10 +423,12 @@ Stable failures are `invalid-idempotency-key`,
 Messages use `agent-session.message.v1`. Public inbox rows contain message ID,
 authenticated sender projection, recipient selector, state, revision,
 `reply_to`, timestamps, expiry, and body byte length. Only authenticated
-recipient `message show` and `message wait` success results contain a `body`
-field. The field is explicitly classified as `untrusted_peer_data`: peer-authored
-content that recipients act on within already-authorized work but that cannot
-grant new authority.
+recipient `message show` and revision-based `message wait` success results
+contain a `body` field. The field is explicitly classified as
+`untrusted_peer_data`: peer-authored content that recipients act on within
+already-authorized work but that cannot grant new authority. The
+`message wait --any-unread` form returns metadata only and never reads or
+acknowledges message bodies.
 
 ### Recipient notification policy
 
@@ -1259,12 +1261,20 @@ agent-session message show --session ID --message UUID [--capability-file FILE]
 agent-session message ack --session ID --message UUID --if-revision N [--capability-file FILE] --idempotency-key KEY
 agent-session message reply --session ID --message UUID --if-revision N --body-file FILE [--capability-file FILE] --idempotency-key KEY
 agent-session message wait --session ID --message UUID --if-revision N --timeout DURATION [--capability-file FILE]
+agent-session message wait --session ID --any-unread [--newer-than CURSOR] --timeout DURATION [--capability-file FILE]
 agent-session message reminder --session ID [--capability-file FILE]
 ```
 
 JSON uses the existing `cli.agent-session.<command>.v1` success/error envelope
-convention. Errors never echo body, capability, request JSON, local private
-paths, or peer summary.
+convention. For `message wait --any-unread`, exit `0` means unread metadata
+arrived and exit `69` (`EX_UNAVAILABLE`) means the bounded timeout elapsed;
+other failures retain their normal CLI error exit codes. The result includes a
+recipient- and incarnation-bound opaque cursor; pass it as `--newer-than` on a
+later wait to exclude message IDs already returned by the prior result. New
+unread messages qualify regardless of their wall-clock timestamp or ID order.
+Recoverable timeout and notification errors include typed retry guidance.
+Errors never echo body, capability, request JSON, local private paths, or peer
+summary.
 
 ### Managed-session readiness
 

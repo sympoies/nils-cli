@@ -217,6 +217,9 @@ fn confirm_prompt_submission(
         &probe,
         hold_started + send_submit::HOLD_BUDGET,
         |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
+        |timeout| {
+            crate::live_status_with_timeout(tmux_bin, &record.tmux_session, timeout) == "stopped"
+        },
         || {
             activity::state_for_view(context, record)
                 .is_none_or(|turn| turn.phase != activity::TurnPhase::NeedsInput)
@@ -445,6 +448,10 @@ fn guarded(
                     &probe,
                     admission.deadline,
                     |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
+                    |timeout| {
+                        crate::live_status_with_timeout(tmux_bin, &record.tmux_session, timeout)
+                            == "stopped"
+                    },
                     || true,
                     press_enter,
                 )?))
