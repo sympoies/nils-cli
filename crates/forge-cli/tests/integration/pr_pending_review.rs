@@ -218,7 +218,7 @@ fn run_pending_delete_with_script(script: &str, review: &str) -> CmdOutput {
     )
 }
 
-fn pending_recovery_snapshot(marked: bool, inline_count: usize, viewer_owned: bool) -> String {
+pub(super) fn recovery_snapshot(marked: bool, inline_count: usize, viewer_owned: bool) -> String {
     let review_body = if marked {
         format!("Summary\n<!-- forge-cli:review-run:v1 run={INCOMPLETE_RECEIPT_RUN_ID} -->")
     } else {
@@ -282,7 +282,7 @@ fn pending_recovery_snapshot(marked: bool, inline_count: usize, viewer_owned: bo
     .to_string()
 }
 
-fn pending_recovery_script(capture: &str, snapshot: &str, marker: &str) -> String {
+pub(super) fn pending_recovery_script(capture: &str, snapshot: &str, marker: &str) -> String {
     let state_marker = serde_json::to_string(marker).expect("serialize review-state marker");
     let mut submitted: serde_json::Value =
         serde_json::from_str(snapshot).expect("pending snapshot fixture");
@@ -883,7 +883,7 @@ esac
 fn pr_pending_review_resume_submit_rejects_an_incomplete_receipt_manifest() {
     let stub = StubEnv::new();
     let capture = stub.tempdir.path().join("resume-submit-calls.log");
-    let snapshot = pending_recovery_snapshot(true, 1, true);
+    let snapshot = recovery_snapshot(true, 1, true);
     let script = pending_recovery_script(
         &capture.to_string_lossy(),
         &snapshot,
@@ -976,7 +976,7 @@ fn pr_pending_review_resume_submit_accepts_an_exact_receipt_manifest() {
     }];
     let (review_run_id, marker) = receipt_marker("Summary", manifest);
     let snapshot =
-        pending_recovery_snapshot(true, 1, true).replace(INCOMPLETE_RECEIPT_RUN_ID, &review_run_id);
+        recovery_snapshot(true, 1, true).replace(INCOMPLETE_RECEIPT_RUN_ID, &review_run_id);
     let script = pending_recovery_script(&capture.to_string_lossy(), &snapshot, &marker);
     let stub = stub.gh_stub(&script);
 
@@ -1062,7 +1062,7 @@ fn pr_pending_review_direct_submit_v1_remains_deserializable_with_a_required_dig
 
     let stub = StubEnv::new();
     let capture = stub.tempdir.path().join("direct-submit-v1-calls.log");
-    let snapshot = pending_recovery_snapshot(false, 1, true);
+    let snapshot = recovery_snapshot(false, 1, true);
     let script = pending_recovery_script(&capture.to_string_lossy(), &snapshot, "unused");
     let stub = stub.gh_stub(&script);
     let inspect = run_forge_cli(
@@ -1141,7 +1141,7 @@ fn pr_pending_review_submit_fails_when_provider_state_cannot_be_reconciled() {
     }];
     let (review_run_id, marker) = receipt_marker("Summary", manifest);
     let snapshot =
-        pending_recovery_snapshot(true, 1, true).replace(INCOMPLETE_RECEIPT_RUN_ID, &review_run_id);
+        recovery_snapshot(true, 1, true).replace(INCOMPLETE_RECEIPT_RUN_ID, &review_run_id);
     let script = pending_recovery_script(&capture.to_string_lossy(), &snapshot, &marker).replace(
         &format!(": > \"{}.submitted\"", capture.to_string_lossy()),
         ":",
@@ -1228,7 +1228,7 @@ fn pr_pending_review_cross_process_lease_excludes_a_second_mutation() {
     }];
     let (review_run_id, marker) = receipt_marker("Summary", manifest);
     let snapshot =
-        pending_recovery_snapshot(true, 1, true).replace(INCOMPLETE_RECEIPT_RUN_ID, &review_run_id);
+        recovery_snapshot(true, 1, true).replace(INCOMPLETE_RECEIPT_RUN_ID, &review_run_id);
     let submitted_flag = format!("{}.submitted", capture.to_string_lossy());
     let transition = format!(
         ": > {started:?}\n        while [ ! -e {release:?} ]; do sleep 0.01; done\n        : > \"{submitted_flag}\""
@@ -1459,7 +1459,7 @@ fn pr_pending_review_resume_submit_rejects_diff_side_and_range_drift_without_mut
     }];
     let (review_run_id, marker) = receipt_marker("Summary", manifest);
     let snapshot =
-        pending_recovery_snapshot(true, 1, true).replace(INCOMPLETE_RECEIPT_RUN_ID, &review_run_id);
+        recovery_snapshot(true, 1, true).replace(INCOMPLETE_RECEIPT_RUN_ID, &review_run_id);
     let script = pending_recovery_script(&capture.to_string_lossy(), &snapshot, &marker);
     let stub = stub.gh_stub(&script);
     let inspect = run_forge_cli(
@@ -1788,8 +1788,8 @@ fn pr_pending_review_resume_submit_rejects_identity_mismatch_without_mutation() 
         body_digest: sha256_digest(b"first"),
     }];
     let (review_run_id, marker) = receipt_marker("Summary", manifest);
-    let snapshot = pending_recovery_snapshot(true, 1, false)
-        .replace(INCOMPLETE_RECEIPT_RUN_ID, &review_run_id);
+    let snapshot =
+        recovery_snapshot(true, 1, false).replace(INCOMPLETE_RECEIPT_RUN_ID, &review_run_id);
     let script = pending_recovery_script(&capture.to_string_lossy(), &snapshot, &marker);
     let stub = stub.gh_stub(&script);
 
@@ -1856,7 +1856,7 @@ fn pr_pending_review_resume_submit_rejects_identity_mismatch_without_mutation() 
 fn pr_pending_review_unmarked_fourteen_comment_draft_submits_without_data_loss() {
     let stub = StubEnv::new();
     let capture = stub.tempdir.path().join("unmarked-submit-calls.log");
-    let snapshot = pending_recovery_snapshot(false, 14, true);
+    let snapshot = recovery_snapshot(false, 14, true);
     let script = pending_recovery_script(
         &capture.to_string_lossy(),
         &snapshot,
@@ -1937,7 +1937,7 @@ fn pr_pending_review_unmarked_fourteen_comment_draft_submits_without_data_loss()
 fn pr_pending_review_discard_requires_distinct_inline_content_approval() {
     let stub = StubEnv::new();
     let capture = stub.tempdir.path().join("discard-calls.log");
-    let snapshot = pending_recovery_snapshot(false, 14, true);
+    let snapshot = recovery_snapshot(false, 14, true);
     let script = pending_recovery_script(
         &capture.to_string_lossy(),
         &snapshot,

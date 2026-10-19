@@ -29,7 +29,7 @@ pub(crate) const MAX_PENDING_REVIEW_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 const GITHUB_REVIEWS_QUERY: &str = "query($owner: String!, $name: String!, $pr: Int!, $after: String) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $pr) { headRefOid reviews(first: 100, after: $after) { nodes { id databaseId url author { login __typename ... on Node { id } } state commit { oid } submittedAt body viewerDidAuthor } pageInfo { hasNextPage endCursor } } } } }";
 const GITHUB_PENDING_REVIEWS_QUERY: &str = "query($owner: String!, $name: String!, $pr: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { headRefOid reviews(first: 100, after: $after, states: [PENDING]) { nodes { id url author { login } state commit { oid } body viewerDidAuthor viewerCanDelete } pageInfo { hasNextPage endCursor } } } } }";
 const GITHUB_PENDING_REVIEW_TARGET_QUERY: &str = "query($review: ID!) { node(id: $review) { ... on PullRequestReview { id url author { login } state commit { oid } body viewerDidAuthor viewerCanDelete comments(first: 1) { totalCount } pullRequest { number url headRefOid } } } }";
-const GITHUB_PENDING_REVIEW_SNAPSHOT_QUERY: &str = "query($review: ID!, $after: String) { node(id: $review) { ... on PullRequestReview { id url author { login } state commit { oid } body viewerDidAuthor viewerCanDelete comments(first: 100, after: $after) { totalCount nodes { id url author { login } body createdAt path diffHunk line originalLine startLine originalStartLine subjectType } pageInfo { hasNextPage endCursor } } pullRequest { number url headRefOid } } } }";
+const GITHUB_PENDING_REVIEW_SNAPSHOT_QUERY: &str = "query($review: ID!, $after: String) { node(id: $review) { ... on PullRequestReview { id url author { login } state commit { oid } body createdAt viewerDidAuthor viewerCanDelete comments(first: 100, after: $after) { totalCount nodes { id url author { login } body createdAt path diffHunk line originalLine startLine originalStartLine subjectType } pageInfo { hasNextPage endCursor } } pullRequest { number url headRefOid } } } }";
 
 struct ReviewPage {
     viewer_login: String,
@@ -136,6 +136,9 @@ pub struct PendingReviewSnapshot {
     pub review_id: String,
     pub review_url: String,
     pub author: String,
+    /// Informational provider timestamp; not part of the recovery CAS digest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
     pub commit_sha: Option<String>,
     pub body: String,
     pub semantic_body: String,
@@ -1114,6 +1117,7 @@ fn parse_github_pending_review_snapshot_page(
             )?,
             review_id: required_string(node, "/id", "review.id")?,
             review_url: required_string(node, "/url", "review.url")?,
+            created_at: optional_string(node, "/createdAt"),
             author: optional_string(node, "/author/login")
                 .unwrap_or_else(|| "<unknown>".to_string()),
             commit_sha: optional_string(node, "/commit/oid"),
@@ -1404,6 +1408,7 @@ fn validate_snapshot_page_identity(
         && expected.review_id == observed.review_id
         && expected.review_url == observed.review_url
         && expected.author == observed.author
+        && expected.created_at == observed.created_at
         && expected.commit_sha == observed.commit_sha
         && expected.body == observed.body
         && expected.viewer_did_author == observed.viewer_did_author

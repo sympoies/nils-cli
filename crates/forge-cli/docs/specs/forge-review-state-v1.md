@@ -72,9 +72,13 @@ validation rules, and output schema versions.
 - `pr pending-review inspect <id> --review <PRR_...>` emits
   `cli.forge-cli.pr.pending-review.inspect.v1`. Its complete snapshot requires
   PR/head/review identity, author, commit, raw and semantic body,
+  `created_at` when supplied by the provider, and an explicit
+  `inline_comment_count` in the inspect payload,
   `viewerDidAuthor`, `viewerCanDelete`, provenance, every inline comment with
   normalized body digest plus `diffSide`/`startDiffSide` and line/range anchors,
-  and `snapshot_digest`. Every page must repeat identical review metadata and a
+  and `snapshot_digest`.
+
+  Every page must repeat identical review metadata and a
   stable `totalCount`; partial data, cursor loops, count mismatch, head drift,
   an aggregate above 1,000 comments, or a decoded retained snapshot above 4 MiB
   returns `review_snapshot_incomplete` instead of a partial snapshot. An
