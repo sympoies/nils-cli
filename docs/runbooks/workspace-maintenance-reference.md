@@ -787,21 +787,26 @@ lane.
 The `devlog` CLI maintains and queries the log:
 
 ```bash
+source scripts/dev-env.sh
 devlog new --title "<title>" --result "<bullet>" --why "<bullet>" \
   --evidence "<bullet>" --link "<bullet>"
 devlog search <term> [--month YYYY-MM]
-devlog check
-devlog fix
-devlog index
+devlog check --base origin/main --fragments-only
 ```
 
-`new` inserts newest-first and refreshes the month index in the same operation.
-`check` reports structural problems the Markdown lint cannot see: mis-named
-month files, index drift, missing or unknown entry sections, date/month
-mismatches, and entries that are not newest-first. `fix` repairs the subset of
-those that have one correct repair and reports the rest; it is for adopting a
-log written before the contract existed, not part of the write path. Exit codes
-and the JSON envelope names are documented in `crates/devlog/README.md`.
+`new` writes a unique pending fragment without touching a shared month file or
+index. `scripts/ci/devlog-check.py` runs the fragment-only merge-base check in
+local-fast, docs-only, full and CI change detection lanes. It requires a
+fetched `origin/main`; `NILS_CLI_DEVLOG_BASE` selects the immutable base in CI.
+CI builds the workspace devlog binary and exports the same writer setting.
+
+After each release, the maintainer runs `.agents/scripts/fold-devlog.sh` in a
+managed worktree and delivers its diff as a dedicated maintenance PR. The gate
+admits only exact deterministic folding on canonical fold branches and commits
+(including queue squash commits). Release preparation keeps its version-only
+patch contract. Authoring, fold ownership, and correction rules
+live in `docs/devlog/README.md`; CLI exits and envelopes are documented in
+`crates/devlog/README.md`.
 
 Devlog-only changes are documentation, so they validate through the docs-only
 fast path in section 3.1.

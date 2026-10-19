@@ -461,6 +461,8 @@ if [[ "$plan_only" -eq 1 ]]; then
   exit 0
 fi
 
+export NILS_CLI_DEVLOG_BASE="${NILS_CLI_DEVLOG_BASE:-$base}"
+
 bash_bin="${BASH:-}"
 if [[ -z "$bash_bin" || ! -x "$bash_bin" ]]; then
   bash_bin="$(command -v bash || true)"
@@ -518,6 +520,8 @@ package_has_doctest() {
   return 1
 }
 
+run python3 scripts/ci/devlog-check.py
+
 case "$mode" in
   none)
     echo "ok: local-fast found no changed files"
@@ -563,6 +567,7 @@ run bash scripts/ci/tempdir-leak-audit.sh
 run python3 scripts/ci/assert-import-audit.py
 run python3 scripts/ci/tests/assert-import-audit.test.py
 run python3 scripts/ci/tests/gate-resources.test.py
+run python3 scripts/ci/tests/devlog-policy.test.py
 run bash scripts/ci/tests/test-env.test.sh
 run bash scripts/ci/tests/node-scope.test.sh
 run bash scripts/ci/tests/tempdir-leak-audit.test.sh

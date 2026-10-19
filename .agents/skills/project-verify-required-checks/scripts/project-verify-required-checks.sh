@@ -186,6 +186,7 @@ run_doc_tests() {
   run_test cargo test --workspace --doc
 }
 
+run python3 scripts/ci/devlog-check.py
 run bash scripts/ci/docs-placement-audit.sh --strict
 run bash scripts/ci/docs-hygiene-audit.sh --strict
 run bash scripts/ci/markdownlint-audit.sh --strict
@@ -228,6 +229,7 @@ run bash scripts/ci/tests/workspace-test-stale-audit.test.sh
 run bash scripts/ci/tests/file-size-audit.test.sh
 run bash scripts/ci/tests/docs-prose-audit.test.sh
 run bash scripts/ci/tests/prepare-private-release-workflow.test.sh
+run python3 scripts/ci/tests/devlog-policy.test.py
 run bash scripts/ci/skill-shell-suites.sh
 run_os_independent_audit bash scripts/ci/test-stale-audit.sh --strict
 run_os_independent_audit bash scripts/ci/file-size-audit.sh --strict
