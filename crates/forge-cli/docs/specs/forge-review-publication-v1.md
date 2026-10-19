@@ -176,7 +176,9 @@ validation rules, and output schema versions.
   detail and the failed spec index/path/line while preserving the pending
   review. Other interruption points return
   `pending_review_transaction_incomplete` (`DATA 65`) with the pending review
-  intact and an identical rerun as the recovery action. A lost creation response
+  intact and an identical rerun as the recovery action.
+
+  A lost creation response
   triggers a read-only lookup for the exact own receipt-bound transaction;
   unprovable identity stays unknown and never authorizes deletion. Once the review ID is
   known, error details include exact inspect commands plus fresh-snapshot shell
@@ -186,7 +188,9 @@ validation rules, and output schema versions.
   or validation failures after thread creation retain the transaction ID and
   this same guidance, including on an identical rerun. Existing recovery guard
   failures keep their specific validation codes while gaining this context.
-  These failures never delete the partial review. Malformed or oversized
+  These failures never delete the partial review.
+
+  Malformed or oversized
   specs return `invalid_review_thread_spec` (`DATA 65`); `--thread-file` without
   `--submit-review` returns `thread_file_requires_submit_review` (`DATA 65`);
   GitLab / Local return `provider_unsupported` (`USAGE 64`) before any backend
