@@ -530,3 +530,79 @@ fn console_operation_reconcile_distinguishes_evicted_from_unused_ids() {
 fn console_operation_reconcile_distinguishes_aged_from_unused_ids() {
     reconcile_expired_operation(false);
 }
+
+#[test]
+fn console_start_failure_survives_cli_forwarding_and_receipt_reconciliation() {
+    for retryable in [true, false] {
+        let fixture = Fixture::new();
+        let aggregator = Aggregator::start();
+        let serve = fixture.serve(&[], Some(&aggregator));
+        let operation = operation_for(if retryable { 601 } else { 602 });
+        aggregator.reply_json(500, &json!({"ok":false,"error":{
+            "code":"start-failed", "message":"provider exited during startup",
+            "details":{
+                "session_id":"failed-child", "reason":"runtime-exited-during-startup",
+                "provider_exit_code":23, "stderr_tail":format!("{}provider configuration unavailable", if retryable { String::new() } else { "中".repeat(2000) }),
+                "retryable":retryable, "safe_to_retry":retryable,
+                "next_action":if retryable {"retry_create"} else {"inspect_session"},
+                "recovery":{"safe_to_retry":retryable},
+                "cleanup":if retryable {json!({"state":"completed"})} else {json!({"state":"blocked","reason":"process_boundary_live"})}
+            }
+        }}));
+        let output = fixture.start_via_console(
+            &[
+                "--agent",
+                "codex",
+                "--operation-id",
+                &operation,
+                "--format",
+                "json",
+            ],
+            true,
+        );
+        let error = error_of(&output);
+        assert_eq!(error["code"], "start-failed");
+        assert_eq!(error["details"]["provider_exit_code"], 23);
+        assert_eq!(error["details"]["safe_to_retry"], retryable);
+        assert_eq!(error["details"]["recovery"]["safe_to_retry"], retryable);
+        let tail = error["details"]["stderr_tail"].as_str().unwrap();
+        assert!(tail.ends_with("provider configuration unavailable"));
+        assert!(tail.len() <= 4096);
+        if !retryable {
+            assert_eq!(error["details"]["cleanup"]["state"], "blocked");
+            assert_eq!(
+                error["details"]["cleanup"]["reason"],
+                "process_boundary_live"
+            );
+        }
+        drop(serve);
+        let _serve = fixture.serve(&[], Some(&aggregator));
+        let output = fixture.start_via_console(
+            &[
+                "--agent",
+                "codex",
+                "--operation-id",
+                &operation,
+                "--reconcile",
+                "--format",
+                "json",
+            ],
+            true,
+        );
+        assert_eq!(output.code, 0, "{}", output.stdout_text());
+        let result = output.stdout_json();
+        assert_eq!(result["data"]["reconciliation"]["state"], "start_failed");
+        assert_eq!(result["data"]["reconciliation"]["safe_to_retry"], retryable);
+        assert_eq!(result["data"]["session"]["id"], "failed-child");
+        assert_eq!(result["data"]["failure"]["provider_exit_code"], 23);
+        assert!(
+            result["data"]["failure"].get("stderr_tail").is_none(),
+            "receipts retain metadata only"
+        );
+        assert_eq!(
+            aggregator.seen().len(),
+            1,
+            "reconciliation must not create or scan after a definitive failure"
+        );
+    }
+}

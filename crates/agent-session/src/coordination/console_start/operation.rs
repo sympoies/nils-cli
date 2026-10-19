@@ -108,6 +108,15 @@ impl Receipt {
         if !path.try_exists().map_err(|_| store_unavailable())? {
             return Ok(());
         }
+        if let Err(error) = result
+            && let Some(failure) = super::start_failure::receipt(error)
+        {
+            self.value["state"] = json!("start_failed");
+            self.value["safe_to_retry"] = failure["safe_to_retry"].clone();
+            self.value["session"] = json!({"id":failure["session_id"]});
+            self.value["failure"] = failure;
+            return self.save(context);
+        }
         let created = match result {
             Ok(value) => Some(value["session"].clone()),
             Err(error) => error
@@ -148,6 +157,11 @@ impl Receipt {
     ) -> Result<Value, CliError> {
         let mut result = json!({"schema_version":RESULT_SCHEMA,"machine":self.value["machine"],
             "reconciliation":{"state":self.value["state"],"safe_to_retry":self.value["safe_to_retry"]}});
+        if self.value["state"] == "start_failed" {
+            result["session"] = self.value["session"].clone();
+            result["failure"] = self.value["failure"].clone();
+            return Ok(result);
+        }
         if self.value["state"] == "created" {
             result["session"] = self.value["session"].clone();
             return Ok(result);

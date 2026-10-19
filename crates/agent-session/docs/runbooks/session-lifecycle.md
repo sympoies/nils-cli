@@ -345,6 +345,23 @@ Ownership mismatches and ambiguous tmux probes still retain the record. An
 interrupted frozen/kill transaction must be recovered through ordinary deletion
 before this flag can be used. Retired external runtimes remain unsupported.
 
+## Startup failures
+
+A fresh `start` or HTTP create that observes the provider stop before readiness
+returns `start-failed` (CLI exit 1). Inspect `error.details.reason`,
+`provider_exit_code`, and the optional redacted `stderr_tail` for the cause.
+The retained `session_id` makes the failed attempt addressable. Retry with a
+fresh session ID only when `retryable` is true; uncertain cleanup requires
+inspection first.
+
+`startup-trust-required` identifies a folder-trust screen. Review the requested
+working directory and configure its provider trust entry before retrying.
+`startup-prompt-required` identifies a recognized sign-in or setup screen.
+The launcher does not accept these prompts automatically and attempts verified
+cleanup so the failed create does not leave a silent live orphan.
+An unobservable or still-starting runtime is not proof of failure; reconcile
+that attempt before creating another session.
+
 ## Read logs
 
 For a stopped session without a one-shot run log, `agent-session logs <id>`
