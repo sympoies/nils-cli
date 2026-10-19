@@ -20,10 +20,39 @@ pub struct SyncCarryOver {
 pub(crate) fn validate(c: &SyncCarryOver) -> bool {
     [&c.reviewed_head, &c.head, &c.base_commit, &c.merge_tree]
         .iter()
-        .all(|sha| sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()))
+        .all(|sha| sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
         && c.reviewed_head != c.head
         && c.review_url.starts_with("https://")
         && c.review_url.len() <= 512
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SyncCarryOver, validate};
+
+    fn carry(sha: String) -> SyncCarryOver {
+        SyncCarryOver {
+            review_url: "https://example.invalid/review".to_string(),
+            reviewed_head: sha.clone(),
+            head: "b".repeat(40),
+            base_commit: "c".repeat(40),
+            merge_tree: "d".repeat(40),
+        }
+    }
+
+    #[test]
+    fn carry_over_sha_fields_require_exact_lowercase_hex() {
+        let lower = "a".repeat(40);
+        assert!(validate(&carry(lower.clone())));
+        for invalid in [
+            "A".repeat(40),
+            format!("{}a", lower),
+            format!("{} ", lower),
+            format!(" {}", lower),
+        ] {
+            assert!(!validate(&carry(invalid)));
+        }
+    }
 }
 
 /// A verified `merge(reviewed_head, base_commit)` whose tree is `merge_tree`.
@@ -115,7 +144,7 @@ impl Objects {
         };
         if *first != reviewed_head
             || base.len() != 40
-            || !base.bytes().all(|b| b.is_ascii_hexdigit())
+            || !base.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         {
             return Err("not-a-sync-merge");
         }
