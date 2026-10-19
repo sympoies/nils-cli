@@ -10,7 +10,7 @@ Description:
   Print "true" when every changed file is documentation and none feeds the
   generated third-party artifacts; otherwise print "false". Used by the ci.yml
   `changes` job to route docs-only PRs/pushes through the docs-only lane while
-  keeping the release-gated check names (test / test_macos / coverage) present
+  keeping the required Linux check names present
   and green via step-level skips.
 
   Classification reuses scripts/ci/lib/doc_classify.py, the same source of truth
