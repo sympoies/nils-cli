@@ -56,7 +56,9 @@ sends.
 submission. `send` reads the pane back and reports
 `data.submission = { outcome, enter_presses }`:
 
-- `submitted` means the text left the Claude Code or Codex composer.
+- `submitted` means the text left the Claude Code or Codex composer, or an
+  accepted Enter was followed by verified absence of the exact terminal runtime
+  (for example, after `/exit`). A failed pane read alone does not confirm exit.
 - `queued` means Claude Code queued it behind a running turn ("Press up to edit
   queued messages").
 - When the text is still in the composer, `send` presses Enter once more,
