@@ -174,7 +174,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--reviewer=[Add a reviewer (repeatable)]:USER:_default' \
 '*--label=[Add a label (repeatable)]:LABEL:_default' \
 '--label-catalog=[Validate labels against this catalog when \`--strict-labels\` is set]:PATH:_default' \
-'--test-first-evidence=[Directory holding a \`test-first-evidence\` record. Verified by the test-first gate when \`\[test_first\].require\` resolves true for a feature/bug PR. Requires a complete v2 record with a testable classification, durable pre-fix evidence, scoped final validation, a residual-gap declaration, and a bound baseline/delivery subject matching the current checkout]:DIR:_default' \
+'--test-first-evidence=[Directory holding a \`test-first-evidence\` record. Verified by the test-first gate when \`\[test_first\].require\` is true and \`require_kinds\` selects this kind (default\: feature/bug). Requires a complete v2 record with a testable classification, pre-fix evidence, scoped final validation, a residual-gap declaration, and a bound baseline/delivery subject matching the current checkout]:DIR:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
@@ -869,6 +869,22 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ':id:_default' \
 && ret=0
 ;;
+(test-changes)
+_arguments "${_arguments_options[@]}" : \
+'--expected-head=[Exact provider head SHA for the immutable comparison]:EXPECTED_HEAD:_default' \
+'--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
+json\:"Single-record JSON envelope (snake_case)"))' \
+'--remote=[Git remote whose URL feeds provider detection (default\: \`origin\`)]:REMOTE:_default' \
+'--provider=[Override auto-detected provider]:PROVIDER:(github gitlab local)' \
+'--host=[Override the forge authority (\`hostname\` or \`hostname\:port\`). With \`--provider\`, a syntactically valid custom authority is accepted unless it is positively identified as the other provider. Without \`--provider\`, the authority must identify a supported provider]:HOST:_default' \
+'--repo=[Override the remote-derived repository path. Accepted shapes\: GitHub \`owner/name\`; GitLab \`group\[/subgroup...\]/project\`; Local \`local\:<slug>\` or \`<slug>\`]:REPOSITORY:_default' \
+'--store-root=[Root directory of the file-backed store used by \`--provider local\`. Overrides the \`FORGE_CLI_LOCAL_STORE\` env var]:path:_files' \
+'--dry-run[Validate and describe the planned operation without applying its mutation. Read-only preflight calls may still run]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':id:_default' \
+&& ret=0
+;;
 (check)
 _arguments "${_arguments_options[@]}" : \
 '--approval-policy=[Require this approval level in addition to the persisted assignment policy]:APPROVAL_POLICY:(source-pass final-approval)' \
@@ -940,6 +956,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (inspect)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(test-changes)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1093,7 +1113,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--reviewer=[Add a reviewer (repeatable)]:USER:_default' \
 '*--label=[Add a label to the created PR / MR (repeatable)]:LABEL:_default' \
 '--label-catalog=[Validate labels against this catalog when \`--strict-labels\` is set]:PATH:_default' \
-'--test-first-evidence=[Directory holding a \`test-first-evidence\` record, forwarded to the create step and verified by the test-first gate when \`\[test_first\].require\` resolves true for a feature/bug PR. Requires a complete v2 record with a testable classification and a bound baseline/delivery subject matching the current checkout]:DIR:_default' \
+'--test-first-evidence=[Directory holding a \`test-first-evidence\` record, forwarded to the create step and verified by the test-first gate when \`\[test_first\].require\` is true and \`require_kinds\` selects this kind (default\: feature/bug). Requires a complete v2 record and a bound baseline/delivery subject matching the current checkout]:DIR:_default' \
 '--timeout=[Cumulative CI-wait budget before declaring \`checks_timeout\` (default \`30m\`)]:TIMEOUT:_default' \
 '--allow-unresolved-threads-reason=[Required when \`--allow-unresolved-threads\` is set. Non-empty free-form text describing why the unresolved threads are safe to merge past; the reason is recorded in the merge-step payload]:TEXT:_default' \
 '--review-convergence=[Override \`\[review_convergence\].require\` for the merge phase. Passing the flag without a value enables it; \`--review-convergence=false\` disables a configured opt-in for this invocation]::REVIEW_CONVERGENCE:(true false)' \
@@ -1295,6 +1315,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (inspect)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(test-changes)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3368,6 +3392,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(test-changes)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (check)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -4407,6 +4435,7 @@ _forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff_commands() {
     local commands; commands=(
 'assign:Persist or explicitly reassign review ownership with head/tip CAS' \
 'inspect:Read the persisted handoff without revealing mailbox addresses' \
+'test-changes:Print test-change findings and confirmation digest before any review exists' \
 'check:Require a published current-head passing review and closed ledger' \
 'surrender:Reviewer-owned surrender of the current assignment generation' \
 'recover:Explicit coordinator revocation with a required reason and fresh generation' \
@@ -4437,6 +4466,11 @@ _forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__recover_co
 _forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__surrender_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli help pr review-handoff surrender commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__test-changes_commands] )) ||
+_forge-cli__subcmd__help__subcmd__pr__subcmd__review-handoff__subcmd__test-changes_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli help pr review-handoff test-changes commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__help__subcmd__pr__subcmd__review-loop_commands] )) ||
 _forge-cli__subcmd__help__subcmd__pr__subcmd__review-loop_commands() {
@@ -5245,6 +5279,7 @@ _forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff_commands() {
     local commands; commands=(
 'assign:Persist or explicitly reassign review ownership with head/tip CAS' \
 'inspect:Read the persisted handoff without revealing mailbox addresses' \
+'test-changes:Print test-change findings and confirmation digest before any review exists' \
 'check:Require a published current-head passing review and closed ledger' \
 'surrender:Reviewer-owned surrender of the current assignment generation' \
 'recover:Explicit coordinator revocation with a required reason and fresh generation' \
@@ -5275,6 +5310,11 @@ _forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__recover_co
 _forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__surrender_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli pr help review-handoff surrender commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__test-changes_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__help__subcmd__review-handoff__subcmd__test-changes_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr help review-handoff test-changes commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr__subcmd__help__subcmd__review-loop_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__help__subcmd__review-loop_commands() {
@@ -5485,6 +5525,7 @@ _forge-cli__subcmd__pr__subcmd__review-handoff_commands() {
     local commands; commands=(
 'assign:Persist or explicitly reassign review ownership with head/tip CAS' \
 'inspect:Read the persisted handoff without revealing mailbox addresses' \
+'test-changes:Print test-change findings and confirmation digest before any review exists' \
 'check:Require a published current-head passing review and closed ledger' \
 'surrender:Reviewer-owned surrender of the current assignment generation' \
 'recover:Explicit coordinator revocation with a required reason and fresh generation' \
@@ -5507,6 +5548,7 @@ _forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help_commands() {
     local commands; commands=(
 'assign:Persist or explicitly reassign review ownership with head/tip CAS' \
 'inspect:Read the persisted handoff without revealing mailbox addresses' \
+'test-changes:Print test-change findings and confirmation digest before any review exists' \
 'check:Require a published current-head passing review and closed ledger' \
 'surrender:Reviewer-owned surrender of the current assignment generation' \
 'recover:Explicit coordinator revocation with a required reason and fresh generation' \
@@ -5544,6 +5586,11 @@ _forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help__subcmd__surrender_
     local commands; commands=()
     _describe -t commands 'forge-cli pr review-handoff help surrender commands' commands "$@"
 }
+(( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help__subcmd__test-changes_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__help__subcmd__test-changes_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr review-handoff help test-changes commands' commands "$@"
+}
 (( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__inspect_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__inspect_commands() {
     local commands; commands=()
@@ -5558,6 +5605,11 @@ _forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__recover_commands() {
 _forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__surrender_commands() {
     local commands; commands=()
     _describe -t commands 'forge-cli pr review-handoff surrender commands' commands "$@"
+}
+(( $+functions[_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__test-changes_commands] )) ||
+_forge-cli__subcmd__pr__subcmd__review-handoff__subcmd__test-changes_commands() {
+    local commands; commands=()
+    _describe -t commands 'forge-cli pr review-handoff test-changes commands' commands "$@"
 }
 (( $+functions[_forge-cli__subcmd__pr__subcmd__review-loop_commands] )) ||
 _forge-cli__subcmd__pr__subcmd__review-loop_commands() {

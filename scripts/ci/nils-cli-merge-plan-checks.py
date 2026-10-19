@@ -166,7 +166,9 @@ def make_plan(repo, expected):
     return plan, None
 
 
-def run(repo, event_name, event, candidate, output, bash='bash'):
+def run(repo, event_name, event, candidate, output, bash='bash', plan_only=False):
+    if plan_only and event_name != 'pull_request':
+        raise ValueError('scope preview is only available for PRs')
     expected, fallback = inputs(repo, event_name, event, candidate)
     plan = None
     if fallback is None:
@@ -178,6 +180,15 @@ def run(repo, event_name, event, candidate, output, bash='bash'):
     output.mkdir(parents=True, exist_ok=True)
     if plan is not None:
         (output / 'plan.json').write_text(json.dumps(plan, sort_keys=True, separators=(',', ':')) + '\n')
+    if plan_only:
+        summary = {'schema_version': 'nils-cli.merge-planning.v1', 'status': 'PLANNED',
+                   'inputs': expected, 'validation_scope': scope, 'packages': packages,
+                   'fallback': fallback, 'plan_digest': plan['digests']['plan'] if plan else None}
+        (output / 'planning.json').write_text(json.dumps(summary, sort_keys=True, indent=2) + '\n')
+        if os.environ.get('GITHUB_OUTPUT'):
+            Path(os.environ['GITHUB_OUTPUT']).write_text(f'validation_scope={scope}\n')
+        print(f'PR scope preview={scope}; no validation executed', flush=True)
+        return 0
     command = [bash]
     if scope == 'SCOPED':
         command += ['scripts/ci/nils-cli-scoped-checks.sh', *packages]
@@ -197,6 +208,14 @@ def run(repo, event_name, event, candidate, output, bash='bash'):
                'coverage_fail_under_lines': None if ratchet else os.environ.get('NILS_CLI_COVERAGE_FAIL_UNDER_LINES', '85'),
                'doctests': os.environ.get('NILS_CLI_SKIP_DOCTESTS', '0') != '1',
                'command': command, 'status': 'RUNNING'}
+    deferred = (event_name == 'pull_request' and runner == 'llvm-cov' and scope == 'FULL'
+                and os.environ.get('NILS_CLI_PR_DEFER_FULL') == '1')
+    if deferred:
+        scope = 'DEFERRED_FULL'
+        receipt.update(schema_version='nils-cli.merge-validation.v2',
+                       validation_scope=scope, command=[], status='DEFERRED',
+                       coverage_policy=None, coverage_fail_under_lines=None,
+                       deferred_reason='deferred-full: runs in merge group')
     (output / 'validation.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
     print(f'CI snapshot base={expected["base"]} event_base={receipt["event_base"]} '
           f'head={expected["head"]} candidate={candidate}', flush=True)
@@ -205,17 +224,22 @@ def run(repo, event_name, event, candidate, output, bash='bash'):
     executor_env = dict(os.environ)
     executor_env.pop('GITHUB_OUTPUT', None)
     executor_env['NILS_CLI_SCOPED_COVERAGE_BASE'] = expected['base']
-    result = subprocess.run(command, cwd=repo, env=executor_env)
-    receipt.update(status='PASS' if result.returncode == 0 else 'FAIL', exit_code=result.returncode)
+    if deferred:
+        print('deferred-full: runs in merge group; no full macOS tests or coverage executed on this PR', flush=True)
+        returncode = 0
+    else:
+        returncode = subprocess.run(command, cwd=repo, env=executor_env).returncode
+        receipt.update(status='PASS' if returncode == 0 else 'FAIL')
+    receipt['exit_code'] = returncode
     (output / 'validation.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
-    if github_output and (result.returncode == 0 or Path(github_output).exists()):
+    if github_output and (returncode == 0 or Path(github_output).exists()):
         # This consumer owns the step's sole output. Replace executor-written
         # framing rather than appending a delimiter that could turn SCOPED
         # into a forged multiline FULL value; failed checks emit no scope.
         with open(github_output, 'w') as stream:
-            if result.returncode == 0:
+            if returncode == 0:
                 stream.write(f'validation_scope={scope}\n')
-    return result.returncode
+    return returncode
 
 
 def main():
@@ -226,10 +250,11 @@ def main():
     parser.add_argument('--candidate', default=os.environ.get('GITHUB_SHA'))
     parser.add_argument('--output', type=Path, default=Path('target/ci-merge-plan'))
     parser.add_argument('--bash', default=os.environ.get('BASH', 'bash'))
+    parser.add_argument('--plan-only', action='store_true', help='preview trusted PR scope without executing validation')
     args = parser.parse_args()
     try:
         event = json.loads(args.event_path.read_text())
-        return run(args.repo.resolve(), args.event_name, event, args.candidate, args.output, args.bash)
+        return run(args.repo.resolve(), args.event_name, event, args.candidate, args.output, args.bash, args.plan_only)
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.CalledProcessError):
         print('error: CI merge plan or event binding is invalid; validation held', file=sys.stderr)
         return 1

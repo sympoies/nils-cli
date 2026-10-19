@@ -45,7 +45,10 @@ then requires the composer to contain **exactly** its own text, rechecks
 identity and requested idle state, and presses Enter. If the exact paste remains,
 one swallowed Enter may be retried within a fifteen-second terminal observation
 budget, with all guards rechecked before the retry. Native continuation keeps
-its existing four-second budget. If a turn
+its existing four-second budget. After an accepted Enter, verified absence of
+that exact terminal runtime also confirms `submission.outcome: "submitted"`
+(for example, `/exit`); no further Enter or cleanup is attempted. An unreadable
+pane or unknown runtime status alone does not confirm submission. If a turn
 starts or the composer changes after paste, it refuses without Enter. It
 then attempts to remove only the text it pasted and verifies the result.
 

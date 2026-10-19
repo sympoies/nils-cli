@@ -1337,9 +1337,9 @@ pub struct PrCreateArgs {
     #[arg(long = "strict-labels", action = ArgAction::SetTrue)]
     pub strict_labels: bool,
     /// Directory holding a `test-first-evidence` record. Verified by the
-    /// test-first gate when `[test_first].require` resolves true for a
-    /// feature/bug PR. Requires a complete v2 record with a testable
-    /// classification, durable pre-fix evidence, scoped final validation, a
+    /// test-first gate when `[test_first].require` is true and `require_kinds`
+    /// selects this kind (default: feature/bug). Requires a complete v2 record
+    /// with a testable classification, pre-fix evidence, scoped final validation, a
     /// residual-gap declaration, and a bound baseline/delivery subject
     /// matching the current checkout.
     #[arg(long = "test-first-evidence", value_name = "DIR")]
@@ -1482,8 +1482,8 @@ pub struct PrDeliverArgs {
     pub strict_labels: bool,
     /// Directory holding a `test-first-evidence` record, forwarded to the
     /// create step and verified by the test-first gate when
-    /// `[test_first].require` resolves true for a feature/bug PR. Requires a
-    /// complete v2 record with a testable classification and a bound
+    /// `[test_first].require` is true and `require_kinds` selects this kind
+    /// (default: feature/bug). Requires a complete v2 record and a bound
     /// baseline/delivery subject matching the current checkout.
     #[arg(long = "test-first-evidence", value_name = "DIR")]
     pub test_first_evidence: Option<String>,

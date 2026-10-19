@@ -32,7 +32,7 @@ use crate::cli::{
     BINARY, GlobalFlags, PrCreateArgs, PrDeliverArgs, PrListArgs, PrMergeArgs, PrStateFilter,
     PrWaitChecksArgs,
 };
-use crate::config::ForgeConfig;
+use crate::config::{ForgeConfig, TestFirstPolicy};
 use crate::error::ForgeError;
 use crate::ops::label::{LabelTarget, validate_label_inputs};
 use crate::ops::pr_create::{
@@ -290,16 +290,12 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
         let number = view.number;
         let url = view.url.clone();
         // Resolve the test-first gate from layered config so an adopted
-        // feature/bug PR is held to the same evidence requirement as the
+        // PR of a selected kind is held to the same evidence requirement as the
         // create path (a draft opened earlier must still carry evidence to
         // be delivered in an opted-in repo).
         let cfg = ForgeConfig::load_layered(workdir, find_git_toplevel(workdir).as_deref());
-        let test_first_required = cfg.resolve_test_first_required(None);
-        let gate_applies = test_first_required
-            && matches!(
-                args.kind.into_kind(),
-                nils_common::git::PrKind::Feature | nils_common::git::PrKind::Bug
-            );
+        let test_first_policy = cfg.resolve_test_first_policy();
+        let gate_applies = test_first_policy.required_for(args.kind.into_kind());
         let remote_url = evidence_remote_url(
             gate_applies,
             ctx,
@@ -314,7 +310,7 @@ fn execute_sequence<R: BackendRunner, C: Clock>(
             workdir,
             remote: &global.remote,
             repository_id: repository_id.as_deref(),
-            test_first_required,
+            test_first_policy: &test_first_policy,
             headings: BodyHeadings::from_config(&cfg),
             resolved_head,
             qualified_subject: qualified_subject.as_ref(),
@@ -781,13 +777,13 @@ fn select_adoptable(
 /// lock-down rules 4 and 5 cover `deliver`), and — when the repo opts in — the
 /// test-first evidence gate. Create-input-only gates (title, `--body`,
 /// local-path) are skipped — the PR already carries its own provider-validated
-/// title and body. `test_first_required` is resolved by the caller from
+/// title and body. `test_first_policy` is resolved by the caller from
 /// layered config so this stays a pure validation.
 struct AdoptValidationContext<'a> {
     workdir: &'a Path,
     remote: &'a str,
     repository_id: Option<&'a str>,
-    test_first_required: bool,
+    test_first_policy: &'a TestFirstPolicy,
     headings: BodyHeadings,
     resolved_head: ResolvedHeadRef<'a>,
     qualified_subject: Option<&'a QualifiedHeadSubject>,
@@ -817,7 +813,7 @@ fn validate_adopted(
     )?;
     test_first_gate(
         args.kind.into_kind(),
-        context.test_first_required,
+        context.test_first_policy,
         args.test_first_evidence.as_deref(),
         context.workdir,
         context.remote,
@@ -862,27 +858,27 @@ fn resolve_preview_body(args: &PrDeliverArgs) -> String {
 }
 
 /// Build the test-first preflight verdict for `pr deliver --dry-run`. Returns
-/// `None` when the gate is off (`required == false`) so the dry-run only
+/// `None` when the policy is disabled so the dry-run only
 /// surfaces the rule for repos that opted in; otherwise it reports the same
-/// pass/fail the real run's `test_first_gate` would produce (exempt kinds such
-/// as docs/chore pass without evidence). Kept pure so the caller injects the
+/// pass/fail the real run's `test_first_gate` would produce (unselected kinds
+/// pass without evidence). Kept pure so the caller injects the
 /// resolved config and tests need no environment.
 fn test_first_preflight_verdict(
     args: &PrDeliverArgs,
-    required: bool,
+    policy: &TestFirstPolicy,
     workdir: &Path,
     remote: &str,
     repository_id: Option<&str>,
     delivery_ref: &str,
 ) -> Option<RuleVerdict> {
-    if !required {
+    if !policy.require {
         return None;
     }
     Some(RuleVerdict::from_result(
         "test_first",
         test_first_gate(
             args.kind.into_kind(),
-            required,
+            policy,
             args.test_first_evidence.as_deref(),
             workdir,
             remote,
@@ -989,15 +985,11 @@ fn build_dry_run_payload(
         ));
     }
     // Faithful test-first gate: when the repo opts in, the real run enforces
-    // evidence for feature/bug kinds (both create and adopt paths), so surface
+    // evidence for selected kinds (both create and adopt paths), so surface
     // the same verdict here instead of predicting a success the real deliver
     // would refuse.
-    let test_first_required = cfg.resolve_test_first_required(None);
-    let gate_applies = test_first_required
-        && matches!(
-            args.kind.into_kind(),
-            nils_common::git::PrKind::Feature | nils_common::git::PrKind::Bug
-        );
+    let test_first_policy = cfg.resolve_test_first_policy();
+    let gate_applies = test_first_policy.required_for(args.kind.into_kind());
     let remote_url = evidence_remote_url(
         gate_applies,
         ctx,
@@ -1010,7 +1002,7 @@ fn build_dry_run_payload(
         .flatten();
     if let Some(verdict) = test_first_preflight_verdict(
         args,
-        test_first_required,
+        &test_first_policy,
         workdir,
         &global.remote,
         repository_id.as_deref(),
@@ -1582,7 +1574,7 @@ mod tests {
         assert!(
             test_first_preflight_verdict(
                 &args(false),
-                false,
+                &TestFirstPolicy::default(),
                 Path::new("."),
                 "origin",
                 None,
@@ -1595,9 +1587,18 @@ mod tests {
     #[test]
     fn dry_run_verdict_fails_feature_without_evidence_when_required() {
         let a = args(false); // feature, no --test-first-evidence
-        let verdict =
-            test_first_preflight_verdict(&a, true, Path::new("."), "origin", None, "HEAD")
-                .expect("verdict surfaced");
+        let verdict = test_first_preflight_verdict(
+            &a,
+            &TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
+            Path::new("."),
+            "origin",
+            None,
+            "HEAD",
+        )
+        .expect("verdict surfaced");
         assert_eq!(verdict.rule, "test_first");
         assert!(
             !verdict.ok,
@@ -1613,9 +1614,18 @@ mod tests {
     fn dry_run_verdict_passes_exempt_kind_when_required() {
         let mut a = args(false);
         a.kind = PrKindFlag::Docs; // exempt kind needs no evidence
-        let verdict =
-            test_first_preflight_verdict(&a, true, Path::new("."), "origin", None, "HEAD")
-                .expect("verdict surfaced");
+        let verdict = test_first_preflight_verdict(
+            &a,
+            &TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
+            Path::new("."),
+            "origin",
+            None,
+            "HEAD",
+        )
+        .expect("verdict surfaced");
         assert!(verdict.ok, "docs is exempt from the test-first gate");
     }
 
@@ -1629,13 +1639,105 @@ mod tests {
         .unwrap();
         let mut a = args(false);
         a.test_first_evidence = Some(dir.path().to_str().unwrap().to_string());
-        let verdict =
-            test_first_preflight_verdict(&a, true, Path::new("."), "origin", None, "HEAD")
-                .expect("verdict surfaced");
+        let verdict = test_first_preflight_verdict(
+            &a,
+            &TestFirstPolicy {
+                require: true,
+                ..TestFirstPolicy::default()
+            },
+            Path::new("."),
+            "origin",
+            None,
+            "HEAD",
+        )
+        .expect("verdict surfaced");
         assert!(
             !verdict.ok,
             "structurally complete but unbound evidence must fail: {verdict:?}"
         );
         assert_eq!(verdict.code.as_deref(), Some("test_first_evidence_unbound"));
+    }
+    #[test]
+    fn test_first_kinds_adoption_uses_the_resolved_policy() {
+        use nils_common::git::PrKind;
+        use nils_test_support::fixtures::init_subject_repo;
+        use nils_test_support::git::git;
+
+        let policy = TestFirstPolicy {
+            require: true,
+            require_kinds: vec![PrKind::Bug],
+            ..TestFirstPolicy::default()
+        };
+        for (flag, kind) in [
+            (PrKindFlag::Feature, PrKind::Feature),
+            (PrKindFlag::Bug, PrKind::Bug),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let repo = init_subject_repo(
+                temp.path(),
+                "repo",
+                "https://github.com/example/project.git",
+            );
+            let branch = format!("{}/sample", kind.branch_prefix());
+            git(&repo, &["checkout", "-qb", &branch]);
+            git(
+                &repo,
+                &[
+                    "update-ref",
+                    &format!("refs/remotes/origin/{branch}"),
+                    "HEAD",
+                ],
+            );
+            git(
+                &repo,
+                &["branch", "--set-upstream-to", &format!("origin/{branch}")],
+            );
+            let mut deliver = args(true);
+            deliver.kind = flag;
+            let view = pr_view::parse_view_output(
+                &ctx(),
+                &crate::backend::BackendSuccess {
+                    stdout: serde_json::json!({
+                        "number": 1, "url": "https://github.com/example/project/pull/1",
+                        "state": "OPEN", "headRefName": branch, "baseRefName": "main",
+                        "body": deliver.body, "isDraft": true, "title": "Example change"
+                    })
+                    .to_string(),
+                    stderr: String::new(),
+                },
+            )
+            .unwrap();
+            let context = AdoptValidationContext {
+                workdir: &repo,
+                remote: "origin",
+                repository_id: None,
+                test_first_policy: &policy,
+                headings: BodyHeadings::default(),
+                resolved_head: resolve_head_ref(Provider::GitHub, &branch).unwrap(),
+                qualified_subject: None,
+                expected_base: "main",
+            };
+            let result = validate_adopted(&view, &deliver, &context);
+            if kind == PrKind::Feature {
+                assert!(result.unwrap().is_none());
+            } else {
+                assert_eq!(result.unwrap_err().kind(), "test_first_evidence_required");
+            }
+            let invalid_policy = ForgeConfig::parse_content(
+                "[test_first]\nrequire = true\nrequire_kinds = [\"feature\", \"bugs\"]",
+            )
+            .unwrap()
+            .resolve_test_first_policy();
+            let invalid_context = AdoptValidationContext {
+                test_first_policy: &invalid_policy,
+                ..context
+            };
+            assert_eq!(
+                validate_adopted(&view, &deliver, &invalid_context)
+                    .unwrap_err()
+                    .kind(),
+                "invalid_test_first_config"
+            );
+        }
     }
 }

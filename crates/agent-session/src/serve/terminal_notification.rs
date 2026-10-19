@@ -1,4 +1,5 @@
-//! Terminal mailbox wakes preserve observed operator drafts and never retry Enter.
+//! Terminal mailbox wakes preserve observed operator drafts and retry a swallowed Enter
+//! only while the exact wake remains visible.
 use super::*;
 
 pub(super) fn start_terminal_coordination_notification(
@@ -258,10 +259,58 @@ fn guarded_input(
     }
     result.map_err(|_| TerminalNotificationStartError::Unknown)?;
     std::thread::sleep(crate::POST_PASTE_KEY_SETTLE_DELAY);
-    // A mismatch after paste leaves all composer contents untouched. The
-    // generation stays uncertain: no Enter or automatic input retry is safe.
+    // Preserve the existing post-paste race guard before the initial Enter.
     check_composer(context, tmux_bin, record, expected_agent, prompt, deadline)
         .map_err(|_| TerminalNotificationStartError::Unknown)?;
-    crate::send_tmux_key(tmux_bin, &target, SpecialKey::Enter)
-        .map_err(|_| TerminalNotificationStartError::Unknown)
+    // Confirm that the wake left the composer. A swallowed Enter is retried
+    // only while the exact prompt remains visible in the recognized composer.
+    let probe = crate::send_submit::probe(prompt).ok_or(TerminalNotificationStartError::Unknown)?;
+    let report = crate::send_submit::submit_and_confirm(
+        record.agent.as_str(),
+        &probe,
+        deadline,
+        |timeout| {
+            let mut command = ProcessCommand::new(tmux_bin);
+            command.args(["capture-pane", "-p", "-e", "-J", "-t", &target]);
+            crate::run_output_with_timeout_and_strict_cap(
+                command,
+                timeout.min(crate::PANE_OBSERVATION_COMMAND_TIMEOUT),
+                crate::PANE_OBSERVATION_MAX_OUTPUT_BYTES,
+            )
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+        },
+        |timeout| {
+            crate::live_status_with_timeout(tmux_bin, &record.tmux_session, timeout) == "stopped"
+        },
+        || {
+            terminal_notification_waiting(context, record, expected_agent)
+                && check_composer(context, tmux_bin, record, expected_agent, prompt, deadline)
+                    .is_ok()
+        },
+        || crate::send_tmux_key(tmux_bin, &target, SpecialKey::Enter),
+    )
+    .map_err(|_| TerminalNotificationStartError::Unknown)?;
+    match report.outcome {
+        crate::send_submit::SubmitOutcome::Submitted
+        | crate::send_submit::SubmitOutcome::Queued => Ok(()),
+        crate::send_submit::SubmitOutcome::Stuck => {
+            let known = crate::coordination::mark_notification_known_failure(
+                context,
+                candidate,
+                "submission-not-confirmed",
+                COORDINATION_NOTIFICATION_RETRY,
+            )
+            .map_err(|_| TerminalNotificationStartError::Unknown)?;
+            Err(if known {
+                TerminalNotificationStartError::Known("submission-not-confirmed")
+            } else {
+                TerminalNotificationStartError::Unknown
+            })
+        }
+        crate::send_submit::SubmitOutcome::Unverified => {
+            Err(TerminalNotificationStartError::Unknown)
+        }
+    }
 }

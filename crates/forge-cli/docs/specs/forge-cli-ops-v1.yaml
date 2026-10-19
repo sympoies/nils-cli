@@ -146,8 +146,12 @@ validations_catalog:
     rule: "search refs-to <ref> parses as a GitHub URL, owner/name#number, or #number / number"
     error_kind: ref_invalid
     exit: DATA
+  test_first_config:
+    rule: "when [test_first].require resolves true, an invalid require_kinds list in any configuration layer blocks delivery with an actionable error before evidence selection can silently fall back"
+    error_kind: invalid_test_first_config
+    exit: DATA
   test_first_evidence:
-    rule: "when [test_first].require resolves true (repo or global config) and --kind is feature/bug, --test-first-evidence <dir> must point at a verified v2 record with a testable classification, contract delta, affected-test decision, meaningful failing evidence or explicit waiver, scoped passing validation, residual-gap declaration, immutable repository/baseline subject, and a latest delivery head/tree/diff attestation matching the selected ref and provider PR/MR head OID through merge CAS; docs/chore/ci/refactor/test are exempt"
+    rule: "when [test_first].require resolves true (repo or global config) and --kind belongs to [test_first].require_kinds (default: feature/bug), --test-first-evidence <dir> must point at a verified v2 record with a testable classification, contract delta, affected-test decision, meaningful failing evidence or explicit waiver, scoped passing validation, residual-gap declaration, immutable repository/baseline subject, and a latest delivery head/tree/diff attestation matching the selected ref and provider PR/MR head OID through merge CAS; unselected kinds are exempt; an empty list selects none"
     error_kind: test_first_evidence_required | test_first_evidence_v1 | test_first_evidence_classification | test_first_evidence_incomplete | test_first_evidence_unbound | test_first_evidence_subject_mismatch | test_first_evidence_provider_head_unavailable | test_first_evidence_provider_head_mismatch | test_first_evidence_unreadable
     exit: DATA
 
@@ -365,7 +369,7 @@ operations:
       - { name: --label,       type: list<string>,   default: [] }
       - { name: --label-catalog, type: path,          required: false }
       - { name: --strict-labels, type: bool,          default: false }
-      - { name: --test-first-evidence, type: path,    required: false } # required only when [test_first].require resolves true for feature/bug
+      - { name: --test-first-evidence, type: path,    required: false } # required only when [test_first].require resolves true for a selected require_kinds entry (default: feature/bug)
     validations:
       - branch_name
       - branch_kind_matches
@@ -378,6 +382,7 @@ operations:
       - worktree_clean
       - head_pushed
       - qualified_github_head # only for GitHub <user>:<branch>; binds upstream repository + provider branch/repository/SHA read-back
+      - test_first_config # rejects invalid kind lists when the gate is enabled
       - test_first_evidence # only when [test_first].require resolves true
       - delivery_base_matches # provider read-back must equal the requested --base
     backends:
@@ -531,7 +536,7 @@ operations:
     #   github_pending_review_exists (RUNTIME 1) — summary-only native review submission found a viewer-owned pending review. Threaded review transactions instead inspect an exact receipt-bound draft and resume it. With --recover-pending this is returned unchanged only when there is no single deletable viewer-owned candidate to name; a candidate that fails a guard surfaces that guard's own pending_review_* code instead.
     #   recover_pending_requires_submit_review (DATA 65) — --recover-pending without --submit-review; refused before any provider call rather than ignored, because the flag names a destructive action.
     #   github_native_review_rejected (RUNTIME 1) — GitHub rejected native review submission with HTTP 422; retry with an eligible reviewer identity or omit --submit-review for an outcome comment fallback
-    #   pending_review_transaction_incomplete (DATA 65) — a receipt-bound pending review was created or updated but the next step was not confirmed. The draft and inline content are preserved; rerunning the identical command resumes it.
+    #   pending_review_transaction_incomplete (DATA 65) — pending-review creation, update, or later snapshot read was not confirmed. The draft and inline content are preserved; rerunning the identical command resumes it. Lost creation responses trigger a read-only exact own-transaction lookup; an unprovable ID stays unknown. Details retain review_run_id, pending_review_id, inspect_command and original cause_kind/cause_message/cause_detail when available. A known ID also provides resume_submit_requires, resume_submit_command and explicit_discard_command. Existing recovery guard errors keep their specific DATA 65 code and gain the same context; backend failures after a retained transaction become this DATA 65 error with cause_kind=backend_error.
     #   pending_review_manifest_mismatch (DATA 65) — the pending body, inline-comment prefix, run marker, decision inputs, or immutable manifest differs. No mutation follows.
     #   pending_review_identity_mismatch (DATA 65) — the authenticated viewer does not own the receipt-bound pending review. No mutation follows.
     #   pending_review_lease_busy (UNAVAILABLE 69) — another cooperating forge-cli process owns the provider/host/repository/PR/viewer pending-review mutation lease.
@@ -773,8 +778,9 @@ operations:
         provider: enum<github>
         number: integer
         url: string
-        snapshot: object<{number,pr_url,head_sha,review_id,review_url,author,commit_sha?,body,semantic_body,viewer_did_author,viewer_can_delete,review_run_id?,provenance,inline_comments:list<{id,url,author,body,semantic_body,created_at,path,line?,original_line?,diff_side?,start_line?,original_start_line?,start_diff_side?,subject_type,body_digest,review_run_id?}>,snapshot_digest}>
-    notes: "The read is complete and fail-closed: every inline-comment page repeats the same review, PR, head, commit, author, body, viewer-capability identity, and stable totalCount. totalCount above 1,000 is rejected before another page, and the decoded retained snapshot is capped at 4 MiB. The snapshot and digest preserve diff_side and start_diff_side as well as line/range anchors. Owned versioned markers are removed only from semantic_body; raw provider content remains visible in the snapshot. provenance is receipt-bound or unmarked, while mixed or digest-mismatched markers return pending_review_manifest_mismatch."
+        inline_comment_count: integer
+        snapshot: object<{number,pr_url,head_sha,review_id,review_url,author,created_at?,commit_sha?,body,semantic_body,viewer_did_author,viewer_can_delete,review_run_id?,provenance,inline_comments:list<{id,url,author,body,semantic_body,created_at,path,line?,original_line?,diff_side?,start_line?,original_start_line?,start_diff_side?,subject_type,body_digest,review_run_id?}>,snapshot_digest}>
+    notes: "The read is complete and fail-closed: every inline-comment page repeats the same review, PR, head, commit, author, creation time, body, viewer-capability identity, and stable totalCount. snapshot.created_at is optional provider metadata; created_at is excluded from snapshot_digest to preserve existing digest values. inline_comment_count reports the complete retained manifest length. totalCount above 1,000 is rejected before another page, and the decoded retained snapshot is capped at 4 MiB. The snapshot and digest preserve diff_side and start_diff_side as well as line/range anchors. Owned versioned markers are removed only from semantic_body; raw provider content remains visible in the snapshot. provenance is receipt-bound or unmarked, while mixed or digest-mismatched markers return pending_review_manifest_mismatch."
 
   - id: pr.pending-review.resume-submit
     schema_version: cli.forge-cli.pr.pending-review.resume-submit.v2
@@ -1916,7 +1922,7 @@ macros:
       # `create` in data.steps[] (payload is the PR's pr.view shape, body
       # re-validated against the body-section gate). When [test_first].require
       # resolves true the adopt path also enforces the test_first_evidence
-      # validation, so an adopted feature/bug PR cannot bypass the gate. The
+      # validation, so an adopted PR of a selected kind cannot bypass the gate. The
       # lifecycle then resumes at wait_checks. The lookup is not a recorded step.
       # GitHub qualified <user>:<branch> lookup instead lists a bounded open
       # set without --head and selects exact branch + headRepository identity;
