@@ -2331,7 +2331,7 @@ _agent__session() {
             return 0
             ;;
         agent__session__message__wait)
-            opts="-h --session --message --if-revision --timeout --capability-file --format --state-dir --host --help"
+            opts="-h --session --message --if-revision --any-unread --newer-than --timeout --capability-file --format --state-dir --host --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2346,6 +2346,10 @@ _agent__session() {
                     return 0
                     ;;
                 --if-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --newer-than)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

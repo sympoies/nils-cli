@@ -927,14 +927,16 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 (wait)
 _arguments "${_arguments_options[@]}" : \
 '--session=[Authenticated recipient session id]:SESSION:_default' \
-'--message=[]:MESSAGE:_default' \
-'--if-revision=[]:IF_REVISION:_default' \
+'(--any-unread --newer-than)--message=[Wait for one known message to change revision]:MESSAGE:_default' \
+'(--any-unread --newer-than)--if-revision=[Expected revision of the known message]:IF_REVISION:_default' \
+'--newer-than=[Opaque cursor from a prior --any-unread result for this recipient incarnation]:NEWER_THAN:_default' \
 '--timeout=[]:DURATION:_default' \
 '--capability-file=[]:PATH:_files' \
 '--format=[]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
 '--state-dir=[State directory. Defaults to AGENT_SESSION_STATE_DIR, XDG_STATE_HOME/agent-session, or ~/.local/state/agent-session]:PATH:_files -/' \
 '--host=[Hostname used in generated ssh attach commands]:HOST:_default' \
+'(--message)--any-unread[Wait for unread messages and return metadata only (exit 0 on arrival, 69 on timeout)]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
@@ -1393,7 +1395,7 @@ _agent-session__subcmd__message_commands() {
 'show:Read one private message body as its authenticated recipient' \
 'ack:Acknowledge one private message using revision compare-and-swap' \
 'reply:Reply to one private message and schedule an eventual fixed notification' \
-'wait:Wait a bounded duration for one message revision change' \
+'wait:Wait for a message revision or for any unread message metadata' \
 'reminder:Claim the authenticated recipient'\''s pending fixed mailbox reminder once' \
     )
     _describe -t commands 'agent-session message commands' commands "$@"
