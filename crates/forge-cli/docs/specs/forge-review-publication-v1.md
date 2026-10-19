@@ -190,6 +190,12 @@ validation rules, and output schema versions.
   failures keep their specific validation codes while gaining this context.
   These failures never delete the partial review.
 
+  The printed discard command fetches a fresh snapshot and uses its head,
+  commit, and digest as the expected values. It therefore cannot detect changes
+  since an earlier operator inspection. To bind approval to inspected content,
+  inspect the review and pass those reviewed values directly to
+  `pr pending-review discard`; retain both required confirmation flags.
+
   Malformed or oversized
   specs return `invalid_review_thread_spec` (`DATA 65`); `--thread-file` without
   `--submit-review` returns `thread_file_requires_submit_review` (`DATA 65`);
