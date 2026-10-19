@@ -214,6 +214,9 @@ run bash scripts/ci/tests/local-fast-checks.test.sh
 run bash scripts/ci/tests/detect-docs-only.test.sh
 run bash scripts/ci/tests/detect-release-only.test.sh
 run node_scoped node scripts/ci/tests/release-ci-gate.test.cjs
+run node_scoped node scripts/ci/tests/full-validation-gate.test.cjs
+run node_scoped node scripts/ci/tests/nightly-tracker.test.cjs
+run python3 scripts/ci/tests/delivery-workflow.test.py
 run node_scoped node scripts/ci/tests/peekaboo-release-check.test.cjs
 run bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh
 run bash scripts/ci/tests/release-workflow-contract.test.sh

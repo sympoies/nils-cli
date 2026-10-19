@@ -57,38 +57,21 @@ class WorkflowDispatchTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             return (root / 'call.log').read_text().splitlines()
 
-    def test_only_pr_dispatches_plan_consumption(self):
-        for job in ('test', 'test_macos'):
-            for event in ('pull_request', 'merge_group'):
-                with self.subTest(job=job, event=event):
-                    argv = self.dispatch(job, event)
-                    self.assertEqual('--ci-merge-plan' in argv, event == 'pull_request',
-                                     f'{job}/{event} uses the wrong scope lane')
-
-    def test_nightly_and_on_demand_keep_full_validation(self):
-        for job in ('test', 'test_macos'):
-            for event in ('schedule', 'workflow_dispatch'):
-                with self.subTest(job=job, event=event):
-                    self.assertNotIn('--ci-merge-plan', self.dispatch(job, event))
+    def test_pr_and_queue_dispatch_plan_consumption(self):
+        for event in ('pull_request', 'merge_group'):
+            self.assertIn('--ci-merge-plan', self.dispatch('test', event))
 
     def test_scoped_checks_cannot_claim_full_release_provenance(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         markers = re.findall(r'      - name: Full validation marker\n        if: ([^\n]+)', workflow)
-        self.assertEqual(len(markers), 3)
-        for condition in markers:
-            for event in ('pull_request', 'merge_group', 'schedule', 'workflow_dispatch'):
-                for scope in ('SCOPED', 'FULL', 'DEFERRED_FULL'):
-                    expression = condition
-                    values = {'needs.changes.outputs.docs_only': 'false',
-                              'needs.changes.outputs.release_only': 'false',
-                              'steps.validation.outputs.validation_scope': scope,
-                              'needs.test_macos.outputs.validation_scope': scope,
-                              'github.event_name': event}
-                    for key, value in values.items():
-                        expression = expression.replace(key, repr(value))
-                    observed = eval(expression.replace('&&', 'and').replace('||', 'or'),
-                                    {'__builtins__': {}}, {})
-                    self.assertEqual(observed, scope == 'FULL' or event in ('merge_group', 'schedule', 'workflow_dispatch'))
+        self.assertEqual(len(markers), 1)
+        for scope in ('SCOPED', 'FULL'):
+            expression = markers[0]
+            for key, value in {'needs.changes.outputs.docs_only': 'false',
+                    'needs.changes.outputs.release_only': 'false',
+                    'steps.validation.outputs.validation_scope': scope}.items():
+                expression = expression.replace(key, repr(value))
+            self.assertEqual(eval(expression.replace('&&', 'and'), {'__builtins__': {}}, {}), scope == 'FULL')
 
 
 class ConsumerExecutionTests(unittest.TestCase):
@@ -491,21 +474,14 @@ raise SystemExit(subprocess.call(sys.argv[sys.argv.index('--') + 1:], env=env))
 
 
 def load_tests(loader, tests, pattern):
-    spec = importlib.util.spec_from_file_location('pr_lane', Path(__file__).with_name('merge-plan-pr-lane.test.py'))
-    lane = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(lane)
-    tests.addTests(loader.loadTestsFromTestCase(lane.PrLaneTests))
-    tests.addTests(loader.loadTestsFromTestCase(lane.ScopedPrRatchetTests))
-    tests.addTests(loader.loadTestsFromTestCase(lane.CoverageLaneTests))
     spec = importlib.util.spec_from_file_location('queue_detection', Path(__file__).with_name('merge-plan-queue-detection.test.py'))
     queue = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(queue)
     tests.addTests(loader.loadTestsFromTestCase(queue.QueueDetectionTests))
-    spec = importlib.util.spec_from_file_location('deferred_jobs', Path(__file__).with_name('merge-plan-deferred-jobs.test.py'))
-    deferred = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(deferred)
-    tests.addTests(loader.loadTestsFromTestCase(deferred.DeferredJobTests))
-    tests.addTests(loader.loadTestsFromTestCase(deferred.PreviewTests))
+    spec = importlib.util.spec_from_file_location('preview', Path(__file__).with_name('merge-plan-preview.test.py'))
+    preview = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preview)
+    tests.addTests(loader.loadTestsFromTestCase(preview.PreviewTests))
     return tests
 
 
