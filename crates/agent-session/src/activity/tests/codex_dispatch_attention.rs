@@ -58,6 +58,7 @@ impl Fixture {
             EnvGuard::set(lock, "HOME", home.to_str().unwrap()),
             EnvGuard::set(lock, "XDG_CONFIG_HOME", config_home.to_str().unwrap()),
             EnvGuard::set(lock, "XDG_STATE_HOME", state_home.to_str().unwrap()),
+            EnvGuard::remove(lock, "CLAUDE_CONFIG_DIR"),
             EnvGuard::remove(lock, "CODEX_HOME"),
             EnvGuard::set(lock, "AGENT_SESSION_BIN", helper.to_str().unwrap()),
             EnvGuard::set(lock, "AGENT_HOOK_BIN", dispatcher.to_str().unwrap()),

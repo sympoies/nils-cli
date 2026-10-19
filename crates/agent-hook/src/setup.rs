@@ -1,3 +1,5 @@
+mod config_path;
+
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -332,7 +334,7 @@ fn build_plan(
     action: SetupAction,
 ) -> Result<Plan, HookError> {
     let groups = policy_groups(loaded, product);
-    let path = provider_path(product)?;
+    let path = config_path::provider_path(product)?;
     let original = read_optional_config(&path)?;
     match product {
         Product::Codex => build_codex_plan(loaded, product, action, path, original, groups),
@@ -1820,23 +1822,6 @@ fn exact_runtime_handler_command(command: &str, product: Product, filename: &str
         }
         Product::Dsh | Product::Hermes => false,
     }
-}
-
-fn provider_path(product: Product) -> Result<PathBuf, HookError> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .ok_or_else(|| HookError::runtime("home-unavailable", "HOME is required for setup"))?;
-    Ok(match product {
-        Product::Codex => std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .unwrap_or_else(|| home.join(".codex"))
-            .join("config.toml"),
-        Product::Claude => home.join(".claude/settings.json"),
-        Product::Dsh => home.join(".dsh/cordis.patch.yml"),
-        Product::Hermes => home.join(".hermes/config.yaml"),
-    })
 }
 
 fn read_optional_config(path: &Path) -> Result<Option<Vec<u8>>, HookError> {

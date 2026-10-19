@@ -48,6 +48,12 @@ def run_coverage(repo, output, arguments, env):
     return coverage_counts(output)
 
 
+def baseline_paths(temporary):
+    """Return canonical paths for the temporary baseline clone and target."""
+    temporary = Path(temporary).resolve()
+    return temporary, temporary / 'repository', temporary / 'target'
+
+
 def run(base, packages, excludes, output):
     if not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', base):
         raise ValueError('an immutable coverage base is required')
@@ -77,11 +83,11 @@ def run(base, packages, excludes, output):
         # share a target directory with the candidate: duplicate source mappings
         # otherwise corrupt the coverage corpus.
         with tempfile.TemporaryDirectory(prefix='ci-coverage-base-') as temporary:
-            baseline = Path(temporary) / 'repository'
+            temporary, baseline, baseline_target = baseline_paths(temporary)
             subprocess.run(['git', 'clone', '--quiet', '--shared', '--no-checkout',
                             str(repo), str(baseline)], check=True)
             subprocess.run(['git', 'checkout', '--quiet', '--detach', base], cwd=baseline, check=True)
-            baseline_env = dict(os.environ, CARGO_TARGET_DIR=str(Path(temporary) / 'target'))
+            baseline_env = dict(os.environ, CARGO_TARGET_DIR=str(baseline_target))
             baseline_env.pop('CARGO_LLVM_COV_TARGET_DIR', None)
             baseline_env.pop('LLVM_PROFILE_FILE', None)
             receipt['baseline'] = run_coverage(baseline, output / 'base-lcov.info', arguments, baseline_env)

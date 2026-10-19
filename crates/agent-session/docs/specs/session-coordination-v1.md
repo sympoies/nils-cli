@@ -1014,12 +1014,17 @@ with `recipient-composer-not-empty` or `recipient-composer-unobservable`; no
 text or key is delivered. The pending wake can be retried once the operator
 clears or submits the draft.
 
-After paste settlement, Enter is pressed once only if the composer contains
-exactly the controller's fixed reminder and the recipient is still idle and
-detached, with no pending provider-event ingress. A changed or unreadable
-composer leaves its contents untouched, sends no Enter, and retains an uncertain
-attempt for existing transcript reconciliation. There is no swallowed-Enter
-retry.
+After paste settlement, Enter is pressed only if the composer contains exactly
+the controller's fixed reminder and the recipient is still idle and detached,
+with no pending provider-event ingress. If the exact reminder remains in the
+recognized composer after the first Enter, one retry is allowed after the
+bounded confirmation delay, but only while the recipient remains idle and the
+exact composer check still passes. A changed composer is never submitted. If
+the pane is unreadable, the attempt remains uncertain; only a verified stopped
+runtime after Enter can confirm success when pane observation is unavailable.
+An unverified runtime status never confirms success. A still-visible reminder
+after the retry is recorded as submission not confirmed so the wake can be
+retried later.
 
 Exact observation reuses the guarded-send styled composer parser;
 `tmux capture-pane -p -e -J` preserves occupied spaces and joins terminal soft

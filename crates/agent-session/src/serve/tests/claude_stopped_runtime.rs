@@ -67,7 +67,17 @@ async fn running_claude_prompt_without_ack_stays_unknown() {
         Some(TOKEN),
         stopping_tmux(tmp.path(), id, false),
     );
-    let record = load_session_record(&st.context, id).unwrap();
+    let mut record = load_session_record(&st.context, id).unwrap();
+    record.extra.insert(
+        "delete_tmux_identity".into(),
+        json!({
+            "launch_id": launch,
+            "session_id": "$77",
+            "pane_id": "%77",
+            "pane_pid": 77
+        }),
+    );
+    crate::write_session_record(&st.context, &record).unwrap();
     activity::activate_runtime(&st.context, &record).unwrap();
     let (status, body) = response_parts(
         submit_claude_structured_prompt(
@@ -83,4 +93,13 @@ async fn running_claude_prompt_without_ack_stays_unknown() {
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "body={body}");
     assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
+    let calls = fs::read_to_string(tmp.path().join("transport-calls")).unwrap();
+    assert!(
+        calls.contains("has-session"),
+        "runtime probe was not called: {calls}"
+    );
+    assert!(
+        calls.contains("$77"),
+        "runtime probe did not use the exact identity: {calls}"
+    );
 }

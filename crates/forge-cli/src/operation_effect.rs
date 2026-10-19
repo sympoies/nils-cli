@@ -146,7 +146,9 @@ pub(crate) fn classify(cli: &Cli) -> (&'static str, Effect, ProviderEffect, Vec<
             // and never opens a socket, so declaring it a network write hands
             // the permission layer an authority it does not need.
             PrCommand::ReviewHandoff(args) => match &args.command {
-                PrReviewHandoffCommand::Inspect(_) | PrReviewHandoffCommand::Check(_) => {
+                PrReviewHandoffCommand::Inspect(_)
+                | PrReviewHandoffCommand::Check(_)
+                | PrReviewHandoffCommand::TestChanges(_) => {
                     ("pr.review-handoff.read", read, network, vec!["provider"])
                 }
                 _ => (

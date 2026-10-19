@@ -72,9 +72,13 @@ validation rules, and output schema versions.
 - `pr pending-review inspect <id> --review <PRR_...>` emits
   `cli.forge-cli.pr.pending-review.inspect.v1`. Its complete snapshot requires
   PR/head/review identity, author, commit, raw and semantic body,
+  `created_at` when supplied by the provider, and an explicit
+  `inline_comment_count` in the inspect payload,
   `viewerDidAuthor`, `viewerCanDelete`, provenance, every inline comment with
   normalized body digest plus `diffSide`/`startDiffSide` and line/range anchors,
-  and `snapshot_digest`. Every page must repeat identical review metadata and a
+  and `snapshot_digest`.
+
+  Every page must repeat identical review metadata and a
   stable `totalCount`; partial data, cursor loops, count mismatch, head drift,
   an aggregate above 1,000 comments, or a decoded retained snapshot above 4 MiB
   returns `review_snapshot_incomplete` instead of a partial snapshot. An
@@ -143,6 +147,11 @@ and delivery read the trusted ledger to detect persisted ownership even after
 a restart without the assignment environment. Assigned operations require
 GitHub's trusted provider ledger; other providers fail closed when assigned.
 
+- `test-changes <id> --expected-head <sha>` is a read-only pre-review preview
+  that needs no assignment or review. It prints test-change findings and the
+  declaration-bound confirmation digest; it never admits a review. See
+  [test-change admission](test-change-admission-v1.md) for declarations, output
+  fields, deterministic limits and recovery.
 - `assign <id> --reviewer-session <session-id>[@machine] --review-author <login>
   --base-sha <sha> --expected-head <sha> --expected-state <digest|none>` records
   an explicit handover in the existing `forge-cli.review-state.v1` chain.
@@ -259,7 +268,15 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
 - `surrender <id> --expected-head <sha> --expected-state <digest>` is a
   reviewer-owned relinquishment at the current assignment generation.
   Ordinary reassignment requires this explicit surrender; inspection alone
-  never transfers ownership.
+  never transfers ownership. Surrender may name the current provider head
+  whether or not an observation exists, but after an advance it may name the
+  assigned head only when that head belongs to the current assignment and no
+  observation exists in that interval; prior-assignment observations do not
+  block it, and a current-assignment observation requires naming the current
+  head. The surrendered record stores the provider-head snapshot read before
+  append without rechecking it there, so a second advance during append leaves
+  the earlier snapshot recorded; the ledger-tip compare-and-swap still guards
+  the state chain, and a later assignment must match the then-current head.
 - `recover <id> --expected-head <sha> --expected-state <digest> --reason
   <reviewer-unreachable|reviewer-closed|reviewer-declined|reviewer-timeout>` is
   an explicit original-coordinator revocation that advances the assignment
@@ -346,6 +363,10 @@ proof. Assigned merge preview and live merge use the same gate. Live delivery,
 merge, and publication detect persisted assignment with the environment absent.
 Mailbox `pass`, stale publication, missing handoff, open findings, and unavailable
 reviewers cannot satisfy admission. Existing convergence and merge gates remain.
+
+Designated publication admission additionally enforces
+[test-change declarations and independent reviewer confirmation](test-change-admission-v1.md)
+for deleted tests, assertion changes and new skips in the PR comparison.
 
 ### `pr review-loop inspect` / `observe` / `extend` / `validate`
 

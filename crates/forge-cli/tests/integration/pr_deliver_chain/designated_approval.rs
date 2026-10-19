@@ -85,8 +85,10 @@ fn delivery_policy(
     let mut view: serde_json::Value = serde_json::from_str(FULL_PR_VIEW_JSON).unwrap();
     view["headRefOid"] = serde_json::json!(head);
     let base = "b".repeat(40);
+    let integrity_subject =
+        serde_json::json!({"head": head, "base": base, "author": "contributor", "body": ""});
     let wrapper = format!(
-        "#!/bin/sh\ncase \"$1 $2\" in 'pr view') cat <<'JSON'\n{view}\nJSON\nexit 0;; 'api repos/sympoies/nils-cli/pulls/123') echo '{base}'; exit 0;; esac\ncase \"$*\" in *'comments(first:'*) cat <<'JSON'\n{response}\nJSON\nexit 0;; *'reviews(first:'*) cat <<'JSON'\n{reviews}\nJSON\nexit 0;; esac\nexec '{}' \"$@\"\n",
+        "#!/bin/sh\ncase \"$1 $2\" in 'pr view') cat <<'JSON'\n{view}\nJSON\nexit 0;; 'api repos/sympoies/nils-cli/compare/'*) exit 0;; 'api repos/sympoies/nils-cli/pulls/123') case \"$*\" in *'author:'*) echo '{integrity_subject}';; *) echo '{base}';; esac; exit 0;; esac\ncase \"$*\" in *'comments(first:'*) cat <<'JSON'\n{response}\nJSON\nexit 0;; *'reviews(first:'*) cat <<'JSON'\n{reviews}\nJSON\nexit 0;; esac\nexec '{}' \"$@\"\n",
         inner.display()
     );
     fs::write(&gh_path, wrapper).unwrap();

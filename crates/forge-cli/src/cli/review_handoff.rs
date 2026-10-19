@@ -14,12 +14,22 @@ pub enum PrReviewHandoffCommand {
     Assign(PrReviewHandoffAssignArgs),
     /// Read the persisted handoff without revealing mailbox addresses.
     Inspect(PrReviewHandoffInspectArgs),
+    /// Print test-change findings and confirmation digest before any review exists.
+    TestChanges(PrReviewHandoffTestChangesArgs),
     /// Require a published current-head passing review and closed ledger.
     Check(PrReviewHandoffCheckArgs),
     /// Reviewer-owned surrender of the current assignment generation.
     Surrender(PrReviewHandoffSurrenderArgs),
     /// Explicit coordinator revocation with a required reason and fresh generation.
     Recover(PrReviewHandoffReturnArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct PrReviewHandoffTestChangesArgs {
+    pub id: u64,
+    /// Exact provider head SHA for the immutable comparison.
+    #[arg(long)]
+    pub expected_head: String,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -36,7 +46,7 @@ pub struct PrReviewHandoffInspectArgs {
 #[derive(Args, Debug, Clone)]
 pub struct PrReviewHandoffSurrenderArgs {
     pub id: u64,
-    /// Exact provider head SHA for this handoff operation.
+    /// Current provider head, or the assigned head after an unobserved advance.
     #[arg(long)]
     pub expected_head: String,
     /// Exact retained provider ledger tip for the ownership transition.

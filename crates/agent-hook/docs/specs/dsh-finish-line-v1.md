@@ -115,6 +115,12 @@ The request and response contracts are:
   bounded sandbox facts. Git environment overrides are removed and stdin is
   closed.
 
+  Unconfined runners retain the user service manager's supplementary groups. They do not promise the calling login process's inventory: an SSH
+  login and an already-running user manager can inherit different groups.
+  The preservation fixture uses an independent transient user service as its
+  baseline and diagnoses caller/manager mismatches separately from runner
+  group changes.
+
   Authoritative execution is Linux-only and fails closed elsewhere. On Linux,
   nils verifies the fixed `/usr/bin/systemd-run` and `/usr/bin/systemctl`
   executables as root-owned, executable, non-symlink regular files without

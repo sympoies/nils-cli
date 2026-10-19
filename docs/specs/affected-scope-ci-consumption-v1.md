@@ -93,7 +93,7 @@ coverage ratchet. If macOS cannot reproduce the selected preview and falls
 back to FULL/HOLD, the macOS job fails rather than deferring selected coverage.
 Missing LCOV or a decrease still fails. Queue, nightly and on-demand workflows
 always run full Linux and macOS tests and the absolute 85% coverage floor.
-Full macOS lanes have a 75-minute timeout; selected PRs retain 55 minutes.
+Full macOS lanes and selected PRs have a 75-minute timeout on every event.
 
 | Required name | SCOPED PR candidate | FULL/HOLD PR candidate | Merge group / nightly |
 | --- | --- | --- | --- |

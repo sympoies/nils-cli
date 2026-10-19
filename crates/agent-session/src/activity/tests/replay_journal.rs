@@ -1067,42 +1067,6 @@ fn configured_provider_specs_require_the_owned_timeout() {
     assert!(permission_command.contains("AGENT_SESSION_ATTENTION_AUTHORITY"));
     assert!(permission_command.contains("= protocol"));
     assert!(permission_command.contains("exec agent-session activity hook --agent codex"));
-
-    let claude_specs = provider_specs(AgentKind::Claude);
-    assert!(
-        claude_specs
-            .iter()
-            .any(|spec| spec.event == "PreToolUse" && spec.matcher.is_none())
-    );
-    assert!(
-        claude_specs
-            .iter()
-            .any(|spec| { spec.event == "PreToolUse" && spec.matcher == Some("AskUserQuestion") })
-    );
-    assert!(
-        claude_specs
-            .iter()
-            .any(|spec| { spec.event == "PostToolUse" && spec.matcher == Some("AskUserQuestion") })
-    );
-    assert!(claude_specs.iter().any(|spec| {
-        spec.event == "PostToolUseFailure" && spec.matcher == Some("AskUserQuestion")
-    }));
-    assert!(claude_specs.iter().any(|spec| spec.event == "Elicitation"));
-    assert!(
-        claude_specs
-            .iter()
-            .any(|spec| spec.event == "ElicitationResult")
-    );
-    assert!(
-        !claude_specs
-            .iter()
-            .any(|spec| spec.event == "SubagentStop" && spec.matcher.is_none())
-    );
-    assert!(
-        retired_provider_specs(AgentKind::Claude)
-            .iter()
-            .any(|spec| spec.event == "SubagentStop" && spec.matcher.is_none())
-    );
 }
 
 #[test]

@@ -16,6 +16,7 @@ use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
 
 mod approval;
+mod test_integrity;
 use crate::cli::ApprovalPolicy;
 use approval::{Admission, PublishedApproval};
 
@@ -791,6 +792,7 @@ fn admit_published<R: BackendRunner>(
         (&b.submitted_at, b.database_id).cmp(&(&a.submitted_at, a.database_id))
     });
     let mut passing = None;
+    let mut passing_body = String::new();
     for r in candidates {
         let body = if r.summary_truncated
             || r.author_type.as_deref() == Some("Bot")
@@ -841,6 +843,7 @@ fn admit_published<R: BackendRunner>(
                 )
             });
         passing = pass.then_some(r);
+        passing_body = body;
         // The newest report not proven to belong to an older interval owns
         // the verdict, including blocked, malformed or unbound reports.
         break;
@@ -851,6 +854,7 @@ fn admit_published<R: BackendRunner>(
             "awaiting designated review: published passing review for the current head is missing",
         ));
     };
+    test_integrity::ensure(runner, ctx, number, head, &selected.author, &passing_body)?;
     Ok(Admission {
         approval: Some(PublishedApproval::from_review(selected, head)),
         sync_carry_over: sync.map(|(_, merge)| SyncCarryOver {
@@ -1085,7 +1089,11 @@ pub fn run(
             "designated review requires the GitHub provider ledger",
         ));
     }
+    if let PrReviewHandoffCommand::TestChanges(a) = &args.command {
+        return test_integrity::preview(&runner, &ctx, a.id, &a.expected_head, format);
+    }
     let id = match &args.command {
+        PrReviewHandoffCommand::TestChanges(_) => unreachable!("preview returned above"),
         PrReviewHandoffCommand::Assign(a) => a.id,
         PrReviewHandoffCommand::Inspect(a) => a.id,
         PrReviewHandoffCommand::Check(a) => a.id,
@@ -1118,6 +1126,7 @@ pub fn run(
         .map(|h| h.approval_policy)
         .unwrap_or_default();
     match &args.command {
+        PrReviewHandoffCommand::TestChanges(_) => unreachable!("preview returned above"),
         PrReviewHandoffCommand::Inspect(a) => {
             if let Some(expected) = &a.expected_head {
                 require_head(head, expected)?;
@@ -1262,12 +1271,20 @@ pub fn run(
             proposed = Some(next);
         }
         PrReviewHandoffCommand::Surrender(a) => {
-            require_head(head, &a.expected_head)?;
+            let handoff = latest(&chain)
+                .ok_or_else(|| fail("review_assignment_missing", "no handoff to surrender"))?;
+            let unobserved_head_advance = head != a.expected_head
+                && handoff.assigned_head == a.expected_head
+                && owned_state(&chain).is_none();
+            if !unobserved_head_advance {
+                require_head(head, &a.expected_head)?;
+            }
             require_tip(chain.tip_digest.as_deref(), &a.expected_state)?;
             ensure_writer(&chain)?;
-            let mut h = latest(&chain)
-                .cloned()
-                .ok_or_else(|| fail("review_assignment_missing", "no handoff to surrender"))?;
+            let mut h = handoff.clone();
+            if unobserved_head_advance {
+                h.assigned_head = head.to_string();
+            }
             h.surrendered = true;
             proposed = Some(h);
         }

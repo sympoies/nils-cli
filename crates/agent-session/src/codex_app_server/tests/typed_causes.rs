@@ -202,15 +202,14 @@ async fn websocket_provider_rejection_is_not_confirmed() {
 }
 
 #[tokio::test]
-async fn websocket_write_after_peer_close_is_not_acknowledgement_unknown() {
+async fn websocket_disconnect_before_submit_is_not_acknowledgement_unknown() {
     let (_tmp, _context, _record, handle, control, peer) =
         start_prompt_control("write-failure", PromptPeer::CloseBeforePrompt).await;
     peer.await.unwrap();
     let error = handle.submit_prompt("not written").await.unwrap_err();
     assert!(matches!(
         error,
-        prompt_submit::PromptSubmissionFailure::NotConfirmed
-            | prompt_submit::PromptSubmissionFailure::NotDispatched
+        prompt_submit::PromptSubmissionFailure::NotDispatched
     ));
     drop(handle);
     control.abort();

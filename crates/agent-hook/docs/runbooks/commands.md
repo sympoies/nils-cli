@@ -254,10 +254,19 @@ that supervisor disappears.
 Every runner keeps control-group kill semantics with immediate `SIGKILL` and a
 bounded `RuntimeMax`; nils does not record the result until `systemctl` reports
 the unit inactive or failed. `unsandboxed` and `danger-full-access` use those
-lifecycle controls without changing the host user's namespace, IPC, network,
-group, localhost, or user-bus authority. A `confined` runner additionally uses
-a private user namespace, excludes `AF_UNIX`, denies localhost, and restricts
-SUID/SGID changes. This tracks descendants that call `setsid` or double-fork;
+lifecycle controls without changing the user service manager's namespace, IPC,
+network, group, localhost, or user-bus authority.
+
+Supplementary groups come from the already-running user manager, not the calling
+login process. SSH and other login contexts can inherit a different group inventory; the runner does not
+synchronize it or change host group membership. Commands requiring login-only
+groups must run in a manager context configured with those groups. The Linux
+group-preservation fixture compares exact and ordinary execution with an
+independent transient user-service inventory and diagnoses caller/manager
+differences explicitly.
+
+A `confined` runner additionally uses a private user namespace, excludes
+`AF_UNIX`, denies localhost, and restricts SUID/SGID changes. This tracks descendants that call `setsid` or double-fork;
 the confined profile also denies the tested parent-cgroup/user-manager escape
 paths. It is not a general network namespace or a guarantee against every
 network or IPC delegation mechanism.
