@@ -259,7 +259,11 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
 - `surrender <id> --expected-head <sha> --expected-state <digest>` is a
   reviewer-owned relinquishment at the current assignment generation.
   Ordinary reassignment requires this explicit surrender; inspection alone
-  never transfers ownership.
+  never transfers ownership. If the provider head advanced after assignment
+  and no reviewer observation exists for the assigned head, surrender may use
+  that original assigned head with the retained state tip; the surrender
+  records the current provider head. Once an observation exists, surrender
+  requires the current provider head as usual.
 - `recover <id> --expected-head <sha> --expected-state <digest> --reason
   <reviewer-unreachable|reviewer-closed|reviewer-declined|reviewer-timeout>` is
   an explicit original-coordinator revocation that advances the assignment

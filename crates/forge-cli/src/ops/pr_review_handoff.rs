@@ -1262,12 +1262,20 @@ pub fn run(
             proposed = Some(next);
         }
         PrReviewHandoffCommand::Surrender(a) => {
-            require_head(head, &a.expected_head)?;
+            let handoff = latest(&chain)
+                .ok_or_else(|| fail("review_assignment_missing", "no handoff to surrender"))?;
+            let unobserved_head_advance = head != a.expected_head
+                && handoff.assigned_head == a.expected_head
+                && owned_state(&chain).is_none();
+            if !unobserved_head_advance {
+                require_head(head, &a.expected_head)?;
+            }
             require_tip(chain.tip_digest.as_deref(), &a.expected_state)?;
             ensure_writer(&chain)?;
-            let mut h = latest(&chain)
-                .cloned()
-                .ok_or_else(|| fail("review_assignment_missing", "no handoff to surrender"))?;
+            let mut h = handoff.clone();
+            if unobserved_head_advance {
+                h.assigned_head = head.to_string();
+            }
             h.surrendered = true;
             proposed = Some(h);
         }
