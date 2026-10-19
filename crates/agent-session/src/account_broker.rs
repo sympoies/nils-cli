@@ -123,9 +123,24 @@ impl BrokerClient {
         call.extend_from_slice(args);
         call.extend(["--format", "json"]);
         run(&argv, &call, timeout).map_err(|error| match error {
-            BrokerProcessError::SpawnFailed => {
-                self.error("unavailable", "could not be started".to_string())
-            }
+            BrokerProcessError::SpawnFailed(failure) => self.error(
+                "unavailable",
+                match failure {
+                    BrokerSpawnFailure::NotFound => {
+                        "executable was not found; check the configured broker command and PATH"
+                    }
+                    BrokerSpawnFailure::PermissionDenied => {
+                        "permission was denied; check executable permissions and access to required files"
+                    }
+                    BrokerSpawnFailure::InvalidConfiguration => {
+                        "command configuration was invalid; check the configured broker argv"
+                    }
+                    BrokerSpawnFailure::Other => {
+                        "could not be started by the operating system; check the configured broker command and host limits"
+                    }
+                }
+                .to_string(),
+            ),
             BrokerProcessError::StdoutUnavailable => {
                 self.error("unavailable", "output was unavailable".to_string())
             }
@@ -266,7 +281,7 @@ pub(crate) enum BrokerArgvError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BrokerProcessError {
-    SpawnFailed,
+    SpawnFailed(BrokerSpawnFailure),
     StdoutUnavailable,
     StderrUnavailable,
     WaitFailed,
@@ -274,6 +289,25 @@ pub(crate) enum BrokerProcessError {
     OutputTooLarge,
     MalformedJson,
     Timeout,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BrokerSpawnFailure {
+    NotFound,
+    PermissionDenied,
+    InvalidConfiguration,
+    Other,
+}
+
+impl From<std::io::ErrorKind> for BrokerSpawnFailure {
+    fn from(kind: std::io::ErrorKind) -> Self {
+        match kind {
+            std::io::ErrorKind::NotFound => Self::NotFound,
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            std::io::ErrorKind::InvalidInput => Self::InvalidConfiguration,
+            _ => Self::Other,
+        }
+    }
 }
 
 /// Parses a broker argv configuration value. Blank values mean "not configured".
@@ -414,7 +448,7 @@ pub(crate) fn run(
         .stderr(Stdio::piped())
         .process_group(0)
         .spawn()
-        .map_err(|_| BrokerProcessError::SpawnFailed)?;
+        .map_err(|error| BrokerProcessError::SpawnFailed(error.kind().into()))?;
     let mut stdout_pipe = child
         .stdout
         .take()
@@ -605,6 +639,30 @@ esac
                 client.call("list", &[], BROKER_TIMEOUT).unwrap_err().code(),
                 code(client, "unavailable")
             );
+        }
+    }
+
+    #[test]
+    fn broker_start_failures_explain_missing_and_unexecutable_commands() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let unexecutable = tmp.path().join("unexecutable-broker");
+        fs::write(&unexecutable, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&unexecutable, fs::Permissions::from_mode(0o600)).unwrap();
+
+        for client in clients() {
+            let missing = tmp.path().join("missing-broker");
+            let _broker = configure(&lock, client, &[missing.to_str().unwrap()]);
+            let error = client.call("list", &[], BROKER_TIMEOUT).unwrap_err();
+            assert_eq!(error.code(), code(client, "unavailable"));
+            assert!(error.message().contains("executable was not found"));
+            assert!(error.message().contains("configured broker command"));
+
+            let _broker = configure(&lock, client, &[unexecutable.to_str().unwrap()]);
+            let error = client.call("list", &[], BROKER_TIMEOUT).unwrap_err();
+            assert_eq!(error.code(), code(client, "unavailable"));
+            assert!(error.message().contains("permission was denied"));
+            assert!(error.message().contains("executable permissions"));
         }
     }
 
