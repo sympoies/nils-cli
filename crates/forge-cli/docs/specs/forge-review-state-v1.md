@@ -148,7 +148,6 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   declaration-bound confirmation digest; it never admits a review. See
   [test-change admission](test-change-admission-v1.md) for declarations, output
   fields, deterministic limits and recovery.
-
 - `assign <id> --reviewer-session <session-id>[@machine] --review-author <login>
   --base-sha <sha> --expected-head <sha> --expected-state <digest|none>` records
   an explicit handover in the existing `forge-cli.review-state.v1` chain.
