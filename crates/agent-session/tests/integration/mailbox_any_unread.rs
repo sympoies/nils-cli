@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+use base64::Engine as _;
 use nils_test_support::cmd::{CmdOptions, CmdOutput, run_resolved};
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::Value;
@@ -245,14 +246,12 @@ impl Drop for WaitChild {
     }
 }
 
-#[test]
-fn any_unread_wait_accepts_arrival_in_one_waiter_process() {
-    let tmp = fixture();
-    let state = tmp.path().join("state");
+fn spawn_waiter(tmp: &Path) -> WaitChild {
+    let state = tmp.join("state");
     let cap = capability(&state, "recipient");
     let mut command = Command::new(nils_test_support::bin::resolve("agent-session"));
     command
-        .current_dir(tmp.path())
+        .current_dir(tmp)
         .args([
             "--state-dir",
             state.to_str().unwrap(),
@@ -276,7 +275,13 @@ fn any_unread_wait_accepts_arrival_in_one_waiter_process() {
             command.env_remove(key);
         }
     }
-    let mut child = WaitChild(command.spawn().expect("spawn waiter"));
+    WaitChild(command.spawn().expect("spawn waiter"))
+}
+
+#[test]
+fn any_unread_wait_accepts_arrival_in_one_waiter_process() {
+    let tmp = fixture();
+    let mut child = spawn_waiter(tmp.path());
     std::thread::sleep(Duration::from_millis(200));
     assert!(
         child.0.try_wait().expect("waiter status").is_none(),
@@ -378,4 +383,115 @@ fn any_unread_wait_rejects_a_cursor_from_another_recipient() {
     );
     assert_eq!(output.code, 65);
     assert_eq!(output.stdout_json()["error"]["code"], "cursor-invalid");
+}
+
+// Count the waiter's own CPU time, including its notification backend threads.
+// A wall-time timeout alone cannot distinguish sleeping from the self-wake loop.
+#[cfg(target_os = "linux")]
+fn cpu_ticks(child: &Child) -> u64 {
+    let stat = fs::read_to_string(format!("/proc/{}/stat", child.id())).expect("waiter stat");
+    let fields: Vec<_> = stat
+        .rsplit_once(") ")
+        .expect("stat command")
+        .1
+        .split_whitespace()
+        .collect();
+    fields[11].parse::<u64>().unwrap() + fields[12].parse::<u64>().unwrap()
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn any_unread_wait_idle_cpu_is_bounded() {
+    let tmp = fixture();
+    let mut child = spawn_waiter(tmp.path());
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(child.0.try_wait().unwrap().is_none());
+    let before = cpu_ticks(&child.0);
+    let window = Duration::from_millis(750);
+    std::thread::sleep(window);
+    assert!(child.0.try_wait().unwrap().is_none());
+    let consumed = cpu_ticks(&child.0) - before;
+    // SAFETY: sysconf with _SC_CLK_TCK takes no pointer arguments.
+    let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    assert!(ticks_per_second > 0);
+    let budget = (window.as_secs_f64() * ticks_per_second as f64 / 4.0).ceil() as u64;
+    assert!(
+        consumed <= budget,
+        "idle waiter consumed {consumed} CPU ticks; budget {budget}"
+    );
+}
+
+#[test]
+fn any_unread_wait_all_waiters_observe_atomic_registry_arrival() {
+    let tmp = fixture();
+    let mut children: Vec<_> = (0..5).map(|_| spawn_waiter(tmp.path())).collect();
+    std::thread::sleep(Duration::from_millis(300));
+    for child in &mut children {
+        assert!(child.0.try_wait().unwrap().is_none(), "idle waiter exited");
+    }
+    // Publish through an atomic replacement, as the registry writer does.
+    let id = "multi-waiter-arrival";
+    let staged = fixture();
+    send(staged.path(), id);
+    let root = tmp.path().join("state/coordination");
+    let next = root.join("registry.next");
+    fs::copy(
+        staged.path().join("state/coordination/registry.json"),
+        &next,
+    )
+    .unwrap();
+    fs::rename(next, root.join("registry.json")).unwrap();
+    for mut child in children {
+        use std::io::Read;
+        let mut stdout = String::new();
+        child
+            .0
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut stdout)
+            .unwrap();
+        assert!(child.0.wait().unwrap().success(), "{stdout}");
+        let output: Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(output["data"]["messages"][0]["message_id"], id);
+        assert!(!stdout.contains(BODY_CANARY));
+    }
+}
+
+#[test]
+fn any_unread_wait_excludes_previous_incarnation_unread_mail() {
+    let tmp = fixture();
+    send(tmp.path(), "previous-incarnation-message");
+    let registry_path = tmp.path().join("state/coordination/registry.json");
+    let mut registry = load_coordination_registry(&tmp.path().join("state"));
+    registry["messages"][0]["recipient_incarnation"] = Value::from("previous-incarnation");
+    write_private_json(&registry_path, &registry);
+    let output = wait(tmp.path(), None);
+    assert_eq!(output.code, 69);
+    assert_eq!(output.stdout_json()["error"]["code"], "wait-timeout");
+    let current = send(tmp.path(), "current-incarnation-message");
+    let result = assert_arrival(&wait(tmp.path(), None), &current);
+    assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn any_unread_wait_rejects_independently_mismatched_cursor_fields() {
+    let tmp = fixture();
+    let id = send(tmp.path(), "cursor-independent-binding");
+    let first = assert_arrival(&wait(tmp.path(), None), &id);
+    let codec = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let original: Value =
+        serde_json::from_slice(&codec.decode(first["cursor"].as_str().unwrap()).unwrap()).unwrap();
+    for field in ["recipient_session_id", "recipient_incarnation"] {
+        let mut cursor = original.clone();
+        cursor[field] = Value::from("other-recipient-binding");
+        let encoded = codec.encode(serde_json::to_vec(&cursor).unwrap());
+        let output = wait(tmp.path(), Some(&encoded));
+        assert_eq!(output.code, 65, "{field}: {}", output.stdout_text());
+        assert_eq!(
+            output.stdout_json()["error"]["code"],
+            "cursor-invalid",
+            "{field}"
+        );
+    }
 }

@@ -4,7 +4,8 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
-use notify::{RecursiveMode, Watcher};
+use notify::event::{AccessKind, AccessMode, ModifyKind};
+use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -53,7 +54,16 @@ pub(super) fn wait_with_cancellation(
     // arrival between setup and that read is either observed or returned.
     let root = coordination_root(context)?;
     let (events_tx, events_rx) = mpsc::channel();
-    let mut watcher = notify::recommended_watcher(move |event| {
+    let registry_path = root.join(super::REGISTRY_FILE);
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
+        // Reads and lock activity must not wake the waiter: rechecking the
+        // registry produces those notifications itself. Always forward errors.
+        if event
+            .as_ref()
+            .is_ok_and(|event| !changes_registry(event, &registry_path))
+        {
+            return;
+        }
         let _ = events_tx.send(event);
     })
     .map_err(|_| notification_error())?;
@@ -156,6 +166,16 @@ pub(super) fn wait_with_cancellation(
             Err(mpsc::RecvTimeoutError::Disconnected) => return Err(notification_error()),
         }
     }
+}
+
+fn changes_registry(event: &Event, registry_path: &std::path::Path) -> bool {
+    event.paths.iter().any(|path| path == registry_path)
+        && matches!(
+            event.kind,
+            EventKind::Create(_)
+                | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Name(_))
+                | EventKind::Access(AccessKind::Close(AccessMode::Write))
+        )
 }
 
 fn encode_cursor(cursor: &WaitCursor) -> Result<String, CliError> {
