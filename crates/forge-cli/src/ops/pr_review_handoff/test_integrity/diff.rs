@@ -38,7 +38,7 @@ pub(super) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
             if remaining != (0, 0) {
                 return Err(incomplete());
             }
-            if line.starts_with("diff --git \"") {
+            if line.contains('"') {
                 return Err(limit("path_bytes", "Git-quoted paths are unsupported"));
             }
             finish(&file, &mut findings);

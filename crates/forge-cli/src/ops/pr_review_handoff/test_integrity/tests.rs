@@ -430,6 +430,11 @@ fn git_quoted_headers_are_non_retryable_path_limits() {
 }
 
 #[test]
+fn a_rename_with_only_a_quoted_destination_is_a_non_retryable_path_limit() {
+    assert_limit(diff::detect("diff --git a/tests/sample.rs \"b/tests/space name.rs\"\nsimilarity index 100%\nrename from tests/sample.rs\nrename to tests/space name.rs\n").unwrap_err(), "path_bytes");
+}
+
+#[test]
 fn comparison_pair_limit_and_declaration_boundaries_are_enforced() {
     let patch = (0..33)
         .map(|n| patch(&format!("tests/sample{n}.rs"), "assert!(value);", ""))
