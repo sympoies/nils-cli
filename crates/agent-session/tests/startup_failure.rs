@@ -184,15 +184,34 @@ impl Drop for Daemon {
 
 #[test]
 fn http_create_reports_app_server_exit_and_retains_reconcilable_session() {
-    let fixture = Fixture::new(
+    assert_http_startup_exit(23);
+}
+
+#[test]
+fn http_create_preserves_zero_exit_before_app_server_socket() {
+    assert_http_startup_exit(0);
+}
+
+fn assert_http_startup_exit(exit_code: u8) {
+    let fixture = Fixture::new(&format!(
         r#"
 case "$*" in
   --version) echo 'codex-cli 0.162.0'; exit 0 ;;
   'app-server --help') echo '  --listen <URL> unix://'; exit 0 ;;
 esac
 printf '%s\n' 'provider startup configuration unavailable' >&2
-exit 23
-"#,
+sleep 0.2 >&2 &
+exit {exit_code}
+"#
+    ));
+    // Let provider teardown finish before the first liveness observation.
+    let tmux_script = fs::read_to_string(&fixture.tmux).unwrap();
+    executable(
+        &fixture.tmux,
+        &tmux_script.replace(
+            "exec tmux",
+            "case \"$1\" in has-session) sleep 1;; esac\nexec tmux",
+        ),
     );
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -236,7 +255,7 @@ exit 23
     assert_eq!(body["error"]["code"], "start-failed", "{body}");
     let details = &body["error"]["details"];
     assert_eq!(details["session_id"], "startup-fixture");
-    assert_eq!(details["provider_exit_code"], 23);
+    assert_eq!(details["provider_exit_code"], exit_code);
     assert_eq!(
         details["startup"]["failure_code"],
         "app-server-start-failed"

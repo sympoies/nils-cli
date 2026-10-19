@@ -9,7 +9,9 @@ collect_startup_diagnostic() {
     else
       rm -f -- "$startup_diagnostic_buffer"
     fi
-    if [ "$runtime_exit" = 0 ]; then
+    if [ "$runtime_exit" = 0 ] &&
+       [ "$(cat "$startup_stage" 2>/dev/null)" = initial_connection ] &&
+       [ ! -f "${startup_failure:-}" ]; then
       rm -f -- "$runtime_exit_status"
     fi
   else
