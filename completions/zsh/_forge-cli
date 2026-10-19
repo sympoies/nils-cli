@@ -888,7 +888,7 @@ json\:"Single-record JSON envelope (snake_case)"))' \
 ;;
 (surrender)
 _arguments "${_arguments_options[@]}" : \
-'--expected-head=[Exact provider head SHA for this handoff operation]:EXPECTED_HEAD:_default' \
+'--expected-head=[Current provider head, or the assigned head after an unobserved advance]:EXPECTED_HEAD:_default' \
 '--expected-state=[Exact retained provider ledger tip for the ownership transition]:EXPECTED_STATE:_default' \
 '--format=[Output format (defaults to text)]:FORMAT:((text\:"Human-readable text output (default)"
 json\:"Single-record JSON envelope (snake_case)"))' \
