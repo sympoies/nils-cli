@@ -127,16 +127,16 @@ impl BrokerClient {
                 "unavailable",
                 match failure {
                     BrokerSpawnFailure::NotFound => {
-                        "executable was not found; check the configured broker command and PATH"
+                        "executable or its interpreter was not found; check the configured broker command and PATH"
                     }
                     BrokerSpawnFailure::PermissionDenied => {
                         "permission was denied; check executable permissions and access to required files"
                     }
-                    BrokerSpawnFailure::InvalidConfiguration => {
-                        "command configuration was invalid; check the configured broker argv"
+                    BrokerSpawnFailure::InvalidInput => {
+                        "call arguments were invalid; check the broker call arguments"
                     }
                     BrokerSpawnFailure::Other => {
-                        "could not be started by the operating system; check the configured broker command and host limits"
+                        "could not be started by the operating system; check the configured broker command and its execution environment"
                     }
                 }
                 .to_string(),
@@ -295,7 +295,7 @@ pub(crate) enum BrokerProcessError {
 pub(crate) enum BrokerSpawnFailure {
     NotFound,
     PermissionDenied,
-    InvalidConfiguration,
+    InvalidInput,
     Other,
 }
 
@@ -304,7 +304,7 @@ impl From<std::io::ErrorKind> for BrokerSpawnFailure {
         match kind {
             std::io::ErrorKind::NotFound => Self::NotFound,
             std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
-            std::io::ErrorKind::InvalidInput => Self::InvalidConfiguration,
+            std::io::ErrorKind::InvalidInput => Self::InvalidInput,
             _ => Self::Other,
         }
     }
@@ -655,7 +655,11 @@ esac
             let _broker = configure(&lock, client, &[missing.to_str().unwrap()]);
             let error = client.call("list", &[], BROKER_TIMEOUT).unwrap_err();
             assert_eq!(error.code(), code(client, "unavailable"));
-            assert!(error.message().contains("executable was not found"));
+            assert!(
+                error
+                    .message()
+                    .contains("executable or its interpreter was not found")
+            );
             assert!(error.message().contains("configured broker command"));
 
             let _broker = configure(&lock, client, &[unexecutable.to_str().unwrap()]);
@@ -663,6 +667,56 @@ esac
             assert_eq!(error.code(), code(client, "unavailable"));
             assert!(error.message().contains("permission was denied"));
             assert!(error.message().contains("executable permissions"));
+        }
+    }
+
+    #[test]
+    fn broker_start_invalid_arguments_and_unsupported_commands_are_actionable() {
+        let lock = GlobalStateLock::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let missing_interpreter = tmp.path().join("missing-interpreter-broker");
+        fs::write(
+            &missing_interpreter,
+            "#!/nils-cli-test-missing-interpreter\nexit 0\n",
+        )
+        .unwrap();
+        fs::set_permissions(&missing_interpreter, fs::Permissions::from_mode(0o700)).unwrap();
+        let unsupported = tmp.path().join("unsupported-broker");
+        fs::write(&unsupported, "not an executable format\n").unwrap();
+        fs::set_permissions(&unsupported, fs::Permissions::from_mode(0o700)).unwrap();
+
+        for client in clients() {
+            let _broker = configure(&lock, client, &[missing_interpreter.to_str().unwrap()]);
+            let error = client.call("list", &[], BROKER_TIMEOUT).unwrap_err();
+            assert_eq!(error.code(), code(client, "unavailable"));
+            assert!(
+                error
+                    .message()
+                    .contains("executable or its interpreter was not found")
+            );
+
+            let broker = script(tmp.path(), "valid-broker", "#!/bin/sh\nexit 0\n");
+            let _broker = configure(&lock, client, &[broker.to_str().unwrap()]);
+            let error = client
+                .call("list", &["invalid\0argument"], BROKER_TIMEOUT)
+                .unwrap_err();
+            assert_eq!(error.code(), code(client, "unavailable"));
+            assert!(error.message().contains("call arguments were invalid"));
+            assert!(error.message().contains("broker call arguments"));
+
+            let _broker = configure(&lock, client, &[unsupported.to_str().unwrap()]);
+            let error = client.call("list", &[], BROKER_TIMEOUT).unwrap_err();
+            assert_eq!(error.code(), code(client, "unavailable"));
+            assert!(
+                error
+                    .message()
+                    .contains("could not be started by the operating system")
+            );
+            assert!(
+                error
+                    .message()
+                    .contains("configured broker command and its execution environment")
+            );
         }
     }
 
