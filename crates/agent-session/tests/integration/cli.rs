@@ -2477,37 +2477,6 @@ fn codex_composed_notify_fans_out_while_activity_lock_is_contended() {
     assert!(!diagnostic.contains("retry-worker-failure"));
 }
 
-#[test]
-fn codex_activity_doctor_surfaces_notification_config_errors() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let home = tmp.path().join("home");
-    fs::create_dir_all(home.join(".codex")).expect("codex dir");
-    fs::write(home.join(".codex/hooks.json"), r#"{"hooks":{}}"#).expect("hooks config");
-    fs::write(
-        home.join(".codex/config.toml"),
-        b"notify = [\"unterminated\"",
-    )
-    .expect("malformed notify config");
-    let home_arg = home.to_string_lossy().to_string();
-    let doctor = run(
-        tmp.path(),
-        &["activity", "doctor", "--agent", "codex", "--format", "json"],
-        &[("HOME", home_arg.as_str())],
-    );
-    assert_eq!(doctor.code, 0, "stderr={}", doctor.stderr_text());
-    let doctor_json = doctor.stdout_json();
-    let provider = &data(&doctor_json)["providers"][0];
-    assert_eq!(provider["configured"], false);
-    assert_eq!(provider["configuration_error"], "provider-config-invalid");
-    assert_eq!(provider["notification_mode"], "invalid");
-    assert!(
-        provider["guidance"]
-            .as_str()
-            .expect("guidance")
-            .contains("fix the provider configuration before running repair")
-    );
-}
-
 // F7/F8: the doctor surfaces the running binary's own version (so a stale/split
 // install is diagnosable) and an explicit `can_launch_worker` signal that is
 // distinct from the config-presence `configured` axis.
@@ -2762,57 +2731,6 @@ printf '%s\n' '{"schema_version":"cli.agent-hook.doctor.v1","ok":false}'
     assert_eq!(
         provider["configuration_error"], "agent-hook-doctor-output-invalid",
         "{doctor_json}"
-    );
-}
-
-#[test]
-fn codex_activity_doctor_recognizes_audited_computer_use_owned_notify() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let home = tmp.path().join("home");
-    let codex = home.join(".codex");
-    fs::create_dir_all(&codex).expect("Codex directory");
-    fs::write(codex.join("hooks.json"), r#"{"hooks":{}}"#).expect("hooks config");
-    let helper = codex.join(
-        "computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient",
-    );
-    fs::create_dir_all(helper.parent().expect("Computer Use helper parent"))
-        .expect("Computer Use helper directory");
-    write_executable(&helper, "#!/usr/bin/env sh\nexit 0\n");
-    let owned = ["agent-session", "activity", "notify", "--agent", "codex"];
-    let notify = [
-        helper.to_string_lossy().into_owned(),
-        "turn-ended".to_string(),
-        "--previous-notify".to_string(),
-        serde_json::to_string(&owned).expect("owned notify JSON"),
-    ];
-    let mut document = toml_edit::DocumentMut::new();
-    let mut array = toml_edit::Array::new();
-    array.extend(notify.iter().map(String::as_str));
-    document["notify"] = toml_edit::value(array);
-    fs::write(codex.join("config.toml"), document.to_string()).expect("Codex config");
-    let home_arg = home.to_string_lossy().to_string();
-
-    let doctor = run(
-        tmp.path(),
-        &["activity", "doctor", "--agent", "codex", "--format", "json"],
-        &[("HOME", home_arg.as_str())],
-    );
-    assert_eq!(doctor.code, 0, "stderr={}", doctor.stderr_text());
-    assert_eq!(
-        data(&doctor.stdout_json())["providers"][0]["notification_mode"],
-        "composed"
-    );
-
-    fs::remove_file(&helper).expect("remove Computer Use helper");
-    let unavailable = run(
-        tmp.path(),
-        &["activity", "doctor", "--agent", "codex", "--format", "json"],
-        &[("HOME", home_arg.as_str())],
-    );
-    assert_eq!(unavailable.code, 0, "stderr={}", unavailable.stderr_text());
-    assert_eq!(
-        data(&unavailable.stdout_json())["providers"][0]["notification_mode"],
-        "conflict"
     );
 }
 

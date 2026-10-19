@@ -96,16 +96,15 @@ impl Fixture {
         envs: &[(&str, &str)],
         removals: &[&str],
     ) -> CmdOutput {
-        // Helper resolution, coordination identity, and the state root are all
-        // env overrides that outrank what a test can set through `PATH` or the
-        // fixture layout, so every one of them has to be dropped unless this
-        // call asked for it. Removals are applied before values, so the
-        // `AGENT_SESSION_STATE_DIR` default below and any explicit `envs` entry
-        // still reach the child. See `sympoies/nils-cli#1420`.
+        // Helper resolution, coordination identity, state roots, and provider
+        // config paths are host overrides that can outrank the fixture. Drop
+        // them unless this call explicitly supplies one; removals are applied
+        // before values so fixture `envs` still reach the child. See
+        // `sympoies/nils-cli#1420`.
         let options = CmdOptions::new()
             .with_cwd(cwd)
             .without_ambient_managed_session_env()
-            .with_env_remove("CODEX_HOME")
+            .with_env_remove_many(&["CLAUDE_CONFIG_DIR", "CODEX_HOME"])
             .with_env("HOME", self.home.to_str().expect("home UTF-8"))
             .with_env(
                 "XDG_CONFIG_HOME",

@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use jiff::Zoned;
-use nils_common::fs::{SECRET_FILE_MODE, display_path, home_dir, write_atomic};
+use nils_common::fs::{SECRET_FILE_MODE, display_path, write_atomic};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -18,9 +18,8 @@ use toml_edit::{DocumentMut as TomlDocument, Item as TomlItem};
 
 use crate::cli::AgentKind;
 use crate::{
-    CliContext, CliError, Envelope, ProviderResume, SessionRecord, canonical_provider_resume_args,
-    load_session_record, mutate_session_record, run_output_with_timeout_and_strict_cap,
-    session_dir, valid_sha256,
+    CliContext, CliError, ProviderResume, SessionRecord, canonical_provider_resume_args,
+    load_session_record, mutate_session_record, session_dir,
 };
 
 #[path = "activity/claude_completion.rs"]
@@ -35,6 +34,12 @@ use codex_attention_source_guard::{
 };
 mod codex_completion;
 mod codex_quiet;
+#[path = "activity/registration.rs"]
+mod registration;
+use registration::{
+    agent_hook_claude_readiness, agent_hook_codex_configured, codex_notification_config_path,
+    provider_config_path,
+};
 #[path = "activity/completion_admission.rs"]
 mod completion_admission;
 #[path = "activity/completion_receipts.rs"]
@@ -101,7 +106,6 @@ pub(crate) const ACTIVITY_RETRY_PROVIDER_ENV: &str = "AGENT_SESSION_ACTIVITY_RET
 const CODEX_FORWARD_TIMEOUT: Duration = Duration::from_secs(2);
 const CODEX_COMPLETION_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_UNHEALTHY_LOCK_TIMEOUT: Duration = Duration::from_millis(250);
-const AGENT_HOOK_DOCTOR_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -704,17 +708,17 @@ pub(crate) struct ProviderDoctor {
     pub(crate) version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) version_error: Option<String>,
-    /// The provider's agent-session lifecycle hook/notification spec is present
-    /// and not drifted. Config presence only — NOT version adequacy (see
-    /// `classification`) and NOT launch-readiness (see `can_launch_worker`).
+    /// The provider lifecycle registration is converged. Claude readiness comes
+    /// from agent-hook dispatch; Codex also requires its notification config.
     pub(crate) configured: bool,
     /// True only when the provider is both `classification == "supported"` and
-    /// `configured`. Makes the
-    /// launch gate explicit instead of leaving callers to AND the two axes.
+    /// `configured`; this is a conservative activity capability signal.
     pub(crate) can_launch_worker: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) configuration_error: Option<String>,
     pub(crate) config_path: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) missing_owned_events: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) hook_representation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3586,6 +3590,7 @@ pub(crate) fn doctor(
             hook_migration_required,
             representation_conflict,
             reported_config_path,
+            missing_owned_events,
         ) = match agent {
             AgentKind::Codex => {
                 let config_path = notification_path
@@ -3638,20 +3643,41 @@ pub(crate) fn doctor(
                     hook_migration_required,
                     representation_conflict,
                     reported_config_path,
+                    Vec::new(),
                 )
             }
-            AgentKind::Claude | AgentKind::Dsh => match provider_configured(agent, &path) {
-                Ok(configured) => (configured, None, None, None, None, None, path.clone()),
-                Err(error) => (
-                    false,
-                    Some(error.code().to_string()),
+            AgentKind::Claude => match agent_hook_claude_readiness(&path) {
+                Ok(readiness) => (
+                    readiness.configured,
+                    None,
                     None,
                     None,
                     None,
                     None,
                     path.clone(),
+                    readiness.missing_owned_events,
+                ),
+                Err(error) => (
+                    false,
+                    Some(error.to_string()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    path.clone(),
+                    Vec::new(),
                 ),
             },
+            AgentKind::Dsh => (
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+                path.clone(),
+                Vec::new(),
+            ),
         };
         let activity_summary = activity_by_provider
             .get(agent.as_str())
@@ -3749,9 +3775,15 @@ pub(crate) fn doctor(
                 );
             } else {
                 guidance.push_str(
-                    " The installed hook specification is missing or drifted; run activity setup --repair after reviewing the dry-run.",
+                    " The agent-hook registration is missing or drifted; review activity setup --agent claude --dry-run before repair.",
                 );
             }
+        }
+        if !missing_owned_events.is_empty() {
+            guidance.push_str(&format!(
+                " Missing agent-hook owned events: {}.",
+                missing_owned_events.join(", ")
+            ));
         }
         if !helper_executable {
             guidance.push_str(
@@ -3768,6 +3800,7 @@ pub(crate) fn doctor(
             can_launch_worker,
             configuration_error,
             config_path: display_path(&reported_config_path),
+            missing_owned_events,
             hook_representation,
             hook_migration_required,
             representation_conflict,
@@ -3798,50 +3831,6 @@ fn command_resolves_on_path(command: &str, path: Option<&std::ffi::OsStr>) -> bo
         fs::metadata(directory.join(command))
             .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
     })
-}
-
-fn agent_hook_codex_configured() -> Result<bool, &'static str> {
-    let binary = std::env::var_os("AGENT_HOOK_BIN").unwrap_or_else(|| "agent-hook".into());
-    let mut command = ProcessCommand::new(binary);
-    command.args(["doctor", "--product", "codex", "--format", "json"]);
-    let output = run_output_with_timeout_and_strict_cap(
-        command,
-        Duration::from_secs(10),
-        AGENT_HOOK_DOCTOR_MAX_OUTPUT_BYTES,
-    )
-    .map_err(|error| {
-        if error.kind() == io::ErrorKind::InvalidData {
-            "agent-hook-doctor-output-invalid"
-        } else {
-            "agent-hook-doctor-unavailable"
-        }
-    })?;
-    let envelope: Envelope<Vec<agent_hook::setup::DoctorResult>> =
-        serde_json::from_slice(&output.stdout).map_err(|_| "agent-hook-doctor-output-invalid")?;
-    if !output.status.success()
-        || !envelope.ok
-        || envelope.error.is_some()
-        || envelope.schema_version != "cli.agent-hook.doctor.v1"
-    {
-        return Err("agent-hook-doctor-output-invalid");
-    }
-    let mut results = envelope
-        .data
-        .ok_or("agent-hook-doctor-output-invalid")?
-        .into_iter();
-    let result = results.next().ok_or("agent-hook-doctor-output-invalid")?;
-    if results.next().is_some()
-        || result.schema_version != "agent-hook.doctor.v1"
-        || result.product != "codex"
-        || !valid_sha256(&result.config_digest)
-        || !valid_sha256(&result.policy_digest)
-    {
-        return Err("agent-hook-doctor-output-invalid");
-    }
-    Ok(result.supported
-        && result.status == agent_hook::setup::ProviderStatus::Converged
-        && result.owned_count == result.expected_owned_count
-        && result.legacy_residue_count == 0)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -4022,38 +4011,6 @@ fn format_version(version: (u64, u64, u64)) -> String {
     format!("{}.{}.{}", version.0, version.1, version.2)
 }
 
-fn provider_config_path(agent: AgentKind) -> Result<std::path::PathBuf, CliError> {
-    let home = home_dir().ok_or_else(|| {
-        CliError::runtime(
-            "home-unavailable",
-            "HOME is required for provider activity setup",
-            None,
-        )
-    })?;
-    Ok(match agent {
-        AgentKind::Codex => home.join(".codex/hooks.json"),
-        AgentKind::Claude => home.join(".claude/settings.json"),
-        AgentKind::Dsh => {
-            return Err(CliError::usage(
-                "unsupported-activity-agent",
-                "dsh activity comes from the dsh-runtime-kit bridge hook installed by the launch profile, or from the external runtime's liveness sidecar; there is no provider activity configuration to manage",
-                Some(json!({ "agent": agent.as_str() })),
-            ));
-        }
-    })
-}
-
-fn codex_notification_config_path() -> Result<std::path::PathBuf, CliError> {
-    let home = home_dir().ok_or_else(|| {
-        CliError::runtime(
-            "home-unavailable",
-            "HOME is required for provider activity setup",
-            None,
-        )
-    })?;
-    Ok(home.join(".codex/config.toml"))
-}
-
 #[derive(Clone, Copy)]
 struct ProviderSpec {
     event: &'static str,
@@ -4078,7 +4035,6 @@ impl CodexHookRepresentation {
 #[derive(Clone, Debug)]
 struct CodexHookStatus {
     representation: CodexHookRepresentation,
-    configured: bool,
     migration_required: bool,
     conflict: bool,
     ownership_conflict: bool,
@@ -4104,84 +4060,10 @@ fn provider_specs(agent: AgentKind) -> Vec<ProviderSpec> {
                 matcher: None,
             },
         ],
-        AgentKind::Claude => vec![
-            ProviderSpec {
-                event: "UserPromptSubmit",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "PermissionRequest",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "PermissionDenied",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "PreToolUse",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "PreToolUse",
-                matcher: Some("AskUserQuestion"),
-            },
-            ProviderSpec {
-                event: "PostToolUse",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "PostToolUse",
-                matcher: Some("AskUserQuestion"),
-            },
-            ProviderSpec {
-                event: "PostToolUseFailure",
-                matcher: Some("AskUserQuestion"),
-            },
-            ProviderSpec {
-                event: "Elicitation",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "ElicitationResult",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "Stop",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "StopFailure",
-                matcher: None,
-            },
-            ProviderSpec {
-                event: "Notification",
-                matcher: Some("idle_prompt"),
-            },
-            ProviderSpec {
-                event: "Notification",
-                matcher: Some("agent_needs_input"),
-            },
-        ],
         // agent-session installs no dsh hooks: profile panes receive the
         // dsh-runtime-kit bridge hook from their launcher, and external workers
         // report through their liveness sidecar.
-        AgentKind::Dsh => Vec::new(),
-    }
-}
-
-fn retired_provider_specs(agent: AgentKind) -> Vec<ProviderSpec> {
-    match agent {
-        AgentKind::Claude => vec![
-            ProviderSpec {
-                event: "Notification",
-                matcher: Some("permission_prompt"),
-            },
-            ProviderSpec {
-                event: "SubagentStop",
-                matcher: None,
-            },
-        ],
-        AgentKind::Codex | AgentKind::Dsh => Vec::new(),
+        AgentKind::Claude | AgentKind::Dsh => Vec::new(),
     }
 }
 
@@ -4194,20 +4076,6 @@ fn owned_command(agent: AgentKind, event: Option<&str>) -> String {
         )
         .to_string(),
         _ => format!("agent-session activity hook --agent {}", agent.as_str()),
-    }
-}
-
-fn provider_configured(agent: AgentKind, path: &Path) -> Result<bool, CliError> {
-    match agent {
-        AgentKind::Codex => {
-            let config_path = codex_notification_config_path()?;
-            let hooks = codex_hook_status(path, &config_path)?;
-            let notification = codex_notification_status(&config_path)?;
-            Ok(hooks.configured && notification.configured)
-        }
-        AgentKind::Claude => json_provider_configured(agent, path),
-        // Unreachable in practice: provider_config_path refuses dsh first.
-        AgentKind::Dsh => Ok(false),
     }
 }
 
@@ -4360,38 +4228,6 @@ fn toml_inline_has_lifecycle_hooks(document: &TomlDocument) -> bool {
                     .is_some_and(|groups| !groups.is_empty())
             })
         })
-}
-
-fn toml_has_spec(document: &TomlDocument, spec: ProviderSpec) -> bool {
-    document
-        .get("hooks")
-        .and_then(TomlItem::as_table)
-        .and_then(|hooks| hooks.get(spec.event))
-        .and_then(TomlItem::as_array_of_tables)
-        .is_some_and(|groups| {
-            groups.iter().any(|group| {
-                toml_hook_matcher_matches(group, spec)
-                    && group
-                        .get("hooks")
-                        .and_then(TomlItem::as_array_of_tables)
-                        .is_some_and(|handlers| {
-                            handlers.iter().any(|handler| {
-                                toml_handler_command_is_owned(spec.event, handler)
-                                    && handler.get("command").and_then(TomlItem::as_str)
-                                        == Some(
-                                            owned_command(AgentKind::Codex, Some(spec.event))
-                                                .as_str(),
-                                        )
-                            })
-                        })
-            })
-        })
-}
-
-fn toml_codex_hooks_configured(document: &TomlDocument) -> bool {
-    provider_specs(AgentKind::Codex)
-        .into_iter()
-        .all(|spec| toml_has_spec(document, spec))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4668,17 +4504,8 @@ fn codex_hook_status_from_analysis(
     let ownership_conflict = json_has_owned_handler_metadata_conflict(json)
         || toml_has_owned_handler_metadata_conflict(&config.document);
     let migration_required = inline_active && json_has_owned_codex_hooks(json);
-    let configured = !conflict
-        && !ownership_conflict
-        && match representation {
-            CodexHookRepresentation::Json => provider_specs(AgentKind::Codex)
-                .into_iter()
-                .all(|spec| json_has_spec(json, AgentKind::Codex, spec)),
-            CodexHookRepresentation::InlineToml => toml_codex_hooks_configured(&config.document),
-        };
     CodexHookStatus {
         representation,
-        configured,
         migration_required,
         conflict,
         ownership_conflict,
@@ -4702,29 +4529,6 @@ fn codex_hook_status(json_path: &Path, config_path: &Path) -> Result<CodexHookSt
         .unwrap_or_default();
     let config = analyze_codex_toml_hooks(config_path, &config_raw)?;
     Ok(codex_hook_status_from_analysis(&json, &config))
-}
-
-fn json_provider_configured(agent: AgentKind, path: &Path) -> Result<bool, CliError> {
-    if !path.is_file() {
-        return Ok(false);
-    }
-    let value: Value = serde_json::from_slice(
-        &fs::read(path)
-            .map_err(|err| activity_io_error("provider-config-read-failed", path, err))?,
-    )
-    .map_err(|err| {
-        CliError::data(
-            "provider-config-invalid",
-            format!("failed to parse {}: {err}", path.display()),
-            None,
-        )
-    })?;
-    Ok(provider_specs(agent)
-        .iter()
-        .all(|spec| json_has_spec(&value, agent, *spec))
-        && retired_provider_specs(agent)
-            .iter()
-            .all(|spec| !json_has_spec(&value, agent, *spec)))
 }
 
 fn read_optional_provider_config(path: &Path) -> Result<Option<Vec<u8>>, CliError> {
@@ -4760,6 +4564,7 @@ fn parse_json_provider_config(
     Ok(original)
 }
 
+#[cfg(test)]
 fn json_has_spec(value: &Value, agent: AgentKind, spec: ProviderSpec) -> bool {
     value
         .get("hooks")
