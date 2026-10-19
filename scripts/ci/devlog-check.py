@@ -70,6 +70,7 @@ def exact_fold(base, devlog, env):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
         replay_env = {k: v for k, v in env.items() if not k.startswith('GIT_')}
+        replay_env['TZ'] = 'UTC'
         subprocess.run(['git', 'init', '-q', directory], env=replay_env, check=True)
         subprocess.run([devlog, 'fold'], cwd=root, env=replay_env, check=True)
         for path, data in retained.items():

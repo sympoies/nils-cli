@@ -14,6 +14,8 @@ if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
   exit 2
 fi
 source "$repo_root/scripts/dev-env.sh"
+# Use the same cutoff on contributor machines and CI runners.
+export TZ=UTC
 devlog check --base HEAD
 devlog fold
 devlog check --base HEAD

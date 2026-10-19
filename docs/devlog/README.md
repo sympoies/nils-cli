@@ -80,8 +80,8 @@ with `semantic-commit` using the exact subject
 deliver with `forge-cli`. Skip the PR when there is no diff. Only this
 maintenance path folds entries; ordinary feature PRs continue adding fragments.
 
-Entries dated before preparation day are folded; today's and future entries
-stay pending. Repeating a completed fold does not duplicate entries. The gate
+Folding uses UTC on both contributor machines and CI. Entries dated before
+the preparation day in UTC are folded; today's and future entries stay pending. Repeating a completed fold does not duplicate entries. The gate
 requires the canonical branch and commit subject (also on the queue's squash
 commit), replays the retired baseline fragments with `devlog fold`, restores
 retained fragments and regenerates the index, then compares the complete log

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Repository devlog policy, through the contributor docs gate and real CLI."""
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 import shutil
@@ -170,6 +171,25 @@ class DevlogPolicy(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.run_cmd('bash', '.agents/scripts/fold-devlog.sh')
         self.assertEqual(self.git('status', '--porcelain'), '')
+
+    def test_fold_cutoff_is_utc_independent_of_caller_timezone(self):
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        yesterday = today - timedelta(days=1)
+        self.git('switch', '-q', 'main')
+        self.new('utc-yesterday', date=str(yesterday))
+        self.new('utc-today', date=str(today))
+        self.commit('Accepted fragments around UTC cutoff')
+        self.git('switch', '-q', '-c', 'chore/devlog-fold-cutoff')
+        # Choose a caller day different from UTC at any time of day.
+        self.env['TZ'] = 'Etc/GMT-14' if now.hour >= 10 else 'Etc/GMT+12'
+        self.run_cmd('bash', '.agents/scripts/fold-devlog.sh')
+        self.assertFalse((self.repo / f'docs/devlog/pending/{yesterday}-utc-yesterday.md').exists())
+        self.assertTrue((self.repo / f'docs/devlog/pending/{today}-utc-today.md').exists())
+        self.commit('chore(devlog): fold accepted fragments')
+        self.env['TZ'] = 'Etc/GMT+12' if now.hour >= 10 else 'Etc/GMT-14'
+        result = self.gate()
+        self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_fold_passes_pr_and_merge_queue_snapshots(self):
         self.git('switch', '-q', 'main')
