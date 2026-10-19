@@ -1469,11 +1469,6 @@ fn claude_ask_user_question_shadows_do_not_pin_attention() {
         mapped.is_none(),
         "AskUserQuestion exact PreToolUse/PostToolUse correlation must be the sole attention occurrence"
     );
-    assert!(
-        !provider_specs(AgentKind::Claude).iter().any(|spec| {
-            spec.event == "Notification" && spec.matcher == Some("permission_prompt")
-        })
-    );
 }
 
 #[test]

@@ -46,7 +46,7 @@ pub struct PrReviewHandoffInspectArgs {
 #[derive(Args, Debug, Clone)]
 pub struct PrReviewHandoffSurrenderArgs {
     pub id: u64,
-    /// Exact provider head SHA for this handoff operation.
+    /// Current provider head, or the assigned head after an unobserved advance.
     #[arg(long)]
     pub expected_head: String,
     /// Exact retained provider ledger tip for the ownership transition.
