@@ -1,4 +1,5 @@
 use super::*;
+use codex_app_server::prompt_submit::{acknowledgement_unknown, not_confirmed, not_dispatched};
 use pretty_assertions::assert_eq;
 
 #[path = "direct_prompt.rs"]
@@ -10,6 +11,50 @@ mod claude_prompt_ack;
 fn keyed_body(incarnation: &str) -> Value {
     json!({"text":"inspect the workspace", "expected_session_incarnation":incarnation,
         "request_id":"attempt-1"})
+}
+
+#[tokio::test]
+async fn structured_prompt_reports_unknown_outcome_after_provider_rejection() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch_id = seed_codex_app_server_session(tmp.path(), "structured-rejected");
+    let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
+    let record = load_session_record(&st.context, "structured-rejected").unwrap();
+    crate::activity::activate_runtime(&st.context, &record).unwrap();
+    let (handle, mut commands) = codex_app_server::control_channel();
+    st.codex_controls.lock().unwrap().insert(
+        record.id.clone(),
+        CodexControlEntry {
+            launch_id: launch_id.clone(),
+            handle,
+        },
+    );
+    let responder = tokio::spawn(async move {
+        let codex_app_server::ControlCommand::Prompt { response, .. } =
+            commands.recv().await.unwrap()
+        else {
+            unreachable!()
+        };
+        response
+            .send(Err(not_confirmed("provider rejected")))
+            .unwrap();
+    });
+
+    let (status, body) = call(
+        router(st),
+        post_json(
+            "/sessions/structured-rejected/prompt/v2",
+            Some(TOKEN),
+            json!({
+                "text": "inspect provider acknowledgement",
+                "expected_session_incarnation": launch_id,
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "body={body}");
+    assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
+    assert!(body.pointer("/data/submitted").is_none());
+    responder.await.unwrap();
 }
 
 #[tokio::test]
@@ -79,6 +124,15 @@ fn bearer_get(uri: &str) -> Request<Body> {
 async fn unknown_submission_is_recoverable_via_authenticated_lookup() {
     let tmp = tempfile::TempDir::new().unwrap();
     let launch = seed_codex_app_server_session(tmp.path(), "unknown-keyed");
+    let record_path = tmp.path().join("sessions/unknown-keyed/session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record["delete_tmux_identity"] = json!({
+        "launch_id": launch,
+        "session_id": "$99",
+        "pane_id": "%99",
+        "pane_pid": 99,
+    });
+    fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
     let st = state(tmp.path(), Some(TOKEN), empty_composer_tmux(tmp.path()));
     let (handle, mut commands) = codex_app_server::control_channel();
     st.codex_controls.lock().unwrap().insert(
@@ -94,7 +148,7 @@ async fn unknown_submission_is_recoverable_via_authenticated_lookup() {
             panic!("missing prompt command");
         };
         response
-            .send(Err("unknown provider outcome".into()))
+            .send(Err(acknowledgement_unknown("unknown provider outcome")))
             .unwrap();
     });
     let uri = "/sessions/unknown-keyed/prompt/v2";
@@ -113,6 +167,231 @@ async fn unknown_submission_is_recoverable_via_authenticated_lookup() {
     let (status, body) = call(router(restarted), bearer_get(&lookup)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["data"]["receipt"]["outcome"], "unknown");
+}
+
+#[tokio::test]
+async fn accepted_prompt_with_recorded_runtime_exit_is_receipted_as_submitted() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch = seed_codex_app_server_session(tmp.path(), "exit-after-submit");
+    let record_path = tmp.path().join("sessions/exit-after-submit/session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record["delete_tmux_identity"] = json!({
+        "launch_id": launch,
+        "session_id": "$98",
+        "pane_id": "%98",
+        "pane_pid": 98,
+    });
+    fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    assert!(
+        crate::persisted_tmux_runtime_identity(
+            &load_session_record(
+                &CliContext {
+                    state_dir: tmp.path().to_path_buf(),
+                    host: None
+                },
+                "exit-after-submit",
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .is_some()
+    );
+    let tmux = guard_tmux(tmp.path(), "exit-after-submit");
+    let script = fs::read_to_string(&tmux).unwrap().replacen(
+        "print('────────────────────────────\\n❯ ' + text + '\\n────────────────────────────')",
+        "if record['agent'] == 'codex': print('› ' + text + '\\n\\n  status')\n    else: print('────────────────────────────\\n❯ ' + text + '\\n────────────────────────────')",
+        1,
+    );
+    let (script, final_exit) = script.rsplit_once("sys.exit(0)\n").unwrap();
+    assert!(final_exit.is_empty());
+    let script = format!(
+        "{script}if args[0] == 'has-session':\n    target = args[args.index('-t') + 1]\n    if target == '=$98':\n        print(\"can't find session: $98\", file=sys.stderr); sys.exit(1)\n    sys.exit(0)\nsys.exit(0)\n"
+    );
+    assert!(
+        script.contains("target == '=$98'"),
+        "exit status fixture was not installed"
+    );
+    fs::write(&tmux, script).unwrap();
+    assert!(crate::send::recorded_tmux_runtime_stopped(
+        &tmux,
+        &load_session_record(
+            &CliContext {
+                state_dir: tmp.path().to_path_buf(),
+                host: None
+            },
+            "exit-after-submit",
+        )
+        .unwrap(),
+        Duration::from_secs(1),
+    ));
+    let st = state(tmp.path(), Some(TOKEN), tmux);
+    let (handle, mut commands) = codex_app_server::control_channel();
+    st.codex_controls.lock().unwrap().insert(
+        "exit-after-submit".into(),
+        CodexControlEntry {
+            launch_id: launch.clone(),
+            handle,
+        },
+    );
+    let uri = "/sessions/exit-after-submit/prompt/v2";
+    let app = router(st);
+    let request = tokio::spawn(call(
+        app,
+        post_json(
+            uri,
+            Some(TOKEN),
+            json!({
+                "text": "/exit",
+                "expected_session_incarnation": launch,
+                "request_id": "exit-attempt",
+            }),
+        ),
+    ));
+    let Some(codex_app_server::ControlCommand::Prompt { response, .. }) = commands.recv().await
+    else {
+        let result = request.await.unwrap();
+        panic!("prompt was not dispatched: {} {}", result.0, result.1);
+    };
+    response
+        .send(Err(acknowledgement_unknown(
+            "lost provider acknowledgement",
+        )))
+        .unwrap();
+
+    let (status, body) = request.await.unwrap();
+    let calls = fs::read_to_string(tmp.path().join("transport-calls")).unwrap();
+    assert!(
+        calls.contains("=$98"),
+        "exact recorded target not probed: {calls}"
+    );
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["receipt"]["outcome"], "submitted");
+    assert!(
+        commands.try_recv().is_err(),
+        "the prompt must not be dispatched again"
+    );
+}
+
+#[tokio::test]
+async fn closed_codex_control_with_stopped_runtime_remains_unknown() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch = seed_codex_app_server_session(tmp.path(), "closed-control-exit");
+    let record_path = tmp.path().join("sessions/closed-control-exit/session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record["delete_tmux_identity"] = json!({
+        "launch_id": launch,
+        "session_id": "$97",
+        "pane_id": "%97",
+        "pane_pid": 97,
+    });
+    fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    let tmux = guard_tmux(tmp.path(), "closed-control-exit");
+    let script = fs::read_to_string(&tmux).unwrap().replacen(
+        "print('────────────────────────────\\n❯ ' + text + '\\n────────────────────────────')",
+        "if record['agent'] == 'codex': print('› ' + text + '\\n\\n  status')\n    else: print('────────────────────────────\\n❯ ' + text + '\\n────────────────────────────')",
+        1,
+    );
+    let (script, final_exit) = script.rsplit_once("sys.exit(0)\n").unwrap();
+    assert!(final_exit.is_empty());
+    let script = format!(
+        "{script}if args[0] == 'has-session':\n    target = args[args.index('-t') + 1]\n    if target == '=$97':\n        print(\"can't find session: $97\", file=sys.stderr); sys.exit(1)\n    sys.exit(0)\nsys.exit(0)\n"
+    );
+    fs::write(&tmux, script).unwrap();
+    let st = state(tmp.path(), Some(TOKEN), tmux);
+    let (handle, commands) = codex_app_server::control_channel();
+    st.codex_controls.lock().unwrap().insert(
+        "closed-control-exit".into(),
+        CodexControlEntry {
+            launch_id: launch.clone(),
+            handle,
+        },
+    );
+    drop(commands);
+
+    let (status, body) = call(
+        router(st),
+        post_json(
+            "/sessions/closed-control-exit/prompt/v2",
+            Some(TOKEN),
+            json!({
+                "text": "must not be reported as submitted",
+                "expected_session_incarnation": launch,
+                "request_id": "closed-control-attempt",
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
+    assert_eq!(body["error"]["details"]["receipt"]["outcome"], "unknown");
+}
+
+#[tokio::test]
+async fn codex_worker_readiness_refusal_with_stopped_runtime_remains_unknown() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let launch = seed_codex_app_server_session(tmp.path(), "readiness-refusal-exit");
+    let record_path = tmp
+        .path()
+        .join("sessions/readiness-refusal-exit/session.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    record["delete_tmux_identity"] = json!({
+        "launch_id": launch,
+        "session_id": "$96",
+        "pane_id": "%96",
+        "pane_pid": 96,
+    });
+    fs::write(&record_path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    let tmux = guard_tmux(tmp.path(), "readiness-refusal-exit");
+    let script = fs::read_to_string(&tmux).unwrap().replacen(
+        "print('────────────────────────────\\n❯ ' + text + '\\n────────────────────────────')",
+        "if record['agent'] == 'codex': print('› ' + text + '\\n\\n  status')\n    else: print('────────────────────────────\\n❯ ' + text + '\\n────────────────────────────')",
+        1,
+    );
+    let (script, final_exit) = script.rsplit_once("sys.exit(0)\n").unwrap();
+    assert!(final_exit.is_empty());
+    let script = format!(
+        "{script}if args[0] == 'has-session':\n    target = args[args.index('-t') + 1]\n    if target == '=$96':\n        print(\"can't find session: $96\", file=sys.stderr); sys.exit(1)\n    sys.exit(0)\nsys.exit(0)\n"
+    );
+    fs::write(&tmux, script).unwrap();
+    let st = state(tmp.path(), Some(TOKEN), tmux);
+    let (handle, mut commands) = codex_app_server::control_channel();
+    st.codex_controls.lock().unwrap().insert(
+        "readiness-refusal-exit".into(),
+        CodexControlEntry {
+            launch_id: launch.clone(),
+            handle,
+        },
+    );
+
+    let request = tokio::spawn(call(
+        router(st),
+        post_json(
+            "/sessions/readiness-refusal-exit/prompt/v2",
+            Some(TOKEN),
+            json!({
+                "text": "/exit",
+                "expected_session_incarnation": launch,
+                "request_id": "readiness-refusal-attempt",
+            }),
+        ),
+    ));
+    let Some(codex_app_server::ControlCommand::Prompt { response, .. }) = commands.recv().await
+    else {
+        let result = request.await.unwrap();
+        panic!(
+            "prompt was not offered to the control worker: {} {}",
+            result.0, result.1
+        );
+    };
+    response
+        .send(Err(not_dispatched("Codex account binding is not ready")))
+        .unwrap();
+
+    let (status, body) = request.await.unwrap();
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["error"]["code"], "structured-prompt-outcome-unknown");
+    assert_eq!(body["error"]["details"]["receipt"]["outcome"], "unknown");
 }
 
 #[tokio::test]

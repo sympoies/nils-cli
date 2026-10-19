@@ -2,6 +2,81 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn prompt_readiness_refusal_is_marked_as_not_dispatched() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket_path = tmp.path().join("prompt-readiness.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    let context = CliContext {
+        state_dir: tmp.path().join("state"),
+        host: None,
+    };
+    let record = record_with_runtime("prompt-readiness", &socket_path);
+    fs::create_dir_all(crate::session_dir(&context, &record.id)).unwrap();
+    crate::write_session_record(&context, &record).unwrap();
+    bind_thread(&record, "thread-prompt-readiness").unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let initialize = receive_json(&mut socket).await;
+        respond(&mut socket, &initialize, json!({})).await;
+        assert_eq!(receive_json(&mut socket).await["method"], "initialized");
+        let loaded = receive_json(&mut socket).await;
+        assert_eq!(loaded["method"], "thread/loaded/list");
+        respond(
+            &mut socket,
+            &loaded,
+            json!({ "data": ["thread-prompt-readiness"], "nextCursor": null }),
+        )
+        .await;
+        let resume = receive_json(&mut socket).await;
+        assert_eq!(resume["method"], "thread/resume");
+        respond(&mut socket, &resume, json!({})).await;
+        let usage = receive_json(&mut socket).await;
+        assert_eq!(usage["method"], "account/rateLimits/read");
+        respond(
+            &mut socket,
+            &usage,
+            json!({ "rateLimits": { "primary": { "usedPercent": 1 } } }),
+        )
+        .await;
+        tokio::time::timeout(Duration::from_millis(250), receive_json(&mut socket))
+            .await
+            .ok()
+    });
+    let (handle, commands, ready) = starting_control_channel();
+    let control = tokio::spawn(run_control(
+        context.clone(),
+        record.clone(),
+        commands,
+        ready,
+    ));
+    handle.wait_ready(Duration::from_secs(5)).await.unwrap();
+    crate::codex_account::queue_next_account_with_unbound(
+        &context,
+        &record.id,
+        &record.runtime.as_ref().unwrap().launch_id,
+        "fixture-next-account",
+    )
+    .unwrap();
+
+    let error = handle
+        .submit_prompt("must remain retryable")
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        crate::codex_app_server::prompt_submit::PromptSubmissionFailure::NotDispatched
+    ));
+    assert!(
+        server.await.unwrap().is_none(),
+        "turn/start must not be written"
+    );
+    drop(handle);
+    control.abort();
+    let _ = control.await;
+}
+
+#[tokio::test]
 async fn fresh_thread_start_waits_for_initial_binding_application() {
     let tmp = tempfile::TempDir::new().unwrap();
     let upstream = tmp.path().join("initial-binding.sock");

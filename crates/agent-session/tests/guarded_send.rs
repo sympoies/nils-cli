@@ -32,6 +32,8 @@ impl Fixture {
             "created_at": "2000-01-01T00:00:00Z", "updated_at": "2000-01-01T00:00:00Z",
             "runtime": { "kind": "tmux", "tmux_session": "modeled-guarded",
                 "generation": 1, "launch_id": "runtime-one", "started_at": "2000-01-01T00:00:00Z" },
+            "delete_tmux_identity": { "launch_id": "runtime-one", "session_id": "$42",
+                "pane_id": "%42", "pane_pid": 42 },
             "provider_resume": { "provider": provider, "session_id": "provider-one",
                 "captured_at": "2000-01-01T00:00:00Z", "capture_method": "fixture", "resume_args": [] }
         });
