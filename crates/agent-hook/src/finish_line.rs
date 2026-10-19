@@ -101,7 +101,7 @@ const CONTAINED_UNIT_PROPERTIES: [&str; 7] = [
 /// Permission restrictions owned only by a DSH confined runner.
 ///
 /// `unsandboxed` and `danger-full-access` deliberately retain the host user's
-/// normal namespace, IPC, network, group, and localhost authority. Their
+/// user-manager namespace, IPC, network, group, and localhost authority. Their
 /// transient unit is a lifecycle supervisor, not a second permission model.
 #[cfg(target_os = "linux")]
 const CONFINED_UNIT_PROPERTIES: [&str; 4] = [
