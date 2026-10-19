@@ -1,10 +1,13 @@
 name: Full validation
 
+# Check out only the caller's immutable event SHA. The commit input asserts
+# the requested identity at the final gate; it never selects executable code.
+
 on:
   workflow_call:
     inputs:
       commit:
-        description: Exact immutable commit to validate
+        description: Expected immutable caller event SHA, verified by the final gate
         required: true
         type: string
 
@@ -26,7 +29,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.commit }}
+          ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -55,7 +58,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.commit }}
+          ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -169,7 +172,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.commit }}
+          ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -224,7 +227,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.commit }}
+          ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -368,7 +371,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.commit }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Download coverage LCOV
         uses: actions/download-artifact@v8
@@ -391,7 +394,7 @@ jobs:
       - name: Checkout exact validated commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.commit }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Require all full-validation lanes
         env:

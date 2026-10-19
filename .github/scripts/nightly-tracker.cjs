@@ -21,7 +21,7 @@ async function trackNightly({ github, context, core, result }) {
   if (issue && (issue.user?.login !== 'github-actions[bot]' || !issue.body.includes(END))) {
     throw new Error('Nightly tracker ownership or section is invalid');
   }
-  if (result === 'success' && !issue) return;
+  if (result === 'success' && (!issue || issue.state === 'closed')) return;
   const { data: current } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: context.runId });
   if (current.head_sha !== context.sha || !Number.isFinite(Date.parse(current.created_at))) {
     throw new Error('Nightly run commit or timestamp is invalid');

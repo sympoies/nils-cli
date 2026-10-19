@@ -71,7 +71,8 @@ must not tag or publish from an ordinary delivery session.
 on an existing stable tag. Invocation and rerun identity checks still apply.
 
 The release runs full validation itself. Every validation and build checkout
-pins the immutable commit SHA. Its final gate rejects failed, cancelled,
+pins the caller's immutable `github.sha`; the expected commit input is checked
+at the final gate and cannot select a different checkout. Its final gate rejects failed, cancelled,
 skipped or missing Linux, macOS, coverage, containment or dependency jobs.
 Only then can release builds start. Coverage uses the full-workspace 85% floor,
 with an LCOV report required; source-PR or merge-group green checks cannot

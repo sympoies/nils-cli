@@ -42,7 +42,7 @@ out of scope for this governance inventory; flag it as a follow-up.
 
 | Job | Step | Canonical owner | Decision | Notes |
 | --- | --- | --- | --- | --- |
-| `test` | full Linux checks/doctests | canonical full checks entrypoint | keep | 50 minutes, nextest; exact input SHA, full audit stack. |
+| `test` | full Linux checks/doctests | canonical full checks entrypoint | keep | 50 minutes, nextest; caller event SHA, full audit stack. |
 | `test_containment` | Linux cgroup canary | workflow-local test command and systemd setup | keep | 25 minutes, required by final full gate. |
 | `cargo_deny` | dependency policy | `scripts/ci/cargo-deny-audit.sh` | keep | 15 minutes, required by final full gate. |
 | `test_macos` | instrumented workspace tests | full checks entrypoint, llvm-cov | keep | 75 minutes, 85% workspace floor; skips only OS-independent audits and doctests already covered by Linux. LCOV, HTML and JUnit artifacts retained. |

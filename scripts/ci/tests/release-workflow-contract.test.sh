@@ -118,6 +118,50 @@ if [[ "$(release_build_signature .github/workflows/release.yml)" != \
   exit 1
 fi
 echo "ok: the release cache warmer builds the same targets, runners, and toolchain as release.yml"
+# Retain the Linux PR lane's existing outputs and protected reduced checker.
+# Full-validation contracts cover a different workflow and cannot replace these.
+assert_contains .github/workflows/ci.yml 'release_only: ${{ steps.finalize.outputs.release_only }}' \
+  "CI publishes the release-only decision"
+assert_contains .github/workflows/ci.yml 'release_mode: ${{ steps.detect.outputs.release_mode }}' \
+  "CI preserves the release-mode output"
+assert_contains .github/workflows/ci.yml 'git show "${base}:scripts/ci/detect-release-only.sh"' \
+  "release classification loads exact-base policy"
+assert_contains .github/workflows/ci.yml 'git show "${base}:.github/scripts/release-ci-gate.cjs"' \
+  "release receipt proof loads the exact-base module"
+assert_contains .github/workflows/ci.yml 'findTrustedMainCi' \
+  "legacy release-only proof retains exact-base receipt lookup"
+assert_contains .github/workflows/ci.yml 'waitForTrustedMainCi' \
+  "legacy release-only proof retains the bounded exact-base wait"
+assert_contains scripts/ci/release-only-checks.sh 'RELEASE_ONLY_DETECTOR' \
+  "the reduced checker accepts a protected detector"
+assert_contains scripts/ci/release-only-checks.sh '--merge-group' \
+  "the protected checker understands merge-group mode"
+workflow_job() {
+  awk -v job="$2" '$0 == "  " job ":" { inside = 1; print; next }
+    inside && /^  [a-z_]+:$/ { exit } inside { print }' "$1"
+}
+linux_job="$(workflow_job .github/workflows/ci.yml test)"
+assert_contains <(printf '%s\n' "$linux_job") \
+  'git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/detect-release-only.sh"' \
+  "Linux reduced validation loads the exact-base detector"
+assert_contains <(printf '%s\n' "$linux_job") \
+  'git show "${{ needs.changes.outputs.base_sha }}:scripts/ci/release-only-checks.sh"' \
+  "Linux reduced validation loads the exact-base checker"
+assert_contains <(printf '%s\n' "$linux_job") 'mode_args=(--merge-group)' \
+  "Linux reduced validation preserves merge-group mode"
+assert_contains <(printf '%s\n' "$linux_job") 'RELEASE_ONLY_DETECTOR="${policy_dir}/detect-release-only.sh"' \
+  "Linux reduced validation uses the protected detector"
+assert_contains <(printf '%s\n' "$linux_job") '"${mode_args[@]}"' \
+  "Linux reduced validation passes its selected mode to the checker"
+assert_contains <(printf '%s\n' "$linux_job") '    timeout-minutes: 50' \
+  "Linux validation retains its 50-minute backstop"
+assert_contains <(workflow_job .github/workflows/ci.yml test_containment) '    timeout-minutes: 25' \
+  "Linux containment retains its 25-minute backstop"
+assert_contains <(workflow_job .github/workflows/ci.yml cargo_deny) '    timeout-minutes: 15' \
+  "dependency policy retains its 15-minute backstop"
+assert_contains <(workflow_job .github/workflows/ci.yml changes) '    timeout-minutes: 60' \
+  "change detection retains its 60-minute backstop"
+
 # The shared full workflow owns the former merge/release coverage contract.
 assert_contains .github/workflows/full-validation.yml 'NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"' \
   "full release/nightly coverage retains the 85% floor"

@@ -48,6 +48,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('needs: verify_ci', full)
         self.assertIn('uses: ./.github/workflows/full-validation.yml', full)
         self.assertIn('commit: ${{ github.sha }}', full)
+        self.assertIn('ref: ${{ github.sha }}', job(release, 'build'))
         self.assertIn('needs: full_validation', job(release, 'build'))
         self.assertIn('needs: build', job(release, 'release'))
         self.assertIn('needs: release', job(release, 'dispatch_homebrew_tap'))
@@ -55,13 +56,14 @@ class DeliveryTests(unittest.TestCase):
     def test_shared_full_gate_checks_out_exact_sha_and_has_no_scope_shortcuts(self):
         full = workflow('full-validation.yml')
         self.assertIn('workflow_call:', full)
+        self.assertNotIn('ref: ${{ inputs.commit }}', full)
         self.assertNotIn('--ci-merge-plan', full)
         self.assertNotIn('--docs-only', full)
         self.assertNotIn('release_only', full)
         self.assertNotIn('PR_DEFER_FULL', full)
         for name in ('test', 'test_containment', 'test_macos', 'cargo_deny', 'coverage', 'gate'):
             body = job(full, name)
-            self.assertIn('ref: ${{ inputs.commit }}', body)
+            self.assertIn('ref: ${{ github.sha }}', body)
             self.assertIn('persist-credentials: false', body)
             self.assertIn('timeout-minutes:', body)
         macos = job(full, 'test_macos')
@@ -76,6 +78,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn('requireFullValidation', gate)
         self.assertIn('toJSON(needs)', gate)
         self.assertIn('git rev-parse HEAD', gate)
+        self.assertIn('EXPECTED_COMMIT: ${{ inputs.commit }}', gate)
 
     def test_full_checks_have_fragment_validator_prerequisites(self):
         full = workflow('full-validation.yml')
@@ -88,9 +91,15 @@ class DeliveryTests(unittest.TestCase):
 
     def test_required_linux_checks_fail_closed(self):
         ci = workflow('ci.yml')
-        self.assertIn("if: github.event_name != 'push'", job(ci, 'cargo_deny'))
-        self.assertIn("if: always() && github.event_name != 'push'", job(ci, 'test'))
-        self.assertIn("if: github.event_name != 'push'", job(ci, 'test_containment'))
+        for name in ('test', 'cargo_deny', 'test_containment'):
+            condition = next(line.removeprefix('    if: ') for line in job(ci, name).splitlines()
+                             if line.startswith('    if: '))
+            for event in ('pull_request', 'merge_group', 'push', 'schedule', 'workflow_dispatch'):
+                with self.subTest(job=name, event=event):
+                    expression = condition.replace('github.event_name', repr(event)).replace('always()', 'True')
+                    observed = eval(expression.replace('&&', 'and').replace('||', 'or'),
+                                    {'__builtins__': {}}, {})
+                    self.assertEqual(observed, event in ('pull_request', 'merge_group'))
 
     def test_failed_change_detection_cannot_be_accepted_as_a_skipped_test(self):
         body = job(workflow('ci.yml'), 'test')
@@ -107,8 +116,9 @@ class DeliveryTests(unittest.TestCase):
         report = job(ci, 'nightly_report')
         self.assertIn('always()', report)
         self.assertIn('needs: full_validation', report)
-        self.assertIn('issues: write', report)
-        self.assertIn('actions: read', report)
+        permissions = re.search(r'^    permissions:\n((?:      [^\n]+\n)+)', report, re.M).group(1)
+        self.assertEqual(dict(line.strip().split(': ', 1) for line in permissions.splitlines()),
+                         {'contents': 'read', 'actions': 'read', 'issues': 'write'})
         self.assertIn('persist-credentials: false', report)
         self.assertIn('trackNightly', report)
         self.assertIn("'nightly-main'", ci)

@@ -66,6 +66,16 @@ test('closed tracker is reopened; maintainer notes survive updates and recovery 
   await trackNightly({ ...options, result: 'success' });
   assert.equal(state.writes[1].state, 'closed');
 });
+test('green nightly leaves a closed tracker unchanged across repeated runs', async () => {
+  const { state, options } = fixture();
+  state.issues = [{ number: 7, state: 'closed', user: { login: 'github-actions[bot]' },
+    body: `${MARKER}\nrecovered\n${END}\nMaintainer notes` }];
+  const original = state.issues[0].body;
+  await trackNightly({ ...options, result: 'success' });
+  await trackNightly({ ...options, result: 'success' });
+  assert.deepEqual(state.writes, []);
+  assert.equal(state.issues[0].body, original);
+});
 test('green nightly creates no issue', async () => {
   const { state, options } = fixture();
   await trackNightly({ ...options, result: 'success' });
