@@ -183,8 +183,10 @@ bash scripts/ci/nils-cli-checks-entrypoint.sh
 ```
 
 This delegates to `./.agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh`.
-It is what CI uses for the full `test` and `test_macos` jobs; it is not the
-default local development loop.
+It is what the shared release/nightly full-validation workflow uses for its
+`test` and `test_macos` jobs; it is not the default local development loop.
+See the [delivery and release flow](../../.github/README.md) for lane ownership,
+required contexts, recovery and timeouts.
 
 ### Integration batches on `next`
 
@@ -237,7 +239,7 @@ batch. Required hosted checks and branch protections continue to apply.
    cut a `chore/` branch at the exact frozen `next` SHA and open the PR from it.
    The head SHA, not the branch name, is what the gate result and
    `--expected-head` bind. Require review and green hosted `test`,
-   `test_macos`, and `coverage` checks before an expected-head merge with
+   `test_containment`, and `cargo-deny (advisories + bans)` checks before an expected-head merge with
    `--expected-base main --keep-branch`.
 
    If `main` advances and reconciliation is needed, open and review a PR into
@@ -388,10 +390,10 @@ regression class against synthetic fixtures.
 
 In CI, the `changes` job runs `scripts/ci/detect-docs-only.sh` (sharing the
 `scripts/ci/lib/doc_classify.py` classifier with the local-fast planner). When
-every changed file is documentation, the `test` and `test_macos` jobs run
-`--docs-only` and the `coverage` job skips its steps, so docs-only PRs avoid the
-full Rust build/test/coverage cost. The skips are step-level, so all three
-release-gated checks still report success.
+every changed file is documentation, the Linux `test` job runs `--docs-only`.
+Dependency policy still runs, and the containment job reports success with its
+Rust steps skipped. The queue invokes the trusted scope planner on its combined
+tree even for docs or release changes. PRs and queue groups run no macOS jobs.
 
 ### 3.2 Local fast changed-scope checks
 
@@ -454,26 +456,23 @@ Notes:
 
 ### 3.4 Full coverage flow (CI gate / explicit local parity)
 
-The full coverage gate is mandatory in merge-group, nightly, on-demand and
-explicit release-quality verification (total line coverage stays `>= 85.00%`).
-On those CI events, `test_macos` runs the workspace tests once under
-`NILS_CLI_TEST_RUNNER=llvm-cov`, which enforces the floor, and `coverage`
-publishes the summary from that run's LCOV artifact.
+The full coverage gate is mandatory for nightly, manual full CI and releases
+(total workspace line coverage stays `>= 85.00%`). The shared
+`.github/workflows/full-validation.yml` runs full Linux tests and doctests,
+Linux containment and dependency policy alongside full instrumented macOS
+tests. `test_macos` enforces the floor with `NILS_CLI_TEST_RUNNER=llvm-cov`;
+`coverage` requires its nonempty LCOV and publishes the summary. The final gate
+requires every lane to succeed. Release builds cannot start before that gate
+passes on the exact tagged SHA.
 
-PRs run the trusted affected scope. Selected macOS tests retain the immutable-base
-coverage no-decrease ratchet. When the macOS PR plan needs FULL or falls back
-from HOLD, an early trusted preview makes `test_macos` conclude skipped.
-`coverage` concludes skipped only after real full Linux and containment success.
-Their required names stay the same, and their check titles state
-`deferred-full: runs in merge group`; neither is a plain success or full test
-measurement. Failed upstream jobs and scoped-Linux/deferred-macOS mismatches
-fail coverage. Full queue checks must pass before main advances.
-Full macOS lanes have 75 minutes; selected PR jobs retain 55 minutes.
+PR and merge-group tests use affected-scope Linux checks with a full Linux
+fallback. They have no macOS or coverage jobs, preview-driven deferral, or
+labeler. Linux `test_containment` and `cargo-deny (advisories + bans)` are
+required checks alongside `test`; the maintainer applies the ruleset migration
+in the [delivery flow](../../.github/README.md). Full macOS has 75 minutes.
 See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)
-for the event/check matrix and receipt versions.
+for candidate bindings and receipts.
 
-The Linux cgroup containment checks run in their own
-`test_containment` job beside `test`; `coverage` requires it to succeed.
 Normal local development does not need to run coverage before opening a PR:
 
 ```bash
@@ -515,6 +514,9 @@ NILS_CLI_COVERAGE_FAIL_UNDER_LINES=90 bash scripts/ci/nils-cli-checks-entrypoint
 - `bash scripts/ci/tests/detect-docs-only.test.sh`
 - `bash scripts/ci/tests/detect-release-only.test.sh`
 - `node scripts/ci/tests/release-ci-gate.test.cjs`
+- `node scripts/ci/tests/full-validation-gate.test.cjs`
+- `node scripts/ci/tests/nightly-tracker.test.cjs`
+- `python3 scripts/ci/tests/delivery-workflow.test.py`
 - `bash scripts/ci/tests/dependabot-third-party-workflow-contract.test.sh`
 - `bash scripts/ci/tests/release-workflow-contract.test.sh`
 - `bash scripts/ci/tests/shared-helper-adoption-audit.test.sh`
@@ -718,8 +720,10 @@ export PATH="$HOME/.local/nils-cli/bin:$PATH"
 ### 9.2 GitHub release packaging
 
 Release tags matching `v*` trigger `.github/workflows/release.yml`. The workflow
-first verifies the tagged commit has green `test`, `test_macos`, and `coverage`
-checks, then builds release tarballs for Linux and macOS on x86_64 and aarch64.
+first authorizes the invocation, then executes full Linux and macOS tests,
+containment, dependency policy and 85% coverage on the exact tagged commit.
+Only successful full validation admits release builds; prior green PR/queue
+checks cannot substitute. It then builds release tarballs for Linux and macOS on x86_64 and aarch64.
 
 Release tarballs include:
 

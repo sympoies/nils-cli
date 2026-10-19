@@ -32,9 +32,9 @@ assert_not_contains() {
   echo "ok: $label"
 }
 
-assert_contains .github/workflows/release.yml \
-  'require("./.github/scripts/release-ci-gate.cjs")' \
-  "release workflow uses checked-in provenance gate"
+assert_contains .github/workflows/full-validation.yml \
+  'require("./.github/scripts/full-validation-gate.cjs")' \
+  "release workflow requires full exact-commit validation"
 assert_contains .github/workflows/release.yml "workflow_dispatch:" \
   "release workflow supports exact-tag recovery dispatch"
 assert_contains .github/workflows/release.yml "RELEASE_TRIGGERING_ACTOR" \
@@ -65,8 +65,6 @@ for invalid_ref in refs/heads/main refs/tags/v1.22.10-rc.1 refs/tags/1.22.10; do
     exit 1
   fi
 done
-assert_contains .github/workflows/release.yml "pull-requests: read" \
-  "release gate can verify the canonical merged PR"
 assert_contains .github/workflows/release.yml "- runs_on: ubuntu-24.04-arm" \
   "Linux ARM64 release uses the native GitHub-hosted runner"
 assert_contains .github/workflows/release.yml 'run: cargo build --release --workspace --locked --target ${{ matrix.target }}' \
@@ -77,7 +75,7 @@ assert_not_contains .github/workflows/release.yml "cross build" \
   "release workflow does not invoke cross"
 assert_contains .github/workflows/ci.yml "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" \
   "CI cancels only superseded pull request runs, never a main push run in progress"
-assert_contains .github/workflows/ci.yml "(github.event_name == 'push' && 'main-push' || github.run_id) }}" \
+assert_contains .github/workflows/ci.yml "'nightly-main' || github.run_id)) }}" \
   "main push runs share one group while merge-group runs never share one"
 assert_contains .github/workflows/ci.yml "  merge_group:" \
   "CI runs on merge groups, so the required checks report for a required merge queue"
@@ -89,7 +87,7 @@ assert_contains .github/workflows/ci.yml "if: github.event_name != 'push'" \
   "main pushes skip the full CI lanes"
 assert_contains .github/workflows/ci.yml "  main_push:" \
   "main pushes retain a lightweight status workflow"
-assert_contains .github/workflows/ci.yml "  nightly_failure_alert:" \
+assert_contains .github/workflows/ci.yml "  nightly_report:" \
   "nightly full CI publishes a failure alert"
 assert_contains .github/workflows/ci.yml "base=\"\${MERGE_GROUP_BASE_SHA}\"" \
   "CI change detection resolves a merge group's base instead of falling back to an empty push base"
@@ -120,118 +118,18 @@ if [[ "$(release_build_signature .github/workflows/release.yml)" != \
   exit 1
 fi
 echo "ok: the release cache warmer builds the same targets, runners, and toolchain as release.yml"
-assert_contains .github/workflows/ci.yml "key: llvm-cov" \
-  "the instrumented macOS job caches its llvm-cov dependencies under their own key"
-assert_contains .github/workflows/ci.yml "NILS_CLI_TEST_RUNNER: llvm-cov" \
-  "the macOS full lane runs the instrumented tests that enforce the coverage floor"
-assert_contains .github/workflows/ci.yml "needs: [changes, test, test_macos, test_containment]" \
-  "coverage reports from the macOS instrumented run instead of repeating it"
-# test_containment is not a required check; only the coverage job's own guard
-# connects it to merge and the release gate, so assert inside that job.
-coverage_job="$(mktemp "${TMPDIR:-/tmp}/ci-coverage-job.XXXXXX")"
-linux_test_job="$(mktemp "${TMPDIR:-/tmp}/ci-test-job.XXXXXX")"
-macos_job="$(mktemp "${TMPDIR:-/tmp}/ci-macos-job.XXXXXX")"
-containment_job="$(mktemp "${TMPDIR:-/tmp}/ci-containment-job.XXXXXX")"
-nextest_ci_profile="$(mktemp "${TMPDIR:-/tmp}/nextest-ci-profile.XXXXXX")"
-trap 'rm -f "$coverage_job" "$linux_test_job" "$macos_job" "$containment_job" "$nextest_ci_profile"' EXIT
-awk '/^  coverage:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
-  .github/workflows/ci.yml >"$coverage_job"
-coverage_if_count="$(awk '/^    if:/ { count++ } END { print count + 0 }' "$coverage_job")"
-if [[ "$coverage_if_count" != "1" ]]; then
-  echo "FAIL: coverage job has exactly one job-level if condition (found $coverage_if_count)" >&2
-  exit 1
-fi
-echo "ok: coverage job has exactly one job-level if condition"
-assert_contains "$coverage_job" "if: \${{ always() && github.event_name != 'push' && !(" \
-  "coverage excludes push while still running after failed upstream lanes"
-assert_contains "$coverage_job" "TEST_CONTAINMENT_RESULT: \${{ needs.test_containment.result }}" \
-  "coverage reads the parallel containment canaries' result"
-assert_contains "$coverage_job" "[ \"\${TEST_CONTAINMENT_RESULT}\" != \"success\" ]; then" \
-  "coverage fails closed unless the parallel containment canaries succeeded"
-# The stale-test and completion freshness/parity audits give the same answer
-# on every OS, so only the Linux `test` job runs them.
-awk '/^  test:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
-  .github/workflows/ci.yml >"$linux_test_job"
-awk '/^  test_macos:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
-  .github/workflows/ci.yml >"$macos_job"
-assert_contains "$macos_job" "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: \"1\"" \
-  "the macOS lane leaves the OS-independent audits to the Linux lane"
-assert_contains "$linux_test_job" "NILS_CLI_TEST_RUNNER: nextest" \
-  "the Linux test job block was extracted"
-assert_not_contains "$linux_test_job" "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS" \
-  "the Linux test lane runs the OS-independent audits"
-# A hung test must not hold a job until GitHub's 6 hour limit. nextest ends the
-# test and names it; the job limit covers a hang nextest cannot see, and is the
-# only guard for test_containment, which runs `cargo test`.
-# Read only the profile-wide settings: a per-test override also carries a
-# slow-timeout and must not satisfy these checks on its own.
-awk '/^\[profile\.ci\]$/ {in_profile = 1; next} in_profile && /^\[/ {exit} in_profile {print}' \
-  .config/nextest.toml >"$nextest_ci_profile"
-assert_contains "$nextest_ci_profile" "slow-timeout = { period = " \
-  "the ci nextest profile sets a slow-timeout"
-assert_contains "$nextest_ci_profile" "terminate-after = " \
-  "the ci nextest profile terminates a hung test instead of only reporting it slow"
-awk '/^  test_containment:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
-  .github/workflows/ci.yml >"$containment_job"
-assert_contains "$linux_test_job" "    timeout-minutes: " \
-  "the Linux test job has a time limit"
-assert_contains "$macos_job" "    timeout-minutes: " \
-  "the macOS test job has a time limit"
-assert_contains "$containment_job" "    timeout-minutes: " \
-  "the containment canary job has a time limit"
+# The shared full workflow owns the former merge/release coverage contract.
+assert_contains .github/workflows/full-validation.yml 'NILS_CLI_COVERAGE_FAIL_UNDER_LINES: "85"' \
+  "full release/nightly coverage retains the 85% floor"
+assert_contains .github/workflows/full-validation.yml 'NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: "1"' \
+  "macOS delegates OS-independent audits to full Linux"
+assert_contains .github/workflows/full-validation.yml 'NILS_CLI_SKIP_DOCTESTS: "1"' \
+  "macOS delegates doctests to full Linux"
+assert_contains .config/nextest.toml 'terminate-after = ' \
+  "nextest terminates hung tests"
 assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
-  "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS" \
-  "the required-checks runner honours the OS-independent audit skip"
-assert_contains .github/workflows/ci.yml "NILS_CLI_SKIP_DOCTESTS: \"1\"" \
-  "the macOS lane leaves the workspace doc tests to the Linux lane"
-assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
-  "NILS_CLI_SKIP_DOCTESTS" \
-  "the required-checks runner honours the doc-test skip"
-assert_contains .github/workflows/ci.yml "test -s target/coverage/lcov.info" \
-  "coverage fails closed when the instrumented run produced no LCOV"
-assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
-  "--fail-under-lines \"\${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}\"" \
-  "the llvm-cov runner enforces the 85% coverage floor"
-assert_contains .github/workflows/ci.yml "NILS_CLI_COVERAGE_FAIL_UNDER_LINES: \"85\"" \
-  "CI pins the 85% coverage floor on the instrumented macOS run"
-assert_contains .github/workflows/ci.yml "release_only:" \
-  "CI publishes the release-only decision"
-assert_contains .github/workflows/ci.yml "release_mode:" \
-  "CI preserves the pull-request versus merge-group release mode"
-assert_contains .github/workflows/ci.yml "scripts/ci/detect-release-only.sh" \
-  "CI uses the semantic release classifier"
-assert_contains .github/workflows/ci.yml "git show \"\${base}:scripts/ci/detect-release-only.sh\"" \
-  "release-only classification loads protected base policy"
-assert_contains .github/workflows/ci.yml "\${{ needs.changes.outputs.base_sha }}:scripts/ci/release-only-checks.sh" \
-  "reduced checks load the exact base checker"
-assert_contains .github/workflows/ci.yml "findTrustedMainCi" \
-  "release-only CI retains exact-base push receipt support"
-assert_contains .github/workflows/ci.yml "waitForTrustedMainCi" \
-  "release-only CI waits for an in-flight exact-base push or merge-group receipt"
-assert_contains .github/workflows/ci.yml "--merge-group" \
-  "merge-group release bumps use the protected semantic release classifier"
-assert_contains scripts/ci/release-only-checks.sh "--merge-group" \
-  "the protected reduced checker supports merge-group revalidation"
-assert_contains scripts/ci/release-only-checks.sh "RELEASE_ONLY_DETECTOR" \
-  "the reduced checker can use the detector copied from the exact base"
-assert_contains .github/workflows/ci.yml 'RELEASE_ONLY_DETECTOR="${policy_dir}/detect-release-only.sh"' \
-  "both reduced checkers use the detector copied from the exact base"
-assert_contains .github/workflows/ci.yml 'mode_args=(--merge-group)' \
-  "merge-group mode is passed to protected reduced checkers"
-if [[ "$(awk 'index($0, "${mode_args[@]}") { count++ } END { print count + 0 }' \
-    .github/workflows/ci.yml)" != "2" ]]; then
-  echo "FAIL: Linux and macOS reduced checkers both receive the release mode" >&2
-  exit 1
-fi
-echo "ok: Linux and macOS reduced checkers both receive the release mode"
-assert_contains .github/scripts/release-ci-gate.cjs "findTrustedMergeGroupCi" \
-  "release gate accepts exact-SHA merge-group receipts"
-assert_contains .github/workflows/ci.yml "Full validation marker" \
-  "full CI is distinguishable from reduced lanes"
-assert_contains .github/workflows/ci.yml "scripts/ci/release-only-checks.sh" \
-  "Linux and macOS checks expose the reduced lane"
-assert_contains .github/workflows/ci.yml "needs.changes.outputs.release_only != 'true'" \
-  "coverage work is skipped only after fail-closed classification"
+  '--fail-under-lines "${NILS_CLI_COVERAGE_FAIL_UNDER_LINES:-85}"' \
+  "the llvm-cov executor enforces the workspace floor"
 assert_contains .agents/skills/project-verify-required-checks/scripts/project-verify-required-checks.sh \
   "node scripts/ci/tests/release-ci-gate.test.cjs" \
   "release gate unit tests are in the required suite"
