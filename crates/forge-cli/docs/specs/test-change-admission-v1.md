@@ -26,15 +26,18 @@ Each finding names an exact repository-relative file and one of:
 The detector is a conservative diff heuristic, not a proof of logical
 implication or a language parser. Assertion strengthening and test renames can
 also be flagged. Identical assertions moved within a file and whitespace-only
-assertion edits are canceled; new assertions alone are permitted. Detection
-covers common Rust, Python, JavaScript/TypeScript, Go and Java test syntax,
+assertion edits are canceled; new assertions alone are permitted.
+
+Detection covers common Rust, Python, JavaScript/TypeScript, Go and Java test syntax,
 including Rust inline `#[test]`, Python `test_` functions, JavaScript `it`/`test`,
 Go `Test` functions, and common `assert`/`expect` calls. Skip signals include
 Rust `#[ignore]`, `#[cfg(any())]`, `#![cfg(any())]` and `#[cfg_attr(..., ignore)]`,
 pytest skip/skipif/xfail, unittest skip, JavaScript skip calls,
 Go `Skip`, and Java `Ignore`/`Disabled`. Source extensions include Rust, Python,
 JavaScript/TypeScript (`.js`, `.jsx`, `.ts`, `.tsx`, `.cjs`, `.mjs`, `.cts`, `.mts`),
-Go, Java/Kotlin, shell, Ruby, C#, and C/C++. A rename uses the old test source
+Go, Java/Kotlin, shell, Ruby, C#, and C/C++.
+
+A rename uses the old test source
 path for its `deleted-test` declaration, even if the destination is still a test
 path or has a disabled extension. Removing `#[cfg(test)] mod tests;` (including
 an attribute on the preceding line) also requires a declaration.
