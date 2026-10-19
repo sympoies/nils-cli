@@ -26,6 +26,19 @@ artifacts, and release/publish procedures live in the
   supply-chain, release, and live acceptance gates remain task-specific or
   CI-owned.
 
+## Development environment
+
+Source the repository environment in every contributor or automation shell:
+
+```bash
+source scripts/dev-env.sh
+```
+
+This selects `DEVLOG_LAYOUT=fragments` for devlog writers. Install released
+`devlog >=1.31.16`, or build `cargo build --locked -p nils-devlog` and add
+`target/debug` to the shell's `PATH`. See the
+[development log](docs/devlog/README.md) for entry authoring and fold ownership.
+
 ## Change workflow
 
 1. Classify the change by crate, shared workspace surface, completion asset,
