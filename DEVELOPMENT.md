@@ -52,7 +52,9 @@ artifacts, and release/publish procedures live in the
 
 7. Run full CI parity or coverage locally only for release-quality evidence,
    coverage maintenance, CI debugging, or an explicit request. GitHub required
-   checks `test`, `test_macos`, and `coverage` remain the merge gate.
+   checks `test`, `test_containment`, and `cargo-deny (advisories + bans)`
+   remain the Linux merge gate. Full Linux/macOS tests and coverage gate releases.
+   See the [delivery and release flow](.github/README.md).
 
 For an approved batch of low-risk changes, follow the
 [`next` integration procedure](docs/runbooks/workspace-maintenance-reference.md#integration-batches-on-next).
