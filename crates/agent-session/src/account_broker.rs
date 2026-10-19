@@ -706,17 +706,32 @@ esac
 
             let _broker = configure(&lock, client, &[unsupported.to_str().unwrap()]);
             let error = client.call("list", &[], BROKER_TIMEOUT).unwrap_err();
-            assert_eq!(error.code(), code(client, "unavailable"));
-            assert!(
-                error
-                    .message()
-                    .contains("could not be started by the operating system")
-            );
-            assert!(
-                error
-                    .message()
-                    .contains("configured broker command and its execution environment")
-            );
+            #[cfg(target_os = "macos")]
+            {
+                // Darwin's execvp fallback runs unrecognized executable text
+                // through a shell; this fixture then exits nonzero, so the
+                // broker rejects it after startup instead of reporting ENOEXEC.
+                assert_eq!(error.code(), code(client, "rejected"));
+                assert_eq!(
+                    error.message(),
+                    format!("{} account broker rejected the request", client.display)
+                );
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                // Linux reports the unrecognized file format as a spawn error.
+                assert_eq!(error.code(), code(client, "unavailable"));
+                assert!(
+                    error
+                        .message()
+                        .contains("could not be started by the operating system")
+                );
+                assert!(
+                    error
+                        .message()
+                        .contains("configured broker command and its execution environment")
+                );
+            }
         }
     }
 
