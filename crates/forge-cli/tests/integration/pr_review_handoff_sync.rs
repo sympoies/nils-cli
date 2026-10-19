@@ -631,12 +631,12 @@ fn assignment_binds_the_base_ref_and_sha_from_the_same_provider_response() {
     );
     assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
     let calls = fs::read_to_string(stub.tempdir.path().join("calls.log")).unwrap();
-    let base_reads: Vec<_> = calls
+    let pull_reads: Vec<_> = calls
         .lines()
-        .filter(|call| call.contains("base.ref") && call.contains("pulls/7"))
+        .filter(|call| call.contains("pulls/7"))
         .collect();
-    assert_eq!(base_reads.len(), 1, "{calls}");
-    assert!(base_reads[0].contains("base.ref"), "{}", base_reads[0]);
+    assert_eq!(pull_reads.len(), 2, "{calls}");
+    assert!(pull_reads[0].contains(".base.sha") && pull_reads[0].contains(".base.ref"), "{}", pull_reads[0]);
     let bodies = ledger_bodies(&stub);
     let record = review_state::parse_state_marker(&bodies[0])
         .unwrap()
