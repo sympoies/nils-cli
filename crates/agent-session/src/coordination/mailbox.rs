@@ -23,7 +23,7 @@ const MESSAGE_VERSION: &str = "agent-session.message.v1";
 pub(super) const BODY_MAX_BYTES: usize = 16 * 1024;
 const DEFAULT_EXPIRY_SECS: i64 = 24 * 60 * 60;
 pub(super) const MAX_EXPIRY_SECS: i64 = 7 * 24 * 60 * 60;
-const MAX_SESSION_MESSAGES: usize = 256;
+pub(super) const MAX_SESSION_MESSAGES: usize = 256;
 const MAX_SESSION_BYTES: usize = 4 * 1024 * 1024;
 const PAIR_RATE_PER_MINUTE: usize = 30;
 const PAIR_BURST: usize = 10;
@@ -108,7 +108,7 @@ pub(crate) struct InboxCursor {
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct MessageMetadata {
+pub(super) struct MessageMetadata {
     category: MessageCategory,
     notification_suppressed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -706,6 +706,16 @@ pub(crate) fn wait_with_cancellation(
     args: MessageWaitArgs,
     cancelled: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<Value, CliError> {
+    if args.any_unread {
+        return super::mailbox_wait::wait_with_cancellation(context, &args, cancelled);
+    }
+    if args.message.is_none() || args.if_revision.is_none() {
+        return Err(CliError::usage(
+            "wait-selector-required",
+            "message wait requires --message with --if-revision, or --any-unread",
+            None,
+        ));
+    }
     let capability_file = resolve_capability_file(args.capability_file.as_deref())?;
     let (record, recipient_incarnation) =
         authenticate_from_file(context, &args.session, Some(&capability_file))?;
@@ -733,7 +743,7 @@ pub(crate) fn wait_with_cancellation(
             .messages
             .iter()
             .find(|message| {
-                message.message_id == args.message
+                Some(message.message_id.as_str()) == args.message.as_deref()
                     && message.recipient_session_id == record.id
                     && message.recipient_incarnation == recipient_incarnation
             })
@@ -750,7 +760,7 @@ pub(crate) fn wait_with_cancellation(
             }
             return Err(message_expired());
         }
-        if message.revision != args.if_revision {
+        if Some(message.revision) != args.if_revision {
             let result = json_value(MessageBodyView {
                 metadata: metadata(&message),
                 body: UntrustedBody {
@@ -1196,7 +1206,7 @@ fn body_classification(message: &StoredMessage) -> &'static str {
     }
 }
 
-fn metadata(message: &StoredMessage) -> MessageMetadata {
+pub(super) fn metadata(message: &StoredMessage) -> MessageMetadata {
     MessageMetadata {
         category: message.category.unwrap_or_default(),
         notification_suppressed: message.notification_suppressed,
@@ -1279,7 +1289,7 @@ pub(crate) fn parse_expiry(value: Option<&str>) -> Result<i64, CliError> {
     Ok(seconds as i64)
 }
 
-fn parse_wait(value: &str) -> Result<Duration, CliError> {
+pub(super) fn parse_wait(value: &str) -> Result<Duration, CliError> {
     let seconds = parse_duration(value)?;
     if seconds == 0 || seconds > MAX_WAIT_SECS {
         return Err(CliError::usage(

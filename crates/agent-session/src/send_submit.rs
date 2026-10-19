@@ -78,7 +78,7 @@ pub(crate) enum Composer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SubmitOutcome {
-    /// The text left the composer after an Enter.
+    /// The text left the composer, or the terminal runtime exited after an Enter.
     Submitted,
     /// The provider queued the text behind its running turn.
     Queued,
@@ -281,8 +281,9 @@ fn starts_with_numbered_choice(after_glyph: &str) -> bool {
 /// Press the submitting Enter, then watch the composer until it proves the
 /// outcome before the caller's deadline. `observe` returns the visible pane
 /// within the given timeout (`None` when tmux cannot answer),
-/// `may_press` is consulted before every retry so a session recorded as waiting
-/// on a dialog is never answered, and `press_enter` sends one Enter. Provider
+/// `has_exited` independently verifies runtime absence after a successful Enter;
+/// capture failure alone never confirms submission. `may_press` is consulted
+/// before every retry so a session recorded as waiting on a dialog is never answered, and `press_enter` sends one Enter. Provider
 /// events cannot land while the caller holds the session lock, so the pane
 /// classifier, which never sees a composer behind a dialog, is the primary
 /// guard and `may_press` covers state recorded before the send.
@@ -291,6 +292,7 @@ pub(crate) fn submit_and_confirm(
     probe: &Probe,
     deadline: Instant,
     mut observe: impl FnMut(Duration) -> Option<String>,
+    mut has_exited: impl FnMut(Duration) -> bool,
     mut may_press: impl FnMut() -> bool,
     mut press_enter: impl FnMut() -> Result<(), crate::CliError>,
 ) -> Result<SubmitReport, crate::CliError> {
@@ -311,7 +313,12 @@ pub(crate) fn submit_and_confirm(
         enter_presses: presses,
     };
     if !observable {
-        return Ok(report(SubmitOutcome::Unverified, presses));
+        let outcome = if has_exited(remaining().min(CAPTURE_TIMEOUT)) {
+            SubmitOutcome::Submitted
+        } else {
+            SubmitOutcome::Unverified
+        };
+        return Ok(report(outcome, presses));
     }
     let mut unrecognized_polls = 0;
     // The verdict at the end of the budget rests on the last pane tmux actually
@@ -327,7 +334,14 @@ pub(crate) fn submit_and_confirm(
             return Ok(report(outcome, presses));
         }
         thread::sleep(POLL_INTERVAL);
-        let Some(pane) = observe(remaining().min(CAPTURE_TIMEOUT)) else {
+        let pane = observe(remaining().min(CAPTURE_TIMEOUT));
+        // A terminating command may leave the last composer pending, then
+        // remove the pane entirely. Verify the exact runtime before retrying
+        // or trusting that stale observation. Unknown liveness is not exit.
+        if has_exited(remaining().min(CAPTURE_TIMEOUT)) {
+            return Ok(report(SubmitOutcome::Submitted, presses));
+        }
+        let Some(pane) = pane else {
             continue;
         };
         let current = classify(agent, &pane, probe);
@@ -629,6 +643,7 @@ mod tests {
                 *index += 1;
                 Some(pane.to_string())
             },
+            |_| false,
             || may_press,
             || {
                 *pressed.borrow_mut() += 1;
@@ -718,6 +733,7 @@ mod tests {
                 thread::sleep(timeout.min(Duration::from_millis(900)));
                 Some(CLAUDE_PENDING.to_string())
             },
+            |_| false,
             || true,
             || {
                 *presses.borrow_mut() += 1;
@@ -745,6 +761,7 @@ mod tests {
                 // A slow host answers the first reads and then times out.
                 (*reads <= 4).then(|| CLAUDE_PENDING.to_string())
             },
+            |_| false,
             || true,
             || Ok(()),
         );

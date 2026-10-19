@@ -177,7 +177,15 @@ case "$1 $2" in
 {view}
 JSON
     exit 0 ;;
+  "api repos/acme/widgets/compare/"*)
+    cat "${{TEST_INTEGRITY_DIFF:-/dev/null}}"; exit 0 ;;
   "api repos/acme/widgets/pulls/7") case "$*" in
+    *'author:'*)
+      if [ -n "${{TEST_INTEGRITY_METADATA:-}}" ]; then
+        cat "$TEST_INTEGRITY_METADATA"
+      else
+        echo '{{"head":"{head}","base":"'"${{PROVIDER_BASE:-{OLD}}}"'","author":"contributor","body":""}}'
+      fi ;;
     *base.ref*) echo "${{PROVIDER_BASE:-{OLD}}} ${{PROVIDER_BASE_REF:-main}}" ;;
     *) echo "${{PROVIDER_BASE:-{OLD}}}" ;;
     esac; exit 0 ;;
@@ -2973,3 +2981,6 @@ fn qualified_reviewable_must_name_the_native_review_head() {
 }
 
 mod approval;
+
+#[path = "pr_review_handoff/test_integrity.rs"]
+mod test_integrity;
