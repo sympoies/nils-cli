@@ -7,6 +7,10 @@ mod direct_prompt;
 
 #[path = "claude_prompt_ack.rs"]
 mod claude_prompt_ack;
+#[path = "claude_stopped_runtime.rs"]
+mod claude_stopped_runtime;
+#[path = "codex_prompt_outcomes.rs"]
+mod codex_prompt_outcomes;
 
 fn keyed_body(incarnation: &str) -> Value {
     json!({"text":"inspect the workspace", "expected_session_incarnation":incarnation,
@@ -429,7 +433,7 @@ async fn require_idle_busy_refusal_is_typed_and_terminal() {
 
 // The actual guard reads exact identity and composer state from this modeled
 // transport. No live terminal or provider is used.
-fn guard_tmux(root: &Path, id: &str) -> PathBuf {
+pub(super) fn guard_tmux(root: &Path, id: &str) -> PathBuf {
     let path = root.join("guard-tmux");
     fs::write(root.join("guard-id"), id).unwrap();
     fs::write(root.join("composer"), "").unwrap();
