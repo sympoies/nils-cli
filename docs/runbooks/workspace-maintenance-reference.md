@@ -468,7 +468,7 @@ Their required names stay the same, and their check titles state
 `deferred-full: runs in merge group`; neither is a plain success or full test
 measurement. Failed upstream jobs and scoped-Linux/deferred-macOS mismatches
 fail coverage. Full queue checks must pass before main advances.
-Full macOS lanes have 75 minutes; selected PR jobs retain 55 minutes.
+Full macOS lanes and selected PR jobs have 75 minutes on every event.
 See [the CI consumption contract](../specs/affected-scope-ci-consumption-v1.md)
 for the event/check matrix and receipt versions.
 
