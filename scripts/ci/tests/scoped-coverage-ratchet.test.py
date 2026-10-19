@@ -5,17 +5,12 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location('ci_fixtures', Path(__file__).with_name('merge-plan-ci.test.py'))
 fixtures = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixtures)
-ratchet_spec = importlib.util.spec_from_file_location(
-    'scoped_coverage_ratchet', ROOT / 'scripts/ci/scoped-coverage-ratchet.py')
-ratchet = importlib.util.module_from_spec(ratchet_spec)
-ratchet_spec.loader.exec_module(ratchet)
 
 
 class RatchetTests(unittest.TestCase):
@@ -25,20 +20,21 @@ class RatchetTests(unittest.TestCase):
     execute = fixtures.ConsumerExecutionTests.execute
     receipt = fixtures.ConsumerExecutionTests.receipt
 
-    def test_baseline_paths_resolve_a_symlinked_tempdir(self):
-        with tempfile.TemporaryDirectory() as directory:
-            canonical_tmp = Path(directory)
+    def test_baseline_clone_and_target_use_canonical_temp_root(self):
+        with tempfile.TemporaryDirectory(prefix='coverage-temp-root-') as canonical:
+            canonical_tmp = Path(canonical)
             symlinked_tmp = canonical_tmp.parent / f'{canonical_tmp.name}-alias'
             symlinked_tmp.symlink_to(canonical_tmp, target_is_directory=True)
             self.addCleanup(symlinked_tmp.unlink, missing_ok=True)
-            with patch.dict(os.environ, TMPDIR=str(symlinked_tmp)):
-                with tempfile.TemporaryDirectory(prefix='ci-coverage-base-') as temporary:
-                    temp_root, baseline, target = ratchet.baseline_paths(temporary)
+            result, calls = self.coverage(TMPDIR=str(symlinked_tmp))
 
-        self.assertEqual(temp_root, Path(temporary).resolve())
-        self.assertEqual(baseline, temp_root / 'repository')
-        self.assertEqual(target, temp_root / 'target')
-        self.assertEqual(temp_root, temp_root.resolve())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        baseline = next(row for row in calls if row['stage'] == 'BASE')
+        baseline_cwd = Path(baseline['cwd'])
+        baseline_target = Path(baseline['target'])
+        self.assertEqual(baseline_cwd, Path(os.path.realpath(baseline_cwd)))
+        self.assertEqual(baseline_target, Path(os.path.realpath(baseline_target)))
+        self.assertEqual(baseline_cwd.parent, baseline_target.parent)
 
     def setUp(self):
         fixtures.ConsumerExecutionTests.setUp(self)
