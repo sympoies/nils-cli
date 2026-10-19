@@ -71,6 +71,36 @@ class DevlogPolicy(unittest.TestCase):
         self.assertIn('month-file-changed', result.stdout)
 
 
+    def test_docs_gate_rejects_committed_month_edit(self):
+        self.write('docs/devlog/2020-01.md', '# Development log - 2020-01\n\nChanged history.\n')
+        self.commit('Committed month edit')
+        result = self.gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('month-file-changed', result.stdout)
+
+    def accepted_fragment(self, slug):
+        self.git('switch', '-q', 'main')
+        self.new(slug)
+        self.commit('Accepted fragment')
+        self.git('switch', '-q', '-c', 'chore/' + slug)
+        return self.repo / f'docs/devlog/pending/2020-01-02-{slug}.md'
+
+    def test_committed_fragment_edit_is_rejected(self):
+        path = self.accepted_fragment('committed-edit')
+        path.write_text(path.read_text().replace('An outcome.', 'Changed outcome.'))
+        self.commit('Committed fragment edit')
+        result = self.gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('fragment-modified', result.stdout)
+
+    def test_committed_fragment_delete_is_rejected(self):
+        path = self.accepted_fragment('committed-delete')
+        path.unlink()
+        self.commit('Committed fragment deletion')
+        result = self.gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('fragment-deleted', result.stdout)
+
     def test_local_fast_preserves_explicit_base_for_docs_checks(self):
         self.new('local-fast')
         self.env.pop('NILS_CLI_DEVLOG_BASE')
@@ -153,6 +183,35 @@ class DevlogPolicy(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn('exact fold', result.stdout)
 
+    def accepted_fold(self):
+        self.git('switch', '-q', 'main')
+        self.new('accepted')
+        self.commit('Accepted fragment')
+        self.git('switch', '-q', '-c', 'chore/devlog-fold-fixture')
+        self.run_cmd('devlog', 'fold')
+        self.commit('chore(devlog): fold accepted fragments')
+        path = self.repo / 'docs/devlog/2020-01.md'
+        return path, path.read_bytes()
+
+    def test_real_fold_cannot_hide_staged_history_edit(self):
+        path, folded = self.accepted_fold()
+        path.write_bytes(folded + b'\nHidden staged edit.\n')
+        self.git('add', 'docs/devlog/2020-01.md')
+        path.write_bytes(folded)
+        result = self.gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('staged or committed devlog', result.stdout)
+
+    def test_real_fold_cannot_hide_committed_history_edit(self):
+        path, folded = self.accepted_fold()
+        path.write_bytes(folded + b'\nHidden committed edit.\n')
+        self.commit('chore(devlog): fold accepted fragments')
+        path.write_bytes(folded)
+        self.git('add', 'docs/devlog/2020-01.md')
+        result = self.gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('staged or committed devlog', result.stdout)
+
     def test_maintainer_preparation_script_folds_without_committing(self):
         self.git('switch', '-q', 'main')
         self.new('accepted')
@@ -187,9 +246,24 @@ class DevlogPolicy(unittest.TestCase):
         self.assertFalse((self.repo / f'docs/devlog/pending/{yesterday}-utc-yesterday.md').exists())
         self.assertTrue((self.repo / f'docs/devlog/pending/{today}-utc-today.md').exists())
         self.commit('chore(devlog): fold accepted fragments')
-        self.env['TZ'] = 'Etc/GMT+12' if now.hour >= 10 else 'Etc/GMT-14'
+        self.env['TZ'] = 'UTC-24'  # POSIX offset: caller is always one date ahead of UTC.
         result = self.gate()
         self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_fold_ahead_of_utc_is_rejected_even_in_that_timezone(self):
+        today = datetime.now(timezone.utc).date()
+        self.git('switch', '-q', 'main')
+        self.new('utc-today', date=str(today))
+        self.commit('Accepted fragment at UTC cutoff')
+        self.git('switch', '-q', '-c', 'chore/devlog-fold-ahead')
+        # Unlike real-world offsets, +24 hours is ahead at every UTC hour.
+        self.env['TZ'] = 'UTC-24'
+        self.run_cmd('devlog', 'fold')
+        self.assertFalse((self.repo / f'docs/devlog/pending/{today}-utc-today.md').exists())
+        self.commit('chore(devlog): fold accepted fragments')
+        result = self.gate()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('differ from deterministic fold', result.stdout)
 
     def test_fold_passes_pr_and_merge_queue_snapshots(self):
         self.git('switch', '-q', 'main')
