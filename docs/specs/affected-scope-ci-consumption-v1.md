@@ -2,17 +2,21 @@
 
 ## Routes
 
-PR code lanes invoke the canonical checks entrypoint with `--ci-merge-plan`.
-They consume the existing [trusted-base plan](affected-scope-merge-plan-v1.md),
-with no second dependency selector. Documentation-only and proven release-only
-PRs retain their substantive audits and provenance checks. Merge groups,
-nightly schedules and explicitly dispatched workflows run the full Linux and
-macOS stacks, including the absolute 85% workspace line-coverage floor. Queue
-candidates cannot select the docs-only, release-only or scoped shortcuts.
+PR and merge-group Linux lanes invoke the canonical checks entrypoint with
+`--ci-merge-plan` and consume the existing
+[trusted-base plan](affected-scope-merge-plan-v1.md). PR docs-only and proven
+release-only lanes retain their audits and provenance checks. The queue always
+invokes the planner on the combined candidate, with full Linux fallback.
 
-Required checks remain `test`, `test_macos`, and `coverage`. Existing advisory
-and containment lanes retain their workflow dependencies; their work is
-additional to the selected Rust scope. No plan or receipt alone permits merge.
+After the maintainer's ruleset migration, required names are `test`,
+`test_containment`, and `cargo-deny (advisories + bans)`. PRs and queue groups
+have no macOS, coverage or deferred-full labeler jobs. The required Linux test
+job runs a failure guard even when change detection fails, preventing skipped
+needs from admitting a candidate. No plan or receipt alone permits merge.
+
+Full Linux/macOS validation and the 85% workspace coverage floor run nightly,
+on manual full CI on main, and before release builds on the exact tagged SHA.
+See the [delivery flow](../../.github/README.md) for migration and recovery.
 
 ## Inputs and execution
 
@@ -24,9 +28,8 @@ still have exactly ordered parents B/H, and local HEAD must equal M. The
 launcher and selector are read from that actual B, with no ancestry tolerance,
 alternate checkout, or substitution of a newly queried remote ref.
 
-The consumer also supports merge-group planning for diagnostics and direct
-callers; the hosted merge-group workflow always runs full checks directly.
-In that diagnostic route, a merge group binds B to `merge_group.base_sha` and M to `merge_group.head_sha`, which must match the
+The hosted merge-group lane consumes the same planner. A merge group binds B
+to `merge_group.base_sha` and M to `merge_group.head_sha`, which must match the
 checkout. A two-parent queue candidate directly supplies H from its second
 parent. A single-parent squash queue uses its canonical reserved PR reference
 to resolve the exact pull-request head. A local merge-tree proof must equal the
@@ -55,87 +58,37 @@ Nonempty `READY/VALIDATE/SCOPED` runs strict Clippy for the selected packages,
 builds their binaries with all features for sibling fixtures, audits selected
 completion-required binaries against committed assets with the existing
 freshness audit and no additional build, and runs their nextest tests. Linux
-runs selected doctests. macOS runs selected instrumented tests for LCOV,
-explicitly excluding unselected workspace packages from the report.
+runs selected doctests. Cheap workspace audits, formatting and test identity
+isolation remain. Accepted policy escalates scripts, completions, shared
+helpers, manifests and sensitive sources to the complete Linux stack.
+Unknown squash provenance or a mismatch between reconstructed source and the
+actual combined tree uses full fallback rather than granting scoped credit.
 
-The selected-package aggregate line percentage must not decrease versus the exact
-immutable base. Both snapshots run the same selected packages, all features,
-nextest profile, and report exclusions on the same runner; no rounded tolerance
-is applied. Test identity isolation, cheap workspace audits and formatting
-remain. The unchanged policy escalates script, completion,
-shared helper, manifest, and sensitive-source changes to the complete stack.
-
-Scoped coverage measures the base freshly in a temporary local clone, with
-separate Cargo object/profile directories to avoid duplicate source mappings.
-It does not reuse cross-platform or cached report percentages. Missing base,
-failed baseline/candidate tests, or empty/invalid LCOV fails closed. The candidate
-checkout and refs stay unchanged; the clone is removed on success or failure.
-`target/ci-merge-plan/scoped-coverage/` retains the baseline LCOV and a ratchet
-receipt with base/candidate commits, identical arguments, counts and verdict.
-
-A trusted PR preview runs in `changes` before the required jobs are scheduled.
-It uses the same consumer with `--plan-only`, preserving B/H/M/T, the accepted
-base selector, and fail-closed plan parsing, but executes no tests. A valid
-FULL/HOLD preview makes the required `test_macos` job conclude **skipped**.
-Linux retains its full fallback. `coverage` concludes **skipped** only after
-changes, Linux FULL validation, and containment have all succeeded, with macOS
-actually skipped. A failed/cancelled upstream or scoped-Linux mismatch runs the
-coverage guard and fails instead of receiving a deferral.
-
-The separate `deferred-full: runs in merge group` job labels the actual skipped
-required check runs with that title and an explanation. It preserves their
-skipped conclusions and the required names `test_macos` and `coverage`; a
-deferred check is never presented as a plain success. It only labels completed
-skipped jobs from the same workflow run.
-
-SCOPED PRs still execute instrumented macOS tests with the immutable-base
-coverage ratchet. If macOS cannot reproduce the selected preview and falls
-back to FULL/HOLD, the macOS job fails rather than deferring selected coverage.
-Missing LCOV or a decrease still fails. Queue, nightly and on-demand workflows
-always run full Linux and macOS tests and the absolute 85% coverage floor.
-Full macOS lanes and selected PRs have a 75-minute timeout on every event.
-
-| Required name | SCOPED PR candidate | FULL/HOLD PR candidate | Merge group / nightly |
-| --- | --- | --- | --- |
-| `test` | Selected Linux checks and doctests | Full Linux fallback | Full Linux checks and doctests |
-| `test_macos` | Selected instrumented tests and base ratchet | Skipped, explicitly labelled deferred-full | Full instrumented macOS tests, 85% floor |
-| `coverage` | Selected LCOV and containment success | Skipped only after full Linux and containment success | Full LCOV and containment success |
-
-Source review binds the PR candidate and selected evidence. Full macOS and
-coverage proof binds the queue candidate that will reach main. A failed queue
-check prevents landing; the delivery owner investigates before retry/requeue.
-Nightly failures retain the alert and bisect/revert path. No required check
-name, ruleset or branch-protection configuration changes with this route.
+Nightly and release full validation use the canonical full entrypoint directly;
+there is no docs, release-only, preview or affected-scope shortcut. Their final
+failure guard requires Linux, macOS, coverage, containment and dependency policy
+success, including nonempty LCOV from the instrumented macOS run. It rejects
+failed, cancelled, skipped and missing lanes. Release build checkouts and all
+full-validation checkouts pin the same immutable SHA.
 
 ## Evidence and provenance
 
-The `merge-scope-preview` artifact retains `plan.json` and `planning.json`.
-The latter uses `nils-cli.merge-planning.v1`, status PLANNED, exact inputs,
-scope, packages, fallback and plan digest. A preview has no validation receipt
-and proves no tests passed. The hosted preview is available only for PRs;
-merge groups cannot replace actual validation with preview mode.
-
-Executed platform artifacts retain `target/ci-merge-plan/plan.json` when available and
-`validation.json`. The latter binds planning B/H/M/T, actual checkout/tree,
-captured event base, plan digest, effective scope,
-packages, fallback, runner, doctest choice, coverage policy/base or absolute
-floor, command, exit code, and PASS/FAIL. Existing executed receipts retain
-`nils-cli.merge-validation.v1`. The low-level deferral safety route uses the additive
-`nils-cli.merge-validation.v2` contract, with `status: DEFERRED`,
-`validation_scope: DEFERRED_FULL`, an empty command, no coverage policy/floor,
-and a `deferred_reason`. Exit 0 acknowledges deferral; it proves no tests ran.
-Hosted FULL/HOLD PRs now skip the macOS job before execution; an unexpected
-low-level deferral during selected macOS validation fails that required job.
+The Linux artifact retains `target/ci-merge-plan/plan.json` when available
+and `validation.json`. Executed `nils-cli.merge-validation.v1` receipts bind
+planning B/H/M/T, actual checkout/tree, captured event base, plan digest,
+effective scope, packages, fallback, runner, doctest choice, command, exit code
+and PASS/FAIL. A diagnostic `--plan-only` invocation remains available for PRs;
+it has no validation receipt and proves no tests ran. Hosted jobs no longer
+use it to schedule or label macOS work. Deferred receipts are no longer emitted.
 
 PASS is written only after the actual executor succeeds. Planner HOLD and passing full validation are separate
 facts. Executors do not receive `GITHUB_OUTPUT`; the consumer replaces the
 step's output with its authoritative scalar scope after success, or empties it
 after failure. Executor-written multiline framing cannot change that scope.
 
-Full-validation markers are emitted only for actual FULL validation or
-merge-group/nightly/on-demand full routes, so scoped or deferred checks cannot
-prove full base CI to the release gate. Executed coverage requires macOS LCOV
-and containment success; a deferred PR never downloads or publishes LCOV.
+Full-validation markers in the Linux affected lane require actual FULL
+execution. They do not authorize releases. Releases execute the separate shared
+full workflow on their tagged SHA rather than reusing PR or queue receipts.
 
 ## Validation and measurement
 
@@ -162,9 +115,11 @@ reviewed-head and checkout inputs before policy reads.
 Rollout compares required-check duration, ready-to-merged time, and merges per
 day against preceding full runs, retaining exact inputs, scope, fallback, and
 real check results. Synthetic package counts are not throughput measurements.
-Missed scopes use the existing nightly alert and maintainer bisect/revert path,
+Missed scopes use the automatic nightly tracking issue and maintainer bisect/revert path,
 followed by a selector regression. This consumer grants no release authority.
 
+The standalone scoped-coverage helper remains available for explicit callers;
+it is not a PR or queue lane.
 `python3 scripts/ci/tests/scoped-coverage-ratchet.test.py` runs the same offline
 consumer fixture with controlled LCOV producers. It covers decreasing, equal
 and increasing percentages, immutable base selection, identical package scope,
