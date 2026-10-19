@@ -2,9 +2,9 @@
 //! No claim of semantic implication: the independent reviewer resolves them.
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{ForgeError, incomplete};
+use super::{ForgeError, incomplete, limit};
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct Finding {
     pub path: String,
     pub kind: &'static str,
@@ -23,7 +23,10 @@ pub(super) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
     if patch.trim().is_empty() {
         return Ok(Vec::new());
     }
-    if patch.len() > 4 * 1024 * 1024 || !patch.starts_with("diff --git ") {
+    if patch.len() > 4 * 1024 * 1024 {
+        return Err(limit("diff_bytes", "diff exceeds 4 MiB"));
+    }
+    if !patch.starts_with("diff --git ") {
         return Err(incomplete());
     }
     let mut findings = BTreeSet::new();
@@ -34,6 +37,9 @@ pub(super) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
         if line.starts_with("diff --git ") {
             if remaining != (0, 0) {
                 return Err(incomplete());
+            }
+            if line.starts_with("diff --git \"") {
+                return Err(limit("path_bytes", "Git-quoted paths are unsupported"));
             }
             finish(&file, &mut findings);
             let names = line
@@ -48,7 +54,7 @@ pub(super) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
             count += 1;
             // The comparison API bounds file lists; fail closed at its limit.
             if count >= 300 {
-                return Err(incomplete());
+                return Err(limit("file_count", "comparison contains 300 or more files"));
             }
         } else if remaining != (0, 0) {
             let Some((prefix, content)) = line.split_at_checked(1) else {
@@ -99,13 +105,26 @@ pub(super) fn detect(patch: &str) -> Result<Vec<Finding>, ForgeError> {
         return Err(incomplete());
     }
     finish(&file, &mut findings);
+    if findings.len() > 32 {
+        return Err(limit(
+            "declaration_pairs",
+            "comparison requires more than 32 file/kind pairs",
+        ));
+    }
     Ok(findings.into_iter().collect())
 }
 
 fn path_name(path: &str, prefix: &str) -> Result<String, ForgeError> {
     let path = path.strip_prefix(prefix).unwrap_or(path);
-    if path.starts_with('"') || path.contains(['\t', '|']) {
-        return Err(incomplete());
+    if !path.is_ascii()
+        || path
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || matches!(b, b'"' | b'|'))
+    {
+        return Err(limit(
+            "path_bytes",
+            "path requires quoting or contains unsupported non-ASCII, whitespace, control, quote or pipe bytes",
+        ));
     }
     Ok(path.to_string())
 }
@@ -137,8 +156,12 @@ fn source(path: &str) -> bool {
             "rs" | "py"
                 | "js"
                 | "jsx"
+                | "cjs"
+                | "mjs"
                 | "ts"
                 | "tsx"
+                | "cts"
+                | "mts"
                 | "go"
                 | "java"
                 | "kt"
@@ -155,6 +178,14 @@ fn source(path: &str) -> bool {
 }
 
 fn finish(file: &File, found: &mut BTreeSet<Finding>) {
+    let renamed_test =
+        !file.deleted && file.old != file.new && source(&file.old) && test_path(&file.old);
+    if renamed_test {
+        found.insert(Finding {
+            path: file.old.clone(),
+            kind: "deleted-test",
+        });
+    }
     let path = if file.deleted || file.new.is_empty() {
         &file.old
     } else {
@@ -198,7 +229,9 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
     let mut depth = 0i32;
     for raw in lines {
         let line = raw.trim();
-        if line.starts_with(['/', '*']) || (line.starts_with('#') && !line.starts_with("#[")) {
+        if line.starts_with(['/', '*'])
+            || (line.starts_with('#') && !line.starts_with("#[") && !line.starts_with("#!["))
+        {
             continue;
         }
         let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
@@ -206,6 +239,16 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
             line.starts_with("#[") && (compact.contains("test]") || compact.contains("test("));
         if rust_test || line.starts_with("@Test") {
             test_attribute = true;
+        }
+        if compact.contains("#[cfg(test)]") {
+            test_attribute = true;
+        }
+        if test_attribute
+            && (compact.starts_with("mod") || compact.contains("]mod"))
+            && compact.ends_with(';')
+        {
+            *cases.entry(compact.clone()).or_default() += 1;
+            test_attribute = false;
         }
         let function =
             line.starts_with("fn ") || line.starts_with("async fn ") || line.starts_with("pub fn ");
@@ -254,27 +297,29 @@ fn signals(lines: &[String], test_path: bool) -> (Counts, Counts, Counts) {
                 depth = 0;
             }
         }
-        if [
-            "#[ignore",
-            "pytest.mark.skip",
-            "pytest.mark.xfail",
-            "pytest.skip(",
-            "pytest.xfail(",
-            "unittest.skip",
-            ".skipTest(",
-            "unittest.expectedFailure",
-            "@Ignore",
-            "@Disabled",
-            "test.skip(",
-            "it.skip(",
-            "describe.skip(",
-            "xit(",
-            "xtest(",
-            "xdescribe(",
-            ".Skip(",
-        ]
-        .iter()
-        .any(|p| compact.contains(p))
+        if compact.contains("cfg(any())")
+            || (compact.contains("cfg_attr(") && compact.contains("ignore"))
+            || [
+                "#[ignore",
+                "pytest.mark.skip",
+                "pytest.mark.xfail",
+                "pytest.skip(",
+                "pytest.xfail(",
+                "unittest.skip",
+                ".skipTest(",
+                "unittest.expectedFailure",
+                "@Ignore",
+                "@Disabled",
+                "test.skip(",
+                "it.skip(",
+                "describe.skip(",
+                "xit(",
+                "xtest(",
+                "xdescribe(",
+                ".Skip(",
+            ]
+            .iter()
+            .any(|p| compact.contains(p))
         {
             *skips.entry(compact).or_default() += 1;
         }

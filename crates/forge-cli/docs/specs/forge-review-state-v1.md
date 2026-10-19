@@ -143,6 +143,12 @@ and delivery read the trusted ledger to detect persisted ownership even after
 a restart without the assignment environment. Assigned operations require
 GitHub's trusted provider ledger; other providers fail closed when assigned.
 
+- `test-changes <id> --expected-head <sha>` is a read-only pre-review preview
+  that needs no assignment or review. It prints test-change findings and the
+  declaration-bound confirmation digest; it never admits a review. See
+  [test-change admission](test-change-admission-v1.md) for declarations, output
+  fields, deterministic limits and recovery.
+
 - `assign <id> --reviewer-session <session-id>[@machine] --review-author <login>
   --base-sha <sha> --expected-head <sha> --expected-state <digest|none>` records
   an explicit handover in the existing `forge-cli.review-state.v1` chain.

@@ -1089,7 +1089,11 @@ pub fn run(
             "designated review requires the GitHub provider ledger",
         ));
     }
+    if let PrReviewHandoffCommand::TestChanges(a) = &args.command {
+        return test_integrity::preview(&runner, &ctx, a.id, &a.expected_head, format);
+    }
     let id = match &args.command {
+        PrReviewHandoffCommand::TestChanges(_) => unreachable!("preview returned above"),
         PrReviewHandoffCommand::Assign(a) => a.id,
         PrReviewHandoffCommand::Inspect(a) => a.id,
         PrReviewHandoffCommand::Check(a) => a.id,
@@ -1122,6 +1126,7 @@ pub fn run(
         .map(|h| h.approval_policy)
         .unwrap_or_default();
     match &args.command {
+        PrReviewHandoffCommand::TestChanges(_) => unreachable!("preview returned above"),
         PrReviewHandoffCommand::Inspect(a) => {
             if let Some(expected) = &a.expected_head {
                 require_head(head, expected)?;

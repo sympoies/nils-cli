@@ -24,6 +24,7 @@ fn error(kind: &'static str, message: impl Into<String>, detail: Option<String>)
     let next_action = match kind {
         "test_changes_undeclared" => "declare_test_changes",
         "test_changes_unconfirmed" => "request_reviewer_confirmation",
+        "test_changes_limit_exceeded" => "split_comparison_or_rename_paths",
         _ => "retry_complete_comparison",
     };
     ForgeError::validation_with_details(
@@ -31,6 +32,16 @@ fn error(kind: &'static str, message: impl Into<String>, detail: Option<String>)
         kind,
         message,
         serde_json::json!({"detail": detail, "next_action": next_action, "retryable": kind == "test_changes_incomplete"}),
+    )
+}
+
+fn limit(name: &str, message: &str) -> ForgeError {
+    error(
+        "test_changes_limit_exceeded",
+        message,
+        Some(format!(
+            "Limit: {name}. Recovery: split the PR into smaller comparisons; for path_bytes, rename affected paths to unambiguous printable ASCII without whitespace, quotes or pipes. See crates/forge-cli/docs/specs/test-change-admission-v1.md#limits-and-recovery. No bypass is available."
+        )),
     )
 }
 
@@ -50,16 +61,13 @@ fn api(ctx: &ProviderContext, endpoint: String, extra: &[&str]) -> BackendCall {
     BackendCall::new(BackendProgram::Gh, argv)
 }
 
-/// Runs only after ordinary designated-review identity, interval and PASS checks.
 /// Re-read mutable provider metadata after reading the immutable comparison.
-pub(super) fn ensure<R: BackendRunner>(
+fn comparison<R: BackendRunner>(
     runner: &R,
     ctx: &ProviderContext,
     number: u64,
     head: &str,
-    review_author: &str,
-    report: &str,
-) -> Result<(), ForgeError> {
+) -> Result<(Subject, String, Vec<diff::Finding>), ForgeError> {
     let repo = ctx.repo.as_deref().ok_or_else(incomplete)?;
     let subject_call = api(
         ctx,
@@ -73,7 +81,11 @@ pub(super) fn ensure<R: BackendRunner>(
         serde_json::from_str(&runner.run(&subject_call)?.stdout).map_err(|_| incomplete())
     };
     let subject = read_subject()?;
-    if subject.head != head || !super::valid_sha(&subject.base) || subject.author.is_empty() {
+    if subject.head != head
+        || !super::valid_sha(head)
+        || !super::valid_sha(&subject.base)
+        || subject.author.is_empty()
+    {
         return Err(incomplete());
     }
     let patch = runner
@@ -91,6 +103,60 @@ pub(super) fn ensure<R: BackendRunner>(
             None,
         ));
     }
+    Ok((subject, patch, findings))
+}
+
+fn digest(subject: &Subject, patch: &str) -> String {
+    sha256_digest(
+        format!(
+            "{}\n{}\n{patch}\n{}",
+            subject.base,
+            subject.head,
+            declarations(&subject.body)
+        )
+        .as_bytes(),
+    )
+}
+
+/// Read-only author preview: no assignment, ledger or review is required.
+pub(super) fn preview<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+    head: &str,
+    format: nils_common::cli_contract::OutputFormat,
+) -> Result<i32, ForgeError> {
+    let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
+    let digest = digest(&subject, &patch);
+    let confirmation = format!("Test changes confirmed: {digest}");
+    let payload = serde_json::json!({"number": number, "head_sha": head, "base_sha": subject.base, "findings": findings, "digest": digest, "confirmation": confirmation});
+    Ok(crate::envelope::emit_success(
+        super::schema(),
+        payload,
+        format,
+        |p| {
+            for finding in p["findings"].as_array().unwrap() {
+                println!(
+                    "- {} | {} | <reason and retained coverage>",
+                    finding["path"].as_str().unwrap(),
+                    finding["kind"].as_str().unwrap()
+                );
+            }
+            println!("{}", p["confirmation"].as_str().unwrap());
+        },
+    ))
+}
+
+/// Runs only after ordinary designated-review identity, interval and PASS checks.
+pub(super) fn ensure<R: BackendRunner>(
+    runner: &R,
+    ctx: &ProviderContext,
+    number: u64,
+    head: &str,
+    review_author: &str,
+    report: &str,
+) -> Result<(), ForgeError> {
+    let (subject, patch, findings) = comparison(runner, ctx, number, head)?;
     if findings.is_empty() {
         return Ok(());
     }
@@ -113,7 +179,13 @@ pub(super) fn ensure<R: BackendRunner>(
                 .any(|(path, kind)| *path == f.path && *kind == f.kind)
         })
         .collect();
-    if rows.len() > 32 || !missing.is_empty() {
+    if rows.len() > 32 {
+        return Err(limit(
+            "declaration_pairs",
+            "declaration contains more than 32 file/kind rows",
+        ));
+    }
+    if !missing.is_empty() {
         let files = findings
             .iter()
             .map(|f| format!("- {} | {} | <reason and retained coverage>", f.path, f.kind))
@@ -123,12 +195,11 @@ pub(super) fn ensure<R: BackendRunner>(
             "test_changes_undeclared",
             "test changes require explicit PR-body declarations under ## Test changes",
             Some(format!(
-                "Add the following rows to ## Test changes with a concrete reason (at least 12 characters). Intentional removals/false positives may use '- allow <path> | <kind> | <reason>'; at most 32 exact entries, no globs. All entries still need independent reviewer confirmation.\n{files}"
+                "Before requesting review, run `forge-cli pr review-handoff test-changes {number} --expected-head {head}` to print findings and the digest without an existing review. Add the following rows to ## Test changes with a concrete reason (at least 12 characters), then rerun that preview for the updated digest. Intentional removals/false positives may use '- allow <path> | <kind> | <reason>'; at most 32 exact entries, no globs. All entries still need independent reviewer confirmation.\n{files}"
             )),
         ));
     }
-    let digest =
-        sha256_digest(format!("{}\n{}\n{patch}\n{declarations}", subject.base, head).as_bytes());
+    let digest = digest(&subject, &patch);
     let confirmation = format!("Test changes confirmed: {digest}");
     if subject.author.eq_ignore_ascii_case(review_author)
         || !report.lines().any(|line| line.trim() == confirmation)
@@ -137,7 +208,7 @@ pub(super) fn ensure<R: BackendRunner>(
             "test_changes_unconfirmed",
             "the designated independent reviewer must confirm the declared test changes in the published passing report",
             Some(format!(
-                "{confirmation}\nReview every declared/allowlisted change and publish that exact line in the designated review report. Confirmation expires when the head, base, diff or declaration changes."
+                "{confirmation}\nRead-only pre-review preview: `forge-cli pr review-handoff test-changes {number} --expected-head {head}`. Review every declared/allowlisted change and publish that exact line in the designated review report. Confirmation expires when the head, base, diff or declaration changes."
             )),
         ));
     }

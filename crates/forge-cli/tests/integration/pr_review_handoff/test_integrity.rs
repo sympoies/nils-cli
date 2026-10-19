@@ -31,9 +31,90 @@ fn handoff_rejects_undeclared_test_changes_with_actionable_files() {
         "assertion-change",
         "new-skip",
         "## Test changes",
+        "review-handoff test-changes",
     ] {
         assert!(out.stdout.contains(expected), "{}", out.stdout);
     }
+}
+
+#[test]
+fn pre_review_test_changes_prints_findings_and_digest_without_a_review_or_writes() {
+    let stub = fixture(HEAD, &[], vec![]);
+    let diff = stub.tempdir.path().join("integrity.diff");
+    let metadata = stub.tempdir.path().join("integrity.json");
+    fs::write(&diff, DIFF).unwrap();
+    fs::write(
+        &metadata,
+        json!({"head": HEAD, "base": OLD, "author": "contributor", "body": DECLARATIONS})
+            .to_string(),
+    )
+    .unwrap();
+    let stub = stub
+        .env("TEST_INTEGRITY_DIFF", diff.to_string_lossy())
+        .env("TEST_INTEGRITY_METADATA", metadata.to_string_lossy());
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-handoff",
+            "test-changes",
+            "7",
+            "--expected-head",
+            HEAD,
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let value = parse_envelope(&out.stdout);
+    assert_eq!(value["data"]["findings"].as_array().unwrap().len(), 2);
+    assert!(
+        value["data"]["digest"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    let confirmation = format!(
+        "Test changes confirmed: {}",
+        value["data"]["digest"].as_str().unwrap()
+    );
+    let admitted = check(
+        &integrity_fixture(DECLARATIONS, &confirmation, "contributor"),
+        HEAD,
+    );
+    assert_eq!(admitted.code, 0, "{} {}", admitted.stdout, admitted.stderr);
+    let log = fs::read_to_string(stub.tempdir.path().join("calls.log")).unwrap();
+    assert!(!log.contains("graphql"), "{log}");
+    assert!(!log.contains("--method"), "{log}");
+    assert!(!log.contains("reviews"), "{log}");
+}
+
+#[test]
+fn pre_review_test_changes_declares_a_read_only_operation_effect() {
+    let stub = StubEnv::new();
+    let out = run_forge_cli(
+        &stub,
+        &[
+            "operation-effect",
+            "--format",
+            "json",
+            "--",
+            "pr",
+            "review-handoff",
+            "test-changes",
+            "7",
+            "--expected-head",
+            HEAD,
+        ],
+    );
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let value = parse_envelope(&out.stdout);
+    assert_eq!(value["data"]["effect"], "read_only");
+    assert_eq!(value["data"]["provider_effect"], "network_read");
 }
 
 #[test]
