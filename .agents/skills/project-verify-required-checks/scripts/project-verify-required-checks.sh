@@ -203,6 +203,8 @@ run python3 scripts/ci/assert-import-audit.py
 run python3 scripts/ci/tests/assert-import-audit.test.py
 run python3 scripts/ci/tests/merge-plan-ci.test.py
 run python3 scripts/ci/tests/scoped-coverage-ratchet.test.py
+run python3 scripts/ci/tests/scoped-coverage-parallel.test.py
+run python3 scripts/ci/tests/scoped-coverage-parallel-jobs.test.py
 run python3 scripts/ci/tests/merge-plan-ci-repairs.test.py
 run python3 scripts/ci/tests/merge-plan-ci-snapshot.test.py
 run bash scripts/ci/tests/test-env.test.sh

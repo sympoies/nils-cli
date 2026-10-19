@@ -54,11 +54,19 @@ def baseline_paths(temporary):
     return temporary, temporary / 'repository', temporary / 'target'
 
 
+def compare_counts(old, new):
+    """Compare exact fractions; display rounding must never change admission."""
+    return new['covered'] * old['lines'] >= old['covered'] * new['lines']
+
+
 def run(base, packages, excludes, output):
     if not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', base):
         raise ValueError('an immutable coverage base is required')
     if not packages or any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', p) for p in packages):
         raise ValueError('invalid scoped coverage package selection')
+    side = os.environ.get('NILS_CLI_SCOPED_COVERAGE_SIDE', 'both')
+    if side not in ('both', 'base', 'candidate'):
+        raise ValueError('invalid scoped coverage side')
     repo = Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip())
     head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip()
     subprocess.run(['git', 'cat-file', '-e', base + '^{commit}'], cwd=repo, check=True)
@@ -72,31 +80,41 @@ def run(base, packages, excludes, output):
     output.mkdir(parents=True, exist_ok=True)
     evidence = repo / 'target/ci-merge-plan/scoped-coverage'
     evidence.mkdir(parents=True, exist_ok=True)
-    receipt = {'schema_version': 'nils-cli.scoped-coverage-ratchet.v1',
+    receipt = {'schema_version': ('nils-cli.scoped-coverage-ratchet.v1' if side == 'both'
+                                  else 'nils-cli.scoped-coverage-measurement.v1'),
                'base': base, 'candidate': head, 'packages': packages,
-               'arguments': arguments, 'status': 'RUNNING', 'stage': 'baseline'}
+               'arguments': arguments, 'status': 'RUNNING', 'stage': 'baseline',
+               'side': side, 'coverage_identity': os.environ.get('NILS_CLI_SCOPED_COVERAGE_IDENTITY')}
     (evidence / 'base-lcov.info').unlink(missing_ok=True)
     (evidence / 'ratchet.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
     try:
-        # A clone keeps Git-aware tests working without registering a worktree
-        # or moving the candidate's refs. Baseline objects and profiles must not
-        # share a target directory with the candidate: duplicate source mappings
-        # otherwise corrupt the coverage corpus.
-        with tempfile.TemporaryDirectory(prefix='ci-coverage-base-') as temporary:
-            temporary, baseline, baseline_target = baseline_paths(temporary)
-            subprocess.run(['git', 'clone', '--quiet', '--shared', '--no-checkout',
-                            str(repo), str(baseline)], check=True)
-            subprocess.run(['git', 'checkout', '--quiet', '--detach', base], cwd=baseline, check=True)
-            baseline_env = dict(os.environ, CARGO_TARGET_DIR=str(baseline_target))
-            baseline_env.pop('CARGO_LLVM_COV_TARGET_DIR', None)
-            baseline_env.pop('LLVM_PROFILE_FILE', None)
-            receipt['baseline'] = run_coverage(baseline, output / 'base-lcov.info', arguments, baseline_env)
-            shutil.copyfile(output / 'base-lcov.info', evidence / 'base-lcov.info')
+        if side in ('both', 'base'):
+            # A clone keeps Git-aware tests working without registering a worktree
+            # or moving the candidate's refs. Baseline objects and profiles must not
+            # share a target directory with the candidate: duplicate source mappings
+            # otherwise corrupt the coverage corpus.
+            with tempfile.TemporaryDirectory(prefix='ci-coverage-base-') as temporary:
+                temporary, baseline, baseline_target = baseline_paths(temporary)
+                subprocess.run(['git', 'clone', '--quiet', '--shared', '--no-checkout',
+                                str(repo), str(baseline)], check=True)
+                subprocess.run(['git', 'checkout', '--quiet', '--detach', base], cwd=baseline, check=True)
+                baseline_env = dict(os.environ, CARGO_TARGET_DIR=str(baseline_target))
+                baseline_env.pop('CARGO_LLVM_COV_TARGET_DIR', None)
+                baseline_env.pop('LLVM_PROFILE_FILE', None)
+                receipt['baseline'] = run_coverage(baseline, output / 'base-lcov.info', arguments, baseline_env)
+                shutil.copyfile(output / 'base-lcov.info', evidence / 'base-lcov.info')
+        if side in ('both', 'candidate'):
             receipt['stage'] = 'candidate'
             receipt['current'] = run_coverage(repo, output / 'lcov.info', arguments, dict(os.environ))
+            if side == 'candidate':
+                shutil.copyfile(output / 'lcov.info', evidence / 'lcov.info')
+        if side != 'both':
+            receipt['status'] = 'MEASURED'
+            print(f'scoped coverage: {side} measured; comparison pending', flush=True)
+            return 0
         receipt['stage'] = 'compare'
         old, new = receipt['baseline'], receipt['current']
-        passed = new['covered'] * old['lines'] >= old['covered'] * new['lines']
+        passed = compare_counts(old, new)
         receipt['status'] = 'PASS' if passed else 'FAIL'
         print(f'coverage ratchet: {receipt["status"]} '
               f'base={old["covered"]}/{old["lines"]} ({100 * old["covered"] / old["lines"]:.6f}%) '

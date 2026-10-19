@@ -58,7 +58,7 @@ class WorkflowDispatchTests(unittest.TestCase):
             return (root / 'call.log').read_text().splitlines()
 
     def test_only_pr_dispatches_plan_consumption(self):
-        for job in ('test', 'test_macos'):
+        for job in ('test', 'test_macos_sides'):
             for event in ('pull_request', 'merge_group'):
                 with self.subTest(job=job, event=event):
                     argv = self.dispatch(job, event)
@@ -66,7 +66,7 @@ class WorkflowDispatchTests(unittest.TestCase):
                                      f'{job}/{event} uses the wrong scope lane')
 
     def test_nightly_and_on_demand_keep_full_validation(self):
-        for job in ('test', 'test_macos'):
+        for job in ('test', 'test_macos_sides'):
             for event in ('schedule', 'workflow_dispatch'):
                 with self.subTest(job=job, event=event):
                     self.assertNotIn('--ci-merge-plan', self.dispatch(job, event))
@@ -83,6 +83,7 @@ class WorkflowDispatchTests(unittest.TestCase):
                               'needs.changes.outputs.release_only': 'false',
                               'steps.validation.outputs.validation_scope': scope,
                               'needs.test_macos.outputs.validation_scope': scope,
+                              'needs.test_macos_sides.outputs.validation_scope': scope,
                               'github.event_name': event}
                     for key, value in values.items():
                         expression = expression.replace(key, repr(value))

@@ -439,9 +439,13 @@ jobs:
             tests::delete_kills_a_detached_descendant_inside_a_pinned_tmux_control_group \
             -- --exact --nocapture
 
-  test_macos:
+  test_macos_sides:
     if: github.event_name != 'push' && needs.changes.result == 'success' && needs.changes.outputs.validation_scope != 'FULL'
     needs: changes
+    strategy:
+      fail-fast: false
+      matrix:
+        side: ${{ fromJSON(github.event_name == 'pull_request' && needs.changes.outputs.validation_scope == 'SCOPED' && '["base", "candidate"]' || '["both"]') }}
     outputs:
       validation_scope: ${{ steps.validation.outputs.validation_scope }}
     runs-on: macos-14
@@ -512,6 +516,13 @@ jobs:
             cargo-llvm-cov
             cargo-nextest
 
+      # Bind concurrent reports to the same resolved tools and runner image.
+      - name: Record coverage runtime identity
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true'
+        run: |
+          identity="$({ rustc -Vv; cargo llvm-cov --version; cargo nextest --version; printf '%s\n' "${ImageOS}" "${ImageVersion}" "${RUNNER_ARCH}"; } | shasum -a 256 | cut -d ' ' -f 1)"
+          echo "NILS_CLI_SCOPED_COVERAGE_IDENTITY=${identity}" >> "$GITHUB_ENV"
+
       # The full lane runs the workspace tests once, instrumented, and enforces
       # the coverage floor here (NILS_CLI_TEST_RUNNER=llvm-cov). The `coverage`
       # job then reports from this run's LCOV instead of repeating the whole
@@ -521,6 +532,7 @@ jobs:
         env:
           NILS_CLI_RUNNER_MAX: "2"
           NILS_CLI_TEST_RUNNER: llvm-cov
+          NILS_CLI_SCOPED_COVERAGE_SIDE: ${{ matrix.side }}
           # Full macOS/coverage is required on the queue candidate. Selected
           # PR tests retain the immutable-base coverage no-decrease ratchet.
           NILS_CLI_PR_DEFER_FULL: ${{ github.event_name == 'pull_request' && '1' || '0' }}
@@ -574,19 +586,15 @@ jobs:
         if: always() && hashFiles('target/ci-merge-plan/validation.json') != ''
         uses: actions/upload-artifact@v7
         with:
-          name: merge-validation-macos
+          name: merge-validation-macos-${{ matrix.side }}
           path: target/ci-merge-plan
-
-      - name: Full validation marker
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (steps.validation.outputs.validation_scope == 'FULL' || github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        run: true
 
       - name: Generate HTML coverage report
         if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && steps.validation.outputs.validation_scope != 'SCOPED' && hashFiles('target/coverage/lcov.info') != ''
         run: cargo llvm-cov report --html --output-dir target/coverage
 
       - name: Upload coverage LCOV
-        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/lcov.info') != ''
+        if: matrix.side != 'base' && always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/lcov.info') != ''
         uses: actions/upload-artifact@v7
         with:
           name: coverage-lcov
@@ -594,7 +602,7 @@ jobs:
           retention-days: 7
 
       - name: Upload coverage HTML
-        if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/html/index.html') != ''
+        if: matrix.side != 'base' && always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && hashFiles('target/coverage/html/index.html') != ''
         uses: actions/upload-artifact@v7
         with:
           name: coverage-html
@@ -612,7 +620,7 @@ jobs:
         uses: mikepenz/action-junit-report@v6
         with:
           token: ${{ github.token }}
-          check_name: JUnit Test Report (macOS)
+          check_name: JUnit Test Report (macOS ${{ matrix.side }})
           report_paths: target/**/nextest/ci/junit.xml
           # Keep the job summary bounded; the JUnit artifact and failure
           # annotations retain the detailed test results.
@@ -625,8 +633,72 @@ jobs:
         if: always() && hashFiles('target/**/nextest/ci/junit.xml') != ''
         uses: actions/upload-artifact@v7
         with:
-          name: junit-nextest-macos
+          name: junit-nextest-macos-${{ matrix.side }}
           path: target/**/nextest/ci/junit.xml
+
+  # Preserve the required check name while scoped base/candidate macOS work
+  # executes concurrently. A failed matrix must fail this aggregate, not skip it.
+  test_macos:
+    if: ${{ always() && github.event_name != 'push' && needs.changes.result == 'success' && needs.changes.outputs.validation_scope != 'FULL' }}
+    needs: [changes, test_macos_sides]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      validation_scope: ${{ steps.scope.outputs.validation_scope }}
+    steps:
+      - name: Require macOS workers
+        env:
+          MACOS_RESULT: ${{ needs.test_macos_sides.result }}
+        run: |
+          if [ "${MACOS_RESULT}" != "success" ]; then
+            echo "error: macOS workers=${MACOS_RESULT}; both selected measurements must succeed" >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download selected measurements
+        if: github.event_name == 'pull_request' && needs.changes.outputs.validation_scope == 'SCOPED'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: merge-validation-macos-*
+          path: target/macos-sides
+
+      - name: Compare selected coverage
+        if: github.event_name == 'pull_request' && needs.changes.outputs.validation_scope == 'SCOPED'
+        env:
+          BASE_SHA: ${{ needs.changes.outputs.base_sha }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p target/ci-merge-plan
+          cp -R target/macos-sides/merge-validation-macos-candidate/. target/ci-merge-plan/
+          python3 scripts/ci/scoped-coverage-compare.py \
+            --base "${BASE_SHA}" --candidate "${CANDIDATE_SHA}" \
+            --baseline target/macos-sides/merge-validation-macos-base/scoped-coverage \
+            --current target/macos-sides/merge-validation-macos-candidate/scoped-coverage \
+            --output target/ci-merge-plan/scoped-coverage/ratchet.json \
+            --validation-receipt target/ci-merge-plan/validation.json
+
+      - name: Record validated scope
+        id: scope
+        env:
+          VALIDATION_SCOPE: ${{ needs.test_macos_sides.outputs.validation_scope }}
+        run: echo "validation_scope=${VALIDATION_SCOPE}" >> "$GITHUB_OUTPUT"
+
+      - name: Full validation marker
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.release_only != 'true' && (needs.test_macos_sides.outputs.validation_scope == 'FULL' || github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: true
+
+      - name: Upload affected plan and validation receipt
+        if: always() && hashFiles('target/ci-merge-plan/validation.json') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: merge-validation-macos
+          path: target/ci-merge-plan
 
   # The coverage floor is enforced by test_macos's instrumented test run; this
   # job keeps the required `coverage` check by proving that run produced its

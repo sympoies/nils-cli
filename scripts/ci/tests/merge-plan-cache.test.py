@@ -112,7 +112,7 @@ if args[0] == 'metadata':''')
 
     def test_both_ci_jobs_enable_preparation_after_cache_restore(self):
         workflow = (fixtures.ROOT / '.github/workflows/ci.yml').read_text()
-        for job, following in (('test', 'test_containment'), ('test_macos', 'coverage')):
+        for job, following in (('test', 'test_containment'), ('test_macos_sides', 'test_macos')):
             body = workflow.split(f'\n  {job}:\n', 1)[1].split(f'\n  {following}:\n', 1)[0]
             validation = body.split('      - name: Nils CLI checks ', 1)[1]
             self.assertIn('NILS_CLI_MERGE_PLAN_PREPARE_METADATA: "1"', validation)

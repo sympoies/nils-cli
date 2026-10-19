@@ -74,7 +74,7 @@ class DeferredJobTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_full_macos_timeout_keeps_margin_without_extending_prs(self):
-        line = next(line for line in job_body('test_macos').splitlines() if 'timeout-minutes:' in line)
+        line = next(line for line in job_body('test_macos_sides').splitlines() if 'timeout-minutes:' in line)
         expression = line.split('timeout-minutes:', 1)[1].strip().removeprefix('${{ ').removesuffix(' }}')
         for event, minutes in (('pull_request', 55), ('merge_group', 75), ('schedule', 75)):
             observed = eval(expression.replace('github.event_name', repr(event))

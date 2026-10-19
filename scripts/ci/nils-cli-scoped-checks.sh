@@ -25,6 +25,9 @@ for package in "$@"; do
   package_args+=(-p "$package")
 done
 
+# The base worker measures only the immutable baseline; candidate audits and
+# compilation stay on the candidate worker. Both use the same corpus below.
+if [[ "${NILS_CLI_SCOPED_COVERAGE_SIDE:-both}" != "base" ]]; then
 # These non-compiling audits retain workspace contracts without building every
 # unrelated binary. Changes to scripts/completions/shared fixtures escalate FULL
 # in the accepted policy and execute the complete existing audit stack there.
@@ -71,6 +74,8 @@ if (( ${#completion_args[@]} > 0 )); then
   run bash scripts/ci/completion-freshness-audit.sh --strict --skip-build "${completion_args[@]}"
 fi
 
+fi
+
 case "${NILS_CLI_TEST_RUNNER:-nextest}" in
   nextest)
     run_test cargo nextest run --profile ci "${package_args[@]}" --all-features
@@ -98,14 +103,16 @@ print("\n".join(sorted(names - selected)))
     run_test python3 scripts/ci/scoped-coverage-ratchet.py \
       --base "${NILS_CLI_SCOPED_COVERAGE_BASE:?missing immutable scoped coverage base}" \
       "${coverage_args[@]}" "$@"
-    run cargo llvm-cov report --html --output-dir target/coverage "${package_args[@]}"
+    if [[ "${NILS_CLI_SCOPED_COVERAGE_SIDE:-both}" != "base" ]]; then
+      run cargo llvm-cov report --html --output-dir target/coverage "${package_args[@]}"
+    fi
     ;;
   *)
     echo "error: unsupported scoped CI test runner" >&2
     exit 2
     ;;
 esac
-if [[ "${NILS_CLI_SKIP_DOCTESTS:-0}" != "1" ]]; then
+if [[ "${NILS_CLI_SKIP_DOCTESTS:-0}" != "1" && "${NILS_CLI_SCOPED_COVERAGE_SIDE:-both}" != "base" ]]; then
   run_test cargo test "${package_args[@]}" --all-features --doc
 fi
 echo "ok: selected CI packages passed ($# package(s))"

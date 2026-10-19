@@ -460,8 +460,15 @@ On those CI events, `test_macos` runs the workspace tests once under
 `NILS_CLI_TEST_RUNNER=llvm-cov`, which enforces the floor, and `coverage`
 publishes the summary from that run's LCOV artifact.
 
-PRs run the trusted affected scope. Selected macOS tests retain the immutable-base
-coverage no-decrease ratchet. When the macOS PR plan needs FULL or falls back
+PRs run the trusted affected scope. Selected macOS base and candidate tests run
+concurrently in `test_macos_sides`, using the same selected test/report corpus.
+The required `test_macos` aggregate joins their exact-snapshot measurements and
+applies the unchanged coverage no-decrease ratchet. Missing, failed or
+mismatched side evidence fails the aggregate. Full lanes run one worker and
+retain the existing coverage floor.
+
+Measure scoped macOS wall-clock from the earliest worker start through
+aggregate completion; the aggregate's own short duration excludes the tests. When the macOS PR plan needs FULL or falls back
 from HOLD, an early trusted preview makes `test_macos` conclude skipped.
 `coverage` concludes skipped only after real full Linux and containment success.
 Their required names stay the same, and their check titles state

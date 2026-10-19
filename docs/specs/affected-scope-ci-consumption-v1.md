@@ -88,8 +88,27 @@ skipped conclusions and the required names `test_macos` and `coverage`; a
 deferred check is never presented as a plain success. It only labels completed
 skipped jobs from the same workflow run.
 
-SCOPED PRs still execute instrumented macOS tests with the immutable-base
-coverage ratchet. If macOS cannot reproduce the selected preview and falls
+SCOPED PRs execute base and candidate coverage in concurrent
+`test_macos_sides` matrix jobs. Each independently consumes the trusted plan;
+the base worker runs only the isolated immutable-base measurement, while the
+candidate worker retains selected audits, Clippy, binary builds and tests.
+Both use the existing selected package arguments, `--all-features`, and report
+exclusions. The base worker never compiles or tests the candidate.
+
+The required `test_macos` name belongs to a small aggregate job. It requires
+all matrix workers to succeed, then compares their LCOV counts with the same
+integer-fraction no-decrease rule. Missing or failed measurements, stale
+base/candidate SHAs, different package/command corpora, or different resolved
+coverage tools and runner images fail the aggregate. Measurements use
+`nils-cli.scoped-coverage-measurement.v1` and status MEASURED; a measurement
+alone is not a ratchet PASS. The aggregate emits the established ratchet
+receipt and updates the platform validation verdict after comparison.
+
+Only scoped PRs split into two workers. Full queue/nightly/on-demand validation
+runs once in the `both` worker; the aggregate retains its full-validation
+marker after that worker succeeds. No base-result cache is introduced.
+
+SCOPED PRs retain the immutable-base coverage ratchet. If macOS cannot reproduce the selected preview and falls
 back to FULL/HOLD, the macOS job fails rather than deferring selected coverage.
 Missing LCOV or a decrease still fails. Queue, nightly and on-demand workflows
 always run full Linux and macOS tests and the absolute 85% coverage floor.
@@ -98,7 +117,7 @@ Full macOS lanes have a 75-minute timeout; selected PRs retain 55 minutes.
 | Required name | SCOPED PR candidate | FULL/HOLD PR candidate | Merge group / nightly |
 | --- | --- | --- | --- |
 | `test` | Selected Linux checks and doctests | Full Linux fallback | Full Linux checks and doctests |
-| `test_macos` | Selected instrumented tests and base ratchet | Skipped, explicitly labelled deferred-full | Full instrumented macOS tests, 85% floor |
+| `test_macos` | Concurrent selected base/candidate measurements and aggregate ratchet | Skipped, explicitly labelled deferred-full | Full instrumented macOS tests, 85% floor |
 | `coverage` | Selected LCOV and containment success | Skipped only after full Linux and containment success | Full LCOV and containment success |
 
 Source review binds the PR candidate and selected evidence. Full macOS and
@@ -170,3 +189,15 @@ consumer fixture with controlled LCOV producers. It covers decreasing, equal
 and increasing percentages, immutable base selection, identical package scope,
 separate profile directories, baseline/candidate failures, fresh report evidence,
 exact fraction comparison and the unchanged full-workspace floor.
+
+`python3 scripts/ci/tests/scoped-coverage-parallel.test.py` verifies isolated
+side execution, exact comparison equivalence with sequential execution,
+failed/missing/stale evidence rejection, and aggregate receipt failure.
+`python3 scripts/ci/tests/scoped-coverage-parallel-jobs.test.py` verifies scoped
+matrix routing, preserved full routes, and the required aggregate failure guard.
+
+For timing acceptance, measure the selected macOS path from the earliest
+matrix-worker start through aggregate completion. The aggregate job's own
+elapsed time excludes test execution and cannot be compared by itself with
+the former serial `test_macos` duration. Retain both worker durations, aggregate
+duration, exact base/head and workflow-run URLs for natural PR samples.

@@ -152,7 +152,7 @@ assert_contains "$coverage_job" "[ \"\${TEST_CONTAINMENT_RESULT}\" != \"success\
 # on every OS, so only the Linux `test` job runs them.
 awk '/^  test:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
   .github/workflows/ci.yml >"$linux_test_job"
-awk '/^  test_macos:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
+awk '/^  test_macos_sides:$/ {in_job = 1; print; next} in_job && /^  [a-z_]+:$/ {exit} in_job {print}' \
   .github/workflows/ci.yml >"$macos_job"
 assert_contains "$macos_job" "NILS_CLI_SKIP_OS_INDEPENDENT_AUDITS: \"1\"" \
   "the macOS lane leaves the OS-independent audits to the Linux lane"
