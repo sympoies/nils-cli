@@ -445,9 +445,9 @@ jobs:
     outputs:
       validation_scope: ${{ steps.validation.outputs.validation_scope }}
     runs-on: macos-14
-    # Recent successful full merge-group jobs: n=13, p90=43m23s,
-    # maximum=44m33s. Full lanes get 75m; selected PRs retain 55m.
-    timeout-minutes: ${{ github.event_name == 'pull_request' && 55 || 75 }}
+    # Scoped PRs validate both base and candidate; allow the same margin
+    # as full merge-group lanes.
+    timeout-minutes: 75
     permissions:
       contents: read
       checks: write
