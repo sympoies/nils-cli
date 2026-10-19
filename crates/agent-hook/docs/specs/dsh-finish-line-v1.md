@@ -113,7 +113,11 @@ The request and response contracts are:
   `-- bash -c <exact-command>` tuple; its declared mode, enforcement strength,
   denial signatures, and runner-failure rules are validated and returned as
   bounded sandbox facts. Git environment overrides are removed and stdin is
-  closed.
+  closed. Unconfined runners retain the user service manager's supplementary
+  groups. They do not promise the calling login process's inventory: an SSH
+  login and an already-running user manager can inherit different groups.
+  The preservation baseline is an independent transient user service; a
+  caller/manager mismatch is diagnosed separately from a runner group change.
 
   Authoritative execution is Linux-only and fails closed elsewhere. On Linux,
   nils verifies the fixed `/usr/bin/systemd-run` and `/usr/bin/systemctl`
