@@ -33,6 +33,7 @@ mod integration {
     mod pr_deliver_chain;
     mod pr_merge;
     mod pr_pending_review;
+    mod pr_pending_review_recovery;
     mod pr_review;
     mod pr_review_dismiss;
     mod pr_review_handoff;

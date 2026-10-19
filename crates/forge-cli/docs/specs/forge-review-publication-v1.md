@@ -176,7 +176,27 @@ validation rules, and output schema versions.
   detail and the failed spec index/path/line while preserving the pending
   review. Other interruption points return
   `pending_review_transaction_incomplete` (`DATA 65`) with the pending review
-  intact and an identical rerun as the recovery action. Malformed or oversized
+  intact and an identical rerun as the recovery action.
+
+  A lost creation response
+  triggers a read-only lookup for the exact own receipt-bound transaction;
+  unprovable identity stays unknown and never authorizes deletion. Once the review ID is
+  known, error details include exact inspect commands plus fresh-snapshot shell
+  commands (POSIX shell and `jq`) for guarded `resume-submit` (only for a complete manifest) and
+  explicit `discard --confirm-discard --confirm-inline-content-loss`. These
+  commands preserve the original provider host and repository. Snapshot read
+  or validation failures after thread creation retain the transaction ID and
+  this same guidance, including on an identical rerun. Existing recovery guard
+  failures keep their specific validation codes while gaining this context.
+  These failures never delete the partial review.
+
+  The printed discard command fetches a fresh snapshot and uses its head,
+  commit, and digest as the expected values. It therefore cannot detect changes
+  since an earlier operator inspection. To bind approval to inspected content,
+  inspect the review and pass those reviewed values directly to
+  `pr pending-review discard`; retain both required confirmation flags.
+
+  Malformed or oversized
   specs return `invalid_review_thread_spec` (`DATA 65`); `--thread-file` without
   `--submit-review` returns `thread_file_requires_submit_review` (`DATA 65`);
   GitLab / Local return `provider_unsupported` (`USAGE 64`) before any backend
