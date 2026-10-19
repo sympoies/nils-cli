@@ -2,8 +2,10 @@
 """Offline base/candidate coverage regressions through the merge-plan consumer."""
 import importlib.util
 import json
+import os
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -29,8 +31,9 @@ class RatchetTests(unittest.TestCase):
             symlinked_tmp = canonical_tmp.parent / f'{canonical_tmp.name}-alias'
             symlinked_tmp.symlink_to(canonical_tmp, target_is_directory=True)
             self.addCleanup(symlinked_tmp.unlink, missing_ok=True)
-            with tempfile.TemporaryDirectory(dir=symlinked_tmp, prefix='ci-coverage-base-') as temporary:
-                temp_root, baseline, target = ratchet.baseline_paths(temporary)
+            with patch.dict(os.environ, TMPDIR=str(symlinked_tmp)):
+                with tempfile.TemporaryDirectory(prefix='ci-coverage-base-') as temporary:
+                    temp_root, baseline, target = ratchet.baseline_paths(temporary)
 
         self.assertEqual(temp_root, Path(temporary).resolve())
         self.assertEqual(baseline, temp_root / 'repository')
