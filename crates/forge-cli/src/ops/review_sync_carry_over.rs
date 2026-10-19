@@ -113,7 +113,10 @@ impl Objects {
         let (Some(tree), [first, base]) = (tree, parents.as_slice()) else {
             return Err("not-a-sync-merge");
         };
-        if *first != reviewed_head {
+        if *first != reviewed_head
+            || base.len() != 40
+            || !base.bytes().all(|b| b.is_ascii_hexdigit())
+        {
             return Err("not-a-sync-merge");
         }
         let merged = output(&mut self.git(&[
