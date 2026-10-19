@@ -230,7 +230,7 @@ fn claude_activity_doctor_reports_registration_and_configuration_states() {
     assert_configuration_error(&malformed, "agent-hook-setup-output-invalid");
 
     fs::write(&fixture.settings_path, &original_settings).expect("restore valid settings");
-    fs::set_permissions(&fixture.settings_path, fs::Permissions::from_mode(0))
+    fs::set_permissions(&fixture.settings_path, fs::Permissions::from_mode(0o0))
         .expect("make settings unreadable");
     let unreadable = fixture.doctor(&fixture.agent_hook);
     fs::set_permissions(&fixture.settings_path, fs::Permissions::from_mode(0o600))
