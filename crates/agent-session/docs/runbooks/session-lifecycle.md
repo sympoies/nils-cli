@@ -34,8 +34,8 @@ for cross-host inheritance and nullable JSON details.
 ## Send input and glance
 
 `send` pushes input to a live session: literal text (`--text` /
-`--text-stdin`) and/or repeatable named keys
-(`--key enter|escape|backspace|c-c|up|down|left|shift-left|right|tab`), so
+`--text-stdin`) and/or repeatable named or single printable keys
+(`--key enter|escape|backspace|c-c|up|down|left|shift-left|right|tab`, or `--key s`), so
 codex/claude approval prompts and terminal editing remain usable from a phone.
 
 - Text is pasted with bracketed-paste markers (`tmux paste-buffer -p`), so a
@@ -46,6 +46,33 @@ codex/claude approval prompts and terminal editing remain usable from a phone.
 - Unguarded `send` is not idempotent: keystrokes are delivered before the command
   returns, so a retry after a mid-delivery failure can re-send. Callers that
   auto-retry should account for this.
+
+A printable key always requires verified idle activity, even without
+`--require-idle`. Busy or unknown sessions are refused before typing. Named
+keys keep their existing dialog/interrupt behavior.
+
+For a session-only model change, inspect the provider's picker with `glance`,
+navigate with named keys, and type the session-only shortcut it advertises:
+
+```bash
+agent-session glance <id> --tail 40
+agent-session send <id> --require-idle --text /model --key enter
+agent-session glance <id> --tail 40
+# Navigate the displayed model/effort choices in separate guarded sends.
+agent-session send <id> --require-idle --key down
+# Only when the displayed picker advertises s for this session only:
+agent-session send <id> --key s
+agent-session glance <id> --tail 40
+```
+
+Verify the resulting model and effort from the final provider display. In
+pickers that advertise `s` for this session only, `enter` may instead save a
+default; use it only when that persistent change is intended. If the provider
+version, picker shortcut, scope, or resulting settings cannot be verified, stop
+without confirming. This is the printable-key alternative for model switching;
+there is no automatic `set-model` command or provider-version support claim.
+For current Claude picker scope behavior, see the provider's
+[model configuration documentation](https://code.claude.com/docs/en/model-config#setting-your-model).
 
 For opt-in continuation guards and persisted at-most-once keys, use the
 [Send v1 contract](../specs/send-v1.md). Guarded submissions verify exact input

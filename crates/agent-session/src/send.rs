@@ -50,8 +50,17 @@ fn guarded_hold_budget(record: &SessionRecord) -> Duration {
 
 pub(crate) fn send_to_session(
     context: &CliContext,
-    args: cli::SendArgs,
+    mut args: cli::SendArgs,
 ) -> Result<SendResult, CliError> {
+    // Picker shortcuts type into the terminal rather than paste. Never send
+    // them into a working/unknown session, even with --allow-blocked.
+    if args
+        .keys
+        .iter()
+        .any(|key| matches!(key, SpecialKey::Printable(_)))
+    {
+        args.guards.require_idle = true;
+    }
     let text = read_send_text(&args.text, args.text_stdin)?;
     if text.is_none() && args.keys.is_empty() {
         return Err(CliError::usage(
