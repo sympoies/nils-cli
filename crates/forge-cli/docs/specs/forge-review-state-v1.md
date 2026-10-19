@@ -347,6 +347,10 @@ merge, and publication detect persisted assignment with the environment absent.
 Mailbox `pass`, stale publication, missing handoff, open findings, and unavailable
 reviewers cannot satisfy admission. Existing convergence and merge gates remain.
 
+Designated publication admission additionally enforces
+[test-change declarations and independent reviewer confirmation](test-change-admission-v1.md)
+for deleted tests, assertion changes and new skips in the PR comparison.
+
 ### `pr review-loop inspect` / `observe` / `extend` / `validate`
 
 - These GitHub-only commands make the repair/re-review loop resumable from the

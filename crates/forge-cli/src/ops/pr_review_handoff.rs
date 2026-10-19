@@ -16,6 +16,7 @@ use crate::provider::{Provider, ProviderContext, detect, git_remote_url};
 use crate::rate_limit::default_runner;
 
 mod approval;
+mod test_integrity;
 use crate::cli::ApprovalPolicy;
 use approval::{Admission, PublishedApproval};
 
@@ -791,6 +792,7 @@ fn admit_published<R: BackendRunner>(
         (&b.submitted_at, b.database_id).cmp(&(&a.submitted_at, a.database_id))
     });
     let mut passing = None;
+    let mut passing_body = String::new();
     for r in candidates {
         let body = if r.summary_truncated
             || r.author_type.as_deref() == Some("Bot")
@@ -841,6 +843,7 @@ fn admit_published<R: BackendRunner>(
                 )
             });
         passing = pass.then_some(r);
+        passing_body = body;
         // The newest report not proven to belong to an older interval owns
         // the verdict, including blocked, malformed or unbound reports.
         break;
@@ -851,6 +854,7 @@ fn admit_published<R: BackendRunner>(
             "awaiting designated review: published passing review for the current head is missing",
         ));
     };
+    test_integrity::ensure(runner, ctx, number, head, &selected.author, &passing_body)?;
     Ok(Admission {
         approval: Some(PublishedApproval::from_review(selected, head)),
         sync_carry_over: sync.map(|(_, merge)| SyncCarryOver {
