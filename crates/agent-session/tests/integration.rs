@@ -16,6 +16,8 @@ mod coordination_server;
 mod delete_guards;
 #[path = "integration/diagnose.rs"]
 mod diagnose;
+#[path = "integration/doctor.rs"]
+mod doctor;
 #[path = "integration/lineage.rs"]
 mod lineage;
 #[path = "integration/mailbox_quota_warning.rs"]

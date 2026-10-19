@@ -732,12 +732,24 @@ There is no embedded registration fallback, including for `--apply`,
 second writer.
 
 `activity doctor` remains a read-only compatibility diagnostic. Because
-`agent-hook` is the provider-registration owner, Codex launch readiness
-requires one bounded, strictly typed `agent-hook doctor` result for Codex.
-The result must be supported and `converged`, report its exact expected owned
-count, report zero retired residue, and carry valid configuration and policy
-digests. Missing, failed, malformed, oversized, multi-record, or
-provider-mismatched evidence fails closed. The diagnostic separately recognizes exact
+`agent-hook` owns provider registration, Codex readiness requires one bounded,
+strictly typed `agent-hook doctor` result for Codex. The result must be
+supported and `converged`, report the exact expected owned count, report zero
+retired residue, and carry valid configuration and policy digests. Missing,
+failed, malformed, oversized, multi-record, or provider-mismatched evidence
+fails closed. Claude readiness uses bounded `agent-hook setup --product claude
+--dry-run` evidence, validates configuration and policy digests, and checks
+exact owned dispatch event groups. Its optional `missing_owned_events` array
+lists missing dispatch event names and is omitted when empty. `config_path`
+reports the checked settings file, resolved from `CLAUDE_CONFIG_DIR` or
+`CODEX_HOME` when set and otherwise from the provider default.
+
+In this diagnostic, `configured` describes agent-hook registration readiness.
+`classification` remains the provider activity support class; Claude's
+`partial` value does not indicate a configuration fault. The existing
+`can_launch_worker` field remains the conjunction of `classification ==
+"supported"` and `configured`, so it is not a general check that a provider
+session can start. The diagnostic separately recognizes exact
 pre-dispatch `agent-session` hook and Codex notify shapes, including a bounded
 audited Computer Use outer wrapper whose exact helper path is a regular
 executable with no symlink below the active config root. It reports conflicts
