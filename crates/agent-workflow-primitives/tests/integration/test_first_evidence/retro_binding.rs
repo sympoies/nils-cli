@@ -169,7 +169,7 @@ fn retro_bind_retains_log_digests_and_real_baseline_and_requires_remaining_steps
     let record_file = out.join("test-first-evidence.json");
     let before_old_writer = fs::read(&record_file).unwrap();
     assert_eq!(
-        legacy_v2_record_gap(&record_file),
+        pre_v3_record_gap(&record_file),
         Err("unsupported-record-version")
     );
     assert_eq!(
@@ -311,7 +311,7 @@ fn retro_bind_retains_log_digests_and_real_baseline_and_requires_remaining_steps
 }
 
 #[test]
-fn ordinary_v2_records_remain_compatible_with_legacy_and_current_writers() {
+fn ordinary_v2_records_remain_compatible_with_pre_v3_and_current_writers() {
     let tmp = tempfile::TempDir::new().unwrap();
     let out = tmp.path().join("evidence");
     assert_eq!(
@@ -331,7 +331,7 @@ fn ordinary_v2_records_remain_compatible_with_legacy_and_current_writers() {
         0
     );
     let record_file = out.join("test-first-evidence.json");
-    assert!(legacy_v2_record_gap(&record_file).is_ok());
+    assert!(pre_v3_record_gap(&record_file).is_ok());
     assert_eq!(
         run(
             tmp.path(),
@@ -345,7 +345,7 @@ fn ordinary_v2_records_remain_compatible_with_legacy_and_current_writers() {
     assert!(record.get("subject").is_none());
 }
 
-fn legacy_v2_record_gap(record_file: &Path) -> Result<(), &'static str> {
+fn pre_v3_record_gap(record_file: &Path) -> Result<(), &'static str> {
     let before = fs::read(record_file).map_err(|_| "record-read-failed")?;
     let mut record: Value = serde_json::from_slice(&before).map_err(|_| "invalid-record-json")?;
     if record["schema_version"] != "test-first-evidence.record.v2" {
