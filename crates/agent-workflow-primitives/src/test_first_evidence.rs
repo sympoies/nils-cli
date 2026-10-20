@@ -1,4 +1,8 @@
 mod cli;
+mod retro_binding;
+mod verification;
+pub use retro_binding::RetroBinding;
+use verification::run_verify;
 mod final_validation;
 pub use final_validation::{FinalResolution, final_resolution_summary};
 
@@ -95,6 +99,7 @@ fn dispatch(cli: Cli) -> i32 {
         Command::ResolveFinal(args) => final_validation::run_resolve_final(args),
         Command::RecordGap(args) => run_record_gap(args),
         Command::BindBaseline(args) => run_bind_baseline(args),
+        Command::RetroBind(args) => retro_binding::run(args),
         Command::BindDelivery(args) => run_bind_delivery(args),
         Command::Check(args) => run_check(args),
         Command::Verify(args) => run_verify(args),
@@ -687,69 +692,6 @@ fn run_bind_delivery(args: BindDeliveryArgs) -> i32 {
     }
 }
 
-fn run_verify(args: VerifyArgs) -> i32 {
-    match verify_record(&args.common) {
-        Ok(result) if !result.missing.is_empty() => render_error(
-            VERIFY_SCHEMA_VERSION,
-            VERIFY_COMMAND,
-            args.common.format,
-            CliError::runtime(
-                "incomplete-evidence",
-                "test-first evidence record is incomplete",
-                Some(json!({
-                    "record_file": result.record_file,
-                    "missing": result.missing,
-                })),
-            ),
-        ),
-        Ok(result) if args.project_path.is_none() => {
-            render_verify_success(args.common.format, &result)
-        }
-        Ok(result) => {
-            let project_path = args.project_path.as_deref().expect("checked above");
-            match match_delivery_subject(
-                &result.record,
-                project_path,
-                &args.remote,
-                args.repository_id.as_deref(),
-                "HEAD",
-            ) {
-                Ok(subject) if subject.matches => {
-                    render_verify_success(args.common.format, &result)
-                }
-                Ok(subject) => render_error(
-                    VERIFY_SCHEMA_VERSION,
-                    VERIFY_COMMAND,
-                    args.common.format,
-                    CliError::data(
-                        if subject.reason_code == "unbound-subject"
-                            || subject.reason_code == "delivery-subject-unbound"
-                        {
-                            "unbound-subject"
-                        } else {
-                            "subject-mismatch"
-                        },
-                        "test-first evidence subject does not match the current delivery",
-                        Some(json!({ "reason_code": subject.reason_code })),
-                    ),
-                ),
-                Err(err) => render_error(
-                    VERIFY_SCHEMA_VERSION,
-                    VERIFY_COMMAND,
-                    args.common.format,
-                    err,
-                ),
-            }
-        }
-        Err(err) => render_error(
-            VERIFY_SCHEMA_VERSION,
-            VERIFY_COMMAND,
-            args.common.format,
-            err,
-        ),
-    }
-}
-
 fn run_show(args: CommonArgs) -> i32 {
     match read_record_result(args.out_dir.as_path()) {
         Ok(result) => {
@@ -960,6 +902,9 @@ fn missing_evidence_fields(record: &EvidenceRecord) -> Vec<String> {
     }
 
     let mut missing = Vec::new();
+    if !retro_binding::valid_provenance(record) {
+        missing.push("invalid_retro_binding".to_string());
+    }
     let classification = ChangeClassification::parse(&record.change_classification);
     if classification.is_none() {
         missing.push("invalid_change_classification".to_string());
@@ -1245,6 +1190,7 @@ fn capture_baseline_subject(
     Ok(EvidenceSubject {
         repository,
         baseline: BaselineSubject { commit, tree },
+        retro_binding: None,
         deliveries: Vec::new(),
     })
 }
@@ -1680,6 +1626,7 @@ fn render_verify_success(format: OutputFormat, result: &VerifyResult) -> i32 {
 }
 
 fn print_record_text(record: &EvidenceRecord, complete: bool) {
+    retro_binding::print_provenance(record);
     println!("complete: {complete}");
     println!("change classification: {}", record.change_classification);
     if !record.production_paths.is_empty() {
@@ -1868,6 +1815,8 @@ pub struct EvidenceRecord {
 pub struct EvidenceSubject {
     pub repository: RepositoryIdentity,
     pub baseline: BaselineSubject,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retro_binding: Option<RetroBinding>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deliveries: Vec<DeliverySubject>,
 }

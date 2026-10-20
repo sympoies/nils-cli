@@ -277,6 +277,11 @@ final validation, waivers, an explicit residual-gap declaration, and optional
 repository/change subject metadata. Record v1 remains readable by `show`, but
 strict `verify` and the forge delivery gate require deliberate v2 re-recording
 because the missing maintenance facts cannot be inferred safely.
+If meaningful pre-edit RED and post-edit GREEN logs already exist but record
+initialization was missed, use the explicit [`retro-bind` recovery](docs/specs/retained-test-first-evidence-v1.md).
+It retains log digests and chronology attestation without replacing prior bindings.
+`verify --project-path` lists structural and subject omissions together with recovery commands.
+
 Classification is a closed set:
 `behavior-change|bug-fix|feature|docs-only|config-only|generated-only|refactor-only`.
 The first three are testable and must declare at least one changed, added, or

@@ -99,6 +99,7 @@ because BSD-style `-path` lets `*` cross slash boundaries.
 - `crates/agent-session/docs/specs/session-display-metadata-v1.md`
 - `crates/agent-session/docs/turn-state-contract.md`
 - `crates/agent-workflow-primitives/docs/specs/failed-final-validation-resolution-v1.md`
+- `crates/agent-workflow-primitives/docs/specs/retained-test-first-evidence-v1.md`
 - `crates/agent-workflow-primitives/docs/specs/test-first-evidence-mutation-receipt-v1.md`
 - `crates/api-websocket/docs/specs/websocket-cli-contract-v1.md`
 - `crates/api-websocket/docs/specs/websocket-request-schema-v1.md`
