@@ -201,6 +201,17 @@ review_state_contract:
   record:
     required: [schema, repository, pr, expected_head, generation, previous_digest, payload, record_digest]
     chain: "one genesis; zero-based contiguous generations; previous_digest binds the unique prior record; byte-identical append retries are deduplicated, while conflicting duplicates, forks, stale, missing, or unreachable records fail as review_state_conflict"
+  review_loop_acceptance:
+    input_schema: forge-cli.review-loop-acceptance.v1
+    input: "observe findings-file wrapper; acceptance {stopped_record, attempted_findings, approval_comment?}; explicit current expected-state and stopped head required"
+    record_kind: review-loop-acceptance
+    authority: "newer same-PR OWNER/MEMBER/COLLABORATOR approval comment containing exact acceptance proposal marker; extension approval grants no acceptance authority"
+    proposal: "sha256 of JSON tuple [input schema, stopped record digest, expected head, canonical attempted inventory map, canonical proposed inventory map]; omit approval_comment and dry-run to discover required marker"
+    transition: "prove the stopped observation digest; only open-to-accepted changes allowed; retain every other row and every prior open identity; at least one acceptance and no remaining open blocking findings"
+    preservation: "append immutable receipt; retain original stop, attempted inventory, accepted fingerprints and approval reference; clear active stop without repair round, counter reset, budget extension, or loss of prior records"
+    inspect: "accepted_risks exposes historical acceptance receipts in chain order; omitted when empty"
+    retry: "identical retry at current tip appends nothing; earlier-assignment retry cannot establish a new interval"
+    readback: "replay against preceding chain; reject rehashed counter, budget, fingerprint or stop drift; older clients require upgrade"
   review_loop_correction:
     input_schema: forge-cli.review-loop-correction.v1
     input: "existing observe findings-file wrapper; correction {corrected_record, reason: omitted-findings, attempted_findings?}; complete canonical findings inventory; explicit current expected-state required"
@@ -1025,7 +1036,7 @@ operations:
       gitlab: unsupported
       local: unsupported
     output:
-      data: object<{provider,number,url,state_tip_digest?,generation?,state?,appended:false,outcome_posted:false}>
+      data: object<{provider,number,url,state_tip_digest?,generation?,state?,appended:false,outcome_posted:false,accepted_risks?}>
     notes: "The append-only forge-cli.review-loop.v1 chain is completely paginated, hash-validated, and fork-checked. ReviewRunReceipt and ReviewLoop records share one chain; no second provider store is created."
 
   - id: pr.review-loop.observe
@@ -1050,6 +1061,8 @@ operations:
       - review_observation_incomplete
       - review_correction_invalid
       - review_supersession_invalid
+      - review_acceptance_invalid
+      - review_acceptance_approval_invalid
       - review_no_progress
       - review_round_limit_exceeded
       - review_state_comment_invalid
@@ -1061,15 +1074,16 @@ operations:
       github:
         - { program: gh, argv: [pr, view, "{id}", --json, "number,url,...,headRefOid"] }
         - { program: gh, argv: [api, graphql, -f, "query=<complete privileged review-state comments>", -F, "pr={id}"] }
+        - { program: gh, argv: [api, "repos/{repo}/issues/comments/{approval_comment}"], notes: "explicit terminal acceptance only; verify maintainer association, PR, timestamp and exact marker before append" }
         - { program: gh, argv: [api, "repos/{repo}/compare/{stopped-head}...{expected-head}?per_page=100&page={page}"], notes: "explicit supersession only; read all pages and verify every new signature before append" }
         - { program: gh, argv: [api, "repos/{repo}/issues/{id}/comments", --method, POST, --raw-field, "body=<visible ledger metadata line, then canonical state marker, then optional `---` and delivery outcome>"] } # one comment carries both halves; with no --body/--body-file it is metadata plus marker
         - { program: gh, argv: [api, graphql, -f, "query=<complete privileged review-state comments>", -F, "pr={id}"] }
       gitlab: unsupported
       local: unsupported
     output:
-      data: object<{provider,number,url,state_tip_digest,generation,state,appended,outcome_posted}>
+      data: object<{provider,number,url,state_tip_digest,generation,state,appended,outcome_posted,accepted_risks?}>
       dry_run_data: object<{provider,plan,preflight_ok,would_append?,planned_comment?:{visible_metadata,includes_outcome_body,bytes},preflight}>
-    notes: "Explicit signed-fast-forward stop supersession uses the typed findings-file wrapper and preserves history and budgets while requiring a fresh approval at the new head. Defaults are five repair rounds, two consecutive no-progress rounds, and zero automatic reopens. Same-head/same-finding retries append nothing. Delta input retains omitted terminal findings; every previously open finding must be included even on the same head. Full-set input may repeat already fixed findings on the same head without advancing their lifecycle counters; thread references are merged. First-time fixed transitions still require a repaired head, with diagnostics explaining the omit-or-repeat alternative for already fixed findings. A subset cannot infer fixed status from omission: new heads must include every previously open identity. Explicit chain-bound omission correction uses the typed findings-file wrapper and appends a history-preserving review-loop-correction record without extending budgets. Observation rows may carry status/disposition open|fixed|accepted|preference|follow-up, with terminal dispositions recorded non-blocking. A new head advances one round; strict cardinality shrink is the only mechanical progress signal. Extendable terminal errors append a durable hard-stop receipt before returning the exact extension proposal; they never approve, resolve, or merge. --body/--body-file posts the delivery outcome in the same comment as the appended record, so outcome_posted is never true without appended; every outcome-body rule is enforced before the first provider call, and planned_comment/state_comment_body appear in a dry run only when a write is planned — including the unextended-hard-stop case, where the live path returns the stop without appending. See review_state_contract.combined_outcome for the record-vs-comment deduplication boundary. --body-file - consumes stdin once, so a dry-run-then-live sequence must not share a piped body. --preflight runs that same sweep in front of a LIVE append, failing as review_preflight_failed with every failing rule named rather than the first, and replaces the separate --dry-run call a caller would otherwise make. --auto-state reads the tip itself instead of being handed one; it is deliberately WEAKER than --expected-state, which is a claim about a tip the caller already saw and is the only form that catches a resumed shell reusing genesis state. Use --auto-state for the genesis observation and keep --expected-state for a closing observation made against a digest an earlier append returned. With both flags the tip is read twice and a move in between fails as review_state_tip_moved, naming both digests, because the transition was computed against the chain the sweep read. --preflight with --body-file - is refused as review_preflight_body_not_replayable before the first provider call: the sweep and the append each read the body once, so a piped body would be validated in one and submitted in the other."
+    notes: "Explicit terminal accepted-risk disposition uses the acceptance envelope and maintainer marker defined in review_state_contract.review_loop_acceptance. Explicit signed-fast-forward stop supersession uses the typed findings-file wrapper and preserves history and budgets while requiring a fresh approval at the new head. Defaults are five repair rounds, two consecutive no-progress rounds, and zero automatic reopens. Same-head/same-finding retries append nothing. Delta input retains omitted terminal findings; every previously open finding must be included even on the same head. Full-set input may repeat already fixed findings on the same head without advancing their lifecycle counters; thread references are merged. First-time fixed transitions still require a repaired head, with diagnostics explaining the omit-or-repeat alternative for already fixed findings. A subset cannot infer fixed status from omission: new heads must include every previously open identity. Explicit chain-bound omission correction uses the typed findings-file wrapper and appends a history-preserving review-loop-correction record without extending budgets. Observation rows may carry status/disposition open|fixed|accepted|preference|follow-up, with terminal dispositions recorded non-blocking. A new head advances one round; strict cardinality shrink is the only mechanical progress signal. Extendable terminal errors append a durable hard-stop receipt before returning the exact extension proposal; they never approve, resolve, or merge. --body/--body-file posts the delivery outcome in the same comment as the appended record, so outcome_posted is never true without appended; every outcome-body rule is enforced before the first provider call, and planned_comment/state_comment_body appear in a dry run only when a write is planned — including the unextended-hard-stop case, where the live path returns the stop without appending. See review_state_contract.combined_outcome for the record-vs-comment deduplication boundary. --body-file - consumes stdin once, so a dry-run-then-live sequence must not share a piped body. --preflight runs that same sweep in front of a LIVE append, failing as review_preflight_failed with every failing rule named rather than the first, and replaces the separate --dry-run call a caller would otherwise make. --auto-state reads the tip itself instead of being handed one; it is deliberately WEAKER than --expected-state, which is a claim about a tip the caller already saw and is the only form that catches a resumed shell reusing genesis state. Use --auto-state for the genesis observation and keep --expected-state for a closing observation made against a digest an earlier append returned. With both flags the tip is read twice and a move in between fails as review_state_tip_moved, naming both digests, because the transition was computed against the chain the sweep read. --preflight with --body-file - is refused as review_preflight_body_not_replayable before the first provider call: the sweep and the append each read the body once, so a piped body would be validated in one and submitted in the other."
 
   - id: pr.review-loop.extend
     schema_version: cli.forge-cli.pr.review-loop.extend.v1
@@ -1107,6 +1121,7 @@ operations:
     validations:
       - review_findings_invalid
       - review_correction_invalid
+      - review_acceptance_invalid
       - review_supersession_invalid
       - review_fingerprint_required
       - review_fingerprint_collision
@@ -1115,7 +1130,7 @@ operations:
       gitlab: none
       local: none
     output:
-      data: object<{shape:enum<merge-envelope|observation-array|correction-envelope|supersession-envelope>,row_count,identity_count,dispositions:[{disposition:enum<open|fixed|accepted|preference|follow-up>,count}],blocking_count,duplicate_identities?}>
+      data: object<{shape:enum<merge-envelope|observation-array|correction-envelope|supersession-envelope|acceptance-envelope>,row_count,identity_count,dispositions:[{disposition:enum<open|fixed|accepted|preference|follow-up>,count}],blocking_count,duplicate_identities?}>
     notes: >-
       Provider-independent and network-free: the op takes no id, resolves no
       provider context, and runs no backend, so `--provider`, `--repo`,
