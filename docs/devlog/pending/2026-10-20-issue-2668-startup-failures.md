@@ -21,6 +21,8 @@
   regressions. Thirteen startup cases and the Console forwarding and
   reconciliation regression passed after the review repairs, including
   credential-boundary and delayed initial-prompt exit cases.
+- Isolated build artifacts repeated the startup and Console contracts after a
+  shared executable resolved to another revision; all assertions were retained.
 
 ### Links
 

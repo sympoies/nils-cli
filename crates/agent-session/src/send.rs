@@ -189,6 +189,19 @@ pub(crate) fn send_to_session(
     })
 }
 
+pub(crate) fn recorded_tmux_runtime_stopped(
+    tmux: &Path,
+    record: &SessionRecord,
+    timeout: Duration,
+) -> bool {
+    crate::persisted_tmux_runtime_identity(record)
+        .ok()
+        .flatten()
+        .is_some_and(|identity| {
+            crate::live_status_with_timeout(tmux, &identity.session_id, timeout) == "stopped"
+        })
+}
+
 /// Press the submitting Enter for pasted `text` and confirm from the pane that
 /// it left the composer. Only Claude Code and Codex composers are recognized;
 /// any other provider gets the single Enter and an `unverified` outcome.
@@ -217,9 +230,7 @@ fn confirm_prompt_submission(
         &probe,
         hold_started + send_submit::HOLD_BUDGET,
         |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
-        |timeout| {
-            crate::live_status_with_timeout(tmux_bin, &record.tmux_session, timeout) == "stopped"
-        },
+        |timeout| recorded_tmux_runtime_stopped(tmux_bin, record, timeout),
         || {
             activity::state_for_view(context, record)
                 .is_none_or(|turn| turn.phase != activity::TurnPhase::NeedsInput)
@@ -448,10 +459,7 @@ fn guarded(
                     &probe,
                     admission.deadline,
                     |timeout| capture_visible_pane_with_timeout(tmux_bin, &target, timeout),
-                    |timeout| {
-                        crate::live_status_with_timeout(tmux_bin, &record.tmux_session, timeout)
-                            == "stopped"
-                    },
+                    |timeout| recorded_tmux_runtime_stopped(tmux_bin, &record, timeout),
                     || true,
                     press_enter,
                 )?))

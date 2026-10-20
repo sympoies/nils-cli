@@ -8,6 +8,8 @@
 
 pub(crate) mod guarded;
 mod idle_probe;
+#[path = "codex_app_server/prompt_submit.rs"]
+pub(crate) mod prompt_submit;
 mod turn_outcome;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -2107,7 +2109,7 @@ pub(crate) enum ControlCommand {
     Usage(oneshot::Sender<Result<UsageSnapshot, String>>),
     Prompt {
         message: String,
-        response: oneshot::Sender<Result<String, String>>,
+        response: oneshot::Sender<Result<String, prompt_submit::PromptSubmissionFailure>>,
     },
     Steer {
         message: String,
@@ -2171,24 +2173,6 @@ impl ControlHandle {
         tokio::time::timeout(CONTROL_SUBMIT_TOTAL_TIMEOUT, async {
             self.sender
                 .send(ControlCommand::Continue {
-                    message: message.to_string(),
-                    response,
-                })
-                .await
-                .map_err(|_| "codex control connection unavailable".to_string())?;
-            receive
-                .await
-                .map_err(|_| "codex control connection closed".to_string())?
-        })
-        .await
-        .map_err(|_| "codex turn submission timed out".to_string())?
-    }
-
-    pub(crate) async fn submit_prompt(&self, message: &str) -> Result<String, String> {
-        let (response, receive) = oneshot::channel();
-        tokio::time::timeout(CONTROL_SUBMIT_TOTAL_TIMEOUT, async {
-            self.sender
-                .send(ControlCommand::Prompt {
                     message: message.to_string(),
                     response,
                 })
@@ -2662,8 +2646,11 @@ pub(crate) async fn run_control(
                         "Codex account binding is not ready; retry the account switch".to_string(),
                     ));
                 }
-                ControlCommand::Prompt { response, .. }
-                | ControlCommand::Steer { response, .. }
+                ControlCommand::Prompt { response, .. } => {
+                    let _ =
+                        response.send(Err(prompt_submit::PromptSubmissionFailure::NotDispatched));
+                }
+                ControlCommand::Steer { response, .. }
                 | ControlCommand::Continue { response, .. } => {
                     let _ = response.send(Err(
                         "Codex account binding is not ready; retry the account switch".to_string(),
@@ -2809,31 +2796,29 @@ pub(crate) async fn run_control(
                         )
                         .await
                         {
-                            let _ = response.send(Err(error));
+                            let _ = error;
+                            let _ = response.send(Err(prompt_submit::PromptSubmissionFailure::NotDispatched));
                             continue;
                         }
                         request_id = request_id.saturating_add(1);
-                        if let Err(err) = send_json(
-                            &mut websocket,
-                            continuation_request(request_id, &thread_id, &message),
-                        ).await {
-                            let _ = response.send(Err(err));
-                            return Err("Codex prompt request write failed".to_string());
-                        }
-                        let result = receive_response_with_timeout(
+                        let result = prompt_submit::submit_prompt_request(
                             &mut websocket,
                             request_id,
+                            continuation_request(request_id, &thread_id, &message),
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
                                 .map(|account| (&context, &record, account)),
                             CONTROL_SUBMISSION_TIMEOUT,
-                        ).await.and_then(|value| {
-                            value.pointer("/turn/id")
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                                .ok_or_else(|| "Codex turn/start response omitted the acknowledged turn id".to_string())
-                        });
+                        ).await;
+                        let result = match result {
+                            Ok(turn_id) => Ok(turn_id),
+                            Err(prompt_submit::PromptRequestFailure::Write(error)) => {
+                                let _ = response.send(Err(error));
+                                return Err("Codex prompt request write failed".to_string());
+                            }
+                            Err(prompt_submit::PromptRequestFailure::Response(error)) => Err(error),
+                        };
                         if let Ok(turn_id) = result.as_deref() {
                             reducer.note_started(turn_id);
                         }
@@ -5108,52 +5093,11 @@ where
 {
     tokio::time::timeout(
         timeout,
-        receive_response(websocket, id, live, external_auth),
+        prompt_submit::receive_response(websocket, id, live, external_auth),
     )
     .await
     .map_err(|_| "Codex app-server request timed out".to_string())?
-}
-
-async fn receive_response<S>(
-    websocket: &mut S,
-    id: u64,
-    mut live: Option<(&CliContext, &SessionRecord, &mut FailureReducer)>,
-    external_auth: Option<(&CliContext, &SessionRecord, &str)>,
-) -> Result<Value, String>
-where
-    S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
-        + futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error>
-        + Unpin,
-{
-    loop {
-        let value = decode_message(websocket.next().await).await?;
-        if respond_to_external_auth_refresh(websocket, &value, external_auth).await? {
-            continue;
-        }
-        if value.get("id").and_then(Value::as_u64) == Some(id) {
-            if let Some(error) = value.get("error") {
-                let category = error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(protocol_error_category)
-                    .unwrap_or("unknown");
-                return Err(format!(
-                    "Codex app-server rejected request: {} ({category})",
-                    error
-                        .get("code")
-                        .and_then(Value::as_i64)
-                        .unwrap_or_default()
-                ));
-            }
-            return value
-                .get("result")
-                .cloned()
-                .ok_or_else(|| "Codex app-server response omitted result".to_string());
-        }
-        if let Some((context, record, reducer)) = live.as_mut() {
-            process_live_message(context, record, reducer, None, &value).await?;
-        }
-    }
+    .map_err(prompt_submit::PromptResponseFailure::into_string)
 }
 
 async fn respond_to_external_auth_refresh<S>(

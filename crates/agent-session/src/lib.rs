@@ -49,7 +49,7 @@ mod runtime_teardown;
 mod startup;
 use runtime_teardown::tmux_kill_identity_with_timeout;
 use startup::start_interactive_tmux;
-mod send;
+pub(crate) mod send;
 mod send_guard;
 mod send_submit;
 use send::{SendResult, load_and_paste_buffer_with_timeout, send_to_session};

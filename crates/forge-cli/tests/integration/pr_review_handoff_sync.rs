@@ -214,10 +214,11 @@ fn assert_not_carried(output: &CmdOutput, stub: &StubEnv, reason: &str) {
 }
 
 #[test]
-fn clean_base_sync_carries_the_pass_and_records_it_once() {
+fn coordinator_with_active_assignment_records_clean_base_sync_once() {
     let s = sync(false);
     let dir = s.repo.path();
-    let stub = provider(&s, &s.synced, vec![review(&s.reviewed, "pass")]);
+    let stub = provider(&s, &s.synced, vec![review(&s.reviewed, "pass")])
+        .env("AGENT_SESSION_ID", "worker-session");
     let evidence = json!({
         "review_url": REVIEW_URL,
         "reviewed_head": s.reviewed,
@@ -591,4 +592,220 @@ fn ledger_rejects_a_carry_over_for_another_head_or_without_an_owner() {
                 .is_err()
         );
     }
+}
+
+#[test]
+fn assignment_binds_the_base_ref_and_sha_from_the_same_provider_response() {
+    let s = sync(false);
+    // The initial PR view reports main; the later REST snapshot reports a
+    // retarget to release. Persist only the matching pair from that snapshot.
+    let stub = writable_ledger(fixture(&s.reviewed, &[], vec![]), &[])
+        .env("PROVIDER_BASE", &s.main)
+        .env("PROVIDER_BASE_REF", "release")
+        .env("AGENT_REVIEWER_SESSION", "");
+    let output = run_forge_cli_in(
+        &stub,
+        &[
+            "--provider",
+            "github",
+            "--repo",
+            "acme/widgets",
+            "--format",
+            "json",
+            "pr",
+            "review-handoff",
+            "assign",
+            "7",
+            "--expected-head",
+            &s.reviewed,
+            "--reviewer-session",
+            "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+            "--review-author",
+            "review-app[bot]",
+            "--base-sha",
+            &s.main,
+            "--expected-state",
+            "none",
+        ],
+        Some(s.repo.path()),
+    );
+    assert_eq!(output.code, 0, "{} {}", output.stdout, output.stderr);
+    let calls = fs::read_to_string(stub.tempdir.path().join("calls.log")).unwrap();
+    let pull_reads: Vec<_> = calls
+        .lines()
+        .filter(|call| call.contains("pulls/7"))
+        .collect();
+    assert_eq!(pull_reads.len(), 2, "{calls}");
+    assert!(
+        pull_reads[0].contains(".base.sha") && pull_reads[0].contains(".base.ref"),
+        "{}",
+        pull_reads[0]
+    );
+    let bodies = ledger_bodies(&stub);
+    let record = review_state::parse_state_marker(&bodies[0])
+        .unwrap()
+        .unwrap();
+    let ReviewStatePayload::ReviewHandoff { handoff } = record.payload else {
+        panic!("expected assignment");
+    };
+    assert_eq!(handoff.base_sha, s.main);
+    assert_eq!(handoff.base_ref.as_deref(), Some("release"));
+}
+
+#[test]
+fn carry_over_without_an_active_assignment_is_refused() {
+    let s = sync(false);
+    let mut surrendered = assigned(&s.base, &s.reviewed);
+    let ReviewStatePayload::ReviewHandoff { mut handoff } = surrendered[0].payload.clone() else {
+        panic!("expected assignment");
+    };
+    handoff.surrendered = true;
+    surrendered.push(
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            &s.synced,
+            2,
+            Some(surrendered.last().unwrap().record_digest.clone()),
+            ReviewStatePayload::ReviewHandoff { handoff },
+        )
+        .unwrap(),
+    );
+    for (seeded, code, error) in [
+        (vec![], 65, "review_assignment_missing"),
+        (surrendered, 69, "designated_reviewer_unavailable"),
+    ] {
+        let stub = writable_ledger(
+            fixture(&s.synced, &seeded, vec![review(&s.reviewed, "pass")]),
+            &seeded,
+        )
+        .env("PROVIDER_BASE", &s.main)
+        .env("AGENT_REVIEWER_SESSION", "");
+        let output = handoff_cmd(&stub, s.repo.path(), false, "check", &s.synced);
+        assert_refusal(&output, code, error);
+        assert_eq!(
+            ledger_bodies(&stub).len(),
+            seeded.len(),
+            "no carry-over may be appended"
+        );
+    }
+}
+
+#[test]
+fn malformed_second_parent_is_refused_before_merge_evaluation() {
+    let s = sync(false);
+    for parent in [
+        format!("{}^{{commit}}", s.main),
+        s.main[..39].to_string(),
+        "g".repeat(40),
+        "--write-tree".to_string(),
+    ] {
+        let raw = format!(
+            "tree {}\nparent {}\nparent {parent}\n\nmalformed parent\n",
+            s.repo.tree(&s.synced),
+            s.reviewed,
+        );
+        let file = s.repo.path().join("malformed-commit");
+        fs::write(&file, raw).unwrap();
+        // --literally lets the fixture retain an invalid raw commit header.
+        let head = s.repo.git(&[
+            "hash-object",
+            "--literally",
+            "-t",
+            "commit",
+            "-w",
+            file.to_str().unwrap(),
+        ]);
+        let stub = provider(&s, &head, vec![review(&s.reviewed, "pass")]);
+        let output = handoff_cmd(&stub, s.repo.path(), false, "check", &head);
+        assert_not_carried(&output, &stub, "not-a-sync-merge");
+    }
+}
+
+#[test]
+fn carry_over_from_an_earlier_interval_is_ignored() {
+    let s = sync(false);
+    let mut seeded = assigned(&s.base, &s.reviewed);
+    let carry = SyncCarryOver {
+        review_url: REVIEW_URL.into(),
+        reviewed_head: s.reviewed.clone(),
+        head: s.synced.clone(),
+        base_commit: s.main.clone(),
+        merge_tree: s.repo.tree(&s.synced),
+    };
+    seeded.push(
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            &s.synced,
+            2,
+            Some(seeded.last().unwrap().record_digest.clone()),
+            ReviewStatePayload::ReviewSyncCarryOver { carry_over: carry },
+        )
+        .unwrap()
+        .with_assignment_generation(Some(1))
+        .unwrap(),
+    );
+    let ReviewStatePayload::ReviewHandoff { mut handoff } = seeded[0].payload.clone() else {
+        panic!("expected assignment");
+    };
+    handoff.assignment_generation = 2;
+    handoff.base_sha = s.main.clone();
+    let refresh = ReviewStateRecord::new(
+        "acme/widgets",
+        7,
+        &s.reviewed,
+        3,
+        Some(seeded.last().unwrap().record_digest.clone()),
+        ReviewStatePayload::ReviewHandoff { handoff },
+    )
+    .unwrap();
+    let binding = refresh.record_digest.clone();
+    seeded.push(refresh);
+    let state = review_state::observe_review_loop(None, &s.reviewed, &[])
+        .unwrap()
+        .state;
+    seeded.push(
+        ReviewStateRecord::new(
+            "acme/widgets",
+            7,
+            &s.reviewed,
+            4,
+            Some(binding.clone()),
+            ReviewStatePayload::ReviewLoop { state },
+        )
+        .unwrap()
+        .with_assignment_generation(Some(2))
+        .unwrap(),
+    );
+    let mut current = review(&s.reviewed, "pass");
+    current["databaseId"] = json!(2);
+    current["id"] = json!("REVIEW_2");
+    current["url"] = json!("https://github.com/acme/widgets/pull/7#pullrequestreview-2");
+    current["submittedAt"] = json!("2026-07-20T12:00:04Z");
+    current["body"] = json!(format!(
+        "{}\n<!-- forge-cli:review-handoff:v1 {binding} -->",
+        current["body"].as_str().unwrap(),
+    ));
+    let stub = writable_ledger(fixture(&s.synced, &seeded, vec![current]), &seeded)
+        .env("PROVIDER_BASE", &s.main)
+        .env("AGENT_REVIEW_ASSIGNMENT_GENERATION", "2");
+    let inspected = handoff_cmd(&stub, s.repo.path(), false, "inspect", &s.synced);
+    assert_eq!(
+        inspected.code, 0,
+        "{} {}",
+        inspected.stdout, inspected.stderr
+    );
+    assert!(parse_envelope(&inspected.stdout)["data"]["sync_carry_over"].is_null());
+    let gate = merge_preview(&stub, s.repo.path());
+    assert_refusal(&gate, 65, "awaiting_designated_review");
+    let checked = handoff_cmd(&stub, s.repo.path(), false, "check", &s.synced);
+    assert_eq!(checked.code, 0, "{} {}", checked.stdout, checked.stderr);
+    assert_eq!(ledger_bodies(&stub).len(), 6);
+    assert_eq!(
+        parse_envelope(&checked.stdout)["data"]["sync_carry_over"]["review_url"],
+        "https://github.com/acme/widgets/pull/7#pullrequestreview-2"
+    );
+    let gate = merge_preview(&stub, s.repo.path());
+    assert_eq!(gate.code, 0, "{} {}", gate.stdout, gate.stderr);
 }

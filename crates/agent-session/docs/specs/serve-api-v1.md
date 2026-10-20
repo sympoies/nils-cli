@@ -654,6 +654,12 @@ recorded in `sympoies/nils-cli#1409`.
   `session_incarnation`, while the provider turn id remains private. These mutations never send multiline text through
   terminal keys; unsupported or not-yet-ready sessions fail closed.
 
+  If provider acknowledgement is lost while the recorded exact tmux runtime is
+  confirmed stopped, the route treats the prompt as submitted. It probes the
+  runtime identity recorded for the locked session, not the reusable tmux
+  session name. Missing identity, probe errors, and a runtime that remains live
+  do not confirm submission and retain the unknown outcome.
+
   On a Claude (pane-delivered) runtime, success means Claude's `UserPromptSubmit` hook started a new turn within the
   acknowledgement wait, or a poll of the wait saw the pane list the prompt among its queued messages behind a running turn
   (a tool-call turn takes the queue at its next tool call); the queued case adds `queued: true` and the client MUST NOT
