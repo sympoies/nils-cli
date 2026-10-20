@@ -167,6 +167,22 @@ pub(super) fn observe(
     }
 }
 
+/// Preserve a known startup exit before the generic prompt cleanup can remove
+/// its record or replace its more specific failure projection.
+pub(super) fn recover_prompt_failure(
+    context: &CliContext,
+    record: &mut SessionRecord,
+    tmux: &Path,
+    identity: Option<&TmuxRuntimeIdentity>,
+    operation: SessionTerminationOperation,
+) -> Result<FailedLaunchCleanup, CliError> {
+    let status = session_status(context, tmux, record);
+    check_stopped(context, record, &status, tmux)?;
+    Ok(recover_failed_tmux_launch_bounded(
+        context, record, tmux, identity, operation,
+    ))
+}
+
 fn prompt_reason(pane: &str) -> Option<&'static str> {
     let text = pane.to_ascii_lowercase();
     if text.contains("trust this folder")
@@ -319,16 +335,33 @@ fn failure(
 }
 
 fn diagnostic_tail(context: &CliContext, record: &SessionRecord) -> Option<String> {
+    // Both stderr collectors retain at most 16 KiB. Preserve that context for
+    // redaction; the response's smaller suffix limit is applied afterward.
+    const CAPTURE_LIMIT: u64 = 16 * 1024;
     let directory = session_dir(context, &record.id);
     let mut text = String::new();
     for name in [STARTUP_DIAGNOSTIC_FILE, STDERR_FILE] {
         let mut file = fs::File::open(directory.join(name)).ok();
         if let Some(file) = file.as_mut() {
             let len = file.metadata().ok()?.len();
-            file.seek(SeekFrom::Start(len.saturating_sub(4096))).ok()?;
+            file.seek(SeekFrom::Start(len.saturating_sub(CAPTURE_LIMIT)))
+                .ok()?;
             let mut bytes = Vec::new();
-            file.take(4096).read_to_end(&mut bytes).ok()?;
-            text.push_str(&String::from_utf8_lossy(&bytes));
+            file.take(CAPTURE_LIMIT).read_to_end(&mut bytes).ok()?;
+            // At the collector bound, the first line may lack the credential
+            // key or other context removed by its raw-byte suffix clipping.
+            let start = if len >= CAPTURE_LIMIT {
+                bytes
+                    .iter()
+                    .position(|byte| *byte == b'\n')
+                    .map_or(bytes.len(), |index| index + 1)
+            } else {
+                0
+            };
+            if start < bytes.len() {
+                text.push_str(&String::from_utf8_lossy(&bytes[start..]));
+                text.push('\n');
+            }
         }
     }
     if text.is_empty() {

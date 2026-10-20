@@ -6,6 +6,8 @@
 - Fresh session startup exits and recognized trust or setup prompts return a
   typed start-failed response with bounded diagnostics and conservative retry
   metadata.
+- Diagnostic redaction precedes response clipping, and a provider exit during
+  initial prompt delivery retains the concrete startup failure.
 
 ### Why / context
 
@@ -16,9 +18,9 @@
 ### Evidence
 
 - Fake-provider reproductions preceded failing CLI, HTTP and Console
-  regressions. Ten startup cases and the full workspace local-fast gate passed
-  on signed head 7855640b5b15560ee3c41cbd58251bbdd0db2e9f before this
-  layout-only entry migration.
+  regressions. Thirteen startup cases and the Console forwarding and
+  reconciliation regression passed after the review repairs, including
+  credential-boundary and delayed initial-prompt exit cases.
 
 ### Links
 

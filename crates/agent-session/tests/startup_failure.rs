@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::Value;
 
 struct Fixture {
@@ -367,5 +367,82 @@ fn sign_in_screen_has_a_typed_configuration_reason() {
     assert_eq!(
         body["error"]["details"]["next_action"],
         "configure_provider"
+    );
+}
+
+#[test]
+fn credentials_are_redacted_before_response_suffix_clipping() {
+    let canary = "RESPONSE_BOUNDARY_CANARY";
+    let reason = "\nSAFE_STARTUP_REASON";
+    let padding_bytes = 4096 - canary.len() - 1 - reason.len();
+    let mut padding = "é".repeat(padding_bytes / 2);
+    if !padding_bytes.is_multiple_of(2) {
+        padding.push('x');
+    }
+    let payload = format!("token={canary}\n{padding}{reason}");
+    assert_eq!(payload.len(), 4102);
+    let tail = assert_credential_boundary(&payload, canary);
+    assert!(tail.contains('é'));
+}
+
+#[test]
+fn partial_collector_line_cannot_expose_a_credential_without_its_key() {
+    let canary = "COLLECTOR_BOUNDARY_CANARY";
+    let payload = format!("token={}{canary}\nSAFE_STARTUP_REASON\n", "é".repeat(8192));
+    assert!(payload.len() > 16384);
+    assert_credential_boundary(&payload, canary);
+}
+
+fn assert_credential_boundary(payload: &str, canary: &str) -> String {
+    let fixture = Fixture::new("cat \"$0.payload\" >&2\nexit 23");
+    fs::write(fixture.provider.with_extension("payload"), payload).unwrap();
+    let output = fixture.start();
+    let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["error"]["code"], "start-failed", "{body}");
+    let details = &body["error"]["details"];
+    assert_eq!(details["provider_exit_code"], 23);
+    let tail = details["stderr_tail"].as_str().unwrap();
+    assert!(!tail.contains(canary), "synthetic credential leaked");
+    assert!(tail.len() <= 4096);
+    assert!(tail.contains("SAFE_STARTUP_REASON"));
+    tail.to_owned()
+}
+
+#[test]
+fn initial_prompt_exit_after_observation_timeout_retains_start_failure() {
+    let fixture = Fixture::new("sleep 1\nprintf 'startup unavailable\\n' >&2\nexit 23");
+    let output = fixture
+        .start_command()
+        .env("AGENT_SESSION_CODEX_CAPTURE_TIMEOUT_MS", "250")
+        .args([
+            "--prompt",
+            "synthetic startup prompt",
+            "--paste-delay-ms",
+            "0",
+        ])
+        .output()
+        .unwrap();
+    let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["error"]["code"], "start-failed", "{body}");
+    let details = &body["error"]["details"];
+    assert_eq!(details["reason"], "runtime-exited-during-startup");
+    assert_eq!(details["provider_exit_code"], 23);
+    assert_eq!(details["session_id"], "startup-fixture");
+    assert_eq!(details["cleanup"]["state"], "completed");
+    assert_eq!(details["safe_to_retry"], true);
+    let record: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .dir
+                .path()
+                .join("state/sessions/startup-fixture/session.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["startup"]["state"], "failed");
+    assert_ne!(
+        record["startup"]["failure_code"],
+        "terminal-runtime-create-failed"
     );
 }

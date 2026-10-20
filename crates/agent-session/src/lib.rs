@@ -2223,13 +2223,13 @@ fn start_session_inner_unjournaled(
         match paste_prompt(&tmux_bin, &created.record) {
             Ok(observation) => prompt_delivery_observation = Some(observation),
             Err(err) => {
-                let cleanup = recover_failed_tmux_launch_bounded(
+                let cleanup = startup::recover_prompt_failure(
                     context,
                     &mut created.record,
                     &tmux_bin,
                     Some(&launch_identity),
                     SessionTerminationOperation::FailedLaunch,
-                );
+                )?;
                 if cleanup == FailedLaunchCleanup::Completed {
                     cleanup_created_record(context, &created);
                 } else {
