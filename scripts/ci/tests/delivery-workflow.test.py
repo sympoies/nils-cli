@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import os
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -87,7 +88,41 @@ class DeliveryTests(unittest.TestCase):
             body = job(full, name)
             self.assertIn('cargo build --locked -p nils-devlog', body)
             self.assertLess(body.index('Build devlog validator'), body.index('Nils CLI checks'))
-            self.assertIn('target/debug" >> "$GITHUB_PATH"', body)
+
+    def test_validator_setup_exposes_only_devlog_to_later_steps(self):
+        setups = (('ci.yml', 'test', 'Build repository devlog checker'),
+                  ('full-validation.yml', 'test', 'Build devlog validator'),
+                  ('full-validation.yml', 'test_macos', 'Build devlog validator'))
+        for filename, name, step_name in setups:
+            with self.subTest(workflow=filename, job=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                binaries = root / 'target/debug'
+                binaries.mkdir(parents=True)
+                for binary in ('devlog', 'semantic-commit', 'agent-hook'):
+                    (binaries / binary).write_text(binary + '\n')
+                tools = root / 'tools'
+                tools.mkdir()
+                cargo = tools / 'cargo'
+                cargo.write_text('#!/bin/sh\nexit 0\n')
+                cargo.chmod(0o755)
+                runner_temp = root / 'runner-temp'
+                runner_temp.mkdir()
+                github_path = root / 'github-path'
+                body = job(workflow(filename), name)
+                step = body.split(f'      - name: {step_name}\n', 1)[1].split('\n      - name:', 1)[0]
+                script = step.split('        run: |\n', 1)[1]
+                script = '\n'.join(line[10:] for line in script.splitlines() if line.startswith('          '))
+                env = dict(os.environ, RUNNER_TEMP=str(runner_temp), GITHUB_PATH=str(github_path),
+                           GITHUB_WORKSPACE=str(root), PATH=str(tools) + os.pathsep + os.environ['PATH'])
+                result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root,
+                                        env=env, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                additions = github_path.read_text().splitlines()
+                self.assertEqual(len(additions), 1)
+                exposed = Path(additions[0])
+                self.assertEqual(sorted(path.name for path in exposed.iterdir()), ['devlog'])
+                self.assertEqual(exposed.parent, runner_temp)
+                self.assertEqual((exposed / 'devlog').read_text(), 'devlog\n')
 
     def test_required_linux_checks_fail_closed(self):
         ci = workflow('ci.yml')
