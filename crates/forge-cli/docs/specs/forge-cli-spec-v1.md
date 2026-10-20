@@ -1296,7 +1296,8 @@ Disabling this feature never disables the existing unresolved-thread gate.
 
 ### `[review_handoff]` — retired coordinator takeover
 
-Read `.forge-cli.toml` at the exact provider base; require selected remote host/repository and base-ref commit to match, and reject invalid explicit `stale_after`.
+Read `.forge-cli.toml` at the exact provider base; require the selected remote host/repository
+and base-ref commit to match, and reject invalid explicit `stale_after`.
 `supervisors` is an empty-by-default allow-list of `sha256:` digests for
 canonical agent-session UUIDs. `stale_after` defaults to `2h` (range `60s` to
 `30d`). Takeover requires `--reason coordinator-retired` and a fresh board
