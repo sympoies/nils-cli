@@ -23,6 +23,12 @@
   credential-boundary and delayed initial-prompt exit cases.
 - Isolated build artifacts repeated the startup and Console contracts after a
   shared executable resolved to another revision; all assertions were retained.
+- The model-picker integration preserves both startup repairs and combines
+  the decreased test-size baselines without changing the regression assertions.
+- An isolated prior-head gate stopped on an existing receipt assertion whose
+  forbidden path substring matched the test executable directory. The same
+  binary failed from that directory and passed from a neutral directory; the
+  failed gate and unchanged-binary comparison remain recorded.
 
 ### Links
 

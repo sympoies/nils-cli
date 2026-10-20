@@ -23554,24 +23554,8 @@ esac
         assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
-    #[tokio::test]
-    async fn send_rejects_unknown_key() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let tmux = minimal_tmux(tmp.path());
-        seed_session(tmp.path(), "steer", "codex", "hs-codex-steer");
-        let st = state(tmp.path(), Some(TOKEN), tmux);
-        let (status, body) = call(
-            router(st.clone()),
-            post_json(
-                "/sessions/steer/send",
-                Some(TOKEN),
-                json!({ "keys": ["banana"] }),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body["error"]["code"], "invalid-key");
-    }
+    #[path = "send_key_contract.rs"]
+    mod send_key_contract;
 
     /// A `send` body's key list is remote input whose length is bounded only by
     /// the Axum body limit, so the handler must reject an oversized list before
