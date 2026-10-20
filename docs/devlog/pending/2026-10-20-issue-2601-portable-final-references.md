@@ -6,6 +6,8 @@
 - Final-resolution summaries display home-absolute investigation references
   portably while canonical evidence bytes, hashes and resolution history remain
   unchanged.
+- URI-contained home components remain intact for the existing publication
+  guard to refuse, preserving audit links rather than silently corrupting them.
 
 ### Why / context
 
@@ -15,7 +17,7 @@
 
 ### Evidence
 
-- Four export regressions, three stub publication regressions and five existing
+- Five export regressions, four stub publication regressions and five existing
   final-resolution tests pass; affected library Clippy and strict file-size
   audit pass.
 

@@ -232,3 +232,40 @@ fn nested_home_components_are_rewritten_once_from_the_original_reference() {
         before
     );
 }
+
+#[test]
+fn uri_home_components_are_preserved_for_the_existing_publication_guard() {
+    let temp = tempfile::tempdir().unwrap();
+    let references = [
+        "https://example.invalid/home/fixture/report",
+        "https://example.invalid/Users/fixture/report",
+        "[report](https://example.invalid/home/fixture/report)",
+        "/home/fixture/report then https://example.invalid/home/fixture/report then /home/fixture/report",
+        "file:/home/fixture/report",
+    ];
+    resolved_fixture(temp.path(), &references, "same source and covered target");
+    let file = temp.path().join("test-first-evidence.json");
+    let before = fs::read(&file).unwrap();
+    let hash = Sha256::digest(&before);
+    let summary = final_resolution_summary(&verify_dir(temp.path()).unwrap().record);
+
+    for reference in [
+        &references[0],
+        &references[1],
+        &references[2],
+        &references[4],
+    ] {
+        assert!(
+            summary.contains(reference),
+            "URI must remain intact: {summary}"
+        );
+    }
+    assert!(summary.contains(
+        "$HOME/report then https://example.invalid/home/fixture/report then $HOME/report"
+    ));
+    assert!(!summary.contains("example.invalid$HOME"));
+    assert!(!summary.contains("file:$HOME"));
+    assert!(validate_no_local_paths(&summary, "body").is_err());
+    assert_eq!(fs::read(&file).unwrap(), before);
+    assert_eq!(Sha256::digest(fs::read(&file).unwrap()), hash);
+}

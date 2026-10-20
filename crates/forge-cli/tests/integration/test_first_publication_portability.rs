@@ -238,3 +238,33 @@ fn nested_home_tail_keeps_the_existing_publication_guard_refusal() {
     );
     assert_eq!(fs::read(file).unwrap(), before);
 }
+
+#[test]
+fn create_and_deliver_refuse_uri_home_components_before_publication() {
+    let fixture = fixture_with_references(&[
+        "https://example.invalid/home/fixture/report",
+        "https://example.invalid/Users/fixture/report",
+    ]);
+    let file = fixture.evidence.join("test-first-evidence.json");
+    let before = fs::read(&file).unwrap();
+    let hash = Sha256::digest(&before);
+    let stub = StubEnv::new();
+    let capture = stub.tempdir.path().join("published-body.md");
+    let stub = publication_stub(stub, &capture);
+    for operation in ["create", "deliver"] {
+        let out = fixture.evidence.to_str().unwrap();
+        let mut args = create_args(operation, out);
+        if operation == "deliver" {
+            args.push("--no-merge");
+        }
+        let result = run_forge_cli_in(&stub, &args, Some(&fixture.repo));
+        assert_eq!(result.code, 65, "{}\n{}", result.stdout, result.stderr);
+        assert_eq!(
+            parse_envelope(&result.stdout)["error"]["code"],
+            "local_path_present"
+        );
+        assert!(!capture.exists(), "URI must not be corrupted and published");
+        assert_eq!(fs::read(&file).unwrap(), before);
+        assert_eq!(Sha256::digest(fs::read(&file).unwrap()), hash);
+    }
+}
