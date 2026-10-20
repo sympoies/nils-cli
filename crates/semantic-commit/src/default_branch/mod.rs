@@ -1,7 +1,8 @@
 mod command;
 mod git;
+pub(crate) mod install;
 mod options;
-mod preflight;
+pub(crate) mod preflight;
 mod receipt;
 mod transaction;
 

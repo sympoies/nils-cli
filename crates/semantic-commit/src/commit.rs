@@ -230,15 +230,11 @@ impl Default for CommitOptions {
 }
 
 pub fn run(args: &[String]) -> i32 {
-    run_with_signing_policy(args, false)
-}
-
-fn run_with_signing_policy(args: &[String], force_signing: bool) -> i32 {
     let options = match parse_args(args) {
         Ok(options) => options,
         Err(code) => return code,
     };
-    run_options(options, force_signing)
+    run_options(options, None)
 }
 
 /// Typed commit configuration shared by the exceptional default-branch path.
@@ -275,20 +271,15 @@ impl DefaultBranchCommitOptions {
     pub(crate) fn finish(&mut self) -> Result<(), i32> {
         finish_message_options(&mut self.options, self.max_header_width_from_flag)
     }
-
-    pub(crate) fn run(mut self, repo: PathBuf, expect_head: String, dry_run: bool) -> i32 {
-        self.options.summary_mode = SummaryMode::None;
-        self.options.no_progress = true;
-        self.options.quiet = true;
-        self.options.dry_run = dry_run;
-        self.options.require_clean = true;
-        self.options.expect_head = Some(expect_head);
-        self.options.repo = Some(repo);
-        run_options(self.options, true)
-    }
 }
 
-fn run_options(mut options: CommitOptions, force_signing: bool) -> i32 {
+#[path = "default_branch/commit_options.rs"]
+mod default_branch_options;
+
+fn run_options(
+    mut options: CommitOptions,
+    installation: Option<&mut crate::default_branch::install::Installation<'_>>,
+) -> i32 {
     let operation = commit_operation(&options);
 
     if !git::command_exists("git") {
@@ -426,7 +417,7 @@ fn run_options(mut options: CommitOptions, force_signing: bool) -> i32 {
         progress.tick();
     }
 
-    let status = git_commit(tmpfile.path(), &options, operation, force_signing);
+    let status = git_commit(tmpfile.path(), &options, operation, installation);
 
     if let Some(progress) = &progress {
         progress.finish_and_clear();
@@ -1159,13 +1150,13 @@ fn git_commit(
     message_path: &Path,
     options: &CommitOptions,
     operation: CommitOperation,
-    force_signing: bool,
+    installation: Option<&mut crate::default_branch::install::Installation<'_>>,
 ) -> anyhow::Result<std::process::ExitStatus> {
+    if let Some(installation) = installation {
+        return installation.commit(message_path, options.signoff, &options.trailers);
+    }
     let message_path = message_path.to_string_lossy();
     let mut args = vec!["commit".to_string()];
-    if force_signing {
-        args.push("-S".to_string());
-    }
     if matches!(
         operation,
         CommitOperation::Amend | CommitOperation::MessageOnlyAmend

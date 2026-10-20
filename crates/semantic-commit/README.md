@@ -144,6 +144,22 @@ cannot be adopted for provider delivery. Successful mutation writes the strict
 single-parent, exact-head, tree, clean-state, branch, and cached-identity
 postconditions pass.
 
+The command runs the configured pre-commit, prepare-commit-msg, and commit-msg
+hooks, creates a signed candidate with exactly `--expect-head` as its parent,
+and installs it using an atomic expected-old-value branch update. Git's
+reference-transaction hooks may veto that update; post-commit runs only after
+installation. A competing branch advance makes installation refuse without
+changing that writer's tip or writing a success receipt. These checks do not
+replace the repository's single-writer enforcement.
+
+If installation succeeds but a later postcondition or receipt write fails, the
+error names the installed commit ID even if HEAD has since moved. Do not replay
+the command or reset the branch: retain that ID and inspect its parent, tree,
+signature, branch state, and any existing receipt. The maintainer must repair
+the finalization failure and independently validate that commit before adopting
+it for delivery. A missing or unvalidated receipt is never delivery evidence;
+this command does not automatically regenerate one or roll back the commit.
+
 For remote-backed repositories, the current branch, configured upstream, and
 the upstream remote's cached symbolic default branch must agree, and the cached
 upstream must be exactly aligned before mutation. Missing, ambiguous, behind,
