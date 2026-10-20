@@ -5869,10 +5869,10 @@ async fn submit_prompt_rejects_response_without_acknowledged_turn_id() {
         .submit_prompt("must require an acknowledged turn id")
         .await
         .unwrap_err();
-    assert_eq!(
+    assert!(matches!(
         error,
-        "Codex turn/start response omitted the acknowledged turn id"
-    );
+        prompt_submit::PromptSubmissionFailure::NotConfirmed
+    ));
     server.await.unwrap();
     drop(handle);
     control.abort();

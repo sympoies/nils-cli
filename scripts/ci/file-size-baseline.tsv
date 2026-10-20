@@ -9,7 +9,7 @@ crates/agent-hook/tests/dsh_policy.rs	test	4623
 crates/agent-hook/tests/setup.rs	test	3033
 crates/agent-out/src/lib.rs	impl	2430
 crates/agent-session/src/activity.rs	impl	5199
-crates/agent-session/src/codex_app_server.rs	impl	5453
+crates/agent-session/src/codex_app_server.rs	impl	5397
 crates/agent-session/src/codex_app_server/tests/mod.rs	test	8545
 crates/agent-session/src/lib.rs	impl	13293
 crates/agent-session/src/lib.rs	test	6320
@@ -17,8 +17,8 @@ crates/agent-session/src/provider_history.rs	impl	2761
 crates/agent-session/src/retitle.rs	impl	3378
 crates/agent-session/src/retitle_v3.rs	impl	3634
 crates/agent-session/src/retitle_v3.rs	test	3648
-crates/agent-session/src/serve.rs	impl	11974
-crates/agent-session/src/serve.rs	test	25233
+crates/agent-session/src/serve.rs	impl	11770
+crates/agent-session/src/serve.rs	test	25189
 crates/agent-session/tests/integration/cli.rs	test	12869
 crates/agent-session/tests/integration/coordination.rs	test	5404
 crates/agent-workflow-primitives/src/heuristic_inbox.rs	impl	4085
