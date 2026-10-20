@@ -2814,31 +2814,24 @@ pub(crate) async fn run_control(
                             continue;
                         }
                         request_id = request_id.saturating_add(1);
-                        if let Err(err) = send_json(
-                            &mut websocket,
-                            continuation_request(request_id, &thread_id, &message),
-                        ).await {
-                            let _ = err;
-                            let _ = response.send(Err(prompt_submit::PromptSubmissionFailure::NotConfirmed));
-                            return Err("Codex prompt request write failed".to_string());
-                        }
-                        let result = prompt_submit::receive_prompt_response_with_timeout(
+                        let result = prompt_submit::submit_prompt_request(
                             &mut websocket,
                             request_id,
+                            continuation_request(request_id, &thread_id, &message),
                             Some((&context, &record, &mut reducer)),
                             external_auth_account
                                 .as_deref()
                                 .map(|account| (&context, &record, account)),
                             CONTROL_SUBMISSION_TIMEOUT,
-                        ).await.map_err(|error| match error {
-                            prompt_submit::PromptResponseFailure::Rejected(error) | prompt_submit::PromptResponseFailure::NotConfirmed(error) => { let _ = error; prompt_submit::PromptSubmissionFailure::NotConfirmed },
-                            prompt_submit::PromptResponseFailure::Other(error) => { let _ = error; prompt_submit::PromptSubmissionFailure::AcknowledgementUnknown },
-                        }).and_then(|value| {
-                            value.pointer("/turn/id")
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                                .ok_or(prompt_submit::PromptSubmissionFailure::NotConfirmed)
-                        });
+                        ).await;
+                        let result = match result {
+                            Ok(turn_id) => Ok(turn_id),
+                            Err(prompt_submit::PromptRequestFailure::Write(error)) => {
+                                let _ = response.send(Err(error));
+                                return Err("Codex prompt request write failed".to_string());
+                            }
+                            Err(prompt_submit::PromptRequestFailure::Response(error)) => Err(error),
+                        };
                         if let Ok(turn_id) = result.as_deref() {
                             reducer.note_started(turn_id);
                         }

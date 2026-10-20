@@ -9,7 +9,7 @@ crates/agent-hook/tests/dsh_policy.rs	test	4623
 crates/agent-hook/tests/setup.rs	test	3033
 crates/agent-out/src/lib.rs	impl	2430
 crates/agent-session/src/activity.rs	impl	5199
-crates/agent-session/src/codex_app_server.rs	impl	5404
+crates/agent-session/src/codex_app_server.rs	impl	5397
 crates/agent-session/src/codex_app_server/tests/mod.rs	test	8545
 crates/agent-session/src/lib.rs	impl	13293
 crates/agent-session/src/lib.rs	test	6320
