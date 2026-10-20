@@ -508,6 +508,20 @@ fn cli_request(
     reconcile: bool,
     operation_id: &str,
 ) -> Result<Value, CliError> {
+    let unmanaged = || {
+        CliError::usage(
+            "console-start-unmanaged",
+            "--via-console requires a managed caller or a worker delegation",
+            None,
+        )
+    };
+    let runtime_caller = crate::non_empty_env("AGENT_SESSION_ID");
+    if runtime_caller.is_none()
+        && capability_file.is_none()
+        && std::env::var_os(super::CAPABILITY_ENV).is_none_or(|path| path.is_empty())
+    {
+        return Err(unmanaged());
+    }
     let token = super::capability_token_from_file(capability_file)?;
     let caller = if super::delegation::is_delegation(&token) {
         super::delegation::authenticate_token(
@@ -520,13 +534,7 @@ fn cli_request(
         .0
         .id
     } else {
-        let caller = crate::non_empty_env("AGENT_SESSION_ID").ok_or_else(|| {
-            CliError::usage(
-                "console-start-unmanaged",
-                "--via-console requires a managed caller or a worker delegation",
-                None,
-            )
-        })?;
+        let caller = runtime_caller.ok_or_else(unmanaged)?;
         super::authenticate_token(context, &caller, &token)?;
         caller
     };
