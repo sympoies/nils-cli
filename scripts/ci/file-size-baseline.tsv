@@ -28,7 +28,7 @@ crates/agent-workflow-primitives/src/test_first_evidence.rs	impl	2017
 crates/agent-workflow-primitives/tests/integration/cli.rs	test	3672
 crates/codex-cli/src/agent/capsule.rs	impl	2626
 crates/codex-cli/tests/integration/execution_capsule.rs	test	3083
-crates/forge-cli/src/cli.rs	impl	2634
+crates/forge-cli/src/cli.rs	impl	2577
 crates/forge-cli/src/ops/inbox.rs	impl	2371
 crates/forge-cli/src/ops/pr_review.rs	impl	3911
 crates/forge-cli/src/ops/repo_bootstrap.rs	impl	2426

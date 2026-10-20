@@ -1514,6 +1514,49 @@ invocation's managed identity. Provider permission errors remain errors.
   and `resolved`. `all` omits the provider state filter. Incompatible states
   fail with `alert_state_invalid`. Alert output selects safe metadata fields
   and never includes scanned secret values or code snippets.
+- `security alerts view NUMBER --repo owner/repo --kind code-scanning
+  --ref REF --commit SHA [--include-sarif]` emits
+  `cli.forge-cli.security.alerts.view.v1`: `provider`, `host`, `repo`, `kind`,
+  `reference`, `commit_sha`, `alert`, `instances`, `sarif_requested`,
+  `sarif_scope`, and `analyses`. The ref is required and the commit must be a
+  full 40-character SHA. This reader supports code scanning only; the existing
+  list reader retains its metadata-only contract for all alert families.
+
+  `alert` contains selected alert/rule/tool/status metadata. `instances` contains
+  only exact ref/commit matches, including their analysis key, environment,
+  category, state, message, and location. The alert's default-branch
+  `most_recent_instance` is never substituted for a matching instance.
+  `security_instance_not_found` means no requested instance was found, not
+  that an alert is fixed or absent from the pull request.
+
+  Without `--include-sarif`, no analysis endpoint is called and `analyses` is
+  empty. With it, analysis metadata must match the ref, commit, instance
+  configuration (analysis key, environment, category), and tool name. All
+  configuration fields must be present strings; only environment may be empty.
+  Tool names must be present and nonempty. A nonempty alert tool GUID must
+  also match; absent or null alert GUIDs use name matching, without requiring
+  equal tool versions. Each `analyses` item contains selected `metadata` and
+  provider `sarif`.
+
+  `sarif_scope` is `analysis`: SARIF may contain code snippets and other alerts
+  in that analysis. Correlate provider result properties such as
+  `github/alertNumber` / `github/alertUrl`, rules, and locations before assigning
+  source/intermediate/sink steps to an alert. Code flows are preserved as
+  supplied; absent flows do not establish clearance. See
+  [GitHub's code-scanning analysis media type](https://docs.github.com/en/rest/code-scanning/code-scanning#get-a-code-scanning-analysis-for-a-repository).
+
+  Missing matching analysis metadata returns `security_analysis_not_found`.
+  Instance and analysis inventory reads each stop after ten 100-row pages;
+  reaching that bound returns `security_read_incomplete`, with no partial
+  success payload. Each backend call has a 30-second timeout and the existing
+  8 MiB capture limit per stream. The entire read allows at most 32 requests,
+  120 seconds, and 16 MiB cumulative captured evidence. Exhausting the command
+  budget returns `security_read_limit`; backend capture overflow returns
+  `backend_output_limit`. Neither emits partial evidence.
+
+  Provider access refusals remain errors. All calls are fixed GET endpoints
+  under the selected authority/repository; response URLs are not followed.
+  `--dry-run` previews only the first alert request, without calls.
 - `security settings view --repo owner/repo` emits
   `cli.forge-cli.security.settings.view.v1`: `provider`, `host`, `repo`, and
   nullable `security_and_analysis`. A missing block means the provider did
@@ -1522,6 +1565,6 @@ invocation's managed identity. Provider permission errors remain errors.
   that block. See the [GitHub repository API](https://docs.github.com/en/rest/repos/repos).
 - Security reads use explicit or remote-derived repository identity rules,
   including credential, actor, permission, and repository coverage checks.
-- `--dry-run` emits the first page's exact `data.plan` without calling the
+- `--dry-run` emits the first request's exact `data.plan` without calling the
   backend. `limited=true` indicates the returned count reached the requested
   bound; it does not prove that more results exist.

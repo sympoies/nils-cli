@@ -1,5 +1,7 @@
 //! GitHub security metadata reads. Alert output selects fields explicitly so
 //! secret-scanning findings never serialize scanned secret values.
+mod code_scanning;
+
 use nils_common::cli_contract::{OutputFormat, schema_version_for};
 use serde::Serialize;
 use std::ffi::OsString;
@@ -75,6 +77,9 @@ pub fn run(
     match command {
         SecurityCommand::Alerts(args) => match args.command {
             SecurityAlertsCommand::List(args) => alerts(&ctx, repo, global, args, format),
+            SecurityAlertsCommand::View(args) => {
+                code_scanning::view(&ctx, repo, global, args, format)
+            }
         },
         SecurityCommand::Settings(args) => match args.command {
             SecuritySettingsCommand::View => settings(&ctx, repo, global, format),
