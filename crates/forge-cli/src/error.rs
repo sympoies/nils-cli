@@ -325,7 +325,13 @@ impl ForgeError {
             envelope_error.with_details(serde_json::json!({
                 "retryable": self.kind() == "review_coordinator_unproven",
                 "next_action": if self.kind() == "review_coordinator_live" { "return_to_coordinator" } else { "refresh_session_evidence" },
-                "recovery": { "reason": "coordinator-retired", "requires_exact_head_base_tip": true }
+                "recovery": {
+                    "reason": "coordinator-retired",
+                    "route": "forge-cli pr review-handoff recover",
+                    "requires_repository_supervisor": true,
+                    "requires_stale_terminal_activity": true,
+                    "requires_exact_head_base_tip": true
+                }
             }))
         } else if self.kind() == "pr_hold_active" {
             envelope_error.with_details(serde_json::json!({

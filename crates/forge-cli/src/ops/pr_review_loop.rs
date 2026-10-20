@@ -549,6 +549,7 @@ pub fn run_observe_with<R: BackendRunner, F: Fn(&str) -> Option<String>>(
             expected_tip: state_view.chain.tip_digest.as_deref(),
             payload: transition.into_payload(),
             visible_outcome: outcome_body.as_deref(),
+            policy_remote: None,
         },
     )?;
     emit_state(

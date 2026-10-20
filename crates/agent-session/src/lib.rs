@@ -7847,7 +7847,11 @@ fn session_list_runtime_snapshot(
     record: &SessionRecord,
 ) -> (String, Option<String>) {
     if recorded_runtime_is_from_prior_boot(record) {
-        return ("stopped".to_string(), None);
+        lifecycle::observe_stopped(context, record);
+        return (
+            "stopped".to_string(),
+            lifecycle::stopped_observed_at(context, record),
+        );
     }
     match tmux_snapshots {
         Some(snapshots) => match snapshots.sessions.get(&record.tmux_session) {
@@ -7857,10 +7861,21 @@ fn session_list_runtime_snapshot(
             ),
             None => {
                 lifecycle::observe_stopped(context, record);
-                ("stopped".to_string(), None)
+                (
+                    "stopped".to_string(),
+                    lifecycle::stopped_observed_at(context, record),
+                )
             }
         },
-        None => (session_status(context, tmux_bin, record), None),
+        None => {
+            let status = session_status(context, tmux_bin, record);
+            if status == "stopped" {
+                lifecycle::observe_stopped(context, record);
+                (status, lifecycle::stopped_observed_at(context, record))
+            } else {
+                (status, None)
+            }
+        }
     }
 }
 

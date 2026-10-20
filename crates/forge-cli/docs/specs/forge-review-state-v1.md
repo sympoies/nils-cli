@@ -279,26 +279,31 @@ GitHub's trusted provider ledger; other providers fail closed when assigned.
   The current recorded coordinator may assign the next generation using the
   durable `state_tip_digest` returned by recovery or fresh inspection.
 - Successor takeover uses `recover <id> --reason coordinator-retired
-  --coordinator-session <recorded-session-id>[@machine] --base-sha <current-base>
+  [--coordinator-session <recorded-session-id>[@machine]] --base-sha <current-base>
   --expected-head <current-head> --expected-state <exact-tip>`. The selector
-  must hash to the recorded coordinator. A distinct successor (also different
-  from the reviewer) must prove retirement through a fresh, complete
-  `agent-session board --state all --format json` read. The source must be
-  available and observed within 60 seconds; only a terminal `closed` row with a
-  `deleted` or `archived` reason qualifies. A live coordinator is refused with
-  `review_coordinator_live`; absent, stopped, unknown, vanished, stale,
-  truncated, unavailable, malformed, or failed evidence is refused with
-  `review_coordinator_unproven`. Neither elapsed time nor a supplied evidence
-  file grants ownership. A qualified selector binds the proof to that machine;
-  the persisted session identity must have one unambiguous source for either
-  selector form. Any live same-ID row refuses takeover, even on another source;
-  qualifiers cannot resolve ambiguous historical identities.
+  when supplied must hash to the recorded coordinator; otherwise the selector
+  is resolved from the stored coordinator digest in a fresh, complete
+  `agent-session board --state all --format json` read. Only a repository
+  configured handoff supervisor may take over, as listed by `sha256:` digest in
+  `[review_handoff].supervisors` on the PR's target base branch. The list is
+  empty by default and is never read from global configuration or the PR head.
+  The supervisor must also prove at operation time that every matching
+  coordinator row is stopped or deleted on one available host and that its
+  `last_terminal_activity_at` is older than `[review_handoff].stale_after`
+  (default `2h`). A live coordinator is refused with
+  `review_coordinator_live`; absent, recent, unknown, vanished, truncated,
+  unavailable, malformed, or failed evidence is refused with
+  `review_coordinator_unproven`. The supervisor identity, reason, host digest,
+  terminal status, activity time, and prior coordinator digest are retained in
+  the new ledger generation. Registry absence alone grants no ownership.
   The opaque source digest binds the final proof read without publishing its
   machine name. Source configuration remains owned by `agent-session`;
   `FORGE_CLI_AGENT_SESSION_BIN` selects its executable (including test adapters).
 - Takeover appends a handoff recovery with `coordinator_transfer` containing
-  `old_coordinator_digest`, `new_coordinator_digest`, `lifecycle_source_digest`, and `reason`
-  (`coordinator-retired`). This optional field is omitted on ordinary records,
+  `old_coordinator_digest`, `new_coordinator_digest`, `lifecycle_source_digest`,
+  `reason` (`coordinator-retired`), `supervisor_digest`, and
+  `retirement_evidence` (`machine_digest`, `session_status`,
+  `last_activity_at`, and `stale_after_seconds`). This optional field is omitted on ordinary records,
   preserving their existing digest bytes. The assignment generation advances,
   the current head/base are captured, reviewer identity and public author stay
   fixed, and every inherited finding/history record remains attached. Takeover

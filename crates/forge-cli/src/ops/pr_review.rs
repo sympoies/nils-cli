@@ -2064,6 +2064,7 @@ fn ensure_review_run_receipt<R: BackendRunner>(
                     receipt: receipt.clone(),
                 },
                 visible_outcome: None,
+                policy_remote: None,
             },
         )?;
         return Ok(());
@@ -2256,6 +2257,7 @@ pub(crate) fn append_review_loop_state<R: BackendRunner>(
             expected_tip,
             payload: review_state::ReviewStatePayload::ReviewLoop { state },
             visible_outcome,
+            policy_remote: None,
         },
     )
 }
@@ -2267,6 +2269,7 @@ pub(crate) struct ReviewStateAppend<'a> {
     pub expected_tip: Option<&'a str>,
     pub payload: review_state::ReviewStatePayload,
     pub visible_outcome: Option<&'a str>,
+    pub policy_remote: Option<&'a str>,
 }
 
 pub(crate) fn append_review_state_payload<R: BackendRunner>(
@@ -2281,6 +2284,7 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
         expected_tip,
         payload,
         visible_outcome,
+        policy_remote,
     } = append;
     let before = read_review_state_snapshot(runner, ctx, repository, number)?;
     if before.chain.tip_digest.as_deref() != expected_tip {
@@ -2296,7 +2300,11 @@ pub(crate) fn append_review_state_payload<R: BackendRunner>(
         ));
     }
     if let review_state::ReviewStatePayload::ReviewHandoff { handoff } = &payload {
-        super::pr_review_handoff::ensure_handoff_append(&before.chain, handoff)?;
+        super::pr_review_handoff::ensure_handoff_append(
+            &before.chain,
+            handoff,
+            policy_remote.unwrap_or("origin"),
+        )?;
         // Assignment and recovery bind a new interval to the current provider
         // scope. Surrender deliberately retains the old scope for recovery.
         if !handoff.surrendered {

@@ -940,7 +940,7 @@ operations:
       - { name: --review-author, type: string, required: conditional }
       - { name: --base-sha, type: string, required: conditional }
       - { name: --reason, type: enum, values: [reviewer-unreachable, reviewer-closed, reviewer-declined, reviewer-timeout, coordinator-retired], required: conditional }
-      - { name: --coordinator-session, type: string, required: conditional, notes: "recover coordinator-retired only; private selector must match recorded coordinator digest" }
+      - { name: --coordinator-session, type: string, required: false, notes: "optional recovery selector; when supplied, must match the recorded coordinator digest" }
     dry_run:
       offline: false
       repo_resolution: "--repo owner/name or recognised GitHub remote"
@@ -950,7 +950,7 @@ operations:
     backends:
       github:
         argv: ["gh", "api", "graphql"]
-        note: "Trusted complete provider-state/native-review reads; stale-base inspect retains ownership and exact durable tip with review-scope-changed status. Same-reviewer/exact-author assign may refresh a moved base in the next generation without surrender, retaining findings and requiring fresh observation/publication. Assign/recover recheck head/base before append through the existing head/tip-CAS ledger owner; surrender retains the old scope. Takeover also reads fresh session-board terminal lifecycle evidence. Never publishes raw session or machine selectors."
+        note: "Trusted complete provider-state/native-review reads; stale-base inspect retains ownership and exact durable tip with review-scope-changed status. Same-reviewer/exact-author assign may refresh a moved base in the next generation without surrender, retaining findings and requiring fresh observation/publication. Assign/recover recheck head/base before append through the existing head/tip-CAS ledger owner; surrender retains the old scope. Retired coordinator takeover requires a repository-configured supervisor and fresh, stale terminal-activity evidence from the coordinator's recorded host. Never publishes raw session or machine selectors."
     output:
       data:
         provider: enum<github>

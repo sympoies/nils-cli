@@ -51,6 +51,7 @@ const KNOWN_SECTIONS: &[&str] = &[
     "inbox",
     "test_first",
     "review_convergence",
+    "review_handoff",
 ];
 
 /// Recognised keys per section.
@@ -77,6 +78,7 @@ const KNOWN_INBOX_KEYS: &[&str] = &[
     "no_cache",
 ];
 const KNOWN_REVIEW_CONVERGENCE_KEYS: &[&str] = &["require", "quiet_period", "timeout", "bots"];
+const KNOWN_REVIEW_HANDOFF_KEYS: &[&str] = &["supervisors", "stale_after"];
 pub const MAX_REVIEW_QUIET_PERIOD: Duration = Duration::from_secs(60 * 60);
 pub const MAX_REVIEW_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -212,6 +214,11 @@ pub struct ForgeConfig {
     /// global bot list unless that global layer enables the monotonic safety
     /// gate; `None` inherits it.
     pub review_convergence_bots: Option<Vec<ReviewConvergenceBot>>,
+    /// Repository-only allow-list of hashed session identities permitted to
+    /// take over retired review coordinators. Never inherited globally.
+    pub review_handoff_supervisors: Option<Vec<String>>,
+    /// Minimum inactivity age for coordinator retirement proof.
+    pub review_handoff_stale_after: Option<Duration>,
     /// Forward-compat warnings collected while parsing (unknown keys, bad
     /// scalar types). Each entry is prefixed `unknown-config-key:` or
     /// `invalid-config-value:` so callers can render them verbatim under
@@ -448,6 +455,12 @@ impl ForgeConfig {
                 .review_convergence_timeout
                 .or(self.review_convergence_timeout),
             review_convergence_bots,
+            review_handoff_supervisors: top
+                .review_handoff_supervisors
+                .or(self.review_handoff_supervisors),
+            review_handoff_stale_after: top
+                .review_handoff_stale_after
+                .or(self.review_handoff_stale_after),
             warnings: {
                 let mut merged = self.warnings;
                 merged.extend(top.warnings);
@@ -685,6 +698,7 @@ fn parse_value(value: &Value) -> ForgeConfig {
             "inbox" => parse_inbox(section_table, &mut cfg),
             "test_first" => parse_test_first(section_table, &mut cfg),
             "review_convergence" => parse_review_convergence(section_table, &mut cfg),
+            "review_handoff" => parse_review_handoff(section_table, &mut cfg),
             _ => unreachable!("section filtered above"),
         }
     }
@@ -884,6 +898,75 @@ fn validate_review_duration(key: &str, duration: Duration) -> Result<(), &'stati
     if duration <= max { Ok(()) } else { Err(label) }
 }
 
+fn parse_review_handoff(table: &toml::map::Map<String, Value>, cfg: &mut ForgeConfig) {
+    for (key, value) in table {
+        if !KNOWN_REVIEW_HANDOFF_KEYS.contains(&key.as_str()) {
+            cfg.warnings
+                .push(format!("unknown-config-key:review_handoff.{key}"));
+            continue;
+        }
+        match key.as_str() {
+            "supervisors" => {
+                let Some(items) = value.as_array() else {
+                    cfg.warnings.push(
+                        "invalid-config-value:review_handoff.supervisors:not_an_array".into(),
+                    );
+                    continue;
+                };
+                let mut supervisors = Vec::new();
+                let mut valid = true;
+                for (index, item) in items.iter().enumerate() {
+                    let Some(digest) = item.as_str() else {
+                        valid = false;
+                        cfg.warnings.push(format!(
+                            "invalid-config-value:review_handoff.supervisors.{index}"
+                        ));
+                        continue;
+                    };
+                    let hex = digest.strip_prefix("sha256:").unwrap_or_default();
+                    if hex.len() != 64
+                        || !hex
+                            .bytes()
+                            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                    {
+                        valid = false;
+                        cfg.warnings.push(format!(
+                            "invalid-config-value:review_handoff.supervisors.{index}"
+                        ));
+                        continue;
+                    }
+                    supervisors.push(digest.to_string());
+                }
+                if valid {
+                    supervisors.sort();
+                    supervisors.dedup();
+                    cfg.review_handoff_supervisors = Some(supervisors);
+                }
+            }
+            "stale_after" => {
+                let Some(raw) = value.as_str() else {
+                    cfg.warnings.push(
+                        "invalid-config-value:review_handoff.stale_after:not_a_string".into(),
+                    );
+                    continue;
+                };
+                match crate::cli::parse_duration(raw) {
+                    Ok(duration)
+                        if duration >= Duration::from_secs(60)
+                            && duration <= Duration::from_secs(30 * 24 * 60 * 60) =>
+                    {
+                        cfg.review_handoff_stale_after = Some(duration)
+                    }
+                    _ => cfg
+                        .warnings
+                        .push("invalid-config-value:review_handoff.stale_after".into()),
+                }
+            }
+            _ => unreachable!("key filtered above"),
+        }
+    }
+}
+
 fn parse_body(table: &toml::map::Map<String, Value>, cfg: &mut ForgeConfig) {
     for (key, value) in table {
         if !KNOWN_BODY_KEYS.contains(&key.as_str()) {
@@ -1050,6 +1133,24 @@ mod tests {
         let path = dir.join(CONFIG_FILE_NAME);
         fs::write(&path, body).expect("write config");
         path
+    }
+
+    #[test]
+    fn review_handoff_supervisors_are_hashed_and_repo_scoped() {
+        let parse = |source: &str| parse_value(&toml::from_str::<Value>(source).unwrap());
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let repo = parse(&format!(
+            "[review_handoff]\nsupervisors = [\"{digest}\"]\nstale_after = \"3h\""
+        ));
+        assert_eq!(repo.review_handoff_supervisors, Some(vec![digest]));
+        assert_eq!(
+            repo.review_handoff_stale_after,
+            Some(Duration::from_secs(3 * 60 * 60))
+        );
+        let invalid =
+            parse("[review_handoff]\nsupervisors = [\"private-id\"]\nstale_after = \"0s\"");
+        assert!(invalid.review_handoff_supervisors.is_none());
+        assert!(invalid.review_handoff_stale_after.is_none());
     }
 
     #[test]

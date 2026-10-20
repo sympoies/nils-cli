@@ -30,15 +30,21 @@ pub(crate) const BOARD_SCHEMA: &str = "agent-session.board.v1";
 pub(crate) const RECORD_SCHEMA: &str = "agent-session.board-record.v1";
 /// Additive capabilities of the v1 envelopes. A reader feature-detects from
 /// this list, never from the presence of a record field.
-pub(crate) const EXTENSIONS: [&str; 4] =
-    ["lineage.v1", "work.v1", "context_usage.v1", "launch_env.v1"];
+pub(crate) const EXTENSIONS: [&str; 5] = [
+    "lineage.v1",
+    "work.v1",
+    "context_usage.v1",
+    "launch_env.v1",
+    "terminal_activity.v1",
+];
 /// What the daemon snapshot names: the extensions plus the programs route.
-const DAEMON_EXTENSIONS: [&str; 5] = [
+const DAEMON_EXTENSIONS: [&str; 6] = [
     "lineage.v1",
     "work.v1",
     "programs.v1",
     "context_usage.v1",
     "launch_env.v1",
+    "terminal_activity.v1",
 ];
 /// `AGENT_SESSION_BOARD=1` enables the daemon board routes, like `--board`.
 pub(crate) const BOARD_ENV: &str = "AGENT_SESSION_BOARD";
@@ -297,6 +303,7 @@ pub(crate) fn project_record(
         "runtime_status": status,
         "created_at": created_at,
         "updated_at": updated_at,
+        "last_terminal_activity_at": nullable("last_terminal_activity_at"),
         "closed_at": null,
         "close_reason": null,
         "summary": null,
@@ -515,12 +522,13 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    const RECORD_KEYS: [&str; 24] = [
+    const RECORD_KEYS: [&str; 25] = [
         "agent_profile",
         "close_reason",
         "closed_at",
         "created_at",
         "cwd",
+        "last_terminal_activity_at",
         "launch_env",
         "lineage",
         "machine",
@@ -669,6 +677,7 @@ mod tests {
                 "updated_at": "2030-01-01T00:04:00Z",
                 "closed_at": null,
                 "close_reason": null,
+                "last_terminal_activity_at": "2030-01-01T00:04:00Z",
                 "summary": null,
                 "role": null,
                 "lineage": null,
