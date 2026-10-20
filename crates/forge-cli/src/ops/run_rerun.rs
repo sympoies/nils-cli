@@ -102,7 +102,9 @@ fn pr_fence(
     repo: &str,
 ) -> Result<(), ForgeError> {
     let discovered: Vec<PullRequest>;
-    let prs = if run.pull_requests.is_empty() && !run.event.starts_with("pull_request") {
+    let commit_associations =
+        run.pull_requests.is_empty() && !run.event.starts_with("pull_request");
+    let prs = if commit_associations {
         // Push-triggered checks can also belong to a PR. Discover associations
         // rather than bypass current-head fencing for those workflow runs.
         let mut request = call(
@@ -147,10 +149,17 @@ fn pr_fence(
             &format!("repos/{repo}/pulls/{}", pr.number),
             READ_TIMEOUT,
         )?;
+        // Commit lookup also returns the merged PR that introduced a default-
+        // branch commit. Its source head need not equal the merge/squash head.
+        // Only these confirmed historical associations bypass current-head fencing.
+        let historical_merged = commit_associations
+            && current["state"].as_str() == Some("closed")
+            && current["merged_at"].as_str().is_some_and(|s| !s.is_empty());
         if current["number"].as_u64() != Some(pr.number)
-            || !current["head"]["sha"]
-                .as_str()
-                .is_some_and(|sha| sha.eq_ignore_ascii_case(&run.head_sha))
+            || (!historical_merged
+                && !current["head"]["sha"]
+                    .as_str()
+                    .is_some_and(|sha| sha.eq_ignore_ascii_case(&run.head_sha)))
         {
             return Err(invalid(
                 OP,

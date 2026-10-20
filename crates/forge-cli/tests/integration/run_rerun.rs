@@ -25,7 +25,7 @@ if post:
         print(os.environ.get('GH_TOKEN', 'provider unavailable'), file=sys.stderr); sys.exit(1)
     sys.exit(0)
 if path.endswith('/pulls/7'):
-    print(json.dumps({'number':7, 'head':{'sha':os.environ.get('PR_HEAD', head)}}))
+    print(json.dumps({'number':7, 'state':os.environ.get('PR_STATE', 'open'), 'merged_at':os.environ.get('MERGED_AT'), 'merge_commit_sha':head, 'head':{'sha':os.environ.get('PR_HEAD', head)}}))
 elif '/jobs/19' in path:
     print(json.dumps({'id':19, 'run_id':int(os.environ.get('JOB_RUN', '42')), 'run_attempt':int(os.environ.get('JOB_ATTEMPT', '1')), 'head_sha':head, 'name':'test'}))
 elif path.endswith('/jobs?per_page=100'):
@@ -249,6 +249,51 @@ fn run_rerun_missing_pr_metadata_fails_closed_and_push_runs_discover_prs() {
         .env("PR_HEAD", "b".repeat(40));
     let out = invoke(&stub, &[]);
     assert_eq!(out.code, 65, "{}", out.stdout);
+    assert!(out.stdout.contains("pr_head_mismatch"));
+    assert!(posts(&stub).is_empty());
+}
+#[test]
+fn run_rerun_merged_push_association_allows_a_different_source_head() {
+    let stub = fixture()
+        .env("NO_PRS", "1")
+        .env("EVENT", "push")
+        .env("PR_STATE", "closed")
+        .env("MERGED_AT", "2026-01-01T00:00:00Z")
+        .env("PR_HEAD", "b".repeat(40));
+    let out = invoke(&stub, &[]);
+    assert_eq!(out.code, 0, "{} {}", out.stdout, out.stderr);
+    let data = parse_envelope(&out.stdout)["data"].clone();
+    assert_eq!(data["head_sha"], HEAD);
+    assert_eq!(data["receipt_status"], "observed");
+    assert_eq!(data["attempt"], 2);
+    assert_eq!(posts(&stub), "repos/example/widget/actions/runs/42/rerun\n");
+    let calls = fs::read_to_string(stub.tempdir.path().join("calls")).unwrap();
+    assert!(calls.contains(&format!(
+        "GET repos/example/widget/commits/{HEAD}/pulls?per_page=100\n"
+    )));
+    assert!(calls.contains("GET repos/example/widget/pulls/7\n"));
+}
+#[test]
+fn run_rerun_push_association_refuses_a_stale_open_pr_without_writes() {
+    for (state, merged_at) in [("open", ""), ("closed", "")] {
+        let stub = fixture()
+            .env("NO_PRS", "1")
+            .env("EVENT", "push")
+            .env("PR_STATE", state)
+            .env("MERGED_AT", merged_at)
+            .env("PR_HEAD", "b".repeat(40));
+        let out = invoke(&stub, &[]);
+        assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
+        assert!(out.stdout.contains("pr_head_mismatch"));
+        assert!(posts(&stub).is_empty());
+    }
+    // A merged PR embedded in a PR-triggered run still uses the current-head fence.
+    let stub = fixture()
+        .env("PR_STATE", "closed")
+        .env("MERGED_AT", "2026-01-01T00:00:00Z")
+        .env("PR_HEAD", "b".repeat(40));
+    let out = invoke(&stub, &[]);
+    assert_eq!(out.code, 65, "{} {}", out.stdout, out.stderr);
     assert!(out.stdout.contains("pr_head_mismatch"));
     assert!(posts(&stub).is_empty());
 }

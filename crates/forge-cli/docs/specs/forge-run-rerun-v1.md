@@ -15,10 +15,15 @@ latest attempt. `--job` and `--failed-only` are mutually exclusive.
 
 Before writing, the CLI re-reads the run and refuses if the attempt changed.
 Every associated PR is fetched again and its current head must equal the run
-head. Push-triggered runs without embedded PR associations discover associated
-PRs through the commit API. A PR-triggered run with missing associations fails
-closed with `run_pr_head_unavailable`. Fork PR metadata can therefore require
-manual investigation. No stale-head override is provided.
+head, except for confirmed merged historical associations discovered through the
+commit API. Push-triggered runs without embedded PR associations use this
+[commit association API](https://docs.github.com/en/rest/commits/commits#list-pull-requests-associated-with-a-commit),
+which returns the merged PR that introduced a default-branch commit. When that
+PR is closed with a nonempty `merged_at`, its source head may differ from the
+merge/squash run head. Open PRs and closed unmerged PRs still require current-head
+equality; embedded PR associations retain the same fence. A PR-triggered run with
+missing associations fails closed with `run_pr_head_unavailable`. Fork PR metadata
+can therefore require manual investigation. No stale-head override is provided.
 
 This is a read-before-write guard: GitHub's rerun endpoint has no atomic head
 compare-and-swap. A PR update or another rerun after the last preflight read
