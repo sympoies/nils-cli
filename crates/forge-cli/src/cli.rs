@@ -1,10 +1,4 @@
-//! Clap derive tree, global flag definitions, and the top-level dispatch
-//! entry consumed by `crate::run`.
-//!
-//! Every subcommand listed in `crates/forge-cli/docs/specs/forge-cli-spec-v1.md` §"Command
-//! tree" is declared here, even when the v1 handler is not yet implemented in
-//! this sprint. Stubs return a structured `not_implemented` envelope under
-//! `SOFTWARE 70` so callers see a stable failure shape rather than a panic.
+//! Clap command tree and top-level dispatch for forge-cli.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -20,6 +14,9 @@ use crate::envelope::emit_success;
 use crate::error::ForgeError;
 use crate::ops;
 use crate::provider::ProviderHint;
+
+mod run;
+pub use run::{RunArgs, RunCommand, RunRerunArgs};
 
 mod comment;
 pub use comment::CommentEditArgs;
@@ -242,6 +239,8 @@ pub enum Command {
     Release(ReleaseArgs),
     /// GitHub workflow dispatch.
     Workflow(WorkflowArgs),
+    /// Rerun existing GitHub workflow runs or jobs at a fenced head.
+    Run(RunArgs),
     /// Edit or delete a native GitHub comment by database id.
     Comment(CommentArgs),
     /// Personal activity across forge repositories.
@@ -2218,6 +2217,7 @@ pub(crate) fn dispatch_parsed(cli: Cli) -> i32 {
     let result = match cli.command {
         Some(Command::Release(args)) => ops::release::run(&global, args.command, format),
         Some(Command::Workflow(args)) => ops::workflow::run(&global, args.command, format),
+        Some(Command::Run(args)) => ops::run_rerun::run(&global, args.command, format),
         Some(Command::Comment(args)) => ops::comment::run(&global, args.command, format),
         Some(Command::Identity(args)) => {
             crate::identity::run(&global, args.command, format, cli.remote_explicit)

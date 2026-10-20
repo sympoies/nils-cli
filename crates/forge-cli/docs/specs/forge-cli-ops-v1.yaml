@@ -296,6 +296,22 @@ operations:
     output:
       data: { provider: github, repository: string, tag: string, url: nullable<string>, assets: integer }
 
+  - id: run.rerun
+    schema_version: cli.forge-cli.run.rerun.v1
+    summary: Request one identity-scoped GitHub rerun at the expected current PR head.
+    inputs:
+      - { name: run-id, type: positive-integer, required: true }
+      - { name: --expected-head, type: full-sha, required: true }
+      - { name: --job, type: positive-integer, optional: true }
+      - { name: --failed-only, type: bool, default: false }
+      - { name: --receipt-timeout-secs, type: integer, default: 10 }
+    validations: []
+    backends:
+      github:
+        - { program: gh, argv: [api, "repos/<repo>/actions/runs/<run-id>/rerun", --method, POST], notes: "Whole run; failed-only and selected job use their respective REST rerun endpoints. Preflight fences run, attempt, job ownership, and current PR heads. One write only; bounded receipt reads never replay it." }
+    output:
+      data: { provider: github, repository: string, run_id: integer, head_sha: string, actor: string, selection: "enum<all|failed|job>", selected_job: nullable<integer>, previous_attempt: integer, rerun_requested: bool, receipt_status: "enum<observed|pending|superseded>", receipt_error: nullable<string>, attempt: nullable<integer>, url: string, attempt_url: nullable<string>, jobs: "list<{id,name,html_url}>" }
+
   - id: workflow.dispatch
     schema_version: cli.forge-cli.workflow.dispatch.v1
     summary: Dispatch a GitHub workflow with literal string inputs and explicit ref.

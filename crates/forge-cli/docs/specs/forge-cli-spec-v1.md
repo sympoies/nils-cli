@@ -395,6 +395,11 @@ backend mapping, validation rules, and output schema versions.
 
 See [publication and administration](forge-publication-admin-v1.md#release-create--release-upload) for this contract.
 
+### `run rerun`
+
+See [workflow run reruns](forge-run-rerun-v1.md) for identity-scoped GitHub
+reruns, current PR-head fencing, single-write semantics, and attempt/job receipts.
+
 ### `workflow dispatch`
 
 See [publication and administration](forge-publication-admin-v1.md#workflow-dispatch) for this contract.
