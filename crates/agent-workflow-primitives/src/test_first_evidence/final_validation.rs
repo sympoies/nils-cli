@@ -246,6 +246,24 @@ pub(super) fn run_resolve_final(args: ResolveFinalArgs) -> i32 {
     }
 }
 
+// Consume matches from the original text so a rendered tail is never rewritten again.
+fn portable_investigation(reference: &str) -> String {
+    let hits = nils_common::provider_payload::scan_local_paths(reference);
+    let mut remaining = reference;
+    let mut display = String::new();
+    while let Some((start, hit)) = hits
+        .iter()
+        .filter_map(|hit| remaining.find(&hit.sample).map(|start| (start, hit)))
+        .min_by_key(|(start, hit)| (*start, std::cmp::Reverse(hit.sample.len())))
+    {
+        display.push_str(&remaining[..start]);
+        display.push_str(&hit.suggestion);
+        remaining = &remaining[start + hit.sample.len()..];
+    }
+    display.push_str(remaining);
+    display
+}
+
 /// Portable audit section for PR bodies containing explicit failed-final dispositions.
 pub fn final_resolution_summary(record: &EvidenceRecord) -> String {
     if !record
@@ -274,7 +292,12 @@ pub fn final_resolution_summary(record: &EvidenceRecord) -> String {
                 resolution.passing_scope.as_str(),
                 resolution.passing_attempt,
                 resolution.reason,
-                resolution.investigation.join("; ")
+                resolution
+                    .investigation
+                    .iter()
+                    .map(|reference| portable_investigation(reference))
+                    .collect::<Vec<_>>()
+                    .join("; ")
             ));
         }
     }
