@@ -172,6 +172,11 @@ fn forwarded(code: Option<&str>, message: &Value) -> CliError {
         | "launch-env-key-duplicate"
         | "launch-env-assignment-invalid" => CliError::usage(code, message, None),
         "coordination-unauthorized"
+        | "delegation-unauthorized"
+        | "delegation-scope-denied"
+        | "delegation-expired"
+        | "delegation-revoked"
+        | "delegation-incarnation-replaced"
         | "session-incarnation-conflict"
         | "ownership-unknown"
         | "machine-forbidden" => CliError::data(code, message, None),
@@ -311,7 +316,13 @@ fn relay_operation(
     body: &Value,
     operation_id: &str,
 ) -> Result<Value, CliError> {
-    let (caller, incarnation) = super::authenticate_token(context, session, token)?;
+    let (caller, incarnation) = super::delegation::authenticate_token(
+        context,
+        Some(session),
+        token,
+        super::delegation::Use::StartViaConsole,
+        true,
+    )?;
     let Some(config) = federation else {
         return Err(disabled());
     };
@@ -497,15 +508,28 @@ fn cli_request(
     reconcile: bool,
     operation_id: &str,
 ) -> Result<Value, CliError> {
-    let caller = crate::non_empty_env("AGENT_SESSION_ID").ok_or_else(|| {
-        CliError::usage(
-            "console-start-unmanaged",
-            "--via-console runs only inside a managed session (AGENT_SESSION_ID is unset)",
-            None,
-        )
-    })?;
     let token = super::capability_token_from_file(capability_file)?;
-    super::authenticate_token(context, &caller, &token)?;
+    let caller = if super::delegation::is_delegation(&token) {
+        super::delegation::authenticate_token(
+            context,
+            None,
+            &token,
+            super::delegation::Use::StartViaConsole,
+            false,
+        )?
+        .0
+        .id
+    } else {
+        let caller = crate::non_empty_env("AGENT_SESSION_ID").ok_or_else(|| {
+            CliError::usage(
+                "console-start-unmanaged",
+                "--via-console requires a managed caller or a worker delegation",
+                None,
+            )
+        })?;
+        super::authenticate_token(context, &caller, &token)?;
+        caller
+    };
     let mut url = remote::daemon_url(context).map_err(|_| {
         unavailable(
             "daemon_endpoint",

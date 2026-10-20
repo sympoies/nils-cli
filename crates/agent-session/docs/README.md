@@ -35,6 +35,8 @@ or integrating a specific subsystem.
   long-session privacy/fencing guarantees.
 - [Session coordination v1](specs/session-coordination-v1.md): normative
   schemas, state machines, authorization, routes, limits, and failure codes.
+- [Scoped worker delegation v1](specs/scoped-worker-delegation-v1.md): expiring
+  operation and recipient scopes for supervised workers, revocation and audits.
 - [Session board v1](specs/session-board-v1.md): opt-in cross-host board
   record, closed-session ledger and cursor, relay route, aggregator query
   contract, and the `agent-session board` CLI.

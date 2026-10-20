@@ -362,12 +362,9 @@ fn snapshot_at(
         let Some(r) = r else {
             return Ok(Registry::default());
         };
-        if matches!(
-            r.schema_version.as_str(),
-            "agent-session.coordination-registry.v1"
-                | "agent-session.coordination-registry.v2"
-                | "agent-session.coordination-registry.v3"
-        ) {
+        if !r.schema_version.is_empty()
+            && super::delegation::registry_version_supported(&r.schema_version)
+        {
             Ok(r)
         } else {
             Err("unsupported")

@@ -1,6 +1,7 @@
 //! Map coordination commands to their envelope names, including raw-argument
 //! routing used when clap rejects a command before it is parsed.
 
+use nils_common::cli_contract::OutputFormat;
 use std::ffi::OsString;
 
 use crate::cli::{self, Command};
@@ -10,6 +11,7 @@ pub(crate) fn command_name(command: &Command) -> Option<&'static str> {
         Command::AutoResume(_) => Some("auto-resume"),
         Command::Workspace(_) => Some("workspace-set"),
         Command::Readiness(_) => Some("readiness"),
+        Command::Delegation(args) => Some(crate::coordination::delegation::name(args)),
         Command::WorkContext(args) => Some(match &args.command {
             cli::WorkContextCommand::Status(_) => "work-context-status",
             cli::WorkContextCommand::Set(_) => "work-context-set",
@@ -97,6 +99,8 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             ("broker", "reconcile") => Some("broker-reconcile"),
             ("broker", "retire-stopped") => Some("broker-retire-stopped"),
             ("broker", "stop") => Some("broker-stop"),
+            ("delegation", "mint") => Some("delegation-mint"),
+            ("delegation", "revoke") => Some("delegation-revoke"),
             ("message", "audit") => Some("message-audit"),
             ("message", "send") => Some("message-send"),
             ("message", "peers") => Some("message-peers"),
@@ -115,4 +119,87 @@ pub(crate) fn leaf_from_raw_args(args: &[OsString]) -> Option<&'static str> {
             _ => None,
         }
     })
+}
+
+pub(crate) fn command_format(command: &Command) -> OutputFormat {
+    match command {
+        Command::Workspace(args) => crate::origin::format(args),
+        Command::Readiness(args) => args.format,
+        Command::Delegation(args) => crate::coordination::delegation::format(args),
+        Command::AutoResume(args) => args.format,
+        Command::Start(args) => args.format,
+        Command::Run(args) => args.format,
+        Command::List(args) => args.format,
+        Command::Board(args) => args.format,
+        Command::Show(args) => args.format,
+        Command::Logs(args) => args.format,
+        Command::Diagnose(args) => args.format,
+        Command::Send(args) => args.format,
+        Command::Glance(args) => args.format,
+        Command::Resume(args) => args.format,
+        Command::Restart(args) => args.format,
+        Command::Clear(args) | Command::Rebind(args) => args.format,
+        Command::Account(args) => match &args.command {
+            cli::AccountCommand::Show(args) => args.format,
+            cli::AccountCommand::Switch(args) => args.format,
+        },
+        Command::Activity(args) => match &args.command {
+            cli::ActivityCommand::Event(args) => args.format,
+            cli::ActivityCommand::Status(args) => args.format,
+            cli::ActivityCommand::Hook(_) | cli::ActivityCommand::Notify(_) => OutputFormat::Text,
+            cli::ActivityCommand::Doctor(args) => args.format,
+            cli::ActivityCommand::Setup(args) => args.format,
+        },
+        Command::WorkContext(args) => match &args.command {
+            cli::WorkContextCommand::Status(args) => args.format,
+            cli::WorkContextCommand::Set(args) => args.format,
+            cli::WorkContextCommand::Clear(args) => args.format,
+            cli::WorkContextCommand::Advise(args) => args.format,
+            cli::WorkContextCommand::Acknowledge(args) => args.format,
+            cli::WorkContextCommand::Claim(args) => args.format,
+            cli::WorkContextCommand::Show(args) => args.format,
+            cli::WorkContextCommand::Check(args) => args.format,
+            cli::WorkContextCommand::Renew(args) => args.format,
+            cli::WorkContextCommand::Release(args) => args.format,
+            cli::WorkContextCommand::Admit(args) => args.format,
+            cli::WorkContextCommand::Complete(args) => args.format,
+            cli::WorkContextCommand::Reconcile(args) => args.format,
+        },
+        Command::Broker(args) => match &args.command {
+            cli::BrokerCommand::Identity(args) | cli::BrokerCommand::Status(args) => args.format,
+            cli::BrokerCommand::Adopt(args) | cli::BrokerCommand::Reconcile(args) => args.format,
+            cli::BrokerCommand::RetireStopped(args) => args.format,
+            cli::BrokerCommand::Stop(args) => args.format,
+            cli::BrokerCommand::Heartbeat(args) => args.format,
+        },
+        Command::Message(args) => match &args.command {
+            cli::MessageCommand::Audit(args) => args.format,
+            cli::MessageCommand::Peers(args) => args.format,
+            cli::MessageCommand::Delivery(args) => args.format,
+            cli::MessageCommand::ServiceSend(args) => args.format,
+            cli::MessageCommand::Send(args) => args.format,
+            cli::MessageCommand::Forward(args) => args.format,
+            cli::MessageCommand::Inbox(args) => args.format,
+            cli::MessageCommand::Show(args) => args.format,
+            cli::MessageCommand::Ack(args) => args.format,
+            cli::MessageCommand::Reply(args) => args.format,
+            cli::MessageCommand::Wait(args) => args.format,
+            cli::MessageCommand::Reminder(args) => args.format,
+        },
+        Command::Metadata(args) => match &args.command {
+            cli::MetadataCommand::Attach(args) => args.format,
+            cli::MetadataCommand::Show(args) => args.format,
+        },
+        Command::Lineage(args) => match &args.command {
+            cli::LineageCommand::Adopt(args) => args.format,
+        },
+        Command::Work(args) => match &args.command {
+            cli::WorkCommand::Set(args) => args.format,
+        },
+        Command::Delete(args) => args.format,
+        Command::Attach(_)
+        | Command::Serve(_)
+        | Command::CodexAppServerProxy(_)
+        | Command::Completion(_) => OutputFormat::Text,
+    }
 }

@@ -1608,3 +1608,6 @@ fn launch_env_console_forwards_every_provider_and_requires_confirmation() {
 
 #[path = "board_relay/console_operations.rs"]
 mod console_operations;
+
+#[path = "board_relay/delegation.rs"]
+mod delegation;

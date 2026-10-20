@@ -103,6 +103,8 @@ pub enum Command {
     Broker(BrokerArgs),
     /// Authenticate the current managed session and its runtime-issued checkpoint.
     Readiness(ReadinessArgs),
+    /// Mint or revoke scoped credentials for supervised workers.
+    Delegation(crate::coordination::delegation::Args),
     /// Exchange bounded private coordination mailbox messages.
     Message(MessageArgs),
     /// Attach and inspect bounded public metadata for one managed session.

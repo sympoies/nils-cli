@@ -1,9 +1,12 @@
 pub(crate) mod advisory;
 pub(crate) mod audit;
 pub(crate) mod broker;
+mod capability;
+pub(crate) use capability::authenticate_token;
 pub mod claims;
 pub(crate) mod console_start;
 pub mod context;
+pub(crate) mod delegation;
 mod forwarding;
 mod heartbeat_state;
 pub mod mailbox;
@@ -94,6 +97,8 @@ pub(crate) struct Registry {
     fingerprint_epoch: u64,
     fingerprint_key: String,
     brokers: BTreeMap<String, BrokerRecord>,
+    delegations: BTreeMap<String, delegation::Record>,
+    delegation_audit: Vec<delegation::Audit>,
     claims: Vec<context::WorkContextRecord>,
     operations: Vec<claims::OperationLease>,
     completion_events: Vec<claims::CompletionEvent>,
@@ -169,22 +174,11 @@ impl LockedRegistry {
         if self.registry.schema_version.is_empty() {
             self.registry.schema_version = REGISTRY_VERSION.to_string();
         }
-        if !matches!(
-            self.registry.schema_version.as_str(),
-            REGISTRY_VERSION | LEGACY_REGISTRY_VERSION | SUPPRESSION_REGISTRY_VERSION
-        ) {
+        if !delegation::registry_version_supported(&self.registry.schema_version) {
             return Err(store_corrupt());
         }
-        // Older writers drop unknown StoredMessage fields. Once suppression is
-        // admitted, fence them before any later read/modify/write can erase it.
-        if self
-            .registry
-            .messages
-            .iter()
-            .any(|message| message.notification_suppressed)
-        {
-            self.registry.schema_version = SUPPRESSION_REGISTRY_VERSION.into();
-        }
+        // Preserve every admitted compatibility fence, including worker state.
+        delegation::fence_registry(&mut self.registry);
         let bytes = serde_json::to_vec(&self.registry).map_err(|_| store_corrupt())?;
         if bytes.len() as u64 > MAX_REGISTRY_BYTES {
             return Err(quota_exceeded(
@@ -912,21 +906,6 @@ pub(crate) fn authenticate_token_observational(
     Ok((record, incarnation))
 }
 
-pub(crate) fn authenticate_token(
-    context: &CliContext,
-    session_id: &str,
-    token: &str,
-) -> Result<(SessionRecord, String), CliError> {
-    if token.len() < 32 || token.len() > 256 || !token.is_ascii() {
-        return Err(unauthorized());
-    }
-    let record = load_session_record(context, session_id).map_err(|_| unauthorized())?;
-    let incarnation = incarnation(&record)?;
-    let locked = lock_registry(context)?;
-    verify_capability_token(context, &locked.registry, &record, &incarnation, token)?;
-    Ok((record, incarnation))
-}
-
 /// Authenticate the recipient of `message reminder` under one registry
 /// acquisition bounded by [`REMINDER_LOCK_TIMEOUT`], returning that lock.
 pub(crate) fn authenticate_reminder_from_file(
@@ -1193,12 +1172,7 @@ fn lock_registry_within(
     let mut registry = match read_private_file(&path, MAX_REGISTRY_BYTES) {
         Ok(bytes) => {
             let registry: Registry = serde_json::from_slice(&bytes).map_err(|_| store_corrupt())?;
-            if !registry.schema_version.is_empty()
-                && !matches!(
-                    registry.schema_version.as_str(),
-                    REGISTRY_VERSION | LEGACY_REGISTRY_VERSION | SUPPRESSION_REGISTRY_VERSION
-                )
-            {
+            if !delegation::registry_version_supported(&registry.schema_version) {
                 return Err(store_corrupt());
             }
             registry
@@ -1906,12 +1880,7 @@ fn read_registry_snapshot(context: &CliContext) -> Result<Registry, CliError> {
     let path = heartbeat_state::observational_root(context)?.join(REGISTRY_FILE);
     let bytes = read_private_file(&path, MAX_REGISTRY_BYTES).map_err(|_| store_unavailable())?;
     let registry: Registry = serde_json::from_slice(&bytes).map_err(|_| store_corrupt())?;
-    if !registry.schema_version.is_empty()
-        && !matches!(
-            registry.schema_version.as_str(),
-            REGISTRY_VERSION | LEGACY_REGISTRY_VERSION | SUPPRESSION_REGISTRY_VERSION
-        )
-    {
+    if !delegation::registry_version_supported(&registry.schema_version) {
         return Err(store_corrupt());
     }
     Ok(registry)
