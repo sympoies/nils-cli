@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -26,6 +27,19 @@ class GateReports(unittest.TestCase):
                 self.assertFalse(Path(first).is_relative_to(ROOT))
                 self.assertEqual(reports_module.run(['cargo', 'nextest', 'run']), 23)
                 self.assertNotEqual(first, launch.call_args.kwargs['env']['NEXTEST_STATE_DIR'])
+
+    def test_non_bmp_report_root_generates_valid_utf8_toml(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'reports-\U0001f4ca'
+            with patch.dict(os.environ, {'NILS_CLI_REPORT_DIR': str(output)}), \
+                 patch.object(reports_module.subprocess, 'call', return_value=0) as launch:
+                self.assertEqual(reports_module.run(['cargo', 'nextest', 'run']), 0)
+                config = output / 'nextest-reports.toml'
+                with config.open('rb') as stream:
+                    self.assertEqual(tomllib.load(stream)['store']['dir'], str(output / 'nextest'))
+                self.assertIn('\U0001f4ca', config.read_text(encoding='utf-8'))
+                self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_STATE_DIR'],
+                                 str(output / 'history'))
 
     def test_target_override_is_refused_before_launch(self):
         with patch.dict(os.environ, {'NILS_CLI_REPORT_DIR': str(ROOT / 'target/reports')}), \

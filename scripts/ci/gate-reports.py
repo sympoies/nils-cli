@@ -25,7 +25,8 @@ def run(arguments):
         raise ValueError('NILS_CLI_REPORT_DIR must be outside Cargo target directories')
     output.mkdir(parents=True, exist_ok=True)
     config = output / 'nextest-reports.toml'
-    config.write_text('[store]\ndir = ' + json.dumps(str(output / 'nextest')) + '\n')
+    config.write_text('[store]\ndir = ' + json.dumps(str(output / 'nextest'), ensure_ascii=False) + '\n',
+                      encoding='utf-8')
     environment = dict(os.environ, NEXTEST_STATE_DIR=str(output / 'history'))
     print(f'gate reports: {output}', flush=True)
     # Tool defaults preserve all repository profiles, filters, and timeouts.
