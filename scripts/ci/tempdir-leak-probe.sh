@@ -210,7 +210,7 @@ cd "$repo_root"
 # the probe directory would leave it pointing at a path cleanup removes before
 # later Rust commands run. The selected tests still execute under the private
 # directory below, which is the behavior this probe owns.
-if ! cargo nextest run --no-run "$@"; then
+if ! python3 "$repo_root/scripts/ci/gate-reports.py" cargo nextest run --no-run "$@"; then
   echo "tempdir-leak-probe: the test build failed" >&2
   exit 1
 fi
@@ -221,7 +221,7 @@ while [ "$i" -le "$runs" ]; do
   if [ "$runs" -gt 1 ]; then
     echo "tempdir-leak-probe: run $i/$runs"
   fi
-  if ! TMPDIR="$probe_dir" cargo nextest run "$@"; then
+  if ! TMPDIR="$probe_dir" python3 "$repo_root/scripts/ci/gate-reports.py" cargo nextest run "$@"; then
     run_status=1
   fi
   i=$((i + 1))

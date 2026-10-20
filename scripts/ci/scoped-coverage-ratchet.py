@@ -40,7 +40,8 @@ def coverage_counts(path):
 
 
 def run_coverage(repo, output, arguments, env):
-    command = ['cargo', 'llvm-cov', 'nextest', '--profile', 'ci', *arguments,
+    command = [sys.executable, str(Path(__file__).with_name('gate-reports.py')),
+               'cargo', 'llvm-cov', 'nextest', '--profile', 'ci', *arguments,
                '--no-fail-fast', '--lcov', '--output-path', str(output)]
     output.unlink(missing_ok=True)
     print('+ ' + ' '.join(command), flush=True)
@@ -88,6 +89,9 @@ def run(base, packages, excludes, output):
                             str(repo), str(baseline)], check=True)
             subprocess.run(['git', 'checkout', '--quiet', '--detach', base], cwd=baseline, check=True)
             baseline_env = dict(os.environ, CARGO_TARGET_DIR=str(baseline_target))
+            if baseline_env.get('NILS_CLI_REPORT_DIR'):
+                baseline_env['NILS_CLI_REPORT_DIR'] = str(
+                    Path(baseline_env['NILS_CLI_REPORT_DIR']) / 'baseline')
             baseline_env.pop('CARGO_LLVM_COV_TARGET_DIR', None)
             baseline_env.pop('LLVM_PROFILE_FILE', None)
             receipt['baseline'] = run_coverage(baseline, output / 'base-lcov.info', arguments, baseline_env)

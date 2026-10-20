@@ -439,6 +439,17 @@ NILS_CLI_TEST_RUNNER=nextest bash scripts/ci/nils-cli-checks-entrypoint.sh
 Notes:
 
 - `nextest` mode runs `cargo nextest run --profile ci --workspace`.
+- Gate nextest runs (including coverage and the leak probe) write JUnit to
+  `NILS_CLI_REPORT_DIR/nextest/ci/junit.xml` and recorded history under
+  `NILS_CLI_REPORT_DIR/history`. Set `NILS_CLI_REPORT_DIR` to an owner artifact
+  directory outside both the worktree's `target/` and `CARGO_TARGET_DIR`.
+  Without an override, each invocation gets a unique directory under
+  `${XDG_STATE_HOME:-$HOME/.local/state}/nils-cli/reports/<checkout-key>/`;
+  the gate prints the selected directory. CI sets the override under
+  `runner.temp` and publishes/uploads that report, including failed test runs.
+  Baseline scoped coverage uses the `baseline/` subdirectory so its report does
+  not replace the candidate's report. These paths are independent of Cargo's
+  build cache. Raw nextest commands retain nextest's default report location.
 - The `ci` profile terminates a test that is still running after 10 minutes
   (`slow-timeout` in `.config/nextest.toml`) and reports it as `TIMEOUT`, so a
   hung test fails the run instead of holding it. The same bound applies to the
