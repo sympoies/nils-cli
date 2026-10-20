@@ -1,9 +1,33 @@
 # Send v1
 
-`agent-session send <id>` delivers literal text and named keys to one live
+`agent-session send <id>` delivers literal text, named keys, and single printable keys to one live
 managed terminal. The JSON envelope remains `cli.agent-session.send.v1`.
 [Session lifecycle operations](../runbooks/session-lifecycle.md) describes the
 existing unguarded input and submission behavior.
+
+## Printable picker keys
+
+The CLI `--key` also accepts one printable Unicode character, such as `s` or
+`1`. It sends a typed literal key rather than bracketed-paste text. Named keys
+retain their existing meaning and completion candidates. Empty values,
+multiple characters, control characters, and unknown multi-character key names
+are rejected. The HTTP/WebSocket named-key contract is unchanged.
+
+Here, printable means a single non-control Unicode character. Unicode format
+characters, including U+200B and U+202E, are accepted and typed literally.
+
+A send containing any printable key always enables `--require-idle` for the
+whole request, including earlier named keys. It checks runtime identity,
+provider activity and pending ingress before delivery and again before each key.
+Busy, blocked, unknown, pending, unsupported, and unobservable sessions refuse
+without initial input. `--allow-blocked` cannot override this requirement.
+These are the same observational guards and race limits described below.
+
+Printable keys use tmux literal mode with command separators escaped. The
+success receipt includes the supplied character in `data.keys`; it confirms
+transport, not a provider setting change. Inspect the provider before and after
+with `glance` to verify model and effort. No provider menu is inferred and no
+configuration file is written by this operation.
 
 ## Opt-in continuation guards
 
