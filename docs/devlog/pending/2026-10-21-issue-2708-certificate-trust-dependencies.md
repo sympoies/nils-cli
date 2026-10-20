@@ -8,6 +8,8 @@
   Mozilla trust.
 - Corrected a recurring activity-refresh cadence test to observe the production
   refresh-start boundary while retaining its strict 250 ms minimum.
+- Renewed the full-mailbox test's synthetic broker heartbeat per authenticated
+  operation while retaining all 256 real acknowledgements and quota assertions.
 
 ### Why / context
 
@@ -16,6 +18,8 @@
   system trust store or weakening verification.
 - Collector entry follows blocking-pool dispatch and can underestimate the
   interval between refresh-operation starts when dispatch delays differ.
+- The mailbox fixture starts no heartbeat updater. Its single seed beat can
+  expire during a long acknowledgement loop even though quota behavior is correct.
 
 ### Evidence
 
@@ -28,8 +32,14 @@
   the corrected real-time test and all 26 affected activity-broker tests passed.
   Production scheduling, timing limits, retries and thread reservations remain
   unchanged. The original failed workspace gate remains retained evidence.
+- Aging only the fixture heartbeat before the second acknowledgement reproduced
+  the exact stale-authority error. With explicit renewal, the same probe passed
+  all 256 acknowledgements and final delivery checks; production freshness and
+  the 30-second limit remain unchanged.
 
 ### Links
 
 - <https://github.com/sympoies/nils-cli/issues/2708>
 - <https://github.com/sympoies/nils-cli/issues/1705>
+- <https://github.com/sympoies/nils-cli/issues/2599>
+- <https://github.com/sympoies/nils-cli/issues/2633>
