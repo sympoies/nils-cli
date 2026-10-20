@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -146,7 +147,7 @@ fn retro_bind_retains_log_digests_and_real_baseline_and_requires_remaining_steps
     );
     let imported_json = imported.stdout_json();
     let record = &imported_json["result"]["record"];
-    assert_eq!(record["schema_version"], "test-first-evidence.record.v2");
+    assert_eq!(record["schema_version"], "test-first-evidence.record.v3");
     assert_eq!(record["subject"]["baseline"]["commit"], base);
     assert_eq!(record["subject"]["retro_binding"]["mode"], "retro-bound");
     assert_eq!(
@@ -164,6 +165,17 @@ fn retro_bind_retains_log_digests_and_real_baseline_and_requires_remaining_steps
     assert_eq!(
         record["subject"]["retro_binding"]["red_log_digest"],
         red_digest
+    );
+    let record_file = out.join("test-first-evidence.json");
+    let before_old_writer = fs::read(&record_file).unwrap();
+    assert_eq!(
+        legacy_v2_record_gap(&record_file),
+        Err("unsupported-record-version")
+    );
+    assert_eq!(
+        fs::read(&record_file).unwrap(),
+        before_old_writer,
+        "an old v2 writer must reject a provenance-bearing record without mutation"
     );
     assert_eq!(record["failing_tests"][0]["exit_code"], 101);
     assert_eq!(record["final_validations"][0]["scope"], "focused");
@@ -210,9 +222,42 @@ fn retro_bind_retains_log_digests_and_real_baseline_and_requires_remaining_steps
         ],
     ] {
         assert_eq!(run(tmp.path(), &args).code, 0);
+        let current: Value = serde_json::from_slice(&fs::read(&record_file).unwrap()).unwrap();
+        assert_eq!(current["schema_version"], "test-first-evidence.record.v3");
+        assert_eq!(current["subject"]["retro_binding"]["mode"], "retro-bound");
     }
     assert_eq!(run(tmp.path(), &verify_args).code, 0);
     let before = fs::read(out.join("test-first-evidence.json")).unwrap();
+    let mut mislabeled_v2: Value = serde_json::from_slice(&before).unwrap();
+    mislabeled_v2["schema_version"] = json!("test-first-evidence.record.v2");
+    fs::write(&record_file, serde_json::to_vec(&mislabeled_v2).unwrap()).unwrap();
+    let rejected_v2_provenance = run(tmp.path(), &verify_args);
+    assert_eq!(rejected_v2_provenance.code, 1);
+    assert!(
+        rejected_v2_provenance.stdout_json()["error"]["details"]["missing"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("invalid_retro_binding"))
+    );
+    let mislabeled_bytes = fs::read(&record_file).unwrap();
+    let rejected_mislabeled_write = run(
+        tmp.path(),
+        &[
+            "record-gap",
+            "--out",
+            out.to_str().unwrap(),
+            "--none",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(rejected_mislabeled_write.code, 65);
+    assert_eq!(
+        rejected_mislabeled_write.stdout_json()["error"]["code"],
+        "invalid-retro-binding"
+    );
+    assert_eq!(fs::read(&record_file).unwrap(), mislabeled_bytes);
+    fs::write(&record_file, &before).unwrap();
     let duplicate = run(tmp.path(), &args);
     assert_eq!(duplicate.code, 65);
     assert_eq!(
@@ -227,6 +272,92 @@ fn retro_bind_retains_log_digests_and_real_baseline_and_requires_remaining_steps
     )
     .unwrap();
     assert_eq!(run(tmp.path(), &verify_args).code, 1);
+    let mut without_provenance: Value = serde_json::from_slice(&before).unwrap();
+    without_provenance["subject"]
+        .as_object_mut()
+        .unwrap()
+        .remove("retro_binding");
+    fs::write(
+        &record_file,
+        serde_json::to_vec(&without_provenance).unwrap(),
+    )
+    .unwrap();
+    let missing_provenance = run(tmp.path(), &verify_args);
+    assert_eq!(missing_provenance.code, 1);
+    assert!(
+        missing_provenance.stdout_json()["error"]["details"]["missing"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("invalid_retro_binding"))
+    );
+    let stripped = fs::read(&record_file).unwrap();
+    let rejected_write = run(
+        tmp.path(),
+        &[
+            "record-gap",
+            "--out",
+            out.to_str().unwrap(),
+            "--none",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(rejected_write.code, 65);
+    assert_eq!(
+        rejected_write.stdout_json()["error"]["code"],
+        "invalid-retro-binding"
+    );
+    assert_eq!(fs::read(&record_file).unwrap(), stripped);
+}
+
+#[test]
+fn ordinary_v2_records_remain_compatible_with_legacy_and_current_writers() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let out = tmp.path().join("evidence");
+    assert_eq!(
+        run(
+            tmp.path(),
+            &[
+                "init",
+                "--out",
+                out.to_str().unwrap(),
+                "--classification",
+                "behavior-change",
+                "--added-behavior",
+                "ordinary v2 compatibility",
+            ]
+        )
+        .code,
+        0
+    );
+    let record_file = out.join("test-first-evidence.json");
+    assert!(legacy_v2_record_gap(&record_file).is_ok());
+    assert_eq!(
+        run(
+            tmp.path(),
+            &["record-gap", "--out", out.to_str().unwrap(), "--none"]
+        )
+        .code,
+        0
+    );
+    let record: Value = serde_json::from_slice(&fs::read(&record_file).unwrap()).unwrap();
+    assert_eq!(record["schema_version"], "test-first-evidence.record.v2");
+    assert!(record.get("subject").is_none());
+}
+
+fn legacy_v2_record_gap(record_file: &Path) -> Result<(), &'static str> {
+    let before = fs::read(record_file).map_err(|_| "record-read-failed")?;
+    let mut record: Value = serde_json::from_slice(&before).map_err(|_| "invalid-record-json")?;
+    if record["schema_version"] != "test-first-evidence.record.v2" {
+        return Err("unsupported-record-version");
+    }
+    if let Some(subject) = record.get_mut("subject").and_then(Value::as_object_mut) {
+        subject.remove("retro_binding");
+    }
+    record["no_residual_gaps"] = json!(true);
+    let mut rewritten = serde_json::to_vec_pretty(&record).map_err(|_| "record-render-failed")?;
+    rewritten.push(b'\n');
+    fs::write(record_file, rewritten).map_err(|_| "record-write-failed")
 }
 
 #[test]

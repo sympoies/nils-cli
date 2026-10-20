@@ -277,6 +277,7 @@ final validation, waivers, an explicit residual-gap declaration, and optional
 repository/change subject metadata. Record v1 remains readable by `show`, but
 strict `verify` and the forge delivery gate require deliberate v2 re-recording
 because the missing maintenance facts cannot be inferred safely.
+Retro-bind writes v3 for old-writer rejection and provenance retention.
 If meaningful pre-edit RED and post-edit GREEN logs already exist but record
 initialization was missed, use the explicit [`retro-bind` recovery](docs/specs/retained-test-first-evidence-v1.md).
 It retains log digests and chronology attestation without replacing prior bindings.

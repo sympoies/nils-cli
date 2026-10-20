@@ -1,10 +1,13 @@
 # Retained test-first evidence v1
 
-`test-first-evidence retro-bind` imports existing RED/GREEN logs into an
-initialized, unbound `test-first-evidence.record.v2` record. Use this recovery
-only when the original meaningful RED preceded production edits and GREEN
-followed the implementation, but record initialization or baseline binding
-was missed. Normal work still uses `init` and `bind-baseline` before editing.
+`test-first-evidence retro-bind` accepts an initialized, unbound
+`test-first-evidence.record.v2` record and writes the dedicated
+`test-first-evidence.record.v3` format. Older v2 writers reject that format
+before mutation, while current writers preserve its provenance. Use this
+recovery only when the original meaningful RED preceded production edits and
+GREEN followed the implementation, but record initialization or baseline
+binding was missed. Normal work still uses `init` and `bind-baseline` before
+editing.
 
 ## Recovery
 
@@ -46,11 +49,11 @@ baseline is inferred from the implementation head.
 
 Success uses `cli.test-first-evidence.retro-bind.v2` with `command`, `ok: true`,
 and the usual full `result` containing `record_file`, `complete`, and `record`.
-The record receives one meaningful failing entry and one focused passing
+The v3 record receives one meaningful failing entry and one focused passing
 validation. Existing impact and gap declarations are preserved. Delivery
 attestations remain empty until `bind-delivery` runs.
 
-The optional `subject.retro_binding` object makes recovery explicit:
+The required `subject.retro_binding` object makes recovery explicit:
 
 | Field | Meaning |
 | --- | --- |
@@ -68,9 +71,10 @@ descriptions are truthful. Reviewers inspect the original logs and chronology.
 Logs need not remain readable for later verification; the digests retain their
 audit identity. Keep the original logs available to the reviewer privately.
 
-Malformed provenance makes the record incomplete. Ordinary v2 records omit
-this optional object and retain their existing behavior. Existing repository,
-baseline, delivery-head, and diff checks still apply to imported records.
+Missing or malformed v3 provenance makes the record incomplete and prevents
+current writers from mutating the record. Ordinary v2 records omit this object
+and retain their existing behavior. Existing repository, baseline,
+delivery-head, and diff checks still apply to imported records.
 
 ## Verification guidance
 

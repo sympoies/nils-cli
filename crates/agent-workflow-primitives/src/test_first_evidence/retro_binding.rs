@@ -1,5 +1,60 @@
 use super::*;
 
+const RETRO_RECORD_SCHEMA_VERSION: &str = "test-first-evidence.record.v3";
+
+pub(super) fn is_current_record_schema(version: &str) -> bool {
+    version == super::RECORD_SCHEMA_VERSION || version == RETRO_RECORD_SCHEMA_VERSION
+}
+
+pub(super) fn validate_record_schema(version: &str, record_file: &Path) -> Result<(), CliError> {
+    if is_current_record_schema(version) || version == super::V1_RECORD_SCHEMA_VERSION {
+        return Ok(());
+    }
+    Err(CliError::runtime(
+        "unsupported-record-version",
+        format!(
+            "unsupported record schema_version {version}; expected {}, {}, or readable previous schema {}",
+            super::RECORD_SCHEMA_VERSION,
+            RETRO_RECORD_SCHEMA_VERSION,
+            super::V1_RECORD_SCHEMA_VERSION
+        ),
+        Some(json!({
+            "record_file": display_path(record_file),
+            "schema_version": version,
+            "expected": RETRO_RECORD_SCHEMA_VERSION
+        })),
+    ))
+}
+
+pub(super) fn update_record_with_item<F, T>(
+    out_dir: &Path,
+    update: F,
+) -> Result<(RecordResult, T), CliError>
+where
+    F: FnOnce(&mut EvidenceRecord) -> Result<T, CliError>,
+{
+    let record_file = record_file_path(out_dir)?;
+    let mut record = read_record(&record_file)?;
+    if record.schema_version == super::V1_RECORD_SCHEMA_VERSION {
+        return Err(v1_record_error(None));
+    }
+    if !valid_provenance(&record) {
+        return Err(invalid(
+            "invalid-retro-binding",
+            "record writer refused invalid or missing retro-binding provenance",
+        ));
+    }
+    let item = update(&mut record)?;
+    if !valid_provenance(&record) {
+        return Err(invalid(
+            "invalid-retro-binding",
+            "record writer refused invalid or missing retro-binding provenance",
+        ));
+    }
+    write_record(&record_file, &record)?;
+    Ok((record_result(record_file, record), item))
+}
+
 #[derive(Debug, clap::Args)]
 pub struct RetroBindArgs {
     #[command(flatten)]
@@ -152,6 +207,7 @@ pub(super) fn run(args: RetroBindArgs) -> i32 {
             ),
             artifacts: normalized_paths(std::slice::from_ref(&args.green_log)),
         });
+        record.schema_version = RETRO_RECORD_SCHEMA_VERSION.to_string();
         record.subject = Some(subject);
         Ok(())
     });
@@ -192,11 +248,21 @@ fn log_digest(path: &Path) -> Result<String, CliError> {
 }
 
 pub(super) fn valid_provenance(record: &EvidenceRecord) -> bool {
+    let binding = record
+        .subject
+        .as_ref()
+        .and_then(|subject| subject.retro_binding.as_ref());
+    if record.schema_version == super::RECORD_SCHEMA_VERSION {
+        return binding.is_none();
+    }
+    if record.schema_version != RETRO_RECORD_SCHEMA_VERSION {
+        return false;
+    }
     let Some(subject) = &record.subject else {
-        return true;
+        return false;
     };
-    let Some(binding) = &subject.retro_binding else {
-        return true;
+    let Some(binding) = binding else {
+        return false;
     };
     binding.mode == "retro-bound"
         && binding.pre_edit_red_attested

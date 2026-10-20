@@ -135,7 +135,7 @@ fn run_check(args: CheckArgs) -> i32 {
 
 fn check(args: &CheckArgs) -> Result<CheckResult, CliError> {
     let record = read_record_result(args.common.out_dir.as_path())?.record;
-    if record.schema_version == RECORD_SCHEMA_VERSION
+    if retro_binding::is_current_record_schema(&record.schema_version)
         && ChangeClassification::parse(&record.change_classification).is_none()
     {
         return Err(CliError::data(
@@ -753,14 +753,7 @@ fn update_record_with_item<F, T>(out_dir: &Path, update: F) -> Result<(RecordRes
 where
     F: FnOnce(&mut EvidenceRecord) -> Result<T, CliError>,
 {
-    let record_file = record_file_path(out_dir)?;
-    let mut record = read_record(&record_file)?;
-    if record.schema_version == V1_RECORD_SCHEMA_VERSION {
-        return Err(v1_record_error(None));
-    }
-    let item = update(&mut record)?;
-    write_record(&record_file, &record)?;
-    Ok((record_result(record_file, record), item))
+    retro_binding::update_record_with_item(out_dir, update)
 }
 
 fn verify_record(args: &CommonArgs) -> Result<VerifyResult, CliError> {
@@ -835,22 +828,7 @@ fn read_record(record_file: &Path) -> Result<EvidenceRecord, CliError> {
         )
     })?;
 
-    if record.schema_version != RECORD_SCHEMA_VERSION
-        && record.schema_version != V1_RECORD_SCHEMA_VERSION
-    {
-        return Err(CliError::runtime(
-            "unsupported-record-version",
-            format!(
-                "unsupported record schema_version {}; expected {} or readable previous schema {}",
-                record.schema_version, RECORD_SCHEMA_VERSION, V1_RECORD_SCHEMA_VERSION
-            ),
-            Some(json!({
-                "record_file": display_path(record_file),
-                "schema_version": record.schema_version,
-                "expected": RECORD_SCHEMA_VERSION
-            })),
-        ));
-    }
+    retro_binding::validate_record_schema(&record.schema_version, record_file)?;
 
     Ok(record)
 }
@@ -1108,7 +1086,7 @@ fn effective_final_validations(
 }
 
 fn has_durable_pre_edit_evidence(record: &EvidenceRecord) -> bool {
-    if record.schema_version != RECORD_SCHEMA_VERSION {
+    if !retro_binding::is_current_record_schema(&record.schema_version) {
         return false;
     }
     let Some(classification) = ChangeClassification::parse(&record.change_classification) else {
